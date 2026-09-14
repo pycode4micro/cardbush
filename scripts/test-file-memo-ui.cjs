@@ -21,6 +21,7 @@ app.whenReady().then(async () => {
     const initialUrl = window.webContents.getURL();
     const sources = Object.fromEntries([
       ['memo', 'src/features/chatMessages/FileMemoReference.tsx'], ['link', 'src/features/chatMessages/LocalFileReferenceLink.tsx'], ['paths', 'src/shared/localPaths.ts'],
+      ['memoScope', 'src/features/chatMessages/FileMemoScope.tsx'],
       ['presentation', 'src/features/chatMessages/mediaPresentation.tsx'], ['scope', 'src/features/conversationScope.ts'], ['workspace', 'src/features/conversationWorkspace.ts'],
     ].map(([name, file]) => [name, compile(file)]));
     const run = code => window.webContents.executeJavaScript(code, true);
@@ -37,6 +38,7 @@ app.whenReady().then(async () => {
           if(id.endsWith('/localPaths'))return loadModule('paths');
           if(id==='./LocalFileReferenceLink')return loadModule('link');
           if(id==='./mediaPresentation')return loadModule('presentation');
+          if(id==='./FileMemoScope')return loadModule('memoScope');
           if(id.endsWith('/conversationScope'))return loadModule('scope');
           if(id==='./conversationWorkspace')return loadModule('workspace');
           if(id==='./FileTypeIcon')return {FileTypeIcon:()=>null};
@@ -52,16 +54,17 @@ app.whenReady().then(async () => {
       const filePath = ${JSON.stringify(imagePath)};
       const result = status => ({status,memo:{protocol:'bush.file_memo.v1',id:'file_'+ '0'.repeat(32),reference:'ref',
         file:{path:filePath,name:'image.png',size:1,mtimeMs:1},note:{purpose:'Model observation',points:[]}}});
-      window.state = 'available'; let releaseSlow;
-      const load = async ref => {if(ref==='slow')await new Promise(resolve=>{releaseSlow=resolve;});if(window.state==='error')throw Error('Missing memo');return result(window.state);};
-      function Harness(){ const [props,setProps]=React.useState({reference:'image',inline:true,children:'Image'}); window.setProps=setProps;
-        return React.createElement(Component,{...props,load}); }
+      window.state = 'available'; window.lookups=[]; let releaseSlow;
+      const load = async (ref, signal, scope) => {window.lookups.push({ref,...scope});if(ref==='slow')await new Promise(resolve=>{releaseSlow=resolve;});if(window.state==='error')throw Error('RuntimeRemoteError: internal message');if(window.state==='unresolved')return {status:'unresolved',reason:'reference_not_found'};return result(window.state);};
+      function Harness(){ const [props,setProps]=React.useState({reference:'image',inline:true,children:'image.png',sessionId:'session-a',turnId:'turn-a'}); window.setProps=setProps;
+        return React.createElement(loadModule('memoScope').FileMemoScope,{sessionId:props.sessionId,turnId:props.turnId},React.createElement(Component,{...props,load})); }
       createRoot(document.getElementById('root')).render(React.createElement(Harness));
       window.releaseSlow=()=>releaseSlow?.();
       undefined;
     `);
     await pause();
     assert.equal(await run('Boolean(document.querySelector("img"))'), true);
+    assert.deepEqual(await run('lookups[0]'), {ref:'image',sessionId:'session-a',turnId:'turn-a',fileName:'image.png'});
     await run('document.querySelector("img").click()');
     assert.equal(await run('opens.length'), 1);
     await run('document.querySelector("img").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true}))');
@@ -75,8 +78,18 @@ app.whenReady().then(async () => {
     assert.match(await run('document.body.textContent'), /文件不可访问/);
     assert.equal(await run('Boolean(document.querySelector("a"))'), false);
     await run('state="error";window.dispatchEvent(new Event("focus"))'); await pause();
+    assert.match(await run('document.body.textContent'), /暂时无法读取/);
+    assert.doesNotMatch(await run('document.body.textContent'), /RuntimeRemoteError|internal message/);
+    await run('state="available"');
     await run('document.querySelector("button").click()');
-    assert.equal(await run('errors.length'), 1);
+    await pause();
+    assert.equal(await run('errors.length'), 0, 'retry never opens a native error dialog');
+    assert.equal(await run('Boolean(document.querySelector("img"))'), true, 'retry restores the file in place');
+    await run('state="unresolved";window.dispatchEvent(new Event("focus"))'); await pause();
+    assert.match(await run('document.body.textContent'), /链接未找到对应文件记录/);
+    await run('setProps({reference:"image",inline:true,children:"image.png",language:"en",sessionId:"session-b",turnId:"turn-b"})'); await pause();
+    assert.match(await run('document.body.textContent'), /No file record matches/);
+    assert.equal(await run('lookups.at(-1).sessionId'), 'session-b', 'same reference reloads against the originating message scope');
     await run('state="available";setProps({reference:"slow",inline:true,children:"Slow image"})'); await pause();
     await run('setProps({reference:"fast",inline:true,children:"Fast image"})'); await pause();
     await run('releaseSlow()'); await pause();

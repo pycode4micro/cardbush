@@ -1,4 +1,5 @@
 import { AutomationReminderCard } from '../automations/AutomationReminderCard';
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   ArrowUp,
   Check,
@@ -90,6 +91,7 @@ import { PromptReferenceFallback, PromptReferenceLink } from '../composer/Prompt
 import { parsePromptReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { FileMemoReference } from './FileMemoReference';
+import { FileMemoScope } from './FileMemoScope';
 import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
 import { activeToolStatusLabel } from '../tools/toolExecutionState';
 import { parseFileMemoReference } from '@cardbush/bush-protocol';
@@ -295,6 +297,11 @@ function assistantFailurePresentation(
     return { reason, title: language === 'zh' ? '当前输入超出上下文额度' : 'Current input exceeds the context allowance',
       detail: measured + (language === 'zh' ? '输入额度是总上下文减去预留输出额度；增大最大输出会减少可用输入。已有进度已保留。' :
         'Input allowance is the total context minus reserved output. Increasing maximum output reduces room for input. Existing progress is preserved.') };
+  }
+  if (reason === 'file_reference_invalid') {
+    return { reason, title: language === 'zh' ? '文件链接需要修正' : 'File links need correction',
+      detail: language === 'zh' ? '已尝试纠正交付链接，但仍无法确认对应文件。已有文件和完成的操作已保留，可以继续让助手重新提供链接。'
+        : 'The delivery links still could not be verified after a correction attempt. Existing files and completed work are preserved. Ask the assistant to provide the links again.' };
   }
   if (reason === 'reasoning-budget-exhausted-before-action' || reason === 'model_output_limit_exceeded') {
     const attempts = Number(stopDetails.continuationAttempts) || 0;
@@ -642,6 +649,7 @@ function MessageBubbleView({
   ) => void | Promise<unknown>;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
+  const keyboardShortcuts = useKeyboardShortcuts();
   const [presentToolOutputs] = useState(createToolOutputProjector);
   const contentParts = splitMessageMedia(message.content);
   const userContentParts =
@@ -838,8 +846,9 @@ function MessageBubbleView({
               autoFocus
               onChange={(event) => setEditText(event.currentTarget.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                if (keyboardShortcuts.matches('submitEdit', event) && !event.nativeEvent.isComposing) {
                   event.preventDefault();
+                  event.stopPropagation();
                   void submitEdit();
                 }
                 if (event.key === 'Escape') {
@@ -869,6 +878,8 @@ function MessageBubbleView({
                     fileAttachments.length === 0)
                 }
                 onClick={() => void submitEdit()}
+                title={keyboardShortcuts.label('submitEdit')}
+                aria-keyshortcuts={keyboardShortcuts.aria('submitEdit')}
               >
                 {submittingEdit ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
                 {language === 'zh' ? '更新并重跑' : 'Update and rerun'}
@@ -3080,6 +3091,10 @@ function isActiveMessageBubble(props: MessageBubbleViewProps) {
   return !activeTurnId || !messageTurnId || activeTurnId === messageTurnId;
 }
 
-export const MessageBubble = memo(MessageBubbleView, sameMessageBubbleProps);
+export const MessageBubble = memo(function MessageBubble(props: MessageBubbleViewProps) {
+  return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId}>
+    <MessageBubbleView {...props} />
+  </FileMemoScope>;
+}, sameMessageBubbleProps);
 
 

@@ -623,19 +623,19 @@ export function useCardbushChat(
     }
     async function load() {
       setLoading(true);
+      const startedWith = new Map(conversationsRef.current.map(item => [item.id, item]));
+      const activeAtStart = activeConversationIdRef.current;
+      const messagesAtStart = messagesByConversationRef.current;
       try {
-        const [loadedConversations, loadedSkills] = await Promise.all([
-          fetchConversations(),
-          fetchSkills().catch(() => []),
-        ]);
+        const loadedConversations = await fetchConversations();
         if (cancelled) {
           return;
         }
         setConversations((current) =>
-          mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations),
+          mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations, startedWith),
         );
         setActiveConversationId((current) =>
-          loadedConversations.some((item) => item.id === current)
+          current !== activeAtStart || loadedConversations.some((item) => item.id === current)
             ? current
             : Object.values(preparedConversationsRef.current).some(
                 (item) => item.id === current,
@@ -647,18 +647,13 @@ export function useCardbushChat(
           const validIds = new Set(loadedConversations.map((item) => item.id));
           return Object.fromEntries(
             Object.entries(current).filter(([conversationId]) =>
-              validIds.has(conversationId),
+              validIds.has(conversationId) || current[conversationId] !== messagesAtStart[conversationId],
             ),
           );
         });
-        setSkills(loadedSkills);
         setError(null);
       } catch (caught) {
         if (!cancelled) {
-          setConversations([]);
-          setActiveConversationId('');
-          setMessagesByConversation({});
-          setSkills([]);
           setError(errorMessage(caught));
         }
       } finally {
@@ -668,6 +663,10 @@ export function useCardbushChat(
       }
     }
     void load();
+    // Skills may take longer than session metadata; neither request blocks the UI or the other.
+    void fetchSkills().then(loaded => {
+      if (!cancelled) setSkills(loaded);
+    }).catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -4274,10 +4273,13 @@ function upsertConversationPreview(
 function mergeLoadedConversationsPreservingLocalTitles(
   current: ConversationSummary[],
   loaded: ConversationSummary[],
+  startedWith?: ReadonlyMap<string, ConversationSummary>,
 ) {
   const localById = new Map(current.map((item) => [item.id, item]));
-  return loaded.map((conversation) => {
+  const merged = loaded.filter(item => !startedWith?.has(item.id) || localById.has(item.id)).map((conversation) => {
     const local = localById.get(conversation.id);
+    // A late startup snapshot must not undo a local create, rename, edit or deletion.
+    if (startedWith && local && startedWith.get(local.id) !== local) return local;
     if (
       local &&
       !shouldAutoTitleConversation(local.title, local.id) &&
@@ -4287,6 +4289,9 @@ function mergeLoadedConversationsPreservingLocalTitles(
     }
     return conversation;
   });
+  if (!startedWith) return merged;
+  const loadedIds = new Set(merged.map(item => item.id));
+  return [...current.filter(item => !loadedIds.has(item.id) && startedWith.get(item.id) !== item), ...merged];
 }
 
 function conversationPreviewFromMessages(messages: ChatMessage[]) {

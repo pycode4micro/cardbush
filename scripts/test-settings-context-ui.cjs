@@ -54,7 +54,7 @@ app.whenReady().then(async () => {
   })()`);
   try {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await win.webContents.insertCSS(['src/styles/theme.css', 'src/styles/app.css', 'src/styles/themes/cyberpunk.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
+    await win.webContents.insertCSS(['src/styles/theme.css', 'src/styles/app.css', 'src/styles/themes/cyberpunk.css', 'src/features/settings/keyboardSettings.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
     await run(`
       window.failures = []; window.usageReads = 0;
       window.usageFixture = { startedAt:'2025-09-12T00:00:00Z', promptTokens:59446000, completionTokens:515000, totalTokens:59961000,
@@ -174,7 +174,12 @@ app.whenReady().then(async () => {
     await until("settingsProps.settings.conversationStyle.customTone === ''");
     assert.equal(await run('file.content'), '全局偏好：先确认事实。', 'style preferences must not rewrite AGENTS.md');
 
-    assert.equal(await run("document.querySelectorAll('.settings-nav').length"), 9, 'each supported setting page has one navigation entry');
+    assert.equal(await run("document.querySelectorAll('.settings-nav').length"), 10, 'each supported setting page has one navigation entry');
+    await click('快捷键');
+    await until("document.querySelectorAll('[data-shortcut-row]').length === 11");
+    assert.equal(await run("document.querySelector('.settings-nav[aria-current=page]').textContent.trim()"), '快捷键');
+    await pause(100);
+    fs.writeFileSync(path.join(root, 'tmp/settings-keyboard-full.png'), (await win.webContents.capturePage()).toPNG());
     assert.equal(await run("document.querySelector('.usage-stat-grid')"), null, 'personalization does not load usage statistics');
     assert.equal(await run('usageReads'), 0, 'unrelated pages must not fetch the full usage history');
     assert.equal(await run("document.querySelector('[name=theme-mode]')"), null, 'appearance is separate from conversation preferences');
@@ -235,7 +240,7 @@ app.whenReady().then(async () => {
     await edit('.settings-search input', '不存在的设置');
     await until("!!document.querySelector('.settings-search-empty')");
     await run("document.querySelector('.settings-search input').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }))");
-    await until("document.querySelectorAll('.settings-nav').length === 9");
+    await until("document.querySelectorAll('.settings-nav').length === 10");
 
     // Failed reads must keep the last recorded totals, then recover on retry.
     await run("window.readUsageNormally = cardbushDesktop.usageStatistics; cardbushDesktop.usageStatistics = async () => { throw Error('fixture unavailable'); }; dispatchEvent(new Event('focus'));");

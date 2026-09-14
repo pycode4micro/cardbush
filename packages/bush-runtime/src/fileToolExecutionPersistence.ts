@@ -17,7 +17,7 @@ import {
   type ToolExecutionRecord,
 } from "@cardbush/bush-protocol";
 
-import type { ToolExecutionPersistence } from "./toolExecutionStore.js";
+import type { FileMemoLocator, ToolExecutionPersistence } from "./toolExecutionStore.js";
 
 const RECORD_PROTOCOL = "bush.tool_execution_journal_record.v1" as const;
 
@@ -86,6 +86,36 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
     const descriptor = this.#descriptor(this.#path(record.sessionId));
     writeSync(descriptor, `${line}\n`, undefined, "utf8");
     fsyncSync(descriptor);
+  }
+
+  // This compact index contains only record locators, never duplicate notes or file data.
+  loadFileMemoReferences(): FileMemoLocator[] {
+    const path = resolve(this.#root, '.file-memo-references');
+    if (!existsSync(path)) {
+      if (existsSync(resolve(this.#root, '.file-memo-references-created'))) throw new Error('The file reference index is missing; existing numbers cannot be reused.');
+      return [];
+    }
+    let bytes = readFileSync(path);
+    const end = bytes.lastIndexOf(0x0a) + 1;
+    if (end < bytes.length) { truncateSync(path, end); bytes = bytes.subarray(0, end); }
+    return bytes.toString('utf8').split('\n').filter(Boolean).map((line, index) => {
+      try {
+        const row = JSON.parse(line);
+        if (row.protocol !== 'bush.file_memo_locator.v1' || row.checksum !== checksum(JSON.stringify(row.reference))) throw new Error('File reference checksum mismatch.');
+        return row.reference as FileMemoLocator;
+      } catch (error) {
+        throw new ToolExecutionJournalCorruptionError(path, index + 1, error instanceof Error ? error.message : String(error));
+      }
+    });
+  }
+
+  appendFileMemoReference(reference: FileMemoLocator): void {
+    const descriptor = this.#descriptor(resolve(this.#root, '.file-memo-references'));
+    const row = { protocol: 'bush.file_memo_locator.v1', checksum: checksum(JSON.stringify(reference)), reference };
+    writeSync(descriptor, JSON.stringify(row) + '\n', undefined, 'utf8');
+    fsyncSync(descriptor);
+    const marker = this.#descriptor(resolve(this.#root, '.file-memo-references-created'));
+    fsyncSync(marker);
   }
 
   close(): void {

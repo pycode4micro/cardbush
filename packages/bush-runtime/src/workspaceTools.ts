@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import {
   lstat,
   mkdir,
@@ -976,7 +975,7 @@ interface ManagedTerminalSession {
   cwd: string;
   shell: TerminalShell;
   shellExecutable: string;
-  child: ReturnType<typeof spawn>;
+  child: GuardedProcess['child'];
   guarded: GuardedProcess;
   pid: number | null;
   state: TerminalSessionState;
@@ -1318,42 +1317,8 @@ function appendTerminalOutput(
 }
 
 async function terminateProcessTree(terminal: ManagedTerminalSession): Promise<void> {
-  const pid = terminal.pid;
-  if (!pid) {
-    terminal.child.kill();
-    return;
-  }
-  if (process.platform === "win32") {
-    if (terminal.guarded.protected) {
-      // Closing the native supervisor's job handle kills the whole task tree,
-      // including descendants whose original parent has already exited.
-      terminal.child.kill();
-      return;
-    }
-    await new Promise<void>((resolvePromise) => {
-      const killer = spawn("taskkill.exe", ["/pid", String(pid), "/t", "/f"], {
-        windowsHide: true,
-      });
-      killer.on("error", () => {
-        terminal.child.kill();
-        resolvePromise();
-      });
-      killer.on("close", () => resolvePromise());
-    });
-    return;
-  }
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    terminal.child.kill("SIGTERM");
-  }
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
-  if (terminal.state !== "running") return;
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    terminal.child.kill("SIGKILL");
-  }
+  terminal.guarded.stop();
+  await terminal.guarded.complete();
 }
 
 function abortReason(signal: AbortSignal): Error {
@@ -1599,17 +1564,17 @@ async function runProcess(
     let outputLimited = false;
     let stdoutBytes = 0, stderrBytes = 0;
     const maximumOutputBytes = 2 * 1024 * 1024;
-    const onAbort = () => { child.kill(); };
+    const onAbort = guarded.stop;
     options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      guarded.stop();
     }, options.timeoutMs ?? 30_000);
     const append = (chunks: Buffer[], chunk: Buffer, used: number) => {
       const remaining = Math.max(0, maximumOutputBytes - used);
       if (remaining) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
-      if (chunk.length > remaining && !outputLimited) { outputLimited = true; child.kill(); }
+      if (chunk.length > remaining && !outputLimited) { outputLimited = true; guarded.stop(); }
       return used + Math.min(chunk.length, remaining);
     };
     child.stdout.on("data", (chunk: Buffer) => { stdoutBytes = append(stdoutChunks, chunk, stdoutBytes); });

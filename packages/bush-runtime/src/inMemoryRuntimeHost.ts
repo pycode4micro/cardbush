@@ -1,4 +1,4 @@
-import { registerFileMemoTools, resolveFileMemo } from "./fileMemo.js";
+import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
 import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import {
@@ -893,9 +893,14 @@ export class InMemoryRuntimeHost {
           { signal },
         );
       case RESOLVE_FILE_MEMO_COMMAND: {
-        const reference = (command.payload as { reference?: unknown })?.reference;
+        const payload = command.payload as { reference?: unknown; sessionId?: unknown; turnId?: unknown; fileName?: unknown };
+        const reference = payload?.reference;
         if (typeof reference !== "string") throw new Error("File memo reference is required.");
-        return resolveFileMemo(this.#toolExecutions, reference);
+        return resolveFileMemo(this.#toolExecutions, reference, {
+          sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : undefined,
+          turnId: typeof payload.turnId === 'string' ? payload.turnId : undefined,
+          fileName: typeof payload.fileName === 'string' ? payload.fileName : undefined,
+        });
       }
       case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
         const identity = toolExecutionIdentitySchema.parse(command.payload);
@@ -1355,6 +1360,7 @@ export class InMemoryRuntimeHost {
     let round = input.nextRound - 1;
     let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
+    let fileReferenceRetries = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_file_reference_${request.turnId}_`)).length ?? 0;
     let outputLimitContinuations = input.sessionCommit?.outputLimitContinuations ?? 0;
     let pluginStopContinuations = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_plugin_stop_${request.turnId}_`)).length ?? 0;
     for (const message of input.nextRound > 1 && input.sessionCommit?.outputLimitContinuations === undefined ? [...input.messages].reverse() : []) {
@@ -2513,6 +2519,20 @@ export class InMemoryRuntimeHost {
               finalMessageId: completedProjector.finalMessageId,
               details: { rounds: round, recoveryAttempts: emptyStopRetries },
             });
+          }
+          const fileLinks = await validateFileMemoLinks(this.#toolExecutions, completedRound.text, identity);
+          if (fileLinks.invalid.length) {
+            if (fileReferenceRetries++ < 1) {
+              const correction: ModelMessage = { role: 'user', name: 'file_reference_correction', visibility: 'internal',
+                content: 'Some file links in your last reply did not resolve. Reissue the final answer with exact verified links. Do not repeat successful tools or file edits. Use read_file_memos if needed; if a file is unavailable, explain that and omit its broken link.\n'
+                  + JSON.stringify({ invalid: fileLinks.invalid, recordedLinks: fileLinks.links }) };
+              messages = [...messages, correction];
+              generatedMessages.push({ messageId: `msg_file_reference_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message: correction });
+              this.#recovery.save({ request, messages, nextRound: round + 1, cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
+              continue;
+            }
+            return await finalize({ status: 'failed', reason: 'file_reference_invalid', finalMessageId: completedProjector.finalMessageId,
+              details: { message: 'File delivery links could not be verified. Existing files and completed work have been preserved.', references: fileLinks.invalid } });
           }
           const stopHooks = await runHook(request.metadata.agentRole === 'child' ? 'SubagentStop' : 'Stop', {
             signal: input.signal, lastAssistantMessage: completedRound.text, stopHookActive: pluginStopContinuations > 0,

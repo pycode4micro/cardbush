@@ -189,7 +189,7 @@ assert.match(sidebarSource, /className=\{`conversation-rename-form\$\{renameFail
 assert.match(sidebarSource, /maxLength=\{160\}/);
 assert.match(sidebarSource, /if \(event\.key === 'Escape'\)/);
 assert.match(sidebarSource, /onDoubleClick=\{\(event\) => \{[\s\S]*?beginRename\(\)/);
-assert.match(sidebarSource, /if \(event\.key === 'F2'\)/);
+assert.match(sidebarSource, /keyboardShortcuts\.matches\('renameConversation', event\)/);
 assert.match(sidebarSource, /const saved = await onRename\(nextTitle\)/);
 assert.match(stylesSource, /\.conversation-rename-form input\s*\{/);
 assert.match(chatHookSource, /const renameConversation = useCallback\(async \(conversationId: string, title: string\)/);

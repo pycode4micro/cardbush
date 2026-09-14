@@ -28,6 +28,7 @@ import type {
   SubagentTaskSnapshot,
 } from '../../types';
 import { AssistantLoopHistoryBlock, MarkdownContent } from '../chatMessages';
+import { FileMemoScope } from '../chatMessages/FileMemoScope';
 import {
   SUBAGENT_DISPATCH_UI_EVENT,
   type WorkSummaryInspectorDetail,
@@ -180,13 +181,15 @@ function TurnHistoryInspector({
                 </div>
                 <span>{historyTurnTimestamp(group.message, language)}</span>
               </header>
-              <AssistantLoopHistoryBlock
-                history={group.history}
-                archivedPlan={group.message.taskPlan && !group.message.taskPlan.active
-                  ? group.message.taskPlan
-                  : undefined}
-                language={language}
-              />
+              <FileMemoScope sessionId={detail.sessionId} turnId={group.turnId || group.message.turnId}>
+                <AssistantLoopHistoryBlock
+                  history={group.history}
+                  archivedPlan={group.message.taskPlan && !group.message.taskPlan.active
+                    ? group.message.taskPlan
+                    : undefined}
+                  language={language}
+                />
+              </FileMemoScope>
             </article>
           ))}
         </div>
@@ -340,12 +343,16 @@ function SubagentTaskInspector({
 
       {task.requestPrompt && (
         <InspectorSection title={language === 'zh' ? '派发任务' : 'Dispatch prompt'}>
-          <MarkdownContent content={task.requestPrompt} language={language} />
+          <FileMemoScope sessionId={detail.sessionId} turnId={task.parentTurnId}>
+            <MarkdownContent content={task.requestPrompt} language={language} />
+          </FileMemoScope>
         </InspectorSection>
       )}
       {task.responsePrompt && (
         <InspectorSection title={language === 'zh' ? '子级结果' : 'Child result'}>
-          <MarkdownContent content={task.responsePrompt} language={language} />
+          <FileMemoScope sessionId={task.childSessionId} turnId={task.childTurnId}>
+            <MarkdownContent content={task.responsePrompt} language={language} />
+          </FileMemoScope>
         </InspectorSection>
       )}
       {permissionRequirements.length > 0 && (

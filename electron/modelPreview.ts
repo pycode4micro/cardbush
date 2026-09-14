@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { runHostCommand } from './hostProcesses';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -165,29 +165,18 @@ function validPreviewId(id: string) { return /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a
 
 async function runBlender(executable: string, script: string, file: string, directory: string, scene: string, signal: AbortSignal, timeoutMs: number) {
   if (signal.aborted) throw new ModelPreviewError('cancelled', 'Preview cancelled.');
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, ['--background', '--factory-startup', '--disable-autoexec', '--threads', '2',
-      '--python-exit-code', '1', '--python', script, '--', file, directory, '--scene', scene], {
-      windowsHide: true, cwd: directory, stdio: ['ignore', 'pipe', 'pipe'],
+  try {
+    const result = await runHostCommand({ executable, args: ['--background', '--factory-startup', '--disable-autoexec', '--threads', '2',
+      '--python-exit-code', '1', '--python', script, '--', file, directory, '--scene', scene],
+      cwd: directory, signal, timeoutMs, maxOutputBytes: 24 * 1024, outputLimit: 'truncate',
       env: { ...process.env, PYTHONNOUSERSITE: '1' },
     });
-    let tail = '';
-    let timedOut = false;
-    const record = (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-6000); };
-    child.stdout.on('data', record);
-    child.stderr.on('data', record);
-    const cancel = () => { child.kill(); };
-    signal.addEventListener('abort', cancel, { once: true });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-    const clean = () => { clearTimeout(timer); signal.removeEventListener('abort', cancel); };
-    child.on('error', error => { clean(); reject(error); });
-    child.on('close', code => {
-      clean();
-      if (signal.aborted) reject(new ModelPreviewError('cancelled', 'Preview cancelled.'));
-      else if (timedOut) reject(new ModelPreviewError('timeout', 'Blender preview conversion timed out.'));
-      else if (code !== 0) reject(new ModelPreviewError('conversion', `Blender could not prepare this scene (exit ${code}).\n${tail}`));
-      else resolve();
-    });
-    if (signal.aborted) cancel();
-  });
+    if (result.exitCode !== 0) throw new ModelPreviewError('conversion', `Blender could not prepare this scene (exit ${result.exitCode}).\n${(result.stdout + result.stderr).slice(-6000)}`);
+  } catch (error) {
+    if (signal.aborted) throw new ModelPreviewError('cancelled', 'Preview cancelled.');
+    if ((error as { code?: string }).code === 'process_timeout') throw new ModelPreviewError('timeout', 'Blender preview conversion timed out.');
+    const code = (error as { code?: string }).code;
+    if (code?.startsWith('resource_') && error instanceof Error) throw new ModelPreviewError(code, error.message);
+    throw error;
+  }
 }

@@ -15,12 +15,17 @@ import type {
 export interface ToolExecutionPersistence {
   load(sessionId: string): ToolExecutionRecord[];
   append(record: ToolExecutionRecord): void;
+  loadFileMemoReferences?(): FileMemoLocator[];
+  appendFileMemoReference?(reference: FileMemoLocator): void;
 }
+
+export interface FileMemoLocator { number: number; sessionId: string; turnId: string; toolCallId: string }
 
 export class ToolExecutionStore {
   readonly #persistence?: ToolExecutionPersistence;
   readonly #now: () => string;
   readonly #records = new Map<string, ToolExecutionRecord[]>();
+  #fileMemoReferences?: FileMemoLocator[];
 
   constructor(options: {
     persistence?: ToolExecutionPersistence;
@@ -92,6 +97,42 @@ export class ToolExecutionStore {
       .filter((record) => record.turnId === turnId)
       .sort((left, right) => left.round - right.round || left.ordinal - right.ordinal)
       .map((record) => structuredClone(toolExecutionSummary(record)));
+  }
+
+  /** Reserve before returning the Tool result. Gaps after cancellation are never reused. */
+  reserveFileMemoReference(identity: Omit<FileMemoLocator, 'number'>): number {
+    if (this.#persistence && (!this.#persistence.loadFileMemoReferences || !this.#persistence.appendFileMemoReference)) {
+      throw new Error('File memo references require durable locator storage.');
+    }
+    const references = this.#loadFileMemoReferences();
+    const existing = references.find(item => item.sessionId === identity.sessionId && item.turnId === identity.turnId && item.toolCallId === identity.toolCallId);
+    if (existing) return existing.number;
+    const reference = { ...identity, number: (references.at(-1)?.number ?? 0) + 1 };
+    if (reference.number > 999_999_999) throw new Error('File reference number limit reached.');
+    try { this.#persistence?.appendFileMemoReference?.(reference); }
+    catch (error) { this.#fileMemoReferences = undefined; throw error; }
+    references.push(reference);
+    return reference.number;
+  }
+
+  getFileMemoReference(number: number): FileMemoLocator | undefined {
+    const reference = this.#loadFileMemoReferences().find(item => item.number === number);
+    return reference && { ...reference };
+  }
+
+  #loadFileMemoReferences(): FileMemoLocator[] {
+    if (this.#fileMemoReferences) return this.#fileMemoReferences;
+    const references = this.#persistence?.loadFileMemoReferences?.() ?? [];
+    let previous = 0;
+    const seen = new Set<string>();
+    for (const reference of references) {
+      const identity = JSON.stringify([reference.sessionId, reference.turnId, reference.toolCallId]);
+      if (!Number.isSafeInteger(reference.number) || reference.number <= previous || reference.number > 999_999_999
+          || [reference.sessionId, reference.turnId, reference.toolCallId].some(value => typeof value !== 'string' || !value)
+          || seen.has(identity)) throw new Error('File reference index is invalid.');
+      previous = reference.number; seen.add(identity);
+    }
+    return this.#fileMemoReferences = structuredClone(references);
   }
 
   #load(sessionId: string): ToolExecutionRecord[] {

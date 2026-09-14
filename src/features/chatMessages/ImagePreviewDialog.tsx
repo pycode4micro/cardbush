@@ -1,4 +1,5 @@
 import { Minus, Plus, X } from 'lucide-react';
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -61,6 +62,7 @@ export function ImagePreviewDialog({
   onClose: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const keyboardShortcuts = useKeyboardShortcuts();
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<ImageDragState | null>(null);
   const viewRef = useRef<ImageView>({ zoom: 1, x: 0, y: 0 });
@@ -123,10 +125,9 @@ export function ImagePreviewDialog({
         onClose();
         return;
       }
-      if (!event.ctrlKey && !event.metaKey) return;
-      const isZoomIn = event.key === '+' || event.key === '=' || event.code === 'NumpadAdd';
-      const isZoomOut = event.key === '-' || event.key === '_' || event.code === 'NumpadSubtract';
-      const isReset = event.key === '0' || event.code === 'Numpad0';
+      const isZoomIn = keyboardShortcuts.matches('imageZoomIn', event);
+      const isZoomOut = keyboardShortcuts.matches('imageZoomOut', event);
+      const isReset = keyboardShortcuts.matches('imageReset', event);
       if (!isZoomIn && !isZoomOut && !isReset) return;
       event.preventDefault();
       event.stopPropagation();
@@ -134,7 +135,7 @@ export function ImagePreviewDialog({
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [applyZoom, onClose]);
+  }, [applyZoom, keyboardShortcuts, onClose]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -226,7 +227,8 @@ export function ImagePreviewDialog({
               onClick={() => applyZoom(viewRef.current.zoom - zoomStep)}
               disabled={!ready || zoom <= minimumZoom}
               aria-label={language === 'zh' ? '缩小图片' : 'Zoom out'}
-              title={language === 'zh' ? '缩小（Ctrl -）' : 'Zoom out (Ctrl -)'}
+              title={[language === 'zh' ? '缩小' : 'Zoom out', keyboardShortcuts.label('imageZoomOut')].filter(Boolean).join(' · ')}
+              aria-keyshortcuts={keyboardShortcuts.aria('imageZoomOut')}
             >
               <Minus size={15} />
             </button>
@@ -236,7 +238,8 @@ export function ImagePreviewDialog({
               onClick={() => applyZoom(1)}
               disabled={!ready}
               aria-label={language === 'zh' ? '恢复适应窗口' : 'Fit to window'}
-              title={language === 'zh' ? '适应窗口（Ctrl 0）' : 'Fit to window (Ctrl 0)'}
+              title={[language === 'zh' ? '适应窗口' : 'Fit to window', keyboardShortcuts.label('imageReset')].filter(Boolean).join(' · ')}
+              aria-keyshortcuts={keyboardShortcuts.aria('imageReset')}
             >
               {percentage}%
             </button>
@@ -245,7 +248,8 @@ export function ImagePreviewDialog({
               onClick={() => applyZoom(viewRef.current.zoom + zoomStep)}
               disabled={!ready || zoom >= maximumZoom}
               aria-label={language === 'zh' ? '放大图片' : 'Zoom in'}
-              title={language === 'zh' ? '放大（Ctrl +）' : 'Zoom in (Ctrl +)'}
+              title={[language === 'zh' ? '放大' : 'Zoom in', keyboardShortcuts.label('imageZoomIn')].filter(Boolean).join(' · ')}
+              aria-keyshortcuts={keyboardShortcuts.aria('imageZoomIn')}
             >
               <Plus size={15} />
             </button>

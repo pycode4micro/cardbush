@@ -45,6 +45,7 @@ import { WindowScrollDiagnostics } from './windowScrollDiagnostics';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
 import { runAcquisitionCommand } from './pluginAcquisition';
+import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess } from './hostProcesses';
 import { installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
@@ -84,6 +85,10 @@ const cardbushProductionAppUserModelId = 'com.cardbush.desktop';
 const cardbushDevelopmentRuntime =
   process.env.CARDBUSH_DEVELOPMENT_RUNTIME?.trim() === '1';
 const cardbushRuntimeIsPackaged = app.isPackaged && !cardbushDevelopmentRuntime;
+// Resolve the same immutable native asset for commands launched by the main process.
+process.env.CARDBUSH_PROCESS_HOST_DIRECTORY = cardbushRuntimeIsPackaged
+  ? path.join(process.resourcesPath, 'process-guard')
+  : path.join(app.getAppPath(), 'dist-native', 'process-guard');
 const windowCompositionDebugEnabled =
   process.env.CARDBUSH_WINDOW_COMPOSITION_DEBUG?.trim() === '1';
 const cardbushDevelopmentRuntimeIdentity =
@@ -281,6 +286,7 @@ const terminalSessions = new Map<
   string,
   {
     process: ChildProcessWithoutNullStreams;
+    stop: () => void;
     ownerId: number;
     cwd: string;
   }
@@ -2661,7 +2667,7 @@ ipcMain.handle(
 );
 
 ipcMain.handle('terminal:create', (event, cwd?: string, runtime?: TerminalRuntime) => {
-  return createTerminalSession(event.sender.id, cwd, runtime);
+  return createTerminalSession(event.sender.id, cwd, runtime, processOwnerSignal(event.sender));
 });
 
 ipcMain.handle('project:restore-file-changes', (_, rootPath: string,
@@ -2690,12 +2696,12 @@ ipcMain.handle('terminal:close', (event, sessionId: string) => {
   if (!session || session.ownerId !== event.sender.id) {
     return;
   }
-  session.process.kill();
+  session.stop();
   terminalSessions.delete(sessionId);
 });
 
-ipcMain.handle('terminal:run', (_, command: string, cwd?: string, runtime?: TerminalRuntime) => {
-  return runTerminalCommand(command, cwd, runtime);
+ipcMain.handle('terminal:run', (event, command: string, cwd?: string, runtime?: TerminalRuntime) => {
+  return runTerminalCommand(command, cwd, runtime, processOwnerSignal(event.sender));
 });
 
 ipcMain.handle(
@@ -4051,12 +4057,16 @@ app.on('before-quit', (event) => {
   }
   event.preventDefault();
   if (hostShutdownPromise == null) {
+    // Stop only main-process-owned commands; the Runtime and shared MCP services
+    // continue through their own orderly shutdown below.
+    const processesClosed = closeHostProcesses();
     hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
       await (await openAiAccountPromise)?.close();
       await (await pluginNetworkPromise)?.close();
       await productMcpManagement?.close();
       productMcpManagement = null;
       await modelPreviewService?.dispose();
+      await processesClosed;
       modelPreviewService = undefined;
       hostShutdownComplete = true;
       app.quit();
@@ -4080,7 +4090,7 @@ app.on('will-quit', () => {
     quitFallbackTimer = null;
   }
   for (const session of terminalSessions.values()) {
-    session.process.kill();
+    session.stop();
   }
   terminalSessions.clear();
 });
@@ -5181,21 +5191,23 @@ function commandErrorMessage(caught: unknown) {
   return String(caught);
 }
 
-function createTerminalSession(ownerId: number, cwd?: string, runtime?: TerminalRuntime) {
+async function createTerminalSession(ownerId: number, cwd?: string, runtime?: TerminalRuntime, signal?: AbortSignal) {
   const workingDirectory = resolveCwd(cwd);
   const shellInfo = terminalShell(runtime, workingDirectory);
-  const child = spawn(shellInfo.command, shellInfo.args, {
+  const managed = await spawnHostProcess({ executable: shellInfo.command, args: shellInfo.args,
     cwd: workingDirectory,
-    windowsHide: true,
+    signal,
     env: {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     },
   });
+  const child = managed.child;
   const id = randomUUID();
   terminalSessions.set(id, {
     process: child,
+    stop: managed.stop,
     ownerId,
     cwd: workingDirectory,
   });
@@ -5211,8 +5223,11 @@ function createTerminalSession(ownerId: number, cwd?: string, runtime?: Terminal
   child.on('error', (error) => {
     sendTerminalData(ownerId, id, `${error.message}\r\n`);
   });
-  child.on('close', (exitCode) => {
+  child.stdin.on('error', () => undefined); // The shell can close between a write and renderer delivery.
+  child.on('close', async (exitCode) => {
     terminalSessions.delete(id);
+    const report = await managed.complete();
+    if (report?.code && !signal?.aborted && !child.killed) sendTerminalData(ownerId, id, `${report.message}\r\n`);
     sendToOwner(ownerId, 'terminal:exit', {
       id,
       exitCode,
@@ -5311,7 +5326,7 @@ function findExecutable(command: string) {
   }
 }
 
-function runTerminalCommand(command: string, cwd?: string, runtime?: TerminalRuntime) {
+async function runTerminalCommand(command: string, cwd?: string, runtime?: TerminalRuntime, signal?: AbortSignal) {
   const trimmed = command.trim();
   if (!trimmed) {
     return {
@@ -5322,61 +5337,38 @@ function runTerminalCommand(command: string, cwd?: string, runtime?: TerminalRun
       stderr: '',
     };
   }
-  return new Promise<{
-    command: string;
-    cwd: string;
-    exitCode: number | null;
-    stdout: string;
-    stderr: string;
-  }>((resolve) => {
-    const workingDirectory = resolveCwd(cwd);
-    const normalizedRuntime = normalizeTerminalRuntime(runtime);
-    const shellCommand = process.platform === 'win32'
-      ? normalizedRuntime === 'wsl'
-        ? 'wsl.exe'
-        : normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash'
-          ? findGitBashExecutable() || 'bash.exe'
-          : 'powershell.exe'
-      : normalizedRuntime === 'powershell'
-        ? findExecutable('pwsh') || 'pwsh'
-        : process.env.SHELL?.trim() || 'bash';
-    const args = process.platform === 'win32'
-      ? normalizedRuntime === 'wsl'
-        ? ['--cd', workingDirectory, '--', 'bash', '-lc', trimmed]
-        : normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash'
-          ? ['-lc', trimmed]
-          : ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', trimmed]
-      : normalizedRuntime === 'powershell'
-        ? ['-NoLogo', '-NoProfile', '-Command', trimmed]
-        : ['-lc', trimmed];
-    const child = spawn(shellCommand, args, {
+  const workingDirectory = resolveCwd(cwd);
+  const normalizedRuntime = normalizeTerminalRuntime(runtime);
+  const shellCommand = process.platform === 'win32'
+    ? normalizedRuntime === 'wsl'
+      ? 'wsl.exe'
+      : normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash'
+        ? findGitBashExecutable() || 'bash.exe'
+        : 'powershell.exe'
+    : normalizedRuntime === 'powershell'
+      ? findExecutable('pwsh') || 'pwsh'
+      : process.env.SHELL?.trim() || 'bash';
+  const args = process.platform === 'win32'
+    ? normalizedRuntime === 'wsl'
+      ? ['--cd', workingDirectory, '--', 'bash', '-lc', trimmed]
+      : normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash'
+        ? ['-lc', trimmed]
+        : ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', trimmed]
+    : normalizedRuntime === 'powershell'
+      ? ['-NoLogo', '-NoProfile', '-Command', trimmed]
+      : ['-lc', trimmed];
+  try {
+    const result = await runHostCommand({ executable: shellCommand, args,
       cwd: workingDirectory,
-      windowsHide: true,
       env: process.env,
+      signal, maxOutputBytes: 80 * 1024, outputLimit: 'truncate',
     });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.on('error', (error) => {
-      stderr += error.message;
-    });
-    child.on('close', (exitCode) => {
-      resolve({
-        command: trimmed,
-        cwd: workingDirectory,
-        exitCode,
-        stdout: trimTerminalOutput(stdout),
-        stderr: trimTerminalOutput(stderr),
-      });
-    });
-  });
+    return { command: trimmed, cwd: workingDirectory, exitCode: result.exitCode,
+      stdout: trimTerminalOutput(result.stdout), stderr: trimTerminalOutput(result.stderr),
+      outputTruncated: result.outputTruncated || result.stdout.length > 20000 || result.stderr.length > 20000 };
+  } catch (error) {
+    return { command: trimmed, cwd: workingDirectory, exitCode: 1, stdout: '', stderr: commandErrorMessage(error) };
+  }
 }
 
 function saveImageDataUrl(
@@ -5422,51 +5414,20 @@ async function copyLocalFileToClipboard(targetPath: string) {
   return { copied: true as const, kind: 'path' as const };
 }
 
-function copyWindowsFileToClipboard(targetPath: string) {
+async function copyWindowsFileToClipboard(targetPath: string) {
   const script = [
     'Add-Type -AssemblyName System.Windows.Forms',
     '$items = New-Object System.Collections.Specialized.StringCollection',
     '[void]$items.Add([IO.Path]::GetFullPath($env:CARDBUSH_CLIPBOARD_TARGET))',
     '[Windows.Forms.Clipboard]::SetFileDropList($items)',
   ].join('; ');
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      'powershell.exe',
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-STA',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        script,
-      ],
-      {
-        windowsHide: true,
-        stdio: ['ignore', 'ignore', 'pipe'],
-        env: { ...process.env, CARDBUSH_CLIPBOARD_TARGET: targetPath },
-      },
-    );
-    let stderr = '';
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error('Copy file operation timed out.'));
-    }, 5_000);
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.once('error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.once('close', (exitCode) => {
-      clearTimeout(timeout);
-      if (exitCode === 0) resolve();
-      else reject(new Error(stderr.trim() || `Copy file exited with code ${exitCode}.`));
-    });
+  const result = await runHostCommand({
+    executable: 'powershell.exe',
+    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    cwd: path.dirname(targetPath), timeoutMs: 5_000, maxOutputBytes: 16 * 1024,
+    env: { ...process.env, CARDBUSH_CLIPBOARD_TARGET: targetPath },
   });
+  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Copy file exited with code ${result.exitCode}.`);
 }
 
 async function readLocalImageDataUrl(targetPath: string) {

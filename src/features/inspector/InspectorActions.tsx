@@ -1,6 +1,7 @@
 import { Clipboard, Clock3, FolderOpen, Globe2 } from 'lucide-react';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage } from '../../types';
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 
 /** Shared entry points for the empty sidebar and the tab bar's add menu. */
 export function InspectorActions({
@@ -25,10 +26,11 @@ export function InspectorActions({
   onOpenBrowser: () => void;
 }) {
   const zh = language === 'zh';
+  const shortcuts = useKeyboardShortcuts();
   const actions = [
     ...(onOpenReview ? [{
       id: 'review', icon: <Clipboard size={16} aria-hidden="true" />,
-      label: zh ? '审查' : 'Review', shortcut: 'Ctrl+Shift+G', keyShortcut: 'Control+Shift+G',
+      label: zh ? '审查' : 'Review', shortcut: shortcuts.label('openReview'), keyShortcut: shortcuts.aria('openReview'),
       description: zh ? '查看文件修改与工作区操作' : 'Review file changes and workspace actions',
       unavailable: '', onClick: onOpenReview,
     }] : []),
@@ -40,20 +42,20 @@ export function InspectorActions({
     }] : []),
     {
       id: 'files', icon: <FolderOpen size={16} aria-hidden="true" />,
-      label: zh ? '文件' : 'Files', shortcut: 'Ctrl+P', keyShortcut: 'Control+P',
+      label: zh ? '文件' : 'Files', shortcut: shortcuts.label('openFiles'), keyShortcut: shortcuts.aria('openFiles'),
       description: zh ? '选择一个或多个文件' : 'Choose one or more files',
       unavailable: filesAvailable ? '' : zh ? '当前环境不支持选择本地文件' : 'Local file selection is unavailable',
       onClick: onOpenFiles,
     },
     {
       id: 'shadow', icon: <ShadowCloneIcon size={16} />,
-      label: zh ? 'Shadow 对话' : 'Shadow chat', shortcut: 'Ctrl+Alt+S', keyShortcut: 'Control+Alt+S',
+      label: zh ? 'Shadow 对话' : 'Shadow chat', shortcut: shortcuts.label('openShadow'), keyShortcut: shortcuts.aria('openShadow'),
       description: zh ? '基于当前会话冻结历史' : 'Freeze the current conversation history',
       unavailable: shadowUnavailableReason, onClick: onOpenShadow,
     },
     {
       id: 'browser', icon: <Globe2 size={16} aria-hidden="true" />,
-      label: zh ? '浏览器' : 'Browser', shortcut: 'Ctrl+T', keyShortcut: 'Control+T',
+      label: zh ? '浏览器' : 'Browser', shortcut: shortcuts.label('openBrowser'), keyShortcut: shortcuts.aria('openBrowser'),
       description: zh ? '打开可导航的空白页' : 'Open a navigable blank page',
       unavailable: '', onClick: onOpenBrowser,
     },
@@ -65,7 +67,7 @@ export function InspectorActions({
         <button key={action.id} type="button" role={menu ? 'menuitem' : undefined}
           data-inspector-action={action.id}
           disabled={Boolean(action.unavailable)}
-          title={action.unavailable || action.description}
+          title={action.unavailable || [action.description, action.shortcut].filter(Boolean).join(' · ')}
           aria-keyshortcuts={action.unavailable ? undefined : action.keyShortcut}
           onClick={action.onClick}>
           {action.icon}
@@ -73,7 +75,7 @@ export function InspectorActions({
             <strong>{action.label}</strong>
             {menu && <small>{action.description}</small>}
           </span>
-          {action.shortcut && <kbd>{action.shortcut}</kbd>}
+          {action.shortcut && <kbd title={action.shortcut}>{action.shortcut.replaceAll(' + ', '+')}</kbd>}
         </button>
       ))}
     </div>

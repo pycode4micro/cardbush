@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { runHostCommand } from './hostProcesses';
 import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { safePackagePath, withinPackage } from './pluginPackagePaths';
@@ -102,25 +102,9 @@ async function npmCommand(): Promise<[string, string[]]> {
 }
 
 export async function runAcquisitionCommand(command: string, args: string[], cwd: string, networkEnv: NodeJS.ProcessEnv = {}): Promise<string> {
-  return new Promise((fulfill, reject) => {
-    const child = spawn(command, args, { cwd, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...networkEnv, GIT_TERMINAL_PROMPT: '0',
-      GCM_INTERACTIVE: 'Never', SSH_ASKPASS_REQUIRE: 'never', npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false' } });
-    const stdout: Buffer[] = [], stderr: Buffer[] = [];
-    let bytes = 0, settled = false;
-    const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : fulfill(Buffer.concat(stdout).toString('utf8')); };
-    const stop = (reason: string) => {
-      if (process.platform === 'win32' && child.pid) spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => undefined);
-      else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
-      finish(new Error(reason));
-    };
-    const timer = setTimeout(() => stop('Plugin acquisition timed out.'), 60_000);
-    for (const [stream, output] of [[child.stdout, true], [child.stderr, false]] as const) stream.on('data', chunk => {
-      if (settled) return;
-      bytes += chunk.length;
-      if (bytes > 4 * 1024 * 1024) { stop('Plugin acquisition output exceeds the size limit.'); return; }
-      (output ? stdout : stderr).push(chunk);
-    });
-    child.on('error', finish);
-    child.on('close', code => finish(code !== 0 ? Object.assign(new Error(`${command} failed (${code}): ${Buffer.concat(stderr).toString('utf8').slice(-4000)}`), { exitCode: code }) : undefined));
-  });
+  const result = await runHostCommand({ executable: command, args, cwd, timeoutMs: 60_000, maxOutputBytes: 4 * 1024 * 1024,
+    env: { ...process.env, ...networkEnv, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', SSH_ASKPASS_REQUIRE: 'never',
+      npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false' } });
+  if (result.exitCode !== 0) throw Object.assign(new Error(`${command} failed (${result.exitCode}): ${result.stderr.slice(-4000)}`), { exitCode: result.exitCode });
+  return result.stdout;
 }

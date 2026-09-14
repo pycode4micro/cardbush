@@ -3440,13 +3440,13 @@ body.right-inspector-resizing .right-inspector-resizer {
   scrollbar-width: thin;
   scrollbar-gutter: stable;
   overscroll-behavior-y: contain;
-  overflow-anchor: none;
+  overflow-anchor: auto;
   transition: padding-right 180ms cubic-bezier(0.2, 0.72, 0.25, 1);
 }
 
 .message-list-content {
   padding: 30px var(--chat-inline-gutter) 0;
-  overflow-anchor: none;
+  overflow-anchor: auto;
 }
 
 .conversation-connection-notice {
@@ -3527,7 +3527,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .message-list-item {
-  overflow-anchor: none;
+  overflow-anchor: auto;
   content-visibility: auto;
   contain-intrinsic-block-size: auto 220px;
 }
@@ -3541,6 +3541,10 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 /* Restore against actual message geometry before returning history to lazy
    layout. Estimated offscreen heights must not replay a scroll on session entry. */
+.message-list[data-scroll-restoring] {
+  overflow-anchor: none;
+}
+
 .message-list[data-scroll-restoring] .message-list-item:not(.streaming) {
   content-visibility: visible;
   /* Keep auto's containment so child margins have the same geometry. */
@@ -5102,6 +5106,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .right-inspector-start-actions > button {
   min-height: 48px;
+  grid-template-columns: 24px minmax(max-content, 1fr) minmax(0, auto);
   padding: 10px 13px;
   background: color-mix(in srgb, var(--text) 4%, transparent);
 }
@@ -5112,6 +5117,9 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .right-inspector-start-actions kbd {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 2px 7px;
   border-radius: 5px;
   color: var(--text-soft);
@@ -7990,7 +7998,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .scroll-bottom {
-  --scroll-bottom-size: 30px;
+  --scroll-bottom-size: 34px;
   --scroll-bottom-gap: 8px;
   position: absolute;
   left: var(--composer-surface-center-x, 50%);
@@ -8004,63 +8012,51 @@ body.right-inspector-resizing .right-inspector-resizer {
   width: var(--scroll-bottom-size);
   height: var(--scroll-bottom-size);
   padding: 0;
+  display: grid;
+  place-items: center;
   color: var(--text);
-  background: transparent;
-  border: 0;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 999px;
-  box-shadow: none;
-  opacity: 0.52;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow) 65%, transparent);
+  opacity: 1;
   cursor: pointer;
   appearance: none;
-  transition: opacity 140ms ease, transform 140ms ease, color 140ms ease;
+  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.2, 0.72, 0.25, 1), background-color 120ms ease;
   transform: translateX(-50%);
   z-index: 6;
 }
 
-.scroll-bottom::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 1px;
-  width: 28px;
-  height: 28px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
-  border-radius: 999px;
-  box-shadow: none;
-  opacity: 0.9;
-  transform: translateX(-50%);
-  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
-}
-
 .scroll-bottom svg {
-  position: absolute;
-  left: 50%;
-  bottom: 7px;
-  z-index: 1;
+  display: block;
   pointer-events: none;
-  transform: translateX(-50%);
+  transform: none;
 }
 
 .scroll-bottom:hover,
 .scroll-bottom:focus-visible {
   color: var(--text);
-  opacity: 1;
+  background: var(--surface-strong);
   transform: translate(-50%, -1px);
 }
 
-.scroll-bottom:hover::before,
-.scroll-bottom:focus-visible::before {
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  border-color: var(--border);
-  box-shadow: 0 8px 18px var(--shadow);
-  opacity: 1;
+.scroll-bottom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.scroll-bottom:active {
+  transform: translate(-50%, 1px);
 }
 
 .scroll-bottom.hidden {
   pointer-events: none;
   opacity: 0;
-  transform: translate(-50%, 6px);
+  transform: translate(-50%, 4px) scale(0.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-bottom { transition: none; }
 }
 
 .composer-dock {
@@ -15135,21 +15131,13 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .app.has-custom-background .scroll-bottom {
   color: var(--text);
-  opacity: 0.9;
+  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
 }
 
 .app.has-custom-background .scroll-bottom.hidden {
   pointer-events: none;
   opacity: 0;
-  transform: translateY(6px);
-}
-
-.app.has-custom-background .scroll-bottom::before {
-  background: color-mix(in srgb, var(--surface-strong) 76%, transparent);
-  border-color: color-mix(in srgb, var(--border) 52%, transparent);
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--shadow) 120%, transparent);
-  backdrop-filter: blur(10px) saturate(1.08);
-  -webkit-backdrop-filter: blur(10px) saturate(1.08);
+  transform: translate(-50%, 4px) scale(0.94);
 }
 
 .settings-stack {
@@ -19469,6 +19457,10 @@ body.change-review-resizing {
 .file-memo-reference { max-width: 100%; }
 .file-memo-reference > img, .file-memo-reference > video, .file-memo-reference > audio { max-width: 100%; }
 .file-memo-reference > small { color: var(--text-secondary, currentColor); }
+.file-memo-reference-error { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.file-memo-reference-error > small { font-size: 0.85em; }
+.file-memo-retry { border: 0; padding: 0 2px; color: var(--accent, #3984f5); background: transparent; font: inherit; font-size: 0.85em; cursor: pointer; }
+.file-memo-retry:hover { text-decoration: underline; }
 
 .settings-search {
   display: flex; align-items: center; gap: 8px; min-height: 34px;

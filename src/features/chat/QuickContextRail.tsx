@@ -14,6 +14,7 @@ import {
   searchSessionContext,
 } from '../../backend/api';
 import { MarkdownContent } from '../chatMessages/MessageBubble';
+import { FileMemoScope } from '../chatMessages/FileMemoScope';
 
 type IndexedUserTurn = {
   message: ChatMessage;
@@ -143,21 +144,27 @@ export function QuickContextRail({
       return undefined;
     }
 
+    // Message order changes with userSignature; scrolling only needs a few
+    // positional reads, not a full-history scan on every animation frame.
+    const userItems = Array.from(
+      scroller.querySelectorAll<HTMLElement>('[data-message-role="user"]'),
+    );
     let frame = 0;
     const updateVisibleTurn = () => {
-      window.cancelAnimationFrame(frame);
+      if (frame) return;
       frame = window.requestAnimationFrame(() => {
+        frame = 0;
         const scrollerRect = scroller.getBoundingClientRect();
         const readingAnchor =
           scrollerRect.top + Math.min(180, Math.max(72, scrollerRect.height * 0.28));
-        const userItems = Array.from(
-          scroller.querySelectorAll<HTMLElement>('[data-message-role="user"]'),
-        );
-        let currentId = userItems[0]?.dataset.messageId ?? lastUserMessage?.id ?? '';
-        for (const item of userItems) {
-          if (item.getBoundingClientRect().top > readingAnchor) break;
-          currentId = item.dataset.messageId ?? currentId;
+        let low = 0;
+        let high = userItems.length - 1;
+        while (low <= high) {
+          const middle = (low + high) >>> 1;
+          if (userItems[middle].getBoundingClientRect().top <= readingAnchor) low = middle + 1;
+          else high = middle - 1;
         }
+        const currentId = userItems[Math.max(0, high)]?.dataset.messageId ?? lastUserMessage?.id ?? '';
         setVisibleUserMessageId((current) => current === currentId ? current : currentId);
       });
     };
@@ -175,7 +182,7 @@ export function QuickContextRail({
       scroller.removeEventListener('scroll', updateVisibleTurn);
       window.removeEventListener('resize', updateVisibleTurn);
     };
-  }, [lastUserMessage?.id, userSignature]);
+  }, [lastUserMessage?.id, sessionId, userSignature]);
 
   const query = draft.trim() || lastUserMessage?.content.trim() || '';
   const querySource: 'draft' | 'latest' = draft.trim() ? 'draft' : 'latest';
@@ -538,7 +545,9 @@ export function QuickContextRail({
                     <article className={`quick-context-message ${message.role}`} key={message.id}>
                       <div>
                         <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
-                        <MarkdownContent content={message.content} language={language} />
+                        <FileMemoScope sessionId={message.conversationId || sessionId} turnId={message.turnId}>
+                          <MarkdownContent content={message.content} language={language} />
+                        </FileMemoScope>
                       </div>
                     </article>
                   ))}

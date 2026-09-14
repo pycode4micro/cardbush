@@ -19,6 +19,9 @@ app.whenReady().then(async () => {
     const shared = Object.fromEntries(['localPaths', 'showUiError', 'fileContextMenu'].map(name => [name, ts.transpileModule(fs.readFileSync(path.join(root, 'src/shared', name + '.ts'), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText]));
+    const shortcuts = Object.fromEntries(['keyboardShortcuts', 'useKeyboardShortcuts'].map(name => [name, ts.transpileModule(fs.readFileSync(path.join(root, 'src/features/shortcuts', name + '.ts'), 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    }).outputText]));
     const run = code => window.webContents.executeJavaScript(code, true);
     await run(`
       const React=require(${JSON.stringify(require.resolve('react'))});
@@ -26,9 +29,14 @@ app.whenReady().then(async () => {
       const {createRoot}=require(${JSON.stringify(require.resolve('react-dom/client'))});
       const sourceRequire=require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
       const sharedSources=${JSON.stringify(shared)},sharedModules={};
+      const shortcutSources=${JSON.stringify(shortcuts)},shortcutModules={};
+      const preferences = new Map();
+      Object.defineProperty(window,'localStorage',{value:{getItem:key=>preferences.get(key)??null,setItem:(key,value)=>preferences.set(key,String(value))}});
+      function loadShortcut(name){if(shortcutModules[name])return shortcutModules[name].exports;const mod=shortcutModules[name]={exports:{}};new Function('require','module','exports',shortcutSources[name])(id=>id.startsWith('./')?loadShortcut(id.slice(2)):sourceRequire(id),mod,mod.exports);return mod.exports;}
       function loadShared(name){if(sharedModules[name])return sharedModules[name].exports;const mod=sharedModules[name]={exports:{}};new Function('require','module','exports',sharedSources[name])(id=>loadShared(id.slice(2)),mod,mod.exports);return mod.exports;}
       const module={exports:{}};
-      new Function('require','module','exports',${JSON.stringify(code)})(id=>id==='../../shared/fileContextMenu'?loadShared('fileContextMenu'):sourceRequire(id),module,module.exports);
+      new Function('require','module','exports',${JSON.stringify(code)})(id=>id==='../../shared/fileContextMenu'?loadShared('fileContextMenu'):id==='../shortcuts/useKeyboardShortcuts'?loadShortcut('useKeyboardShortcuts'):sourceRequire(id),module,module.exports);
+      window.previewShortcuts=loadShortcut('useKeyboardShortcuts');
       const {ImagePreviewDialog}=module.exports; const h=React.createElement;
       const image={src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="#238797"/></svg>'),name:'很长的图片文件名'.repeat(20)+'.png',naturalWidth:1600,naturalHeight:900};
       window.closeCount=0;
@@ -67,6 +75,13 @@ app.whenReady().then(async () => {
       await run('flushSync(()=>controls.setOpen(false))');
     }
     await sampleOpening('image',1600,900);
+    await run("flushSync(()=>previewShortcuts.saveKeyboardShortcuts({imageZoomIn:{key:'j',ctrl:true}}))");
+    await run("flushSync(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'=',ctrlKey:true,bubbles:true})))");
+    assert.equal(await run("document.querySelector('.image-preview-zoom-value').textContent"),'100%','the old image binding is removed');
+    await run("flushSync(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'j',ctrlKey:true,bubbles:true})))");
+    assert.equal(await run("document.querySelector('.image-preview-zoom-value').textContent"),'125%','custom image bindings apply to the actual preview');
+    assert.ok(await run("document.querySelector('[aria-label=放大图片]').title.includes('Ctrl + J')"),'image tooltips follow the saved binding');
+    await run("flushSync(()=>{previewShortcuts.saveKeyboardShortcuts({});document.querySelector('.image-preview-zoom-value').click()})");
     const geometry = () => run(`(() => {
       const stage=document.querySelector('.image-preview-stage'), canvas=document.querySelector('.image-preview-canvas');
       const s=stage.getBoundingClientRect(),r=canvas.querySelector('img').getBoundingClientRect();

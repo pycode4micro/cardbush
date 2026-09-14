@@ -1,7 +1,5 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
-const { EventEmitter } = require('node:events');
-const { PassThrough } = require('node:stream');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain, Menu, protocol, net } = require('electron');
 const ts = require('typescript');
@@ -25,7 +23,7 @@ app.whenReady().then(async () => {
     localPathFromProtocolUrl: localFileSystemPathFromProtocolUrl,
     Menu: { buildFromTemplate: items => { const menu = Menu.buildFromTemplate(items); menus.push(menu); return { popup() {} }; } },
     clipboard: { writeText: value => actions.push(['path', value]) },
-    spawn: (command, args, options) => { actions.push(['file', command, args, options.env.CARDBUSH_CLIPBOARD_TARGET]); const child = new EventEmitter(); child.stderr = new PassThrough(); child.kill = () => {}; process.nextTick(() => child.emit('close', failCopy ? 1 : 0)); return child; },
+    runHostCommand: async options => { actions.push(['file', options.executable, options.args, options.env.CARDBUSH_CLIPBOARD_TARGET]); assert.equal(options.timeoutMs, 5000); assert.equal(options.maxOutputBytes, 16 * 1024); return { exitCode: failCopy ? 1 : 0, stderr: '' }; },
     openUiPreview: value => actions.push(['open', value]), openFileWithChooser: value => actions.push(['with', value]),
     shell: { showItemInFolder: value => actions.push(['reveal', value]) }, showWindowError: (_, title, message) => errors.push({ title, message }),
   };

@@ -6,6 +6,7 @@ import { promptReferenceMarkdown } from '../../shared/promptReferences';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   ArrowRight,
   ArrowUp,
@@ -372,7 +373,7 @@ export function Composer({
   onPermissionModeChange: (value: PermissionMode) => void;
   onSubagentPermissionRoutingChange: (value: SubagentPermissionRouting) => void;
   onReasoningLevelChange: (value: ReasoningLevel) => void;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, options?: { immediate?: boolean }) => Promise<void>;
   onCancel: () => Promise<void>;
   cancelEnabled?: boolean;
   skills?: SkillSummary[];
@@ -392,6 +393,9 @@ export function Composer({
   contextWindow?: ContextWindowUsage;
 }) {
   const runtimeStartup = useRuntimeStartupStatus();
+  const keyboardShortcuts = useKeyboardShortcuts();
+  const immediatePendingRef = useRef(false);
+  const immediateHandlerRef = useRef<(fromQueue?: boolean) => Promise<void>>(async () => {});
   const runtimeReady = runtimeStartup.phase === 'ready';
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
@@ -509,7 +513,7 @@ export function Composer({
     updatePopoverMaxHeight,
   ]);
 
-  async function submit() {
+  async function submit(immediate = false) {
     if (!runtimeReady) {
       if (runtimeStartupFailed) {
         await window.cardbushDesktop?.retryRuntimeStartup?.();
@@ -539,7 +543,7 @@ export function Composer({
     onDraftChange('');
     setImageAttachments([]);
     setFileAttachments([]);
-    await onSend(value);
+    await onSend(value, immediate ? { immediate: true } : undefined);
   }
 
   function toggleMenu(menu: Exclude<ComposerMenu, null>, event?: React.MouseEvent<HTMLElement>) {
@@ -1011,6 +1015,36 @@ export function Composer({
     }
   };
 
+  async function sendImmediate(fromQueue = false) {
+    if (!runtimeReady || stopping || immediatePendingRef.current || (sending && !cancelEnabled)) return;
+    const useQueue = fromQueue || !hasContent;
+    if (useQueue && (!sending || !firstQueuedMessage || !onGuideQueuedMessage)) return;
+    immediatePendingRef.current = true;
+    try {
+      if (useQueue) await guideFirstQueuedMessage();
+      else await submit(true);
+    } catch (error) {
+      showUiError(language === 'zh' ? '引导发送失败' : 'Unable to send guidance', error instanceof Error ? error.message : String(error));
+    } finally { immediatePendingRef.current = false; }
+  }
+  immediateHandlerRef.current = sendImmediate;
+
+  useEffect(() => {
+    const handleImmediate = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || !keyboardShortcuts.matches('guideNow', event)) return;
+      const root = fileDropTarget?.current ?? composerStackRef.current;
+      const target = event.target;
+      if (!root || root.closest('[inert]') || !(target instanceof Element) || !root.contains(target) ||
+          target.closest('[role="dialog"], [data-shortcut-recorder]')) return;
+      if (!composerStackRef.current?.contains(target) && target.closest('input, textarea, [contenteditable="true"], [role="textbox"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void immediateHandlerRef.current(Boolean(target.closest('.queue-context-panel, .runtime-screen-queue-actions, .composer-queue-row')));
+    };
+    window.addEventListener('keydown', handleImmediate);
+    return () => window.removeEventListener('keydown', handleImmediate);
+  }, [fileDropTarget, keyboardShortcuts]);
+
   return (
     <div
       className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''}`}
@@ -1089,7 +1123,8 @@ export function Composer({
               <button
                 type="button"
                 aria-label={language === 'zh' ? '将排队消息用于引导' : 'Use queued message as guidance'}
-                title={language === 'zh' ? '引导' : 'Guide'}
+                title={[language === 'zh' ? '引导' : 'Guide', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
+                aria-keyshortcuts={keyboardShortcuts.aria('guideNow')}
                 disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
                 onClick={() => void guideFirstQueuedMessage()}
               >
@@ -1263,6 +1298,17 @@ export function Composer({
             }
           }}
           onKeyDown={(event) => {
+            if (event.repeat) {
+              const gesture = { key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey };
+              if (keyboardShortcuts.matches('guideNow', gesture) || keyboardShortcuts.matches('sendMessage', gesture)) event.preventDefault();
+              return;
+            }
+            if (keyboardShortcuts.matches('guideNow', event)) {
+              event.preventDefault();
+              event.stopPropagation();
+              void sendImmediate();
+              return;
+            }
             if (
               goalDraft &&
               event.key === 'Backspace' &&
@@ -1298,7 +1344,7 @@ export function Composer({
                 return;
               }
             }
-            if (event.key === 'Enter' && !event.shiftKey) {
+            if (keyboardShortcuts.matches('sendMessage', event)) {
               if (event.repeat || event.nativeEvent.isComposing) {
                 return;
               }
@@ -1404,8 +1450,9 @@ export function Composer({
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={(!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
-              title={sendButtonLabel}
+              title={[sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (language === 'zh' ? ' 立即引导' : ' Send guidance now') : ''].filter(Boolean).join(' · ')}
               aria-label={sendButtonLabel}
+              aria-keyshortcuts={hasContent ? keyboardShortcuts.aria('sendMessage') : undefined}
               onClick={() => void submit()}
             >
               {!runtimeReady ? (

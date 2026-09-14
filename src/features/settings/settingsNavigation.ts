@@ -6,6 +6,7 @@ type LocalizedText = { zh: string; en: string };
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
   profile: { zh: '个性化', en: 'Personalization' },
   appearance: { zh: '外观与语言', en: 'Appearance & language' },
+  shortcuts: { zh: '快捷键', en: 'Keyboard shortcuts' },
   usage: { zh: '使用统计', en: 'Usage' },
   models: { zh: '模型管理', en: 'Models' },
   mcp: { zh: '插件', en: 'Plugins' },
@@ -18,6 +19,7 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
 export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText> = {
   profile: { zh: '调整对话语气、交互方式和长期偏好。', en: 'Set the conversation tone, interaction preferences, and shared instructions.' },
   appearance: { zh: '选择主题、界面语言和字体。', en: 'Choose your theme, interface language, and font.' },
+  shortcuts: { zh: '查看和自定义快捷键，让操作更顺手。', en: 'View and customize keyboard shortcuts.' },
   usage: { zh: '查看实际记录的 Token 用量和使用活动。', en: 'Review recorded token usage and activity.' },
   models: { zh: '管理模型服务、输入能力和上下文长度。', en: 'Manage model services, input capabilities, and context limits.' },
   mcp: { zh: '管理插件、技能和应用连接。', en: 'Manage plugins, skills, and app connections.' },
@@ -29,13 +31,14 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
 
 export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
   { label: { zh: '能力', en: 'Capabilities' }, sections: ['mcp', 'models'] },
-  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'usage', 'appearance'] },
+  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'shortcuts', 'usage', 'appearance'] },
   { label: { zh: '系统', en: 'System' }, sections: ['runtime', 'proxy', 'cache', 'diagnostics'] },
 ];
 
 const keywords: Record<VisibleSettingsSection, string> = {
   profile: '对话 风格 自然 专业 简短 自定义 语气 全局约束 AGENTS.md 提示词 引导 排队 队列 思考 instructions tone style guidance queue thinking',
   appearance: '主题 深色 浅色 赛博朋克 窗口 玻璃 导入 字体 中文 English theme font language glass',
+  shortcuts: '快捷键 键盘 按键 引导 发送 排队 Ctrl Enter keyboard shortcuts hotkeys guidance queue',
   usage: '统计 Token 用量 活跃 热力图 会话次数 usage activity',
   models: '模型 API key 密钥 服务商 上下文 输出 视觉 图片 provider context vision',
   mcp: '插件 市场 技能 账号 授权 浏览器 Chrome MCP skills marketplace accounts OAuth search browser',

@@ -1,3 +1,4 @@
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   Brain,
   CheckCircle2,
@@ -108,6 +109,7 @@ export function ComposerRuntimeRail({
   const [changesOpen, setChangesOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
+  const keyboardShortcuts = useKeyboardShortcuts();
   const queueDrag = useQueueReorder(queuedMessages, onReorderQueuedMessage, Boolean(guidingQueuedId) || !queueOpen);
   const hasProcessing = running || Boolean(goal);
   const activePanel = processingOpen
@@ -568,6 +570,7 @@ export function ComposerRuntimeRail({
                     <div className="runtime-queue-actions">
                       <button
                         className="runtime-queue-guide"
+                        title={[language === 'zh' ? '立即引导（快捷键发送队列第一条）' : 'Guide now (shortcut sends the first queued message)', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
                         type="button"
                         disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
                         onClick={() => void guideQueuedMessage(item.id)}
@@ -704,10 +707,11 @@ export function ComposerRuntimeRail({
         >
           <button
             className="runtime-screen-queue-guide"
+            aria-keyshortcuts={keyboardShortcuts.aria('guideNow')}
             type="button"
             disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
             aria-label={language === 'zh' ? '将首条排队消息用于引导' : 'Use first queued message as guidance'}
-            title={language === 'zh' ? '引导' : 'Guide'}
+            title={[language === 'zh' ? '引导' : 'Guide', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
             onClick={() => void guideQueuedMessage(firstQueuedMessage.id)}
           >
             {guidingQueuedId === firstQueuedMessage.id

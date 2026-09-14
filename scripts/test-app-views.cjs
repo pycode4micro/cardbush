@@ -56,6 +56,8 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' ? ['src/ShadowWindow.tsx'] : []),
     'src/features/inspector/InspectorErrorBoundary.tsx',
     'src/features/composer/queueOrdering.ts',
+    'src/features/settings/SettingsKeyboardPanel.tsx',
+    'src/features/shortcuts/useKeyboardShortcuts.ts',
     'src/features/chatMessages/transcript/liveMessageUpdates.ts']
     .map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n');
   const result = await build({
@@ -354,7 +356,7 @@ app.whenReady().then(async () => {
         visualInputAvailable: false, visualInputEnabled: false, contextSearchAvailable: false,
         subagentObservabilityAvailable: false, shadowAvailable: false, shadowAccentColor: '#999999',
         shadowThemeVariables: {}, thinkingVisible: false, guidanceDeliveryMode: 'queue',
-        loading: true, historyLoading: true, sending: false, stopping: false, activeTurnId: '',
+        loading: true, historyLoading: false, sending: false, stopping: false, activeTurnId: '',
         queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], pendingInteraction: null,
         error: null, notice: null, selectedModel: 'fixture', availableModels: [],
         referencePlanAvailable: false, referencePlanMode: 'off', permissionMode: 'task_free',
@@ -365,6 +367,11 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    await until("!!document.querySelector('.welcome-composer textarea')", 'welcome composer during background startup');
+    assert.equal(await run("!!document.querySelector('.loading-view')"), false, 'initial catalog loading never replaces the page');
+    await run(`window.startupComposer = document.querySelector('.welcome-composer textarea'); updateChat({ loading: false });`);
+    await until("document.querySelector('.welcome-composer textarea') === startupComposer", 'composer remains mounted after startup');
+    await run('updateChat({ loading: true, historyLoading: true })');
     await until("document.querySelector('.loading-view')?.textContent.includes('Loading conversation')", 'history loading');
     await run('updateChat({ loading: false, historyLoading: false })');
     await until("!!document.querySelector('.welcome-project-trigger')", 'welcome composer');
@@ -388,6 +395,13 @@ app.whenReady().then(async () => {
       updateChat({ activeConversationId: 'session-a', messages });
     `);
     await until("document.querySelector('.message-list')?.textContent.includes('Fixture assistant answer')", 'draft to loaded session');
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'startup') {
+      await run(`window.startupMessage = document.querySelector('.message-list'); updateChat({ loading: true, historyLoading: true });`);
+      assert.equal(await run("document.querySelector('.message-list') === startupMessage && !document.querySelector('.loading-view')"), true, 'refresh preserves loaded conversation content');
+      assert.deepEqual(await run('failures'), []);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'solution-selection') {
       await require('./helpers/solution-selection.cjs')({ run, until, pause, window, root });
     }
@@ -417,6 +431,18 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll-logs') {
       await require('./helpers/chat-window-scroll-diagnostics.cjs')({ run, until, pause, window });
       assert.deepEqual(await run('failures'), [], 'no window diagnostic renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'scroll-motion') {
+      await require('./helpers/chat-scroll-motion.cjs')({ run, until, pause, window });
+      assert.deepEqual(await run('failures'), [], 'no scroll motion renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'keyboard-shortcuts') {
+      await require('./helpers/keyboard-shortcuts.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no keyboard shortcuts renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

@@ -1,4 +1,5 @@
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
+import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
 import { SettingsDropdown } from './settings/SettingsDropdown';
 import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
 import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
@@ -20,6 +21,7 @@ import {
   Cpu,
   Eye,
   EyeOff,
+  Keyboard,
   LoaderCircle,
   Monitor,
   PackageOpen,
@@ -118,7 +120,7 @@ const defaultFontSettings = {
   filePath: '',
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
-  profile: SlidersHorizontal, appearance: Sun, usage: BarChart3,
+  profile: SlidersHorizontal, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
   models: Cpu, mcp: McpLogoIcon,
   runtime: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
@@ -538,6 +540,7 @@ export function SettingsView({
   }, [updateSettings]);
 
   const content = (() => {
+    if (section === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
     if (section === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
       reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
     if (section === 'usage') return <UsageStatisticsPanel language={language} active={active} />;

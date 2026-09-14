@@ -79,8 +79,8 @@ export class ProcessResourceGovernor {
   }
 }
 
-// Every Runtime session, fork and subagent in this host shares one admission
-// budget and one native parent job, even when it has its own terminal manager.
+// Every caller in this OS process shares one budget and native parent job.
+// Electron main and its Runtime utility process still have separate governors.
 const sharedGovernor = new ProcessResourceGovernor();
 
 export interface ProcessResourceReport {
@@ -96,7 +96,39 @@ export interface ProcessResourceReport {
 export interface GuardedProcess {
   child: ChildProcessWithoutNullStreams;
   protected: boolean;
+  stop: () => void;
   complete: () => Promise<ProcessResourceReport | undefined>;
+}
+
+export interface ManagedProcessOptions {
+  executable: string;
+  args: string[];
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  governor?: ProcessResourceGovernor;
+  hostPath?: string;
+}
+
+/** A lifetime owned by a host, window or operation, never by an unrelated turn. */
+export class ManagedProcessScope {
+  readonly #controller = new AbortController();
+  readonly #pending = new Set<Promise<unknown>>();
+
+  spawn(input: ManagedProcessOptions): Promise<GuardedProcess> {
+    const signal = input.signal
+      ? AbortSignal.any([this.#controller.signal, input.signal]) : this.#controller.signal;
+    const started = spawnResourceManagedProcess({ ...input, signal });
+    const lifetime = started.then(managed => managed.complete(), () => undefined);
+    this.#pending.add(lifetime);
+    void lifetime.finally(() => this.#pending.delete(lifetime));
+    return started;
+  }
+
+  async close(): Promise<void> {
+    this.#controller.abort();
+    await Promise.allSettled(this.#pending);
+  }
 }
 
 let pinnedProcessHost: string | undefined;
@@ -127,25 +159,22 @@ if (process.platform === "win32") {
   try { resolveProcessResourceHost(); } catch { /* Resolved again at execution. */ }
 }
 
-export async function spawnResourceManagedProcess(input: {
-  executable: string;
-  args: string[];
-  cwd: string;
-  governor?: ProcessResourceGovernor;
-  hostPath?: string;
-}): Promise<GuardedProcess> {
+export async function spawnResourceManagedProcess(input: ManagedProcessOptions): Promise<GuardedProcess> {
+  input.signal?.throwIfAborted();
   const governor = input.governor ?? sharedGovernor;
   const lease = governor.acquire();
   let reportDirectory: string | undefined;
   try {
     if (process.platform !== "win32") {
-      const child = spawn(input.executable, input.args, { cwd: input.cwd, detached: true, stdio: "pipe" });
-      child.once("exit", lease.release);
-      child.once("error", lease.release);
-      return { child, protected: false, complete: async () => undefined };
+      const child = spawn(input.executable, input.args, { cwd: input.cwd, env: input.env, detached: true, stdio: "pipe" });
+      const lifecycle = manageLifecycle(child, false, input.signal);
+      const completion = lifecycle.exited.then(() => { lease.release(); return undefined; });
+      return { child, protected: false, stop: lifecycle.stop, complete: () => completion };
     }
     const hostPath = input.hostPath ?? resolveProcessResourceHost();
     reportDirectory = await mkdtemp(join(tmpdir(), "cardbush-process-"));
+    // Cancellation can arrive while the receipt directory is being created.
+    input.signal?.throwIfAborted();
     const reportPath = join(reportDirectory, "result.json");
     const limits = governor.limits;
     const child = spawn(hostPath, [
@@ -161,9 +190,12 @@ export async function spawnResourceManagedProcess(input: {
       reportPath,
       input.executable,
       ...input.args,
-    ], { cwd: input.cwd, windowsHide: true, stdio: "pipe" });
+    ], { cwd: input.cwd, env: input.env, windowsHide: true, stdio: "pipe" });
+    const lifecycle = manageLifecycle(child, true, input.signal);
     let completion: Promise<ProcessResourceReport | undefined> | undefined;
     const complete = () => completion ??= (async () => {
+      // A caller may wait immediately after spawn; never read an unfinished receipt.
+      await lifecycle.exited;
       try {
         const report = JSON.parse(await readFile(reportPath, "utf8")) as ProcessResourceReport;
         if (report.phase !== "finished") throw new Error("Resource host did not finish.");
@@ -183,14 +215,42 @@ export async function spawnResourceManagedProcess(input: {
         await removeReceiptDirectory(reportDirectory!);
       }
     })();
-    child.once("exit", () => { void complete(); });
-    child.once("error", () => { void complete(); });
-    return { child, protected: true, complete };
+    void complete();
+    return { child, protected: true, stop: lifecycle.stop, complete };
   } catch (error) {
     lease.release();
     if (reportDirectory) await removeReceiptDirectory(reportDirectory);
     throw error;
   }
+}
+
+function manageLifecycle(child: ChildProcessWithoutNullStreams, protectedTree: boolean, signal?: AbortSignal) {
+  let ended = false;
+  const killGroup = () => {
+    if (child.pid) {
+      try { process.kill(-child.pid, "SIGKILL"); return; } catch { /* Already exited. */ }
+    }
+    child.kill("SIGKILL");
+  };
+  const stop = () => {
+    if (ended) return;
+    if (protectedTree) child.kill(); // Closing the supervisor closes its kill-on-close job.
+    else killGroup();
+  };
+  const exited = new Promise<void>(resolveExit => {
+    const finish = () => {
+      if (ended) return;
+      ended = true;
+      signal?.removeEventListener("abort", stop);
+      if (!protectedTree) killGroup();
+      resolveExit();
+    };
+    child.once("exit", finish);
+    child.once("error", finish);
+  });
+  signal?.addEventListener("abort", stop, { once: true });
+  if (signal?.aborted) stop();
+  return { stop, exited };
 }
 
 function resourceError(code: string, message: string): Error & { code: string } {

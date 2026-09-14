@@ -35,8 +35,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /forceListToVisualBottom\(\);[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?strategy: 'native-message-list'/,
-  'A bottom jump must settle the native list once after layout',
+  /scrollMotion\.move\(scroller, \(\) => absoluteBottomScrollTop\(scroller\), 'jump'[\s\S]*?strategy: 'native-message-list'/,
+  'A bottom jump must use the cancellable animation and resolve the live bottom',
 );
 assert.match(
   appSource,
@@ -74,7 +74,7 @@ assert.doesNotMatch(
 );
 assert.match(
   styles,
-  /\.scroll-bottom\s*\{[\s\S]*?--scroll-bottom-size:\s*30px;[\s\S]*?width:\s*var\(--scroll-bottom-size\);[\s\S]*?height:\s*var\(--scroll-bottom-size\);[\s\S]*?color:\s*var\(--text\);/,
+  /\.scroll-bottom\s*\{[\s\S]*?--scroll-bottom-size:\s*34px;[\s\S]*?width:\s*var\(--scroll-bottom-size\);[\s\S]*?height:\s*var\(--scroll-bottom-size\);[\s\S]*?color:\s*var\(--text\);/,
   'The scroll button hit target must not be an oversized transparent moving hotzone',
 );
 for (const label of [
@@ -97,17 +97,17 @@ assert.match(
 );
 assert.match(
   appSource,
-  /trace-outer-resize-follow[\s\S]*?scroller\.scrollTo\(\{[\s\S]*?top:\s*targetScrollTop,[\s\S]*?behavior:\s*gentleAutoFollowScrollBehavior\(\)/,
+  /trace-outer-resize-follow[\s\S]*?scrollMotion\.move\(scroller, targetScrollTop, 'follow'\)/,
   'An outer layout change must ease toward the real bottom while automatic follow is active',
 );
 assert.match(
   appSource,
-  /scrollBy\(\{[\s\S]*?top:\s*delta,[\s\S]*?behavior:\s*gentleAutoFollowScrollBehavior\(\)/,
+  /scrollMotion\.move\(scroller, scroller\.scrollTop \+ delta, 'follow'\)/,
   'Streaming content must ease into view instead of snapping the reading surface',
 );
 assert.match(
   appSource,
-  /const desiredTop = Math\.round\([\s\S]*?scroller\.clientHeight \* 0\.07[\s\S]*?--submitted-user-reading-anchor[\s\S]*?behavior:\s*gentleAutoFollowScrollBehavior\(\)/,
+  /const desiredTop = Math\.round\([\s\S]*?scroller\.clientHeight \* 0\.07[\s\S]*?--submitted-user-reading-anchor[\s\S]*?scrollMotion\.move\(scroller, nextTop, 'submission'\)/,
   'A submitted user bubble must glide to a compact measured reading anchor below the title bar',
 );
 assert.match(

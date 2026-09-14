@@ -390,6 +390,7 @@ const desktopApi = {
       exitCode: number | null;
       stdout: string;
       stderr: string;
+      outputTruncated?: boolean;
     }>,
   saveImageDataUrl: (
     dataUrl: string,

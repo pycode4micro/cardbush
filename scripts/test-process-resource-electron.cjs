@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { app, utilityProcess } = require('electron');
+app.on('window-all-closed', () => {}); // Closing the fixture window must not quit before the utility test.
 
 const root = path.resolve(__dirname, '..');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-resource-electron-'));
@@ -41,7 +42,30 @@ function finish(code, message) {
   worker?.kill();
   app.exit(code);
 }
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  timer = setTimeout(() => finish(1, 'Electron main resource test timed out.'), 15000);
+  process.env.CARDBUSH_PROCESS_HOST_DIRECTORY = nativeDirectory;
+  delete process.env.CARDBUSH_PROCESS_HOST_PATH;
+  const { runHostCommand, spawnHostProcess, processOwnerSignal, closeHostProcesses } = require('../dist-electron/hostProcesses.js');
+  const mainResult = await runHostCommand({ executable: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', '[Console]::Write($env:CARDBUSH_FIXTURE)'],
+    cwd: temporary, env: { ...process.env, CARDBUSH_FIXTURE: 'protected-main-ready' }, timeoutMs: 5000 });
+  assert.equal(mainResult.stdout, 'protected-main-ready');
+  const window = new (require('electron').BrowserWindow)({ show: false });
+  await window.loadURL('data:text/html,<title>Process ownership fixture</title>');
+  const reloading = await spawnHostProcess({ executable: 'powershell.exe', args: ['-NoProfile', '-Command', 'Start-Sleep -Seconds 30'], cwd: temporary,
+    signal: processOwnerSignal(window.webContents) });
+  reloading.child.stdout.resume(); reloading.child.stderr.resume();
+  await window.loadURL('data:text/html,<title>Reloaded owner</title>');
+  await reloading.complete();
+  assert.notEqual(reloading.child.signalCode ?? reloading.child.exitCode, null);
+  const task = await spawnHostProcess({ executable: 'powershell.exe', args: ['-NoProfile', '-Command', 'Start-Sleep -Seconds 30'], cwd: temporary,
+    signal: processOwnerSignal(window.webContents) });
+  task.child.stdout.resume(); task.child.stderr.resume();
+  assert.equal(task.protected, true);
+  window.destroy();
+  await task.complete();
+  await closeHostProcesses();
+  clearTimeout(timer);
   worker = utilityProcess.fork(workerPath, [], {
     env: { ...process.env, CARDBUSH_PROCESS_HOST_PATH: '', CARDBUSH_PROCESS_HOST_DIRECTORY: nativeDirectory },
     serviceName: 'CardBush resource protection test', stdio: ['ignore', 'pipe', 'pipe'],
@@ -49,7 +73,7 @@ app.whenReady().then(() => {
   worker.stdout.on('data', () => {});
   worker.stderr.on('data', chunk => process.stderr.write(chunk));
   worker.on('message', result => {
-    try { assert.equal(result.ok, true, result.error); finish(0, 'Electron UtilityProcess protected execution/stop and relocated native host passed.'); }
+    try { assert.equal(result.ok, true, result.error); finish(0, 'Electron main/UtilityProcess protected execution, window cleanup and relocated native host passed.'); }
     catch (error) { finish(1, error.stack); }
   });
   worker.on('exit', () => { if (!finished) finish(1, 'Resource test worker exited before completing.'); });

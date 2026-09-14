@@ -11,6 +11,7 @@ export type SettingsSection =
   | 'instructions'
   | 'profile'
   | 'appearance'
+  | 'shortcuts'
   | 'usage'
   | 'browser'
   | 'companion'

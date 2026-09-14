@@ -94,6 +94,7 @@ import {
   themeClassNames,
 } from './features/appearance/themeRuntime';
 import { useWindowAppearance, readWindowMaterialPreference, WINDOW_MATERIAL_STORAGE_KEY, type WindowMaterialPreference } from './features/appearance/windowAppearance';
+import { useKeyboardShortcuts } from './features/shortcuts/useKeyboardShortcuts';
 import {
   importedThemeBaseMode,
   importedThemeStyleVariables,
@@ -311,6 +312,7 @@ export function App() {
 }
 
 function CardbushApp() {
+  const keyboardShortcuts = useKeyboardShortcuts();
   const [runtimeStartup, setRuntimeStartup] = useState<RuntimeStartupStatus>(() =>
     window.cardbushDesktop?.runtimeStartupStatus
       ? { phase: 'initializing', attempt: 0, startedAt: new Date().toISOString() }
@@ -1130,24 +1132,20 @@ function CardbushApp() {
   const inspectorMenuOpen = inspectorAddMenuOpen || inspectorTabsMenuOpen || !!inspectorTabContextMenu;
   useOutsideDismiss(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus);
   useEffect(() => {
-    if (!inspectorOpen || settingsOpen) return undefined;
+    if (settingsOpen) return undefined;
     const handleInspectorShortcut = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) return;
-      const key = event.key.toLowerCase();
-      if (event.shiftKey) {
-        if (key === 'g' && !event.altKey && inspectorReviewAvailable) {
-          event.preventDefault();
-          openChangeReviewInspector(chat.activeConversationId);
-        }
-        return;
-      }
-      if (key === 't' && !event.altKey) {
+      if (event.defaultPrevented || event.isComposing || event.repeat ||
+          event.target instanceof Element && event.target.closest('[inert], [role="dialog"], [data-shortcut-recorder]')) return;
+      if (keyboardShortcuts.matches('openReview', event) && inspectorReviewAvailable) {
+        event.preventDefault();
+        openChangeReviewInspector(chat.activeConversationId);
+      } else if (keyboardShortcuts.matches('openBrowser', event)) {
         event.preventDefault();
         openNewBrowserInspectorTab();
-      } else if (key === 'p' && !event.altKey) {
+      } else if (keyboardShortcuts.matches('openFiles', event)) {
         event.preventDefault();
         void openInspectorFiles();
-      } else if (key === 's' && event.altKey && inspectorShadowAvailable) {
+      } else if (keyboardShortcuts.matches('openShadow', event) && inspectorShadowAvailable) {
         event.preventDefault();
         openShadowInspectorTab();
       }
@@ -1155,7 +1153,7 @@ function CardbushApp() {
     window.addEventListener('keydown', handleInspectorShortcut);
     return () => window.removeEventListener('keydown', handleInspectorShortcut);
   }, [
-    inspectorOpen,
+    keyboardShortcuts,
     inspectorReviewAvailable,
     inspectorShadowAvailable,
     chat.activeConversationId,
@@ -2204,7 +2202,7 @@ function CardbushApp() {
                 thinkingVisible={reasoningTraceVisible}
                 guidanceDeliveryMode={appSettings.guidance.deliveryMode}
                 loading={chat.loading || chat.messagesLoading}
-                historyLoading={!chat.loading && chat.messagesLoading}
+                historyLoading={chat.messagesLoading}
                 sending={chat.sending}
                 stopping={chat.stopping}
                 activeTurnId={chat.activeTurnId}

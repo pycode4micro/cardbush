@@ -1,0 +1,27 @@
+.keyboard-settings-toolbar { display: flex; align-items: center; gap: 16px; justify-content: space-between; }
+.keyboard-settings-search { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 360px; flex: 1; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-mid); background: var(--surface); }
+.keyboard-settings-search:focus-within { border-color: var(--accent); }
+.keyboard-settings-search input { border: 0; outline: 0; background: transparent; color: var(--text); min-width: 0; width: 100%; font: inherit; }
+.keyboard-reset-all { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 8px; padding: 8px 10px; color: var(--text); background: var(--surface); font: inherit; cursor: pointer; }
+.keyboard-settings-help { margin: 12px 0 20px; color: var(--text-mid); font-size: 13px; }
+.keyboard-settings-error { color: var(--danger); font-size: 13px; margin: 8px 0; }
+.keyboard-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.keyboard-settings-row:first-child { padding-top: 4px; }
+.keyboard-settings-row:last-child { border-bottom: 0; padding-bottom: 4px; }
+.keyboard-settings-description { min-width: 0; display: grid; gap: 5px; }
+.keyboard-settings-description strong { font-size: 14px; font-weight: 600; }
+.keyboard-settings-description small { font-size: 13px; color: var(--text-mid); line-height: 1.6; }
+.keyboard-settings-description .keyboard-binding-error { color: var(--danger); }
+.keyboard-settings-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.keyboard-binding { min-width: 150px; min-height: 36px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; transition: border-color 120ms ease, background-color 120ms ease; }
+.keyboard-binding:hover { background: var(--surface-strong); }
+.keyboard-binding.recording { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.keyboard-binding:focus-visible, .keyboard-binding-action:focus-visible, .keyboard-reset-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.keyboard-settings kbd { font: inherit; white-space: nowrap; }
+.keyboard-binding-action { width: 28px; height: 30px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--text-mid); cursor: pointer; }
+.keyboard-binding-action:hover { background: var(--surface); color: var(--text); }
+.keyboard-settings button:disabled { opacity: .35; cursor: default; }
+.keyboard-reference-row { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; padding: 10px 0; font-size: 13px; color: var(--text-mid); }
+.keyboard-reference-row kbd { color: var(--text); }
+@media (max-width: 960px) { .keyboard-settings-row { align-items: flex-start; flex-direction: column; gap: 12px; } }
+@media (prefers-reduced-motion: reduce) { .keyboard-binding { transition: none; } }

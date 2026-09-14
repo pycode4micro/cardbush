@@ -311,7 +311,7 @@ assert.match(
   'compact headings must not add a decorative rail beside ordinary sections',
 );
 
-const memoReference = fileMemoReference({ sessionId: '会话', turnId: 'turn', toolCallId: 'memo' });
+for (const memoReference of [fileMemoReference({ sessionId: '会话', turnId: 'turn', toolCallId: 'memo' }), fileMemoReference({ number: 1 })]) {
 for (const content of [`[文件](${memoReference})`, `![图片](${memoReference})`, `[文件][memo]\n\n[memo]: ${memoReference}`]) {
   const references = [];
   renderToStaticMarkup(createElement(ReactMarkdown, {
@@ -324,4 +324,5 @@ for (const content of [`[文件](${memoReference})`, `![图片](${memoReference}
   }, normalizeMarkdownContentForDisplay(content)));
   assert.deepEqual(references, [memoReference], 'Markdown parsing must preserve the exact tool-returned reference');
 }
-console.log(`markdown format tests passed (${cases.length} formatting, ${linkCases.length} rendered links, 3 memo references)`);
+}
+console.log(`markdown format tests passed (${cases.length} formatting, ${linkCases.length} rendered links, 6 memo references)`);

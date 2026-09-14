@@ -1,0 +1,87 @@
+type MotionKind = 'follow' | 'submission' | 'jump';
+type Target = number | (() => number);
+type Motion = {
+  scroller: HTMLElement;
+  target: Target;
+  kind: MotionKind;
+  start: number;
+  startedAt: number;
+  updatedAt: number;
+  lastFrameAt: number;
+  duration: number;
+  overflowAnchor: string;
+  complete?: () => void;
+};
+
+/** One cancellable animation owns the list; streamed targets update it in place. */
+export function createChatScrollMotion() {
+  let motion: Motion | null = null;
+  let frame: number | null = null;
+  const targetTop = (item: Motion) => Math.max(0, Math.min(
+    item.scroller.scrollHeight - item.scroller.clientHeight,
+    typeof item.target === 'function' ? item.target() : item.target,
+  ));
+  const cancel = () => {
+    if (frame != null) window.cancelAnimationFrame(frame);
+    frame = null;
+    if (motion) {
+      motion.scroller.style.overflowAnchor = motion.overflowAnchor;
+      delete motion.scroller.dataset.scrollAnimating;
+    }
+    motion = null;
+  };
+  const tick = (now: number) => {
+    frame = null;
+    const item = motion;
+    if (!item || !item.scroller.isConnected) { cancel(); return; }
+    const target = targetTop(item);
+    const current = item.scroller.scrollTop;
+    // A frame's timestamp can predate work submitted during that same frame.
+    const elapsed = Math.max(0, now - item.startedAt);
+    const done = item.kind === 'follow'
+      ? Math.abs(target - current) < 0.75 || now - item.updatedAt >= 320
+      : elapsed >= item.duration;
+    const progress = Math.min(1, elapsed / item.duration);
+    const next = done ? target : item.kind === 'follow'
+      ? current + (target - current) * (1 - Math.exp(-Math.max(0, Math.min(64, now - item.lastFrameAt)) / 65))
+      : item.start + (target - item.start) * (1 - (1 - progress) ** 3);
+    item.lastFrameAt = Math.max(item.lastFrameAt, now);
+    // No browser-owned smooth animation survives a wheel/touch/key cancellation.
+    item.scroller.scrollTo({ top: next, behavior: 'instant' });
+    if (done) {
+      const complete = item.complete;
+      cancel();
+      complete?.();
+    } else {
+      frame = window.requestAnimationFrame(tick);
+    }
+  };
+  return {
+    cancel,
+    isActive: () => motion != null,
+    move(scroller: HTMLElement, target: Target, kind: MotionKind, complete?: () => void) {
+      if (motion?.scroller === scroller && motion.kind === 'jump' && kind === 'follow') return;
+      const now = performance.now();
+      if (motion?.scroller === scroller && motion.kind === 'follow' && kind === 'follow') {
+        motion.target = target;
+        motion.updatedAt = now;
+        return;
+      }
+      cancel();
+      const start = scroller.scrollTop;
+      const destination = typeof target === 'function' ? target() : target;
+      const item: Motion = { scroller, target, kind, start, startedAt: now, updatedAt: now,
+        lastFrameAt: now, duration: kind === 'jump' ? Math.min(360, 180 + Math.sqrt(Math.abs(destination - start)) * 3) : 260,
+        overflowAnchor: scroller.style.overflowAnchor, complete };
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || Math.abs(destination - start) < 0.75) {
+        scroller.scrollTo({ top: targetTop(item), behavior: 'instant' });
+        complete?.();
+        return;
+      }
+      motion = item;
+      scroller.style.overflowAnchor = 'none';
+      scroller.dataset.scrollAnimating = kind;
+      frame = window.requestAnimationFrame(tick);
+    },
+  };
+}

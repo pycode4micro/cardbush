@@ -22,6 +22,7 @@ const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 const expectedSections = [
   'profile',
   'appearance',
+  'shortcuts',
   'usage',
   'runtime',
   'proxy',

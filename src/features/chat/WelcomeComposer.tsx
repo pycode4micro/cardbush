@@ -97,7 +97,7 @@ export function WelcomeComposer({
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage: (queuedId: string) => void;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, options?: { immediate?: boolean }) => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
   const welcomeRef = useRef<HTMLDivElement>(null);

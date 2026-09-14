@@ -1,3 +1,4 @@
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   Archive,
   CalendarClock,
@@ -1197,6 +1198,7 @@ function ConversationRow({
   onClick: () => void;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const keyboardShortcuts = useKeyboardShortcuts();
   const displayTitle = conversationDisplayTitle(conversation.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [renameDraft, setRenameDraft] = useState(displayTitle);
@@ -1265,8 +1267,9 @@ function ConversationRow({
       }}
       onContextMenu={(event) => onContextMenu?.(event, menuOptions)}
       onKeyDown={(event) => {
-        if (event.key === 'F2') {
+        if (keyboardShortcuts.matches('renameConversation', event) && !event.nativeEvent.isComposing) {
           event.preventDefault();
+          event.stopPropagation();
           beginRename();
           return;
         }

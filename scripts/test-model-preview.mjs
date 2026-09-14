@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 const require = createRequire(import.meta.url);
 const { ModelPreviewService, findBlenderExecutable } = require('../dist-electron/modelPreview.js');
 const run = promisify(execFile);
@@ -25,6 +26,63 @@ test('adapter rejects unregistered input and never treats missing executable con
     await assert.rejects(service.preview(path.resolve('file.blend'), '', undefined, '../outside'), { code: 'invalid_request' });
     assert.equal(await findBlenderExecutable({ CARDBUSH_BLENDER_PATH: path.resolve('missing-blender-executable') }), null);
   } finally { await service.dispose(); }
+});
+
+test('preview command keeps bounded logs and stops descendants on release without needing Blender', { timeout: 15000 }, async () => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'cardbush-preview-process-test-'));
+  const helper = path.join(scratch, 'preview-fixture.cjs');
+  const file = path.join(scratch, 'fixture.blend');
+  const host = require('../dist-electron/hostProcesses.js');
+  const runHostCommand = host.runHostCommand;
+  const service = new ModelPreviewService({ scriptPath, executable: process.execPath, tempRoot: scratch });
+  try {
+    await fs.writeFile(file, 'fixture input');
+    await fs.writeFile(helper, `const fs=require('node:fs'),path=require('node:path');
+const args=process.argv.slice(2), split=args.indexOf('--'), file=args[split+1], dir=args[split+2], scene=args[args.indexOf('--scene')+1];
+if(scene==='hold') {
+const child=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},10000)'],{stdio:'ignore',windowsHide:true});
+fs.writeFileSync(file+'.pids',JSON.stringify([process.pid,child.pid]));setTimeout(()=>{},10000);
+} else if(scene==='fail') { console.error('fixture conversion failed'); process.exitCode=7; }
+else { for(let i=0;i<64;i++)process.stdout.write('x'.repeat(65536));
+fs.writeFileSync(path.join(dir,'scene.glb'),'glTF fixture');
+fs.writeFileSync(path.join(dir,'metadata.json'),JSON.stringify({scene:'Fixture',scenes:['Fixture'],issues:[]})); }`);
+    // Replace only the Blender executable with a fixture. Launching, resource
+    // protection, output receipt, cancellation and cleanup use production code.
+    host.runHostCommand = options => {
+      assert.ok(options.args.includes('--disable-autoexec'));
+      assert.equal(options.env.PYTHONNOUSERSITE, '1');
+      return runHostCommand({ ...options, args: [helper, ...options.args] });
+    };
+    const prepared = await service.preview(file);
+    assert.equal(prepared.metadata.scene, 'Fixture');
+    await service.release(prepared.id);
+    await assert.rejects(service.preview(file, 'fail'), { code: 'conversion' });
+    const id = randomUUID();
+    const pending = service.preview(file, 'hold', undefined, id);
+    const cancelled = assert.rejects(pending, { code: 'cancelled' });
+    let pids;
+    const deadline = Date.now() + 5000;
+    while (!pids && Date.now() < deadline) {
+      try { pids = JSON.parse(await fs.readFile(file + '.pids', 'utf8')); } catch { await delay(20); }
+    }
+    assert.ok(pids, 'fixture started a real descendant');
+    await service.release(id);
+    await cancelled;
+    for (const pid of pids) {
+      let alive = true;
+      for (let attempt = 0; attempt < 100 && alive; attempt++) {
+        try { process.kill(pid, 0); await delay(20); } catch { alive = false; }
+      }
+      assert.equal(alive, false, `preview process ${pid} survived release`);
+    }
+    assert.equal(await fs.readFile(file, 'utf8'), 'fixture input');
+  } finally {
+    host.runHostCommand = runHostCommand;
+    await service.dispose();
+    assert.equal(path.dirname(path.resolve(scratch)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(scratch).startsWith('cardbush-preview-process-test-'));
+    await fs.rm(scratch, { recursive: true, force: true, maxRetries: 3 });
+  }
 });
 
 test('real Blender preview: compressed/uncompressed scenes, animation, textures, read-only source, failures and cleanup', { skip: !executable, timeout: 120000 }, async () => {

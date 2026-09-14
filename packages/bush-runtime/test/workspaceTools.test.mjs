@@ -655,14 +655,22 @@ test("returns a session handle instead of waiting on inherited descendant stdio"
   const setup = tools(root);
   const startedAt = Date.now();
   const outcome = await setup.execute("session", "terminal_exec", {
-    command: "node -e \"const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setTimeout(()=>{},750)'],{stdio:'inherit'}); child.unref();\"",
+    command: "node -e \"const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setTimeout(()=>{},15000)'],{stdio:'inherit'}); child.unref();\"",
     cwd: root,
     yield_time_ms: 1_000,
   });
   assert.equal(outcome.kind, "returned");
-  assert.equal(outcome.result.state, "exited");
   assert.match(outcome.result.terminalSessionId, /^terminal_/);
-  assert.ok(Date.now() - startedAt < 2_000);
+  assert.ok(Date.now() - startedAt < 3_000, 'yield must not wait for a 15-second descendant');
+  // A cold Windows shell may still be starting at the yield boundary. Poll the
+  // terminal fact instead of requiring process startup to fit in one second.
+  let completed = outcome;
+  const deadline = Date.now() + 5_000;
+  while (completed.result.state === 'running' && Date.now() < deadline) {
+    completed = await setup.execute('session', 'terminal_poll', { session_id: outcome.result.terminalSessionId, yield_time_ms: 1000 });
+  }
+  assert.equal(completed.result.state, 'exited');
+  assert.equal(completed.result.exitCode, 0);
 });
 
 test("writes to and explicitly stops persistent terminal sessions", async (t) => {
@@ -680,13 +688,17 @@ test("writes to and explicitly stops persistent terminal sessions", async (t) =>
     yield_time_ms: 1_000,
   });
   assert.equal(written.kind, "returned");
-  assert.match(written.result.stdout, /hello terminal/);
-  const interactiveCompleted = written.result.state === "exited"
-    ? written
-    : await setup.execute("session", "terminal_poll", {
+  let interactiveCompleted = written;
+  let output = written.result.stdout;
+  const deadline = Date.now() + 5_000;
+  while (interactiveCompleted.result.state === 'running' && Date.now() < deadline) {
+    interactiveCompleted = await setup.execute("session", "terminal_poll", {
         session_id: interactive.result.terminalSessionId,
         yield_time_ms: 1_000,
       });
+    output += interactiveCompleted.result.stdout;
+  }
+  assert.match(output, /hello terminal/);
   assert.equal(interactiveCompleted.result.state, "exited");
 
   const persistent = await setup.execute("session", "terminal_exec", {
