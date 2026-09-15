@@ -15,11 +15,12 @@ function run(args) {
 const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', name, 'test'))
   .filter(file => file.endsWith('.test.mjs')).map(file => `packages/${name}/test/${file}`));
 run(['--test', '--test-concurrency=3', ...tests]);
+run(['--test', 'scripts/test-windows-app-identity.mjs']);
 for (const script of ['test-background-startup.mjs', 'test-startup-runtime-contract.mjs',
   'test-local-path-metadata.mjs', 'test-settings-layout-contract.mjs', 'test-panel-motion-contract.mjs',
   'test-chat-scroll-contract.mjs', 'test-keyboard-shortcuts.mjs', 'test-chrome-connector-contract.mjs',
   'test-release-cleanup-contract.mjs']) run(['scripts/' + script]);
 if (!process.argv.includes('--no-ui')) {
-  for (const script of ['run-app-views-test.mjs', 'test-plugin-connections-ui.mjs',
+  for (const script of ['run-app-views-test.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
 }

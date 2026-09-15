@@ -122,8 +122,8 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   return <div className="plugin-market-page plugin-catalog-page">
     <button className="plugin-back" type="button" disabled={busy === 'install'} onClick={() => {
       generation.current++;
-      if (preview) { setPreview(null); setBusy(''); setError(''); } else onBack();
-    }}><ArrowLeft size={17} />{preview ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
+      if (preview || busy.startsWith('preview:')) { setPreview(null); setBusy(''); setError(''); } else onBack();
+    }}><ArrowLeft size={17} />{preview || busy.startsWith('preview:') ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
       <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>
       {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy)} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen}><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
@@ -140,7 +140,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         <dt>{zh ? '开发者' : 'Developer'}</dt><dd>{preview.developerName}</dd>
         <dt>{zh ? '内容版本' : 'Content revision'}</dt><dd>{preview.revision === 'local' ? (zh ? '本地快照' : 'Local snapshot') : preview.revision.slice(0, 12)}</dd></dl>
       <h3>{zh ? '包含的能力' : 'Included capabilities'}</h3>
-      {preview.components.map((component, index) => <div className="plugin-component-row" key={`${component.kind}:${index}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'agent' ? 'A' : component.kind === 'hook' ? 'H' : 'M'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div></div>)}
+      {preview.components.map((component, index) => <div className="plugin-component-row" key={`${component.kind}:${index}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'agent' ? 'A' : component.kind === 'hook' ? 'H' : 'M'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div></div>)}
       {!preview.components.length && <p>{zh ? '未发现可加载的能力。' : 'No loadable capabilities found.'}</p>}
       {preview.components.some(component => component.kind === 'command') && <p className="plugin-market-hint">{zh ? 'Commands 原生加载，启用后可在输入框通过 /插件名:命令名 调用。参数和动态上下文由宿主处理，执行遵循当前权限设置。' : 'Commands load natively. Invoke /plugin:command from the composer; the host handles arguments and dynamic context under the current permissions.'}</p>}
       {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{zh ? 'Hooks 可运行命令和 MCP 工具；Claude 格式还支持 HTTP、提示词评估和只读 Agent 验证。安装后需在插件详情中审核并信任具体定义。' : 'Hooks run commands and MCP tools. Claude plugins also support HTTP, prompt evaluation and read-only Agent verification. Review and trust each definition after installation.'}</p>}

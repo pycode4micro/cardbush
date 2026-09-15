@@ -816,6 +816,8 @@ export function SettingsView({
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
           onOpenMcp={(serverId) => setPluginMcpTarget({ serverId })}
+          renderMcp={serverId => <McpServersPanel initialServerId={serverId} language={language}
+            capabilities={backendCapabilities} onNotify={notify} />}
           onNotify={notify}
         />
       );

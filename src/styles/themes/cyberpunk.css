@@ -22,6 +22,9 @@
   --text: #f4f5e8;
   --text-mid: #b9c5c6;
   --text-soft: #718287;
+  --action: var(--cyber-yellow);
+  --action-hover: var(--cyber-cyan);
+  --on-action: var(--cyber-ink);
   --shadow: rgba(0, 0, 0, 0.58);
   --user-bubble: #11191c;
   --terminal-bg: #020304;

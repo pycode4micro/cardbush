@@ -1119,7 +1119,7 @@ body.sidebar-resizing .right-inspector {
   flex: 1 1 0;
   padding: 0 7px;
   color: var(--sidebar-text, var(--text));
-  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
   border-radius: 6px;
   outline: none;
@@ -1241,7 +1241,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .conversation-attention-indicator.waiting {
-  color: #d08a39;
+  color: var(--warning);
 }
 
 .conversation-attention-indicator.error {
@@ -2438,7 +2438,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .subagent-inspector-state.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .subagent-inspector-state.stopped { color: var(--muted); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.subagent-inspector-state.complete { color: #65b982; background: color-mix(in srgb, #65b982 11%, transparent); }
+.subagent-inspector-state.complete { color: var(--success); background: color-mix(in srgb, #65b982 11%, transparent); }
 .subagent-inspector-state.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
 .subagent-inspector-error {
@@ -5607,7 +5607,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  color: #64a9ff;
+  color: var(--info);
   text-decoration: none;
   vertical-align: baseline;
   cursor: pointer;
@@ -5615,7 +5615,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .local-file-reference:hover,
 .local-file-reference:focus-visible {
-  color: #8bc0ff;
+  color: var(--info-hover);
 }
 
 .local-file-reference svg {
@@ -5692,7 +5692,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .local-application-reference:hover,
 .local-application-reference:focus-visible {
-  color: #8bc0ff;
+  color: var(--info-hover);
 }
 
 .local-file-reference span {
@@ -6344,11 +6344,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .assistant-changed-files-summary .additions {
-  color: #50c878;
+  color: var(--success);
 }
 
 .assistant-changed-files-summary .deletions {
-  color: #ef7373;
+  color: var(--danger);
 }
 
 .assistant-changed-files-review,
@@ -6491,7 +6491,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .agent-hook-summary.warning {
-  color: #d9ae5a;
+  color: var(--warning);
   background: rgba(217, 174, 90, 0.1);
   border-color: rgba(217, 174, 90, 0.22);
 }
@@ -6815,7 +6815,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .tool-execution-block.warning .tool-execution-label,
 .tool-change-block.warning .tool-change-header strong {
-  color: #c9922e;
+  color: var(--warning);
   -webkit-text-fill-color: currentColor;
 }
 
@@ -7295,7 +7295,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .tool-execution-row.waiting {
-  color: #c9922e;
+  color: var(--warning);
 }
 
 .tool-execution-row > svg:last-child {
@@ -7377,7 +7377,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .tool-execution-detail header span.warning {
-  color: #d9ae5a;
+  color: var(--warning);
 }
 
 .goal-update-notice {
@@ -7621,7 +7621,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .worker-dispatch-status.rejected {
-  color: #d9ae5a !important;
+  color: var(--warning) !important;
 }
 
 .worker-dispatch-card dl {
@@ -7708,7 +7708,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .tool-hook-decision.blocked {
-  color: #d9ae5a;
+  color: var(--warning);
   background: rgba(217, 174, 90, 0.1);
   border-color: rgba(217, 174, 90, 0.24);
 }
@@ -7769,7 +7769,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .subagent-audit-signals.intervene header svg {
-  color: #d9ae5a;
+  color: var(--warning);
 }
 
 .subagent-audit-signals header strong {
@@ -9296,11 +9296,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .work-summary-file-list b {
-  color: #55c88a;
+  color: var(--success);
 }
 
 .work-summary-file-list i {
-  color: #ff7169;
+  color: var(--danger);
   font-style: normal;
 }
 
@@ -9479,7 +9479,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .work-summary-subagent-state.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .work-summary-subagent-state.stopped { color: var(--muted); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.work-summary-subagent-state.complete { color: #65b982; background: color-mix(in srgb, #65b982 12%, transparent); }
+.work-summary-subagent-state.complete { color: var(--success); background: color-mix(in srgb, #65b982 12%, transparent); }
 .work-summary-subagent-state.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
 .work-summary-subagent-main {
@@ -9510,7 +9510,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .work-summary-subagent-status.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .work-summary-subagent-status.stopped { color: var(--muted); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.work-summary-subagent-status.complete { color: #65b982; background: color-mix(in srgb, #65b982 10%, transparent); }
+.work-summary-subagent-status.complete { color: var(--success); background: color-mix(in srgb, #65b982 10%, transparent); }
 .work-summary-subagent-status.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
 
 .work-summary-subagent-task > svg {
@@ -15757,7 +15757,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   align-items: center;
   gap: 10px;
   padding: 12px;
-  color: #d8a63b;
+  color: var(--warning);
   background: color-mix(in srgb, #d8a63b 9%, transparent);
   border: 1px solid color-mix(in srgb, #d8a63b 27%, transparent);
   border-radius: 12px;
@@ -16051,7 +16051,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .mcp-inline-link {
   padding: 0;
-  color: #6bb7ff;
+  color: var(--info);
   background: transparent;
   border: 0;
   font: inherit;
@@ -19458,7 +19458,7 @@ body.change-review-resizing {
 
 .file-memo-reference { max-width: 100%; }
 .file-memo-reference > img, .file-memo-reference > video, .file-memo-reference > audio { max-width: 100%; }
-.file-memo-reference > small { color: var(--text-secondary, currentColor); }
+.file-memo-reference > small { color: var(--text-mid); }
 .file-memo-reference-error { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .file-memo-reference-error > small { font-size: 0.85em; }
 .file-memo-retry { border: 0; padding: 0 2px; color: var(--accent, #3984f5); background: transparent; font: inherit; font-size: 0.85em; cursor: pointer; }
@@ -19506,14 +19506,29 @@ body.change-review-resizing {
   .settings-value-row .settings-actions { flex-wrap: wrap; }
 }
 
-/* Settings use a consistent blue action color, independent of conversation status colors. */
+/* Settings controls share the theme's primary action colors. */
 .settings-shell {
-  --accent: #3b82f6;
-  --accent-soft: color-mix(in srgb, #3b82f6 15%, var(--surface));
+  --accent: var(--action);
+  --accent-soft: color-mix(in srgb, var(--action) 10%, var(--surface));
 }
-.settings-shell .settings-switch input::after { background: #fff; }
+.settings-shell .settings-switch input::after { background: var(--text); }
+.settings-shell .settings-switch input:checked::after { background: var(--on-action); }
 .settings-shell .primary-button:not(.danger),
-.settings-shell .plugin-install-button { color: #fff; }
+.settings-shell .plugin-install-button:not(.secondary),
+.settings-shell .plugin-detail-primary {
+  color: var(--on-action);
+  background: var(--action);
+  border-color: var(--action);
+}
+.settings-shell .primary-button:not(.danger):hover:not(:disabled),
+.settings-shell .plugin-install-button:not(.secondary):hover:not(:disabled),
+.settings-shell .plugin-detail-primary:hover:not(:disabled) {
+  background: var(--action-hover);
+  border-color: var(--action-hover);
+}
+.settings-shell .primary-button:focus-visible,
+.settings-shell .settings-switch input:focus-visible { outline: 2px solid var(--action); outline-offset: 3px; }
+.settings-shell .primary-button:disabled { opacity: .55; cursor: default; }
 
 .settings-dropdown { min-width: 0; position: relative; }
 .settings-select-row > .settings-dropdown { width: min(100%, 180px); justify-self: end; }
@@ -19528,7 +19543,7 @@ body.change-review-resizing {
 .settings-dropdown-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-dropdown-trigger > svg, .settings-dropdown-option > svg { flex: 0 0 auto; }
 .settings-dropdown-trigger:hover:not(:disabled), .settings-dropdown-trigger[aria-expanded=true] { background: color-mix(in srgb, var(--text) 9%, var(--surface)); }
-.settings-dropdown-trigger:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+.settings-dropdown-trigger:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
 .settings-dropdown-trigger:disabled { opacity: .5; cursor: not-allowed; }
 .settings-dropdown-popover {
   position: fixed; inset: auto; margin: 0; padding: 5px;

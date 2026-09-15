@@ -20,7 +20,7 @@ app.whenReady().then(async()=>{
  const until=async script=>{const end=Date.now()+5000;while(!(await read(script))){if(Date.now()>end)throw Error('Timed out: '+script+'; '+await read('document.body.innerText'));await new Promise(r=>setTimeout(r,25))}};
  const click=label=>read(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(label)}&&b.checkVisibility()).click()`);
  const advanced=async open=>{await read(`(()=>{const details=document.querySelector('.plugin-mcp-advanced');if(details.open!==${open})details.querySelector('summary').click();})()`);await until(`document.querySelector('.plugin-mcp-advanced').open===${open}`)};
- const search=value=>read(`(()=>{const input=document.querySelector('.plugin-search input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+ const search=value=>read(`(()=>{const input=Array.from(document.querySelectorAll('.plugin-search input')).find(input=>input.checkVisibility());Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
  try{
   await win.loadFile(join(directory,'index.html'));
   await until('document.body.innerText.includes("已连接 · 26 个工具")');
@@ -548,7 +548,7 @@ app.whenReady().then(async()=>{
   assert.match(await read('Array.from(document.querySelectorAll(".plugin-manage-list article")).find(item=>item.textContent.includes("由 Chrome 管理")).textContent'),/已连接 · 15 个工具/);
   await read('Array.from(document.querySelectorAll(".plugin-manage-list button")).find(b=>b.textContent.includes("由 Chrome 管理")).click()');
   await until('document.querySelector(".plugin-detail-hero h2")?.textContent==="Chrome"');
-  await click('返回插件');await click('MCP 服务');
+  await click('返回管理');
   await click('添加 MCP 服务');assert.equal(await read('opened.at(-1)'),'new');
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationState:"pending",applicationPhase:"connecting",pendingServerIds:["plugin_personal_tools_echo"]}};refreshFixture()');
   await until('document.querySelector(".plugin-manage-list")?.textContent.includes("重新连接中")');
@@ -580,7 +580,7 @@ app.whenReady().then(async()=>{
   await until('document.querySelector(".plugin-market-page")&&document.body.innerText.includes("chrome")');
   await read('Array.from(document.querySelectorAll(".plugin-market-page article button")).find(b=>b.textContent.includes("chrome")).click()');
   await until('document.querySelector(".plugin-detail-hero h2")?.textContent==="Chrome"');
-  await click('返回插件');await click('市场');
+  await click('返回市场');
   await until('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="添加来源").disabled');
   await click('添加来源');
   await until('!document.querySelector(".plugin-market-add input").disabled');
@@ -605,11 +605,11 @@ app.whenReady().then(async()=>{
   await new Promise(r=>setTimeout(r,150));
   await until('Array.from(document.querySelectorAll(".plugin-market-page .plugin-logo img")).some(image=>image.naturalWidth>0)');
   writeFileSync(resolve('tmp/plugin-marketplace-wide.png'),(await win.webContents.capturePage()).toPNG());
-  const open=label=>read(`Array.from(document.querySelectorAll('article button')).find(b=>b.textContent.includes(${JSON.stringify(label)})).click()`);
+  const open=label=>read(`Array.from(document.querySelectorAll('article button')).find(b=>b.checkVisibility()&&b.textContent.includes(${JSON.stringify(label)})).click()`);
   await open('hook-example');await until('document.querySelector(".plugin-market-issues")');
   assert.equal(await read('document.querySelector(".plugin-detail-primary").disabled'),true,'unsupported Claude components cannot install');
   await click('返回市场');await search('claude');
-  await until('document.querySelectorAll("article").length===1');
+  await until('document.querySelectorAll(".plugin-market-grid article").length===1');
   await read('marketPreviewReads=0;marketRateLimitUntil=Date.now()+2000');
   await open('claude-example');
   await until('document.querySelector(".plugin-market-error p")?.textContent.includes("秒后可重试")');
@@ -641,7 +641,7 @@ app.whenReady().then(async()=>{
   await click('返回市场');await search('');await read('marketCached=true');await click('刷新市场');
   await until('document.body.innerText.includes("当前显示缓存目录")');
   await read('marketSlow=true');await open('claude-example');
-  await until('typeof finishMarketPreview==="function"');await click('返回插件');
+  await until('typeof finishMarketPreview==="function"');await click('返回市场');await click('返回插件');
   await read('finishMarketPreview()');
   await until('document.querySelectorAll(".plugin-added-card").length===6');
   assert.equal(await read('!!document.querySelector(".plugin-market-detail")'),false,'late preview does not reopen marketplace after navigating away');

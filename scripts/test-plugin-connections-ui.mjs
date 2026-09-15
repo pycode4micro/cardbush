@@ -9,7 +9,8 @@ const parent = resolve('tmp');
 await mkdir(parent, { recursive: true });
 const directory = await mkdtemp(join(parent, 'plugin-connections-ui-'));
 const local = file => resolve(file).replaceAll('\\', '/');
-const source = `
+const appearanceNavigation = process.argv.includes('--appearance-navigation');
+let source = `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
@@ -93,6 +94,13 @@ let fixtureRoot=createRoot(document.getElementById('root'));
 fixtureRoot.render(<Fixture/>);
 window.remountPlugins=()=>{fixtureRoot.unmount();fixtureRoot=createRoot(document.getElementById('root'));fixtureRoot.render(<Fixture/>)};
 `;
+if (appearanceNavigation) {
+  source = source.replace('className="app theme-cyberpunk"', 'className="app theme-bright"')
+    .replace('<main style={{padding:26,width:', '<main className="settings-shell" style={{width:')
+    .replace("boxSizing:'border-box'}}>{composer?", "boxSizing:'border-box'}}><section className=\"settings-content\" style={{width:'100%',overflow:'auto'}}>{composer?")
+    .replace('</main><McpUserRequests', '</section></main><McpUserRequests')
+    .replace('<PluginFixture {...props} onOpenPrompt=', '<PluginFixture {...props} renderMcp={id=><div data-fixture-mcp={id??\'new\'}>MCP configuration</div>} onOpenPrompt=');
+}
 try {
   const result = await build({configFile:false,logLevel:'silent',define:{'process.env.NODE_ENV':'"production"'},plugins:[{
     name:'plugin-connections-fixture',enforce:'pre',
@@ -119,7 +127,8 @@ try {
   await writeFile(join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8">${css.map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
   const require=createRequire(import.meta.url),env={...process.env};
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
-  const run=spawnSync(require('electron'),['scripts/test-plugin-connections-ui-worker.cjs',directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});
+  const worker = appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
+  const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});
   assert.equal(run.status,0,String(run.error??'Plugin UI fixture failed'));
 } finally {
   assert.ok(directory.startsWith(parent+sep+'plugin-connections-ui-'));

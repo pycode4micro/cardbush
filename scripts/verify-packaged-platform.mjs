@@ -8,6 +8,7 @@ const run = args => {
 };
 run(['scripts/run-packaged-smoke.mjs', path.join(directory, process.platform === 'win32' ? 'CardBush.exe' : 'cardbush')]);
 if (process.platform === 'win32') {
+  run(['scripts/verify-windows-app-icon.mjs', path.join(directory, 'CardBush.exe')]);
   run(['scripts/test-chrome-native-host.mjs', path.join(directory, 'resources/chrome-native-host/CardBushBrowserHost.exe')]);
 }
 run(['scripts/test-chrome-connector-contract.mjs', directory]);

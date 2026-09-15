@@ -43,6 +43,7 @@ import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
 import { sendToLiveRenderer } from './rendererDelivery';
 import { restoreEditorFocus } from './rendererFocus';
 import { WindowScrollDiagnostics } from './windowScrollDiagnostics';
+import { windowsShellIconPath } from './windowsAppIdentity';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
 import { runAcquisitionCommand } from './pluginAcquisition';
@@ -1670,9 +1671,8 @@ function applyCardbushWindowIcon(
   if (process.platform !== 'win32') {
     return;
   }
-  const iconPath = cardbushIconAssetPaths('cardbush.ico').find((candidate) =>
-    fs.existsSync(candidate),
-  );
+  const iconPath = windowsShellIconPath({ packaged: cardbushRuntimeIsPackaged,
+    executablePath: process.execPath, candidates: cardbushIconAssetPaths('cardbush.ico') });
   try {
     window.setIcon(icon);
     window.setAppDetails({
@@ -1717,9 +1717,8 @@ function ensureWindowsTaskbarShortcut() {
   if (process.platform !== 'win32') {
     return false;
   }
-  const iconPath = cardbushIconAssetPaths('cardbush.ico').find((candidate) =>
-    fs.existsSync(candidate),
-  );
+  const iconPath = windowsShellIconPath({ packaged: cardbushRuntimeIsPackaged,
+    executablePath: process.execPath, candidates: cardbushIconAssetPaths('cardbush.ico') });
   if (!iconPath) {
     appendDebugLog('taskbar', {
       stage: 'shortcut',
@@ -1748,7 +1747,7 @@ function ensureWindowsTaskbarShortcut() {
       ...(cardbushRuntimeIsPackaged
         ? {}
         : { args: quoteWindowsCommandArgument(app.getAppPath()) }),
-      cwd: app.getAppPath(),
+      cwd: cardbushRuntimeIsPackaged ? path.dirname(process.execPath) : app.getAppPath(),
       description: 'CardBush desktop',
       icon: iconPath,
       iconIndex: 0,
@@ -3037,7 +3036,14 @@ async function runPackagedApplicationSmoke(): Promise<void> {
     }
     Object.assign(report, { terminalReady: true, searchReady: true,
       hostCapabilities: platformFeatures(process.platform, process.arch) });
+    const shellIcon = windowsShellIconPath({ packaged: cardbushRuntimeIsPackaged,
+      executablePath: process.execPath, candidates: cardbushIconAssetPaths('cardbush.ico') });
+    const shellIconReady = process.platform !== 'win32' || Boolean(shellIcon &&
+      (require('original-fs') as typeof fs).existsSync(shellIcon) &&
+      !(await app.getFileIcon(shellIcon, { size: 'normal' })).isEmpty());
     const assets = {
+      windowIcon: !loadCardbushIcon(64).isEmpty(),
+      windowsShellIcon: shellIconReady,
       runtimeWorker: fs.existsSync(path.join(__dirname, 'runtimeHostWorker.mjs')),
       productHostController: fs.existsSync(path.join(__dirname, 'productHostController.mjs')),
       appsMcp: fs.existsSync(path.join(

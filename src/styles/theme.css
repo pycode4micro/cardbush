@@ -91,12 +91,20 @@ button {
   --accent-soft: #ebf2ed;
   --text: #1e1c1a;
   --text-mid: #6b6560;
-  --text-soft: #a09890;
+  --text-soft: #756e66;
   --model-logo-filter: brightness(0);
   --shadow: rgba(0, 0, 0, 0.06);
   --user-bubble: #edebe7;
   --terminal-bg: #15130f;
   --danger: #b3261e;
+  --success: #217346;
+  --warning: #96600b;
+  --info: #175fb5;
+  --info-hover: #124c91;
+  --purple: #6550b5;
+  --action: var(--text);
+  --action-hover: color-mix(in srgb, var(--text) 85%, var(--surface));
+  --on-action: var(--surface);
   --sidebar-width: 232px;
   --wallpaper-accent-rgb: 123 158 135;
   --wallpaper-accent-hex: #7b9e87;
@@ -123,7 +131,7 @@ button {
   --accent-soft: #ebf2ed;
   --text: #1e1c1a;
   --text-mid: #6b6560;
-  --text-soft: #a09890;
+  --text-soft: #756e66;
   --shadow: rgba(0, 0, 0, 0.06);
   --user-bubble: #edebe7;
 }
@@ -140,6 +148,12 @@ button {
   --text: #f0ede7;
   --text-mid: #b7afa5;
   --text-soft: #80786f;
+  --danger: #f18c88;
+  --success: #70cb98;
+  --warning: #e5ba67;
+  --info: #83baff;
+  --info-hover: #acd1ff;
+  --purple: #b5a5f0;
   --model-logo-filter: brightness(0) invert(1);
   --shadow: rgba(0, 0, 0, 0.25);
   --user-bubble: #2b2b2b;

@@ -24,7 +24,7 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-react';
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   fetchCardbushAppsConfiguration,
@@ -47,19 +47,8 @@ import type {
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
 import { PluginMarketplacePanel } from './PluginMarketplacePanel';
+import { usePluginNavigation, type PluginPage as Page, type ManageTab } from './usePluginNavigation';
 import './plugin-management.css';
-
-type Page =
-  | { kind: 'catalog' }
-  | { kind: 'manage'; tab?: ManageTab }
-  | { kind: 'marketplace' }
-  | { kind: 'network' }
-  | { kind: 'workspace'; pluginId: string; extensionId: string }
-  | { kind: 'accounts'; pluginId: string }
-  | { kind: 'plugin'; pluginId: string }
-  | { kind: 'skill'; skillName: string };
-
-type ManageTab = 'plugins' | 'apps' | 'mcp';
 
 export function PluginManagementPanel({
   language,
@@ -70,6 +59,7 @@ export function PluginManagementPanel({
   onReloadSkills,
   onLoadSkillDetail,
   onOpenMcp,
+  renderMcp,
   onNotify,
   onOpenPrompt,
   presentation = 'catalog',
@@ -83,13 +73,15 @@ export function PluginManagementPanel({
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onOpenMcp: (serverId?: string) => void;
+  renderMcp?: (serverId?: string) => ReactNode;
   onNotify: (message: string) => void;
   onOpenPrompt?: (prompt: string) => void;
   presentation?: 'catalog' | 'network';
   onOpenNetwork?: () => void;
 }) {
   const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
-  const [page, setPage] = useState<Page>({ kind: 'catalog' });
+  const { rootRef, entries, page, open: setPage, back, reset } = usePluginNavigation();
+  const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp(serverId);
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [localSkills, setLocalSkills] = useState(skills);
   const [skillDetail, setSkillDetail] = useState<SkillDetail | null>(null);
@@ -137,8 +129,8 @@ export function PluginManagementPanel({
   useEffect(() => setLocalSkills(skills), [skills]);
   useEffect(() => {
     setTab(initialTab);
-    setPage({ kind: 'catalog' });
-  }, [initialTab]);
+    reset();
+  }, [initialTab, reset]);
   useEffect(() => {
     if (!addOpen) return;
     const closeFromOutside = (event: PointerEvent) => {
@@ -320,9 +312,6 @@ export function PluginManagementPanel({
     skill.sourceLabel ?? '',
   ].join(' ').toLocaleLowerCase().includes(normalizedQuery)), [localSkills, normalizedQuery]);
 
-  const selectedPlugin = page.kind === 'plugin'
-    ? plugins.find((plugin) => plugin.id === page.pluginId)
-    : undefined;
   const savePluginProxy = (pluginId: string, proxy?: ProxySettings) => configuration ? persist({ ...configuration,
     plugins: configuration.plugins.map(item => item.id === pluginId ? { ...item, config: { ...item.config, proxy } } : item),
   }, `proxy:${pluginId}`, language === 'zh' ? '代理设置已保存' : 'Proxy settings saved') : Promise.resolve(false);
@@ -378,9 +367,20 @@ export function PluginManagementPanel({
     finally { setBusy(''); }
   };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
+  const renderPage = (page: Page, parent?: Page) => {
+  const selectedPlugin = page.kind === 'plugin' ? plugins.find(plugin => plugin.id === page.pluginId) : undefined;
+  const backLabel = parent?.kind === 'marketplace' ? (language === 'zh' ? '返回市场' : 'Back to marketplace')
+    : parent?.kind === 'manage' ? (language === 'zh' ? '返回管理' : 'Back to management')
+    : (language === 'zh' ? '返回插件' : 'Back to plugins');
+
+  if (page.kind === 'mcp') return <div className="plugin-mcp-settings">
+    <button type="button" className="plugin-back" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
+    {renderMcp?.(page.serverId)}
+  </div>;
+
   if (presentation === 'network' || page.kind === 'network') return <div className="plugin-detail-page plugin-network-page">
     {presentation !== 'network' && <>
-    <button type="button" className="plugin-back" onClick={() => setPage({ kind: 'catalog' })}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugins'}</button>
+    <button type="button" className="plugin-back" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
     <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件设置' : 'Plugin settings'}</h2></header>
     {configuration && <PluginSearchSettings language={language} value={configuration.searchResultLimit ?? DEFAULT_SEARCH_RESULT_LIMIT}
       busy={Boolean(busy)} onSave={saveSearchLimit}/>}
@@ -408,11 +408,11 @@ export function PluginManagementPanel({
     </>}
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
   </div>;
-  if (page.kind === 'accounts') return <AccountsPanel language={language} onBack={() => setPage({ kind: 'plugin', pluginId: page.pluginId })}/>;
+  if (page.kind === 'accounts') return <AccountsPanel language={language} onBack={back}/>;
   if (page.kind === 'marketplace') {
     return <><PluginMarketplacePanel language={language}
       onOpenNetwork={() => setMarketProxyOpen(true)}
-      onBack={() => setPage({ kind: 'catalog' })}
+      onBack={back}
       onOpenBundled={pluginId => setPage({ kind: 'plugin', pluginId })}
       onNotify={onNotify}
       onInstalled={async id => {
@@ -432,10 +432,14 @@ export function PluginManagementPanel({
   }
   if (page.kind === 'workspace') {
     const plugin = plugins.find(item => item.id === page.pluginId);
-    return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={() => setPage({ kind: 'plugin', pluginId: page.pluginId })}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugin'}</button>
+    return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugin'}</button>
       {plugin?.installed && plugin.enabled ? <RuntimePluginWorkspace id={page.extensionId} language={language}/> : <p>{language === 'zh' ? '请先启用插件。' : 'Enable this plugin first.'}</p>}
     </div>;
   }
+  if (page.kind === 'plugin' && !selectedPlugin) return <div className="plugin-detail-page">
+    <button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
+    <p role="status">{language === 'zh' ? '此插件已不可用，请返回列表刷新。' : 'This plugin is no longer available. Return to the list to refresh.'}</p>
+  </div>;
   if (selectedPlugin) {
     return (
       <PluginDetail
@@ -450,7 +454,8 @@ export function PluginManagementPanel({
         onManageAccounts={() => setPage({ kind: 'accounts', pluginId: selectedPlugin.id })}
         busy={Boolean(busy)}
         error={error}
-        onBack={() => setPage({ kind: 'catalog' })}
+        onBack={back}
+        backLabel={backLabel}
         onReplace={replacePlugin}
         onPersist={(plugin, message) => configuration && void persist({
           ...configuration,
@@ -469,7 +474,7 @@ export function PluginManagementPanel({
         loading={busy === `skill:${page.skillName}`}
         error={error}
         enabled={!disabledSkillNames.has(page.skillName)}
-        onBack={() => setPage({ kind: 'catalog' })}
+        onBack={back}
         onToggle={(enabled) => onToggleSkill(page.skillName, enabled)}
       />
     );
@@ -486,11 +491,11 @@ export function PluginManagementPanel({
         connections={filteredConnections}
         mcpLoading={mcpLoading}
         mcpError={mcpError}
-        onOpenMcp={onOpenMcp}
+        onOpenMcp={openMcp}
         onRefreshMcp={() => void loadConnections()}
         busy={Boolean(busy)}
         onQuery={setQuery}
-        onBack={() => setPage({ kind: 'catalog' })}
+        onBack={back}
         onOpen={(plugin) => setPage({ kind: 'plugin', pluginId: plugin.id })}
         onPersist={(next, message) => void persist(next, 'manage', message)}
         onUninstall={plugin => void uninstallPlugin(plugin)}
@@ -563,7 +568,7 @@ export function PluginManagementPanel({
           connections={filteredConnections}
           mcpLoading={mcpLoading}
           mcpError={mcpError}
-          onOpenMcp={onOpenMcp}
+          onOpenMcp={openMcp}
           query={query}
           busy={Boolean(busy)}
           onQuery={setQuery}
@@ -588,6 +593,17 @@ export function PluginManagementPanel({
       )}
     </div>
   );
+  };
+
+  return <div ref={rootRef} className="plugin-navigation">
+    {entries.map((entry, index) => {
+      const hidden = index !== entries.length - 1;
+      return <div key={entry.id} className="plugin-navigation-page" data-plugin-page={entry.page.kind}
+        hidden={hidden} inert={hidden} aria-hidden={hidden}>
+        {renderPage(entry.page, entries[index - 1]?.page)}
+      </div>;
+    })}
+  </div>;
 }
 
 function PluginCatalog({ language, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, query, busy, onQuery, onOpen, onInstall }: {
@@ -866,7 +882,7 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
+function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, backLabel, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
   onOpenWorkspace: (id: string) => void;
   onOpenPrompt?: (prompt: string) => void;
   onUninstall: () => void;
@@ -879,12 +895,13 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
   busy: boolean;
   error: string;
   onBack: () => void;
+  backLabel: string;
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
   return (
     <div className="plugin-detail-page">
-      <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回插件' : 'Back to plugins'}</button>
+      <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{backLabel}</button>
       <header className="plugin-detail-hero">
         <PluginLogo plugin={plugin} large />
         <div><h2>{plugin.name}</h2><p>{plugin.description}</p></div>
@@ -906,7 +923,7 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
         <PluginProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
       </details>}
       {plugin.installed && <PluginHookTrust plugin={plugin} language={language} busy={busy} onPersist={onPersist} />}
-      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
+      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
       {plugin.id === 'computer-use' && plugin.installed && <section className="plugin-detail-section"><h3>{language === 'zh' ? '配置' : 'Settings'}</h3><label className="plugin-path-setting"><span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span><input value={String(plugin.config.screenshotDirectory ?? '')} placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Use the system temp directory when empty'} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, screenshotDirectory: event.currentTarget.value } })} /></label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.yieldToUser !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, yieldToUser: event.currentTarget.checked } })} />{language === 'zh' ? '用户输入优先（检测到操作时主动让行）' : 'Yield when user input is detected'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.restorePointer !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, restorePointer: event.currentTarget.checked } })} />{language === 'zh' ? '鼠标操作后恢复原位置' : 'Restore pointer after mouse actions'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowOpenApp !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowOpenApp: event.currentTarget.checked } })} />{language === 'zh' ? '允许启动应用' : 'Allow opening apps'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowWindowClose !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowWindowClose: event.currentTarget.checked } })} />{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</label><button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? '配置已保存' : 'Settings saved')}>{language === 'zh' ? '保存配置' : 'Save settings'}</button></section>}
       {plugin.id === 'chrome' && plugin.installed && (
         <ChromeConnectionSettings

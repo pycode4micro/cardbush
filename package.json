@@ -49,6 +49,7 @@
     "test:plugin-install-transaction": "tsc -p tsconfig.node.json && node scripts/test-plugin-install-transaction.mjs",
     "test:plugin-local-install": "tsc -p tsconfig.node.json && node --test scripts/test-plugin-local-install.mjs && node scripts/test-plugin-install-transaction.mjs",
     "test:plugin-detail-races": "node scripts/run-plugin-detail-races-test.mjs",
+    "test:plugin-appearance": "node scripts/test-plugin-appearance.mjs",
     "test:plugin-connections": "node scripts/test-plugin-connections.mjs && node scripts/test-plugin-connections-ui.mjs",
     "test:plugin-marketplaces": "tsc -p tsconfig.node.json && node --test scripts/test-plugin-market-downloads.mjs scripts/test-plugin-archives.mjs && node scripts/test-plugin-marketplaces.mjs && node scripts/test-plugin-acquisition.mjs",
     "test:plugin-extensions": "npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-mcp-client && npm run build --workspace @cardbush/product-host && tsc -p tsconfig.node.json && node scripts/test-plugin-extensions.mjs && node scripts/test-plugin-portable.mjs && node scripts/test-plugin-openai-hooks.mjs && node scripts/test-plugin-compatibility.mjs",

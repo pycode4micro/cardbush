@@ -20,15 +20,16 @@ const devRunner = read('scripts', 'run-electron-dev.mjs');
 const electronRuntime = read('scripts', 'cardbush-electron-runtime.mjs');
 const iconGenerator = read('scripts', 'generate-cardbush-icon.cjs');
 const windowsIcon = fs.readFileSync(path.join(process.cwd(), 'assets', 'cardbush.ico'));
+const windowAppearance = read('electron', 'windowAppearance.ts');
 
 assert.match(main, /Notification\.isSupported\(\)/);
 assert.match(main, /dark:\s*'#1a1a1a'/);
 assert.doesNotMatch(main, /dark:\s*'#ff1a1a1a'/);
-assert.match(main, /target\.setBackgroundColor\(background\)/);
-assert.match(main, /target\.contentView\.setBackgroundColor\(background\)/);
+assert.match(windowAppearance, /target\.setBackgroundColor\(opaqueBackground\)/);
+assert.match(windowAppearance, /target\.contentView\.setBackgroundColor\(opaqueBackground\)/);
 assert.match(
-  main,
-  /target\.setBackgroundMaterial\('none'\)[\s\S]*?target\.setBackgroundColor\(background\)/,
+  windowAppearance,
+  /target\.setBackgroundMaterial\('none'\)[\s\S]*?target\.setBackgroundColor\(opaqueBackground\)/,
   'native material must be applied before the final themed HWND background',
 );
 assert.match(main, /stage:\s*'background-applied'/);
@@ -138,8 +139,8 @@ assert.match(
 );
 assert.match(
   app,
-  /const target = chat\.conversations\.find[\s\S]*?setOnlyTalkMode\(taskMode\)[\s\S]*?chat\.openConversation\(normalized\)/,
-  'Opening a notification must restore its task or project scope before selecting the session',
+  /const target = chat\.conversations\.find[\s\S]*?if \(!target\) return false;[\s\S]*?chat\.openConversation\(normalized\)/,
+  'Notification navigation uses the shared conversation opener and waits for a known session',
 );
 assert.match(sidebar, /conversation-attention-indicator/);
 assert.match(sidebar, /已完成，待查看/);

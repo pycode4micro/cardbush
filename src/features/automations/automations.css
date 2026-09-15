@@ -7,7 +7,9 @@
 .automation-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .automation-actions button { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; background: var(--surface); color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
 .automation-actions button:disabled { opacity: .45; cursor: default; }
-.automation-panel button.primary-button { background: var(--accent); color: var(--accent-text, #111); }
+.automation-panel button.primary-button { background: var(--action); color: var(--on-action); border-color: var(--action); }
+.automation-panel button.primary-button:hover:not(:disabled) { background: var(--action-hover); border-color: var(--action-hover); }
+.automation-panel button.primary-button:focus-visible { outline: 2px solid var(--action); outline-offset: 3px; }
 .automation-form, .automation-card { border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; background: var(--surface); }
 .automation-form h2, .automation-card h2 { font-size: 17px; margin: 0 0 12px; overflow-wrap: anywhere; }
 .automation-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }

@@ -1,13 +1,13 @@
-.mcp-request-dialog { box-sizing: border-box; width: min(540px, calc(100vw - 40px)); max-height: 85vh; overflow: auto; padding: 24px; border: 1px solid var(--border, #454545); border-radius: 14px; color: var(--text, #eee); background: var(--panel, #1b1d1c); }
+.mcp-request-dialog { box-sizing: border-box; width: min(540px, calc(100vw - 40px)); max-height: 85vh; overflow: auto; padding: 24px; border: 1px solid var(--border, #454545); border-radius: 14px; color: var(--text, #eee); background: var(--surface); }
 .mcp-request-dialog *, .plugin-mcp-settings input, .plugin-mcp-settings select { box-sizing: border-box; }
 .mcp-request-dialog::backdrop { background: #0009; }
 .mcp-request-dialog h2 { font-size: 19px; margin: 0 0 8px; }
 .mcp-request-dialog p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mcp-request-origin, .mcp-form-field small { opacity: .7; font-size: 12px; }
 .mcp-form-field, .mcp-request-url { display: grid; gap: 6px; margin: 16px 0; }
-.mcp-form-field input, .mcp-form-field select, .plugin-mcp-settings input, .plugin-mcp-settings select { min-width: 0; width: 100%; padding: 8px 10px; border: 1px solid var(--border, #454545); border-radius: 7px; background: var(--panel, #1b1d1c); color: inherit; }
+.mcp-form-field input, .mcp-form-field select, .plugin-mcp-settings input, .plugin-mcp-settings select { min-width: 0; width: 100%; padding: 8px 10px; border: 1px solid var(--border, #454545); border-radius: 7px; background: var(--surface); color: inherit; }
 .mcp-request-dialog footer, .plugin-mcp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.mcp-request-dialog button, .plugin-mcp-actions button, .plugin-mcp-primary-actions button, .openai-account-panel header button, .plugin-mcp-settings .mcp-fields button { border: 1px solid var(--border, #454545); border-radius: 7px; padding: 7px 12px; color: inherit; background: var(--panel-strong, #303431); cursor: pointer; font: inherit; font-size: 13px; }
+.mcp-request-dialog button, .plugin-mcp-actions button, .plugin-mcp-primary-actions button, .openai-account-panel header button, .plugin-mcp-settings .mcp-fields button { border: 1px solid var(--border, #454545); border-radius: 7px; padding: 7px 12px; color: inherit; background: var(--surface-raised); cursor: pointer; font: inherit; font-size: 13px; }
 .mcp-request-url code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .plugin-mcp-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .plugin-mcp-heading h3 { margin: 0; }
@@ -21,7 +21,7 @@
 .plugin-mcp-status[data-ready=true], .openai-account-identity [data-connected=true] { opacity: 1; color: var(--success, #65c59b); }
 .plugin-mcp-status::before, .openai-account-identity [role=status]::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: middle; }
 .plugin-mcp-primary-actions { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 8px; }
-.plugin-mcp-settings .mcp-primary-action, .openai-account-panel .mcp-primary-action { background: var(--panel-strong, #303431); border-color: var(--text-secondary, #80908a); }
+.plugin-mcp-settings .mcp-primary-action, .openai-account-panel .mcp-primary-action { background: var(--surface-raised); border-color: var(--text-mid); }
 .plugin-mcp-settings button:disabled, .openai-account-panel button:disabled { opacity: .45; cursor: default; }
 .plugin-mcp-advanced { margin-top: 10px; font-size: 12px; }
 .plugin-mcp-advanced > summary, .openai-account-options > summary { width: fit-content; cursor: pointer; opacity: .65; }
@@ -37,13 +37,13 @@
 .plugin-mcp-error { margin-top: 12px; font-size: 12px; line-height: 1.6; }
 .plugin-mcp-error summary { cursor: pointer; }
 .plugin-mcp-error p { overflow-wrap: anywhere; white-space: pre-wrap; margin: 6px 0; }
-.plugin-mcp-error[role=alert] { padding: 10px 12px; border-left: 2px solid var(--error, #d88480); background: var(--panel, #1b1d1c); border-radius: 4px; }
-.plugin-mcp-save { position: sticky; bottom: 0; padding: 12px 0; background: var(--panel, #1b1d1c); }
+.plugin-mcp-error[role=alert] { padding: 10px 12px; border-left: 2px solid var(--danger); background: var(--surface); border-radius: 4px; }
+.plugin-mcp-save { position: sticky; bottom: 0; padding: 12px 0; background: var(--surface); }
 .plugin-mcp-tool { display: grid; grid-template-columns: minmax(140px, 1fr) 130px; gap: 12px; align-items: center; margin: 8px 0; }
 .plugin-mcp-tool code { overflow-wrap: anywhere; }
 
 @media (max-width: 540px) { .plugin-mcp-service .mcp-fields { grid-template-columns: minmax(0, 1fr); } .plugin-mcp-service header { flex-wrap: wrap; } .plugin-mcp-tool { grid-template-columns: minmax(0, 1fr) 100px; } }
-.openai-account-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; border: 1px solid var(--border-color, #344144); border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; background: var(--bg-secondary, rgba(255,255,255,.025)); }
+.openai-account-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; background: var(--surface-raised); }
 .openai-account-panel header { grid-column: 1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .openai-account-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .openai-account-identity [role=status] { font-size: 12px; opacity: .7; }
