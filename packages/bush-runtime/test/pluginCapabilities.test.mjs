@@ -29,7 +29,7 @@ test('MCP discovery hides large catalogs, retains permission checks and cannot c
   const req = request(registry, { metadata: { mcpToolDiscovery: true } });
   assert.deepEqual(modelToolDefinitions(registry, req).map(tool => tool.name), ['mcp_search', 'mcp_call']);
   const runner = coordinator(registry, async permission => { asks++; return { decision: 'deny', grantedCapabilityIds: [] }; });
-  assert.equal((await call(runner, req, 'mcp__service42__lookup', {})).error.code, 'tool_not_exposed');
+  assert.equal((await call(runner, req, 'mcp__service42__lookup', {})).error.code, 'mcp_discovery_required');
   const searched = await call(runner, req, 'mcp_search', { action: 'load', query: 'mcp__service42__lookup' });
   assert.equal(searched.result.matches.length, 1); assert.ok(searched.result.matches[0].inputSchema);
   synchronizeMcpDiscovery(registry, req, [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }]);

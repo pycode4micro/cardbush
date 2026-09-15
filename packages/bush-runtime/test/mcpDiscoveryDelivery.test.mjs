@@ -29,6 +29,8 @@ test('search keeps long descriptions compact and only an explicitly loaded schem
   const content = projectMcpDiscoveryResult(JSON.stringify(result));
   const view = JSON.parse(content);
   assert.equal(view.action, 'search');
+  assert.ok(view.matches.every(tool => tool.loaded === false));
+  assert.match(view.next_step, /action="load"/);
   assert.equal(view.catalog, undefined, 'one catalog, without duplicate entries');
   assert.ok(view.matches.some(tool => tool.name === 'mcp__seedream__generate'));
   assert.ok(view.matches.every(tool => tool.inputSchema === undefined && tool.description.length <= 512));
@@ -42,9 +44,11 @@ test('search keeps long descriptions compact and only an explicitly loaded schem
     { role: 'tool', toolCallId: 'load', content: projectMcpDiscoveryResult(JSON.stringify(full)) });
   synchronizeMcpDiscovery(registry, request, messages);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), true);
+  assert.equal((await search({ query: 'mcp__seedream__generate' })).matches[0].loaded, true);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__fixture__aaa_long'), false);
   synchronizeMcpDiscovery(registry, request, []);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), false, 'compaction cannot retain a hidden schema');
+  assert.equal((await search({ query: 'mcp__seedream__generate' })).matches[0].loaded, false);
 });
 
 test('exact names rank before description mentions; pagination and isolated large loads remain complete', async () => {

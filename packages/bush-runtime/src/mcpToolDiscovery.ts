@@ -82,6 +82,14 @@ export function mcpToolWasDiscovered(registry: ToolRegistry, request: ModelReque
 }
 export function clearMcpDiscovery(registry: ToolRegistry, request: ModelRequest) { selections(registry).delete(key(request)); }
 
+/** A recoverable schema prerequisite, derived from the existing discovery state. */
+export function mcpSchemaRequiredError(name: string) {
+  return Object.assign(new Error('This MCP tool is available, but its current schema is not loaded in the model context. Call mcp_search with the action and exact query in details.load, read the returned schema, then retry the tool (using mcp_call when available). The tool has not executed; this does not indicate a service connection failure.'), {
+    code: 'mcp_discovery_required',
+    details: { toolName: name, load: { name: 'mcp_search', arguments: { action: 'load', query: name } } },
+  });
+}
+
 /** Rebuild from the exact model context after restart or compaction, without rewriting history.
  * A summary, compact reference or archived preview cannot substitute for a full loaded schema.
  */
@@ -219,7 +227,7 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
           name: candidate.definition.name, description: candidate.definition.description.slice(0, 512),
           ...(candidate.definition.description.length > 512 ? { descriptionTruncated: true } : {}),
           server: candidate.server, tool: candidate.tool,
-          ...(loaded.get(candidate.definition.name) === version ? { loaded: true } : {}),
+          loaded: loaded.get(candidate.definition.name) === version,
         };
         const app = registry.resolve(candidate.definition.name)?.mcpApp;
         const reference = { name: candidate.definition.name, server: candidate.server, tool: candidate.tool, revision: version,
@@ -229,6 +237,9 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       remember(registry, request, loaded);
       const next = context.input.offset + matches.length;
       return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, action: context.input.action,
+        next_step: context.input.action === 'load'
+          ? 'Read this complete schema, then call the tool using its exact name and arguments (mcp_call when available).'
+          : 'Search results are summaries, not tool schemas. For loaded=false, call mcp_search with action="load" and query set to the exact name. Then call using the returned schema (mcp_call when available).',
         ...(context.input.action === 'load' ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
         matches, total: context.input.action === 'load' ? 1 : candidates.length,
         more: context.input.action !== 'load' && candidates.length > next,
@@ -245,9 +256,11 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
     },
     execute: async context => {
       const mcp = registry.resolve(context.input.name)?.mcpHook;
-      if (!context.turn || !mcp || !available(registry, context.turn.request, context.input.name) ||
-        !mcpToolWasDiscovered(registry, { ...context.turn.request, metadata: { ...context.turn.request.metadata, mcpToolDiscovery: true } }, context.input.name)) {
-        throw Object.assign(new Error('Load the current schema with mcp_search action=load and query set to its exact name. It may have changed, become unavailable, or left context after compaction.'), { code: 'mcp_discovery_required' });
+      if (!context.turn || !mcp || !available(registry, context.turn.request, context.input.name)) {
+        throw Object.assign(new Error('This MCP tool is not available to this turn. Use mcp_search to check the current catalog; loading a schema cannot restore an unavailable tool.'), { code: 'tool_not_exposed' });
+      }
+      if (!mcpToolWasDiscovered(registry, { ...context.turn.request, metadata: { ...context.turn.request.metadata, mcpToolDiscovery: true } }, context.input.name)) {
+        throw mcpSchemaRequiredError(context.input.name);
       }
       return { mcp: { server: mcp.server, tool: mcp.tool, name: context.input.name }, result: await context.invokeTool(context.input.name, context.input.arguments) };
     },

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { mcpToolWasDiscovered } from './mcpToolDiscovery.js';
+import { mcpSchemaRequiredError, mcpToolWasDiscovered } from './mcpToolDiscovery.js';
 import {
   BUSH_ACTION_MANIFEST_PROTOCOL,
   type ActionManifest,
@@ -91,7 +91,7 @@ export class ToolExecutionCoordinator {
   ): Promise<ToolExecutionOutcome> {
     if (
       turn &&
-      (!turn.request.tools.some((definition) => definition.name === toolCall.name) || !mcpToolWasDiscovered(this.#registry, turn.request, toolCall.name))
+      !turn.request.tools.some((definition) => definition.name === toolCall.name)
     ) {
       return failedResult(
         "tool_not_exposed",
@@ -111,6 +111,10 @@ export class ToolExecutionCoordinator {
     const childDenial = childAgentToolDenial(turn?.request, registration);
     if (childDenial) return failedResult(childDenial.code, childDenial.message, undefined,
       { agentRole: 'child', toolName: toolCall.name }, 'permission');
+    if (turn && !mcpToolWasDiscovered(this.#registry, turn.request, toolCall.name)) {
+      const error = mcpSchemaRequiredError(toolCall.name);
+      return failedResult(error.code, error.message, undefined, error.details);
+    }
 
     const hooks = registration.delegatesToolExecution ? undefined : this.#hooks;
     let parsedArguments: unknown;
