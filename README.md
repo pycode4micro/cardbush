@@ -10,10 +10,12 @@ Current release: **1.0.0-beta.1**. Choose the package for your operating system.
 
 | System | Download | Suitable computers |
 | --- | --- | --- |
-| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-windows-x64.exe) | Intel / AMD 64-bit |
+| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-windows-x64-b7e0b7d.exe) | Intel / AMD 64-bit |
 | Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x86_64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
+
+The Windows installer was updated on September 15, 2026 from commit [`b7e0b7d`](https://github.com/pycode4micro/cardbush/commit/b7e0b7ded0542a0f9e7558aac93ca25762159a42), with consistent action colors, restored plugin navigation state and Windows icon fixes. Use `SHA256SUMS-win32-x64-b7e0b7d.txt` to verify this build. The Linux download remains the original beta build.
 
 Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8 and macOS packages are not part of this release. These beta packages are unsigned.
 
