@@ -1,7 +1,6 @@
 import {
   CheckCircle2,
   Circle,
-  Edit3,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -18,12 +17,10 @@ import {
 import type {
   AppLanguage,
   AppSection,
-  ConversationSummary,
   SkillDetail,
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
-import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { AutomationPanel } from '../automations/AutomationPanel';
 
 import { RuntimeDelegationSurface } from '../../plugins/runtimeWorkspaces';
@@ -33,13 +30,11 @@ export function FeatureContentPanel({
   section,
   activeProjectDir,
   workflowValidationAvailable,
-  conversations,
   skills,
   disabledSkillNames,
   onToggleSkill,
   onReloadSkills,
   onLoadSkillDetail,
-  onCreateConversation,
   onCreateAutomation,
   onOpenConversation,
 }: {
@@ -47,27 +42,15 @@ export function FeatureContentPanel({
   section: AppSection;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
-  conversations: ConversationSummary[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onCreateConversation: () => void;
   onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
   if (section === 'automations') return <AutomationPanel language={language} onOpenConversation={onOpenConversation} onCreateAutomation={onCreateAutomation} />;
-  if (section === 'search') {
-    return (
-      <SearchPanel
-        language={language}
-        conversations={conversations}
-        onCreateConversation={onCreateConversation}
-        onOpenConversation={onOpenConversation}
-      />
-    );
-  }
   if (section === 'skills') {
     return (
       <SkillsPanel
@@ -102,65 +85,6 @@ function FeaturePanelLoading({ language }: { language: AppLanguage }) {
     <div className="feature-content feature-loading">
       <LoaderCircle size={18} />
       <span>{language === 'zh' ? '正在加载...' : 'Loading...'}</span>
-    </div>
-  );
-}
-
-function SearchPanel({
-  language,
-  conversations,
-  onCreateConversation,
-  onOpenConversation,
-}: {
-  language: AppLanguage;
-  conversations: ConversationSummary[];
-  onCreateConversation: () => void;
-  onOpenConversation: (conversationId: string) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const normalizedQuery = query.trim().toLowerCase();
-  const results = useMemo(
-    () =>
-      conversations.filter((conversation) => {
-        if (!normalizedQuery) {
-          return true;
-        }
-        return `${conversationDisplayTitle(conversation.title)} ${conversation.preview}`
-          .toLowerCase()
-          .includes(normalizedQuery);
-      }),
-    [conversations, normalizedQuery],
-  );
-
-  return (
-    <div className="feature-content">
-      <div className="feature-toolbar">
-        <div className="search-box">
-          <Search size={18} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={language === 'zh' ? '搜索标题或摘要' : 'Search titles or summaries'}
-          />
-        </div>
-        <button className="primary-button" type="button" onClick={onCreateConversation}>
-          <Edit3 size={16} />
-          {language === 'zh' ? '新会话' : 'New chat'}
-        </button>
-      </div>
-      <div className="result-stack">
-        {results.map((conversation) => (
-          <button
-            className="result-card result-card-button"
-            key={conversation.id}
-            type="button"
-            onClick={() => onOpenConversation(conversation.id)}
-          >
-            <h3>{conversationDisplayTitle(conversation.title)}</h3>
-            <p>{conversation.preview}</p>
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

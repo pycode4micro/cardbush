@@ -43,12 +43,14 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-dark' 
     assert.equal(await run('appendRow === document.querySelector(".message-row.streaming")'), true, 'next segment retains the assistant row');
     assert.equal(await run('appendParagraph.isConnected'), true, 'previous segment remains mounted');
   }
+  await until("Boolean(document.querySelector('[data-segment-id=append-round-5] .markdown-content p'))", 'latest buffered segment visible');
   await run(`window.appendTail = document.querySelector('[data-segment-id="append-round-5"] .markdown-content p'); void 0;`);
   for (let i = 0; i < 8; i++) {
     await run(`appendSegments = appendSegments.map((segment, index) => index === appendSegments.length - 1 ? { ...segment, content: segment.content + ' More streamed text.' } : segment); renderAppend();`);
     await pause(40);
     assert.equal(await run('appendTail.isConnected && appendParagraph.isConnected'), true, 'token updates keep both current and historical paragraph nodes');
   }
+  await until("appendTail.textContent.endsWith('More streamed text.') && appendTail.textContent.split('More streamed text.').length === 9", 'all buffered text delivered');
   await run('cancelAnimationFrame(appendFrame)');
   assert.equal(await run('appendList === document.querySelector(".message-list")'), true);
   const frames = await run('appendSnapshots');
@@ -69,6 +71,7 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-dark' 
   await pause(180);
   const detachedTop = await run('appendList.scrollTop');
   await run(`appendSegments = [...appendSegments, { id: 'append-detached', role: 'assistant', turnId: 'append-turn', content: 'Do not move a reader viewing history.' }]; renderAppend();`);
+  await until("Boolean(document.querySelector('[data-segment-id=append-detached]'))", 'detached update delivered');
   await pause(250);
   assert.ok(Math.abs(await run('appendList.scrollTop') - detachedTop) < 2, 'appending respects a reader detached from the bottom');
   await run(`

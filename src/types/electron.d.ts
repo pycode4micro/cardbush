@@ -145,12 +145,14 @@ declare global {
       onOpenAiAccountChanged: (callback: () => void) => () => void;
       savePluginConnections: (input: { pluginId: string; expectedRevision: number; connections: Record<string, unknown>; secrets?: Record<string, string | null> }) => Promise<{ saved: boolean; configurationRevision: number; connections: Record<string, unknown>; applicationError?: string; runtimeError?: string }>;
       onMcpRequestsChanged: (callback: () => void) => () => void;
+      pluginTroubleshootingContext: (pluginId: string, componentId: string) => Promise<import('../../electron/pluginTroubleshooting.mjs').PluginTroubleshootingContext>;
       automationCommand: (input: import('@cardbush/bush-protocol').AutomationCommand) => Promise<unknown>;
       onAutomationChanged: (callback: () => void) => () => void;
       listSkills: () => Promise<unknown[]>;
       onCapabilityCatalogChanged?: (callback: () => void) => () => void;
       readSkill: (skillName: string) => Promise<unknown>;
       installLocalPlugin: (kind?: 'directory' | 'zip') => Promise<{ id: string; manifestPath: string } | null>;
+      uninstallPlugin: (pluginId: string) => Promise<Record<string, unknown>>;
       pluginCommands: () => Promise<import('../types').PluginCommandSummary[]>;
       pluginMarketSources: () => Promise<PluginMarketSource[]>;
       addPluginMarket: (source: string) => Promise<PluginMarketSource>;

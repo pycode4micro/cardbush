@@ -1,0 +1,66 @@
+.conversation-search-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - clamp(48px, 16vh, 136px) - 24px);
+  margin: clamp(48px, 16vh, 136px) auto 24px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 56px color-mix(in srgb, var(--shadow) 200%, transparent);
+}
+
+.conversation-search-dialog[open] { display: flex; flex-direction: column; }
+.conversation-search-dialog::backdrop { background: rgb(0 0 0 / 16%); }
+.conversation-search-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--text-mid);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.conversation-search-header input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 14px;
+}
+.conversation-search-header input::placeholder { color: var(--text-mid); }
+.conversation-search-close { padding: 4px; color: var(--text-mid); background: transparent; border-radius: 6px; }
+.conversation-search-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px 8px; }
+.conversation-search-label { padding: 10px 8px 5px; color: var(--text-mid); font-size: 11px; font-weight: 600; }
+.conversation-search-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 20px;
+}
+.conversation-search-option[aria-selected="true"], .conversation-search-close:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.conversation-search-icon { display: flex; align-items: center; flex: 0 0 16px; color: var(--text-mid); }
+.conversation-search-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-search-project { flex: 0 1 auto; max-width: 28%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-mid); font-size: 12px; }
+.conversation-search-dialog kbd { flex-shrink: 0; padding: 1px 5px; border-radius: 5px; color: var(--text-mid); background: color-mix(in srgb, var(--text) 6%, transparent); font-family: inherit; font-size: 10px; line-height: 16px; }
+.conversation-search-empty { margin: 0; padding: 16px 8px; color: var(--text-mid); font-size: 12px; }
+.conversation-search-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media (max-height: 520px) {
+  .conversation-search-dialog { margin-top: 42px; max-height: calc(100dvh - 58px); }
+}

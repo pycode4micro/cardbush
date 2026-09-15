@@ -69,7 +69,7 @@ export function SettingsKeyboardPanel({ language }: { language: AppLanguage }) {
               onClick={() => { setRecording(item.id); setError(''); }} onBlur={() => setRecording(null)}
               onKeyDown={event => {
                 if (recording !== item.id || event.nativeEvent.isComposing || event.keyCode === 229) return;
-                if (event.key === 'Tab') { setRecording(null); return; }
+                if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey) { setRecording(null); return; }
                 event.preventDefault(); event.stopPropagation();
                 if (event.key === 'Escape') { setRecording(null); setError(''); return; }
                 if (event.repeat) return;

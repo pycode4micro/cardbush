@@ -10,6 +10,7 @@ module.exports = async ({ run, until }) => {
       recordAssistantLogicFeedback: async () => {},
       updateShadowConversationMode: (id, mode) => new Promise(resolve => { window.finishShadowMode = () => resolve({ id, mode, workspaceDir: 'D:/fixture' }); }),
       streamShadowConversationMessage: request => new Promise(resolve => {
+        window.appendShadowReply = request.onDelta;
         window.finishShadowReply = () => { request.onDone({ content: 'Shadow fixture completed', createdAt: new Date().toISOString() }); resolve(); };
         request.signal.addEventListener('abort', () => resolve(), { once: true });
       }),
@@ -36,8 +37,15 @@ module.exports = async ({ run, until }) => {
   await run(`document.querySelector('${send}').click()`);
   await until(`document.querySelector('${send}.stop') !== null`, 'active reply shows Stop');
   assert.equal(await animation(), 'none', 'Stop is not a spinner');
+  assert.equal(await run('getComputedStyle(document.querySelector(".shadow-window-message.streaming")).contentVisibility'), 'visible', 'an active Shadow turn keeps its real height');
+  await run('appendShadowReply("Shadow first"); appendShadowReply(" snapshot")');
+  await until('document.querySelector(".shadow-window-message.streaming .markdown-content p")?.textContent === "Shadow first snapshot"', 'Shadow commits buffered deltas');
+  await run('window.shadowParagraph = document.querySelector(".shadow-window-message.streaming .markdown-content p"); appendShadowReply(" grows")');
+  await until('shadowParagraph.textContent === "Shadow first snapshot grows"', 'Shadow delivers the next snapshot');
+  assert.equal(await run('shadowParagraph.isConnected'), true, 'Shadow updates retain the visible paragraph');
   await run('finishShadowReply()');
   await until(`document.querySelector('${send}:not(.stop)')?.disabled === true`, 'completed reply returns to idle Send');
+  assert.equal(await run('document.querySelector(".shadow-window-transcript").textContent.includes("Shadow fixture completed")'), true, 'completion flushes Shadow output');
   assert.equal(await animation(), 'none');
   await run(`document.querySelectorAll('.shadow-window-mode-switch button')[1].click()`);
   await until('typeof finishShadowMode === "function"', 'mode switch in flight');

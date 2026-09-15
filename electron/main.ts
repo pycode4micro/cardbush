@@ -47,12 +47,15 @@ import { windowsShellIconPath } from './windowsAppIdentity';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
 import { runAcquisitionCommand } from './pluginAcquisition';
-import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess } from './hostProcesses';
+import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess, setHostApplicationMemoryProvider } from './hostProcesses';
+import { applicationMemoryBytes, installPreviewResourceProtection, relievePreviewForMemoryPressure } from './previewResourceProtection';
 import { installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
 import { renameProjectDirectory } from './projectDirectories';
-import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
+import { isOfficePreviewPath } from './officePreview';
+import { checkOfficePreviewAdmission, officePreviewLimits } from './officePreviewAdmission';
+import { localFileResponse } from './localFileStream';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
-import { readFilePrefix, readHandleBytes } from './fileRead';
+import { readFilePrefix } from './fileRead';
 import { readTextPreviewResult, renderTextFilePreview } from './textPreview';
 import { ModelPreviewError, ModelPreviewService } from './modelPreview';
 import {
@@ -185,8 +188,10 @@ let productHostController: {
   configureMcpServer: (input: import('./productMcpManagement.mjs', { with: { 'resolution-mode': 'import' } }).McpServerPatch, signal?: AbortSignal) => Promise<unknown>;
   removeMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
   listPluginConnections: (pluginId?: string) => Promise<unknown>;
+  pluginTroubleshootingContext: (pluginId: string, componentId: string) => Promise<unknown>;
   configurePluginConnection: (input: unknown, signal?: AbortSignal) => Promise<unknown>;
   savePluginConnections: (input: unknown) => Promise<unknown>;
+  uninstallPlugin: (pluginId: string) => Promise<unknown>;
   requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
   resolveAutomationModel: (modelId: string) => Promise<Record<string, unknown>>;
   subagentModels: () => Promise<Array<{ id: string; model: string; maxContextTokens?: number; maxOutputTokens?: number }>>;
@@ -849,6 +854,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 }
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
+  installPreviewResourceProtection(target.webContents);
   installSandboxFrameNavigationGuard(target.webContents);
   target.webContents.setWindowOpenHandler(({ url }) => {
     if (sendUiPreviewToInspector(target, url)) {
@@ -2374,6 +2380,11 @@ ipcMain.handle('plugins:install-local', async (event, kind: unknown = 'directory
   if (!sourcePath) return null;
   return installLocalProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'));
 });
+ipcMain.handle('plugins:uninstall', async (event, pluginId: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (typeof pluginId !== 'string' || !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(pluginId)) throw new Error('Invalid plugin id.');
+  return (await ensureRuntimeServicesReady()).uninstallPlugin(pluginId);
+});
 
 let pluginMarketplaceService: PluginMarketplaceService | undefined;
 let pluginNetworkPromise: Promise<import('./pluginNetwork.mjs', { with: { 'resolution-mode': 'import' } }).PluginNetwork> | undefined;
@@ -2461,6 +2472,11 @@ function mcpDesktop() {
 ipcMain.handle('mcp:requests', event => { assertMainWindowSender(event.sender.id); return mcpDesktop().requests(); });
 ipcMain.handle('mcp:answer', (event, id: string, answer: unknown) => { assertMainWindowSender(event.sender.id); return mcpDesktop().answer(String(id), answer); });
 ipcMain.handle('mcp:open-request-url', (event, id: string) => { assertMainWindowSender(event.sender.id); return mcpDesktop().openRequestUrl(String(id)); });
+ipcMain.handle('plugins:troubleshooting-context', (event, pluginId: string, componentId: string) => {
+  assertMainWindowSender(event.sender.id);
+  if (!productHostController) throw new Error('Runtime is not ready.');
+  return productHostController.pluginTroubleshootingContext(String(pluginId), String(componentId));
+});
 ipcMain.handle('plugins:save-connections', async (event, input: unknown) => {
   assertMainWindowSender(event.sender.id);
   if (!productHostController) throw new Error('Runtime is not ready.');
@@ -3162,6 +3178,7 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  await setHostApplicationMemoryProvider(applicationMemoryBytes, relievePreviewForMemoryPressure);
   // CardBush owns its complete frameless application chrome. Removing
   // Electron's hidden default menu also removes browser-style reload
   // accelerators that can otherwise blank the integrated renderer mid-Turn.
@@ -3903,17 +3920,11 @@ function registerLocalFileProtocol() {
         if (!stats.isFile() || !isHighFidelityOfficePreviewPath(officePath)) {
           return new Response('Not found', { status: 404 });
         }
-        const bytes = request.method === 'HEAD'
-          ? null
-          : await fs.promises.readFile(officePath);
-        return new Response(bytes ? new Uint8Array(bytes) : null, {
-          headers: {
-            'content-type': contentTypeForPath(officePath),
-            'content-length': String(bytes?.length ?? stats.size),
-            'cache-control': 'no-store',
-            'x-content-type-options': 'nosniff',
-          },
-        });
+        try { await checkOfficePreviewAdmission(officePath); }
+        catch (error) { return new Response(error instanceof Error ? error.message : String(error), { status: 413 }); }
+        const source = await localFileResponse(officePath, contentTypeForPath(officePath), request, undefined, officePreviewLimits.compressedBytes);
+        source.headers.set('x-content-type-options', 'nosniff');
+        return source;
       }
       if (protocolHost === 'office-preview') {
         if (parsed.pathname.startsWith('/assets/')) {
@@ -3936,7 +3947,12 @@ function registerLocalFileProtocol() {
         }
         let previewHtml: string;
         try {
-          previewHtml = await renderOfficePreview(officePath);
+          await checkOfficePreviewAdmission(officePath);
+          const preview = await runHostCommand({ executable: process.execPath, args: [path.join(__dirname, 'officePreviewWorker.js'), officePath],
+            cwd: path.dirname(officePath), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, signal: request.signal,
+            memoryCeilingBytes: 512 * 1024 ** 2, maxOutputBytes: 24 * 1024 ** 2, timeoutMs: 20_000 });
+          if (preview.exitCode !== 0) throw new Error(preview.stderr || '预览未完成，可在外部应用打开文件。');
+          previewHtml = preview.stdout;
         } catch (error) {
           previewHtml = await renderTextFilePreview(
             officePath,
@@ -3974,46 +3990,9 @@ function registerLocalFileProtocol() {
         ? contentTypeForBytes(await readFilePrefix(normalizedPath, 512))
         : contentType;
       const range = byteRangeFromHeader(request.headers.get('range'), stats.size);
-      if (range) {
-        const length = range.end - range.start + 1;
-        let bytes: Buffer;
-        let resourceSize: number;
-        const handle = await fs.promises.open(normalizedPath, 'r');
-        try {
-          resourceSize = (await handle.stat()).size;
-          const readableLength = Math.max(0, Math.min(length, resourceSize - range.start));
-          bytes = await readHandleBytes(handle, readableLength, range.start);
-          if (bytes.length < readableLength) {
-            resourceSize = bytes.length > 0 ? range.start + bytes.length : (await handle.stat()).size;
-          }
-        } finally {
-          await handle.close();
-        }
-        if (bytes.length === 0) {
-          return new Response(null, { status: 416, headers: { 'content-range': `bytes */${resourceSize}` } });
-        }
-        return new Response(request.method === 'HEAD' ? null : new Uint8Array(bytes), {
-          status: 206,
-          headers: {
-            'content-type': responseType,
-            'content-length': String(bytes.length),
-            'content-range': `bytes ${range.start}-${range.start + bytes.length - 1}/${resourceSize}`,
-            'accept-ranges': 'bytes',
-            'cache-control': 'public, max-age=31536000, immutable',
-          },
-        });
-      }
-      const bytes = request.method === 'HEAD'
-        ? null
-        : await fs.promises.readFile(normalizedPath);
-      return new Response(bytes ? new Uint8Array(bytes) : null, {
-        headers: {
-          'content-type': responseType,
-          'content-length': String(bytes?.length ?? stats.size),
-          'accept-ranges': 'bytes',
-          'cache-control': 'public, max-age=31536000, immutable',
-        },
-      });
+      const response = await localFileResponse(normalizedPath, responseType, request, range ?? undefined);
+      response.headers.set('cache-control', 'public, max-age=31536000, immutable');
+      return response;
     } catch (error) {
       console.error(`[${localFileProtocol}] failed to load ${request.url}`, error);
       return new Response('Not found', { status: 404 });

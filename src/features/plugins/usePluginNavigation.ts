@@ -32,6 +32,10 @@ export function usePluginNavigation() {
   const reset = useCallback(() => {
     setEntries([{ id: ++nextId.current, page: { kind: 'catalog' }, scrollTop: 0 }]);
   }, []);
+  const dismissPlugin = useCallback((pluginId: string) => setEntries(items => {
+    const index = items.findIndex(entry => 'pluginId' in entry.page && entry.page.pluginId === pluginId);
+    return index > 0 ? items.slice(0, index) : items;
+  }), []);
 
   useLayoutEffect(() => {
     current.focusTarget?.focus({ preventScroll: true });
@@ -39,5 +43,5 @@ export function usePluginNavigation() {
     if (scroller) scroller.scrollTop = current.scrollTop;
   }, [current.id]);
 
-  return { rootRef, entries, page: current.page, open, back, reset };
+  return { rootRef, entries, page: current.page, open, back, reset, dismissPlugin };
 }

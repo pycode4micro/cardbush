@@ -6,7 +6,7 @@ import type {
 } from '@cardbush/bush-protocol';
 import type { ConversationStyleSettings } from '@cardbush/bush-product-agent';
 
-export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team' | 'automations';
+export type AppSection = 'chat' | 'skills' | 'subagents' | 'team' | 'automations';
 export type SettingsSection =
   | 'instructions'
   | 'profile'
@@ -422,6 +422,7 @@ export interface CardbushAppPlugin {
   }>;
   installed: boolean;
   enabled: boolean;
+  removalPending?: boolean;
   config: {
     proxy?: PluginProxySettings;
     screenshotDirectory?: string;

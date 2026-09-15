@@ -1,7 +1,7 @@
 import type { McpSnapshotResult } from '@cardbush/bush-protocol';
 import type { McpServerConfig } from '../types';
 
-export type McpConnectionState = 'connected' | 'auth_required' | 'configuration_required' | 'pending' | 'restarting' | 'unavailable' | 'disabled' | 'unknown';
+export type McpConnectionState = 'connected' | 'auth_required' | 'configuration_required' | 'pending' | 'waiting_for_resources' | 'restarting' | 'unavailable' | 'disabled' | 'unknown';
 export type McpConnectionOverview = {
   revision: number;
   servers: Pick<McpServerConfig, 'id' | 'name' | 'description' | 'enabled' | 'transport' | 'proxy'>[];
@@ -15,6 +15,7 @@ export function mcpConnectionState(
   if (!snapshot || snapshot.snapshotId !== 'cardbush-product-mcp') return enabled ? 'unknown' : 'disabled';
   if (revision !== undefined && snapshot.configurationRevision !== revision) return enabled ? 'unknown' : 'disabled';
   const server = snapshot.servers.find(item => item.id === id);
+  if (enabled && server?.updateState === 'waiting_for_resources') return 'waiting_for_resources';
   if (server?.updateState === 'queued' || server?.updateState === 'connecting') return 'restarting';
   if (server?.updateState === 'failed') return 'unavailable';
   if (server?.updateState === 'waiting_for_catalog') {

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -28,8 +29,11 @@ internal static class CardBushProcessHost
 
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--observe") return Observe(args[1]);
         string reportPath = args.Length > 9 ? args[9] : null;
         IntPtr globalJob = IntPtr.Zero, completionPort = IntPtr.Zero, parent = IntPtr.Zero;
+        EventWaitHandle pressureStop = null;
+        MemoryMappedFile pressureState = null;
         PROCESS_INFORMATION process = new PROCESS_INFORMATION();
         uint exitCode = FAILURE_EXIT;
         bool resumed = false;
@@ -39,6 +43,11 @@ internal static class CardBushProcessHost
         {
             if (args.Length < 11) throw new ArgumentException("Missing process resource host arguments.");
             string groupName = args[0];
+            int commandStart = args[10] == "--lease" ? 12 : 10;
+            string leaseId = commandStart == 12 ? args[11] : null;
+            if (leaseId != null && !ValidLease(leaseId)) throw new ArgumentException("Invalid resource lease.");
+            pressureState = MemoryMappedFile.CreateOrOpen(groupName + "-pressure-state", 16);
+            if (leaseId != null) pressureStop = new EventWaitHandle(false, EventResetMode.ManualReset, groupName + "-" + leaseId + "-pressure");
             uint parentPid = UInt32.Parse(args[1]);
             taskMemory = UInt64.Parse(args[2]);
             totalMemory = UInt64.Parse(args[3]);
@@ -72,7 +81,7 @@ internal static class CardBushProcessHost
                 }
                 finally { if (locked) mutex.ReleaseMutex(); }
             }
-            taskJob = CreateJobObject(IntPtr.Zero, null);
+            taskJob = CreateJobObject(IntPtr.Zero, leaseId == null ? null : groupName + "-" + leaseId);
             Check(taskJob != IntPtr.Zero, "Create task job");
             SetLimits(taskJob, taskMemory, taskProcesses, false);
 
@@ -88,9 +97,9 @@ internal static class CardBushProcessHost
             startup.hStdOutput = InheritStandardHandle(-11, inheritedHandles);
             startup.hStdError = InheritStandardHandle(-12, inheritedHandles);
             var commandLine = new StringBuilder();
-            for (int i = 10; i < args.Length; i++)
+            for (int i = commandStart; i < args.Length; i++)
             {
-                if (i > 10) commandLine.Append(' ');
+                if (i > commandStart) commandLine.Append(' ');
                 commandLine.Append(QuoteArgument(args[i]));
             }
             // No user code executes until BOTH jobs are assigned. Never fall back
@@ -119,11 +128,17 @@ internal static class CardBushProcessHost
 
             // Normal commands wake on process exit immediately. The two-second
             // watchdog runs only for live jobs; it never delays short commands.
-            IntPtr[] waits = new IntPtr[] { process.hProcess, parent };
+            IntPtr[] waits = pressureStop == null ? new IntPtr[] { process.hProcess, parent }
+                : new IntPtr[] { process.hProcess, parent, pressureStop.SafeWaitHandle.DangerousGetHandle() };
             while (true)
             {
-                uint wait = WaitForMultipleObjects(2, waits, false, 2000);
+                uint wait = WaitForMultipleObjects((uint)waits.Length, waits, false, 2000);
                 if (wait == 0) break;
+                if (wait == 2)
+                {
+                    Fail("resource_memory_pressure", "System memory became critically low. This task was stopped to keep the host responsive. Reduce the workload before retrying.");
+                    break;
+                }
                 if (wait == 1)
                 {
                     Fail("resource_parent_exited", "The Runtime exited; its task processes were stopped.");
@@ -133,7 +148,8 @@ internal static class CardBushProcessHost
                 UpdatePeakMemory();
                 var memory = new MEMORYSTATUSEX();
                 memory.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
-                if (GlobalMemoryStatusEx(ref memory) && memory.ullAvailPhys < criticalMemory && peakMemory >= 256UL * 1024 * 1024)
+                if (GlobalMemoryStatusEx(ref memory) && Math.Min(memory.ullAvailPhys, memory.ullAvailPageFile) < criticalMemory
+                    && CurrentMemory(taskJob) >= 256UL * 1024 * 1024 && ClaimFallbackRelief(groupName, pressureState))
                 {
                     Fail("resource_memory_pressure", "System memory became critically low. This task was stopped to keep the host responsive. Reduce the workload before retrying.");
                     break;
@@ -180,6 +196,8 @@ internal static class CardBushProcessHost
             if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
             foreach (IntPtr handle in inheritedHandles) CloseHandle(handle);
             if (parent != IntPtr.Zero) CloseHandle(parent);
+            if (pressureStop != null) pressureStop.Dispose();
+            if (pressureState != null) pressureState.Dispose();
             if (globalJob != IntPtr.Zero) CloseHandle(globalJob);
             if (completionPort != IntPtr.Zero) CloseHandle(completionPort);
             if (reportPath != null)
@@ -196,6 +214,94 @@ internal static class CardBushProcessHost
             }
         }
         return unchecked((int)(failureCode.Length > 0 ? FAILURE_EXIT : exitCode));
+    }
+
+    // An ephemeral shared watchdog clock prevents a monitor failure from either
+    // disabling protection or making every service terminate at the same time.
+    private static bool ClaimFallbackRelief(string group, MemoryMappedFile state)
+    {
+        using (var mutex = new Mutex(false, group + "-pressure-lock"))
+        {
+            bool locked = false;
+            try
+            {
+                try { locked = mutex.WaitOne(0); } catch (AbandonedMutexException) { locked = true; }
+                if (!locked) return false;
+                using (var view = state.CreateViewAccessor())
+                {
+                    long now = DateTime.UtcNow.Ticks;
+                    if (now - view.ReadInt64(0) < TimeSpan.TicksPerSecond * 6 || now - view.ReadInt64(8) < TimeSpan.TicksPerSecond * 6) return false;
+                    view.Write(8, now);
+                    return true;
+                }
+            }
+            finally { if (locked) mutex.ReleaseMutex(); }
+        }
+    }
+
+    private static bool ValidLease(string id) { Guid parsed; return Guid.TryParseExact(id, "D", out parsed); }
+
+    private static ulong CurrentMemory(IntPtr job)
+    {
+        MEMORY_USAGE usage;
+        Check(QueryMemoryInformation(job, 28, out usage, (uint)Marshal.SizeOf(typeof(MEMORY_USAGE)), IntPtr.Zero), "Query job memory");
+        return usage.JobMemory;
+    }
+
+    private static int Observe(string group)
+    {
+        if (!group.StartsWith("Local\\CardBush-Tasks-", StringComparison.Ordinal) || group.Length > 160) return 1;
+        try
+        {
+            using (var state = MemoryMappedFile.CreateOrOpen(group + "-pressure-state", 16))
+            using (var view = state.CreateViewAccessor())
+            {
+                string line;
+                while ((line = Console.ReadLine()) != null)
+                {
+                    if (line.Length > 16384) return 1;
+                    string[] parts = line.Split('\t');
+                    if (parts.Length != 2) return 1;
+                    if (parts[0] == "relieve" && ValidLease(parts[1]))
+                    {
+                        try
+                        {
+                            using (var stop = EventWaitHandle.OpenExisting(group + "-" + parts[1] + "-pressure"))
+                            { view.Write(8, DateTime.UtcNow.Ticks); stop.Set(); }
+                        }
+                        catch (WaitHandleCannotBeOpenedException) { }
+                        continue;
+                    }
+                    if (parts[0] != "sample") return 1;
+                    var jobs = new StringBuilder();
+                    string[] ids = parts[1].Split(',');
+                    if (ids.Length > 256) return 1;
+                    foreach (string id in ids)
+                    {
+                        if (!ValidLease(id)) return 1;
+                        IntPtr job = OpenJobObject(0x4, false, group + "-" + id);
+                        if (job == IntPtr.Zero) continue;
+                        try
+                        {
+                            if (jobs.Length > 0) jobs.Append(',');
+                            jobs.Append("{\"id\":").Append(JsonString(id)).Append(",\"memoryBytes\":").Append(CurrentMemory(job)).Append('}');
+                        }
+                        finally { CloseHandle(job); }
+                    }
+                    ulong total = 0;
+                    IntPtr global = OpenJobObject(0x4, false, group);
+                    if (global != IntPtr.Zero) { try { total = CurrentMemory(global); } finally { CloseHandle(global); } }
+                    var memory = new MEMORYSTATUSEX(); memory.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+                    Check(GlobalMemoryStatusEx(ref memory), "Query system memory");
+                    view.Write(0, DateTime.UtcNow.Ticks);
+                    Console.WriteLine("{\"availableMemoryBytes\":" + memory.ullAvailPhys + ",\"availableCommitBytes\":" + memory.ullAvailPageFile
+                        + ",\"totalMemoryBytes\":" + total + ",\"jobs\":[" + jobs + "]}");
+                    Console.Out.Flush();
+                }
+            }
+            return 0;
+        }
+        catch { return 1; }
     }
 
     private static void SetLimits(IntPtr job, ulong memory, uint processes, bool shared)
@@ -315,6 +421,7 @@ internal static class CardBushProcessHost
         public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
     }
     [StructLayout(LayoutKind.Sequential)] private struct CPU_LIMIT { public uint ControlFlags, CpuRate; }
+    [StructLayout(LayoutKind.Sequential)] private struct MEMORY_USAGE { public ulong JobMemory, PeakJobMemoryUsed; }
     [StructLayout(LayoutKind.Sequential)] private struct COMPLETION_PORT { public IntPtr CompletionKey, CompletionPort; }
     [StructLayout(LayoutKind.Sequential)] private struct PROCESS_INFORMATION
     {
@@ -336,6 +443,8 @@ internal static class CardBushProcessHost
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr OpenJobObject(uint access, bool inherit, string name);
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)] private static extern bool QueryMemoryInformation(IntPtr job, int kind, out MEMORY_USAGE information, uint length, IntPtr returnLength);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", EntryPoint = "SetInformationJobObject", SetLastError = true)] private static extern bool SetExtendedInformation(IntPtr job, int kind, ref EXTENDED_LIMIT information, uint length);
     [DllImport("kernel32.dll", EntryPoint = "SetInformationJobObject", SetLastError = true)] private static extern bool SetCpuInformation(IntPtr job, int kind, ref CPU_LIMIT information, uint length);

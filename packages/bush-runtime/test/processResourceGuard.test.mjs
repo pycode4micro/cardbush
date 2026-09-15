@@ -7,6 +7,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { defaultProcessResourceLimits, ProcessResourceGovernor, spawnResourceManagedProcess, TerminalSessionManager } from '../dist/index.js';
+import { ProcessResourceObserver } from '../dist/processResourceObserver.js';
+import { resolveProcessResourceHost } from '../dist/processes.js';
 
 const MiB = 1024 ** 2;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -14,7 +16,7 @@ const fixtureRoot = mkdtempSync(join(tmpdir(), 'cardbush-resource-test-'));
 const fixture = join(fixtureRoot, 'resource worker.exe');
 const defaults = defaultProcessResourceLimits(8 * 1024 ** 3);
 const governor = overrides => new ProcessResourceGovernor({
-  limits: { ...defaults, taskMemoryBytes: 256 * MiB, totalMemoryBytes: 512 * MiB, ...overrides },
+  limits: { ...defaults, taskMemoryBytes: 256 * MiB, totalMemoryBytes: 512 * MiB, startupMemoryBytes: 8 * MiB, serviceStartupMemoryBytes: 8 * MiB, ...overrides },
   availableMemory: () => 4 * 1024 ** 3,
 });
 
@@ -45,18 +47,53 @@ test('budgets scale with host RAM and admission is shared, bounded and released 
   assert.throws(() => pressure.acquire(), { code: 'resource_memory_pressure' });
 });
 
-test('shared budget reserves currently available RAM and refreshes after work finishes', () => {
+test('persistent service slots do not consume terminal slots and retain the shared resource ceiling', () => {
+  const budget = new ProcessResourceGovernor({ limits: { ...defaults, maxConcurrentTasks: 1, maxConcurrentServices: 2 }, availableMemory: () => 8 * 1024 ** 3 });
+  const first = budget.acquire('service'), second = budget.acquire('service'), terminal = budget.acquire();
+  assert.equal(first.totalMemoryBytes, terminal.totalMemoryBytes);
+  assert.throws(() => budget.acquire('service'), { code: 'resource_service_capacity_busy' });
+  assert.throws(() => budget.acquire(), { code: 'resource_capacity_busy' });
+  second.release(); second.release();
+  const replacement = budget.acquire('service');
+  replacement.release(); first.release(); terminal.release();
+});
+
+test('persistent services do not freeze the shared ceiling and new tasks use recovered memory', () => {
   let free = 2 * 1024 ** 3;
   const budget = new ProcessResourceGovernor({ limits: defaults, availableMemory: () => free });
-  const first = budget.acquire();
-  assert.equal(first.totalMemoryBytes, free - defaults.memoryReserveBytes);
+  const first = budget.acquire('service');
+  assert.equal(first.totalMemoryBytes, defaults.totalMemoryBytes);
+  assert.equal(first.taskMemoryBytes, free - defaults.memoryReserveBytes);
   free = 6 * 1024 ** 3;
   const second = budget.acquire();
   assert.equal(second.totalMemoryBytes, first.totalMemoryBytes);
+  assert.ok(second.taskMemoryBytes > first.taskMemoryBytes);
   first.release(); second.release();
   const fresh = budget.acquire();
   assert.equal(fresh.totalMemoryBytes, defaults.totalMemoryBytes);
   fresh.release();
+});
+
+test('simultaneous startups reserve memory; measured allocations replace rather than duplicate reservations', () => {
+  let free = defaults.memoryReserveBytes + 300 * MiB;
+  const budget = new ProcessResourceGovernor({ limits: defaults, availableMemory: () => free });
+  const first = budget.acquire('service'), second = budget.acquire('service');
+  assert.throws(() => budget.acquire('service'), { code: 'resource_memory_pressure' });
+  second.release();
+  budget.observe({ availableMemoryBytes: free, availableCommitBytes: 8 * 1024 ** 3, totalMemoryBytes: 128 * MiB, jobs: [{ id: first.id, memoryBytes: 128 * MiB }] });
+  const third = budget.acquire('service'); third.release();
+  free = defaults.memoryReserveBytes - 1;
+  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' });
+  first.release();
+});
+
+test('admission includes application memory and commit headroom', () => {
+  const budget = governor();
+  budget.setApplicationMemoryProvider(() => 510 * MiB);
+  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' });
+  budget.setApplicationMemoryProvider(() => 0);
+  budget.observe({ availableMemoryBytes: 4 * 1024 ** 3, availableCommitBytes: 1, totalMemoryBytes: 0, jobs: [] });
+  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' });
 });
 
 test('process resource host is built and included outside asar', { skip: process.platform !== 'win32' }, () => {
@@ -124,6 +161,25 @@ test('task memory is capped before an eager allocation can exhaust the host', na
   assert.ok(Math.max(...committed) < 128 * MiB, JSON.stringify(result));
   assert.ok(result.stdout.includes('allocation-denied') || result.report.code === 'resource_memory_limit');
   assert.doesNotMatch(result.stdout, /allocation-finished/);
+});
+
+test('native sampling measures only owned jobs and pressure relief stops only the selected tree', native, async t => {
+  const budget = governor();
+  const first = await start(t, ['hold-memory', '4'], budget), second = await start(t, ['hold-memory', '2'], budget);
+  await ready(first); await ready(second);
+  let sample;
+  const observer = new ProcessResourceObserver(budget.groupName, resolveProcessResourceHost, value => { sample = value; });
+  t.after(() => observer.track([]));
+  observer.track([first.resourceId, second.resourceId]);
+  const deadline = Date.now() + 5_000;
+  while ((!sample || sample.jobs.length !== 2) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(sample.jobs.length, 2);
+  assert.ok(sample.jobs.find(job => job.id === first.resourceId).memoryBytes >= 64 * MiB);
+  assert.ok(sample.availableMemoryBytes > 0); assert.ok(sample.availableCommitBytes > 0);
+  assert.equal(observer.relieve('unowned'), false);
+  assert.equal(observer.relieve(first.resourceId), true);
+  assert.equal((await first.done).report.code, 'resource_memory_pressure');
+  assert.equal(second.child.exitCode, null, 'sibling process remains available');
 });
 
 test('simultaneous tasks share the native memory budget across separate launches', native, async t => {

@@ -9,6 +9,24 @@ const compiled = ts.transpileModule(readFileSync('src/features/shortcuts/keyboar
 new Function('module', 'exports', compiled)(module, module.exports);
 const { matchesShortcut, bindingFromEvent, conflictingShortcut, bindingError, normalizeShortcutOverrides, shortcutBinding } = module.exports;
 const key = (value, options = {}) => ({ key: value, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...options });
+assert.equal(matchesShortcut('searchConversations', key('f', { ctrlKey: true }), {}), true);
+assert.equal(matchesShortcut('previousConversation', key('Tab', { ctrlKey: true }), {}), true);
+assert.equal(matchesShortcut('previousConversation', key('Tab'), {}), false);
+assert.equal(matchesShortcut('previousConversation', key('Tab', { ctrlKey: true, repeat: true }), {}), false);
+assert.equal(matchesShortcut('previousConversation', key('Tab', { ctrlKey: true, shiftKey: true }), {}), false);
+assert.equal(matchesShortcut('previousConversation', key('Tab', { ctrlKey: true, isComposing: true }), {}), false);
+assert.equal(bindingError('previousConversation', { key: 'Tab', ctrl: true }, 'en'), '');
+assert.ok(bindingError('previousConversation', { key: 'Tab' }, 'en'));
+assert.ok(bindingError('previousConversation', { key: 'Tab', shift: true }, 'en'));
+assert.ok(bindingError('previousConversation', { key: 'Tab', alt: true }, 'en'));
+assert.equal(conflictingShortcut('openFiles', { key: 'Tab', ctrl: true }, {}).id, 'previousConversation');
+assert.deepEqual(normalizeShortcutOverrides({ previousConversation: { key: 'Tab', ctrl: true } }), {});
+assert.deepEqual(normalizeShortcutOverrides({ previousConversation: { key: 'k', ctrl: true, shift: true } }),
+  { previousConversation: { key: 'k', ctrl: true, shift: true, alt: false } });
+assert.equal(matchesShortcut('searchConversations', key('f', { metaKey: true }), {}), true);
+assert.equal(matchesShortcut('searchConversations', key('f', { ctrlKey: true, shiftKey: true }), {}), false);
+assert.equal(matchesShortcut('searchConversations', key('f', { ctrlKey: true, isComposing: true }), {}), false);
+assert.equal(conflictingShortcut('openFiles', { key: 'f', ctrl: true }, {}).id, 'searchConversations');
 assert.equal(matchesShortcut('sendMessage', key('Enter'), {}), true);
 assert.equal(matchesShortcut('sendMessage', key('Enter', { ctrlKey: true }), {}), false, 'guidance must never enter the ordinary queue/send branch');
 assert.equal(matchesShortcut('guideNow', key('Enter', { ctrlKey: true }), {}), true);

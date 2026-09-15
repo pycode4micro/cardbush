@@ -22,6 +22,7 @@ import {
   normalizeActiveTurnTranscriptForDisplay,
 } from '../chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
+import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
 import {
   MessageListFooter,
   absoluteBottomScrollTop,
@@ -331,13 +332,15 @@ export function ChatPanel({
       value: performance.now() - chatPanelRenderStartedAt,
     });
   });
+  const visibleMessages = useBatchedTranscript(messages, activeConversationId, activeTurnId, sending,
+    stopping || Boolean(pendingInteraction) || Boolean(error) || goalWaiting);
   const renderMessages = useMemo(() => {
-    const normalized = normalizeChatMessagesForDisplay(messages);
+    const normalized = normalizeChatMessagesForDisplay(visibleMessages);
     const activeTranscript = sending
       ? normalizeActiveTurnTranscriptForDisplay(normalized, activeTurnId)
       : normalized;
     return projectRenderableChatMessages(activeTranscript);
-  }, [activeTurnId, messages, sending]);
+  }, [activeTurnId, visibleMessages, sending]);
   const [refreshError, setRefreshError] = useState('');
   const refreshBackendWithFeedback = useCallback(async (
     options?: { silent?: boolean },

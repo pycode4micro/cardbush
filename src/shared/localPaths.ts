@@ -37,6 +37,30 @@ export function isAbsoluteLocalPath(value: string) {
   return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
 }
 
+/** Only explicit @ references outside code attach files; ordinary path text stays authored text. */
+export function splitExplicitAttachmentMentions(content: string) {
+  const paths: string[] = [], lines: string[] = [];
+  let fence: { marker: string; length: number } | undefined;
+  for (const line of content.split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      lines.push(line);
+      if (marker && marker[1][0] === fence.marker && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
+      continue;
+    }
+    if (marker) {
+      fence = { marker: marker[1][0], length: marker[1].length };
+      lines.push(line);
+      continue;
+    }
+    const mention = /^ {0,3}@(.+)$/.exec(line);
+    const path = mention ? stripWrappingQuotes(mention[1]) : '';
+    if (path && isAbsoluteLocalPath(path)) paths.push(path);
+    else lines.push(line);
+  }
+  return { text: lines.join('\n').trim(), paths };
+}
+
 export function basename(value: string) {
   const normalized = value.replaceAll('\\', '/').replace(/\/+$/, '');
   return normalized.split('/').pop() || value;

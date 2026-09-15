@@ -50,6 +50,24 @@ export class PluginHookRunner {
   }
   async close() { await Promise.allSettled([...this.sessions.keys()].map(id => this.closeSession(id))); }
 
+  async removePlugin(pluginId: string) {
+    const pending: Array<Promise<void> | undefined> = [];
+    for (const [sessionId, session] of this.sessions) {
+      for (const hook of session.hooks) if (hook.pluginId === pluginId) this.once.delete(`${sessionId}\0${hook.id}`);
+      session.hooks = session.hooks.filter(hook => hook.pluginId !== pluginId);
+      session.queue = session.queue.filter(job => {
+        if (job.hook.pluginId !== pluginId) return true;
+        job.observe?.({ id: job.id, hook: job.hook, phase: 'cancelled', error: 'Plugin was uninstalled.' });
+        return false;
+      });
+      for (const job of session.active) if (job.hook.pluginId === pluginId) {
+        job.controller.abort(new Error('Plugin was uninstalled.'));
+        pending.push(job.promise);
+      }
+    }
+    await Promise.allSettled(pending);
+  }
+
   async run(hooks: PluginHook[], event: PluginHookEvent, context: PluginHookContext, observe?: Observer): Promise<PluginHookResult> {
     await this.options.onEvent?.(event, context);
     const sessionId = context.request.sessionId;
@@ -91,7 +109,7 @@ export class PluginHookRunner {
       const job = session.queue.shift()!;
       session.active.add(job);
       job.promise = this.execute(job.id, job.hook, { ...job.context, signal: job.controller.signal }, job.observe)
-        .then(result => { if (!session.closed && result.messages.length) session.ready.push({ id: job.id, messages: result.messages }); })
+        .then(result => { if (!session.closed && !job.controller.signal.aborted && result.messages.length) session.ready.push({ id: job.id, messages: result.messages }); })
         .catch(() => undefined)
         .finally(() => { session.active.delete(job); this.pump(session); });
     }

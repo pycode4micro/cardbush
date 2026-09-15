@@ -57,7 +57,7 @@ module.exports = async function testConversationTitleRendering({ run, until, pau
     }
   }
   await run('showTitleFixture(0)');
-  await until("!!document.querySelector('.conversation-row.active .conversation-more')", 'legacy conversation');
+  await until("document.querySelector('.conversation-row.active .conversation-title')?.textContent === 'video-face-stylizer' && !!document.querySelector('.conversation-row.active .conversation-more')", 'legacy conversation');
   await run("document.querySelector('.conversation-row.active .conversation-more').click()");
   await until("!!document.querySelector('.sidebar-menu')", 'rename menu');
   await run("[...document.querySelectorAll('.sidebar-menu button')].find(button => button.textContent.includes('重命名')).click()");
@@ -73,13 +73,12 @@ module.exports = async function testConversationTitleRendering({ run, until, pau
     fs.writeFileSync(process.env.CARDBUSH_CONVERSATION_TITLE_SCREENSHOT,
       (await window.webContents.capturePage({ x: 0, y: 0, width: 1180, height: 330 })).toPNG());
   }
-  await run(`renderView(h(views.FeatureContentPanel, {
-    language: 'zh', section: 'search', workflowValidationAvailable: false, conversations: titleConversations,
-    skills: [], disabledSkillNames: new Set(), onToggleSkill: titleNoop, onReloadSkills: async () => [],
-    onLoadSkillDetail: titleNoop, onCreateConversation: titleNoop, onOpenConversation: titleNoop,
+  await run(`renderView(h(views.ConversationSearchDialog, {
+    language: 'zh', conversations: titleConversations, projects: [], onClose: titleNoop,
+    onCreateConversation: titleNoop, onOpenConversation: titleNoop,
   })); undefined;`);
-  await until("document.querySelectorAll('.result-card h3').length === 4", 'search title results');
-  assert.deepEqual(await run("[...document.querySelectorAll('.result-card h3')].map(node => node.textContent)"),
+  await until("document.querySelectorAll('[data-search-conversation] .conversation-search-title').length === 4", 'search title results');
+  assert.deepEqual(await run("[...document.querySelectorAll('[data-search-conversation] .conversation-search-title')].map(node => node.textContent)"),
     await run('titleFixtures.map(item => item.expected)'));
   console.log('Conversation titles passed: legacy references, both themes, narrow/wide layouts, tooltips, rename and search.');
 };

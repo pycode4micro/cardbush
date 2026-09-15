@@ -8,6 +8,12 @@ type ShortcutDefinition = {
 const appContexts: ShortcutContext[] = ['composer', 'queue', 'transcript', 'edit', 'sidebar'];
 
 export const shortcutDefinitions = [
+  { id: 'searchConversations', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'f', ctrl: true },
+    title: { zh: '搜索会话', en: 'Search chats' },
+    description: { zh: '打开会话搜索，侧栏收起时也可使用。', en: 'Open chat search, including when the sidebar is collapsed.' } },
+  { id: 'previousConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'Tab', ctrl: true },
+    title: { zh: '切回上个会话', en: 'Switch to previous chat' },
+    description: { zh: '切回上一个访问的会话，再按一次可切回来。', en: 'Switch to the last visited chat. Press again to switch back.' } },
   { id: 'sendMessage', group: 'conversation', contexts: ['composer'], defaultBinding: { key: 'Enter' },
     title: { zh: '发送消息', en: 'Send message' },
     description: { zh: '任务运行时，遵循个性化中的发送方式。', en: 'During a task, use the delivery preference in Personalization.' } },
@@ -80,7 +86,7 @@ export function shortcutAria(binding: ShortcutBinding | null) {
 
 export function bindingError(id: ShortcutId, binding: ShortcutBinding, language: 'zh' | 'en'): string {
   const zh = language === 'zh';
-  if (['Escape', 'Tab'].includes(binding.key) || binding.key === 'F5' ||
+  if (binding.key === 'Escape' || binding.key === 'Tab' && (!binding.ctrl || binding.alt) || binding.key === 'F5' ||
       binding.ctrl && ['a', 'c', 'v', 'x', 'z', 'y', 'r'].includes(binding.key) ||
       binding.alt && binding.key === 'F4' || binding.key === 'Enter' && binding.shift && !binding.ctrl && !binding.alt) {
     return zh ? '这个按键保留给换行、取消或系统操作，请换一个组合。' : 'This key is reserved for editing, dismissal, or system actions. Choose another combination.';
@@ -105,7 +111,7 @@ export function normalizeShortcutOverrides(value: unknown): ShortcutOverrides {
     if (binding === null) { result[item.id] = null; continue; }
     if (!binding || typeof binding !== 'object') continue;
     const candidate = binding as Record<string, unknown>;
-    if (typeof candidate.key !== 'string' || !/^(?:[a-z0-9]|Enter|Space|Plus|Minus|F(?:[1-9]|1[0-2])|Arrow(?:Up|Down|Left|Right)|Home|End|PageUp|PageDown|[.,/;\[\]\\'`])$/.test(candidate.key)) continue;
+    if (typeof candidate.key !== 'string' || !/^(?:[a-z0-9]|Enter|Tab|Space|Plus|Minus|F(?:[1-9]|1[0-2])|Arrow(?:Up|Down|Left|Right)|Home|End|PageUp|PageDown|[.,/;\[\]\\'`])$/.test(candidate.key)) continue;
     const normalized = { key: candidate.key, ctrl: candidate.ctrl === true, alt: candidate.alt === true, shift: candidate.shift === true };
     if (!bindingError(item.id, normalized, 'en') && !sameBinding(normalized, item.defaultBinding)) result[item.id] = normalized;
   }

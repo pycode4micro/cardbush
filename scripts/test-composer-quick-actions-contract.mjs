@@ -92,11 +92,15 @@ assert.match(source, /className="composer-command-mode goal"/);
 assert.match(source, /<Target size=\{15\}/);
 assert.match(source, /value=\{composerInputValue\}/);
 assert.match(source, /onDraftChange\(`\/goal\$\{next \? ` \$\{next\}` : ' '\}`\)/);
-assert.match(
-  chatHookSource,
-  /\^\\\/\(\?:model\|goal\|skill\|collect\|new\)\(\?:\\s\|\$\)/,
-  'slash commands must not be parsed as POSIX file attachments',
-);
+assert.match(chatHookSource, /splitExplicitAttachmentMentions\(content\)/);
+const attachmentExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/shared/localPaths.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: attachmentExports });
+for (const content of ['/model', '/goal task', '/skill', '/collect', '/new', '[skill](<C:/skills/a/SKILL.md>)']) {
+  assert.equal(attachmentExports.splitExplicitAttachmentMentions(content).paths.length, 0,
+    'commands and skill links must remain prompt text, not file attachments');
+}
 assert.doesNotMatch(slashBlock.split('commands.push')[0], /title:\s*['"`]\//, 'built-in quick actions retain their descriptive labels');
 assert.match(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.match(source, /referenceableUserMessages\(referenceContext.messages, referenceContext.sessionId\)/);

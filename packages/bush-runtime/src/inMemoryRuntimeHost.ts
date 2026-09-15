@@ -749,6 +749,10 @@ export class InMemoryRuntimeHost {
   hasActiveTurns(): boolean {
     return this.#activeTurns.size > 0;
   }
+  async preparePluginUninstall(pluginId: string): Promise<void> {
+    if (this.isExtensionBusy(pluginId)) throw new Error('插件仍在使用中，请在当前任务结束后重试卸载。');
+    await this.#pluginHooks.removePlugin(pluginId);
+  }
   hasActiveSession(sessionId: string): boolean {
     return [...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId);
   }

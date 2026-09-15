@@ -58,7 +58,7 @@ test('ZIP installs a self-contained Runtime and UI; unchanged refresh keeps runt
   assert.deepEqual(f.errors, []);
 });
 
-test('disable, uninstall, reinstall and restart preserve editable configuration and ordinary Subagent', async () => {
+test('legacy loading flags, package replacement and restart preserve editable configuration and ordinary Subagent', async () => {
   const f = await fixture(); await f.state.refresh();
   const input = { kind: 'plugin.team.configuration', payload: { action: 'read' } };
   const before = await f.host.sendCommand(input);
@@ -71,6 +71,8 @@ test('disable, uninstall, reinstall and restart preserve editable configuration 
     await assert.rejects(f.host.sendCommand(input));
     assert.deepEqual(await loadEnabledProductRuntimeRenderers(f.roots, f.config), []);
   }
+  // Direct legacy state changes and package replacement are not full uninstall.
+  // The desktop uninstall path also deletes plugin-data (test-plugin-uninstall).
   await rm(join(f.installed, 'team'), { recursive: true, force: true });
   assert.equal(JSON.parse(await readFile(saved.path, 'utf8')).teams[0].name, 'Preserved custom team');
   await installLocalProductPlugin(resolve('release-plugins/team-0.2.0.zip'), f.installed);

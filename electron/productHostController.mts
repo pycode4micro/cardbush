@@ -8,6 +8,7 @@ import {
   stat,
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import {
   CardbushAppsConfigStore,
@@ -20,7 +21,7 @@ import {
 } from '@cardbush/product-host';
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
-import { loadProductPluginCatalog } from './productPlugins.js';
+import { loadProductPluginCatalog, removeProductPlugin, withProductPluginLifecycle } from './productPlugins.js';
 import { PluginConnectionManager } from './pluginConnectionManagement.mjs';
 import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
 import type { ClientCredentialsPrompt, ClientCredentialsAnswer } from './pluginConnectionManagement.mjs';
@@ -64,6 +65,7 @@ export interface ElectronProductHostControllerOptions {
 export class ElectronProductHostController {
   readonly #models: ProductModelConfigStore;
   readonly #apps: CardbushAppsConfigStore;
+  readonly #userPluginRoot: string;
   readonly #mcp: ProductMcpConfigStore;
   readonly #subagents: ProductSubagentConfigStore;
   readonly #runtime: ElectronRuntimeTransport;
@@ -79,6 +81,7 @@ export class ElectronProductHostController {
   constructor(options: ElectronProductHostControllerOptions) {
     const dataRoot = resolve(options.dataRoot);
     this.#dataRoot = dataRoot;
+    this.#userPluginRoot = resolve(options.userPluginRoot);
     this.#runtimeStateRoot = resolve(options.runtimeStateRoot);
     this.#bundledSkillRoot = resolve(options.bundledSkillRoot);
     this.#userSkillRoot = resolve(options.userSkillRoot);
@@ -88,10 +91,10 @@ export class ElectronProductHostController {
     this.#runtime = new ElectronRuntimeTransport(options.runtimeBridge);
     this.#models = new ProductModelConfigStore(join(dataRoot, 'config', 'models.json'));
     this.#apps = new CardbushAppsConfigStore(join(dataRoot, 'config', 'apps.json'), {
-      loadCatalog: () => loadProductPluginCatalog([
+      loadCatalog: excludedIds => loadProductPluginCatalog([
         { path: options.bundledPluginRoot, source: 'bundled' },
         { path: options.userPluginRoot, source: 'user' },
-      ]),
+      ], excludedIds),
     });
     this.#mcp = new ProductMcpConfigStore(join(dataRoot, 'config', 'mcp-servers.json'));
     this.#subagents = new ProductSubagentConfigStore(join(dataRoot, 'config', 'subagents.json'));
@@ -158,7 +161,7 @@ export class ElectronProductHostController {
     return this.#resolveModel(modelId, 'The selected clean Agent model is not configured. Refresh list_subagent_options and select an available model.');
   }
 
-  async refreshMcp(): Promise<unknown> {
+  async refreshMcp(uninstallPluginId?: string): Promise<unknown> {
     const config = await this.#mcp.read();
     const snapshot = mcpSnapshotSchema.parse({
       protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
@@ -179,7 +182,23 @@ export class ElectronProductHostController {
         toolPolicies: {},
       })),
     });
-    return this.#runtime.sendCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot });
+    return this.#runtime.sendCommand(uninstallPluginId
+      ? { kind: 'runtime.prepare_plugin_uninstall', payload: { ...snapshot, uninstallPluginId } }
+      : { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot });
+  }
+
+  async uninstallPlugin(pluginId: string) {
+    return withProductPluginLifecycle(() => this.#apps.uninstall(pluginId, async (plugin, commit, otherPlugins) => {
+      const state = mcpSnapshotResultSchema.parse(await this.refreshMcp(plugin.id));
+      if (state.applicationState !== 'applied' || state.applicationError) {
+        throw new Error(state.applicationError || '插件仍在使用中，请在当前任务结束后重试卸载。');
+      }
+      await this.#pluginConnections.clearPluginCredentials(plugin, otherPlugins);
+      return removeProductPlugin(plugin, this.#userPluginRoot, [
+        { root: join(dirname(this.#userPluginRoot), 'plugin-data'), name: plugin.id },
+        { root: join(this.#runtimeStateRoot, 'plugin-data'), name: createHash('sha256').update(plugin.id).digest('hex').slice(0, 24) },
+      ], commit);
+    }));
   }
 
   async listMcpServers(): Promise<unknown> {
@@ -204,6 +223,7 @@ export class ElectronProductHostController {
   }
 
   listPluginConnections(pluginId?: string) { return this.#pluginConnections.list(pluginId); }
+  pluginTroubleshootingContext(pluginId: string, componentId: string) { return this.#pluginConnections.troubleshootingContext(pluginId, componentId); }
   configurePluginConnection(input: unknown, signal?: AbortSignal) { return this.#pluginConnections.configure(input, signal); }
   savePluginConnections(input: unknown) { return this.#pluginConnections.save(input); }
   requestPluginCredentials(input: unknown, signal: AbortSignal) { return this.#pluginConnections.requestCredentials(input, signal); }

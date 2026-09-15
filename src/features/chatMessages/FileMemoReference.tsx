@@ -5,6 +5,7 @@ import { fileUrl, isImagePath, isVideoPath, isAudioPath } from '../../shared/loc
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { openInspector } from '../inspector/inspectorEvents';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
+import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { mediaPresentationKey, PresentedMediaContext } from './mediaPresentation';
 import { FileMemoScopeContext } from './FileMemoScope';
 
@@ -61,7 +62,8 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const media = inline && status === 'available' && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
   const source = fileUrl(path);
   return <span className="file-memo-reference" title={`${language === 'zh' ? '模型备注' : 'Model note'}: ${memo.note.purpose}`}>
-    {media && isImagePath(path) ? <img src={source} alt={typeof children === 'string' ? children : memo.file.name}
+    {media && isHtmlPreviewPath(path) ? <InlineHtmlPreview key={path} path={path} title={typeof label === 'string' ? label : memo.file.name} language={language} />
+      : media && isImagePath(path) ? <img src={source} alt={typeof children === 'string' ? children : memo.file.name}
       onError={() => setFailedMedia(mediaKey)}
       onClick={() => openInspector(path, memo.file.name)}
       onContextMenu={event => openFileContextMenu(event, path, { image: true, language })} />

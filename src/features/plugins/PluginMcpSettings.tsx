@@ -74,6 +74,24 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   const dirty = JSON.stringify(draft) !== baseline.current || Object.keys(secrets).length > 0;
   const services = plugin.components.filter(item => item.kind === 'mcp' || item.kind === 'app');
   const change = (name: string, patch: Json) => { setSavedMessage(''); setDraft(current => ({ ...current, [name]: { ...record(current[name]), ...patch } })); };
+  const troubleshoot = async (componentId: string, connection: Parameters<typeof pluginTroubleshootingPrompt>[1]) => {
+    if (actionInFlight.current || dirty || !onOpenPrompt) return;
+    actionInFlight.current = true;
+    const revision = ++actionRevision.current;
+    setBusy('troubleshoot');
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // A failed or slow context read must still allow an editable diagnostic draft.
+      const context = await Promise.race([
+        window.cardbushDesktop?.pluginTroubleshootingContext?.(plugin.id, componentId).catch(() => undefined),
+        new Promise<undefined>(resolve => { timeout = setTimeout(() => resolve(undefined), 2_000); }),
+      ]);
+      if (revision === actionRevision.current) onOpenPrompt(pluginTroubleshootingPrompt(plugin, connection, language, context));
+    } finally {
+      clearTimeout(timeout);
+      if (revision === actionRevision.current) { actionInFlight.current = false; setBusy(''); }
+    }
+  };
   const save = async () => {
     setBusy('save'); setError(''); setSavedMessage('');
     try {
@@ -198,12 +216,15 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const enabled = plugin.enabled && settings.enabled !== false;
       const connectionState = mcpConnectionState(id, enabled, overview?.snapshot ?? null, overview?.revision);
       const pending = connectionState === 'pending';
+      const resourceWaiting = connectionState === 'waiting_for_resources';
       const needsAccount = hosted && openAiStatus?.state !== 'signed_in';
       const modified = JSON.stringify(settings) !== JSON.stringify(record(stored[component.id])) || Object.hasOwn(secrets, component.id);
       const ready = !modified && !needsAccount && !missingBinding && connectionState === 'connected';
       const waitingForAuthorization = hosted && authorizationTarget === id;
       const cancelling = busy === `${id}:cancel`;
-      const status = modified ? (zh ? '有未保存修改' : 'Unsaved changes') : !enabled ? (zh ? '已停用' : 'Disabled') : pending ? (actual?.updateState === 'waiting_for_catalog' ? (zh ? '等待工具生效' : 'Awaiting tool activation') : (zh ? '等待任务结束后生效' : 'Pending until tasks finish'))
+      const status = modified ? (zh ? '有未保存修改' : 'Unsaved changes') : !enabled ? (zh ? '已停用' : 'Disabled')
+        : resourceWaiting ? (actual?.health === 'ready' ? (zh ? '已连接，等待资源后更新' : 'Connected; update waiting for resources') : (zh ? '等待可用资源' : 'Waiting for resources'))
+        : pending ? (actual?.updateState === 'waiting_for_catalog' ? (zh ? '等待工具生效' : 'Awaiting tool activation') : (zh ? '等待任务结束后生效' : 'Pending until tasks finish'))
         : needsAccount ? (zh ? '登录账户后连接' : 'Sign in above to connect') : ready ? (zh ? '已连接' : 'Connected')
           : busy === `${id}:reconnect` || connectionState === 'restarting' ? (zh ? '连接中…' : 'Connecting…')
             : connectionState === 'unavailable' ? (zh ? '连接失败' : 'Connection failed') : connectionState === 'auth_required' ? (zh ? '需要登录' : 'Sign-in required') : connectionState === 'configuration_required' ? (hosted ? (zh ? '尚未连接' : 'Not connected') : (zh ? '需要配置' : 'Configuration required'))
@@ -218,7 +239,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       return <div className="plugin-mcp-service" key={component.id}><header><div className="plugin-mcp-identity"><strong>{component.name}</strong><span className="plugin-mcp-status" data-ready={ready}>{status}</span></div>
         {plugin.enabled && !ready && <div className="plugin-mcp-primary-actions">
           {!enabled ? <button type="button" disabled={Boolean(busy)} onClick={() => void setConnectionEnabled(component.id, true)}>{zh ? '重新启用' : 'Enable again'}</button>
-            : <>{!needsAccount && !signingIn && <button type="button" className="mcp-primary-action" disabled={Boolean(busy) || dirty || pending || connectionState === 'restarting'} onClick={() => {
+            : <>{!needsAccount && !signingIn && <button type="button" className="mcp-primary-action" disabled={Boolean(busy) || dirty || pending || resourceWaiting || connectionState === 'restarting'} onClick={() => {
               if (hosted && openHostedAuthorization) void authorizeApp(id, authorizationUrl!);
               else if (needsSetup) toggleAdvanced(id, true);
               else void action(id, !hosted && network && connectionState === 'auth_required' ? 'login' : 'reconnect');
@@ -229,11 +250,14 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
         </div>}</header>
         {onOpenPrompt && enabled && ['unavailable', 'configuration_required', 'auth_required'].includes(connectionState) && <button
           type="button" className="plugin-troubleshoot-action" disabled={Boolean(busy) || dirty}
-          onClick={() => onOpenPrompt(pluginTroubleshootingPrompt(plugin, {
+          onClick={() => void troubleshoot(component.id, {
             id, name: component.name, state: connectionState, transport,
             error: actual?.lastError || overview?.snapshot?.applicationError,
-          }, language))}><ArrowUpRight size={15} />{zh ? '交给助手排查' : 'Troubleshoot with assistant'}</button>}
-        {waitingForAuthorization && <p role="status" className="plugin-mcp-hint">{zh ? '请在浏览器完成授权，返回后会自动检查连接。' : 'Finish authorization in your browser. We’ll check the connection when you return.'}</p>}
+            configurationRevision: overview?.snapshot?.configurationRevision, updateState: actual?.updateState,
+            restartAttempts: actual?.restartAttempts, toolCount: actual?.tools.length,
+          })}><ArrowUpRight size={15} />{zh ? '交给助手排查' : 'Troubleshoot with assistant'}</button>}
+        {waitingForAuthorization && !resourceWaiting && <p role="status" className="plugin-mcp-hint">{zh ? '请在浏览器完成授权，返回后会自动检查连接。' : 'Finish authorization in your browser. We’ll check the connection when you return.'}</p>}
+        {resourceWaiting && <p role="status" className="plugin-mcp-hint">{zh ? '资源可用后会自动连接。' : 'Connects automatically when resources are available.'}</p>}
         {pending && <p className="plugin-mcp-hint">{!enabled
           ? (zh ? '已保存停用设置；正在运行的任务仍可能使用旧连接，任务结束后会移除。' : 'Disabling is saved. Running tasks may still use the previous connection until they finish.')
           : (zh ? '连接配置正在等待运行中的任务结束，可先取消不需要的连接。状态会自动更新。' : 'Connection settings are waiting for running tasks to finish. You can cancel unwanted connections; status updates automatically.')}</p>}
@@ -293,7 +317,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
         <div className="plugin-mcp-actions">{hosted && authorizationUrl && <button type="button" disabled={Boolean(busy) || dirty || needsAccount} onClick={() => void authorizeApp(id, authorizationUrl)}>{zh ? '在 OpenAI 授权此应用' : 'Authorize this app through OpenAI'}</button>}
           {network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'login')}>{signingIn ? (zh ? '等待浏览器登录…' : 'Waiting for sign-in…') : (zh ? '登录 / 重新授权' : 'Sign in / authorize')}</button>}
           {signingIn ? <button type="button" onClick={() => void window.cardbushDesktop!.mcpConnectionAction(id, 'cancel_login').catch(caught => setError(String(caught)))}>{zh ? '取消登录' : 'Cancel sign-in'}</button>
-            : <button type="button" disabled={Boolean(busy) || dirty || unavailable || pending || connectionState === 'restarting'} onClick={() => void action(id, 'reconnect')}>{hosted ? (zh ? '检查授权与连接' : 'Check authorization and connection') : (zh ? '重新连接' : 'Reconnect')}</button>}
+            : <button type="button" disabled={Boolean(busy) || dirty || unavailable || pending || resourceWaiting || connectionState === 'restarting'} onClick={() => void action(id, 'reconnect')}>{hosted ? (zh ? '检查授权与连接' : 'Check authorization and connection') : (zh ? '重新连接' : 'Reconnect')}</button>}
           {network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'logout')}>{zh ? '退出登录' : 'Sign out'}</button>}</div></details>
       </div>;
     })}

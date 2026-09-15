@@ -54,6 +54,7 @@ import {
   useContext,
   Fragment,
   useEffect,
+  useLayoutEffect,
   useId,
   useMemo,
   useRef,
@@ -80,6 +81,7 @@ import type {
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from '../chatMessages';
 import { openInspector } from '../inspector/inspectorEvents';
 import { SkillIcon } from '../skills/SkillIcon';
+import { skillReference } from '../skills/skillReferences';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
@@ -903,7 +905,7 @@ export function Composer({
           id: `skill:${skill.name}`, title: skill.displayName || skill.name, category: 'skills' as const,
           subtitle: [skill.sourceLabel, language === 'zh' ? skill.descriptionZh || skill.description : skill.description].filter(Boolean).join(' · '),
           icon: <SkillIcon skill={skill} compact />,
-          value: `[${skill.name.replace(/([\\\[\]])/g, '\\$1')}](<${skill.path.replaceAll('\\', '/').replaceAll('>', '%3E').replaceAll('<', '%3C')}>) `,
+          value: `${skillReference(skill)} `,
           searchText: `${skill.name} ${skill.displayName || ''} ${skill.description} ${skill.descriptionZh || ''}`,
         })));
       return commands.filter(command => (goalAvailable || command.id !== '/goal') && (teamAvailable || command.id !== delegationCommand));
@@ -1280,6 +1282,7 @@ export function Composer({
         <ComposerPromptInput
           ref={textareaRef}
           plugins={plugins}
+          skills={skills}
           language={language}
           autoFocus={autoFocus}
           value={composerInputValue}
@@ -1300,8 +1303,11 @@ export function Composer({
           onKeyDown={(event) => {
             if (event.repeat) {
               const gesture = { key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey };
-              if (keyboardShortcuts.matches('guideNow', gesture) || keyboardShortcuts.matches('sendMessage', gesture)) event.preventDefault();
-              return;
+              if (keyboardShortcuts.matches('guideNow', gesture) || keyboardShortcuts.matches('sendMessage', gesture) ||
+                commandState && (event.key === 'Enter' || event.key === 'Tab')) {
+                event.preventDefault();
+                return;
+              }
             }
             if (keyboardShortcuts.matches('guideNow', event)) {
               event.preventDefault();
@@ -1495,13 +1501,20 @@ function ComposerCommandPalette({
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listRef = useRef<HTMLDivElement>(null);
   const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的浏览器或用户指令' : 'No matching browser tabs or user instructions') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   const categories = language === 'zh'
     ? { actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', turns: '当前对话 · 用户指令' }
     : { actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', turns: 'This conversation · User instructions' };
-  useEffect(() => {
+  useLayoutEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
-    row?.scrollIntoView({ block: 'nearest' });
+    const list = listRef.current;
+    if (!row || !list) return;
+    const item = row.getBoundingClientRect();
+    const viewport = list.getBoundingClientRect();
+    // Only move the menu, never the conversation or its outer scroll container.
+    if (item.top < viewport.top) list.scrollTop += item.top - viewport.top;
+    else if (item.bottom > viewport.bottom) list.scrollTop += item.bottom - viewport.bottom;
   }, [items.length, selectedIndex]);
   return (
     <div className="composer-command-palette">
@@ -1509,7 +1522,7 @@ function ComposerCommandPalette({
         <strong>{mode === 'mention' ? (language === 'zh' ? '引用' : 'Reference') : mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
         <span>{language === 'zh' ? '输入关键词筛选' : 'Type to filter'}</span>
       </header>
-      <div className="composer-command-list">
+      <div className="composer-command-list" ref={listRef}>
         {items.length === 0 ? (
           <div className="composer-command-empty">{emptyLabel}</div>
         ) : (

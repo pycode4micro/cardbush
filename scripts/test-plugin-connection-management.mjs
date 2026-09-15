@@ -9,6 +9,69 @@ import { ElectronProductHostController } from '../dist-electron/productHostContr
 import { McpDesktopHost } from '../dist-electron/mcpDesktopHost.js';
 import { startProductMcpManagement } from '../dist-electron/productMcpManagement.mjs';
 import { loadEnabledProductPluginMcpServers } from '../dist-electron/productPlugins.js';
+import { PluginConnectionManager } from '../dist-electron/pluginConnectionManagement.mjs';
+import { troubleshootingLaunch } from '../dist-electron/pluginTroubleshooting.mjs';
+
+test('troubleshooting drafts resolve the CardBush installation and overrides without changing connections', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-plugin-troubleshooting-'));
+  const manifestPath = join(root, '.codex-plugin', 'plugin.json');
+  await mkdir(join(root, '.codex-plugin'));
+  await writeFile(manifestPath, JSON.stringify({ name: 'fixture', mcpServers: { local: {
+    command: 'package-default', args: ['${CODEX_PLUGIN_ROOT}/original.mjs'],
+  } } }));
+  const apps = { revision: 43, plugins: [{ id: 'fixture', version: '1.0.0+codex.20260915', source: 'user', installed: true, enabled: true,
+    manifestPath, components: [{ id: 'local', kind: 'mcp' }], config: { mcp_servers: { local: { connection: {
+      command: 'node', args: ['${CODEX_PLUGIN_ROOT}/managed.mjs', '--api-key=PRIVATE_ARGUMENT', 'PRIVATE_POSITIONAL'], cwd: 'run',
+      env: { API_TOKEN: 'PRIVATE_POSITIONAL', CACHE_ROOT: '${PLUGIN_ROOT}' },
+    } } } } }] };
+  const mcp = { revision: 9, servers: [] };
+  let mutations = 0;
+  const manager = new PluginConnectionManager({ apps: { read: async () => structuredClone(apps) }, mcp: { read: async () => structuredClone(mcp) },
+    refresh: async () => { mutations++; }, runtime: async () => { mutations++; return { runtime: null }; },
+  });
+  try {
+    let context = await manager.troubleshootingContext('fixture', 'local');
+    assert.equal(context.application, 'CardBush');
+    assert.equal(context.pluginRoot, root);
+    assert.equal(context.manifestPath, manifestPath);
+    assert.equal(context.serviceId, 'plugin_fixture_local');
+    assert.equal(context.pluginConfigurationRevision, 43);
+    assert.equal(context.mcpConfigurationRevision, 9);
+    assert.equal(context.configuredLaunch.command, 'node', 'the saved launch override wins over the package default');
+    assert.equal(context.configuredLaunch.cwd, join(root, 'run'));
+    assert.equal(context.configuredLaunch.args[0].replaceAll('\\', '/'), root.replaceAll('\\', '/') + '/managed.mjs', 'CODEX_PLUGIN_ROOT is resolved to this CardBush installation');
+    assert.deepEqual(context.configuredLaunch.environmentNames, ['API_TOKEN', 'CACHE_ROOT']);
+    assert.doesNotMatch(JSON.stringify(context), /PRIVATE_ARGUMENT|PRIVATE_POSITIONAL|package-default/);
+    assert.equal(mutations, 0, 'building a draft does not refresh, launch, reconnect or enumerate runtime tools');
+    apps.revision++;
+    apps.plugins[0].config.mcp_servers.local.connection = { type: 'http', url: 'https://user:PRIVATE_PASSWORD@example.test/mcp?ticket=PRIVATE_TICKET', headers: { Authorization: 'Bearer PRIVATE_HEADER' } };
+    context = await manager.troubleshootingContext('fixture', 'local');
+    assert.equal(context.pluginConfigurationRevision, 44, 'each click reads the current settings');
+    assert.equal(context.configuredLaunch.endpoint, 'https://example.test/mcp');
+    assert.deepEqual(context.configuredLaunch.headerNames, ['Authorization']);
+    assert.doesNotMatch(JSON.stringify(context), /PRIVATE_PASSWORD|PRIVATE_TICKET|PRIVATE_HEADER/);
+    apps.plugins[0].config.mcp_servers.local.connection.type = 'invalid';
+    context = await manager.troubleshootingContext('fixture', 'local');
+    assert.equal(context.configuredLaunch, null);
+    assert.match(context.configurationError, /Unsupported MCP transport/);
+    await assert.rejects(manager.troubleshootingContext('missing', 'local'), /no longer installed/);
+    await assert.rejects(manager.troubleshootingContext('fixture', 'missing'), /Unknown plugin MCP/);
+  } finally {
+    assert.ok(root.startsWith(join(tmpdir(), 'cardbush-plugin-troubleshooting-')));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('launch evidence keeps paths while omitting credential flags and inline scripts', () => {
+  const launch = troubleshootingLaunch({ kind: 'stdio', command: 'powershell.exe', args: ['-File', 'C:/CardBush/plugins/example/launch.ps1',
+    '--password', 'PRIVATE_SPACED_PASSWORD words', '--token:PRIVATE_TOKEN', '--key', 'PRIVATE_KEY', '-Command', 'Write-Host PRIVATE_SCRIPT'],
+    env: { CACHE_ROOT: 'C:/CardBush/plugins/example' }, cwd: 'C:/CardBush/plugins/example' });
+  assert.equal(launch.args[1], 'C:/CardBush/plugins/example/launch.ps1');
+  assert.equal(launch.cwd, 'C:/CardBush/plugins/example');
+  assert.doesNotMatch(JSON.stringify(launch), /PRIVATE_/);
+  const large = troubleshootingLaunch({ kind: 'stdio', command: 'node', args: Array.from({ length: 200 }, () => 'x'.repeat(5000)) });
+  assert.ok(JSON.stringify(large).length < 7_000, 'large diagnostics cannot flood the composer');
+});
 
 test('plugin owner tools configure connections and save private credentials with revision and cancellation fences', { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-plugin-management-'));

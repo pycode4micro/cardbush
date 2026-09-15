@@ -780,31 +780,12 @@ export async function saveCardbushAppsConfiguration(configuration: CardbushAppsC
   return saved;
 }
 
-/** Uninstall is an installation-state change; retained packages can be reinstalled. */
+/** The desktop host owns teardown, filesystem removal and configuration cleanup. */
 export async function uninstallCardbushPlugin(pluginId: string): Promise<{
   configuration: CardbushAppsConfiguration;
-  pending: boolean;
-  applicationError?: string;
 }> {
-  const current = await fetchCardbushAppsConfiguration();
-  const target = current.plugins.find(plugin => plugin.id === pluginId);
-  if (!target) throw new Error(localizedClientMessage('插件不存在，请刷新列表。', 'Plugin not found. Refresh the list.'));
-  const configuration = target.installed || target.enabled
-    ? await writeCardbushAppsConfiguration({ ...current,
-      plugins: current.plugins.map(plugin => plugin.id === pluginId ? { ...plugin, installed: false, enabled: false } : plugin),
-    }) : current;
-  let runtime: ReturnType<typeof createDesktopRuntimeSession> | undefined;
-  try {
-    runtime = createDesktopRuntimeSession();
-    const snapshot = await synchronizeProductMcpSnapshot(runtime.client);
-    if (snapshot.applicationState === 'failed' || snapshot.applicationError) return { configuration, pending: true,
-      applicationError: snapshot.applicationError || localizedClientMessage('运行时未能应用卸载。', 'Runtime could not apply the uninstall.'),
-    };
-    return { configuration, pending: snapshot.applicationState === 'pending' };
-  } catch (error) {
-    // Persistence succeeded even if the worker cannot apply the removal yet.
-    return { configuration, pending: true, applicationError: error instanceof Error ? error.message : String(error) };
-  } finally { runtime?.dispose(); }
+  if (!window.cardbushDesktop?.uninstallPlugin) throw new Error(localizedClientMessage('请重启应用后使用完整卸载。', 'Restart the app to use complete uninstall.'));
+  return { configuration: cardbushAppsConfigurationFromPayload(await window.cardbushDesktop.uninstallPlugin(pluginId)) };
 }
 
 /** Catalog reads never apply configuration or restart MCP hosts. */
@@ -1761,6 +1742,7 @@ function cardbushAppsConfigurationFromPayload(
       }),
       installed: value.installed === true,
       enabled: value.enabled === true,
+      removalPending: value.removalPending === true,
       config: asRecord(value.config),
     };
   });

@@ -119,11 +119,8 @@ assert.match(
   'Native window controls must use a neutral Windows-style hover surface',
 );
 assert.match(stylesSource, /\.window-button\.danger:hover\s*\{[\s\S]*?background:\s*#c42b1c/);
-assert.match(
-  appSource,
-  /label=\{language === 'zh' \? '插件' : 'Plugins'\}[\s\S]*?插件管理[\s\S]*?技能管理/,
-  'The native title bar must group plugin and skill management together',
-);
+assert.match(sidebarSource, /label=\{language === 'zh' \? '新会话' : 'New chat'\}[\s\S]*?label=\{language === 'zh' \? '插件' : 'Plugins'\}/,
+  'Plugin navigation follows New chat in the sidebar');
 assert.doesNotMatch(appSource, /工具管理|Tool management/);
 assert.match(
   appSource,
@@ -151,6 +148,8 @@ assert.match(sidebarSource, /pinnedConversations\.map\(renderStandaloneConversat
 assert.match(sidebarSource, /options\.pinned[\s\S]*?取消置顶[\s\S]*?置顶对话/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
 const windowFrameBlock = appSource.match(/function WindowFrame\([\s\S]*?function WindowFrameMenu\(/)?.[0] ?? '';
+assert.doesNotMatch(windowFrameBlock, /onOpenPluginSettings|onOpenSkills|label=\{language === 'zh' \? '插件'/,
+  'Plugin and skill entry points no longer occupy the title bar');
 assert.doesNotMatch(windowFrameBlock, /only-talk-toggle|onOnlyTalkModeChange/);
 assert.doesNotMatch(sidebarSource, /onlyTalkMode|onOnlyTalkModeChange|only-talk-toggle/);
 assert.doesNotMatch(stylesSource, /\.only-talk-toggle|new-chat-mode-row|sidebar-mode-enter/);

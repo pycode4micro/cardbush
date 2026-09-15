@@ -58,6 +58,7 @@ export interface ChromePluginConfig {
 export interface CardbushAppPluginConfig extends CardbushPluginCatalogEntry {
   installed: boolean;
   enabled: boolean;
+  removalPending?: boolean;
   config: Record<string, unknown>;
 }
 
@@ -71,7 +72,7 @@ export interface CardbushAppsConfigSnapshot {
 }
 
 export interface CardbushAppsConfigStoreOptions {
-  loadCatalog?: () => Promise<CardbushPluginCatalogEntry[]>;
+  loadCatalog?: (excludedIds?: ReadonlySet<string>) => Promise<CardbushPluginCatalogEntry[]>;
 }
 
 const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
@@ -101,7 +102,7 @@ const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
 
 export class CardbushAppsConfigStore {
   readonly #path: string;
-  readonly #loadCatalog: () => Promise<CardbushPluginCatalogEntry[]>;
+  readonly #loadCatalog: NonNullable<CardbushAppsConfigStoreOptions['loadCatalog']>;
 
   constructor(path: string, options: CardbushAppsConfigStoreOptions = {}) {
     if (!isAbsolute(path)) throw new Error("CardBush Apps config path must be absolute.");
@@ -118,13 +119,21 @@ export class CardbushAppsConfigStore {
   }
 
   async #read(): Promise<CardbushAppsConfigSnapshot> {
-    const catalog = await this.#catalog();
+    let stored;
     try {
-      return decodeSnapshot(JSON.parse(await readFile(this.#path, "utf8")), catalog);
+      stored = JSON.parse(await readFile(this.#path, "utf8"));
     } catch (error) {
-      if (isMissing(error)) return defaultCardbushAppsConfig(catalog);
+      if (isMissing(error)) return defaultCardbushAppsConfig(await this.#catalog());
       throw error;
     }
+    // The existing configuration owns incomplete removals. Their package may
+    // already be partly deleted; keep a disabled retry entry across restarts.
+    const removals: CardbushAppPluginConfig[] = Array.isArray(stored.plugins)
+      ? stored.plugins.filter((item: CardbushAppPluginConfig) => item?.removalPending === true && item.source === 'user') : [];
+    const catalog = await this.#catalog(new Set(removals.map(item => item.id)));
+    const snapshot = decodeSnapshot(stored, catalog);
+    snapshot.plugins.push(...removals.map(item => ({ ...item, installed: true, enabled: false, removalPending: true })));
+    return snapshot;
   }
 
   async write(input: unknown): Promise<CardbushAppsConfigSnapshot> {
@@ -136,6 +145,28 @@ export class CardbushAppsConfigStore {
     const expected = (input as { expectedRevision?: unknown })?.expectedRevision;
     if (expected !== undefined && expected !== existing.revision) throw new Error('Plugin configuration changed; refresh before saving again.');
     const snapshot = decodeUpdate(input, existing);
+    return this.#persist(snapshot);
+  }
+
+  /** Keep the entry retryable until the host has stopped and removed its files. */
+  async uninstall(pluginId: string, remove: (
+    plugin: CardbushAppPluginConfig,
+    commit: () => Promise<CardbushAppsConfigSnapshot>,
+    otherPlugins: CardbushAppPluginConfig[],
+  ) => Promise<CardbushAppsConfigSnapshot>): Promise<CardbushAppsConfigSnapshot> {
+    return withConfigFileLock(this.#path, async () => {
+      const existing = await this.#read();
+      const plugin = existing.plugins.find(item => item.id === pluginId);
+      if (!plugin) throw new Error('Plugin not found. Refresh the list.');
+      if (plugin.source !== 'user') throw new Error('Bundled components can be disabled, not uninstalled.');
+      const disabled = await this.#persist({ ...existing, revision: existing.revision + 1,
+        plugins: existing.plugins.map(item => item.id === pluginId ? { ...item, installed: true, enabled: false, removalPending: true } : item) });
+      return remove(plugin, () => this.#persist({ ...disabled, revision: disabled.revision + 1,
+        plugins: disabled.plugins.filter(item => item.id !== pluginId) }), existing.plugins.filter(item => item.id !== pluginId));
+    });
+  }
+
+  async #persist(snapshot: CardbushAppsConfigSnapshot): Promise<CardbushAppsConfigSnapshot> {
     await mkdir(dirname(this.#path), { recursive: true });
     const temporary = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, {
@@ -147,9 +178,8 @@ export class CardbushAppsConfigStore {
     return snapshot;
   }
 
-  async #catalog(): Promise<CardbushPluginCatalogEntry[]> {
-    const catalog = await this.#loadCatalog();
-    if (!catalog.length) throw new Error("CardBush plugin catalog is empty.");
+  async #catalog(excludedIds?: ReadonlySet<string>): Promise<CardbushPluginCatalogEntry[]> {
+    const catalog = (await this.#loadCatalog(excludedIds)).filter(item => !excludedIds?.has(item.id));
     const ids = new Set<string>();
     for (const plugin of catalog) {
       if (!plugin.id || ids.has(plugin.id)) throw new Error(`Duplicate or empty CardBush plugin id: ${plugin.id}`);
@@ -201,6 +231,7 @@ function decodeUpdate(
       const candidate = candidates.get(plugin.id);
       if (!candidate) return plugin;
       const installed = boolean(candidate.installed, "plugin.installed");
+      if (plugin.removalPending && candidate.enabled === true) throw new Error('Finish uninstalling this plugin before reinstalling it.');
       return {
         ...plugin,
         installed,

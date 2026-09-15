@@ -57,7 +57,7 @@ if(input.action==='close'){if(awaiting?.token===input.token){awaiting.reject(Err
 const no=async()=>{};
 const execution={id:'tool',name:'mcp_call',state:'completed',turnId:'t',summary:'Fixture',output:'Native result',createdAt:'2026-09-10T00:00:00Z',metadata:{}};
 const image={id:'image',name:'result.png',path:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=',type:'image',display:'inline'};
-window.cardbushDesktop.readImageDataUrl=async()=>image.path;
+window.imageReads=[];window.cardbushDesktop.readImageDataUrl=async path=>{imageReads.push(path);return image.path};
 window.cardbushDesktop.inspectPath=async path=>({path,name:'apple.png',kind:'file'});
 const file={id:'doc',name:'report.pdf',path:'C:/fixture/report.pdf',type:'document',display:'attachment',size:1234};
 // A historical execution: rendering must not require the removed tool to be registered.

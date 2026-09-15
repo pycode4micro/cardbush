@@ -6,6 +6,7 @@ import {
   type WebFrameMain,
 } from 'electron';
 import { isMcpHostMessage, handleMcpHostRequest, type McpHostOperation } from './mcpHostBridge.js';
+import { HostProcessResourceOwner } from './hostProcesses.js';
 
 import {
   BUSH_RUNTIME_ERROR_PROTOCOL,
@@ -59,13 +60,14 @@ export class RuntimeUtilityProcessController {
     if (this.#ready) return this.#ready;
     const ready = new Promise<RuntimeIpcOutboundMessage>((resolve, reject) => {
       const child = utilityProcess.fork(this.#options.modulePath, [], {
-        env: this.#options.env,
+        env: { ...(this.#options.env ?? process.env), CARDBUSH_RESOURCE_COORDINATION: 'desktop' },
         serviceName: 'CardBush Runtime Host',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       this.#child = child;
       const hostRequests = new Map<string, AbortController>();
-      child.once('exit', () => { for (const request of hostRequests.values()) request.abort(); hostRequests.clear(); });
+      const resources = new HostProcessResourceOwner();
+      child.once('exit', () => { for (const request of hostRequests.values()) request.abort(); hostRequests.clear(); resources.close(); });
       const startupTimeoutMs = Math.max(1_000, this.#options.startupTimeoutMs ?? 12_000);
       const startupTimeout = setTimeout(() => {
         const failure = new RuntimeHostControllerError(
@@ -96,7 +98,11 @@ export class RuntimeUtilityProcessController {
           if (candidate.type === 'request') {
             const abort = new AbortController();
             hostRequests.set(candidate.id, abort);
-            void handleMcpHostRequest(candidate, abort.signal, this.#options.onMcpHostRequest ?? (async () => { throw new Error('MCP desktop integration is unavailable.'); }))
+            void handleMcpHostRequest(candidate, abort.signal, (operation, payload, signal) => {
+              if (operation === 'resources.acquire' || operation === 'resources.release') return resources.handle(operation, payload, signal);
+              if (!this.#options.onMcpHostRequest) throw new Error('MCP desktop integration is unavailable.');
+              return this.#options.onMcpHostRequest(operation, payload, signal);
+            })
               .then(response => { if (this.#child === child) child.postMessage(response); })
               .catch(error => this.#options.onStderr?.(`MCP host response delivery failed: ${errorMessage(error)}`))
               .finally(() => hostRequests.delete(candidate.id));

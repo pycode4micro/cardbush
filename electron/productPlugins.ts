@@ -1,5 +1,5 @@
 import { resolveRuntimePluginPackage, readRuntimePluginBundle } from './runtimePluginPackage';
-import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
 import { safePackagePath } from './pluginPackagePaths';
@@ -7,6 +7,7 @@ import { safePackagePath } from './pluginPackagePaths';
 import type {
   CardbushPluginCatalogEntry,
   CardbushPluginComponent,
+  CardbushAppPluginConfig,
 } from '@cardbush/product-host' with { 'resolution-mode': 'import' };
 
 export interface PluginRoot {
@@ -28,9 +29,18 @@ interface MarketplaceEntry {
 }
 
 let pluginInstallQueue: Promise<void> = Promise.resolve();
+let pluginLifecycleQueue: Promise<void> = Promise.resolve();
+
+/** Serialize install/uninstall decisions without blocking read-only catalogs during teardown. */
+export function withProductPluginLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+  const result = pluginLifecycleQueue.then(operation);
+  pluginLifecycleQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 export async function loadProductPluginCatalog(
   roots: PluginRoot[],
+  excludedIds?: ReadonlySet<string>,
 ): Promise<CardbushPluginCatalogEntry[]> {
   await pluginInstallQueue;
   const plugins = new Map<string, CardbushPluginCatalogEntry>();
@@ -38,6 +48,7 @@ export async function loadProductPluginCatalog(
     const rootPath = resolve(root.path);
     const entries = await marketplaceEntries(rootPath);
     for (const entry of entries) {
+      if (excludedIds?.has(entry.name)) continue;
       const pluginRoot = resolve(rootPath, entry.path);
       if (!inside(rootPath, pluginRoot)) continue;
       const resolved = await resolvePluginManifest(pluginRoot).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
@@ -91,7 +102,6 @@ export async function loadEnabledProductPluginSkillRootEntries(
 }
 
 export async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string) {
-  const catalog = await loadProductPluginCatalog(roots);
   let snapshot: Record<string, unknown> | null = null;
   try {
     snapshot = await readJson(configPath);
@@ -107,6 +117,8 @@ export async function loadEnabledProductPlugins(roots: PluginRoot[], configPath:
       if (id) stored.set(id, state);
     }
   }
+  const catalog = await loadProductPluginCatalog(roots, new Set([...stored]
+    .filter(([, state]) => state.removalPending === true).map(([id]) => id)));
   return catalog.filter((plugin) => {
     const state = stored.get(plugin.id);
     const installed = state
@@ -174,9 +186,46 @@ export async function installProductPlugin(
   sourcePath: string,
   userPluginRoot: string,
 ): Promise<{ id: string; manifestPath: string }> {
-  const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot));
+  return withProductPluginLifecycle(() => {
+    const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot));
+    pluginInstallQueue = result.then(() => undefined, () => undefined);
+    return result;
+  });
+}
+
+/** Removal uses the same file queue as installation; callers cannot supply a path. */
+export async function removeProductPlugin<T>(plugin: CardbushAppPluginConfig, userPluginRoot: string,
+  dataDirectories: Array<{ root: string; name: string }>, commit: () => Promise<T>): Promise<T> {
+  const result = pluginInstallQueue.then(async () => {
+    if (plugin.source !== 'user' || safePackagePath(plugin.id) !== plugin.id || /[\\/]/.test(plugin.id)) {
+      throw new Error('Only user-installed plugin packages can be removed.');
+    }
+    const target = resolve(userPluginRoot, plugin.id);
+    if (resolve(pluginRootForManifest(plugin.manifestPath)) !== target) throw new Error('Plugin installation path changed. Refresh before uninstalling.');
+    // Validate every deletion before touching any of them. A junction must never
+    // turn an uninstall into deletion of a source checkout or another package.
+    const directories = [...dataDirectories, { root: userPluginRoot, name: plugin.id }];
+    for (const entry of directories) await ownedDirectory(entry.root, entry.name);
+    for (const entry of directories) {
+      const directory = await ownedDirectory(entry.root, entry.name);
+      if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+    }
+    return commit();
+  });
   pluginInstallQueue = result.then(() => undefined, () => undefined);
   return result;
+}
+
+async function ownedDirectory(root: string, name: string): Promise<string | undefined> {
+  if (safePackagePath(name) !== name || /[\\/]/.test(name)) throw new Error('Invalid plugin data directory.');
+  const parent = resolve(root), target = resolve(parent, name);
+  if (dirname(target) !== parent) throw new Error('Plugin directory escapes its managed root.');
+  const info = await lstat(target).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+  if (!info) return undefined;
+  if (info.isSymbolicLink() || !info.isDirectory() || dirname(await realpath(target)) !== await realpath(parent)) {
+    throw new Error('Plugin directory is not an owned installation directory.');
+  }
+  return target;
 }
 
 /** Validate an acquired package before it is offered for installation. */

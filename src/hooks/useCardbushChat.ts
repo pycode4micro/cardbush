@@ -79,12 +79,11 @@ import {
 } from '../features/sessionAttention';
 import {
   basename,
-  isAbsoluteLocalPath,
   isAudioPath,
   isImagePath,
   isVideoPath,
   samePath,
-  stripWrappingQuotes,
+  splitExplicitAttachmentMentions,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
 import { conversationTitleFromUserText } from '../shared/conversationTitle';
@@ -4336,20 +4335,14 @@ function firstUserTitleSource(messages: ChatMessage[], fallback: string) {
 function splitStreamAttachmentMentions(content: string) {
   const images: Array<{ path: string }> = [];
   const files: string[] = [];
-  const textLines: string[] = [];
-  for (const line of content.split(/\r?\n/)) {
-    const mention = attachmentPathFromLine(line);
-    if (!mention) {
-      textLines.push(line);
-      continue;
-    }
+  const { text: userInput, paths } = splitExplicitAttachmentMentions(content);
+  for (const mention of paths) {
     if (isImagePath(mention)) {
       images.push({ path: mention });
     } else {
       files.push(mention);
     }
   }
-  const userInput = textLines.join('\n').trim();
   return {
     displayInput: userInput,
     userInput:
@@ -4431,20 +4424,6 @@ function streamAttachmentsFromChatAttachments(
     { displayInput: '', userInput: '', images, files },
     standardImageInputEnabled,
   );
-}
-
-function attachmentPathFromLine(value: string) {
-  const trimmed = value.trim();
-  if (/^\/(?:model|goal|skill|collect|new)(?:\s|$)/i.test(trimmed)) {
-    return '';
-  }
-  const pathValue = stripWrappingQuotes(
-    trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed,
-  );
-  if (isAbsoluteLocalPath(pathValue)) {
-    return pathValue;
-  }
-  return '';
 }
 
 function localConversation(

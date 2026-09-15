@@ -53,6 +53,7 @@ import {
   isImagePath,
   isVideoPath,
   stripWrappingQuotes,
+  splitExplicitAttachmentMentions,
 } from '../../shared/localPaths';
 import type {
   AppLanguage,
@@ -86,6 +87,7 @@ import {
   type ProjectPathAlias,
 } from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
+import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
 import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
 import { parsePromptReference } from '../../shared/promptReferences';
@@ -399,12 +401,18 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
-      if (src && parseFileMemoReference(src)) return <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>;
+      const richFileReferences = useContext(RichFileReferencesContext);
+      if (src && parseFileMemoReference(src)) return richFileReferences
+        ? <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>
+        : <span>{alt}</span>;
       const reference = markdownLocalFileReference(src, workspaceRoot);
       const resolvedPath = reference
         ? remapProjectPath(reference.path, pathAliases)
         : '';
       const resolvedSource = reference ? fileUrl(resolvedPath) : src;
+      if (resolvedPath && isHtmlPreviewPath(resolvedPath)) return richFileReferences
+        ? <InlineHtmlPreview key={resolvedPath} path={resolvedPath} title={alt} language={language} />
+        : <span>{alt || basename(resolvedPath)}</span>;
       const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
       if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
       if (finalAnswerMedia && isVideoPath(resolvedPath || src || '')) {
@@ -1045,7 +1053,9 @@ function MessageBubbleView({
     !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
   const showFinalAnswer = finalAssistantRound &&
     !guidanceBoundaryRound && !stoppedAssistantRound && !failedAssistantRound;
-  const completedChangeReport = finalAssistantRound
+  // Stopping or failing a turn does not undo file changes already made by its tools.
+  const completedChangeReport = !isActiveAssistantTurn &&
+    (finalAssistantRound || stoppedAssistantRound || failedAssistantRound)
     ? completedAssistantChangeReport(message)
     : null;
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
@@ -1062,6 +1072,7 @@ function MessageBubbleView({
       visibleLoopHistory.length > 0 ||
       timeoutPresentation ||
       failurePresentation ||
+      completedChangeReport ||
       hookSummary,
   );
   if (!showAssistantProgress && !hasAssistantBody) {
@@ -1675,7 +1686,9 @@ function AssistantMessageContent({
         onOpenScene={onOpenScene}
       />,
     );
-    const media = group.executions.flatMap(execution => mediaByExecution.get(execution.id) ?? []);
+    // Tool images open on demand through "View image" in the execution details.
+    const media = group.executions.flatMap(execution => mediaByExecution.get(execution.id) ?? [])
+      .filter(artifact => artifact.type !== 'image');
     if (media.length) {
       blocks.push(
         <div key={`media-${groupKey}`} className="message-tool-outputs message-tool-media-outputs">
@@ -2548,21 +2561,8 @@ function hookVerificationStatusLabel(
 }
 
 function splitUserFileAttachments(content: string) {
-  const paths: string[] = [];
-  const lines = content.split(/\r?\n/);
-  const keptLines: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const directPath = trimmed.startsWith('@')
-      ? stripWrappingQuotes(trimmed.slice(1).trim())
-      : '';
-    if (directPath && isAbsoluteLocalPath(directPath)) {
-      paths.push(directPath);
-      continue;
-    }
-    keptLines.push(line);
-  }
+  const { text, paths } = splitExplicitAttachmentMentions(content);
+  const keptLines = text.split(/\r?\n/);
 
   let attachmentHeaderIndex = -1;
   for (let index = keptLines.length - 1; index >= 0; index -= 1) {

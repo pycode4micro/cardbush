@@ -32,6 +32,7 @@ import {
   projectRenderableChatMessages,
 } from './features/chatMessages';
 import { normalizeChatMessagesForDisplay } from './features/chatMessages/transcript/messageProjection';
+import { useBatchedTranscript } from './features/chatMessages/useBatchedTranscript';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
 import {
   themeBackgroundColor,
@@ -96,6 +97,8 @@ export function ShadowWindow({
   const initializationGenerationRef = useRef(0);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const autoFollowTranscriptRef = useRef(true);
+  const visibleShadowMessages = useBatchedTranscript(shadowMessages, conversation?.id ?? '',
+    activeAssistantMessageId, busy, initializing || closing || Boolean(error));
 
   const closeRuntimeConversation = useCallback(async () => {
     const current = conversationRef.current;
@@ -251,7 +254,7 @@ export function ShadowWindow({
       );
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [busy, shadowMessages, sourceMessages]);
+  }, [busy, visibleShadowMessages, sourceMessages]);
 
   useEffect(() => {
     const target = transcriptRef.current;
@@ -383,8 +386,8 @@ export function ShadowWindow({
     [sourceMessages],
   );
   const renderedShadowMessages = useMemo(
-    () => projectRenderableChatMessages(normalizeChatMessagesForDisplay(shadowMessages)),
-    [shadowMessages],
+    () => projectRenderableChatMessages(normalizeChatMessagesForDisplay(visibleShadowMessages)),
+    [visibleShadowMessages],
   );
   const allMessages = useMemo(
     () => [...renderedSourceMessages, ...renderedShadowMessages],
@@ -461,7 +464,7 @@ export function ShadowWindow({
             <div className="shadow-window-transcript-content message-list-content">
               {allMessages.map((message, index) => (
                 <div
-                  className={`shadow-window-message message-list-item${index === 0 ? ' first' : ''}${index < renderedSourceMessages.length ? ' source' : ' shadow'}`}
+                  className={`shadow-window-message message-list-item${index === 0 ? ' first' : ''}${index < renderedSourceMessages.length ? ' source' : ' shadow'}${busy && message.id === activeAssistantMessageId ? ' streaming' : ''}`}
                   key={`${message.conversationId ?? 'source'}:${message.id}`}
                 >
                   {index === renderedSourceMessages.length && renderedSourceMessages.length > 0 && (

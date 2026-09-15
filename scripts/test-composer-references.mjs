@@ -18,10 +18,46 @@ function load(file) {
   return exports;
 }
 const refs = load('src/shared/promptReferences.ts');
+const skillRefs = load('src/features/skills/skillReferences.ts');
 const { resolvePromptReferenceContext } = load('src/backend/promptReferenceContext.ts');
 const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessageProjection.ts');
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
+
+test('skill tokens preserve full paths, surrounding text and escaped labels without changing the prompt', () => {
+  const skill = { name: '中文 [技能] \\ 示例', displayName: '视频制作', path: 'C:\\Users\\EDY\\My Skills\\场景 #50% (test)\\SKILL.md' };
+  const link = skillRefs.skillReference(skill);
+  const content = `先用 ${link} 再补充 ${link}。`;
+  const parts = skillRefs.skillPromptParts(content, [skill]);
+  assert.equal(parts.map(part => part.text).join(''), content);
+  const tokens = parts.filter(part => part.skillReference);
+  assert.equal(tokens.length, 2);
+  assert.equal(tokens[0].skill, skill);
+  assert.equal(tokens[0].skillReference.title, skill.name);
+  assert.equal(tokens[0].skillReference.path, skill.path.replaceAll('\\', '/'));
+  for (const part of parts) assert.equal(content.slice(part.start, part.start + part.text.length), part.text);
+});
+
+test('skill identity follows the referenced path, including before the catalog loads', () => {
+  const first = { name: 'same-name', path: 'C:/CardBush/skills/a/SKILL.md' };
+  const other = { name: 'same-name', path: 'C:/Other Host/skills/a/SKILL.md' };
+  const link = '[same-name](<c:/cardbush/skills/A/skill.md>)';
+  assert.equal(skillRefs.skillPromptParts(link, [other, first])[0].skill, first);
+  assert.equal(skillRefs.skillPromptParts(link, [])[0].skillReference.path, 'c:/cardbush/skills/A/skill.md');
+  assert.equal(skillRefs.skillPromptParts(link, [])[0].skill, undefined);
+  assert.equal(skillRefs.skillPromptParts('[a](<//server/skills/a/SKILL.md>)', [])[0].skillReference.path, '//server/skills/a/SKILL.md');
+  assert.equal(skillRefs.skillPromptParts('[a](/home/me/skills/a/SKILL.md)', [])[0].skillReference.path, '/home/me/skills/a/SKILL.md');
+});
+
+test('skill examples, escaped links, images and unrelated paths remain editable literal text', () => {
+  const link = '[sample](<C:/skills/sample/SKILL.md>)';
+  for (const value of ['`' + link + '`', '```md\n' + link + '\n```', '~~~md\n' + link + '\n~~~',
+    '\\' + link, '!' + link, '[a](https://example.test/SKILL.md)', '[a](<C:/skills/README.md>)', '[a](skills/sample/SKILL.md)']) {
+    const parts = skillRefs.skillPromptParts(value, []);
+    assert.equal(parts.some(part => part.skillReference), false, value);
+    assert.equal(parts.map(part => part.text).join(''), value);
+  }
+});
 const browser = { kind: 'browser', tabId: 'tab-1', url: 'https://example.test/a?term=中文&next=(x)#section', title: '已打开的网页' };
 const raw = { messageId: user.messageId, turnId: user.turnId, turnSequence: 1, messageIndex: 0, createdAt: '2026-09-12T00:00:00Z', message: { role: 'user', content: '完整原文\n' + '内容'.repeat(6000) } };
 const snapshot = { sessionId: 'current', supersededMessageIds: [], turns: [{ turnId: user.turnId, messages: [raw, { ...raw, messageId: 'assistant', message: { role: 'assistant', content: 'Do not attach this response.' } }] }] };

@@ -19,8 +19,6 @@ import {
   Menu,
   PanelRightClose,
   Plus,
-  Plug,
-  Puzzle,
   RefreshCw,
   X,
 } from 'lucide-react';
@@ -96,6 +94,9 @@ import {
 } from './features/appearance/themeRuntime';
 import { useWindowAppearance, readWindowMaterialPreference, WINDOW_MATERIAL_STORAGE_KEY, type WindowMaterialPreference } from './features/appearance/windowAppearance';
 import { useKeyboardShortcuts } from './features/shortcuts/useKeyboardShortcuts';
+import { ConversationSearchDialog } from './features/search/ConversationSearchDialog';
+import { useConversationSearch } from './features/search/useConversationSearch';
+import { usePreviousConversationShortcut } from './features/shortcuts/usePreviousConversationShortcut';
 import {
   importedThemeBaseMode,
   importedThemeStyleVariables,
@@ -314,6 +315,7 @@ export function App() {
 
 function CardbushApp() {
   const keyboardShortcuts = useKeyboardShortcuts();
+  const conversationSearch = useConversationSearch();
   const [runtimeStartup, setRuntimeStartup] = useState<RuntimeStartupStatus>(() =>
     window.cardbushDesktop?.runtimeStartupStatus
       ? { phase: 'initializing', attempt: 0, startedAt: new Date().toISOString() }
@@ -1526,7 +1528,7 @@ function CardbushApp() {
     const focus = () => {
       const input = Array.from(document.querySelectorAll<HTMLElement>('[data-composer-input]')).find(node => node.checkVisibility());
       if (!input) return;
-      input.focus();
+      input.focus({ preventScroll: true });
       if (input instanceof HTMLTextAreaElement) input.setSelectionRange(input.value.length, input.value.length);
       else {
         const range = document.createRange(); range.selectNodeContents(input); range.collapse(false);
@@ -2050,6 +2052,35 @@ function CardbushApp() {
   const handleSidebarOpenSettings = useCallback(() => {
     openSettings('profile');
   }, [openSettings]);
+  const handleSidebarOpenPlugins = useCallback(() => openSettings('mcp', 'plugins'), [openSettings]);
+  const handleSearchOpenConversation = useCallback((conversationId: string) => {
+    setSettingsOpen(false);
+    openConversation(conversationId);
+  }, [openConversation]);
+  const handlePreviousConversation = useCallback((conversationId: string) => {
+    chat.openConversation(conversationId);
+    setSection('chat');
+    setConversationPromptFocus(value => value + 1);
+  }, [chat.openConversation]);
+  usePreviousConversationShortcut({
+    activeConversationId: chat.activeConversationId,
+    conversations: chat.conversations,
+    preparedConversations: chat.preparedConversations,
+    enabled: section === 'chat' && !settingsOpen && !conversationSearch.open,
+    onOpenConversation: handlePreviousConversation,
+  });
+  const handleSearchCreateConversation = useCallback(() => {
+    setSettingsOpen(false);
+    createConversation();
+  }, [createConversation]);
+  const handleSearchOpenFiles = useCallback(() => {
+    setSettingsOpen(false);
+    void openInspectorFiles();
+  }, [openInspectorFiles]);
+  const handleSearchAddProject = useCallback(() => {
+    setSettingsOpen(false);
+    void addProject();
+  }, [addProject]);
 
   return (
     <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
@@ -2063,16 +2094,23 @@ function CardbushApp() {
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}
         onOpenCacheSettings={() => openSettings('cache')}
-        onOpenPluginSettings={() => openSettings('mcp', 'plugins')}
-        onOpenSkills={() => {
-          openSettings('mcp', 'skills');
-        }}
         teamAvailable={backendCapabilities.teamMode}
         onOpenTeam={() => {
           setSettingsOpen(false);
           setSection('team');
         }}
       />
+      {conversationSearch.open && <ConversationSearchDialog
+        language={language}
+        conversations={chat.conversations}
+        projects={projectItems}
+        runningConversationIds={chat.processingConversationIds}
+        onClose={conversationSearch.close}
+        onOpenConversation={handleSearchOpenConversation}
+        onCreateConversation={handleSearchCreateConversation}
+        onAddProject={window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined}
+        onOpenFiles={window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined}
+      />}
       {settingsMounted && (
         <Suspense fallback={null}>
           <LazySettingsView
@@ -2149,6 +2187,8 @@ function CardbushApp() {
                   onRenameConversation={chat.renameConversation}
                   onOpenConversationChanges={handleSidebarOpenConversationChanges}
                   onOpenSettings={handleSidebarOpenSettings}
+                  onOpenPlugins={handleSidebarOpenPlugins}
+                  onOpenSearch={conversationSearch.show}
                   softVisible={sidebarPresence.visible}
                 />
               )}
@@ -2268,13 +2308,11 @@ function CardbushApp() {
                 section={section}
                 activeProjectDir={activeProjectDir}
                 workflowValidationAvailable={backendCapabilities.teamWorkflows}
-                conversations={chat.conversations}
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
                 onToggleSkill={toggleSkillEnabled}
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
-                onCreateConversation={handleSidebarCreateConversation}
                 onOpenConversation={(conversationId) => {
                   openConversation(conversationId);
                 }}
@@ -3535,8 +3573,6 @@ function WindowFrame({
   sidebarCollapsed,
   onToggleSidebar,
   onOpenCacheSettings,
-  onOpenPluginSettings,
-  onOpenSkills,
   onOpenTeam,
   teamAvailable,
 }: {
@@ -3544,13 +3580,11 @@ function WindowFrame({
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   onOpenCacheSettings: () => void;
-  onOpenPluginSettings: () => void;
-  onOpenSkills: () => void;
   onOpenTeam: () => void;
   teamAvailable: boolean;
 }) {
   const [maximized, setMaximized] = useState(false);
-  const [openMenu, setOpenMenu] = useState<'plugins' | 'beta' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'beta' | null>(null);
   const menuRootRef = useRef<HTMLDivElement | null>(null);
 
   const syncMaximized = useCallback(() => {
@@ -3605,22 +3639,6 @@ function WindowFrame({
         {language === 'zh' ? '缓存' : 'Cache'}
       </button>
       <div className="window-frame-menu-group no-drag" ref={menuRootRef}>
-        <WindowFrameMenu
-          label={language === 'zh' ? '插件' : 'Plugins'}
-          open={openMenu === 'plugins'}
-          onToggle={() => setOpenMenu((current) => current === 'plugins' ? null : 'plugins')}
-        >
-          <WindowFrameMenuItem
-            icon={<Plug size={14} />}
-            label={language === 'zh' ? '插件管理' : 'Plugin management'}
-            onClick={() => runMenuAction(onOpenPluginSettings)}
-          />
-          <WindowFrameMenuItem
-            icon={<Puzzle size={14} />}
-            label={language === 'zh' ? '技能管理' : 'Skill management'}
-            onClick={() => runMenuAction(onOpenSkills)}
-          />
-        </WindowFrameMenu>
         {teamAvailable && <WindowFrameMenu
           label="Beta"
           open={openMenu === 'beta'}
@@ -3777,13 +3795,11 @@ function FeaturePanel({
   workflowValidationAvailable,
   inspectorOpen,
   onToggleInspector,
-  conversations,
   skills,
   disabledSkillNames,
   onToggleSkill,
   onReloadSkills,
   onLoadSkillDetail,
-  onCreateConversation,
   onCreateAutomation,
   onOpenConversation,
 }: {
@@ -3793,13 +3809,11 @@ function FeaturePanel({
   workflowValidationAvailable: boolean;
   inspectorOpen: boolean;
   onToggleInspector: () => void;
-  conversations: ConversationSummary[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onCreateConversation: () => void;
   onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
@@ -3819,13 +3833,11 @@ function FeaturePanel({
           section={section}
           activeProjectDir={activeProjectDir}
           workflowValidationAvailable={workflowValidationAvailable}
-          conversations={conversations}
           skills={skills}
           disabledSkillNames={disabledSkillNames}
           onToggleSkill={onToggleSkill}
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
-          onCreateConversation={onCreateConversation}
           onCreateAutomation={onCreateAutomation}
           onOpenConversation={onOpenConversation}
         />

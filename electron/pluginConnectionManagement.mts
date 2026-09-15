@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { mcpOAuthConfigSchema, mcpOAuthFromConfig, mcpServerSnapshotSchema, openAiAppAuthorizationUrl, usesOpenAiHostedConnection } from '@cardbush/bush-protocol';
 import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
+import { credentialKey } from '@cardbush/bush-mcp-client';
 import type { CardbushAppsConfigStore, CardbushAppPluginConfig, ProductMcpConfigStore } from '@cardbush/product-host';
 import { pluginRootForManifest, resolvePluginManifest } from './pluginManifest.js';
 import { resolvePluginMcpConnection } from './pluginMcpConfiguration.mjs';
+import { redactTroubleshootingText, troubleshootingLaunch, type PluginTroubleshootingContext } from './pluginTroubleshooting.mjs';
 
 type Json = Record<string, unknown>;
 const record = (value: unknown): Json => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {};
@@ -48,6 +50,28 @@ export class PluginConnectionManager {
     refresh: () => Promise<unknown>; runtime: () => Promise<{ runtime: unknown; runtimeError?: string }>;
     requestCredentials?: (input: ClientCredentialsPrompt, signal: AbortSignal) => Promise<ClientCredentialsAnswer>;
   }) {}
+
+  /** Read only, for the editable troubleshooting draft; never reconnects a service. */
+  async troubleshootingContext(pluginId: string, componentId: string): Promise<PluginTroubleshootingContext> {
+    const [config, mcp] = await Promise.all([this.options.apps.read(), this.options.mcp.read()]);
+    const plugin = config.plugins.find(item => item.id === pluginId && item.installed);
+    if (!plugin) throw new Error('Plugin is no longer installed. Refresh the plugin list.');
+    this.component(plugin, componentId);
+    const settings = record(record(plugin.config.mcp_servers)[componentId]);
+    let configuredLaunch: PluginTroubleshootingContext['configuredLaunch'] = null, configurationError: string | undefined;
+    try {
+      const effective = await this.resolve(plugin, componentId, { ...settings, required: false }, mcp);
+      if (effective) configuredLaunch = troubleshootingLaunch(effective.transport);
+    } catch (error) { configurationError = redactTroubleshootingText(error instanceof Error ? error.message : String(error)); }
+    return {
+      capturedAt: new Date().toISOString(), application: 'CardBush', pluginId: plugin.id, version: plugin.version,
+      source: plugin.source, manifestPath: plugin.manifestPath, pluginRoot: pluginRootForManifest(plugin.manifestPath),
+      pluginEnabled: plugin.enabled, componentId, serviceId: `plugin_${plugin.id.replaceAll('.', '_')}_${componentId}`,
+      pluginConfigurationRevision: config.revision, mcpConfigurationRevision: mcp.revision,
+      ...(typeof settings.server === 'string' ? { boundServerId: settings.server } : {}),
+      configuredLaunch, ...(configurationError ? { configurationError } : {}),
+    };
+  }
 
   async list(pluginId?: string) {
     const config = await this.options.apps.read();
@@ -160,6 +184,23 @@ export class PluginConnectionManager {
       secrets: { [input.componentId]: answer.content.clientSecret } }, signal));
   }
 
+  /** Delete only this installation's secrets; shared accounts and bindings stay intact. */
+  async clearPluginCredentials(plugin: CardbushAppPluginConfig, otherPlugins: CardbushAppPluginConfig[]) {
+    const mcp = await this.options.mcp.read();
+    const references = (config: Json) => Object.values(record(config.mcp_servers))
+      .map(settings => mcpOAuthFromConfig(record(settings).oauth).clientSecretRef).filter(Boolean);
+    const shared = new Set([...otherPlugins.flatMap(item => references(item.config)),
+      ...mcp.servers.map(server => mcpOAuthFromConfig(server.oauth).clientSecretRef)]);
+    const owned = references(plugin.config).filter(ref => !shared.has(ref));
+    for (const component of plugin.components.filter(item => item.kind === 'mcp' || item.kind === 'app')) {
+      const settings = record(record(plugin.config.mcp_servers)[component.id]);
+      const server = await this.resolve(plugin, component.id, { ...settings, enabled: true, required: false }, mcp).catch(() => null);
+      if (server && server.transport.kind !== 'stdio' && server.transport.auth !== 'openai') owned.push(credentialKey(server));
+    }
+    if (!this.options.credentials && owned.length) throw new Error('Secure credential storage is unavailable.');
+    for (const ref of new Set(owned)) if (ref) await this.options.credentials!.write(ref, undefined);
+  }
+
   private async current(pluginId: string, expectedRevision: number) {
     const config = await this.options.apps.read();
     if (config.revision !== expectedRevision) throw new Error('Plugin configuration changed; refresh before saving again.');
@@ -181,10 +222,10 @@ export class PluginConnectionManager {
   private component(plugin: CardbushAppPluginConfig, name: string) {
     if (!plugin.components.some(item => item.id === name && (item.kind === 'mcp' || item.kind === 'app'))) throw new Error('Unknown plugin MCP connection.');
   }
-  private async resolve(plugin: CardbushAppPluginConfig, name: string, settings: Json) {
+  private async resolve(plugin: CardbushAppPluginConfig, name: string, settings: Json, configured?: Awaited<ReturnType<ProductMcpConfigStore['read']>>) {
     const root = pluginRootForManifest(plugin.manifestPath);
     const manifest = await resolvePluginManifest(root);
-    const configured = await this.options.mcp.read();
+    configured ??= await this.options.mcp.read();
     const standalone = configured.servers.map(server => ({ ...server, transport: server.transport === 'stdio' ? {
       kind: 'stdio', command: server.command, args: server.args, cwd: server.cwd, env: server.env,
     } : { kind: server.transport === 'sse' ? 'sse' : 'streamable_http', url: server.url, headers: server.headers,

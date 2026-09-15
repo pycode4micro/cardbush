@@ -2183,7 +2183,7 @@ function McpServersPanel({
   }, []);
   useCapabilityCatalogRefresh(refreshServerStatus);
   useEffect(() => {
-    if (!servers.some((server) => server.status === 'pending')) return;
+    if (!servers.some((server) => ['pending', 'waiting_for_resources', 'restarting'].includes(server.status ?? ''))) return;
     let active = true;
     const timer = window.setTimeout(() => void refreshServerStatus(() => active).catch(() => undefined), 1_000);
     return () => { active = false; window.clearTimeout(timer); };
@@ -2347,7 +2347,7 @@ function McpServersPanel({
           {language === 'zh' ? '配置已保存，当前任务结束后自动生效，无需重启。' : 'Saved. Changes apply automatically after active tasks finish; no restart needed.'}
         </p>}
         {servers.find((server) => server.lastError)?.lastError && <p className="settings-inline-error" role="alert">
-          {language === 'zh' ? 'MCP 更新失败，保留上次可用配置：' : 'MCP update failed; the previous working configuration is retained: '}
+          {language === 'zh' ? 'MCP 连接异常：' : 'MCP connection issue: '}
           {servers.find((server) => server.lastError)?.lastError}
         </p>}
         <div className="mcp-section-title">
@@ -2372,6 +2372,7 @@ function McpServersPanel({
               <div className="mcp-simple-row" key={server.id}>
                 <McpLogoIcon className="mcp-logo-icon" size={18} />
                 <strong>{server.name || server.id}</strong>
+                {server.status === 'waiting_for_resources' && <span role="status">{language === 'zh' ? '等待可用资源，稍后自动连接' : 'Waiting for resources; connects automatically'}</span>}
                 {server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
                   setBusyKey(server.id); setError('');
                   void window.cardbushDesktop!.mcpConnectionAction(server.id, 'login').then(() => fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language))).finally(() => setBusyKey(''));

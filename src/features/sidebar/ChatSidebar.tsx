@@ -38,6 +38,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { McpLogoIcon } from '../../components/McpLogoIcon';
 
 import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
@@ -197,6 +198,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   onRenameConversation,
   onOpenConversationChanges,
   onOpenSettings,
+  onOpenPlugins,
+  onOpenSearch,
   softVisible = true,
 }: {
   language: AppLanguage;
@@ -216,6 +219,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
+  onOpenPlugins: () => void;
+  onOpenSearch: () => void;
   softVisible?: boolean;
 }) {
   const sidebarRenderStartedAt = performance.now();
@@ -226,6 +231,9 @@ export const ChatSidebar = memo(function ChatSidebar({
     });
   });
   const t = (id: AppSection) => sectionLabels[id][language];
+  const keyboardShortcuts = useKeyboardShortcuts();
+  const searchLabel = language === 'zh' ? '搜索会话' : 'Search chats';
+  const searchShortcut = keyboardShortcuts.label('searchConversations');
   const unreadAutomations = useAutomationUnreadCount();
   const [archivedConversationIds, setArchivedConversationIds] = useState<Set<string>>(
     () => new Set(),
@@ -738,20 +746,9 @@ export const ChatSidebar = memo(function ChatSidebar({
           }
         />
         <NavRow
-          active={section === 'search'}
-          icon={<Search size={14} />}
-          label={t('search')}
-          onClick={() => onSectionChange('search')}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:search', [
-              {
-                key: 'open',
-                icon: <Search size={15} />,
-                label: language === 'zh' ? '打开搜索' : 'Open search',
-                onClick: () => onSectionChange('search'),
-              },
-            ])
-          }
+          icon={<McpLogoIcon size={16} />}
+          label={language === 'zh' ? '插件' : 'Plugins'}
+          onClick={onOpenPlugins}
         />
         <NavRow active={section === 'automations'} icon={<CalendarClock size={14}/>} label={t('automations')} trailing={unreadAutomations > 0 ? <span className="automation-nav-count" aria-label={language === 'zh' ? `${unreadAutomations} 条未读结果` : `${unreadAutomations} unread results`}>{unreadAutomations > 99 ? '99+' : unreadAutomations}</span> : undefined} onClick={() => onSectionChange('automations')} />
       </nav>
@@ -834,6 +831,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         </div>
       </div>
 
+      <div className="sidebar-footer">
       <button
         className="settings-dock"
         type="button"
@@ -852,6 +850,12 @@ export const ChatSidebar = memo(function ChatSidebar({
         <Settings size={17} />
         <span>{language === 'zh' ? '设置' : 'Settings'}</span>
       </button>
+      <button className="sidebar-search-button" type="button" onClick={onOpenSearch}
+        aria-label={searchLabel} aria-haspopup="dialog" aria-keyshortcuts={keyboardShortcuts.aria('searchConversations')}
+        title={searchShortcut ? `${searchLabel} (${searchShortcut})` : searchLabel}>
+        <Search size={17} aria-hidden="true" />
+      </button>
+      </div>
       </div>
       {contextMenu && (
         createPortal(
@@ -934,8 +938,8 @@ function SectionHeader({
       <span
         className="section-title"
       >
-        <ChevronDown className={expanded ? '' : 'collapsed'} size={14} />
         {title}
+        <ChevronDown className={`section-chevron${expanded ? '' : ' collapsed'}`} size={14} aria-hidden="true" />
       </span>
       <button
         className="section-action"

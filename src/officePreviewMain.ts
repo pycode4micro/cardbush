@@ -196,6 +196,7 @@ async function renderOfficeFile() {
     signal: abortController.signal,
   });
   if (!response.ok) {
+    if (response.status === 413) throw new Error(await response.text());
     throw new Error(`无法读取本地文件（${response.status}）。`);
   }
   const buffer = await response.arrayBuffer();

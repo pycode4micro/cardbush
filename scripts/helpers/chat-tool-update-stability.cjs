@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 
-// Match the real loop: existing narration + a large image, followed by many
+// Match the real loop: an attached image and narration, followed by many
 // textless tool rounds. Sample every paint, not just the settled DOM.
 module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright' }) => {
   const fs = require('node:fs/promises');
@@ -21,8 +21,9 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
       ...Array.from({ length: 6 }, (_, index) => ({ id: 'stable-history-' + index,
         role: index % 2 ? 'assistant' : 'user', content: ('Earlier context ' + index + '\\n\\n').repeat(6),
         turnId: 'stable-history-turn-' + index })),
-      { id: 'stable-user', role: 'user', content: 'Continue the render', turnId: 'stable-turn' },
-      { id: 'stable-intro', assistantMessageId: 'stable-intro', role: 'assistant', content: 'This narration and preview stay in place.', turnId: 'stable-turn',
+      { id: 'stable-user', role: 'user', content: 'Continue the render',
+        attachments: [{ id: 'stable-user-image', name: 'reference.png', type: 'image', path: stabilityImage }], turnId: 'stable-turn' },
+      { id: 'stable-intro', assistantMessageId: 'stable-intro', role: 'assistant', content: 'This narration stays in place.', turnId: 'stable-turn',
         toolExecutions: [{ id: 'stable-image-tool', name: 'present_artifact', state: 'completed',
           success: true, output: '', summary: 'Preview', metadata: {}, durationMs: 10,
           createdAt: '2026-09-13T00:00:00Z', turnId: 'stable-turn',
@@ -44,12 +45,13 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
     renderStability();
     }
   `);
-  await until("document.querySelector('.message-tool-artifact img')?.naturalWidth === 1280", 'large tool preview loaded');
+  await until("document.querySelector('.user-bubble .message-image-strip img')?.naturalWidth === 1280", 'large user attachment loaded');
+  assert.equal(await run("document.querySelector('.message-tool-artifact img')"), null, 'tool images stay in the on-demand viewer');
   await pause(600);
   await run(`
     window.stableList = document.querySelector('.message-list');
     window.stableRow = document.querySelector('.message-row.streaming');
-    window.stableImage = stableRow.querySelector('.message-tool-artifact img');
+    window.stableImage = document.querySelector('.user-bubble .message-image-strip img');
     window.stableParagraph = stableRow.querySelector('.markdown-content p');
     window.stableToolBlock = stableRow.querySelector('.tool-execution-block');
     window.stabilityBaseline = { top: stableList.scrollTop, height: stableList.scrollHeight, y: stableImage.getBoundingClientRect().y };

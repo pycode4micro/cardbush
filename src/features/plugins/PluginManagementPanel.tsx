@@ -80,7 +80,7 @@ export function PluginManagementPanel({
   onOpenNetwork?: () => void;
 }) {
   const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
-  const { rootRef, entries, page, open: setPage, back, reset } = usePluginNavigation();
+  const { rootRef, entries, page, open: setPage, back, reset, dismissPlugin } = usePluginNavigation();
   const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp(serverId);
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [localSkills, setLocalSkills] = useState(skills);
@@ -250,13 +250,15 @@ export function PluginManagementPanel({
       const result = await uninstallCardbushPlugin(plugin.id);
       dirtyPluginIds.current.delete(plugin.id);
       receiveConfiguration(result.configuration);
-      onNotify(language === 'zh' ? `${plugin.name} 已卸载${result.pending ? '，连接变更正在后台生效' : ''}`
-        : `${plugin.name} uninstalled${result.pending ? '; connection changes are pending' : ''}`);
-      if (result.applicationError) setError(language === 'zh' ? `插件已卸载，但运行时更新失败：${result.applicationError}` : `Plugin uninstalled, but runtime update failed: ${result.applicationError}`);
+      dismissPlugin(plugin.id);
+      onNotify(language === 'zh' ? `${plugin.name} 已卸载` : `${plugin.name} uninstalled`);
       try { setLocalSkills(await onReloadSkills()); }
       catch (caught) { setError(current => current || (language === 'zh' ? `插件已卸载，但技能列表刷新失败：${errorMessage(caught)}` : `Plugin uninstalled, but skill refresh failed: ${errorMessage(caught)}`)); }
       await loadConnections();
-    } catch (caught) { setError(errorMessage(caught)); }
+    } catch (caught) {
+      setError(language === 'zh' ? `卸载未完成：${errorMessage(caught)}` : `Uninstall incomplete: ${errorMessage(caught)}`);
+      await fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
+    }
     finally { uninstalling.current = false; setBusy(''); }
   };
 
@@ -838,8 +840,8 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
         {activeTab === 'plugins' && installed.map((plugin) => (
           <article key={plugin.id}>
             <button className="plugin-featured-main" type="button" onClick={() => onOpen(plugin)}><PluginLogo plugin={plugin} /><span><strong>{plugin.name}</strong><small>{plugin.description}</small></span></button>
-            <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration} onClick={() => togglePlugin(plugin)}><span /></button>
-            <button className="plugin-uninstall-button" type="button" disabled={busy || !configuration} aria-label={language === 'zh' ? `卸载 ${plugin.name}` : `Uninstall ${plugin.name}`} title={language === 'zh' ? '卸载插件，保留包文件和设置' : 'Uninstall plugin; keep package files and settings'} onClick={() => onUninstall(plugin)}><Trash2 size={16}/></button>
+            <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration || plugin.removalPending} onClick={() => togglePlugin(plugin)}><span /></button>
+            {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy || !configuration} aria-label={language === 'zh' ? `卸载 ${plugin.name}` : `Uninstall ${plugin.name}`} title={language === 'zh' ? '卸载插件并删除文件与设置' : 'Uninstall plugin and delete its files and settings'} onClick={() => onUninstall(plugin)}><Trash2 size={16}/></button>}
           </article>
         ))}
         {activeTab === 'apps' && components.map(({ plugin, component }) => (
@@ -873,6 +875,7 @@ function McpCatalogNotice({ language, loading, error }: { language: AppLanguage;
 
 function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; language: AppLanguage }) {
   const labels = {
+    waiting_for_resources: ['等待可用资源', 'Waiting for resources'],
     auth_required: ['需要登录', 'Sign-in required'], configuration_required: ['需要配置', 'Configuration required'], connected: ['已连接', 'Connected'], pending: ['等待生效', 'Pending'], restarting: ['重新连接中', 'Reconnecting'],
     unavailable: ['连接异常', 'Unavailable'], disabled: ['已停用', 'Disabled'], unknown: ['连接待确认', 'Connection unconfirmed'],
   };
@@ -905,12 +908,14 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
       <header className="plugin-detail-hero">
         <PluginLogo plugin={plugin} large />
         <div><h2>{plugin.name}</h2><p>{plugin.description}</p></div>
-        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (language === 'zh' ? '插件已停用' : 'Plugin disabled') : (language === 'zh' ? '插件已启用' : 'Plugin enabled'))}><span /></button>
-          <button className="plugin-uninstall-button" type="button" disabled={busy} onClick={onUninstall}><Trash2 size={15}/>{language === 'zh' ? '卸载插件' : 'Uninstall'}</button></div>
+        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || plugin.removalPending} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (language === 'zh' ? '插件已停用' : 'Plugin disabled') : (language === 'zh' ? '插件已启用' : 'Plugin enabled'))}><span /></button>
+          {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy} onClick={onUninstall}><Trash2 size={15}/>{language === 'zh' ? '卸载插件' : 'Uninstall'}</button>}</div>
           : <button className="plugin-detail-primary" type="button" disabled={busy} onClick={() => onPersist({ ...plugin, installed: true, enabled: true }, language === 'zh' ? '插件已安装' : 'Plugin installed')}>{language === 'zh' ? '安装插件' : 'Install'}</button>}
       </header>
       <p className="plugin-uninstall-hint">{plugin.installed
-        ? (language === 'zh' ? '卸载会从已添加列表移除插件及其能力，保留包文件和设置，方便重新安装。' : 'Uninstall removes the plugin and its capabilities from Added. Package files and settings are kept for reinstalling.')
+        ? (plugin.source === 'user'
+          ? (language === 'zh' ? '卸载将删除插件的安装文件、专属数据和设置。仅暂停使用可选择停用。' : 'Uninstall deletes this plugin’s installed files, data and settings. Disable it to keep them.')
+          : (language === 'zh' ? '内置组件可停用。' : 'Bundled components can be disabled.'))
         : (language === 'zh' ? '此插件尚未安装。安装后可使用其能力。' : 'This plugin is not installed. Install it to use its capabilities.')}</p>
       {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <button type="button" key={prompt} disabled={!plugin.installed || busy || !onOpenPrompt}
         title={language === 'zh' ? '在新会话中使用此提示词' : 'Use this prompt in a new conversation'}
@@ -918,7 +923,8 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
       <p className="plugin-long-description">{plugin.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
       {plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{language === 'zh' ? '打开插件配置' : 'Open plugin settings'}</button></section>)}
-      {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
+      {plugin.removalPending && <p className="plugin-market-error">{language === 'zh' ? '卸载尚未完成，可点击卸载重试。' : 'Uninstall is incomplete. Click Uninstall to retry.'}</p>}
+      {plugin.installed && !plugin.removalPending && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
       {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{language === 'zh' ? '网络代理' : 'Network proxy'} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language === 'zh')}</summary>
         <PluginProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
       </details>}

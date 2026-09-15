@@ -126,7 +126,7 @@ export const mcpSnapshotResultSchema = z.object({
   // Optional product configuration revision; runtime revisions also track plugin changes.
   configurationRevision: z.number().int().positive().optional(),
   applicationState: z.enum(["applied", "pending", "failed"]).optional(),
-  applicationPhase: z.enum(["waiting_for_idle", "connecting"]).optional(),
+  applicationPhase: z.enum(["waiting_for_idle", "connecting", "waiting_for_resources"]).optional(),
   pendingRevision: z.number().int().positive().optional(),
   // Services affected by an uncommitted update; absent on older runtimes.
   pendingServerIds: z.array(z.string().min(1)).optional(),
@@ -138,7 +138,7 @@ export const mcpSnapshotResultSchema = z.object({
     restartAttempts: z.number().int().nonnegative().default(0),
     lastError: z.string().optional(),
     // Background connection progress; tools still describe the currently published catalog.
-    updateState: z.enum(['queued', 'connecting', 'waiting_for_catalog', 'failed']).optional(),
+    updateState: z.enum(['queued', 'connecting', 'waiting_for_resources', 'waiting_for_catalog', 'failed']).optional(),
     tools: z.array(z.object({
       remoteName: z.string().min(1),
       runtimeName: z.string().min(1),

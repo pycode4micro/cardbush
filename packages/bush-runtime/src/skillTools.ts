@@ -36,7 +36,7 @@ function searchRegistration(
   return {
     definition: {
       name: "search_skills",
-      description: "Search installed Skills by capability. Returns names, short descriptions and local SKILL.md paths in mainResource. Read the selected file with read_file for full instructions. Plugin Skills also include an invocation id: use run_skill with that id to apply policies, parameters and dependencies; reading the file alone does not invoke them.",
+      description: "Search installed Skills by capability. Returns names, short descriptions and local SKILL.md paths in mainResource. Read the selected SKILL.md, list its references/ directory if present, and read task-relevant documents relative to that Skill's directory. Plugin Skills also include an invocation id: use run_skill with that id to apply policies, parameters and dependencies; reading the file alone does not invoke them.",
       inputSchema: {
         type: "object",
         properties: {

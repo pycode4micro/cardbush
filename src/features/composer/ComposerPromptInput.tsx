@@ -1,11 +1,16 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
-import type { AppLanguage, CardbushAppPlugin } from '../../types';
+import type { AppLanguage, CardbushAppPlugin, SkillSummary } from '../../types';
 import { fileUrl } from '../../shared/localPaths';
 import { restoreNativeEditorFocus } from '../../shared/editorFocus';
 import { pluginPromptParts, type PluginPromptPart } from '../plugins/pluginPrompts';
 import { promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
+import { skillPromptParts, type SkillLinkReference } from '../skills/skillReferences';
 
-type ComposerPromptPart = PluginPromptPart & { contextReference?: PromptReference };
+type ComposerPromptPart = PluginPromptPart & { contextReference?: PromptReference; skillReference?: SkillLinkReference; skill?: SkillSummary };
+
+const emptySkills: SkillSummary[] = [];
+const isReference = (part: ComposerPromptPart) => Boolean(part.plugin || part.contextReference || part.skillReference);
+const referenceTitle = (part: ComposerPromptPart) => part.plugin?.name || part.skill?.displayName || part.skillReference?.title || part.contextReference?.title || '';
 
 export interface ComposerPromptInputHandle {
   focus(): void;
@@ -16,13 +21,14 @@ export interface ComposerPromptInputHandle {
 export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   value: string;
   plugins: CardbushAppPlugin[];
+  skills?: SkillSummary[];
   language: AppLanguage;
   autoFocus?: boolean;
   placeholder: string;
   onChange(value: string, caret: number): void;
   onSelectionChange(caret: number): void;
   onKeyDown(event: KeyboardEvent<HTMLElement>): void;
-}>(function ComposerPromptInput({ value, plugins, language, autoFocus, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
+}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const editor = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
@@ -30,9 +36,10 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const lastCaret = useRef(value.length);
   const change = useRef(onChange);
   change.current = onChange;
-  const parts: ComposerPromptPart[] = pluginPromptParts(value, plugins).flatMap(part => part.reference ? [part]
-    : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: part.start + contextPart.start, contextReference: contextPart.reference })));
-  const rich = parts.some(part => part.plugin || part.contextReference);
+  const parts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
+    : pluginPromptParts(skillPart.text, plugins).flatMap<ComposerPromptPart>(part => part.reference ? [{ ...part, start: skillPart.start + part.start }]
+      : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
+  const rich = parts.some(isReference);
   useImperativeHandle(ref, () => ({
     focus: () => (rich ? editor.current : textarea.current)?.focus(),
     setSelectionRange: (start, end) => {
@@ -45,23 +52,24 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   useLayoutEffect(() => {
     const node = editor.current;
     if (!node || composing.current) return;
-    const rendered = Array.from(node.querySelectorAll<HTMLElement>('[data-plugin-reference], [data-context-reference]')).map(chip => tokenText(chip));
-    const expected = parts.filter(part => part.plugin || part.contextReference).map(part => part.text);
+    const rendered = Array.from(node.querySelectorAll<HTMLElement>('[data-plugin-reference], [data-context-reference], [data-skill-reference]')).map(chip => [tokenText(chip), chip.querySelector('span')?.textContent]);
+    const expected = parts.filter(isReference).map(part => [part.text, referenceTitle(part)]);
     if (readPrompt(node) === value && JSON.stringify(rendered) === JSON.stringify(expected)) return;
     const focused = document.activeElement === node;
     const caret = caretOffset(node);
     const fragment = document.createDocumentFragment();
     for (const part of parts) {
-      if (!part.plugin && !part.contextReference) { fragment.append(document.createTextNode(part.text)); continue; }
+      if (!isReference(part)) { fragment.append(document.createTextNode(part.text)); continue; }
       const reference = part.contextReference;
-      const title = part.plugin?.name || reference!.title;
+      const title = referenceTitle(part);
       const chip = document.createElement('span');
-      chip.className = part.plugin ? 'composer-plugin-token' : 'composer-context-token';
+      chip.className = part.plugin ? 'composer-plugin-token' : part.skillReference ? 'composer-context-token composer-skill-token' : 'composer-context-token';
       chip.contentEditable = 'false';
       if (part.plugin) chip.dataset.pluginReference = part.text;
+      else if (part.skillReference) chip.dataset.skillReference = part.text;
       else chip.dataset.contextReference = part.text;
-      chip.title = part.plugin ? part.plugin.name : reference?.kind === 'browser' ? reference.url : title;
-      const logo = part.plugin?.logoPath || part.plugin?.logoDarkPath;
+      chip.title = part.skillReference?.path || (part.plugin ? part.plugin.name : reference?.kind === 'browser' ? reference.url : title);
+      const logo = part.plugin?.logoPath || part.plugin?.logoDarkPath || part.skill?.logoPath || part.skill?.logoDarkPath;
       if (logo) {
         const image = document.createElement('img'); image.src = fileUrl(logo); image.alt = ''; image.draggable = false;
         image.onerror = () => image.replaceWith(referenceGlyph('plugin'));
@@ -72,7 +80,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       const label = document.createElement('span'); label.textContent = title; chip.append(label);
       const remove = document.createElement('button');
       remove.type = 'button'; remove.tabIndex = -1; remove.textContent = '×';
-      remove.setAttribute('aria-label', `${language === 'zh' ? part.plugin ? '移除插件引用' : '移除引用' : part.plugin ? 'Remove plugin reference' : 'Remove reference'} ${title}`);
+      remove.setAttribute('aria-label', `${language === 'zh' ? part.plugin ? '移除插件引用' : part.skillReference ? '移除技能引用' : '移除引用' : part.plugin ? 'Remove plugin reference' : part.skillReference ? 'Remove skill reference' : 'Remove reference'} ${title}`);
       remove.onmousedown = event => event.preventDefault();
       remove.onclick = () => {
         const start = offsetBefore(node, chip);
@@ -217,7 +225,7 @@ function selectOffsets(root: HTMLElement, start: number, end: number): void {
   const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
 }
 
-function tokenText(node: HTMLElement) { return node.dataset.pluginReference || node.dataset.contextReference; }
+function tokenText(node: HTMLElement) { return node.dataset.pluginReference || node.dataset.contextReference || node.dataset.skillReference; }
 
 function referenceGlyph(kind: PromptReference['kind'] | 'plugin'): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

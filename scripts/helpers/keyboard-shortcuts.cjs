@@ -16,7 +16,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
     views.saveKeyboardShortcuts({}); showKeyboardSettings('zh'); void 0;`);
   await until("!!document.querySelector('[data-keyboard-settings]')", 'keyboard settings');
   try {
-    assert.equal(await run("document.querySelectorAll('[data-shortcut-row]').length"), 11);
+    assert.equal(await run("document.querySelectorAll('[data-shortcut-row]').length"), 13);
+    assert.equal(await run("document.querySelector('[data-shortcut-recorder=previousConversation] kbd').textContent"), 'Ctrl + Tab');
+    await run("document.querySelector(keyboardRecorder('previousConversation')).click()");
+    await until("document.querySelector('[data-shortcut-recorder=previousConversation]').classList.contains('recording')", 'shortcut recording ready');
+    await run("shortcutKey(keyboardRecorder('previousConversation'), 'Tab', { ctrlKey: true })");
+    await until("!document.querySelector('[data-shortcut-recorder=previousConversation]').classList.contains('recording')", 'Ctrl+Tab can be recorded');
     await run(`document.querySelector(keyboardRecorder('guideNow')).click()`);
     await pause(30);
     await run(`shortcutKey(keyboardRecorder('guideNow'), 't', { ctrlKey: true })`);

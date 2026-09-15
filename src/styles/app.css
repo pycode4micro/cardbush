@@ -875,23 +875,23 @@ body.sidebar-resizing .right-inspector {
   text-align: left;
 }
 
-.section-title svg {
-  position: absolute;
-  left: -4px;
+.section-chevron {
+  flex: 0 0 14px;
+  margin-inline: 5px;
+  pointer-events: none;
   opacity: 0;
   transition:
     opacity 100ms ease,
     transform 120ms ease;
 }
 
-.section-header:hover .section-title svg,
-.section-title:hover svg,
-.section-title:focus-visible svg,
-.section-title:focus-within svg {
+.section-header:hover .section-chevron,
+.section-header:focus-visible .section-chevron,
+.section-header:has(.section-action:focus-visible) .section-chevron {
   opacity: 1;
 }
 
-.section-title svg.collapsed {
+.section-chevron.collapsed {
   transform: rotate(-90deg);
 }
 
@@ -1470,6 +1470,37 @@ body.sidebar-resizing .right-inspector {
   margin-top: 10px;
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
+
+.sidebar-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+}
+
+.sidebar-footer .settings-dock {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  border: 0;
+}
+
+.sidebar-search-button {
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  color: var(--sidebar-text-mid, var(--text-mid));
+  background: transparent;
+  border-radius: 9px;
+}
+
+.sidebar-search-button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.sidebar-search-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .main-stage,
 .settings-content {
@@ -9974,7 +10005,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 .composer-plugin-token, .plugin-reference-token { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: text-bottom; color: var(--accent); font-weight: 600; white-space: nowrap; user-select: all; }
 .composer-plugin-token > span, .plugin-reference-token > span { overflow: hidden; text-overflow: ellipsis; }
-.composer-plugin-token img, .plugin-reference-token img, .composer-plugin-option-logo { width: 18px; height: 18px; flex: 0 0 18px; object-fit: contain; border-radius: 4px; }
+.composer-plugin-token img, .composer-skill-token img, .plugin-reference-token img, .composer-plugin-option-logo { width: 18px; height: 18px; flex: 0 0 18px; object-fit: contain; border-radius: 4px; }
 .markdown-content .plugin-reference-token { text-decoration: none; }
 .plugin-reference-token:hover, .plugin-reference-token:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 .plugin-reference-token .composer-plugin-fallback { flex: 0 0 18px; }
@@ -19458,6 +19489,62 @@ body.change-review-resizing {
 
 .file-memo-reference { max-width: 100%; }
 .file-memo-reference > img, .file-memo-reference > video, .file-memo-reference > audio { max-width: 100%; }
+
+.inline-html-preview {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.inline-html-toolbar, .inline-html-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.inline-html-toolbar {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.inline-html-toolbar > .local-file-reference { min-width: 0; }
+.inline-html-toolbar > .local-file-reference > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inline-html-actions { flex: 0 0 auto; }
+.inline-html-actions button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.inline-html-actions button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.inline-html-viewport {
+  position: relative;
+  display: block;
+  height: clamp(300px, 55vh, 520px);
+  contain: layout paint;
+}
+.inline-html-webview { display: flex; width: 100%; height: 100%; border: 0; }
+.inline-html-viewport.is-loading .inline-html-webview { visibility: hidden; }
+.inline-html-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
 .file-memo-reference > small { color: var(--text-mid); }
 .file-memo-reference-error { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .file-memo-reference-error > small { font-size: 0.85em; }

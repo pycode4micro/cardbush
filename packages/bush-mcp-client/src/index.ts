@@ -2,6 +2,7 @@ import { attachMcpResultFallback, McpResultValidationError } from "./resultFallb
 import { projectMcpResult } from './modelResult.js';
 export { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { createHash } from "node:crypto";
+import { StringDecoder } from 'node:string_decoder';
 import { McpInteractiveCalls, ScopedMcpClient, type McpElicitationHandler } from './elicitation.js';
 import { McpOAuthCoordinator, McpAuthenticationRequired, McpOAuthConfigurationRequired, credentialKey } from './oauth.js';
 import { mcpHeaderFetch } from './headerHelper.js';
@@ -23,7 +24,8 @@ import {
   type Tool as McpTool,
   type Transport,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { ManagedStdioClientTransport, McpProcessError } from './managedStdio.js';
+import { isResourceAdmissionError } from '@cardbush/bush-runtime/processes';
 import {
   BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
   actionManifestTemplateSchema,
@@ -46,7 +48,9 @@ interface ConnectedServer {
   transport: Transport;
   health: "ready" | "restarting" | "unavailable" | "auth_required" | "configuration_required";
   restartAttempts: number;
+  readySince?: number;
   lastError?: string;
+  waitingForResources?: boolean;
   restartPromise?: Promise<void>;
   authorization?: Promise<void>;
   authorizationAbort?: AbortController;
@@ -65,7 +69,8 @@ interface ConnectedServer {
 interface ConnectionUpdate {
   config: McpServerSnapshot;
   controller: AbortController;
-  state: 'queued' | 'connecting' | 'waiting_for_catalog' | 'failed';
+  state: 'queued' | 'connecting' | 'waiting_for_resources' | 'waiting_for_catalog' | 'failed';
+  retryAt?: number;
   connection?: ConnectedServer;
   error?: string;
 }
@@ -84,6 +89,7 @@ export interface McpClientManagerOptions {
   wait?: (milliseconds: number) => Promise<void>;
   closeTimeoutMs?: number;
   maxConcurrentConnections?: number;
+  maxRestartAttempts?: number;
   onServiceStateChange?: (state: {
     serverId: string;
     health: "ready" | "restarting" | "unavailable" | "auth_required" | "configuration_required";
@@ -112,6 +118,7 @@ export class McpClientManager {
   readonly #wait: (milliseconds: number) => Promise<void>;
   readonly #closeTimeoutMs: number;
   readonly #maxConcurrentConnections: number;
+  readonly #maxRestartAttempts: number;
   readonly #onServiceStateChange?: McpClientManagerOptions["onServiceStateChange"];
   readonly #onServerStderr?: McpClientManagerOptions["onServerStderr"];
   readonly #onAuthenticationRequired?: McpClientManagerOptions['onAuthenticationRequired'];
@@ -124,6 +131,10 @@ export class McpClientManager {
   readonly #running = new Set<Promise<void>>();
   readonly #cleanup = new Set<Promise<void>>();
   readonly #observers = new Set<() => void>();
+  readonly #transitions = new Map<string, Promise<unknown>>();
+  readonly #forks = new Set<McpClientManager>();
+  #parent?: McpClientManager;
+  #closePromise?: Promise<void>;
   #pumpScheduled = false;
   #atomicUpdate = false;
   #closed = false;
@@ -190,8 +201,12 @@ export class McpClientManager {
     this.#wait = options.wait ?? delay;
     this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000;
     this.#maxConcurrentConnections = options.maxConcurrentConnections ?? 4;
+    this.#maxRestartAttempts = options.maxRestartAttempts ?? 3;
     if (!Number.isSafeInteger(this.#maxConcurrentConnections) || this.#maxConcurrentConnections < 1) {
       throw new Error('maxConcurrentConnections must be a positive integer.');
+    }
+    if (!Number.isSafeInteger(this.#maxRestartAttempts) || this.#maxRestartAttempts < 1) {
+      throw new Error('maxRestartAttempts must be a positive integer.');
     }
     this.#onServiceStateChange = options.onServiceStateChange;
     this.#onServerStderr = options.onServerStderr;
@@ -203,14 +218,16 @@ export class McpClientManager {
     const removed = this.#connections.filter(c => !desired.servers.some(s => s.id === c.config.id));
     const ids = [...desired.servers.map(s => s.id), ...removed.map(c => c.config.id)];
     const pendingServerIds = [...this.#updates].filter(([, update]) => update.state !== 'failed' || this.#applicationError).map(([id]) => id).concat(removed.map(c => c.config.id));
-    const connecting = [...this.#updates.values()].some(update => update.state === 'queued' || update.state === 'connecting');
+    const connecting = [...this.#updates.values()].some(update => update.state === 'connecting' ||
+      (update.state === 'queued' && (!this.#replacement(update) || this.#canApply())));
+    const waitingForResources = [...this.#updates.values()].some(update => update.state === 'waiting_for_resources');
     return structuredClone({
       protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
       snapshotId: desired.snapshotId,
       revision: this.#snapshot?.snapshotId === desired.snapshotId ? this.#snapshot.revision : desired.revision,
       applicationState: this.#pending ? (this.#applicationError ? 'failed' : 'pending') : 'applied',
       ...(this.#pending ? { pendingRevision: desired.revision, pendingServerIds,
-        ...(!this.#applicationError ? { applicationPhase: connecting ? 'connecting' : 'waiting_for_idle' } : {}),
+        ...(!this.#applicationError ? { applicationPhase: connecting ? 'connecting' : waitingForResources ? 'waiting_for_resources' : 'waiting_for_idle' } : {}),
       } : {}),
       ...(this.#applicationError ? { applicationError: this.#applicationError } : {}),
       servers: ids.map(id => {
@@ -222,7 +239,8 @@ export class McpClientManager {
           negotiatedProtocolVersion: current?.client.getNegotiatedProtocolVersion() ?? undefined,
           health: update?.state === 'failed' ? 'unavailable' : update?.connection?.health ?? current?.health ?? 'unavailable',
           restartAttempts: current?.restartAttempts ?? 0,
-          ...(update ? { updateState: update.state } : removed.some(c => c.config.id === id) ? { updateState: 'waiting_for_catalog' } : {}),
+          ...(update ? { updateState: update.state } : current?.waitingForResources ? { updateState: 'waiting_for_resources' }
+            : removed.some(c => c.config.id === id) ? { updateState: 'waiting_for_catalog' } : {}),
           ...(lastError ? { lastError } : {}),
           // Only published tools belong to the active catalog, including while a replacement connects.
           tools: current?.tools.map(tool => ({ remoteName: tool.remote.name, runtimeName: tool.runtimeName })) ?? [],
@@ -284,6 +302,7 @@ export class McpClientManager {
         throw new Error(error);
       }
       if (!this.#pending || !this.#canApply()) break;
+      if (!this.#running.size && [...this.#updates.values()].some(update => update.state === 'waiting_for_resources')) break;
       await new Promise<void>(resolve => this.#observers.add(resolve));
     }
     await this.#drainCleanup();
@@ -308,9 +327,13 @@ export class McpClientManager {
     if (!this.#applicationError) {
       for (const update of this.#updates.values()) {
         if (this.#running.size >= this.#maxConcurrentConnections) break;
-        if (update.state !== 'queued') continue;
+        if (update.state !== 'queued' && update.state !== 'waiting_for_resources') continue;
+        if (update.retryAt && update.retryAt > Date.now()) { this.#schedulePublication(update.retryAt - Date.now()); continue; }
+        // A locally owned service may hold a fixed port. Replace it only after
+        // active turns finish, and never start it alongside the previous tree.
+        if (this.#replacement(update) && !this.#canApply()) { this.#schedulePublication(); continue; }
         update.state = 'connecting';
-        const work = this.#connect(update.config, update.controller.signal).then(connection => {
+        const work = this.#connectUpdate(update).then(connection => {
           if (this.#closed || this.#updates.get(update.config.id) !== update) {
             this.#trackCleanup(this.#retireConnections([connection]));
             return;
@@ -319,13 +342,54 @@ export class McpClientManager {
           update.state = 'waiting_for_catalog';
         }, error => {
           if (this.#closed || this.#updates.get(update.config.id) !== update) return;
-          if (update.config.required) this.#failUpdate(error);
+          if (update.state === 'waiting_for_resources') {
+            update.state = 'waiting_for_resources'; update.retryAt = Date.now() + 2_000;
+            update.error = undefined;
+          } else if ((error as { code?: string })?.code === 'mcp_waiting_for_idle') {
+            update.state = 'queued'; update.retryAt = Date.now() + 250;
+          } else if (update.config.required) this.#failUpdate(error);
           else { update.state = 'failed'; update.error = errorMessage(error); }
         }).finally(() => { this.#running.delete(work); this.#pump(); });
         this.#running.add(work);
       }
     }
     this.#notifyObservers();
+  }
+
+  #replacement(update: ConnectionUpdate): ConnectedServer | undefined {
+    return this.#connections.find(connection => connection.config.id === update.config.id &&
+      connection.transport instanceof ManagedStdioClientTransport);
+  }
+
+  async #connectUpdate(update: ConnectionUpdate): Promise<ConnectedServer> {
+    const id = update.config.id;
+    const previous = this.#transitions.get(id);
+    const work = (async () => {
+      // Includes cancellation/teardown of superseded startups for this service.
+      await previous?.catch(() => undefined);
+      update.controller.signal.throwIfAborted();
+      const transport = await withConnectionDeadline(update.config, 'transport setup', update.controller.signal,
+        stepSignal => Promise.resolve(this.#createTransport(update.config, stepSignal)));
+      try {
+        if (transport instanceof ManagedStdioClientTransport) {
+          const previousTransport = this.#replacement(update)?.transport;
+          try { await transport.prepare(update.controller.signal, previousTransport instanceof ManagedStdioClientTransport ? previousTransport.resourceId : undefined); }
+          catch (error) { if (isResourceAdmissionError(error)) update.state = 'waiting_for_resources'; throw error; }
+        }
+        update.controller.signal.throwIfAborted();
+        const old = this.#replacement(update);
+        if (old && !this.#canApply()) throw Object.assign(new Error('Waiting for active tasks to finish.'), { code: 'mcp_waiting_for_idle' });
+        if (old) { old.health = 'restarting'; await this.#retireConnections([old]); }
+        update.controller.signal.throwIfAborted();
+        return await this.#connect(update.config, update.controller.signal, transport);
+      } catch (error) {
+        await settleWithin(Promise.resolve().then(() => transport.close?.()), this.#closeTimeoutMs);
+        throw error;
+      }
+    })();
+    this.#transitions.set(id, work);
+    try { return await work; }
+    finally { if (this.#transitions.get(id) === work) this.#transitions.delete(id); }
   }
 
   #publishAvailable(): void {
@@ -358,6 +422,9 @@ export class McpClientManager {
 
   #failUpdate(error: unknown): void {
     this.#applicationError = errorMessage(error);
+    for (const connection of this.#connections) if (connection.retired) {
+      connection.health = 'unavailable'; connection.lastError = this.#applicationError;
+    }
     for (const [id, update] of [...this.#updates]) {
       this.#discardUpdate(id, update);
       this.#updates.set(id, { config: update.config, controller: new AbortController(), state: 'failed', error: this.#applicationError });
@@ -379,14 +446,18 @@ export class McpClientManager {
     while (this.#cleanup.size) await Promise.all(this.#cleanup);
   }
 
-  #schedulePublication(): void {
+  #schedulePublication(delay = 250): void {
     if (this.#closed || this.#retryTimer) return;
-    this.#retryTimer = setTimeout(() => { this.#retryTimer = undefined; this.#pump(); }, 250);
+    this.#retryTimer = setTimeout(() => { this.#retryTimer = undefined; this.#pump(); }, delay);
     this.#retryTimer.unref?.();
   }
 
   fork(registry: ToolRegistry): McpClientManager {
-    return new McpClientManager({ ...this.#options, registry, canApply: () => true, closeOAuthOnClose: false });
+    if (this.#closed) throw new Error('MCP manager is closed.');
+    const fork = new McpClientManager({ ...this.#options, registry, canApply: () => true, closeOAuthOnClose: false });
+    fork.#parent = this;
+    this.#forks.add(fork);
+    return fork;
   }
 
   /** Agent startup may require authentication before a server can disclose any tools. */
@@ -406,7 +477,11 @@ export class McpClientManager {
     if (unavailable) throw new Error(`Agent MCP ${unavailable.config.id}: ${unavailable.lastError || unavailable.health}`);
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    return this.#closePromise ??= this.#close();
+  }
+
+  async #close(): Promise<void> {
     if (this.#options.closeOAuthOnClose !== false) this.#oauth?.close();
     this.#closed = true;
     clearTimeout(this.#retryTimer);
@@ -417,13 +492,15 @@ export class McpClientManager {
     this.#snapshot = undefined;
     this.#pending = undefined;
     this.#registry.removeOwned("runtime_mcp");
+    await Promise.allSettled([...this.#forks].map(fork => fork.close()));
     await Promise.all(this.#running);
     await this.#drainCleanup();
     await this.#retireConnections(current);
+    if (this.#parent) this.#parent.#forks.delete(this);
   }
 
-  async #connect(config: McpServerSnapshot, signal?: AbortSignal): Promise<ConnectedServer> {
-    const transport = await withConnectionDeadline(config, 'transport setup', signal,
+  async #connect(config: McpServerSnapshot, signal?: AbortSignal, preparedTransport?: Transport): Promise<ConnectedServer> {
+    const transport = preparedTransport ?? await withConnectionDeadline(config, 'transport setup', signal,
       stepSignal => Promise.resolve(this.#createTransport(config, stepSignal)));
     signal?.throwIfAborted();
     const client = this.#createClient(config);
@@ -432,7 +509,7 @@ export class McpClientManager {
     let closedDuringStartup = false;
     try {
       await withConnectionDeadline(config, 'handshake', signal, stepSignal => {
-        const connecting = client.connect(transport, { timeout: config.startupTimeoutMs ?? 15_000, signal: stepSignal });
+        const connecting = connectClient(client, transport, { timeout: config.startupTimeoutMs ?? 15_000, signal: stepSignal });
         void connecting.then(() => {
           // A client can finish after ignoring cancellation or its own timeout.
           if (stepSignal.aborted && closedDuringStartup) this.#trackCleanup(closeConnection(client, transport, this.#closeTimeoutMs));
@@ -469,6 +546,7 @@ export class McpClientManager {
         tools,
         health: "ready",
         restartAttempts: 0,
+        readySince: Date.now(),
         retired: false,
       };
       this.#watchClientLifecycle(connection, client);
@@ -549,6 +627,7 @@ export class McpClientManager {
         };
       },
       execute: async (context) => {
+        if (connection.retired) throw codedMcpError('mcp_service_unavailable', `MCP service ${connection.config.id} has been disconnected.`, { serverId: connection.config.id });
         if (connection.health === 'configuration_required') throw new McpOAuthConfigurationRequired(connection.lastError);
         if (connection.health !== "ready" && connection.health !== 'auth_required') {
           throw codedMcpError(
@@ -626,6 +705,11 @@ export class McpClientManager {
   }
 
   #watchClientLifecycle(connection: ConnectedServer, client: Client): void {
+    const previousError = client.onerror;
+    client.onerror = error => {
+      previousError?.(error);
+      if (error instanceof McpProcessError) this.#invalidateConnection(connection, client, error);
+    };
     client.onclose = () => {
       this.#invalidateConnection(
         connection,
@@ -690,6 +774,9 @@ export class McpClientManager {
       connection.client !== failedClient ||
       connection.health !== "ready"
     ) return;
+    // A service that stays healthy gets a fresh recovery budget. Rapid crash /
+    // successful-handshake loops share the same cap, instead of restarting forever.
+    if (connection.readySince && Date.now() - connection.readySince >= 60_000) connection.restartAttempts = 0;
     connection.health = "restarting";
     connection.lastError = errorMessage(error);
     this.#publishServiceState(connection, "cardbush_supervisor");
@@ -707,34 +794,43 @@ export class McpClientManager {
     connection: ConnectedServer,
     failedClient: Client,
   ): Promise<void> {
+    const recovery = new AbortController();
+    connection.recoveryAbort = recovery;
     const failedTransport = connection.transport;
     await closeConnection(failedClient, failedTransport, this.#closeTimeoutMs);
     while (!connection.retired) {
+      if (connection.restartAttempts >= this.#maxRestartAttempts) {
+        throw new Error(`MCP service ${connection.config.id} stopped after ${this.#maxRestartAttempts} restart attempts. Reconnect it manually after fixing the service. Last error: ${connection.lastError ?? 'connection closed'}`);
+      }
       const attempt = connection.restartAttempts + 1;
       const backoff = Math.min(
         10_000,
         connection.config.restartBackoffMs * 2 ** Math.min(attempt - 1, 5),
       );
-      if (backoff > 0) await this.#wait(backoff);
+      if (backoff > 0) await abortable(this.#wait(backoff), recovery.signal);
       if (connection.retired) return;
       connection.health = "restarting";
-      connection.restartAttempts = attempt;
       this.#publishServiceState(connection, "cardbush_supervisor");
       const client = this.#createClient(connection.config);
       this.#interactive.prepare(client);
-      const recovery = new AbortController();
-      connection.recoveryAbort = recovery;
       let transport: Transport | undefined;
+      let admissionPending = false;
       try {
         transport = await withConnectionDeadline(connection.config, 'transport setup', recovery.signal,
           stepSignal => Promise.resolve(this.#createTransport(connection.config, stepSignal)));
+        if (transport instanceof ManagedStdioClientTransport) {
+          try { await transport.prepare(recovery.signal); }
+          catch (error) { admissionPending = isResourceAdmissionError(error); throw error; }
+        }
+        connection.waitingForResources = false;
+        connection.restartAttempts = attempt;
         if (connection.retired) { await closeConnection(client, transport, this.#closeTimeoutMs); return; }
         drainTransportStderr(transport, connection.config.id, this.#onServerStderr);
         connection.pendingClient = client;
         connection.pendingTransport = transport;
         const pendingTransport = transport;
         await withConnectionDeadline(connection.config, 'handshake', recovery.signal, stepSignal => {
-          const connecting = client.connect(pendingTransport, { timeout: connection.config.startupTimeoutMs ?? 15_000, signal: stepSignal });
+          const connecting = connectClient(client, pendingTransport, { timeout: connection.config.startupTimeoutMs ?? 15_000, signal: stepSignal });
           void connecting.then(() => {
             if (stepSignal.aborted) this.#trackCleanup(closeConnection(client, pendingTransport, this.#closeTimeoutMs));
           }, () => undefined);
@@ -769,6 +865,7 @@ export class McpClientManager {
           tool.remote = byName.get(tool.remote.name)!;
         });
         connection.health = "ready";
+        connection.readySince = Date.now();
         connection.lastError = undefined;
         connection.restartPromise = undefined;
         this.#publishServiceState(connection, "cardbush_supervisor");
@@ -776,7 +873,22 @@ export class McpClientManager {
       } catch (error) {
         connection.pendingClient = undefined;
         connection.pendingTransport = undefined;
-        if (connection.retired) { await settleWithin(client.close(), this.#closeTimeoutMs); return; }
+        if (connection.retired) {
+          if (transport) await closeConnection(client, transport, this.#closeTimeoutMs);
+          else await settleWithin(client.close(), this.#closeTimeoutMs);
+          return;
+        }
+        if (admissionPending) {
+          if (transport) await closeConnection(client, transport, this.#closeTimeoutMs);
+          else await settleWithin(client.close(), this.#closeTimeoutMs);
+          connection.waitingForResources = true;
+          connection.lastError = undefined;
+          this.#publishServiceState(connection, 'cardbush_supervisor');
+          await abortable(this.#wait(2_000), recovery.signal);
+          continue;
+        }
+        connection.restartAttempts = attempt;
+        connection.waitingForResources = false;
         const authentication = authenticationFailure(error);
         connection.health = authentication?.health ?? "unavailable";
         connection.lastError = authentication?.error.message ?? errorMessage(error);
@@ -784,8 +896,6 @@ export class McpClientManager {
         if (transport) await closeConnection(client, transport, this.#closeTimeoutMs);
         else await settleWithin(client.close(), this.#closeTimeoutMs);
         if (authentication) { connection.restartPromise = undefined; return; }
-      } finally {
-        if (connection.recoveryAbort === recovery) connection.recoveryAbort = undefined;
       }
     }
   }
@@ -808,6 +918,7 @@ export class McpClientManager {
           : []),
       ]),
     );
+    await Promise.allSettled(connections.map(connection => connection.restartPromise));
   }
 
   #publishServiceState(
@@ -893,7 +1004,7 @@ function createClient(server: McpServerSnapshot, calls: McpInteractiveCalls): Cl
 export function createTransport(server: McpServerSnapshot, authProvider?: OAuthClientProvider, network?: { fetch: typeof fetch; env: Record<string, string> }): Transport {
   const transport = server.transport;
   if (transport.kind === "stdio") {
-    return new StdioClientTransport({
+    return new ManagedStdioClientTransport({
       command: transport.command,
       args: transport.args,
       cwd: transport.cwd,
@@ -961,6 +1072,21 @@ function mcpErrorCode(error: unknown): unknown {
 }
 
 
+/** A process error must reject startup before the SDK replaces it with a closed-channel error. */
+async function connectClient(client: Client, transport: Transport, options: Parameters<Client['connect']>[1]) {
+  if (!(transport instanceof ManagedStdioClientTransport)) return client.connect(transport, options);
+  let connecting = true;
+  let rejectProcessError!: (error: McpProcessError) => void;
+  const processFailed = new Promise<never>((_resolve, reject) => { rejectProcessError = reject; });
+  const previousError = transport.onerror;
+  transport.onerror = error => {
+    if (connecting && error instanceof McpProcessError) rejectProcessError(error);
+    previousError?.(error);
+  };
+  try { await Promise.race([client.connect(transport, options), processFailed]); }
+  finally { connecting = false; }
+}
+
 function drainTransportStderr(
   transport: Transport,
   serverId: string,
@@ -974,13 +1100,18 @@ function drainTransportStderr(
     (stderr as NodeJS.ReadableStream & { resume?: () => void }).resume?.();
     return;
   }
+  const decoder = new StringDecoder('utf8');
   stderr.on("data", (chunk: unknown) => {
     const message = Buffer.isBuffer(chunk)
-      ? chunk.toString("utf8")
+      ? decoder.write(chunk)
       : String(chunk);
     const normalized = message.trim();
     if (!normalized) return;
     onServerStderr({ serverId, message: normalized.slice(0, 8_192) });
+  });
+  stderr.on('end', () => {
+    const remaining = decoder.end().trim();
+    if (remaining) onServerStderr({ serverId, message: remaining });
   });
 }
 
@@ -1036,6 +1167,12 @@ async function closeConnection(
     }),
     timeoutMs,
   );
+  if (transport instanceof ManagedStdioClientTransport) {
+    // A timeout bounds the protocol close, not our ownership of its processes.
+    // This also handles SDK/client implementations that close without closing their transport.
+    await transport.close();
+    return;
+  }
   if (clientSettled && clientCloseSucceeded) return;
   const close = (transport as { close?: () => Promise<void> }).close;
   if (typeof close === "function") {

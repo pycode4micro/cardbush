@@ -47,9 +47,10 @@ assert.match(
   'historical image attachments must not synchronously decode every offscreen full-resolution image',
 );
 assert.match(imagePreviewDialog, /event\.ctrlKey[\s\S]*?event\.metaKey/);
-assert.match(imagePreviewDialog, /NumpadAdd/);
-assert.match(imagePreviewDialog, /NumpadSubtract/);
-assert.match(imagePreviewDialog, /Numpad0/);
+// Key decoding belongs to the shared shortcut registry; the preview consumes its actions.
+for (const action of ['imageZoomIn', 'imageZoomOut', 'imageReset']) {
+  assert.ok(imagePreviewDialog.includes(`keyboardShortcuts.matches('${action}', event)`));
+}
 assert.match(imagePreviewDialog, /addEventListener\('wheel', handleWheel, \{ passive: false \}\)/);
 assert.match(imagePreviewDialog, /onPointerDown=\{handlePointerDown\}/);
 assert.match(imagePreviewDialog, /setPointerCapture\(event\.pointerId\)/);

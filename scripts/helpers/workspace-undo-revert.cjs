@@ -79,6 +79,47 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('undoCalls.length === 4', 'bulk restore after history reload');
   await run('finishUndo()');
   await until(`document.querySelector('${inline}').textContent === '撤回'`, 'successful restore overrides stale replay until next refresh');
+  await run(`
+    window.terminalReviewCalls = []; window.terminalRevertCalls = [];
+    window.showTerminalChanges = (status, withChanges = true) => {
+      const edit = undoMessage().toolExecutions[0];
+      const tools = withChanges ? [{ ...edit, metadata: { ...edit.metadata, revert_status: undefined } }] : [];
+      const message = { id: 'terminal-answer', role: 'assistant', content: '', status,
+        conversationId: 'terminal-edits', turnId: 'one', toolExecutions: tools,
+        loopHistory: [{ id: 'edit-progress', role: 'assistant', content: '正在检查修改结果。',
+          turnId: 'one', toolExecutions: tools }] };
+      renderView(h(views.MessageBubble, { message, language: 'zh', sending: status === 'running',
+        activeTurnId: status === 'running' ? 'one' : '', activeAssistantMessageId: 'terminal-answer',
+        onRegenerate: async()=>{}, onEditUserMessage: async()=>{}, onRetryGuidance: async()=>{},
+        onRevertChangeReport: async (report, source) => terminalRevertCalls.push({ report, turnId: source.turnId }),
+        onOpenChangeReview: file => terminalReviewCalls.push(file ?? 'all'), onOpenScene: ()=>{} }));
+    };
+    showTerminalChanges('running');
+  `);
+  await pause();
+  assert.equal(await run(`document.querySelector('.assistant-changed-files-summary') === null`), true,
+    'the live turn keeps its existing progress presentation');
+  for (const status of ['stopped', 'failed', 'completed']) {
+    await run(`showTerminalChanges('${status}')`);
+    await until(`document.querySelector('.assistant-changed-files-title')?.textContent === '已编辑 1 个文件'`,
+      status + ' retains changes even without a final answer');
+    assert.equal(await run(`document.querySelectorAll('.assistant-changed-files-summary').length`), 1,
+      'one summary across the turn and its loop history');
+    assert.equal(await run(`document.querySelectorAll('.assistant-changed-file').length`), 1,
+      'the same execution in loop history is not counted twice');
+    assert.equal(await run(`document.querySelector('.assistant-changed-files-totals').textContent`), '+1-1');
+    await run(`document.querySelector('.assistant-changed-files-review').click();
+      document.querySelector('.assistant-changed-file').click();
+      document.querySelector('${inline}').click();`);
+  }
+  assert.deepEqual(await run('terminalReviewCalls'), ['all', 'src/file.ts', 'all', 'src/file.ts', 'all', 'src/file.ts']);
+  assert.deepEqual(await run(`terminalRevertCalls.map(call => ({ turnId: call.turnId, files: call.report.files.map(file => file.path) }))`),
+    Array.from({ length: 3 }, () => ({ turnId: 'one', files: ['src/file.ts'] })),
+    'terminal summaries retain review and revert actions with the original turn');
+  await run(`showTerminalChanges('stopped', false)`);
+  await pause();
+  assert.equal(await run(`document.querySelector('.assistant-changed-files-summary') === null`), true,
+    'stopping without file changes does not create an empty summary');
   await run('renderView(null)');
-  console.log('Undo revert UI passed: inline/review/bulk actions, shared busy state, history replay, session isolation and both themes.');
+  console.log('Undo revert UI passed: inline/review/bulk actions, history replay, session isolation, both themes, and stopped/failed/completed change summaries.');
 };

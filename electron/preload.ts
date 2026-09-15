@@ -101,6 +101,7 @@ const desktopApi = {
   openAiAccountAction: (action: string) => ipcRenderer.invoke('openai:account-action', action),
   onOpenAiAccountChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('openai:account-changed', listener); return () => ipcRenderer.removeListener('openai:account-changed', listener); },
   savePluginConnections: (input: unknown) => ipcRenderer.invoke('plugins:save-connections', input),
+  pluginTroubleshootingContext: (pluginId: string, componentId: string) => ipcRenderer.invoke('plugins:troubleshooting-context', pluginId, componentId),
   automationCommand: (input: unknown) => ipcRenderer.invoke('automation:command', input),
   onAutomationChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('automation:changed', listener); return () => ipcRenderer.removeListener('automation:changed', listener); },
   onMcpRequestsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('mcp:requests-changed', listener); return () => ipcRenderer.removeListener('mcp:requests-changed', listener); },
@@ -268,6 +269,7 @@ const desktopApi = {
     manifestPath: string;
   } | null>,
   pluginCommands: () => ipcRenderer.invoke('plugins:commands'),
+  uninstallPlugin: (pluginId: string) => ipcRenderer.invoke('plugins:uninstall', pluginId),
   pluginMarketSources: () => ipcRenderer.invoke('plugins:market-sources'),
   addPluginMarket: (source: string) => ipcRenderer.invoke('plugins:market-add', source),
   addLocalPluginMarket: () => ipcRenderer.invoke('plugins:market-add-local'),

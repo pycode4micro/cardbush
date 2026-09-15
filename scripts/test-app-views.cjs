@@ -54,6 +54,7 @@ async function buildViews() {
     'src/hooks/useCapabilityCatalogRefresh.ts',
     'src/hooks/useSoftPanelPresence.ts',
     'src/features/chatMessages/MessageBubble.tsx',
+    'src/features/chatMessages/FileMemoReference.tsx',
     'src/features/tools/WorkspaceChangeStateContext.ts',
     'src/features/tools/toolChangeReports.ts',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' ? ['src/ShadowWindow.tsx'] : []),
@@ -61,6 +62,9 @@ async function buildViews() {
     'src/features/composer/queueOrdering.ts',
     'src/features/settings/SettingsKeyboardPanel.tsx',
     'src/features/shortcuts/useKeyboardShortcuts.ts',
+    'src/features/shortcuts/usePreviousConversationShortcut.ts',
+    'src/features/search/ConversationSearchDialog.tsx',
+    'src/features/search/useConversationSearch.ts',
     'src/features/chatMessages/transcript/liveMessageUpdates.ts']
     .map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n');
   const result = await build({
@@ -101,6 +105,7 @@ app.whenReady().then(async () => {
     show: false, width: 1200, height: 800,
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
+      webviewTag: process.env.CARDBUSH_APP_VIEWS_CASE === 'html-references',
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -173,8 +178,20 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)} !== 'conversation-titles') preview('D:/fixture/first.md');
+      if (!['conversation-titles', 'conversation-search'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'conversation-search') {
+      await require('./helpers/conversation-search.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no conversation search renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-references') {
+      await require('./helpers/html-references.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no HTML reference renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state') {
       await require('./helpers/shadow-state.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no Shadow renderer errors');
@@ -193,7 +210,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (process.env.CARDBUSH_APP_VIEWS_CASE !== 'tool-update-stability') {
+    if (!['tool-update-stability', 'composer-input', 'previous-conversation'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -398,6 +415,22 @@ app.whenReady().then(async () => {
       updateChat({ activeConversationId: 'session-a', messages });
     `);
     await until("document.querySelector('.message-list')?.textContent.includes('Fixture assistant answer')", 'draft to loaded session');
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'previous-conversation') {
+      await require('./helpers/previous-conversation.cjs')({ run, until, pause });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'previous-conversation') {
+      assert.deepEqual(await run('failures'), [], 'no previous conversation renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-input') {
+      await require('./helpers/composer-input.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-input') {
+      assert.deepEqual(await run('failures'), [], 'no composer input renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'startup') {
       await run(`window.startupMessage = document.querySelector('.message-list'); updateChat({ loading: true, historyLoading: true });`);
       assert.equal(await run("document.querySelector('.message-list') === startupMessage && !document.querySelector('.loading-view')"), true, 'refresh preserves loaded conversation content');
@@ -414,6 +447,7 @@ app.whenReady().then(async () => {
       return;
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'tool-update-stability') {
+      await require('./helpers/chat-transcript-batching.cjs')({ run, until, pause });
       await require('./helpers/chat-tool-update-stability.cjs')({ run, until, pause, window, root });
       await require('./helpers/chat-tool-update-stability.cjs')({ run, until, pause, window, root, theme: 'theme-dark' });
     }
