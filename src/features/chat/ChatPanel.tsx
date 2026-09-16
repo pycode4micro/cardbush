@@ -163,6 +163,7 @@ export function ChatPanel({
   availableProjects,
   onWelcomeProjectChange,
   messages,
+  transcriptDelivery = 'frame',
   activeGoal,
   goalAvailable,
   teamAvailable = false,
@@ -246,6 +247,8 @@ export function ChatPanel({
   availableProjects: ProjectItem[];
   onWelcomeProjectChange: (projectDir: string | null) => Promise<void>;
   messages: ChatMessage[];
+  /** Opt-in display scheduling for the isolated streaming lab. */
+  transcriptDelivery?: 'batched' | 'frame';
   activeGoal: ExperimentalGoal | null;
   goalAvailable: boolean;
   teamAvailable?: boolean;
@@ -334,7 +337,7 @@ export function ChatPanel({
     });
   });
   const visibleMessages = useBatchedTranscript(messages, activeConversationId, activeTurnId, sending,
-    stopping || Boolean(pendingInteraction) || Boolean(error) || goalWaiting);
+    stopping || Boolean(pendingInteraction) || Boolean(error) || goalWaiting, transcriptDelivery);
   const renderMessages = useMemo(() => {
     const normalized = normalizeChatMessagesForDisplay(visibleMessages);
     const activeTranscript = sending

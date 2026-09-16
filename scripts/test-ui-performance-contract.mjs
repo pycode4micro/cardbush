@@ -270,6 +270,10 @@ assert.match(
   /Math\.ceil\(characters\.length \/ assistantRevealMaximumCommits\)/,
   'large terminal replies must automatically use larger chunks',
 );
+assert.equal((hookSource.match(/createFrameStreamBuffers\(/g) ?? []).length, 3,
+  'production subscriptions must use the bounded frame queue');
+assert.doesNotMatch(hookSource, /from ['"][^'"]*pre_test\//,
+  'production streaming must not import the replay UI or personal history');
 assert.doesNotMatch(
   messageBubbleSource,
   /AssistantAtomicReveal/,

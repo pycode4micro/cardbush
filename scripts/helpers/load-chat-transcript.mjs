@@ -8,7 +8,7 @@ export const transcriptDirectory = path.resolve(
   import.meta.dirname, '../../src/features/chatMessages/transcript',
 );
 export const transcriptModules = [
-  'assistantStreamBuffer', 'messageFacts', 'toolExecutionMerge',
+  'assistantStreamBuffer', 'frameStreamBuffer', 'messageFacts', 'toolExecutionMerge',
   'loopHistory', 'liveMessageUpdates', 'messageProjection',
 ];
 

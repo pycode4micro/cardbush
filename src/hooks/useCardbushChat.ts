@@ -119,6 +119,7 @@ import {
   ensureBackgroundTurnAssistant,
   appendAssistantDelta,
   applyAssistantSegmentBoundary,
+  replaceAssistantStreamContent,
   applyAssistantRevision,
   appendToolExecution,
   applyTaskPlanUpdate,
@@ -136,8 +137,9 @@ import {
   markOptimisticGuidancePending,
 } from '../features/chatMessages/transcript/liveMessageUpdates';
 import {
-  createSegmentedAssistantStreamBuffers,
-} from '../features/chatMessages/transcript/assistantStreamBuffer';
+  createFrameStreamBuffers,
+  type FrameStreamCheckpoint,
+} from '../features/chatMessages/transcript/frameStreamBuffer';
 import {
   hasCompletedAssistantForTurn,
   chatMessageTurnId,
@@ -289,6 +291,7 @@ export function useCardbushChat(
   }>>(new Map());
   const contextUsageReadsRef = useRef(new SessionReadFence());
   const historyReadsRef = useRef(new SessionReadFence());
+  const goalStreamCheckpointsRef = useRef<Record<string, { turnId: string; checkpoint: FrameStreamCheckpoint }>>({});
   const messagesByConversationRef = useRef(messagesByConversation);
   messagesByConversationRef.current = messagesByConversation;
   const liveTranscriptSessionsRef = useRef(new Set<string>());
@@ -490,6 +493,7 @@ export function useCardbushChat(
       controller.abort();
     }
     goalTurnControllersRef.current = {};
+    goalStreamCheckpointsRef.current = {};
   }, []);
 
   const applyConnectionRecoveryUpdate = useCallback((
@@ -1190,7 +1194,7 @@ export function useCardbushChat(
         ),
       );
     };
-    const streamBuffer = createSegmentedAssistantStreamBuffers(
+    const streamBuffer = createFrameStreamBuffers(
       (delta, route, release) => {
         ensureAssistant(route.createdAt);
         setMessagesByConversation((state) =>
@@ -1204,7 +1208,12 @@ export function useCardbushChat(
           ),
         );
       },
-      { shouldAnimate: () => activeConversationIdRef.current === normalizedSessionId },
+      { shouldAnimate: () => activeConversationIdRef.current === normalizedSessionId,
+        checkpoint: initialCursor.sequence > 0 && goalStreamCheckpointsRef.current[normalizedSessionId]?.turnId === normalizedTurnId
+          ? goalStreamCheckpointsRef.current[normalizedSessionId].checkpoint : undefined,
+        replace: (content, route) => setMessagesByConversation(state =>
+          replaceAssistantStreamContent(state, normalizedSessionId, assistantId, content, route)),
+      },
     );
     markSessionRunning(normalizedSessionId, normalizedTurnId);
     void streamTurnEvents({
@@ -1230,6 +1239,7 @@ export function useCardbushChat(
       },
       onExecution: (update) => {
         if (isTurnGuidanceBoundary(update)) {
+          streamBuffer.flushToolBoundary();
           ensureAssistant();
           setMessagesByConversation((state) =>
             applyAssistantSegmentBoundary(
@@ -1265,18 +1275,12 @@ export function useCardbushChat(
         }
       },
       onToolExecution: (execution) => {
-        void streamBuffer.releaseToolBoundary().then(() => {
-          ensureAssistant();
-          applyGoalExecution(normalizedSessionId, execution);
-          setMessagesByConversation((state) =>
-            appendToolExecution(
-              state,
-              normalizedSessionId,
-              assistantId,
-              execution,
-            ),
-          );
-        });
+        streamBuffer.flushToolBoundary();
+        ensureAssistant();
+        applyGoalExecution(normalizedSessionId, execution);
+        setMessagesByConversation((state) =>
+          appendToolExecution(state, normalizedSessionId, assistantId, execution),
+        );
       },
       onTaskPlanUpdate: (update) => {
         ensureAssistant();
@@ -1321,6 +1325,10 @@ export function useCardbushChat(
         });
       },
       onDone: (terminal) => {
+        terminalTurnIdsRef.current.add(normalizedTurnId);
+        if (goalStreamCheckpointsRef.current[normalizedSessionId]?.turnId === normalizedTurnId) {
+          delete goalStreamCheckpointsRef.current[normalizedSessionId];
+        }
         clearConnectionRecovery(normalizedSessionId);
         markSessionDone(normalizedSessionId);
         setPendingInteraction((current) =>
@@ -1331,6 +1339,7 @@ export function useCardbushChat(
         } else {
           void streamBuffer.flushAllStreaming();
         }
+        setMessagesByConversation(state => applyTurnTerminalSnapshot(state, normalizedSessionId, assistantId, terminal));
       },
       onMessages: (nextMessages, finalSnapshot) => {
         void (finalSnapshot
@@ -1387,6 +1396,10 @@ export function useCardbushChat(
       })
       .finally(async () => {
         await streamBuffer.flushAllStreaming();
+        if (!terminalTurnIdsRef.current.has(normalizedTurnId) &&
+            goalTurnControllersRef.current[normalizedSessionId]?.controller === controller) {
+          goalStreamCheckpointsRef.current[normalizedSessionId] = { turnId: normalizedTurnId, checkpoint: streamBuffer.checkpoint() };
+        }
         streamBuffer.dispose();
         const historyRead = beginHistoryRead(normalizedSessionId);
         const loaded = await fetchSessionMessages(normalizedSessionId, {
@@ -2258,13 +2271,16 @@ export function useCardbushChat(
       persistAutoConversationTitle(conversation, titleSource);
       setError(null);
       const controller = new AbortController();
-      const streamBuffer = createSegmentedAssistantStreamBuffers(
+      const streamBuffer = createFrameStreamBuffers(
         (delta, route, release) => {
           setMessagesByConversation((current) =>
             appendAssistantDelta(current, sessionId, assistantId, delta, route, release),
           );
         },
-        { shouldAnimate: () => activeConversationIdRef.current === sessionId },
+        { shouldAnimate: () => activeConversationIdRef.current === sessionId,
+          replace: (content, route) => setMessagesByConversation(current =>
+            replaceAssistantStreamContent(current, sessionId, assistantId, content, route)),
+        },
       );
       controllersRef.current[sessionId] = controller;
       let finalSnapshotPromise: Promise<void> | null = null;
@@ -2329,6 +2345,7 @@ export function useCardbushChat(
           },
           onExecution: (update) => {
             if (isTurnGuidanceBoundary(update)) {
+              streamBuffer.flushToolBoundary();
               setMessagesByConversation((current) =>
                 applyAssistantSegmentBoundary(
                   current,
@@ -2367,12 +2384,11 @@ export function useCardbushChat(
             }
           },
           onToolExecution: (execution) => {
-            void streamBuffer.releaseToolBoundary().then(() => {
-              applyGoalExecution(sessionId, execution);
-              setMessagesByConversation((current) =>
-                appendToolExecution(current, sessionId, assistantId, execution),
-              );
-            });
+            streamBuffer.flushToolBoundary();
+            applyGoalExecution(sessionId, execution);
+            setMessagesByConversation((current) =>
+              appendToolExecution(current, sessionId, assistantId, execution),
+            );
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
@@ -2769,7 +2785,7 @@ export function useCardbushChat(
       const sessionId = conversation.id;
       const controller = new AbortController();
       let finalSnapshot: ChatMessage[] | null = null;
-      const streamBuffer = createSegmentedAssistantStreamBuffers(
+      const streamBuffer = createFrameStreamBuffers(
         (delta, route, release) => {
           setMessagesByConversation((current) =>
             appendAssistantDelta(
@@ -2782,7 +2798,10 @@ export function useCardbushChat(
             ),
           );
         },
-        { shouldAnimate: () => activeConversationIdRef.current === sessionId },
+        { shouldAnimate: () => activeConversationIdRef.current === sessionId,
+          replace: (content, route) => setMessagesByConversation(current =>
+            replaceAssistantStreamContent(current, sessionId, tempAssistant.id, content, route)),
+        },
       );
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
       const replacementIds = temporaryMessageIds ?? [tempAssistant.id];
@@ -2844,6 +2863,7 @@ export function useCardbushChat(
           },
           onExecution: (update) => {
             if (isTurnGuidanceBoundary(update)) {
+              streamBuffer.flushToolBoundary();
               setMessagesByConversation((current) =>
                 applyAssistantSegmentBoundary(
                   current,
@@ -2879,12 +2899,11 @@ export function useCardbushChat(
             }
           },
           onToolExecution: (execution) => {
-            void streamBuffer.releaseToolBoundary().then(() => {
-              applyGoalExecution(sessionId, execution);
-              setMessagesByConversation((current) =>
-                appendToolExecution(current, sessionId, tempAssistant.id, execution),
-              );
-            });
+            streamBuffer.flushToolBoundary();
+            applyGoalExecution(sessionId, execution);
+            setMessagesByConversation((current) =>
+              appendToolExecution(current, sessionId, tempAssistant.id, execution),
+            );
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);

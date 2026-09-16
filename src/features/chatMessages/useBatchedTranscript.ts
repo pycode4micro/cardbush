@@ -11,6 +11,7 @@ export function useBatchedTranscript(
   turnId: string,
   active: boolean,
   urgent = false,
+  delivery: 'batched' | 'frame' = 'frame',
 ) {
   const scope = useMemo(() => {
     let userId = '';
@@ -22,8 +23,10 @@ export function useBatchedTranscript(
     }
     return JSON.stringify([sessionId, turnId, userId]);
   }, [messages, sessionId, turnId]);
-  const immediate = !active || urgent;
   const [visible, setVisible] = useState(() => ({ scope, messages }));
+  // Text is already paced by the stream queue. Keep the existing 500ms tool-only
+  // batching, but never make a new text frame wait behind it.
+  const immediate = !active || urgent || (delivery === 'frame' && textFrameChanged(visible.messages, messages));
   const latest = useRef({ scope, messages });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -53,4 +56,18 @@ export function useBatchedTranscript(
   // Never paint the previous conversation/turn or leave a stopped turn stale
   // while waiting for an effect. The layout effect also cancels its timer.
   return immediate || visible.scope !== scope ? messages : visible.messages;
+}
+
+function textFrameChanged(previous: ChatMessage[], next: ChatMessage[]) {
+  if (previous === next) return false;
+  const textMessages = (messages: ChatMessage[]) => messages.filter(message =>
+    message.role === 'assistant' && (message.content || message.metadata?.segment_complete));
+  const before = textMessages(previous), after = textMessages(next);
+  if (before.length !== after.length) return true;
+  return after.some((message, index) => {
+    const old = before[index];
+    return message.id !== old.id || message.content !== old.content ||
+      message.metadata?.segment_complete !== old.metadata?.segment_complete ||
+      message.metadata?.assistant_segment_id !== old.metadata?.assistant_segment_id;
+  });
 }

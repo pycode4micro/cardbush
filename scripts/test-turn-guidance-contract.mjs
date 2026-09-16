@@ -49,7 +49,10 @@ assert.match(hookSource, /optimisticGuidanceMessage\(/);
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_guidance_closed'/);
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /isBushServerHttpError/);
-assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
+assert.equal((hookSource.match(/createFrameStreamBuffers\(/g) ?? []).length, 3,
+  'foreground, control and background subscriptions must share the production frame queue');
+assert.equal((hookSource.match(/onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/g) ?? []).length, 3,
+  'tool facts must not wait for asynchronous animation callbacks');
 const streamBufferSource = fs.readFileSync(
   path.join(process.cwd(), 'src/features/chatMessages/transcript/assistantStreamBuffer.ts'), 'utf8',
 );
@@ -77,18 +80,8 @@ assert.equal(
   3,
   'foreground, control, and Goal streams must commit loop text from the canonical segment-completed fact',
 );
-assert.doesNotMatch(
-  hookSource,
-  /onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/,
-  'tool lifecycle events must not be used to guess assistant text boundaries',
-);
-assert.equal(
-  (hookSource.match(
-    /onToolExecution: \(execution\) => \{[\s\S]{0,100}?streamBuffer\.releaseToolBoundary\(\)\.then/g,
-  ) ?? []).length,
-  3,
-  'foreground, control, and Goal tools must wait for the preceding visual text queue',
-);
+assert.doesNotMatch(hookSource, /onToolExecution: \(execution\) => \{[\s\S]{0,100}?streamBuffer\.releaseToolBoundary\(\)\.then/,
+  'tool lifecycle updates must apply in event order without waiting for reveal animation');
 assert.match(
   runtimeChatSource,
   /case 'assistant_segment_completed':[\s\S]{0,240}?onAssistantSegmentCompleted\?\.\(/,

@@ -242,6 +242,21 @@ export function applyAssistantSegmentBoundary(
   return { ...current, [sessionId]: messages };
 }
 
+/** A canonical text correction is not a new loop or a tool revision. */
+export function replaceAssistantStreamContent(
+  current: Record<string, ChatMessage[]>, sessionId: string, assistantId: string,
+  content: string, route: AssistantStreamRoute,
+) {
+  const messages = current[sessionId] ?? [];
+  const target = assistantStreamTargetIndex(messages, assistantId, route);
+  if (target < 0) return appendAssistantDelta(current, sessionId, assistantId, content, route);
+  return { ...current, [sessionId]: messages.map((message, index) => index === target ? {
+    ...applyAssistantStreamRoute(message, route), content,
+    toolExecutions: message.toolExecutions?.map(tool => tool.contentOffset > content.length
+      ? { ...tool, contentOffset: content.length } : tool),
+  } : message) };
+}
+
 export function optimisticGuidanceMessage({
   clientMessageId,
   conversationId,
@@ -444,6 +459,11 @@ function createAssistantStreamMessage(
 ): ChatMessage {
   const messageId = route?.messageId.trim() ?? '';
   const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
+  // Tool records can arrive after the terminal snapshot. A newly discovered
+  // tool-only owner must inherit that turn's settled status, not reopen it.
+  const terminal = route?.turnId ? findTranscriptAssistant(messages, message =>
+    chatMessageTurnId(message) === route.turnId && message.metadata?.cardbush_terminal_snapshot === true,
+  ) : undefined;
   return {
     id: messageId || `assistant-${route?.turnId || sessionId}-segment-${route?.assistantSegmentIndex ?? 1}`,
     messageId: messageId || undefined,
@@ -454,6 +474,7 @@ function createAssistantStreamMessage(
     turnId: route?.turnId || undefined,
     createdAt: route?.createdAt || new Date().toISOString(),
     sequence: route?.sequence,
+    ...(terminal?.status ? { status: terminal.status } : {}),
     metadata: {
       ...(route?.assistantSegmentIndex != null ? { assistant_segment_index: route.assistantSegmentIndex } : {}),
       ...(messageId ? { message_id: messageId } : {}),
@@ -718,6 +739,14 @@ export function applyTurnTerminalSnapshot(
     ...(turnDurationMs != null ? { cardbush_turn_duration_ms: turnDurationMs } : {}),
   });
   let matchedAssistant = false;
+  // Reconnect/enrichment may archive an assistant before its status arrives.
+  // Settle those copies without adding a terminal-summary flag to history.
+  const settleHistory = (message: ChatMessage): ChatMessage => ({
+    ...message,
+    ...(message.role === 'assistant' && chatMessageTurnId(message) === turnId && message.status !== 'superseded'
+      ? { status: terminalStatus } : {}),
+    ...(message.loopHistory ? { loopHistory: message.loopHistory.map(settleHistory) } : {}),
+  });
   const nextMessages = messages.map((message) => {
     const belongsToTurn = turnId && chatMessageTurnId(message) === turnId;
     if (
@@ -731,6 +760,7 @@ export function applyTurnTerminalSnapshot(
       ...message,
       status: terminalStatus,
       metadata: terminalMetadata(message),
+      ...(message.loopHistory ? { loopHistory: message.loopHistory.map(settleHistory) } : {}),
     };
   });
   if (!matchedAssistant && terminalStatus === 'failed') {

@@ -1,0 +1,20 @@
+.streaming-lab { display: flex; flex-direction: column; height: 100vh; width: 100%; padding: 18px; gap: 14px; color: var(--text); background: var(--bg); }
+.streaming-lab-controls { flex: none; display: grid; gap: 10px; }
+.streaming-lab-controls h1 { margin: 0 0 5px; font-size: 20px; }
+.streaming-lab-controls p, .streaming-lab-controls output { margin: 0; font-size: 12px; opacity: .7; }
+.streaming-lab-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.streaming-lab-actions button, .streaming-lab-actions select { color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 7px 12px; }
+.streaming-lab-actions button { cursor: pointer; }
+.streaming-lab-actions button:disabled { opacity: .4; }
+.streaming-lab-actions select[aria-label="测试场景"] { max-width: 340px; }
+.streaming-lab-source { display: grid; gap: 4px; }
+.streaming-lab-source details { font-size: 11px; opacity: .65; }
+.streaming-lab-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; }
+.streaming-lab-lane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid #8884; border-radius: 12px; overflow: hidden; }
+.streaming-lab-lane > header { padding: 12px 16px; display: grid; gap: 5px; border-bottom: 1px solid #8883; }
+.streaming-lab-lane > header span, .streaming-lab-lane > header small { font-size: 12px; opacity: .65; }
+.streaming-lab-chat { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; }
+.streaming-lab-chat > .chat-panel { flex: 1; min-width: 0; }
+.streaming-lab-chat .topbar { display: none; }
+.streaming-lab-chat { --chat-inline-gutter: 20px; --chat-track-width: 100%; }
+@media (max-width: 900px) { .streaming-lab { padding: 10px; } .streaming-lab-columns { gap: 8px; } }

@@ -8,6 +8,7 @@ import { testLoopTranscript } from './helpers/chat-loop-transcript.mjs';
 // Keep a one-way dependency graph, not six files importing a shared mega-Hook.
 const allowed = {
   assistantStreamBuffer: [],
+  frameStreamBuffer: [],
   messageFacts: [],
   toolExecutionMerge: ['messageFacts'],
   loopHistory: ['messageFacts', 'toolExecutionMerge'],
@@ -207,5 +208,26 @@ for (const withLegacySegmentIndex of [true, false]) {
   assert.equal(api.normalizeChatMessagesForDisplay(lateState.s)[0].content, '最终答复');
 }
 
+for (const status of ['completed', 'stopped', 'failed']) {
+  const original = freeze({ s: [{ id: 'final', messageId: 'final', role: 'assistant', content: 'Result', turnId: 'late-turn',
+    loopHistory: [{ id: 'archived', role: 'assistant', turnId: 'late-turn', content: 'Prior step' }] }] });
+  const settled = api.applyTurnTerminalSnapshot(original, 's', 'final', {
+    turnId: 'late-turn', status, stopped: status === 'stopped', completedAt: '2026-09-16T00:00:00Z',
+  });
+  assert.equal(settled.s[0].loopHistory[0].status, status, 'archived copies settle with their turn');
+  assert.notEqual(settled.s[0].loopHistory[0].metadata?.cardbush_terminal_snapshot, true, 'history settlement does not create another summary');
+  const late = api.appendToolExecution(settled, 's', 'final', {
+    id: 'late-tool', name: 'terminal_exec', state: 'completed', success: true, output: '',
+    assistantMessageId: 'late-owner', turnId: 'late-turn', metadata: {}, contentOffset: 0,
+  });
+  assert.equal(late.s.find(message => message.id === 'late-owner').status, status,
+    'late tool-only owners must not reopen a terminal turn');
+}
+const corrected = api.replaceAssistantStreamContent({ s: [{ id: 'correct', role: 'assistant', turnId: 'correct-turn',
+  content: 'Long previous text', toolExecutions: [{ id: 'edit', contentOffset: 18 }] }] },
+  's', 'correct', 'New', { messageId: 'correct', turnId: 'correct-turn' });
+assert.equal(corrected.s[0].content, 'New');
+assert.equal(corrected.s[0].toolExecutions[0].contentOffset, 3);
+assert.equal(corrected.s[0].loopHistory, undefined, 'snapshot correction is not another loop');
 testLoopTranscript(api);
 console.log('Chat transcript module boundaries, buffering, mutation and identity tests passed.');
