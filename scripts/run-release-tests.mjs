@@ -16,6 +16,7 @@ const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', n
   .filter(file => file.endsWith('.test.mjs')).map(file => `packages/${name}/test/${file}`));
 run(['--test', '--test-concurrency=3', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs']);
+run(['--test', 'scripts/test-file-preview-registry.mjs']);
 for (const script of ['test-background-startup.mjs', 'test-startup-runtime-contract.mjs',
   'test-local-path-metadata.mjs', 'test-settings-layout-contract.mjs', 'test-panel-motion-contract.mjs',
   'test-chat-scroll-contract.mjs', 'test-keyboard-shortcuts.mjs', 'test-chrome-connector-contract.mjs',

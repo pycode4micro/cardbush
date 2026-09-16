@@ -65,3 +65,12 @@ test('a new format reuses the registration interface, with explicit matching and
   assert.throws(() => createFilePreviewRegistry([...filePreviewAdapters, { ...custom, id: 'text' }]), /Duplicate or empty file preview id/);
   assert.throws(() => createFilePreviewRegistry([{ ...custom, extensions: ['.*'] }]), /Invalid file preview extension/);
 });
+
+test('POSIX HTML documents use native file URLs with encoded names and relative assets', () => {
+  const file = '/home/runner/报表 #1?.html';
+  const source = resolveFilePreview(file).source(file);
+  assert.equal(source, 'file:///home/runner/%E6%8A%A5%E8%A1%A8%20%231%3F.html');
+  assert.equal(inspectorSource(file), source);
+  assert.equal(new URL('chart.js', source).href, 'file:///home/runner/chart.js');
+  assert.equal(new URL('./样式.css', source).href, 'file:///home/runner/%E6%A0%B7%E5%BC%8F.css');
+});

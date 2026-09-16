@@ -44,6 +44,9 @@ function nativeSource(path: string) {
     const [host, ...parts] = path.slice(2).replaceAll('\\', '/').split('/');
     return `file://${host}/${parts.map(encodeURIComponent).join('/')}`;
   }
+  // Webview documents need native file URLs on POSIX too, so relative scripts
+  // and styles share the document's directory instead of a host-only protocol.
+  if (path.startsWith('/')) return `file://${path.split('/').map(encodeURIComponent).join('/')}`;
   if (!/^[a-zA-Z]:[\\/]/.test(path)) return fileUrl(path);
   const encoded = path.replaceAll('\\', '/').split('/')
     .map((part, index) => index === 0 ? part : encodeURIComponent(part)).join('/');
