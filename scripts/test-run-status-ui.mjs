@@ -13,6 +13,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { McpActivationStatus } from '${resolve('src/features/chatMessages/McpActivationStatus.tsx').replaceAll('\\', '/')}';
 import { MessageBubble } from '${resolve('src/features/chatMessages/MessageBubble.tsx').replaceAll('\\', '/')}';
+import '${resolve('src/styles/theme.css').replaceAll('\\', '/')}';
 import '${resolve('src/styles/app.css').replaceAll('\\', '/')}';
 import '${resolve('src/styles/themes/cyberpunk.css').replaceAll('\\', '/')}';
 const initial = {protocol:'bush.mcp_snapshot_result.v1',snapshotId:'fixture',revision:1,pendingRevision:2,applicationState:'pending',servers:[]};
@@ -49,6 +50,17 @@ window.renderFailure = language => {
  failureRoot.render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
   <MessageBubble message={{id:'failure',role:'assistant',content:'',status:'failed',metadata:{stop_reason:'invalid_request_error',stop_details:{status:400,message:'400 Tool names must be unique.'}}}}
    language={language} sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
+ </div>);
+};
+window.renderPlan = (reason, status = 'completed', theme = 'theme-dark') => {
+ failureRoot ??= createRoot(document.getElementById('root'));
+ const nodes = [{id:'auth',step:'提交生成',status:'waiting',waitingFor:'用户确认'},
+  {id:'verify',step:'核对成片',status:'pending'}];
+ failureRoot.render(<div className={'app ' + theme} data-plan-reason={reason} style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
+  <MessageBubble message={{id:'plan',role:'assistant',content:'准备成果已保存。',status,
+   taskPlan:{protocol:'bush.task_plan.v1',planId:'plan',sessionId:'session',nodes,active:true,explanation:''},
+   metadata:{stop_reason:reason}}}
+   language="zh" sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
  </div>);
 };
 window.renderFixture(true);

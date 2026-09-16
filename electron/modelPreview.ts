@@ -1,4 +1,5 @@
 import { runHostCommand } from './hostProcesses';
+import { collectTemporaryDirectories, leaseTemporaryDirectory } from './cacheMaintenance';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -55,13 +56,17 @@ export class ModelPreviewService {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly released = new Map<string, number>();
   private disposed = false;
+  private releaseCacheLease?: () => void;
 
   constructor(private readonly options: { scriptPath: string; executable?: string; timeoutMs?: number; tempRoot?: string }) {}
 
   private getRoot() {
     return this.root ??= fs.mkdtemp(path.join(this.options.tempRoot ?? os.tmpdir(), 'cardbush-model-preview-'))
+      .then(async root => { this.releaseCacheLease = await leaseTemporaryDirectory(root); return root; })
       .catch(error => { this.root = undefined; throw error; });
   }
+
+  static collectCache(tempRoot = os.tmpdir()) { return collectTemporaryDirectories(tempRoot, 'cardbush-model-preview-', 24 * 60 * 60_000); }
 
   async preview(file: string, scene = '', signal?: AbortSignal, id: string = randomUUID()) {
     if (this.disposed || signal?.aborted) throw new ModelPreviewError('cancelled', 'Preview cancelled.');
@@ -151,6 +156,7 @@ export class ModelPreviewService {
     // Pending jobs remove their own directories after their process exits.
     const root = await this.root?.catch(() => undefined);
     if (this.jobs.size === 0 && root) await this.removeDirectory(root, true);
+    if (this.jobs.size === 0) this.releaseCacheLease?.();
   }
 
   private async removeDirectory(directory: string, rootItself = false) {

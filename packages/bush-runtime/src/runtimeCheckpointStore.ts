@@ -2,8 +2,10 @@ import {
   runtimeCheckpointSchema,
   type RuntimeCheckpoint,
 } from "@cardbush/bush-protocol";
+import type { CacheEntry } from './cacheMaintenance.js';
 
 export interface RuntimeCheckpointStore {
+  cacheEntries?(): Promise<CacheEntry[]>;
   load(sessionId: string, turnId: string): RuntimeCheckpoint | undefined;
   list(): RuntimeCheckpoint[];
   save(checkpoint: RuntimeCheckpoint): void;

@@ -511,6 +511,7 @@ export interface MaintenanceClearResult {
   target: string;
   cleared: boolean;
   counts: Record<string, number>;
+  errors?: string[];
 }
 
 export interface SessionMessagesResult {
@@ -1794,22 +1795,11 @@ async function productHostValue(
 }
 
 export async function clearConversationHistory(): Promise<MaintenanceClearResult> {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    const sessions = await runtime.client.listSessions();
-    let deleted = 0;
-    for (const session of sessions) {
-      if ((await runtime.client.deleteSession(session.sessionId)).deleted)
-        deleted += 1;
-    }
-    return {
-      target: 'conversation_history',
-      cleared: true,
-      counts: { sessions: deleted },
-    };
-  } finally {
-    runtime.dispose();
-  }
+  return maintenanceClearResultFromPayload(await productHostValue({ kind: 'maintenance.clear_conversations' }));
+}
+
+export async function clearApplicationCache(): Promise<MaintenanceClearResult> {
+  return maintenanceClearResultFromPayload(await productHostValue({ kind: 'maintenance.clear_cache' }));
 }
 
 export async function clearLogsCache(): Promise<MaintenanceClearResult> {
@@ -2707,6 +2697,7 @@ function maintenanceClearResultFromPayload(
   return {
     target: String(payload.target ?? ''),
     cleared: Boolean(payload.cleared),
+    errors: Array.isArray(payload.errors) ? payload.errors.map(String) : [],
     counts: Object.fromEntries(
       Object.entries(counts).map(([key, value]) => {
         const numeric = Number(value);

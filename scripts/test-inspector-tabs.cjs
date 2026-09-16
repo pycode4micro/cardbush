@@ -35,15 +35,13 @@ app.whenReady().then(async () => {
         const [width,setWidth] = React.useState(420);
         const presence = useSoftPanelPresence(open);
         const strip = useInspectorTabStrip(active,count);
-        window.controls = {setOpen,setCount,setActive,setWidth,state:strip.state};
+        window.controls = {setOpen,setCount,setActive,setWidth};
         return h('div',{className:'app',style:{height:'100vh'}}, presence.mounted && h('aside',{
           className:'right-inspector', style:{position:'absolute',left:650,top:50,width,overflow:'hidden',transform:'translateX(0)'}
         },h('div',{className:'right-inspector-tab-strip',style:{width}},
-          strip.state.overflow && h('button',{className:'right-inspector-tab-scroll'},'<'),
           h('div',{className:'right-inspector-tabs',ref:strip.ref}, Array.from({length:count},(_,i)=>h('div',{
             key:i,'data-inspector-tab-id':String(i),style:{flex:'0 0 120px',height:40}
-          },'Tab '+i))),
-          strip.state.overflow && h('button',{className:'right-inspector-tab-scroll'},'>')
+          },'Tab '+i)))
         ), createPortal(h('div',{className:'right-inspector-tab-context-menu',style:{left:720,top:85}},'Menu'),document.querySelector('.app') ?? document.body)));
       }
       const reactRoot = createRoot(document.getElementById('root'));
@@ -57,9 +55,9 @@ app.whenReady().then(async () => {
       const strip=document.querySelector('.right-inspector-tabs');
       const active=strip.querySelector('[data-inspector-tab-id="'+Array.from(strip.children).at(-1).dataset.inspectorTabId+'"]');
       const v=strip.getBoundingClientRect(), a=active.getBoundingClientRect();
-      return {state:controls.state, left:strip.scrollLeft, activeVisible:a.left>=v.left-1&&a.right<=v.right+1};
+      return {overflow:strip.scrollWidth>strip.clientWidth+2, left:strip.scrollLeft, activeVisible:a.left>=v.left-1&&a.right<=v.right+1};
     })()`);
-    assert.equal((await snapshot()).state.overflow, true, 'first delayed mount measures overflow');
+    assert.equal((await snapshot()).overflow, true, 'first delayed mount overflows');
     assert.equal((await snapshot()).activeVisible, true, 'first delayed mount reveals active tab');
     const menu = await run(`(()=>{const r=document.querySelector('.right-inspector-tab-context-menu').getBoundingClientRect();return {x:r.x,y:r.y,visible:document.elementFromPoint(r.x+3,r.y+3)?.className};})()`);
     assert.equal(menu.x,720); assert.equal(menu.y,85);
@@ -75,9 +73,10 @@ app.whenReady().then(async () => {
     await run('controls.setCount(13);controls.setActive("12")'); await pause();
     assert.equal((await snapshot()).activeVisible,true,'new active tab becomes visible');
     await run('controls.setCount(3);controls.setActive("2");controls.setWidth(350)'); await pause();
-    assert.equal((await snapshot()).state.overflow,true);
+    assert.equal((await snapshot()).overflow,true);
+    assert.equal((await snapshot()).activeVisible,true,'narrow panel reveals active tab');
     await run('controls.setWidth(390)'); await pause();
-    assert.equal((await snapshot()).state.overflow,false,'arrows disappear even when their old slots would cause overflow');
+    assert.equal((await snapshot()).overflow,false,'tabs fit after panel grows');
     assert.equal(await run('document.documentElement.scrollLeft'),0,'tab reveal never scrolls app ancestors');
     await run(`
       const {useOutsideDismiss} = load(${JSON.stringify(compile('src/hooks/useOutsideDismiss.ts'))});

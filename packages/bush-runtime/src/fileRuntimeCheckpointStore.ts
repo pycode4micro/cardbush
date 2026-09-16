@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { temporaryCacheEntries } from './cacheMaintenance.js';
 import {
   chmodSync,
   closeSync,
@@ -35,6 +36,7 @@ export class RuntimeCheckpointCorruptionError extends Error {
 }
 
 export class FileRuntimeCheckpointStore implements RuntimeCheckpointStore {
+  cacheEntries() { return temporaryCacheEntries(this.#root); }
   readonly #root: string;
 
   constructor(root: string) {

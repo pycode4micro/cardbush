@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, assembleContext,
@@ -21,7 +22,7 @@ const request = (overrides = {}) => ({ protocol: 'bush.session_turn_request.v1',
   sessionId: 'budget', turnId: 'current', model: 'fixture', maxOutputTokens: 128000,
   prefixMessages: [{ role: 'system', content: 'Stable rules. A checkpoint is intermediate; continue the user task.' }],
   inputMessages: [{ messageId: 'current_user', message: { role: 'user', content: 'Finish verification.' } }],
-  metadata: { contextWindowTokens: 400000 }, ...overrides });
+  metadata: { contextWindowTokens: 400000 }, ...overrides, tools: [orderedCheckpointTool, ...(overrides.tools ?? [])] });
 const isMaintenance = request => request.messages.some(message => message.name === 'context_pressure');
 const hasCommittedCheckpoint = request => request.messages.some(message => message.role === 'tool' && message.content.includes('summarized_turns'));
 function sourceRows(request) {
@@ -36,9 +37,7 @@ function *checkpoint(request, id) {
   };
   yield event(request, 0, 'reasoning_delta', { delta: 'Preserve verified facts and pending work.' });
   yield event(request, 1, 'tool_call_delta', { index: 0, toolCallId: id, nameDelta: 'checkpoint_context',
-    argumentsDelta: JSON.stringify({ summaries: sources.filter(source => source.target.startsWith('summaries[')).map(summarize),
-      active_summary: sources.some(source => source.target === 'active_summary')
-        ? summarize(sources.find(source => source.target === 'active_summary')) : '' }) });
+    argumentsDelta: JSON.stringify({ summaries: sources.filter(source => source.target.startsWith('summaries[')).map(summarize) }) });
   yield event(request, 2, 'response_completed', { finishReason: 'tool_calls' });
 }
 function *finished(request) {
@@ -420,4 +419,183 @@ test('restart retains the maintenance retry limit without restoring partial outp
   assert.deepEqual(observed.map(input => input.maxOutputTokens), [32768, 65536]);
   assert.ok(observed.every(input => !JSON.stringify(input.messages).includes('FAILED_DRAFT')));
   assert.equal(restoredSessions.snapshot('budget').turns.at(-1).contextCheckpoint, undefined);
+});
+
+// Incident regression: nine historical sources plus a current Tool receipt.
+// The fixture model fills the supplied blanks, without reconstructing identity
+// fields or deciding whether the current source belongs in another array.
+const currentProgress = 'User authorized the update. Skill updated; image saved; preview completed. Paid creation is NOT submitted. Next submit once.';
+function filledTemplate(input) {
+  const notice = input.messages.findLast(message => message.name === 'context_pressure').content;
+  const line = notice.split('\n').find(line => line.startsWith('Fill this exact template;'));
+  const value = JSON.parse(line.slice(line.indexOf('{')));
+  const rows = sourceRows(input).filter(source => source.target !== 'not_requested');
+  for (const source of rows) {
+    const text = source.turnId === 'current' ? currentProgress : `Verified historical facts for ${source.turnId}.`;
+    const index = source.target.match(/^summaries\[(\d+)\]/)?.[1];
+    if (index !== undefined) {
+      if (source.target.endsWith('.summary')) value.summaries[Number(index)].summary = text;
+      else value.summaries[Number(index)] = text;
+    } else if (source.target === 'active_summary') value.active_summary = text;
+    else value.active_turn.summary = text;
+  }
+  return value;
+}
+function *replyCheckpoint(input, id, value = filledTemplate(input)) {
+  yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: id,
+    nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify(value) });
+  yield event(input, 1, 'response_completed', { finishReason: 'tool_calls' });
+}
+function committedCheckpoint(turn) {
+  const message = turn.messages.find(item => item.messageId === turn.contextCheckpoint.exchangeMessageIds[0]).message;
+  return JSON.parse(message.toolCalls[0].argumentsText);
+}
+function observationRegistry(onExecute) {
+  return new ToolRegistry().register({ definition: { name: 'observe_once', description: 'Record completed work.', inputSchema: { type: 'object' } },
+    manifest: { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
+    decodeInput: value => value, execute: () => { onExecute(); return { completed: 'Skill updated and preview ready; paid creation not submitted.' }; } });
+}
+function *observe(input) {
+  yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: 'completed_once', nameDelta: 'observe_once', argumentsDelta: '{}' });
+  yield event(input, 1, 'response_completed', { finishReason: 'tool_calls' });
+}
+const nineSources = () => Array.from({ length: 9 }, (_, i) => [
+  { role: 'user', content: `Historical request ${i}` },
+  { role: 'assistant', content: `Verified historical facts for old_${i}.`, toolCalls: [] },
+]);
+const activeCount = async input => ({ inputTokens: hasCommittedCheckpoint(input) ? 500
+  : input.messages.some(message => message.role === 'tool') ? 260000 : 500, source: 'provider' });
+
+for (const mode of ['first attempt', 'partitioned correction', 'last allowed request']) test(`nine-plus-one fills slots and resumes once (${mode})`, async t => {
+  const fallback = mode !== 'first attempt';
+  let executions = 0, maintenance = 0;
+  const sizes = [];
+  const registry = observationRegistry(() => executions++);
+  const fixture = harness(t, function *(input, ordinal, store) {
+    if (isMaintenance(input)) {
+      maintenance++;
+      sizes.push(sourceRows(input).filter(source => source.target !== 'not_requested').length);
+      assert.equal(store.snapshot('budget').turns.length, 9);
+      const value = filledTemplate(input);
+      assert.deepEqual(Object.keys(value), ['summaries']);
+      if (fallback && maintenance > 2 && sizes.at(-1) === 10) {
+        const rows = sourceRows(input);
+        assert.equal(input.messages.filter(message => message.role === 'assistant' && message.toolCalls.length).length, 2,
+          'each genuine staged exchange appears once, even when it owns nine sources');
+        for (const [index, row] of rows.entries()) {
+          const locator = row.checkpointSummaries[0];
+          const args = JSON.parse(input.messages[locator.message].toolCalls[0].argumentsText);
+          const slot = Number(locator.target.match(/\[(\d+)\]/)[1]);
+          assert.equal(args.summaries[slot], value.summaries[index], 'source locator must select only this slot\'s facts');
+        }
+      }
+      if (fallback && (maintenance <= 2 || mode === 'last allowed request' && [3, 4, 6, 7].includes(maintenance))) {
+        value.summaries.push('EXTRA_REJECTED_DRAFT');
+      }
+      yield *replyCheckpoint(input, `slot_${maintenance}`, value);
+    } else if (!hasCommittedCheckpoint(input)) yield *observe(input);
+    else {
+      assert.match(JSON.stringify(input.messages), /Paid creation is NOT submitted/);
+      assert.doesNotMatch(JSON.stringify(input.messages), /EXTRA_REJECTED_DRAFT/);
+      yield *finished(input);
+    }
+  }, { toolRegistry: registry, history: nineSources(), count: activeCount });
+  const original = structuredClone(fixture.original);
+  const result = await fixture.host.runSessionTurn(request({ tools: registry.definitions().filter(tool => tool.name === 'observe_once') }));
+  assert.equal(result.payload.status, 'completed');
+  assert.equal(executions, 1);
+  assert.deepEqual(sizes, mode === 'last allowed request' ? [10, 10, 9, 9, 9, 1, 1, 1, 10]
+    : fallback ? [10, 10, 9, 1, 10] : [10]);
+  const snapshot = fixture.store.snapshot('budget');
+  assert.deepEqual(snapshot.turns.slice(0, 9), original);
+  assert.equal(committedCheckpoint(snapshot.turns.at(-1)).summaries[9], currentProgress);
+  assert.deepEqual(snapshot.turns.at(-1).contextCheckpoint.coveredTurnIds, original.map(turn => turn.turnId));
+  assert.equal(fixture.host.events('budget', 'current').filter(event => event.kind === 'context_compaction_completed').length, 1);
+  if (fallback) {
+    const retry = fixture.host.events('budget', 'current').filter(event => event.kind === 'context_compaction_retrying');
+    assert.match(retry[0].payload.message, /summaries\[9\]/);
+    assert.match(retry[0].payload.message, /exactly 10/);
+    assert.equal(retry[1].payload.diagnostics.correctionPartition, true);
+    assert.doesNotMatch(JSON.stringify(retry), /EXTRA_REJECTED_DRAFT/);
+  }
+  for (const input of fixture.observed) assert.deepEqual(input.tools, fixture.observed[0].tools);
+});
+
+test('invalid slots exhaust the small-job budget without committing a partial checkpoint', async t => {
+  const fixture = harness(t, function *(input, ordinal) {
+    yield *replyCheckpoint(input, `invalid_${ordinal}`, { summaries: [] });
+  }, { history: nineSources() });
+  const result = await fixture.host.runSessionTurn(request());
+  assert.equal(result.payload.reason, 'context_compaction_failed');
+  assert.equal(fixture.observed.length, 5, 'two root attempts and three attempts on the first smaller job');
+  assert.deepEqual(fixture.store.snapshot('budget').turns.slice(0, 9), fixture.original);
+  assert.equal(fixture.store.snapshot('budget').turns.at(-1).contextCheckpoint, undefined);
+});
+
+for (const format of ['ordered-partition', 'ordered-exhausted', 'separate', 'identified']) test(`restart preserves filled-slot ownership and saved ${format} contract`, async t => {
+  const ordered = format.startsWith('ordered');
+  const journal = [];
+  const store = new SessionStore({ persistence: { load: () => structuredClone(journal), append: value => journal.push(structuredClone(value)) } });
+  nineSources().forEach((messages, index) => seed(store, `old_${index}`, index + 1, messages));
+  const original = structuredClone(store.snapshot('budget').turns);
+  const eventLog = new InMemoryRuntimeEventLog(), checkpoints = new InMemoryRuntimeCheckpointStore();
+  let executions = 0, maintenance = 0, ready;
+  const paused = new Promise(resolve => { ready = resolve; });
+  const controller = new AbortController();
+  const registry = observationRegistry(() => executions++);
+  const first = new InMemoryRuntimeHost({ sessionStore: store, eventLog, checkpointStore: checkpoints,
+    toolRegistry: registry, registerDefaultWorkspaceTools: false,
+    provider: { countInputTokens: activeCount, async *stream(input) {
+      if (!isMaintenance(input)) { yield *observe(input); return; }
+      maintenance++;
+      if (ordered && (maintenance <= 2 || format === 'ordered-exhausted' && [3, 4, 6, 7].includes(maintenance))) {
+        yield *replyCheckpoint(input, `rejected_${maintenance}`, { summaries: [] });
+      } else if (format === 'ordered-exhausted' && [5, 8].includes(maintenance)) {
+        yield *replyCheckpoint(input, `completed_${maintenance}`);
+      } else { ready(); await new Promise(() => {}); }
+    } } });
+  t.after(() => first.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const start = request({ tools: registry.definitions().filter(tool => tool.name === 'observe_once') });
+  if (!ordered) start.tools = [...start.tools.filter(tool => tool.name !== 'checkpoint_context'),
+    { name: 'checkpoint_context', description: 'Saved checkpoint catalog.', inputSchema: { type: 'object',
+      required: format === 'separate' ? ['summaries', 'active_summary'] : ['session_revision', 'summaries'],
+      properties: format === 'separate' ? { summaries: { type: 'array', items: { type: 'string' } }, active_summary: { type: 'string' } }
+        : { session_revision: { type: 'integer' }, summaries: { type: 'array', items: { type: 'object' } }, active_turn: { type: 'object' } } } }];
+  const running = first.runSessionTurn(start, { signal: controller.signal });
+  await paused;
+  const saved = structuredClone(checkpoints.load('budget', 'current'));
+  const events = structuredClone(eventLog.replay('budget', 'current'));
+  const sessions = structuredClone(journal);
+  controller.abort(); await running;
+  const restored = new InMemoryRuntimeCheckpointStore(); restored.save(saved);
+  const restoredStore = new SessionStore({ persistence: { load: () => structuredClone(sessions), append: value => sessions.push(structuredClone(value)) } });
+  const restoredLog = new InMemoryRuntimeEventLog({ persistence: { load: () => structuredClone(events), append: value => events.push(structuredClone(value)) } });
+  const observed = [];
+  const second = new InMemoryRuntimeHost({ sessionStore: restoredStore, eventLog: restoredLog, checkpointStore: restored,
+    toolRegistry: observationRegistry(() => executions++), registerDefaultWorkspaceTools: false,
+    provider: { countInputTokens: activeCount, async *stream(input) {
+      observed.push(structuredClone(input));
+      if (isMaintenance(input)) yield *replyCheckpoint(input, `resumed_${observed.length}`);
+      else yield *finished(input);
+    } } });
+  t.after(() => second.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const result = await second.sendCommand({ kind: 'runtime.resume_model_turn', payload: { sessionId: 'budget', turnId: 'current' } });
+  if (format === 'ordered-exhausted') {
+    assert.equal(result.payload.reason, 'context_compaction_failed');
+    assert.match(result.payload.details.message, /correction budget was exhausted/);
+    assert.equal(observed.length, 0, 'restart must count the interrupted ninth dispatch and cannot grant fresh requests');
+    assert.deepEqual(restoredStore.snapshot('budget').turns.slice(0, 9), original);
+    assert.equal(restoredStore.snapshot('budget').turns.at(-1).contextCheckpoint, undefined);
+    assert.equal(executions, 1);
+    return;
+  }
+  assert.equal(result.payload.status, 'completed');
+  assert.equal(executions, 1, 'completed Tool receipts survive restart');
+  const sizes = observed.filter(isMaintenance).map(input => sourceRows(input).filter(row => row.target !== 'not_requested').length);
+  assert.deepEqual(sizes, format === 'ordered-partition' ? [9, 1, 10] : [10]);
+  for (const input of observed) assert.deepEqual(input.tools, saved.request.tools);
+  assert.deepEqual(restoredStore.snapshot('budget').turns.slice(0, 9), original);
+  const committed = committedCheckpoint(restoredStore.snapshot('budget').turns.at(-1));
+  assert.equal(format === 'ordered-partition' ? committed.summaries[9]
+    : format === 'separate' ? committed.active_summary : committed.active_turn.summary, currentProgress);
 });

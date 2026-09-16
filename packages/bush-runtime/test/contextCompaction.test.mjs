@@ -3,6 +3,10 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import {
   bindContextCheckpointInput,
+  contextCheckpointFormat,
+  contextCheckpointSlots,
+  contextCheckpointTemplate,
+  contextCheckpointCorrection,
   ContextCheckpointInputError,
   contextCheckpointFailure,
   contextPressureNotice,
@@ -151,7 +155,7 @@ const authorization = () => ({
   revision: 3, totalTurns: 2, unsummarizedTurnIds: ["prior_a", "prior_b"],
   activeTurn: { turnId: "current_turn", throughMessageId: "msg_tool_current_71_0_long_runtime_boundary" },
 });
-const draft = () => ({ summaries: ["Prior A facts.", "Prior B facts."], active_summary: "Tool completed. Verify next; do not repeat it." });
+const draft = () => ({ summaries: ["Prior A facts.", "Prior B facts.", "Tool completed. Verify next; do not repeat it."] });
 const legacyDraft = () => ({
   session_revision: 3,
   summaries: [{ turn_id: "prior_a", summary: "Prior A facts." }, { turn_id: "prior_b", summary: "Prior B facts." }],
@@ -170,11 +174,11 @@ test('appended source index locates repeated prompts and transient maintenance m
   const input = { messages, prefixMessageCount: 1, turns, activeTurnId: 'current_turn', activeMessages: active, state: authorization() };
   const sources = locateContextCompactionSources(input);
   assert.deepEqual(sources.map(source => [source.target, source.startMessage, source.endMessageExclusive]),
-    [['summaries[0]', 1, 3], ['summaries[1]', 3, 5], ['active_summary', 5, 9]]);
+    [['summaries[0]', 1, 3], ['summaries[1]', 3, 5], ['summaries[2]', 5, 9]]);
   assert.equal(sources[0].last.excerpt, 'Verified prior_a');
   assert.equal(sources[1].last.excerpt, 'Verified prior_b');
   assert.deepEqual(sources[2].last, { role: 'tool', toolCallId: 'c' });
-  const notice = contextPressureNotice(input.state, pressure(), false, sources);
+  const notice = contextPressureNotice(input.state, pressure(), 'ordered', sources);
   assert.doesNotMatch(notice.content, /LARGE_PRIVATE_TOOL_BODY|context_source_boundary/);
   assert.match(notice.content, /zero-based/);
   assert.deepEqual(messages, original);
@@ -203,7 +207,7 @@ test("binds summary text to runtime-owned revision, Turn order and active bounda
   assert.deepEqual(bound, {
     sessionRevision: 3,
     summaries: [{ turnId: "prior_a", summary: input.summaries[0] }, { turnId: "prior_b", summary: input.summaries[1] }],
-    activeTurn: { ...state.activeTurn, summary: input.active_summary },
+    activeTurn: { ...state.activeTurn, summary: input.summaries[2] },
   });
   assert.deepEqual({ state, input }, before, "binding cannot mutate source facts or its authorization");
   bound.activeTurn.summary = "changed result";
@@ -212,12 +216,12 @@ test("binds summary text to runtime-owned revision, Turn order and active bounda
 
 test("supports preceding-only and active-only summaries without fabricated segments", () => {
   const preceding = { ...authorization(), activeTurn: undefined };
-  assert.equal(bindContextCheckpointInput({ summaries: draft().summaries, active_summary: "" }, preceding).activeTurn, undefined);
+  assert.equal(bindContextCheckpointInput({ summaries: draft().summaries.slice(0, 2) }, preceding).activeTurn, undefined);
   const active = { ...authorization(), unsummarizedTurnIds: [] };
-  const bound = bindContextCheckpointInput({ summaries: [], active_summary: "Keep the cumulative verified state." }, active);
+  const bound = bindContextCheckpointInput({ summaries: ["Keep the cumulative verified state."] }, active);
   assert.deepEqual(bound.summaries, []);
   assert.equal(bound.activeTurn.throughMessageId, active.activeTurn.throughMessageId);
-  assert.throws(() => bindContextCheckpointInput(draft(), preceding), { field: "active_summary" });
+  assert.throws(() => bindContextCheckpointInput(draft(), preceding), { field: "summaries" });
 });
 
 test("rejects missing, wrong-type, oversized and miscounted summaries with exact field diagnostics", () => {
@@ -226,13 +230,10 @@ test("rejects missing, wrong-type, oversized and miscounted summaries with exact
     [{ ...draft(), summaries: [] }, "summaries"],
     [{ ...draft(), summaries: ["one"] }, "summaries"],
     [{ ...draft(), summaries: [...draft().summaries, "extra"] }, "summaries"],
-    [{ ...draft(), summaries: ["valid", { summary: "not a string" }] }, "summaries[1]"],
-    [{ ...draft(), summaries: ["valid", " "] }, "summaries[1]"],
-    [{ ...draft(), active_summary: undefined }, "active_summary"],
-    [{ ...draft(), active_summary: null }, "active_summary"],
-    [{ ...draft(), active_summary: [] }, "active_summary"],
-    [{ ...draft(), active_summary: { summary: "do not stringify objects" } }, "active_summary"],
-    [{ ...draft(), active_summary: "x".repeat(6001) }, "active_summary"],
+    ...[undefined, null, [], {}, ' ', 'x'.repeat(6001)].map(value =>
+      [{ summaries: ['valid', 'valid', value] }, 'summaries[2]']),
+    [{ summaries: ['valid', { summary: 'not a string' }, 'current'] }, 'summaries[1]'],
+    [{ ...draft(), active_summary: 'Never mix contracts' }, 'input'],
     [{ ...draft(), session_revision: 99 }, "input"],
     [{ ...draft(), active_turn: legacyDraft().active_turn }, "input"],
   ];
@@ -243,7 +244,7 @@ test("rejects missing, wrong-type, oversized and miscounted summaries with exact
 });
 
 test("old saved catalogs remain compatible but stale identity claims are never overwritten", () => {
-  assert.equal(bindContextCheckpointInput(legacyDraft(), authorization()).sessionRevision, 3);
+  assert.equal(bindContextCheckpointInput(legacyDraft(), authorization(), 'identified').sessionRevision, 3);
   const cases = [
     [{ ...legacyDraft(), session_revision: 2 }, "session_revision"],
     [{ ...legacyDraft(), summaries: legacyDraft().summaries.toReversed() }, "summaries[0].turn_id"],
@@ -254,7 +255,7 @@ test("old saved catalogs remain compatible but stale identity claims are never o
     [{ ...legacyDraft(), active_turn: { ...legacyDraft().active_turn, summary: { text: "wrong shape" } } }, "active_turn.summary"],
   ];
   for (const [input, field] of cases) {
-    assert.throws(() => bindContextCheckpointInput(input, authorization()), { field });
+    assert.throws(() => bindContextCheckpointInput(input, authorization(), 'identified'), { field });
   }
 });
 
@@ -263,26 +264,28 @@ test("checkpoint catalog stays static while notices bind different runtime state
   registerContextCompactionTool(registry, () => { throw new Error("catalog inspection cannot execute"); });
   const before = registry.definitions();
   const schema = before[0].inputSchema;
-  assert.deepEqual(Object.keys(schema.properties), ["summaries", "active_summary"]);
-  assert.equal(schema.properties.summaries.items.type, "string");
-  assert.equal(schema.properties.active_summary.type, "string");
+  assert.deepEqual(Object.keys(schema.properties), ["updates"]);
+  assert.deepEqual(schema.required, ['updates']);
+  assert.equal(schema.properties.updates.type, "array");
+  assert.equal(schema.properties.updates.minItems, 1);
+  assert.equal(contextCheckpointFormat(schema.required), 'incremental');
   const notice = contextPressureNotice(authorization(), pressure());
-  assert.match(notice.content, /exactly 2 plain summary strings/);
-  assert.match(notice.content, /Runtime binds them/);
-  assert.match(contextPressureNotice({ revision: 4, unsummarizedTurnIds: [], totalTurns: 2 }, pressure()).content, /active_summary to an empty string/);
-  const legacy = contextPressureNotice(authorization(), pressure(), true);
-  assert.match(legacy.content, /provide active_turn/);
+  assert.match(notice.content, /exactly 3 text slots/);
+  assert.match(notice.content, /Runtime binds the filled slots/);
+  assert.match(contextPressureNotice({ revision: 4, unsummarizedTurnIds: [], totalTurns: 2 }, pressure()).content, /"summaries":\[\]/);
+  const legacy = contextPressureNotice(authorization(), pressure(), 'identified');
+  assert.match(legacy.content, /active_turn/);
   assert.doesNotMatch(legacy.content, /active_summary/);
   assert.deepEqual(registry.definitions(), before, "no dynamic IDs or schema changes in the cache prefix");
 });
 
 test("diagnostics persist field/type/count and a fingerprint, never duplicate raw summary text", () => {
-  const input = { ...draft(), active_summary: { sensitive: "PRIVATE_SUMMARY_CONTENT" } };
+  const input = { summaries: ['Prior A facts', 'Prior B facts', { sensitive: "PRIVATE_SUMMARY_CONTENT" }] };
   const args = JSON.stringify(input);
   let failure;
   try { bindContextCheckpointInput(input, authorization()); }
   catch (error) { failure = contextCheckpointFailure(error, args); }
-  assert.equal(failure.diagnostics.field, "active_summary");
+  assert.equal(failure.diagnostics.field, "summaries[2]");
   assert.equal(failure.diagnostics.received, "object");
   assert.equal(failure.diagnostics.argumentsChars, args.length);
   assert.equal(failure.diagnostics.argumentsSha256, createHash("sha256").update(args).digest("hex"));
@@ -293,4 +296,46 @@ test("diagnostics persist field/type/count and a fingerprint, never duplicate ra
     assert.equal(invalid.diagnostics.code, "checkpoint_json_invalid");
     assert.doesNotMatch(JSON.stringify(invalid), /PRIVATE_SUMMARY_CONTENT/);
   }
+});
+
+test('nine preceding Turns and one active Turn fill ten slots without a second current field', () => {
+  const state = { revision: 12, totalTurns: 9, unsummarizedTurnIds: Array.from({ length: 9 }, (_, i) => `prior_${i}`),
+    activeTurn: { turnId: 'current', throughMessageId: 'last_preview_receipt' } };
+  const slots = contextCheckpointSlots(state);
+  const template = JSON.parse(contextCheckpointTemplate(state));
+  assert.deepEqual(template, { summaries: Array(10).fill('') });
+  assert.deepEqual(slots.map(slot => slot.target), Array.from({ length: 10 }, (_, i) => `summaries[${i}]`));
+  const current = 'User authorized the update. Skill updated; image saved; request previewed. Creation has NOT been submitted. Next submit once.';
+  const texts = state.unsummarizedTurnIds.map(id => `Verified facts for ${id}.`);
+  const input = { summaries: [...texts, current] };
+  const bound = bindContextCheckpointInput(input, state);
+  assert.deepEqual(bound.summaries, texts.map((summary, i) => ({ turnId: state.unsummarizedTurnIds[i], summary })));
+  assert.deepEqual(bound.activeTurn, { ...state.activeTurn, summary: current });
+  assert.deepEqual(input.summaries, [...texts, current]);
+  // The incident's old ten-plus-one payload remains invalid under its saved
+  // contract. Compatibility must never silently drop or reinterpret a draft.
+  assert.throws(() => bindContextCheckpointInput({ ...input, active_summary: current }, state, 'separate'), /exactly 9/);
+  assert.throws(() => bindContextCheckpointInput({ ...input, active_summary: current }, state), { field: 'input' });
+  assert.throws(() => bindContextCheckpointInput({ summaries: texts }, state), /exactly 10/);
+  const correction = contextCheckpointCorrection('Expected 10 slots; received 11.', state);
+  assert.match(correction, /summaries\[9\]/);
+  assert.match(correction, /"summaries":\["","","","","","","","","",""\]/);
+  assert.doesNotMatch(correction, /active_summary|last_preview_receipt|User authorized/);
+});
+
+test('saved catalogs choose the contract; malformed responses cannot switch it', () => {
+  assert.equal(contextCheckpointFormat(['summaries']), 'ordered');
+  assert.equal(contextCheckpointFormat(['summaries', 'active_summary']), 'separate');
+  assert.equal(contextCheckpointFormat(['session_revision', 'summaries']), 'identified');
+  const state = authorization();
+  const split = { summaries: draft().summaries.slice(0, 2), active_summary: draft().summaries[2] };
+  assert.deepEqual(bindContextCheckpointInput(split, state, 'separate'), bindContextCheckpointInput(draft(), state));
+  assert.throws(() => bindContextCheckpointInput(draft(), state, 'separate'), /exactly 2/);
+  assert.throws(() => bindContextCheckpointInput(legacyDraft(), state), { field: 'input' });
+  const preceding = { ...state, activeTurn: undefined };
+  assert.throws(() => bindContextCheckpointInput({ summaries: split.summaries }, preceding, 'separate'), { field: 'active_summary' });
+  assert.equal(bindContextCheckpointInput({ ...split, active_summary: '' }, preceding, 'separate').activeTurn, undefined);
+  const correction = contextCheckpointCorrection('Received 3 summaries.', state, 'separate');
+  assert.match(correction, /only the 2 preceding sources/);
+  assert.match(correction, /current source only in active_summary/);
 });

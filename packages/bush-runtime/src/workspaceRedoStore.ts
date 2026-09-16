@@ -1,3 +1,4 @@
+import { blobCacheEntries, memoryCacheEntry, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,6 +8,11 @@ import { join } from 'node:path';
 export class WorkspaceRedoStore {
   readonly #memory = new Map<string, Buffer>();
   constructor(readonly directory?: string) {}
+
+  async cacheEntries() {
+    if (this.directory) return [...await blobCacheEntries(this.directory, 'workspace_redo', name => /^[a-f0-9]{64}$/.test(name)), ...await temporaryCacheEntries(this.directory)];
+    return [...this.#memory.keys()].map(hash => ({ ...memoryCacheEntry('workspace_redo', hash, [], () => this.#memory.delete(hash)), owner: undefined }));
+  }
 
   async save(hash: string, content: Buffer): Promise<void> {
     this.#verify(hash, content);

@@ -47,16 +47,19 @@ import { WindowScrollDiagnostics } from './windowScrollDiagnostics';
 import { windowsShellIconPath } from './windowsAppIdentity';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
-import { runAcquisitionCommand } from './pluginAcquisition';
+import { collectPluginAcquisitionCache, runAcquisitionCommand } from './pluginAcquisition';
 import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess, setHostApplicationMemoryProvider } from './hostProcesses';
 import { applicationMemoryBytes, installPreviewResourceProtection, relievePreviewForMemoryPressure } from './previewResourceProtection';
-import { installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
+import { collectPluginInstallCache, installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
+import { clearBrowserCaches, clearDiagnosticFiles, mergeCleanup } from './cacheMaintenance';
+import { appendRotatingLog } from './rotatingLog';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath } from './officePreview';
 import { checkOfficePreviewAdmission, officePreviewLimits } from './officePreviewAdmission';
 import { localFileResponse } from './localFileStream';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 import { readFilePrefix } from './fileRead';
+import { ImageGalleryScanner } from './imageGallery';
 import { readTextPreviewResult, renderTextFilePreview } from './textPreview';
 import { ModelPreviewError, ModelPreviewService } from './modelPreview';
 import {
@@ -376,7 +379,7 @@ function appendDebugLog(scope: string, payload: unknown) {
     at: new Date().toISOString(),
     payload,
   };
-  fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+  appendRotatingLog(filePath, entry);
   return filePath;
 }
 
@@ -2521,6 +2524,39 @@ function pluginMarkets() {
     },
   });
 }
+
+const cacheSessions = new Set<Electron.Session>();
+app.on('session-created', created => cacheSessions.add(created));
+async function collectTemporaryCaches() {
+  const results = [];
+  for (const collect of [
+    () => pluginMarkets().collectCache(),
+    () => collectPluginAcquisitionCache(path.join(app.getPath('userData'), 'plugin-marketplaces')),
+    () => collectPluginInstallCache(path.join(app.getPath('userData'), 'plugins')).then(results => mergeCleanup(...results)),
+    () => ModelPreviewService.collectCache(),
+  ]) {
+    try { results.push(await collect()); }
+    catch (error) { results.push({ counts: {}, errors: [error instanceof Error ? error.message : String(error)] }); }
+  }
+  return mergeCleanup(...results);
+}
+
+async function clearApplicationCaches() {
+  cacheSessions.add(session.defaultSession);
+  // Include persistent partitions from plugins that have not been opened this launch.
+  const partitions = path.join(app.getPath('sessionData'), 'Partitions');
+  const storageKey = (value: string) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const openedPaths = new Set([...cacheSessions].flatMap(value => value.storagePath ? [storageKey(value.storagePath)] : []));
+  if (fs.existsSync(partitions) && !fs.lstatSync(partitions).isSymbolicLink()) {
+    for (const entry of fs.readdirSync(partitions, { withFileTypes: true })) {
+      const storage = path.join(partitions, entry.name);
+      if (entry.isDirectory() && !entry.isSymbolicLink() && !openedPaths.has(storageKey(storage))) {
+        cacheSessions.add(session.fromPath(storage)); openedPaths.add(storageKey(storage));
+      }
+    }
+  }
+  return mergeCleanup(await clearBrowserCaches(cacheSessions), await collectTemporaryCaches());
+}
 ipcMain.handle('plugins:market-sources', async event => {
   assertMainWindowSender(event.sender.id);
   return pluginMarkets().sources();
@@ -2748,6 +2784,29 @@ ipcMain.handle('image:read-data-url', async (event, targetPath: string) => {
   }
   return readLocalImageDataUrl(targetPath);
 });
+
+const imageGalleryScanner = new ImageGalleryScanner();
+const imageGalleryOwners = new WeakSet<Electron.WebContents>();
+function imageGalleryOwner(event: Electron.IpcMainInvokeEvent) {
+  const owner = event.sender;
+  const sourceWindow = BrowserWindow.fromWebContents(owner);
+  if (!sourceWindow || (sourceWindow !== mainWindow && !shadowWindows.has(owner.id))) {
+    throw new Error('Image galleries are available only in the application.');
+  }
+  if (!imageGalleryOwners.has(owner)) {
+    imageGalleryOwners.add(owner);
+    const id = owner.id;
+    owner.once('destroyed', () => { void imageGalleryScanner.close(id); });
+    owner.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+      if (mainFrame && !inPlace) void imageGalleryScanner.close(id);
+    });
+  }
+  return owner.id;
+}
+ipcMain.handle('image:gallery-start', (event, root: string, recursive: boolean) =>
+  imageGalleryScanner.start(imageGalleryOwner(event), normalizeShellPath(root), recursive === true));
+ipcMain.handle('image:gallery-next', (event, id: string) => imageGalleryScanner.next(imageGalleryOwner(event), id));
+ipcMain.handle('image:gallery-close', (event, id: string) => imageGalleryScanner.close(imageGalleryOwner(event), id));
 
 ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   guestWebContentsId?: number;
@@ -3187,6 +3246,7 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  void collectTemporaryCaches().then(result => { if (result.errors.length) console.warn('[cache-maintenance]', result.errors); }).catch(error => console.warn('[cache-maintenance]', error));
   await setHostApplicationMemoryProvider(applicationMemoryBytes, relievePreviewForMemoryPressure);
   // CardBush owns its complete frameless application chrome. Removing
   // Electron's hidden default menu also removes browser-style reload
@@ -3665,6 +3725,9 @@ async function initializeProductHost(controller: RuntimeHostController) {
   productHostController = new productModule.ElectronProductHostController({
     dataRoot: path.join(app.getPath('userData'), 'product-host'),
     runtimeStateRoot,
+    logRoots: [appLogsDir(), path.join(app.getPath('userData'), 'logs')],
+    clearApplicationCaches,
+    clearCrashReports: () => clearDiagnosticFiles(app.getPath('crashDumps'), (name, modified) => /\.(dmp|meta)$/i.test(name) && modified < Date.now() - 24 * 60 * 60_000),
     bundledSkillRoot,
     userSkillRoot,
     bundledPluginRoot,

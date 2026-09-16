@@ -1,3 +1,4 @@
+import { journalCacheEntries } from './cacheMaintenance.js';
 import {
   chmodSync,
   existsSync,
@@ -133,6 +134,13 @@ export class FileRuntimeEventPersistence implements RuntimeEventPersistence {
       closeSync(descriptor);
       this.#descriptors.delete(path);
     }
+  }
+
+  cacheEntries() {
+    return journalCacheEntries(this.#root, 'events', RECORD_PROTOCOL, 'event', 'sessionId', path => {
+      const descriptor = this.#descriptors.get(path);
+      if (descriptor !== undefined) { closeSync(descriptor); this.#descriptors.delete(path); }
+    }, true);
   }
 
   close(): void {

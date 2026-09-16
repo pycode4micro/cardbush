@@ -38,6 +38,9 @@ export interface RuntimeRecoveryCoordinatorOptions {
 }
 
 export class RuntimeRecoveryCoordinator {
+  cacheRoots() { return this.#checkpoints.list(); }
+  async cacheEntries() { return await this.#checkpoints.cacheEntries?.() ?? []; }
+  discardSession(sessionId: string) { for (const checkpoint of this.#checkpoints.list()) if (checkpoint.request.sessionId === sessionId) this.#checkpoints.remove(sessionId, checkpoint.request.turnId); }
   readonly #eventLog: InMemoryRuntimeEventLog;
   readonly #checkpoints: RuntimeCheckpointStore;
   readonly #now: () => string;

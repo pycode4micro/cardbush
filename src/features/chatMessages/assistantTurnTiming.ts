@@ -168,6 +168,16 @@ export function assistantTurnTimingFingerprint(
   return parts.sort().join('|');
 }
 
+/** Remove presentation cache for deleted sessions, including their fallback Turn keys. */
+export function pruneAssistantTurnTiming(sessionIds: ReadonlySet<string>) {
+  const cache = readAssistantTurnTimingCache();
+  const retained = Object.entries(cache).filter(([key]) => sessionIds.has(key.split('::')[0]!));
+  const turns = new Set(retained.map(([key]) => key.slice(key.indexOf('::') + 2)));
+  writeAssistantTurnTimingCache(Object.fromEntries([
+    ...retained, ...Object.entries(cache).filter(([key]) => key.startsWith('*::') && turns.has(key.slice(3))),
+  ]));
+}
+
 function transcriptGroupKeys(messages: ChatMessage[]) {
   let fallbackGroup = 'conversation:0';
   let fallbackIndex = 0;

@@ -9,6 +9,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { clearDiagnosticFiles, mergeCleanup, type CleanupResult } from './cacheMaintenance.js';
 
 import {
   CardbushAppsConfigStore,
@@ -33,14 +34,11 @@ import {
   type McpServerPatch,
 } from './productMcpManagement.mjs';
 import {
-  DELETE_RUNTIME_SESSION_COMMAND,
-  LIST_RUNTIME_SESSIONS_COMMAND,
+  CLEAR_RUNTIME_SESSIONS_COMMAND,
+  COLLECT_RUNTIME_CACHE_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   SHUTDOWN_RUNTIME_COMMAND,
   runtimeProviderBindingResultSchema,
-  runtimeSessionIdentitySchema,
-  runtimeSessionListRequestSchema,
-  sessionSnapshotSchema,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   BUSH_MCP_SNAPSHOT_PROTOCOL,
@@ -60,6 +58,9 @@ export interface ElectronProductHostControllerOptions {
   runtimeBridge: ElectronRuntimeBridge;
   credentials?: McpCredentialStore;
   requestClientCredentials?: (input: ClientCredentialsPrompt, signal: AbortSignal) => Promise<ClientCredentialsAnswer>;
+  logRoots?: string[];
+  clearApplicationCaches?: () => Promise<CleanupResult>;
+  clearCrashReports?: () => Promise<CleanupResult>;
 }
 
 export class ElectronProductHostController {
@@ -77,10 +78,16 @@ export class ElectronProductHostController {
   readonly #host: ProductHost;
   readonly #pluginConnections: PluginConnectionManager;
   #legacyCredentialMigration?: Promise<void>;
+  readonly #logRoots: string[];
+  readonly #clearApplicationCaches?: ElectronProductHostControllerOptions['clearApplicationCaches'];
+  readonly #clearCrashReports?: ElectronProductHostControllerOptions['clearCrashReports'];
 
   constructor(options: ElectronProductHostControllerOptions) {
     const dataRoot = resolve(options.dataRoot);
     this.#dataRoot = dataRoot;
+    this.#logRoots = [...new Set([...(options.logRoots ?? []), join(dataRoot, 'logs')].map(root => resolve(root)))];
+    this.#clearApplicationCaches = options.clearApplicationCaches;
+    this.#clearCrashReports = options.clearCrashReports;
     this.#userPluginRoot = resolve(options.userPluginRoot);
     this.#runtimeStateRoot = resolve(options.runtimeStateRoot);
     this.#bundledSkillRoot = resolve(options.bundledSkillRoot);
@@ -120,6 +127,7 @@ export class ElectronProductHostController {
     }, {
       clearConversations: () => this.#clearConversations(),
       clearLogsCache: () => this.#clearLogsCache(),
+      clearCache: () => this.#clearCache(),
       runtimeAssetPlan: () => Promise.resolve(this.#runtimeAssetPlan()),
       resetRuntimeAssets: (categories) => this.#resetRuntimeAssets(categories),
       diagnostics: () => this.#diagnostics(),
@@ -285,51 +293,28 @@ export class ElectronProductHostController {
   }
 
   async #clearConversations(): Promise<Record<string, unknown>> {
-    const sessions = sessionSnapshotSchema.array().parse(
-      await this.#runtime.sendCommand({
-        kind: LIST_RUNTIME_SESSIONS_COMMAND,
-        payload: runtimeSessionListRequestSchema.parse({}),
-      }),
-    );
-    let deleted = 0;
-    for (const session of sessions) {
-      const result = objectValue(await this.#runtime.sendCommand({
-        kind: DELETE_RUNTIME_SESSION_COMMAND,
-        payload: runtimeSessionIdentitySchema.parse({ sessionId: session.sessionId }),
-      }), 'delete session result');
-      if (result.deleted === true) deleted += 1;
-    }
-    return {
-      target: 'conversation-history',
-      cleared: deleted > 0,
-      counts: {
-        sessions: deleted,
-        turns: sessions.reduce((total, session) => total + session.turns.length, 0),
-        messages: sessions.reduce(
-          (total, session) => total + session.turns.reduce(
-            (subtotal, turn) => subtotal + turn.messages.length,
-            0,
-          ),
-          0,
-        ),
-      },
-    };
+    return objectValue(await this.#runtime.sendCommand({ kind: CLEAR_RUNTIME_SESSIONS_COMMAND, payload: {} }), 'clear sessions result');
   }
 
   async #clearLogsCache(): Promise<Record<string, unknown>> {
-    const logsRoot = join(this.#dataRoot, 'logs');
-    const counts = await treeCounts(logsRoot);
-    await rm(logsRoot, { recursive: true, force: true });
-    await mkdir(logsRoot, { recursive: true });
-    return {
-      target: 'logs-cache',
-      cleared: counts.files > 0,
-      counts: {
-        log_files: counts.files,
-        log_directories: counts.directories,
-        log_bytes: counts.bytes,
-      },
-    };
+    const results: CleanupResult[] = [];
+    for (const root of this.#logRoots) {
+      try { results.push(await clearDiagnosticFiles(root)); }
+      catch (error) { results.push({ counts: {}, errors: [error instanceof Error ? error.message : String(error)] }); }
+    }
+    if (this.#clearCrashReports) results.push(await this.#clearCrashReports());
+    const result = mergeCleanup(...results);
+    return { target: 'logs-cache', cleared: result.counts.files! > 0, ...result };
+  }
+
+  async #clearCache(): Promise<Record<string, unknown>> {
+    // The runtime performs the busy check before any host cache is changed.
+    const runtime = await this.#runtime.sendCommand({ kind: COLLECT_RUNTIME_CACHE_COMMAND, payload: {} }) as CleanupResult;
+    let application: CleanupResult = { counts: {}, errors: [] };
+    try { application = await this.#clearApplicationCaches?.() ?? application; }
+    catch (error) { application.errors.push(error instanceof Error ? error.message : String(error)); }
+    const result = mergeCleanup(runtime, application);
+    return { target: 'application-cache', cleared: Object.values(result.counts).some(count => count > 0), ...result };
   }
 
   #runtimeAssetPlan(): Record<string, unknown> {
@@ -398,7 +383,7 @@ export class ElectronProductHostController {
       treeCounts(this.#runtimeStateRoot),
       treeCounts(this.#dataRoot),
     ]);
-    const logFiles = await recentFiles(join(this.#dataRoot, 'logs'), 50);
+    const logFiles = (await Promise.all(this.#logRoots.map(root => recentFiles(root, 50)))).flat();
     return {
       protocol: 'cardbush.product_diagnostics.v1',
       chain: [{

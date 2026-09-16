@@ -30,6 +30,8 @@ export type RuntimeUserPrompt = z.infer<typeof runtimeUserPromptSchema>;
 export const runtimeUserMessageIdentitySchema = z.object({ sessionId: z.string().min(1), turnId: z.string().min(1), messageId: z.string().min(1) });
 export const CREATE_RUNTIME_SESSION_COMMAND = "runtime.create_session" as const;
 export const DELETE_RUNTIME_SESSION_COMMAND = "runtime.delete_session" as const;
+export const CLEAR_RUNTIME_SESSIONS_COMMAND = "runtime.clear_sessions" as const;
+export const COLLECT_RUNTIME_CACHE_COMMAND = "runtime.collect_cache" as const;
 export const LIST_RUNTIME_SESSIONS_COMMAND = "runtime.list_sessions" as const;
 export const UPDATE_RUNTIME_SESSION_METADATA_COMMAND =
   "runtime.update_session_metadata" as const;

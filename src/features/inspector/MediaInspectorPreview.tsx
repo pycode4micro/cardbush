@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { basename } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage } from '../../types';
+import { ImagePreviewDialog, type ImagePreviewSource } from '../chatMessages/ImagePreviewDialog';
 
 export function MediaInspectorPreview({ kind, source, path, name: displayName, language, onLoadingChange }: {
   kind: 'image' | 'video' | 'audio';
@@ -14,6 +15,8 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<'load' | 'timeout' | null>(null);
   const [revision, setRevision] = useState(0);
+  const [preview, setPreview] = useState<ImagePreviewSource | null>(null);
+  useEffect(() => setPreview(null), [path]);
 
   useEffect(() => {
     const media = containerRef.current?.querySelector('img, video, audio') as HTMLImageElement | HTMLMediaElement | null;
@@ -59,7 +62,11 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
     <div className="inspector-media-preview" ref={containerRef}
       onContextMenu={event => openFileContextMenu(event, path, { image: kind === 'image', language })}>
       {kind === 'image' ? (
-        <img key={revision} src={source} alt={name} />
+        <button type="button" className="inspector-image-open" aria-label={language === 'zh' ? `查看 ${name}` : `View ${name}`}
+          onClick={event => {
+            const image = event.currentTarget.querySelector('img');
+            setPreview({ src: source, path, name, naturalWidth: image?.naturalWidth, naturalHeight: image?.naturalHeight });
+          }}><img key={revision} src={source} alt={name} /></button>
       ) : kind === 'video' ? (
         <video key={revision} src={source} controls playsInline preload="metadata" aria-label={name} />
       ) : (
@@ -75,6 +82,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
           </button>
         </div>
       )}
+      {preview && <ImagePreviewDialog image={preview} language={language} initialScope="directory" onClose={() => setPreview(null)} />}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { blobCacheEntries, memoryCacheEntry, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -6,6 +7,11 @@ import type { ToolRegistry } from './toolRegistry.js';
 import { settleAtAbort } from './abortSettlement.js';
 
 export class PluginBackgroundTasks {
+  get busy() { return this.active.size > 0; }
+  async cacheEntries() {
+    return [...await blobCacheEntries(this.root, 'plugin_background', name => /^[a-f0-9]{64}\.json$/.test(name)), ...await temporaryCacheEntries(this.root),
+      ...[...this.delivered].map(([id, value]) => memoryCacheEntry('plugin_background', id, [...value], () => this.delivered.delete(id)))];
+  }
   private readonly active = new Map<string, { session: string; turn: string; controller: AbortController; promise: Promise<unknown> }>();
   private readonly delivered = new Map<string, Set<string>>();
   constructor(private readonly root: string, private readonly tasks: SubagentTaskStore, registry: ToolRegistry) {

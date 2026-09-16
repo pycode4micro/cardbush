@@ -34,6 +34,7 @@ import {
 import { normalizeChatMessagesForDisplay } from './features/chatMessages/transcript/messageProjection';
 import { useBatchedTranscript } from './features/chatMessages/useBatchedTranscript';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
+import { ImageGalleryProvider } from './features/chatMessages/ImageGalleryContext';
 import {
   themeBackgroundColor,
   themeClassNames,
@@ -460,6 +461,8 @@ export function ShadowWindow({
           aria-busy={busy || initializing}
           onScroll={(event) => syncTranscriptScrollState(event.currentTarget)}
         >
+          <ImageGalleryProvider sessionId={conversation?.id ?? ''} messages={allMessages}
+            workspaceRoot={conversation?.workspaceDir || context?.projectDir} language={language}>
           <MessageFileReferenceScope workspaceRoot={conversation?.workspaceDir || context?.projectDir}>
             <div className="shadow-window-transcript-content message-list-content">
               {allMessages.map((message, index) => (
@@ -493,6 +496,7 @@ export function ShadowWindow({
               {error && <div className="shadow-window-error">{error}</div>}
             </div>
           </MessageFileReferenceScope>
+          </ImageGalleryProvider>
         </div>
         <button
           className={`scroll-bottom shadow-window-scroll-bottom${showScrollBottom ? '' : ' hidden'}`}

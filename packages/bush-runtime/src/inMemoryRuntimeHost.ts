@@ -1,3 +1,4 @@
+import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { canonicalStoragePath } from '@cardbush/platform';
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
@@ -40,6 +41,8 @@ import {
   CREATE_RUNTIME_GOAL_COMMAND,
   CREATE_RUNTIME_SESSION_COMMAND,
   DELETE_RUNTIME_SESSION_COMMAND,
+  CLEAR_RUNTIME_SESSIONS_COMMAND,
+  COLLECT_RUNTIME_CACHE_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
@@ -106,6 +109,8 @@ import {
   CHECKPOINT_CONTEXT_TOOL,
   ContextCheckpointInputError,
   bindContextCheckpointInput,
+  contextCheckpointFormat,
+  contextCheckpointCorrection,
   contextCheckpointFailure,
   checkpointResult,
   contextToolIngressTokenBudget,
@@ -118,10 +123,11 @@ import {
   requiresContextCompactionBeforeRound,
   resolveContextOutputTokens,
   type ContextCheckpointInput,
+  type ContextCheckpointFormat,
   type ContextCompactionState,
   type ContextPressure,
 } from "./contextCompaction.js";
-import { ContextCompactionTransaction, isContextLengthFailure } from './contextCompactionTransaction.js';
+import { ContextCompactionTransaction, isContextLengthFailure, type RestoredCompactionFailure } from './contextCompactionTransaction.js';
 import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
@@ -196,6 +202,8 @@ export interface RuntimeRetryContext {
 }
 
 export interface InMemoryRuntimeHostOptions {
+  /** Previous built-in capture location, supplied only by the product host. Never a user output path. */
+  legacyCaptureCacheRoot?: string;
   openAgentMcpScope?: OpenAgentMcpScope;
   requestBackgroundPermission?: (request: import('./toolRegistry.js').ToolPermissionRequest & { toolCallId: string; sessionId: string; turnId: string }, signal?: AbortSignal) => Promise<boolean>;
   provider: ModelProvider;
@@ -348,6 +356,8 @@ export class InMemoryRuntimeHost {
   readonly #solutions: RuntimeSolutionBroker;
   readonly #logicMemory: LogicMemoryStore;
   readonly #modelImages: ModelImageStore;
+  readonly #captureCacheRoot: string;
+  readonly #legacyCaptureCacheRoot?: string;
   readonly #guidanceQueues = new Map<string, Array<{
     messageId: string;
     content: string;
@@ -355,8 +365,10 @@ export class InMemoryRuntimeHost {
     metadata?: Record<string, unknown>;
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
-  readonly #contextCompactionAuthorizations = new Map<string, ContextCompactionState>();
+  readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
   #shuttingDown = false;
+  #cacheMaintenance = false;
+  #activeAppCommands = 0;
 
   readonly #workspaceRedo: WorkspaceRedoStore;
 
@@ -386,6 +398,8 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
+    this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
+    this.#legacyCaptureCacheRoot = options.legacyCaptureCacheRoot;
     this.#loadPluginExtensions = options.loadPluginExtensions;
     this.#pluginHookScopes = new PluginHookScopes(join(runtimeDataRoot, 'plugin-hook-scopes'));
     this.#mcpApps = new McpAppsHost(join(runtimeDataRoot, 'mcp-apps'), this.#toolRegistry, this.#toolExecutions, this.#capabilityGrants, request => {
@@ -620,6 +634,8 @@ export class InMemoryRuntimeHost {
         LIST_RUNTIME_USER_PROMPTS_COMMAND,
         CREATE_RUNTIME_SESSION_COMMAND,
         DELETE_RUNTIME_SESSION_COMMAND,
+        CLEAR_RUNTIME_SESSIONS_COMMAND,
+        COLLECT_RUNTIME_CACHE_COMMAND,
         LIST_RUNTIME_SESSIONS_COMMAND,
         UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
         SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
@@ -754,6 +770,7 @@ export class InMemoryRuntimeHost {
     await this.#pluginHooks.removePlugin(pluginId);
   }
   hasActiveSession(sessionId: string): boolean {
+    if (this.#cacheMaintenance || this.#workspaceActions) return true;
     return [...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId);
   }
 
@@ -781,6 +798,7 @@ export class InMemoryRuntimeHost {
     command: RuntimeHostCommand,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    if (this.#cacheMaintenance) throw new Error('Cache maintenance is in progress. Retry after it settles.');
     for (const { extension, enabled } of this.#extensions.values()) {
       const handler = Object.hasOwn(extension.commands, command.kind) ? extension.commands[command.kind] : undefined;
       if (handler) {
@@ -796,7 +814,9 @@ export class InMemoryRuntimeHost {
     }
     switch (command.kind) {
       case MCP_APPS_COMMAND:
-        return this.#mcpApps.command(command.payload, signal);
+        this.#activeAppCommands++;
+        try { return await this.#mcpApps.command(command.payload, signal); }
+        finally { this.#activeAppCommands--; }
       case GET_RUNTIME_CAPABILITIES_COMMAND:
         return this.capabilities();
       case RUN_MODEL_TURN_COMMAND:
@@ -852,18 +872,29 @@ export class InMemoryRuntimeHost {
       }
       case DELETE_RUNTIME_SESSION_COMMAND: {
         const identity = runtimeSessionIdentitySchema.parse(command.payload);
-        const workspace = await this.#taskWorkspaces?.descriptor(identity.sessionId);
-        if (workspace?.mode === "worktree" && workspace.status === "ready") {
-          throw new Error("This task still owns an independent workspace. Apply or review its changes, then discard the copy before deleting the task.");
-        }
-        if ([...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === identity.sessionId)) throw new Error('An active Session cannot be deleted.');
-        await this.#pluginHooks.closeSession(identity.sessionId);
-        this.#pluginBackground.stop(identity.sessionId);
-        await this.#pluginHookScopes.remove(identity.sessionId);
-        this.#pluginTerminalHooks.closeSession(identity.sessionId);
-        this.#pluginStartedSessions.delete(identity.sessionId);
-        return { sessionId: identity.sessionId, deleted: this.#sessions.delete(identity.sessionId) };
+        return this.#withCacheMaintenance(async () => {
+          await this.#assertSessionDeletable(identity.sessionId);
+          const deleted = await this.#deleteSession(identity.sessionId);
+          const cleanup = await this.#collectCacheAfterDeletion();
+          return { sessionId: identity.sessionId, deleted, cleanup };
+        });
       }
+      case COLLECT_RUNTIME_CACHE_COMMAND:
+        return this.#withCacheMaintenance(() => this.#collectCaches());
+      case CLEAR_RUNTIME_SESSIONS_COMMAND:
+        return this.#withCacheMaintenance(async () => {
+          const sessions = this.#sessions.list();
+          // Preflight the entire operation so an active/protected task cannot cause partial deletion.
+          for (const session of sessions) await this.#assertSessionDeletable(session.sessionId);
+          const errors: string[] = [];
+          let deleted = 0;
+          for (const session of sessions) {
+            try { if (await this.#deleteSession(session.sessionId)) deleted++; }
+            catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+          }
+          const cleanup = await this.#collectCacheAfterDeletion();
+          return { target: 'conversation-history', cleared: deleted > 0, counts: { ...cleanup.counts, sessions: deleted }, errors: [...errors, ...cleanup.errors] };
+        });
       case LIST_RUNTIME_SESSIONS_COMMAND:
         runtimeSessionListRequestSchema.parse(command.payload);
         return this.#sessions.list();
@@ -1363,7 +1394,6 @@ export class InMemoryRuntimeHost {
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
     let round = input.nextRound - 1;
-    let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
     let fileReferenceRetries = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_file_reference_${request.turnId}_`)).length ?? 0;
     let outputLimitContinuations = input.sessionCommit?.outputLimitContinuations ?? 0;
@@ -1384,8 +1414,7 @@ export class InMemoryRuntimeHost {
     // Resumed checkpoints retain their saved tool catalog and cache prefix.
     const checkpointRequiredFields = request.tools.find((tool) =>
       tool.name === CHECKPOINT_CONTEXT_TOOL)?.inputSchema.required;
-    const legacyCheckpointInput = Array.isArray(checkpointRequiredFields) &&
-      checkpointRequiredFields.includes("session_revision");
+    const checkpointFormat = contextCheckpointFormat(checkpointRequiredFields);
     let providerState: ModelProviderState = freshResponseChain();
     const cacheChain = new CacheChainTracker(input.cacheChainState);
     const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
@@ -1498,14 +1527,29 @@ export class InMemoryRuntimeHost {
         },
       });
     };
+    const saveIncrementalMessages = () => {
+      if (!compactionTransaction?.incremental || !activeContextCompaction) return;
+      const next = compactionTransaction.job().messages;
+      // Only append real notices, model calls and their receipts. They remain
+      // canonical on stop/recovery; source history is not replaced piecemeal.
+      for (const [index, message] of next.slice(messages.length).entries()) {
+        generatedMessages.push({ messageId: `msg_compaction_loop_${activeContextCompaction.compactionId}_${messages.length + index}`,
+          createdAt: this.#sessionNow(), metadata: { runtimeMaintenance: 'context_compaction',
+            contextCompactionId: activeContextCompaction.compactionId }, message });
+      }
+      messages = next;
+    };
     const retryMaintenance = (reason: string, message: string, increaseOutput = false,
-      diagnostics: Record<string, unknown> = {}) => {
+      diagnostics: Record<string, unknown> = {}, partitionOnRepeat = false) => {
       if (!compactionTransaction) return false;
       const mayRetry = compactionTransaction.retry(message, increaseOutput);
       const job = compactionTransaction.job();
       if (mayRetry) {
+        const correctionPartition = partitionOnRepeat && job.failures === 2 && compactionTransaction.partitionForCorrection();
         retryContextCompaction(reason, message, { ...diagnostics, jobId: job.id,
-          failures: job.failures, outputTokens: job.outputTokens });
+          failures: job.failures, outputTokens: job.outputTokens,
+          ...(correctionPartition ? { correctionPartition: true } : {}) });
+        saveIncrementalMessages();
         this.#recovery.save({ request, messages, nextRound: round + 1,
           cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
       }
@@ -1714,10 +1758,30 @@ export class InMemoryRuntimeHost {
         }
         if (input.sessionCommit && !compactionTransaction) {
           const pressure = dispatchPressure;
+          let sourceMessages = messages;
+          let sourceGenerated = generatedMessages;
+          let continuation: ModelMessage[] | undefined;
+          if (checkpointFormat === 'incremental' && activeContextCompaction) {
+            const compactionId = activeContextCompaction.compactionId;
+            const noticeIndex = generatedMessages.findIndex(item => item.metadata?.contextCompactionId === compactionId &&
+              item.message.role === 'user' && item.message.name === 'context_pressure');
+            if (noticeIndex >= 0) {
+              const notice = generatedMessages[noticeIndex]!.message;
+              let boundary = -1;
+              for (let index = messages.length - 1; index >= 0; index--) {
+                const message = messages[index]!;
+                if (message.role === 'user' && message.name === 'context_pressure' && message.content === notice.content) { boundary = index; break; }
+              }
+              if (boundary < 0) throw new Error('Saved context maintenance notice is missing.');
+              sourceMessages = messages.slice(0, boundary);
+              sourceGenerated = generatedMessages.slice(0, noticeIndex);
+              continuation = messages.slice(boundary);
+            }
+          }
           const state = this.#contextCompactionState(
             request.sessionId,
             request.turnId,
-            generatedMessages,
+            sourceGenerated,
             activeContextCheckpoint,
           );
           if (
@@ -1727,28 +1791,35 @@ export class InMemoryRuntimeHost {
           ) {
             const stopped = await beginContextCompaction(state, pressure);
             if (stopped !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: stopped } });
-            const restoredFailures = new Map<string, { failures: number; outputTokens: number }>();
+            const restoredFailures = new Map<string, RestoredCompactionFailure>();
             for (const event of priorContextCompactionEvents) {
               if (event.kind !== 'context_compaction_retrying' || event.payload.compactionId !== activeContextCompaction?.compactionId) continue;
               const detail = event.payload.diagnostics;
               if (typeof detail?.jobId === 'string' && Number.isInteger(detail.failures) && Number.isInteger(detail.outputTokens)) {
-                restoredFailures.set(detail.jobId, { failures: Number(detail.failures), outputTokens: Number(detail.outputTokens) });
+                restoredFailures.set(detail.jobId, { failures: Number(detail.failures), outputTokens: Number(detail.outputTokens),
+                  ...(detail.correctionPartition === true ? { correctionPartition: true } : {}) });
               }
             }
+            // Cache observations are already journaled before each dispatch,
+            // including a request interrupted before any model response arrived.
+            const maintenanceEvents = this.#eventLog.replay(request.sessionId, request.turnId);
+            const startedAt = maintenanceEvents.find(event => event.kind === 'context_compaction_started' &&
+              event.payload.compactionId === activeContextCompaction?.compactionId)?.sequence ?? Infinity;
             compactionTransaction = new ContextCompactionTransaction({
-              messages, prefixMessageCount: input.sessionCommit.prefixMessages.length,
+              messages: sourceMessages, prefixMessageCount: input.sessionCommit.prefixMessages.length, continuation,
               sources: locateContextCompactionSources({
-                messages, prefixMessageCount: input.sessionCommit.prefixMessages.length,
+                messages: sourceMessages, prefixMessageCount: input.sessionCommit.prefixMessages.length,
                 turns: this.#sessions.contextSourceTurns(request.sessionId,
                   activeContextCheckpoint?.projectionVersion === 'exchange_v1' ? activeContextCheckpoint.coveredTurnIds : undefined),
                 activeTurnId: request.turnId,
                 activeMessages: projectActiveTurnContext({ turnId: request.turnId,
-                  inputMessages: input.sessionCommit.inputMessages, generatedMessages,
+                  inputMessages: input.sessionCommit.inputMessages, generatedMessages: sourceGenerated,
                   checkpoint: activeContextCheckpoint, includeResumeInstruction: true }),
-                state, legacyInput: legacyCheckpointInput,
-              }), state, pressure, legacyInput: legacyCheckpointInput,
+                state, inputFormat: checkpointFormat,
+              }), state, pressure, inputFormat: checkpointFormat,
               outputTokens: contextBudgetForPressure(pressure).compactionOutputTokens,
               maximumOutputTokens: pressure.reservedOutputTokens, restoredFailures,
+              restoredAttempts: maintenanceEvents.filter(event => event.kind === 'cache_chain_observed' && event.sequence > startedAt).length,
             });
             forceContextCompaction = false;
           } else {
@@ -1796,9 +1867,10 @@ export class InMemoryRuntimeHost {
         let dispatchProviderState = providerState;
         let dispatchOutputTokens = request.maxOutputTokens;
         if (compactionTransaction && compactionJob) {
+          saveIncrementalMessages();
           if (compactionJob.failures >= 3) return await finalize({ status: 'failed', reason: 'context_compaction_failed',
             details: { message: 'The checkpoint retry budget was exhausted before recovery.', jobId: compactionJob.id } });
-          this.#contextCompactionAuthorizations.set(turnKey, compactionJob.state);
+          this.#contextCompactionAuthorizations.set(turnKey, { state: compactionJob.state, format: checkpointFormat });
           dispatchMessages = compactionJob.messages;
           dispatchOutputTokens = compactionJob.outputTokens;
           // Maintenance never continues an unfinished provider response. The
@@ -1878,6 +1950,10 @@ export class InMemoryRuntimeHost {
         let retryAfterContextRecovery = false;
         for (let attempt = 1; this.#maxAttempts === null || attempt <= this.#maxAttempts; attempt += 1) {
           if (input.signal?.aborted) return await stop();
+          if (compactionTransaction && !compactionTransaction.beginAttempt()) {
+            return await finalize({ status: 'failed', reason: 'context_compaction_failed',
+              details: { message: 'The bounded checkpoint correction budget was exhausted. Original history is preserved.' } });
+          }
           // Hash the same validated request shape that the Provider receives.
           // In-memory Tool messages and replayed messages can have different JS key order.
           synchronizeMcpDiscovery(this.#toolRegistry, request, dispatchMessages);
@@ -2240,17 +2316,19 @@ export class InMemoryRuntimeHost {
           }
           try {
             if (compactionTransaction && !compactionTransaction.accept(completedRound)) {
-              // A validated fragment remains staged. The source conversation,
-              // session revision and checkpoint pointer are all unchanged.
+              // Retain accepted entries and structural errors as genuine Tool
+              // receipts, so the next loop can choose any remaining source.
+              saveIncrementalMessages();
               this.#recovery.save({ request, messages, nextRound: round + 1,
                 cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
               continue;
             }
-            if (compactionTransaction) this.#contextCompactionAuthorizations.set(turnKey, compactionTransaction.originalState);
+            if (compactionTransaction) this.#contextCompactionAuthorizations.set(turnKey,
+              { state: compactionTransaction.originalState, format: compactionTransaction.incremental ? 'ordered' : checkpointFormat });
             const { checkpoint, session } = this.#applyContextCheckpoint({
               sessionId: request.sessionId,
               activeTurnId: request.turnId,
-              checkpoint: JSON.parse(checkpointCalls[0]!.argumentsText),
+              checkpoint: compactionTransaction?.incremental?.value ?? JSON.parse(checkpointCalls[0]!.argumentsText),
             });
             const call = checkpointCalls[0]!;
             const receiptId = `msg_checkpoint_${request.turnId}_${round}_${call.id}`;
@@ -2279,7 +2357,11 @@ export class InMemoryRuntimeHost {
             }, {
               messageId: receiptId, createdAt: this.#sessionNow(),
               metadata: { runtimeMaintenance: "context_compaction" },
-              message: { role: "tool", toolCallId: call.id, content: JSON.stringify(checkpointResult(checkpoint, session)) },
+              message: { role: "tool", toolCallId: call.id, content: JSON.stringify({
+                ...(compactionTransaction?.incremental
+                  ? JSON.parse(compactionTransaction.incremental.history.at(-1)!.content) : {}),
+                ...checkpointResult(checkpoint, session),
+              }) },
             });
             activeContextCheckpoint = {
               projectionVersion: "exchange_v1", throughMessageId: receiptId,
@@ -2334,8 +2416,8 @@ export class InMemoryRuntimeHost {
             const failure = contextCheckpointFailure(error, checkpointCalls[0]!.argumentsText);
             if (compactionTransaction) {
               if (failure.diagnostics.code !== 'checkpoint_apply_failed' && retryMaintenance('checkpoint_rejected',
-                `The checkpoint was rejected: ${failure.message} Generate the complete checkpoint again from the same indexed sources using the saved Tool schema.`,
-                false, failure.diagnostics)) continue;
+                contextCheckpointCorrection(failure.message, compactionTransaction.job().state, checkpointFormat),
+                false, failure.diagnostics, failure.diagnostics.code === 'checkpoint_input_invalid')) continue;
               return await finalize({ status: 'failed', reason: 'context_compaction_failed',
                 details: { message: failure.message, checkpointDiagnostics: failure.diagnostics } });
             }
@@ -2371,7 +2453,7 @@ export class InMemoryRuntimeHost {
               (state.unsummarizedTurnIds.length > 0 || state.activeTurn !== undefined),
             );
             if (mayRetry) {
-              this.#contextCompactionAuthorizations.set(turnKey, state);
+              this.#contextCompactionAuthorizations.set(turnKey, { state, format: checkpointFormat });
               retryContextCompaction(
                 "checkpoint_rejected",
                 failure.message,
@@ -2398,7 +2480,7 @@ export class InMemoryRuntimeHost {
               name: "context_compaction_correction",
               visibility: "internal",
               content: mayRetry
-                ? `The context checkpoint was rejected: ${failure.message} Re-read the next context_pressure notice and return the requested summary fields in its order.${legacyCheckpointInput ? " Match the saved Tool schema and the exact authorized identifiers." : " Return only summaries (an array of strings) and active_summary (a string); Runtime supplies the revision and boundaries."}`
+                ? contextCheckpointCorrection(failure.message, state, checkpointFormat)
                 : `The checkpoint_context call was rejected because Runtime has not issued an authorizing user-role context_pressure instruction at the mandatory threshold. Continue the task normally and do not call checkpoint_context proactively.`,
             }];
             providerState = freshResponseChain();
@@ -2468,39 +2550,6 @@ export class InMemoryRuntimeHost {
             );
             continue;
           }
-          const activePlan = request.metadata.planEnabled === true
-            ? this.#coordination.getPlan(request.sessionId)
-            : undefined;
-          if (activePlan?.plan.nodes.some(node => node.status === "pending" || node.status === "in_progress")) {
-            if (unresolvedPlanContinuations >= 2) {
-              return await finalize({
-                status: "failed",
-                reason: "open_task_plan_not_resolved",
-                finalMessageId: completedProjector.finalMessageId,
-                details: {
-                  planId: activePlan.plan.plan_id,
-                  revision: activePlan.revision,
-                  openNodeIds: activePlan.plan.nodes
-                    .filter((node) => node.status !== "completed")
-                    .map((node) => node.id ?? node.step),
-                },
-              });
-            }
-            unresolvedPlanContinuations += 1;
-            const planMessage: ModelMessage = {
-              role: "user",
-              name: "task_plan_continuation",
-              visibility: "internal",
-              content: "The active task plan still has actionable nodes. Continue the work or update_task_plan with accurate states. Steps that require user action or an external dependency may be waiting with a concrete waitingFor; preserve unfinished verification steps when handing off.",
-            };
-            messages = [...messages, planMessage];
-            generatedMessages.push({
-              messageId: `msg_plan_continuation_${request.turnId}_${round}`,
-              createdAt: this.#sessionNow(),
-              message: planMessage,
-            });
-            continue;
-          }
           if (!completedRound.text.trim()) {
             if (emptyStopRetries < 1) {
               emptyStopRetries += 1;
@@ -2552,6 +2601,10 @@ export class InMemoryRuntimeHost {
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_stop_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
             continue;
           }
+          // Completion ends this response, not the plan. Only explicit updates change plan states.
+          const activePlan = request.metadata.planEnabled === true
+            ? this.#coordination.getPlan(request.sessionId)
+            : undefined;
           return await finalize({
             status: "completed",
             reason: activePlan?.plan.nodes.some(node => node.status === "waiting") ? "task_plan_waiting" : "model_response_completed",
@@ -2778,7 +2831,7 @@ export class InMemoryRuntimeHost {
     if (!authorized) {
       throw new ContextCheckpointInputError("authorization", "a Runtime-authorized context_pressure boundary", undefined);
     }
-    const checkpoint = bindContextCheckpointInput(input.checkpoint, authorized);
+    const checkpoint = bindContextCheckpointInput(input.checkpoint, authorized.state, authorized.format);
     const session = this.#sessions.snapshot(input.sessionId);
     if (!session || session.revision !== checkpoint.sessionRevision) {
       throw new Error("Context checkpoint session revision changed before application.");
@@ -3065,6 +3118,75 @@ export class InMemoryRuntimeHost {
     if (this.#workspaceActions) throw new Error("A workspace action is in progress. Retry the Turn after it settles.");
     this.#turnAdmissions++;
     try { return await operation(); } finally { this.#turnAdmissions--; }
+  }
+
+  async #withCacheMaintenance<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#activeAppCommands || this.#mcpApps.busy || this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size) {
+      throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
+    }
+    return this.#withWorkspaceAction(async () => {
+      this.#cacheMaintenance = true;
+      try { return await operation(); } finally { this.#cacheMaintenance = false; }
+    });
+  }
+
+  async #assertSessionDeletable(sessionId: string) {
+    const workspace = await this.#taskWorkspaces?.descriptor(sessionId);
+    if (workspace?.mode === 'worktree' && workspace.status === 'ready') {
+      throw new Error('This task still owns an independent workspace. Apply or review its changes, then discard the copy before deleting the task.');
+    }
+  }
+
+  async #deleteSession(sessionId: string) {
+    await this.#pluginHooks.closeSession(sessionId);
+    this.#pluginBackground.stop(sessionId);
+    await this.#pluginHookScopes.remove(sessionId);
+    this.#pluginTerminalHooks.closeSession(sessionId);
+    this.#pluginStartedSessions.delete(sessionId);
+    await this.#mcpApps.closeSession(sessionId);
+    await this.#automation?.sessionDeleted(sessionId);
+    this.#recovery.discardSession(sessionId);
+    return this.#sessions.delete(sessionId);
+  }
+
+  async #collectCacheAfterDeletion() {
+    try { return await this.#collectCaches(); }
+    catch (error) { return { counts: {}, errors: [`History was removed; associated cache cleanup needs a retry: ${error instanceof Error ? error.message : String(error)}`] }; }
+  }
+
+  async #collectCaches() {
+    const sessions = this.#sessions.list();
+    const children = sessions.filter(session => session.metadata?.agentRole === 'child' && typeof session.metadata.parentSessionId === 'string' && session.metadata.parentSessionId !== session.sessionId);
+    const childIds = new Set(children.map(session => session.sessionId));
+    const protectedChildren = [];
+    for (const child of children) {
+      const workspace = await this.#taskWorkspaces?.descriptor(child.sessionId);
+      if (workspace?.mode === 'worktree' && workspace.status === 'ready') protectedChildren.push(child);
+    }
+    let removedChildren = 0;
+    const childEntries = children.map(child => ({
+      ...memoryCacheEntry('child_sessions', child.sessionId, [child], () => {}),
+      keys: [child.sessionId, String(child.metadata?.parentSessionId)],
+      remove: async () => { if (await this.#deleteSession(child.sessionId)) removedChildren++; },
+    }));
+    const automation = await this.#automation?.collectContexts(new Set(sessions.map(session => session.sessionId)));
+    const checkpoints = this.#recovery.cacheRoots();
+    const userSessions = sessions.filter(session => !childIds.has(session.sessionId));
+    const owners = [...userSessions.map(session => session.sessionId), ...checkpoints.map(checkpoint => checkpoint.request.sessionId)];
+    const entries = (await Promise.all([
+      this.#eventLog.cacheEntries(), this.#toolExecutions.cacheEntries(), this.#coordination.cacheEntries(),
+      this.#recovery.cacheEntries(), this.#automation?.cacheEntries() ?? [],
+      this.#subagentTasks.cacheEntries(), this.#mcpApps.cacheEntries(), this.#modelImages.cacheEntries(),
+      this.#workspaceRedo.cacheEntries(), this.#pluginHookScopes.cacheEntries(), this.#pluginBackground.cacheEntries(),
+      // Only the built-in capture directory is owned by CardBush. Custom output paths are user files.
+      blobCacheEntries(this.#captureCacheRoot, 'captures', name => /^(capture|window)-[\w-]+\.png$/.test(name), 24 * 60 * 60_000),
+      this.#legacyCaptureCacheRoot ? blobCacheEntries(this.#legacyCaptureCacheRoot, 'legacy_captures', name => /^(capture|window)-[\w-]+\.png$/.test(name), 24 * 60 * 60_000) : [],
+    ])).flat();
+    const result = await collectUnreferencedCache([...entries, ...childEntries],
+      [...userSessions, ...protectedChildren, ...checkpoints, automation?.roots ?? {}, ...this.#mcpApps.cacheRoots(), owners.flatMap(sessionCacheKeys)], this.#toolExecutions.fileMemoLocators());
+    result.counts.automation_contexts = automation?.removed ?? 0;
+    result.counts.child_sessions = removedChildren;
+    return result;
   }
 
   async #withWorkspaceAction<T>(operation: () => Promise<T>): Promise<T> {

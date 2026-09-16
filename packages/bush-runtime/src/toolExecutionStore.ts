@@ -1,3 +1,4 @@
+import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
@@ -13,6 +14,7 @@ import type {
 } from "./toolExecutionCoordinator.js";
 
 export interface ToolExecutionPersistence {
+  cacheEntries?(): Promise<CacheEntry[]>;
   load(sessionId: string): ToolExecutionRecord[];
   append(record: ToolExecutionRecord): void;
   loadFileMemoReferences?(): FileMemoLocator[];
@@ -34,6 +36,13 @@ export class ToolExecutionStore {
     this.#persistence = options.persistence;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
+
+  async cacheEntries(): Promise<CacheEntry[]> {
+    return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#records].map(([id, rows]) =>
+      memoryCacheEntry('tool_executions', id, this.#persistence?.cacheEntries ? [] : rows, () => this.#records.delete(id)))];
+  }
+
+  fileMemoLocators(): FileMemoLocator[] { return [...this.#loadFileMemoReferences()]; }
 
   record(
     toolCall: ToolCall,

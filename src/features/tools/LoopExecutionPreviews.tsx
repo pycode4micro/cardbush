@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { CheckCircle2, ChevronRight, CircleStop, GitFork, LoaderCircle, TriangleAlert, Image } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ChatToolExecution, SubagentTaskSnapshot } from '../../types';
 import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
@@ -37,17 +37,23 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
   const agents = executions.filter(execution => agentTools.has(execution.name));
   const tasks = useLoopSubagentTasks(sessionId, agents.length > 0, active);
   const zh = language === 'zh';
-  const rows = executions.flatMap(base => {
+  const imageRows: ReactNode[] = [];
+  const agentRows: ReactNode[] = [];
+  for (const base of executions) {
     const execution = details.find(detail => detail.id === base.id) ?? base;
     const images = media.get(execution.id) ?? execution.artifacts ?? [];
-    if (!isLoopPreviewExecution(execution) && !images.some(artifact => artifact.type === 'image')) return [];
+    if (!isLoopPreviewExecution(execution) && !images.some(artifact => artifact.type === 'image')) continue;
     if (!agentTools.has(execution.name)) {
       const pending = isToolRunningInContext(execution, active);
-      return [<div key={execution.id} className="loop-image-preview" data-execution-id={execution.id}>
+      imageRows.push(<div key={execution.id} className="loop-image-preview" data-execution-id={execution.id}>
         {images.some(artifact => artifact.type === 'image') ? <ToolImageArtifactViewer artifacts={images} language={language} />
-          : <span className="loop-execution-preview-label">{pending ? <LoaderCircle size={14} className="spin" /> : <Image size={14} />}
-            {zh ? '查看图像' : 'View image'}<small>{pending ? activeToolStatusLabel(execution, language) : execution.success === false ? (zh ? '执行失败' : 'Failed') : (zh ? '已执行' : 'Executed')}</small></span>}
-      </div>];
+          : <span className="tool-preview-card loop-execution-preview-label">
+            <span className="tool-preview-icon" aria-hidden="true">{pending ? <LoaderCircle size={14} className="spin" /> : <Image size={14} />}</span>
+            <span className="tool-preview-content"><strong>{zh ? '查看图像' : 'View image'}</strong>
+              <small>{pending ? activeToolStatusLabel(execution, language) : execution.success === false ? (zh ? '执行失败' : 'Failed') : (zh ? '已执行' : 'Executed')}</small></span>
+          </span>}
+      </div>);
+      continue;
     }
     const output = execution.metadata.nativeResult ? asRecord(execution.metadata.nativeResult) : parseToolOutputJson(execution.output);
     const members = Array.isArray(output.members) ? output.members.map(asRecord) : [output];
@@ -55,7 +61,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
     if (Array.isArray(output.taskIds)) output.taskIds.forEach(id => ids.add(String(id)));
     const matched = tasks.filter(task => task.parentTurnId === (execution.turnId ?? turnId) && task.taskId && ids.has(task.taskId));
     const slots: Array<SubagentTaskSnapshot | undefined> = matched.length ? matched : [undefined];
-    return slots.map((task, index) => {
+    agentRows.push(...slots.map((task, index) => {
       const running = task ? task.status === 'running' : isToolRunningInContext(execution, active) || output.status === 'running';
       const status = task ? subagentTaskPresentation(task, language).label :
         running ? (zh ? '运行中' : 'Running') : execution.state === 'failed' ? (zh ? '执行失败' : 'Failed') :
@@ -64,15 +70,19 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       const title = task?.agentName || task?.agentProfileId || task?.teamMemberId || (execution.name === 'await_subagents' ? (zh ? '等待子 Agent' : 'Wait for subagents') : (zh ? '子 Agent' : 'Subagent'));
       const Icon = running ? LoaderCircle : task?.status === 'failed' || execution.state === 'failed' ? TriangleAlert :
         task?.status === 'stopped' || execution.state === 'cancelled' ? CircleStop : task?.status === 'completed' ? CheckCircle2 : GitFork;
-      return <button key={`${execution.id}:${task?.taskId ?? index}`} type="button" className="loop-subagent-preview"
-        data-execution-id={execution.id} data-task-id={task?.taskId} disabled={!task}
+      return <button key={`${execution.id}:${task?.taskId ?? index}`} type="button" className="tool-preview-card loop-subagent-preview"
+        data-execution-id={execution.id} data-task-id={task?.taskId} disabled={!task} title={`${title} · ${status}`}
         onClick={() => task && openWorkSummaryInspector({ kind: 'subagent-task', sessionId, task, title })}>
-        <Icon size={15} className={running ? 'spin' : undefined} /><span>{title}</span><small>{status}</small>{task && <ChevronRight size={13} />}
+        <span className="tool-preview-icon" aria-hidden="true"><Icon size={14} className={running ? 'spin' : undefined} /></span>
+        <span className="tool-preview-content"><strong>{title}</strong><small>{status}</small></span>
+        {task && <ChevronRight size={14} aria-hidden="true" />}
       </button>;
-    });
-  });
-  if (!rows.length) return null;
+    }));
+  }
+  if (!agentRows.length && !imageRows.length) return null;
   return <div className="loop-execution-previews" aria-label={zh ? '执行预览' : 'Execution previews'}>
-    {rows}{failed && <button className="loop-preview-retry" type="button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试读取预览' : 'Retry previews'}</button>}
+    {agentRows.length > 0 && <div className="loop-execution-preview-group loop-subagent-previews">{agentRows}</div>}
+    {imageRows.length > 0 && <div className="loop-execution-preview-group loop-image-previews">{imageRows}</div>}
+    {failed && <button className="loop-preview-retry" type="button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试读取预览' : 'Retry previews'}</button>}
   </div>;
 }

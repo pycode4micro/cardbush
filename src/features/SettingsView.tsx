@@ -52,6 +52,7 @@ import {
   RUNTIME_ASSET_RESET_PROTOCOL,
   clearConversationHistory,
   clearLogsCache,
+  clearApplicationCache,
   deleteMcpServerConfig,
   fetchCardbushAppsConfiguration,
   fetchMcpServers,
@@ -1316,13 +1317,13 @@ function CacheMaintenancePanel({
   runtimeBusy: boolean;
   onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
-  const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | ''>('');
+  const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | 'cache' | ''>('');
   const [result, setResult] = useState<MaintenanceClearResult | null>(null);
   const [error, setError] = useState('');
 
   const runClear = useCallback(
-    async (target: 'conversation' | 'logs') => {
-      if (busyTarget) {
+    async (target: 'conversation' | 'logs' | 'cache') => {
+      if (busyTarget || (runtimeBusy && target !== 'logs')) {
         return;
       }
       const supported =
@@ -1340,11 +1341,15 @@ function CacheMaintenancePanel({
       const confirmed = window.confirm(
         target === 'conversation'
           ? language === 'zh'
-            ? '确定清空本地对话历史吗？这会删除会话、轮次、摘要和 token usage，但不会删除项目文件或任务工作目录。'
-            : 'Clear local conversation history? This removes sessions, turns, summaries, and token usage, but not project files or task workspaces.'
-          : language === 'zh'
-            ? '确定清空本地日志缓存吗？这只会删除 chain logs 和 tool failure logs，不影响对话历史。'
-            : 'Clear local logs cache? This removes chain logs and tool failure logs without touching conversations.',
+            ? '确定清空本地对话历史吗？这会删除会话、消息、摘要和不再使用的附件，并暂停绑定的自动化。项目文件、任务工作目录和累计用量统计会保留。'
+            : 'Clear local conversation history and unreferenced attachments? Bound automations will be paused. Project files, task workspaces and cumulative usage statistics are kept.'
+          : target === 'cache'
+            ? language === 'zh'
+              ? '清理应用缓存、过期预览和无引用的历史残留？保留现有对话、登录状态、草稿和用户文件。'
+              : 'Clear application caches, expired previews and unreferenced history data? Keep conversations, sign-ins, drafts and user files.'
+            : language === 'zh'
+              ? '确定清空本地运行日志和过期崩溃报告吗？会保留对话历史与使用记录。'
+              : 'Clear local runtime logs and old crash reports? Conversations and usage records are kept.',
       );
       if (!confirmed) {
         return;
@@ -1355,13 +1360,17 @@ function CacheMaintenancePanel({
         const cleared =
           target === 'conversation'
             ? await clearConversationHistory()
-            : await clearLogsCache();
+            : target === 'cache' ? await clearApplicationCache() : await clearLogsCache();
         setResult(cleared);
+        if (cleared.errors?.length) setError(cleared.errors.join('\n'));
         if (target === 'conversation') {
           await onConversationHistoryCleared?.();
         }
         onNotify(
-          target === 'conversation'
+          cleared.errors?.length ? (language === 'zh' ? '部分清理未完成，请查看详情' : 'Some cleanup could not finish; see details')
+          : !cleared.cleared ? (language === 'zh' ? '没有需要清理的数据' : 'No data to clear')
+          : target === 'cache' ? (language === 'zh' ? '缓存清理完成' : 'Cache cleanup finished')
+          : target === 'conversation'
             ? language === 'zh'
               ? '对话历史已清空'
               : 'Conversation history cleared'
@@ -1382,7 +1391,7 @@ function CacheMaintenancePanel({
         setBusyTarget('');
       }
     },
-    [busyTarget, capabilities, language, onConversationHistoryCleared, onNotify],
+    [busyTarget, capabilities, language, onConversationHistoryCleared, onNotify, runtimeBusy],
   );
   const conversationClearSupported = capabilities.maintenanceConversationHistoryClear;
   const logsClearSupported = capabilities.maintenanceLogsCacheClear;
@@ -1393,8 +1402,8 @@ function CacheMaintenancePanel({
         title={language === 'zh' ? '本地数据' : 'Local data'}
         subtitle={
           language === 'zh'
-            ? '这些操作只清理 CardBush Runtime 本地数据库中的历史和诊断缓存，不会删除项目文件、任务工作目录或 provider 侧缓存。'
-            : 'These actions clear CardBush Runtime history and diagnostics cache only. Project files, task workspaces, and provider-side caches are untouched.'
+            ? '管理本地历史、日志与缓存，保留项目文件、任务工作目录和累计用量。'
+            : 'Manage local history, logs and caches. Keep project files, task workspaces and cumulative usage.'
         }
       >
         <div className="maintenance-action-list">
@@ -1413,7 +1422,7 @@ function CacheMaintenancePanel({
             <button
               className="secondary-button"
               type="button"
-              disabled={Boolean(busyTarget) || !conversationClearSupported}
+              disabled={Boolean(busyTarget) || runtimeBusy || !conversationClearSupported}
               onClick={() => void runClear('conversation')}
               title={
                 conversationClearSupported
@@ -1437,8 +1446,8 @@ function CacheMaintenancePanel({
               <strong>{language === 'zh' ? '清空日志缓存' : 'Clear logs cache'}</strong>
               <small>
                 {language === 'zh'
-                  ? '清理运行与工具错误日志，保留会话和使用记录。'
-                  : 'Clear runtime and tool error logs. Keep conversations and usage records.'}
+                  ? '清理运行日志和过期崩溃报告。'
+                  : 'Clear runtime logs and old crash reports.'}
               </small>
             </span>
             <button
@@ -1458,7 +1467,19 @@ function CacheMaintenancePanel({
               {language === 'zh' ? '清空' : 'Clear'}
             </button>
           </div>
+          <div className="maintenance-action-row">
+            <Trash2 size={18} />
+            <span>
+              <strong>{language === 'zh' ? '清理应用缓存' : 'Clear application cache'}</strong>
+              <small>{language === 'zh' ? '回收过期预览、无引用附件和已删除会话的残留，保留登录状态与草稿。' : 'Reclaim expired previews, unreferenced attachments and deleted conversation data. Keep sign-ins and drafts.'}</small>
+            </span>
+            <button className="secondary-button" type="button" disabled={Boolean(busyTarget) || runtimeBusy || !logsClearSupported} onClick={() => void runClear('cache')}>
+              {busyTarget === 'cache' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+              {language === 'zh' ? '清理' : 'Clear'}
+            </button>
+          </div>
         </div>
+        {runtimeBusy && <small>{language === 'zh' ? '当前任务结束后可清理历史与应用缓存。' : 'History and application caches can be cleared after active tasks finish.'}</small>}
         {(!conversationClearSupported || !logsClearSupported) && (
           <p className="settings-inline-error">
             {language === 'zh'

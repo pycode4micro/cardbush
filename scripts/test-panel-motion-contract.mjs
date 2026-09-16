@@ -129,7 +129,6 @@ assert.match(read('src', 'features', 'inspector', 'inspectorTabs.ts'), /type Ins
 assert.match(app, /className="right-inspector-add-tab"/);
 assert.match(app, /<InspectorActions \{\.\.\.inspectorActionProps\} menu/);
 assert.match(app, /className="right-inspector-tab-strip"/);
-assert.match(app, /className="right-inspector-tab-scroll"/);
 assert.match(app, /useInspectorTabStrip\(activeInspectorTabIdentity, displayedInspectorTabs\.length\)/);
 // Mount, wheel cancellation and ancestor-scroll behavior are exercised in Electron
 // by test-inspector-tabs.cjs, rather than asserting the old buggy implementation.
@@ -179,7 +178,6 @@ assert.match(app, /handleInspectorShortcut[\s\S]*?matches\('openBrowser'[\s\S]*?
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
 assert.match(css, /\.right-inspector-add-menu\s*\{/);
-assert.match(css, /\.right-inspector-tab-scroll\s*\{/);
 assert.match(css, /\.right-inspector-tab-menu\s*\{/);
 assert.match(css, /\.right-inspector-tab-context-menu\s*\{/);
 assert.match(css, /\.shadow-window-shell\.shadow-inspector-shell\s*\{/);
@@ -370,7 +368,7 @@ assert.match(
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?overflow-y:\s*auto/);
-assert.match(css, /\.runtime-queue-item-header\s*\{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\) auto/);
+assert.match(css, /\.runtime-queue-item-header\s*\{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\);/);
 assert.match(css, /\.runtime-screen-queue-actions\s*\{[\s\S]*?position:\s*absolute[\s\S]*?right:\s*8px/);
 assert.match(css, /\.composer-queue-actions\s*\{[\s\S]*?opacity:\s*1/);
 assert.doesNotMatch(

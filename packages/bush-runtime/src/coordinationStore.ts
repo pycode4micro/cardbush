@@ -1,3 +1,4 @@
+import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { randomUUID } from "node:crypto";
 
 import {
@@ -16,6 +17,7 @@ import {
 } from "@cardbush/bush-protocol";
 
 export interface CoordinationPersistence {
+  cacheEntries?(): Promise<CacheEntry[]>;
   load(sessionId: string): CoordinationEvent[];
   append(event: CoordinationEvent): void;
 }
@@ -45,6 +47,11 @@ export class CoordinationStore {
       options.createEventId ?? (() => `coordination_event_${randomUUID()}`);
     this.#createNodeId = options.createNodeId ?? (() => `plan_node_${randomUUID()}`);
     this.#now = options.now ?? (() => new Date().toISOString());
+  }
+
+  async cacheEntries(): Promise<CacheEntry[]> {
+    return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#events].map(([id, rows]) =>
+      memoryCacheEntry('coordination', id, this.#persistence?.cacheEntries ? [] : rows, () => this.#events.delete(id)))];
   }
 
   getPlan(sessionId: string): PlanState | undefined {

@@ -531,16 +531,22 @@ export function ComposerRuntimeRail({
           </header>
           <div className="runtime-queue-detail">
             <div className="runtime-queue-hint">
-              {language === 'zh' ? '当前回复完成后按顺序发送，拖动手柄调整顺序。' : 'Sends in order after the current reply. Drag a handle to reorder.'}
+              {language === 'zh' ? '当前回复完成后按顺序发送，按住消息拖动排序。' : 'Sends in order after the current reply. Hold and drag a message to reorder.'}
             </div>
             {queuedMessages.length > 0 ? (
               <div className="runtime-queue-list" ref={queueDrag.listRef} role="list" aria-label={language === 'zh' ? '待发送的提示词' : 'Queued prompts'}>
                 {queuedMessages.map((item, index) => (
                   <article
-                    className={`runtime-queue-item${queueDrag.draggingId === item.id ? ' dragging' : ''}${queueDrag.dropPosition?.id === item.id ? ` drop-${queueDrag.dropPosition.side}` : ''}`}
+                    className="runtime-queue-item"
                     data-queue-item-id={item.id}
+                    data-reorderable={Boolean(onReorderQueuedMessage) && queuedMessages.length > 1 && !guidingQueuedId}
                     role="listitem"
                     key={item.id}
+                    onPointerDown={(event) => queueDrag.onPointerDown(item.id, event)}
+                    onPointerMove={queueDrag.onPointerMove}
+                    onPointerUp={queueDrag.onPointerUp}
+                    onPointerCancel={queueDrag.onPointerCancel}
+                    onLostPointerCapture={queueDrag.onPointerCancel}
                   >
                     <div className="runtime-queue-item-header">
                       <button
@@ -551,11 +557,6 @@ export function ComposerRuntimeRail({
                           ? `第 ${index + 1} 条，拖动或按上下方向键排序`
                           : `Queue item ${index + 1}. Drag or use the up and down arrows to reorder`}
                         title={language === 'zh' ? '拖动排序，也可用上下方向键' : 'Drag to reorder, or use the up and down arrows'}
-                        onPointerDown={(event) => queueDrag.onPointerDown(item.id, event)}
-                        onPointerMove={queueDrag.onPointerMove}
-                        onPointerUp={queueDrag.onPointerUp}
-                        onPointerCancel={queueDrag.onPointerCancel}
-                        onLostPointerCapture={queueDrag.onPointerCancel}
                         onKeyDown={(event) => {
                           if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
                           event.preventDefault();
@@ -564,9 +565,6 @@ export function ComposerRuntimeRail({
                       >
                         <GripVertical size={16} aria-hidden="true" />
                       </button>
-                      <span className="runtime-queue-position">{index === 0
-                        ? language === 'zh' ? '下一个' : 'Next'
-                        : language === 'zh' ? `第 ${index + 1} 条` : `#${index + 1}`}</span>
                     <div className="runtime-queue-actions">
                       <button
                         className="runtime-queue-guide"

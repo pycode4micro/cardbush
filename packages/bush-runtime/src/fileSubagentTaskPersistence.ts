@@ -1,3 +1,4 @@
+import { journalCacheEntries } from './cacheMaintenance.js';
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -84,6 +85,13 @@ export class FileSubagentTaskPersistence implements SubagentTaskPersistence {
     const descriptor = this.#descriptor(this.#path(event.parentSessionId));
     writeSync(descriptor, `${line}\n`, undefined, "utf8");
     fsyncSync(descriptor);
+  }
+
+  cacheEntries() {
+    return journalCacheEntries(this.#root, 'subagents', RECORD_PROTOCOL, 'event', 'parentSessionId', path => {
+      const descriptor = this.#descriptors.get(path);
+      if (descriptor !== undefined) { closeSync(descriptor); this.#descriptors.delete(path); }
+    }, false);
   }
 
   close(): void {

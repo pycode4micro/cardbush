@@ -184,11 +184,11 @@ await serveStdio(()=>{const s=new McpServer({name:'hook-fixture',version:'1'});s
           : input.event === 'SessionStart' ? { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'context after compaction' } } : {} };
       } } });
     const compactHost = host({ toolRegistry: compactRegistry, loadPluginExtensions: async () => ({ agents: [], hooks: ['PreCompact', 'PostCompact', 'SessionStart'].map(event => ({ ...hook(event, ''), type: 'mcp_tool', server: 'lifecycle', tool: 'observe', matcher: event === 'SessionStart' ? '^compact$' : '^auto$', input: { event: '${hook_event_name}' } })) }), provider: {
-      async countInputTokens(req) { return { inputTokens: req.messages.some(value => value.name === 'turn_context_summary') ? 100 : req.messages.some(value => value.name === 'context_pressure') ? 2900 : 2860, source: 'provider' }; },
+      async countInputTokens(req) { return { inputTokens: req.messages.some(value => value.role === 'tool' && value.toolCallId === 'checkpoint') ? 100 : req.messages.some(value => value.name === 'context_pressure') ? 2900 : 2860, source: 'provider' }; },
       async *stream(req) {
         compactRequests.push(structuredClone(req)); yield event(req, 0, 'response_started');
         if (compactRequests.length > 1 && req.messages.some(value => value.name === 'context_pressure')) {
-          yield event(req, 1, 'tool_call_delta', { index: 0, toolCallId: 'checkpoint', nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ summaries: ['The previous user message was answered.'], active_summary: '' }) });
+          yield event(req, 1, 'tool_call_delta', { index: 0, toolCallId: 'checkpoint', nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ summaries: ['The previous user message was answered.'] }) });
           yield event(req, 2, 'response_completed', { finishReason: 'tool_calls' });
         } else { yield event(req, 1, 'text_delta', { delta: 'done' }); yield event(req, 2, 'response_completed', { finishReason: 'stop' }); }
       }

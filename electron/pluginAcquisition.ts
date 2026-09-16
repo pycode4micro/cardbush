@@ -1,4 +1,5 @@
 import { runHostCommand } from './hostProcesses';
+import { collectTemporaryDirectories, leaseTemporaryDirectory } from './cacheMaintenance';
 import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { safePackagePath, withinPackage } from './pluginPackagePaths';
@@ -46,6 +47,7 @@ export async function withGitSnapshot<T>(url: string, ref: string, dataRoot: str
   const base = resolve(dataRoot, 'acquisitions');
   await mkdir(base, { recursive: true });
   const stage = await mkdtemp(join(base, 'git-'));
+  const release = await leaseTemporaryDirectory(stage);
   const repository = join(stage, 'repo.git');
   try {
     await run('git', ['init', '--bare', '--template=', repository], stage);
@@ -57,9 +59,14 @@ export async function withGitSnapshot<T>(url: string, ref: string, dataRoot: str
     if (/^[a-f0-9]{40,64}$/i.test(ref) && revision.toLowerCase() !== ref.toLowerCase()) throw new Error('Git snapshot does not match its pinned commit.');
     return await read(repository, revision, run);
   } finally {
+    release();
     if (dirname(stage) !== base) throw new Error('Invalid Git acquisition cleanup path.');
     await rm(stage, { recursive: true, force: true, maxRetries: 2 });
   }
+}
+
+export function collectPluginAcquisitionCache(dataRoot: string) {
+  return collectTemporaryDirectories(resolve(dataRoot, 'acquisitions'), 'git-', 24 * 60 * 60_000);
 }
 export async function gitCatalogFile(repository: string, revision: string, path: string, run: AcquisitionCommand) {
   try {

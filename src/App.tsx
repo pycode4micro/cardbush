@@ -110,6 +110,7 @@ import {
 } from './features/tools';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
 import { WorkspaceChangeStateContext, readLegacyRevertKeys, saveLegacyRevertKeys, workspaceChangeKey, workspaceChangeReverted } from './features/tools/WorkspaceChangeStateContext';
+import { ImageGalleryProvider } from './features/chatMessages/ImageGalleryContext';
 import { ShadowWindow, type ShadowConversationContext } from './ShadowWindow';
 import {
   OPEN_INSPECTOR_EVENT,
@@ -928,11 +929,7 @@ function CardbushApp() {
     : null;
   const displayedInspectorTabs = inspectorTabs;
   const activeInspectorTabIdentity = displayedInspectorTab?.id ?? '';
-  const {
-    ref: inspectorTabsRef,
-    state: inspectorTabScrollState,
-    scroll: scrollInspectorTabs,
-  } = useInspectorTabStrip(activeInspectorTabIdentity, displayedInspectorTabs.length);
+  const { ref: inspectorTabsRef } = useInspectorTabStrip(activeInspectorTabIdentity, displayedInspectorTabs.length);
   const activateInspectorTab = (tab: InspectorTab) => {
     selectInspectorTab(tab.id);
     setInspectorOpen(true);
@@ -2087,6 +2084,8 @@ function CardbushApp() {
 
   return (
     <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
+    <ImageGalleryProvider sessionId={chat.activeConversationId} messages={chat.activeMessages}
+      workspaceRoot={activeProjectDir} pathAliases={activeProjectPathAliases} language={language}>
     <div
       className={`app ${themeClassNames(theme)}`}
       lang={language}
@@ -2346,18 +2345,6 @@ function CardbushApp() {
                 {displayedInspectorTab && displayedInspectorTabs.length > 0 ? (
                   <>
                     <div className="right-inspector-tab-strip">
-                      {inspectorTabScrollState.overflow && (
-                        <button
-                          type="button"
-                          className="right-inspector-tab-scroll"
-                          disabled={!inspectorTabScrollState.canScrollLeft}
-                          title={language === 'zh' ? '向前查看标签页' : 'Scroll tabs backward'}
-                          aria-label={language === 'zh' ? '向前查看标签页' : 'Scroll tabs backward'}
-                          onClick={() => scrollInspectorTabs(-1)}
-                        >
-                          <ArrowLeft size={13} aria-hidden="true" />
-                        </button>
-                      )}
                       <div
                         className="right-inspector-tabs"
                         ref={inspectorTabsRef}
@@ -2423,18 +2410,6 @@ function CardbushApp() {
                           );
                         })}
                       </div>
-                      {inspectorTabScrollState.overflow && (
-                        <button
-                          type="button"
-                          className="right-inspector-tab-scroll"
-                          disabled={!inspectorTabScrollState.canScrollRight}
-                          title={language === 'zh' ? '向后查看标签页' : 'Scroll tabs forward'}
-                          aria-label={language === 'zh' ? '向后查看标签页' : 'Scroll tabs forward'}
-                          onClick={() => scrollInspectorTabs(1)}
-                        >
-                          <ArrowRight size={13} aria-hidden="true" />
-                        </button>
-                      )}
                     </div>
                     <div className="right-inspector-tab-manager" ref={inspectorTabsMenuRef}>
                       <button
@@ -2477,25 +2452,27 @@ function CardbushApp() {
                                 >
                                   <button
                                     type="button"
-                                    role="menuitem"
+                                    role="menuitemradio"
+                                    aria-checked={active}
                                     title={label}
                                     onClick={() => activateInspectorTab(tab)}
                                   >
                                     {tab.kind === 'resource'
                                       ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
-                                        ? <Globe2 size={13} aria-hidden="true" />
-                                        : <FileText size={13} aria-hidden="true" />
+                                        ? <Globe2 size={14} aria-hidden="true" />
+                                        : <FileText size={14} aria-hidden="true" />
                                       : tab.kind === 'review'
-                                        ? <Clipboard size={13} aria-hidden="true" />
+                                        ? <Clipboard size={14} aria-hidden="true" />
                                         : tab.kind === 'history' || tab.kind === 'automation'
-                                          ? <Clock3 size={13} aria-hidden="true" />
+                                          ? <Clock3 size={14} aria-hidden="true" />
                                           : tab.kind === 'subagent'
-                                            ? <Bot size={13} aria-hidden="true" />
-                                            : <ShadowCloneIcon size={13} />}
+                                            ? <Bot size={14} aria-hidden="true" />
+                                            : <ShadowCloneIcon size={14} />}
                                     <span>{label}</span>
                                   </button>
                                   <button
                                     type="button"
+                                    role="menuitem"
                                     title={language === 'zh' ? '关闭标签页' : 'Close tab'}
                                     aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
                                     onClick={() => closeInspectorTab(tab.id)}
@@ -2777,6 +2754,7 @@ function CardbushApp() {
       <CopyToastHost language={language} />
       <McpUserRequests language={language} />
     </div>
+    </ImageGalleryProvider>
     </WorkspaceChangeStateContext.Provider>
   );
 }

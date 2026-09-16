@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from '../../bush-runtime/test/helpers/orderedCheckpoint.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
@@ -54,7 +55,7 @@ test('real SDK HTTP rejection and incomplete terminal events recover without par
         assert.doesNotMatch(JSON.stringify(body.input), /PARTIAL_MAINTENANCE_REASONING|cp_partial/);
         output = [{ type: 'reasoning', id: 'rs_valid', summary: [], content: [{ type: 'reasoning_text', text: 'Verified checkpoint reasoning.' }] },
           { type: 'function_call', id: 'fc_valid', call_id: 'cp_valid', name: 'checkpoint_context',
-            arguments: JSON.stringify({ summaries: ['The earlier work completed; verification remains.'], active_summary: '' }) }];
+            arguments: JSON.stringify({ summaries: ['The earlier work completed; verification remains.'] }) }];
       } else {
         assert.equal(body.max_output_tokens, 128000);
         assert.equal(body.input.filter(item => item.type === 'function_call' && item.call_id === 'cp_valid').length, 1);
@@ -87,7 +88,7 @@ test('real SDK HTTP rejection and incomplete terminal events recover without par
     provider: new OpenAIResponsesProvider({ apiKey: 'fixture-only', baseURL: `http://127.0.0.1:${server.address().port}/v1`, timeoutMs: 2000 }) });
   const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'sdk', sessionId: 'sdk', turnId: 'current',
     model: 'fixture', maxOutputTokens: 128000, reasoningEffort: 'high', metadata: { contextWindowTokens: 400000 },
-    prefixMessages: [{ role: 'system', content: 'Stable rules.' }],
+    tools: [orderedCheckpointTool], prefixMessages: [{ role: 'system', content: 'Stable rules.' }],
     inputMessages: [{ messageId: 'current_user', message: { role: 'user', content: 'Verify the result.' } }] });
   assert.equal(result.payload.status, 'completed');
   assert.equal(requests.length, 4);

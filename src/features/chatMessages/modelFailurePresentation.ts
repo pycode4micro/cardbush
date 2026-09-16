@@ -3,6 +3,14 @@ import type { AppLanguage } from '../../types';
 /** User-facing explanations are localized; provider diagnostics remain verbatim. */
 export function modelFailurePresentation(reason: string, message: string, language: AppLanguage, status?: unknown) {
   const zh = language === 'zh';
+  if (reason === 'open_task_plan_not_resolved') {
+    return {
+      tone: 'neutral' as const,
+      title: zh ? '计划仍有未完成标记' : 'Some plan steps are still marked unfinished',
+      detail: zh ? '计划工具仍记录有未完成节点，已保留最后一次更新的状态。' : 'The plan tool still records unfinished nodes. Its last reported statuses are preserved.',
+      technicalDetails: undefined,
+    };
+  }
   const httpStatus = typeof status === 'number' ? status : Number.NaN;
   let detail: string;
   if (/\btool names must be unique\b|\bduplicate tool names?\b|\bconflicting tool definitions\b/i.test(message)) {
@@ -31,6 +39,7 @@ export function modelFailurePresentation(reason: string, message: string, langua
       : 'This turn could not finish. Existing progress is preserved; expand the error details for the cause.';
   }
   return {
+    tone: 'error' as const,
     title: zh ? '本轮执行失败' : 'This turn failed',
     detail,
     technicalDetails: [reason, message].filter(Boolean).join('\n'),

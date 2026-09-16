@@ -578,7 +578,7 @@ throw "Application '$requested' was not found as a path, executable, registered 
 `;
 
 async function captureDesktop(configuredDirectory: string, signal?: AbortSignal) {
-  const directory = configuredDirectory || join(tmpdir(), 'cardbush-apps', 'captures');
+  const directory = configuredDirectory || process.env.CARDBUSH_OWNED_CAPTURE_ROOT || join(tmpdir(), 'cardbush-apps', 'captures');
   await mkdir(directory, { recursive: true });
   const path = join(directory, `capture-${Date.now()}-${randomUUID()}.png`);
   const script = String.raw`
@@ -649,7 +649,7 @@ async function captureWindowState(
 ) {
   const hwnd = optionalInteger(target.hwnd);
   if (hwnd == null || hwnd <= 0) throw new Error('Target window does not have a valid hwnd.');
-  const directory = configuredDirectory || join(tmpdir(), 'cardbush-apps', 'captures');
+  const directory = configuredDirectory || process.env.CARDBUSH_OWNED_CAPTURE_ROOT || join(tmpdir(), 'cardbush-apps', 'captures');
   await mkdir(directory, { recursive: true });
   const path = join(directory, `window-${hwnd}-${Date.now()}-${randomUUID()}.png`);
   const rawOutput = record(json(await powershell(windowStateCaptureScript, {

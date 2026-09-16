@@ -12,6 +12,7 @@ import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, Plugi
 import { readPluginPresentation } from './pluginPresentation';
 import { pluginChild } from './pluginExtensions';
 import { PluginMarketDownloads, MarketplaceRateLimitError } from './pluginMarketDownloads';
+import { collectTemporaryDirectories, leaseTemporaryDirectory, removeTemporaryDirectory, mergeCleanup, type CleanupResult } from './cacheMaintenance';
 
 type Json = Record<string, unknown>;
 type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: string };
@@ -30,6 +31,7 @@ export class PluginMarketplaceService {
   private readonly catalogRequests = new Map<string, Promise<PluginMarketCatalog>>();
   private readonly downloads: PluginMarketDownloads;
   private mutation: Promise<unknown> = Promise.resolve();
+  private readonly stageLeases = new Map<string, () => void>();
   constructor(private readonly options: {
     dataRoot: string;
     userPluginRoot: string;
@@ -184,6 +186,7 @@ export class PluginMarketplaceService {
     const stageBase = join(this.options.dataRoot, 'previews');
     await mkdir(stageBase, { recursive: true });
     const stage = await mkdtemp(join(stageBase, 'preview-'));
+    this.stageLeases.set(stage, await leaseTemporaryDirectory(stage));
     const root = join(stage, name);
     let revision = catalog.revision;
     let sourceLabel = source.location;
@@ -349,15 +352,21 @@ export class PluginMarketplaceService {
     catch { return null; }
   }
   private async expirePreviews() {
+    const results: CleanupResult[] = [];
     for (const [token, prepared] of this.prepared) {
       if (prepared.expiresAt > Date.now() && this.prepared.size < 8) continue;
-      this.prepared.delete(token); await this.cleanStage(prepared.stage);
+      this.prepared.delete(token); results.push(await this.cleanStage(prepared.stage));
     }
+    results.push(await collectTemporaryDirectories(resolve(this.options.dataRoot, 'previews'), 'preview-', 30 * 60_000,
+      new Set([...this.prepared.values()].map(prepared => prepared.stage))));
+    return mergeCleanup(...results);
   }
+  collectCache() { return this.serial(() => this.expirePreviews()); }
   private async cleanStage(stage: string) {
     const base = resolve(this.options.dataRoot, 'previews');
     if (dirname(resolve(stage)) !== base || !basename(stage).startsWith('preview-')) throw new Error('Invalid preview cleanup path.');
-    await rm(stage, { recursive: true, force: true, maxRetries: 2 });
+    try { return await removeTemporaryDirectory(base, stage, 'preview-'); }
+    finally { this.stageLeases.get(stage)?.(); this.stageLeases.delete(stage); }
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.mutation.then(operation);

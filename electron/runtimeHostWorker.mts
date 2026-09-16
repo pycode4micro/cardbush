@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import {
   BUSH_RUNTIME_ERROR_PROTOCOL,
   BUSH_RUNTIME_IPC_PROTOCOL,
@@ -425,6 +426,7 @@ function withBundledAppsServer(input: unknown): unknown {
           // The bundled Apps process reads its config at launch. Only that
           // connection needs replacement when its effective config changes.
           CARDBUSH_APPS_CONFIG_FINGERPRINT: appsConfig.fingerprint,
+          ...(process.env.CARDBUSH_RUNTIME_STATE_ROOT ? { CARDBUSH_OWNED_CAPTURE_ROOT: join(process.env.CARDBUSH_RUNTIME_STATE_ROOT, 'captures') } : {}),
         }),
       },
       versionMode: 'auto',
@@ -773,6 +775,7 @@ host = new InMemoryRuntimeHost({
   provider: usageLedger ? usageRecordingProvider(providers, usage => usageLedger.record(usage)) : providers,
   toolRegistry,
   dataRoot: runtimeStateRoot,
+  legacyCaptureCacheRoot: join(tmpdir(), 'cardbush-apps', 'captures'),
   eventLog,
   checkpointStore,
   sessionStore: new SessionStore({ persistence: sessionPersistence }),

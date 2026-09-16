@@ -345,7 +345,7 @@ test("validates and resolves an explicit local image path before provider submis
   await assert.rejects(() => resolveLocalImageInputs({
     ...request,
     messages: [{ role: "user", content: "inspect", images: [{ url: textPath }] }],
-  }), /supported raster image/);
+  }), { code: "image_input_unsupported" });
 });
 
 test("posts directly to the Responses endpoint and streams stable model events", async (context) => {

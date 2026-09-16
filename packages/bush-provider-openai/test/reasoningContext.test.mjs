@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from '../../bush-runtime/test/helpers/orderedCheckpoint.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
@@ -55,7 +56,7 @@ test('thinking endpoint resumes repeated compaction and durable history without 
       if (pressure) {
         compactions++;
         output = [reasoning(`rs_checkpoint_${compactions}`, 'Summarize the verified observations.'), call(`checkpoint_${compactions}`, 'checkpoint_context', {
-          summaries: [], active_summary: `Completed ${compactions} observations. ${compactions === 1 ? 'Perform the second observation.' : 'Return the final answer.'}`,
+          summaries: [`Completed ${compactions} observations. ${compactions === 1 ? 'Perform the second observation.' : 'Return the final answer.'}`],
         })];
       } else if (executed < 2) {
         output = [reasoning(`rs_read_${executed}`, 'Read the next fact.'), call(`read_${executed}`, 'fixture_read', {})];
@@ -89,7 +90,7 @@ test('thinking endpoint resumes repeated compaction and durable history without 
     hosts.push(host); return host;
   };
   const turn = id => ({ protocol: 'bush.session_turn_request.v1', requestId: id, sessionId: 's', turnId: id, model: 'thinking-fixture',
-    reasoningEffort: 'high', tools: [readTool.definition], prefixMessages: [], maxOutputTokens: 1000, metadata: { contextWindowTokens: 4000 },
+    reasoningEffort: 'high', tools: [orderedCheckpointTool, readTool.definition], prefixMessages: [], maxOutputTokens: 1000, metadata: { contextWindowTokens: 4000 },
     inputMessages: [{ messageId: `user_${id}`, message: { role: 'user', content: 'Inspect twice and report.' } }] });
   const first = createHost();
   const result = await first.runSessionTurn(turn('first'));

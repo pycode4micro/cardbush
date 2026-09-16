@@ -134,6 +134,11 @@ app.whenReady().then(async () => {
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'maintenance') {
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      await require('./helpers/settings-maintenance.cjs')({ run, until, window: win, root, click });
+      win.destroy(); app.exit(0); return;
+    }
     await require('./helpers/settings-sidebar.cjs')({ run, until, pause, window: win, root });
     await edit('#global-agent-instructions', '全局偏好：先确认事实。', true);
     await run('failSave = true'); await click('保存');

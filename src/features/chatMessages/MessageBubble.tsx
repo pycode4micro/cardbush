@@ -279,7 +279,7 @@ function assistantTimeoutPresentation(
 function assistantFailurePresentation(
   message: ChatMessage,
   language: AppLanguage,
-): { reason: string; title: string; detail: string; technicalDetails?: string } | null {
+): { reason: string; title: string; detail: string; technicalDetails?: string; tone?: 'neutral' | 'error' } | null {
   if (message.role !== 'assistant') return null;
   const metadata = message.metadata ?? {};
   const status = String(message.status ?? metadata.status ?? '').trim().toLowerCase();
@@ -399,6 +399,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       );
     },
     img: ({ src, alt, ...props }) => {
+      const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
       const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
@@ -425,15 +426,20 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
       return (
+        <>
         <img
           {...props}
           src={resolvedSource}
           alt={alt ?? ''}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { image: true, language })}
-          onClick={reference
-            ? () => openInspector(resolvedPath, reference.label)
-            : undefined}
+          role="button"
+          tabIndex={0}
+          onClick={event => setImagePreview({ src: event.currentTarget.src, path: resolvedPath || src,
+            name: alt || basename(resolvedPath || src || ''), naturalWidth: event.currentTarget.naturalWidth, naturalHeight: event.currentTarget.naturalHeight })}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}
         />
+        {imagePreview && <ImagePreviewDialog image={imagePreview} language={language} onClose={() => setImagePreview(null)} />}
+        </>
       );
     },
     code: ({ children, className, ...props }) => {
@@ -1241,11 +1247,12 @@ function MessageBubbleView({
           )}
           {failurePresentation && (
             <div
-              className="assistant-timeout-notice assistant-failure-notice"
-              data-failure-reason={failurePresentation.reason}
-              role="alert"
+              className={`assistant-timeout-notice ${failurePresentation.tone === 'neutral' ? 'assistant-plan-notice' : 'assistant-failure-notice'}`}
+              data-failure-reason={failurePresentation.tone === 'neutral' ? undefined : failurePresentation.reason}
+              data-plan-reason={failurePresentation.tone === 'neutral' ? failurePresentation.reason : undefined}
+              role={failurePresentation.tone === 'neutral' ? 'status' : 'alert'}
             >
-              <CircleAlert size={15} />
+              {failurePresentation.tone === 'neutral' ? <Clock3 size={15} /> : <CircleAlert size={15} />}
               <div className="assistant-failure-content">
                 <strong>{failurePresentation.title}</strong>
                 <small>{failurePresentation.detail}</small>

@@ -1,3 +1,4 @@
+import { cacheFiles, fileCacheEntry, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,6 +35,27 @@ function declaredResultError(result: unknown) {
 
 /** UI capabilities are issued from persisted executions, never from iframe-supplied server names. */
 export class McpAppsHost {
+  get busy() { return this.openings.size > 0 || [...this.instances.values()].some(instance => instance.busy); }
+  async cacheEntries() {
+    await Promise.all(this.contextWrites.values());
+    const entries = [...await this.observations.cacheEntries(), ...await temporaryCacheEntries(this.root)];
+    for (const file of await cacheFiles(this.root, name => /^[a-f0-9]{64}\.json$/.test(name))) {
+      const scope = JSON.parse(await readFile(file.path, 'utf8'));
+      if (!scope.request && !scope.names && scope && typeof scope === 'object' && !Array.isArray(scope) && Object.values(scope).every(value => value && typeof value === 'object' && 'source' in value && 'content' in value)) {
+        // Legacy context files contain a bounded map, keyed by hash([session, "context"]).
+        entries.push(fileCacheEntry(file, 'mcp_app_context', [file.path.split(/[\\/]/).at(-1)!.replace(/\.json$/, '')], undefined, () => this.contextWrites.delete(file.path)));
+        continue;
+      }
+      const request = modelRequestSchema.parse(scope.request);
+      if (this.file(request.sessionId, request.turnId) !== file.path) throw new Error('Invalid MCP App cache identity.');
+      entries.push(fileCacheEntry(file, 'mcp_app_scopes', [request.sessionId], request.sessionId, () => this.scopes.delete(file.path)));
+    }
+    return entries;
+  }
+  cacheRoots() { return [...this.instances.values()].map(instance => instance.scope.request); }
+  async closeSession(session: string) {
+    await Promise.all([...this.instances].filter(([, instance]) => instance.sessionId === session).map(([token]) => this.close(token)));
+  }
   private readonly instances = new Map<string, Instance>();
   private readonly openings = new Map<AbortController, Promise<void>>();
   private readonly scopes = new Map<string, Scope>();

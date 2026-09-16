@@ -99,5 +99,5 @@ test('does not flatten animated inputs and reports invalid image decoders explic
   assert.equal(metadata.pages, 2);
   // File signature is complete, but the pixel stream is broken.
   await writeFile(source, Buffer.from([255, 216, 1, 2, 3, 4, 255, 217]));
-  await assert.rejects(store.snapshot(source), { code: 'image_input_compression_failed' });
+  await assert.rejects(store.snapshot(source), { code: 'image_input_invalid' });
 });

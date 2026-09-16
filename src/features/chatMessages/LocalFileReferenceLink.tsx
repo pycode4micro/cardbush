@@ -1,10 +1,13 @@
 import { FolderOpen, Play } from 'lucide-react';
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { openInspector } from '../inspector/inspectorEvents';
 import { FileTypeIcon } from './FileTypeIcon';
+import { ImagePreviewDialog } from './ImagePreviewDialog';
+import { ImageGalleryContext } from './ImageGalleryContext';
+import { galleryImage, isGalleryImage } from './imageGallery';
 
 type LocalReferenceMetadata = {
   path: string;
@@ -32,6 +35,8 @@ export function LocalFileReferenceLink({
   /** A caller that just resolved a native file can reuse that observation. */
   knownFileName?: string;
 }) {
+  const gallery = useContext(ImageGalleryContext);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [inspection, setInspection] = useState<LocalReferenceInspection | null>(null);
   const inspectionComplete = knownFileName !== undefined || inspection?.path === path;
   const metadata = knownFileName !== undefined ? { path, name: knownFileName, kind: 'file' as const }
@@ -80,6 +85,7 @@ export function LocalFileReferenceLink({
       void window.cardbushDesktop?.openPath?.(path);
       return;
     }
+    if (isGalleryImage(path)) { setPreviewOpen(true); return; }
     openInspector(path, basename(path));
   }
 
@@ -88,6 +94,7 @@ export function LocalFileReferenceLink({
   }
 
   return (
+    <>
     <a
       className={`local-file-reference${applicationLike ? ' local-application-reference' : ''}`}
       href={fileUrl(path)}
@@ -104,5 +111,7 @@ export function LocalFileReferenceLink({
             : <FileTypeIcon path={path} />}
       <span>{label}</span>
     </a>
+    {previewOpen && <ImagePreviewDialog image={galleryImage(path)} language={gallery?.language ?? 'zh'} onClose={() => setPreviewOpen(false)} />}
+    </>
   );
 }

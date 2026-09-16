@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InMemoryRuntimeHost, SessionStore, assembleContext, projectActiveTurnContext } from '../dist/index.js';
@@ -38,7 +39,7 @@ test('legacy summaries are explicitly compacted, never silently dropped at the 2
         shouldCompact = false;
         yield event(1, 'reasoning_delta', { delta: 'Summarize the authorized sources.' });
         yield event(2, 'tool_call_delta', { index: 0, toolCallId: `checkpoint_${compactions}`, nameDelta: 'checkpoint_context',
-          argumentsDelta: JSON.stringify({ summaries, active_summary: '' }) });
+          argumentsDelta: JSON.stringify({ summaries }) });
         yield event(3, 'response_completed', { finishReason: 'tool_calls' });
       } else {
         yield event(1, 'text_delta', { delta: 'Follow-up completed.' });
@@ -49,7 +50,7 @@ test('legacy summaries are explicitly compacted, never silently dropped at the 2
   const host = new InMemoryRuntimeHost({ provider, sessionStore: store, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const request = id => ({ protocol: 'bush.session_turn_request.v1', requestId: id, sessionId: 's', turnId: id,
-    model: 'fixture', prefixMessages: [{ role: 'system', content: 'fixed' }], inputMessages: [{ messageId: `${id}_user`, message: { role: 'user', content: 'Follow up.' } }],
+    model: 'fixture', tools: [orderedCheckpointTool], prefixMessages: [{ role: 'system', content: 'fixed' }], inputMessages: [{ messageId: `${id}_user`, message: { role: 'user', content: 'Follow up.' } }],
     maxOutputTokens: 1000, metadata: { contextWindowTokens: 4000 } });
   assert.equal((await host.runSessionTurn(request('one'))).payload.status, 'completed');
   assert.deepEqual(store.snapshot('s').turns.slice(0, 25), original);

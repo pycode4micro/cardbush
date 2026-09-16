@@ -1,3 +1,4 @@
+import { blobCacheEntries, memoryCacheEntry, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -6,6 +7,11 @@ import type { PluginHook } from './pluginExtensions.js';
 
 /** Stores activation identities, never executable Hook definitions or trust decisions. */
 export class PluginHookScopes {
+  async cacheEntries() {
+    await Promise.all(this.queue.values());
+    return [...await blobCacheEntries(this.root, 'plugin_hook_scopes', name => /^[a-f0-9]{64}\.json$/.test(name)), ...await temporaryCacheEntries(this.root),
+      ...[...this.active].map(([id, value]) => memoryCacheEntry('plugin_hook_scopes', id, [...value], () => { this.active.delete(id); this.queue.delete(id); }))];
+  }
   private readonly active = new Map<string, Set<string>>();
   private readonly queue = new Map<string, Promise<unknown>>();
   constructor(private readonly root: string) {}

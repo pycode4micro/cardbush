@@ -71,6 +71,7 @@ import { emitSubagentDispatch } from '../features/subagents/subagentObservabilit
 import {
   assistantTurnTimingFingerprint,
   persistAssistantTurnTiming,
+  pruneAssistantTurnTiming,
 } from '../features/chatMessages/assistantTurnTiming';
 import {
   isCardbushForeground,
@@ -458,7 +459,7 @@ export function useCardbushChat(
   }, [attentionByConversation]);
 
   useEffect(() => {
-    if (loading || conversations.length === 0) return;
+    if (loading) return;
     const knownIds = new Set(conversations.map((item) => item.id));
     const staleIds = Object.keys(attentionByConversationRef.current).filter(
       (sessionId) => !knownIds.has(sessionId),
@@ -1053,6 +1054,23 @@ export function useCardbushChat(
 
   const reloadConversations = useCallback(async () => {
     const loadedConversations = await fetchConversations();
+    const keep = new Set([...loadedConversations.map(item => item.id), ...Object.keys(preparedConversationsRef.current), ...sendingSessionsRef.current]);
+    pruneAssistantTurnTiming(keep);
+    const prune = <T,>(state: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(state).filter(([id]) => keep.has(id)));
+    for (const id of new Set([...conversationsRef.current.map(item => item.id), ...Object.keys(messagesByConversationRef.current)])) {
+      if (keep.has(id)) continue;
+      historyReadsRef.current.invalidate(id); contextUsageReadsRef.current.invalidate(id);
+      historyLoadingRequestsRef.current.delete(id); liveTranscriptSessionsRef.current.delete(id);
+    }
+    messagesByConversationRef.current = prune(messagesByConversationRef.current);
+    attentionByConversationRef.current = prune(attentionByConversationRef.current);
+    setMessagesByConversation(prune);
+    setAttentionByConversation(prune);
+    setRunningByConversation(prune);
+    setTeamFlowsByConversation(prune); setTeamFlowLoadingByConversation(prune); setTeamFlowActionByConversation(prune);
+    setContextWindowUsageByConversation(prune); setGoalByConversation(prune); setGoalCancellingByConversation(prune);
+    setConnectionRecoveryByConversation(prune);
+    setMessageHistoryLoadingIds(current => new Set([...current].filter(id => keep.has(id))));
     setConversations((current) =>
       mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations),
     );

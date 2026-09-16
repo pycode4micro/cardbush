@@ -7,7 +7,7 @@ import {
   InMemoryRuntimeEventLog, ModelImageStore, registerExtendedBuiltins,
   RuntimeToolLoop, ToolRegistry, ToolExecutionStore,
 } from "../dist/index.js";
-import { imageFixture, png } from "./helpers/modelImages.mjs";
+import { imageFixture, incompletePng, png } from "./helpers/modelImages.mjs";
 
 test("pins a native screenshot before the next sequential Tool deletes it, retaining the native result", async (context) => {
   const { root, source } = await imageFixture(context);
@@ -59,10 +59,10 @@ test("incomplete injection reports the actual Tool error and succeeds when the w
       metadata: { workspaceDir: root },
     }, contextMessages: [],
   });
-  await writeFile(source, png.subarray(0, -12));
+  await writeFile(source, incompletePng);
   const failed = await run("failed");
   assert.equal(failed.messages.length, 1);
-  assert.equal(JSON.parse(failed.messages[0].content).runtimeError.code, "image_input_not_ready");
+  assert.equal(JSON.parse(failed.messages[0].content).runtimeError.code, "image_input_invalid");
   await writeFile(source, png);
   const succeeded = await run("succeeded");
   assert.deepEqual(JSON.parse(succeeded.messages[0].content), { queued: true, attached_images: 1 });

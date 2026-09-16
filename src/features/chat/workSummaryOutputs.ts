@@ -35,7 +35,7 @@ function mediaType(path: string): WorkSummaryOutput['type'] | undefined {
 }
 
 /** Read authored media nodes, not filenames mentioned in prose, examples or tool logs. */
-function messageMediaReferences(message: ChatMessage): MediaReference[] {
+export function messageMediaReferences(message: ChatMessage): MediaReference[] {
   const cached = messageMediaCache.get(message);
   if (cached?.content === message.content) return cached.references;
   const tree: MarkdownNode = fromMarkdown(normalizeMarkdownContentForDisplay(message.content));

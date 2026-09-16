@@ -105,10 +105,12 @@ for (const mcp of [false, true]) for (const compressed of [false, true]) test(`r
   }
 });
 
-test('new user attachments are compressed before journaling and their bytes survive source deletion', async context => {
+for (const compressed of [true, false]) test(`new user ${compressed ? 'large PNG' : 'JPEG with application trailer'} attachments reach the provider and survive source deletion`, async context => {
   const { root, source } = await imageFixture(context);
-  const original = await sharp({ create: { width: 1600, height: 1000, channels: 3,
-    noise: { type: 'gaussian', mean: 128, sigma: 30 } } }).png().toBuffer();
+  const original = compressed
+    ? await sharp({ create: { width: 1600, height: 1000, channels: 3,
+      noise: { type: 'gaussian', mean: 128, sigma: 30 } } }).png().toBuffer()
+    : Buffer.concat([await sharp(png).jpeg().toBuffer(), Buffer.alloc(24, 0x42)]);
   await writeFile(source, original);
   const inputs = [];
   const host = new InMemoryRuntimeHost({ dataRoot: root, registerDefaultWorkspaceTools: false,
@@ -123,7 +125,12 @@ test('new user attachments are compressed before journaling and their bytes surv
   assert.equal((await host.runSessionTurn(first)).payload.status, 'completed');
   assert.deepEqual(await readFile(source), original);
   const images = inputs[0].messages.find(message => message.images?.length).images;
-  assert.ok(Buffer.from(images[0].url.split(',')[1], 'base64').length < original.length / 2);
+  const observed = Buffer.from(images[0].url.split(',')[1], 'base64');
+  if (compressed) assert.ok(observed.length < original.length / 2);
+  else {
+    assert.match(images[0].url, /^data:image\/jpeg;base64,/);
+    assert.deepEqual(observed, original);
+  }
   assert.equal(images[0].detail, 'high');
   await rm(source);
   assert.equal((await host.runSessionTurn(sessionRequest(root, 2))).payload.status, 'completed');

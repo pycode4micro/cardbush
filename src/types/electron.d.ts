@@ -330,6 +330,9 @@ declare global {
         copiedToClipboard?: boolean;
       }>;
       readImageDataUrl: (targetPath: string) => Promise<string>;
+      startImageGallery: (root: string, recursive: boolean) => Promise<{ id: string; images: Array<{ path: string; name: string }>; done: boolean; skipped: number }>;
+      nextImageGallery: (id: string) => ReturnType<NonNullable<Window['cardbushDesktop']>['startImageGallery']>;
+      closeImageGallery: (id: string) => Promise<void>;
       setCardlingState: (payload: CardlingDesktopState) => Promise<void>;
       onCardlingState: (
         callback: (payload: CardlingDesktopState) => void,

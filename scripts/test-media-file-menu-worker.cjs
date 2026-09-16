@@ -19,7 +19,7 @@ app.whenReady().then(async () => {
   const functions = ['normalizeShellPath', 'copyLocalFileToClipboard', 'copyWindowsFileToClipboard'].map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast));
   const ipcHandler = ast.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(ast) === 'ipcMain.handle' && node.expression.arguments[0]?.text === 'shell:file-context-menu');
   const source = ts.transpileModule([...functions, ipcHandler.getText(ast)].join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
-  const dependencies = { fs, path, process, BrowserWindow, ipcMain, mainWindow: win, shadowWindows: new Map(), buildFileContextMenu,
+  const dependencies = { fs, path, process, localPath: require('@cardbush/platform').localPath, BrowserWindow, ipcMain, mainWindow: win, shadowWindows: new Map(), buildFileContextMenu,
     localPathFromProtocolUrl: localFileSystemPathFromProtocolUrl,
     Menu: { buildFromTemplate: items => { const menu = Menu.buildFromTemplate(items); menus.push(menu); return { popup() {} }; } },
     clipboard: { writeText: value => actions.push(['path', value]) },

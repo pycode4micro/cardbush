@@ -48,25 +48,52 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(prompt.text, await run('queueFixture[0].text'));
   assert.equal(prompt.whiteSpace, 'pre-wrap');
   assert.ok(prompt.lines >= 3 && prompt.clamp === 'none', 'the full multiline prompt is visible');
+  assert.equal(await run("document.querySelector('.runtime-queue-position')"), null, 'order labels do not duplicate the visible sequence');
+  const rowRect = id => run(`(() => { const r = document.querySelector('[data-queue-item-id="${id}"]').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`);
+  const previewRect = () => run(`(() => { const r = document.querySelector('.runtime-queue-drag-preview').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`);
   const native = (type, point, extra = {}) => window.webContents.sendInputEvent({ type, ...point, ...extra });
-  const startDrag = async id => {
-    const point = await run(`queuePoint(${JSON.stringify(id)})`);
+  const startDrag = async (id, handle = true) => {
+    const point = await run(`queuePoint(${JSON.stringify(id)}, ${handle})`);
     native('mouseMove', point);
     native('mouseDown', point, { button: 'left', clickCount: 1 });
     return point;
   };
   const moveDrag = point => native('mouseMove', point, { modifiers: ['leftButtonDown'] });
   const endDrag = point => native('mouseUp', point, { button: 'left', clickCount: 1 });
-  await startDrag('q1');
+  const original = await rowRect('q1');
+  const neighbour = await rowRect('q2');
+  const start = await startDrag('q1', false);
+  await until("!!document.querySelector('.runtime-queue-drag-preview')", 'holding the card body lifts the full card');
+  const lifted = await previewRect();
+  assert.ok(Math.abs(lifted.width - original.width) < 1 && Math.abs(lifted.height - original.height) < 1, 'the drag preview keeps the full card dimensions');
+  assert.equal(await run("document.querySelector('.runtime-queue-drag-preview').inert"), true);
+  moveDrag({ x: start.x + 16, y: start.y + 9 });
+  await pause(60);
+  const following = await previewRect();
+  assert.ok(Math.abs(following.x - original.x - 16) < 2 && Math.abs(following.y - original.y - 9) < 2, 'the card follows small pointer movements before any order change');
+  assert.equal(await run('queueOrders.length'), 0, 'lifting and moving do not persist the queue');
   let drop = await run("queuePoint('q2', false, 0.8)");
   moveDrag(drop);
-  await until("!!document.querySelector('[data-queue-item-id=q1].dragging')", 'ordinary drag activates without a long press');
+  await until("!!document.querySelector('[data-queue-item-id=q1].dragging')", 'the source leaves a full-height placeholder');
+  await pause(180);
   assert.equal(await run('queueOrders.length'), 0, 'moving only previews the insertion');
-  assert.ok(await run("Boolean(document.querySelector('.drop-before, .drop-after'))"), 'visible insertion indicator');
+  const shifted = await rowRect('q2');
+  assert.ok(shifted.y < neighbour.y - 20, 'neighbours make room before the pointer is released');
+  const moving = await previewRect();
+  assert.ok(Math.abs(moving.x - original.x - (drop.x - start.x)) < 2 && Math.abs(moving.y - original.y - (drop.y - start.y)) < 2, 'the preview stays anchored to the pointer across an insertion boundary');
+  await pause(180);
+  assert.ok(Math.abs((await rowRect('q2')).y - shifted.y) < 1, 'a stationary pointer does not make rows oscillate');
+  fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'tmp', 'composer-queue-drag.png'), (await window.webContents.capturePage()).toPNG());
+  await run("window.queueSavedTheme = document.querySelector('.app').className; document.querySelector('.app').className = 'app theme-light'");
+  await pause(60);
+  fs.writeFileSync(path.join(root, 'tmp', 'composer-queue-drag-light.png'), (await window.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.app').className = queueSavedTheme");
   endDrag(drop);
   await until('queueOrders.length === 1', 'drop commits exactly once');
   assert.deepEqual(await run('queueFixture.map(item => item.id)'), ['q2', 'q1', 'q3']);
-  // Reverse direction and verify the first item indicator follows the new order.
+  assert.equal(await run("document.querySelector('.runtime-queue-drag-preview')"), null, 'dropping removes the visual copy');
+  // Reverse direction and preserve the same order shown by the live preview.
   await startDrag('q1');
   drop = await run("queuePoint('q2', false, 0.1)");
   moveDrag(drop); endDrag(drop);
@@ -82,6 +109,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     if (mode === 'outside') { drop = { x: 2, y: 2 }; moveDrag(drop); }
     endDrag(drop);
     await until("!document.querySelector('.runtime-queue-item.dragging')", 'drag cancel cleanup');
+    assert.equal(await run("document.querySelector('.runtime-queue-drag-preview')"), null);
+    assert.equal(await run("document.body.classList.contains('queue-reordering')"), false);
     assert.equal(await run('queueOrders.length'), 2, mode + ' does not change order');
   }
   await run(`document.querySelector('[data-queue-item-id=q2] .runtime-queue-drag-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))`);
@@ -120,7 +149,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
     })()`);
     assert.deepEqual(layout, { inside: true, iconRight: true, iconReachable: true, textFits: true }, width + 'px queue layout');
   }
-  await run("document.querySelector('.chat-panel').style.width = ''; document.querySelector('.runtime-queue-guide').click()");
+  await run("document.querySelector('.chat-panel').style.width = ''");
+  const guidePoint = await run("(() => { const r = document.querySelector('.runtime-queue-guide').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
+  native('mouseMove', guidePoint);
+  native('mouseDown', guidePoint, { button: 'left', clickCount: 1 });
+  native('mouseUp', guidePoint, { button: 'left', clickCount: 1 });
   await until('queueGuided.length === 1', 'guidance action still uses selected queue item');
   assert.equal(await run('queueGuided[0]'), 'q2');
   await until("document.querySelector('[data-queue-item-id=q1] .runtime-queue-drag-handle')?.disabled === false && document.querySelector('.composer-queue-button')?.textContent === '2'", 'guidance finishes updating the queue');
@@ -134,7 +167,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     .catch(async error => { throw new Error(error.message + '\nRenderer failures: ' + JSON.stringify(await run('failures'))); });
   endDrag(drop);
   assert.equal(await run('queueOrders.length'), 3, 'switching sessions cancels the active drag');
+  assert.equal(await run("document.querySelector('.runtime-queue-drag-preview')"), null, 'switching sessions also removes the floating card');
   await run('window.queueLeavingList = document.querySelector(".message-list"); updateChat(queueOriginalProps)');
   await until('document.querySelector(".message-list") !== queueLeavingList', 'restored session has committed before the next view test');
-  console.log('Queue interaction passed: shortcut, full prompts, native pointer reorder, cancel, keyboard, autoscroll, live append, guidance, session isolation and narrow layout.');
+  console.log('Queue interaction passed: full-card hold and pointer tracking, live gap, drop-only commit, cancel, keyboard, autoscroll, guidance, session isolation and narrow layout.');
 };

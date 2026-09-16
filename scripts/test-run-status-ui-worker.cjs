@@ -12,7 +12,7 @@ app.whenReady().then(async () => {
   window.webContents.on('console-message', event => {
     if (event.level === 'error') console.error('Renderer:', event.message);
   });
-  const read = script => window.webContents.executeJavaScript(script);
+  const read = script => window.webContents.executeJavaScript(script).catch(error => { throw new Error(`Renderer assertion failed: ${script}`, { cause: error }); });
   const until = async script => {
     const end = Date.now() + 6000;
     while (!(await read(script))) {
@@ -83,6 +83,19 @@ app.whenReady().then(async () => {
     writeFileSync(resolve('tmp/run-status-failure-zh.png'), (await window.webContents.capturePage()).toPNG());
     await read('window.renderFailure("en")');
     await until('document.querySelector(".assistant-failure-notice small")?.textContent.includes("Duplicate tool names")');
+    await read('window.renderPlan("open_task_plan_not_resolved", "failed")');
+    await until('document.querySelector(".assistant-plan-notice")?.dataset.planReason === "open_task_plan_not_resolved"');
+    assert.equal(await read('document.querySelector(".assistant-plan-notice").getAttribute("role")'), 'status');
+    assert.equal(await read('document.querySelector(".assistant-failure-notice")'), null);
+    assert.equal(await read('document.querySelector(".assistant-failure-details")'), null);
+    assert.ok(await read('document.documentElement.scrollWidth <= window.innerWidth'));
+    writeFileSync(resolve('tmp/run-status-plan-dark.png'), (await window.webContents.capturePage()).toPNG());
+    await read('window.renderPlan("open_task_plan_not_resolved", "failed", "theme-light")');
+    await until('document.querySelector(".app").classList.contains("theme-light")');
+    writeFileSync(resolve('tmp/run-status-plan-light.png'), (await window.webContents.capturePage()).toPNG());
+    await read('window.renderPlan("task_plan_waiting")');
+    await until('document.querySelector(".app").dataset.planReason === "task_plan_waiting"');
+    assert.equal(await read('document.querySelector(".assistant-plan-notice, .assistant-failure-notice")'), null, 'normal waiting does not add an error or unfinished-plan notice');
     console.log('Run status UI passed: stable header and narration across tool states, idle-only MCP verification and cleanup.');
     clearTimeout(deadline); window.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); window.destroy(); app.exit(1); }

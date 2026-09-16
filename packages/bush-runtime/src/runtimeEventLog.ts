@@ -1,3 +1,4 @@
+import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { randomUUID } from "node:crypto";
 
 import {
@@ -45,6 +46,7 @@ export interface RuntimeEventLogOptions {
 }
 
 export interface RuntimeEventPersistence {
+  cacheEntries?(): Promise<CacheEntry[]>;
   load(sessionId: string, turnId: string): RuntimeEvent[];
   append(event: RuntimeEvent): void;
 }
@@ -69,6 +71,13 @@ export class RuntimeCursorError extends Error {
 }
 
 export class InMemoryRuntimeEventLog {
+  async cacheEntries(): Promise<CacheEntry[]> {
+    return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#streams].map(([key, stream]) =>
+      memoryCacheEntry('events', JSON.parse(key)[0], this.#persistence?.cacheEntries ? [] : stream.events, () => {
+        for (const event of stream.events) this.#eventIds.delete(event.eventId);
+        this.#streams.delete(key);
+      }))];
+  }
   readonly #streams = new Map<string, TurnEventStream>();
   readonly #eventIds = new Set<string>();
   readonly #createEventId: (context: RuntimeEventIdContext) => string;

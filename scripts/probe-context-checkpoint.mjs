@@ -53,7 +53,7 @@ try {
     provider: {
       async countInputTokens(request) {
         return {
-          inputTokens: request.messages.some(m => m.name === 'context_checkpoint_resume') ? 1000 : 229230,
+          inputTokens: request.messages.some(m => m.role === 'tool' && m.toolCallId === 'offline_checkpoint') ? 1000 : 229230,
           source: 'provider',
         };
       },
@@ -65,14 +65,16 @@ try {
           yield modelEvent(request, 1, 'tool_call_delta', {
             index: 0, toolCallId: 'offline_checkpoint', nameDelta: 'checkpoint_context',
             argumentsDelta: JSON.stringify({
-              summaries: prior.turns.filter(t => !t.contextSummary).map(() => 'Offline fixture summary, not a model-generated summary. Prior facts remain in the copied journal.'),
-              active_summary: 'Offline fixture summary, not a model-generated summary. Original Tool results remain in history. Execute only offline_probe_only next, never repeat original Tools.',
+              summaries: request.messages.findLast(m => m.name === 'context_pressure').content.split('\n')
+                .filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+                .filter(source => source.target.startsWith('summaries['))
+                .map(() => 'Offline fixture summary, not a model-generated summary. Original facts remain in the copied journal. Execute only offline_probe_only next, never repeat original Tools.'),
             }),
           });
           yield modelEvent(request, 2, 'response_completed', { finishReason: 'tool_calls' });
         } else if (!probeToolExecutions) {
-          assert.equal(request.messages.some(m => m.name === 'context_checkpoint_resume' && m.role === 'developer'), true);
-          assert.equal(request.messages.some(m => m.role === 'tool'), false);
+          assert.equal(request.messages.some(m => m.role === 'assistant' && m.toolCalls.some(call => call.id === 'offline_checkpoint')), true);
+          assert.deepEqual(request.messages.filter(m => m.role === 'tool').map(m => m.toolCallId), ['offline_checkpoint']);
           yield modelEvent(request, 1, 'tool_call_delta', {
             index: 0, toolCallId: 'offline_after_checkpoint', nameDelta: 'offline_probe_only', argumentsDelta: '{}',
           });

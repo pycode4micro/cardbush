@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
@@ -184,7 +185,7 @@ test("resumes a Session Turn with prior tool messages and commits it exactly onc
       createdAt: "2026-08-29T00:00:00.000Z",
       message: { role: "user", content: "recover this" },
     }],
-    tools: [recoveryToolDefinition],
+    tools: [orderedCheckpointTool, recoveryToolDefinition],
   });
   await waitForEvent(firstLog, "assistant_segment_delta");
   firstEvents.close();
@@ -272,19 +273,13 @@ for (const legacyProjection of [false, true]) test(`recovers a compacted active 
         const pressure = modelRequest.messages.find((message) =>
           message.name === "context_pressure");
         if (pressure) {
-          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
-          const throughMessageId = pressure.content.match(
-            /- through_message_id: (.+)/,
-          )?.[1];
-          assert.ok(activeTurnId);
-          assert.ok(throughMessageId);
+          assert.match(pressure.content, /summaries\[0\]: current Turn/);
           yield recoveryEvent(modelRequest.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: "call_recovery_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              summaries: [],
-              active_summary: "The fixture Tool completed successfully; continue by returning the final answer without rerunning it.",
+              summaries: ["The fixture Tool completed successfully; continue by returning the final answer without rerunning it."],
             }),
           });
           yield recoveryEvent(modelRequest.requestId, 2, "usage", { inputTokens: 2900, outputTokens: 20 });
@@ -320,7 +315,7 @@ for (const legacyProjection of [false, true]) test(`recovers a compacted active 
       createdAt: "2026-08-29T00:00:00.000Z",
       message: { role: "user", content: "run the fixture once and finish" },
     }],
-    tools: [recoveryToolDefinition],
+    tools: [orderedCheckpointTool, recoveryToolDefinition],
     maxOutputTokens: 1_000,
     metadata: { contextWindowTokens: 4_000 },
   });

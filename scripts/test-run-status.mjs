@@ -51,4 +51,10 @@ assert.ok(unknownFailure.technicalDetails.includes('Unexpected upstream failure'
 assert.match(modelFailurePresentation('invalid_request_error', 'Invalid parameters', 'zh', 400).detail, /请求参数/);
 assert.match(modelFailurePresentation('rate_limit_exceeded', 'Rate limited', 'zh', 429).detail, /限制了请求/);
 assert.match(modelFailurePresentation('insufficient_quota', 'Quota exhausted', 'zh', 429).detail, /额度或计费/);
+const legacyPlanNotice = modelFailurePresentation('open_task_plan_not_resolved', '', 'zh');
+assert.equal(legacyPlanNotice.tone, 'neutral');
+assert.equal(legacyPlanNotice.title, '计划仍有未完成标记');
+assert.equal(modelFailurePresentation('open_task_plan_not_resolved', '', 'en').tone, 'neutral');
+assert.equal(legacyPlanNotice.technicalDetails, undefined);
+assert.equal(duplicateFailure.tone, 'error');
 console.log('Run activity and MCP activation facts passed (concurrency, history, stale revisions and failures).');

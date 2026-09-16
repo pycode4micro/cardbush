@@ -34,8 +34,8 @@ app.whenReady().then(async () => {
     assert.ok(node, name);
     return node.getText(ast);
   }).join('\n');
-  const deps = { fs, path, protocol, localFileProtocol: 'cardbush-file',
-    ...load('electron/localFileProtocol.ts'), ...load('electron/fileRead.ts') };
+  const deps = { fs, path, protocol, localPath: require('@cardbush/platform').localPath, localFileProtocol: 'cardbush-file',
+    ...load('electron/localFileProtocol.ts'), ...load('electron/fileRead.ts'), ...load('electron/localFileStream.ts') };
   new Function(...Object.keys(deps), compile(funcs) + '\nregisterLocalFileProtocol();')(...Object.values(deps));
   const window = new BrowserWindow({ show: false, width: 600, height: 720,
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false, offscreen: true, webviewTag: true } });
@@ -53,9 +53,11 @@ app.whenReady().then(async () => {
     const modules = Object.fromEntries([
       'src/shared/localPaths.ts', 'src/shared/textPreview.ts',
       'src/shared/showUiError.ts',
+      'src/shared/recoverableLazy.tsx',
       'src/shared/fileContextMenu.ts',
       'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
       'src/features/inspector/MediaInspectorPreview.tsx',
+      'src/features/tools/PlainSourceLines.tsx',
       'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',
       'src/features/inspector/TextInspectorPreview.tsx', 'src/features/inspector/filePreviewRegistry.ts',
       'src/features/inspector/inspectorFilePreviewRenderers.tsx',
@@ -72,6 +74,8 @@ app.whenReady().then(async () => {
         const module = cache[file] = {exports:{}};
         function resolve(name) {
           if(name === '../chatMessages') return {}; // unrelated Markdown renderer
+          // The real gallery and its image navigation are exercised by test:image-gallery.
+          if(name === '../chatMessages/ImagePreviewDialog') return {ImagePreviewDialog:()=>null};
           if(!name.startsWith('.')) return nativeRequire(name);
           const base = path.resolve(path.dirname(file), name);
           const key = [base, base+'.ts', base+'.tsx'].find(key => sources[key]);

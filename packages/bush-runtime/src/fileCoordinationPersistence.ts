@@ -1,3 +1,4 @@
+import { journalCacheEntries } from './cacheMaintenance.js';
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -82,6 +83,13 @@ export class FileCoordinationPersistence implements CoordinationPersistence {
     const descriptor = this.#descriptor(this.#path(event.sessionId));
     writeSync(descriptor, `${line}\n`, undefined, "utf8");
     fsyncSync(descriptor);
+  }
+
+  cacheEntries() {
+    return journalCacheEntries(this.#root, 'coordination', RECORD_PROTOCOL, 'event', 'sessionId', path => {
+      const descriptor = this.#descriptors.get(path);
+      if (descriptor !== undefined) { closeSync(descriptor); this.#descriptors.delete(path); }
+    }, false);
   }
 
   close(): void {

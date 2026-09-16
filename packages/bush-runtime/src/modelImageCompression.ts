@@ -6,13 +6,17 @@ export const MODEL_IMAGE_MAX_EDGE = 4096;
 export const MODEL_IMAGE_MAX_PIXELS = 4_000_000;
 export const MODEL_IMAGE_TARGET_BYTES = 1_000_000;
 export const MAX_MODEL_IMAGE_SOURCE_BYTES = 64_000_000;
-const MAX_SOURCE_PIXELS = 64_000_000;
+export const MODEL_IMAGE_DECODER_OPTIONS = {
+  limitInputPixels: 64_000_000,
+  failOn: "warning",
+  sequentialRead: true,
+} as const;
 
 export async function compressModelImage(content: Buffer, mime: string, signal?: AbortSignal): Promise<{
   content: Buffer; mime: string;
 }> {
   signal?.throwIfAborted();
-  const metadata = await sharp(content, { limitInputPixels: MAX_SOURCE_PIXELS }).metadata();
+  const metadata = await sharp(content, MODEL_IMAGE_DECODER_OPTIONS).metadata();
   signal?.throwIfAborted();
   const width = metadata.autoOrient.width;
   const height = metadata.autoOrient.height;
@@ -30,7 +34,7 @@ export async function compressModelImage(content: Buffer, mime: string, signal?:
   }
   for (let attempt = 0; attempt < 8; attempt++) {
     signal?.throwIfAborted();
-    const pipeline = sharp(content, { limitInputPixels: MAX_SOURCE_PIXELS }).autoOrient().resize({
+    const pipeline = sharp(content, MODEL_IMAGE_DECODER_OPTIONS).autoOrient().resize({
       width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)),
       fit: "inside", withoutEnlargement: true,
     }).timeout({ seconds: 15 });

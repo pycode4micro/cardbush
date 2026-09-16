@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { InMemoryRuntimeEventLog, ModelImageStore, RuntimeToolLoop, ToolExecutionStore, ToolRegistry,
   registerExtendedBuiltins, omitToolImageDataFromText } from '../dist/index.js';
-import { imageFixture, png } from './helpers/modelImages.mjs';
+import { imageFixture, incompletePng, png } from './helpers/modelImages.mjs';
 
 const block = (data = png) => ({ type: 'image', mimeType: 'image/png', data: data.toString('base64') });
 const call = { protocol: 'bush.tool_call.v1', id: 'capture', name: 'capture', argumentsText: '{}' };
@@ -69,7 +69,7 @@ test('vision-disabled models and insufficient ingress budgets receive usable pat
 });
 
 test('invalid images fail visibly while valid images and native isError status survive', async t => {
-  const native = { isError: true, content: [block(png.subarray(0, -12)), block()] };
+  const native = { isError: true, content: [block(incompletePng), block()] };
   const { run, executionStore } = await fixture(t, native);
   const { messages } = await run();
   const observation = messages.at(-1);

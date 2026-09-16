@@ -64,7 +64,7 @@ export function ToolImageArtifactViewer({
           const failed = failedPaths.has(pathValue);
           return (
             <button
-              className="tool-image-artifact-button"
+              className="tool-preview-card tool-image-artifact-button"
               type="button"
               key={artifact.id || pathValue}
               title={pathValue}
@@ -72,10 +72,10 @@ export function ToolImageArtifactViewer({
               onClick={() => void openImage(artifact)}
               onContextMenu={event => openFileContextMenu(event, pathValue, { language })}
             >
-              <span className="tool-image-artifact-icon" aria-hidden="true">
+              <span className="tool-preview-icon" aria-hidden="true">
                 {loading ? <LoaderCircle size={14} /> : <FileImage size={14} />}
               </span>
-              <span>
+              <span className="tool-preview-content">
                 <strong>
                   {failed
                     ? language === 'zh' ? '图片无法预览' : 'Preview unavailable'

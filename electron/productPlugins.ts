@@ -1,3 +1,4 @@
+import { leaseTemporaryDirectory } from './cacheMaintenance';
 import { resolveRuntimePluginPackage, readRuntimePluginBundle } from './runtimePluginPackage';
 import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -255,6 +256,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
   }
   // Staging is outside the catalog so incomplete copies are never discovered.
   const work = await mkdtemp(join(dirname(targetRoot), '.cardbush-plugin-install-'));
+  const releaseCacheLease = await leaseTemporaryDirectory(work);
   const temporary = join(work, 'staged', id);
   const backup = join(work, 'previous');
   let preserveBackup = false;
@@ -282,6 +284,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
     }
     return { id, manifestPath: join(target, relative(temporary, staged.manifestPath)) };
   } finally {
+    releaseCacheLease();
     if (!preserveBackup) await rm(work, { recursive: true, force: true }).catch((error: unknown) => {
       // A running old plugin may still hold a Windows file handle. The committed
       // installation remains successful; retain cleanup diagnostics for this directory.

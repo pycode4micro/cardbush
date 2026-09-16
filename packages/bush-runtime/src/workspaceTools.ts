@@ -354,7 +354,7 @@ export function registerWorkspaceTools(
           type: "integer",
           minimum: 1,
           maximum: MAX_TERMINAL_YIELD_MS,
-          description: `Required initial wait before a still-running command returns a terminal session handle. Maximum ${MAX_TERMINAL_YIELD_MS}.`,
+          description: `Required maximum wait for this call, not a command timeout. A still-running command returns a terminal session handle and continues running. Maximum ${MAX_TERMINAL_YIELD_MS} ms.`,
         },
         shell: {
           type: "string",
@@ -408,7 +408,11 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "terminal_poll",
-      description: "Wait for new output or a state change from one running terminal session. Returns only output produced since the preceding terminal result.",
+      description: [
+        "Wait up to yield_time_ms for new output or a state change from an existing terminal session, including a sleep started by terminal_exec.",
+        "Pass the returned terminalSessionId as session_id. If state=running, continue waiting on the same session instead of starting another command; empty output does not mean completion.",
+        "Returns only output produced since the preceding terminal result.",
+      ].join(" "),
       inputSchema: objectSchema({
         session_id: { type: "string", minLength: 1 },
         yield_time_ms: {
@@ -1509,7 +1513,10 @@ function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
     "Execute one command in the selected working directory.",
-    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. If the command is still active then, return state=running and a terminalSessionId instead of waiting for process exit.`,
+    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. This bounds the call's wait, not the command's duration. If state=running, pass the returned terminalSessionId to terminal_poll as session_id to continue waiting; do not restart the command.`,
+    process.platform === "win32"
+      ? "To delay before rechecking an external task, use shell=powershell with a sleep command, e.g. Start-Sleep -Seconds 30. Reuse an existing running wait session when available."
+      : "To delay before rechecking an external task, use shell=posix with a sleep command, e.g. sleep 30. Reuse an existing running wait session when available.",
     "Running sessions persist across Agent turns until terminal_stop, natural exit, or a host resource limit. On Windows the whole task tree shares host memory/CPU budgets; detached descendants end with the session. After a resource-limit failure, reduce the workload instead of bypassing the guard or repeating the same command.",
     `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
     "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",

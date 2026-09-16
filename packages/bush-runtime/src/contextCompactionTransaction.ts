@@ -1,8 +1,15 @@
 import type { ModelMessage } from '@cardbush/bush-protocol';
 import type { CompletedModelRound } from './modelRound.js';
 import { validateConversation } from './sessionStore.js';
-import { bindContextCheckpointInput, ContextCheckpointInputError, contextPressureNotice, type ContextCompactionSource,
-  type ContextCompactionState, type ContextPressure } from './contextCompaction.js';
+import { IncrementalCheckpoint } from './incrementalCheckpoint.js';
+import { bindContextCheckpointInput, ContextCheckpointInputError, contextCheckpointSlots, contextPressureNotice, type ContextCompactionSource,
+  type ContextCheckpointFormat, type ContextCompactionState, type ContextPressure } from './contextCompaction.js';
+
+export interface RestoredCompactionFailure {
+  failures: number;
+  outputTokens: number;
+  correctionPartition?: boolean;
+}
 
 interface Fragment {
   turnId: string;
@@ -44,18 +51,21 @@ export class ContextCompactionTransaction {
   readonly #sources: ContextCompactionSource[];
   readonly #state: ContextCompactionState;
   readonly #pressure: ContextPressure;
-  readonly #legacy: boolean;
+  readonly #format: ContextCheckpointFormat;
   readonly #initialOutput: number;
   readonly #maximumOutput: number;
-  readonly #restoredFailures: Map<string, { failures: number; outputTokens: number }>;
+  readonly #restoredFailures: Map<string, RestoredCompactionFailure>;
   readonly #callIds = new Set<string>();
   #current: Node;
   #nodes = 1;
+  #attempts: number;
+  #correctionRecovery = false;
+  readonly incremental?: IncrementalCheckpoint;
 
   constructor(input: { messages: ModelMessage[]; prefixMessageCount: number;
     sources: ContextCompactionSource[]; state: ContextCompactionState; pressure: ContextPressure;
-    outputTokens: number; maximumOutputTokens: number; legacyInput: boolean;
-    restoredFailures?: Map<string, { failures: number; outputTokens: number }> }) {
+    outputTokens: number; maximumOutputTokens: number; inputFormat: ContextCheckpointFormat;
+    restoredFailures?: Map<string, RestoredCompactionFailure>; restoredAttempts?: number; continuation?: ModelMessage[] }) {
     this.#messages = structuredClone(input.messages);
     for (const message of this.#messages) {
       if (message.role === 'assistant') for (const call of message.toolCalls) this.#callIds.add(call.id);
@@ -69,10 +79,11 @@ export class ContextCompactionTransaction {
     }
     this.#state = structuredClone(input.state);
     this.#pressure = input.pressure;
-    this.#legacy = input.legacyInput;
+    this.#format = input.inputFormat;
     this.#initialOutput = input.outputTokens;
     this.#maximumOutput = input.maximumOutputTokens;
     this.#restoredFailures = input.restoredFailures ?? new Map();
+    this.#attempts = input.restoredAttempts ?? 0;
     const fragments = input.sources.filter(source => source.target !== 'not_requested').map(source => ({
       turnId: source.turnId, active: source.turnId === input.state.activeTurn?.turnId,
       startMessage: source.startMessage, endMessageExclusive: source.endMessageExclusive,
@@ -81,12 +92,26 @@ export class ContextCompactionTransaction {
     if (!fragments.length) throw new Error('No authorized context sources can be compacted.');
     this.#root = this.#node('root', fragments);
     this.#current = this.#root;
+    if (this.#format === 'incremental') this.incremental = new IncrementalCheckpoint(this.#state,
+      contextPressureNotice(this.#state, this.#pressure, this.#format, this.#sources), input.continuation, this.#sources);
+    if (this.#restoredFailures.get('root')?.correctionPartition) this.partitionForCorrection();
   }
 
   get originalState(): ContextCompactionState { return structuredClone(this.#state); }
   get isRoot(): boolean { return this.#current === this.#root; }
 
+  /** Malformed-output recovery gets at most nine requests across both small
+   * jobs and their final consolidation, including attempts before restart. */
+  beginAttempt(): boolean {
+    if (this.#correctionRecovery && this.#attempts >= 9) return false;
+    this.#attempts += 1;
+    return true;
+  }
+
   job(): CompactionJob {
+    if (this.incremental) return { id: 'root', state: this.originalState,
+      messages: [...this.#messages, ...this.incremental.history], outputTokens: this.#root.outputTokens,
+      failures: this.incremental.failures, sourceRanges: this.#ranges(this.#root) };
     const node = this.#current;
     const state = this.#nodeState(node);
     let messages: ModelMessage[];
@@ -96,19 +121,32 @@ export class ContextCompactionTransaction {
       sources = this.#sources;
     } else {
       messages = [...this.#prefix];
+      const slots = contextCheckpointSlots(state, this.#format);
+      const stagedRanges = new Map<Node, { start: number; end: number }>();
+      for (const child of node.children ?? []) {
+        const start = messages.length;
+        messages.push(...child.result!);
+        stagedRanges.set(child, { start, end: messages.length });
+      }
       sources = node.fragments.map((fragment, index) => {
-        const startMessage = messages.length;
-        // Children of a split single Turn all belong to that same source.
-        // Children of a multi-Turn node each own exactly one original Turn.
         const children = node.children?.filter(child => child.fragments.some(part => part.turnId === fragment.turnId));
-        messages.push(...(children ? children.flatMap(child => child.result!) : fragment.units.flat()));
-        return { turnId: fragment.turnId, target: fragment.active
-          ? (this.#legacy ? 'active_turn.summary' : 'active_summary') : `summaries[${index}]`,
+        if (children?.length) {
+          // A grouped child exchange is appended once. Each parent slot points
+          // to its exact field, preserving call identities and source ownership.
+          return { turnId: fragment.turnId, target: slots[index]!.target,
+            startMessage: stagedRanges.get(children[0]!)!.start,
+            endMessageExclusive: stagedRanges.get(children.at(-1)!)!.end,
+            checkpointSummaries: children.map(child => ({ message: stagedRanges.get(child)!.start,
+              target: contextCheckpointSlots(this.#nodeState(child), this.#format).find(slot => slot.turnId === fragment.turnId)!.target })) };
+        }
+        const startMessage = messages.length;
+        messages.push(...fragment.units.flat());
+        return { turnId: fragment.turnId, target: slots[index]!.target,
           startMessage, endMessageExclusive: messages.length };
       });
     }
     validateConversation(messages);
-    const notice = contextPressureNotice(state, this.#pressure, this.#legacy, sources);
+    const notice = contextPressureNotice(state, this.#pressure, this.#format, sources);
     if (node !== this.#root || node.children) {
       notice.content += '\n' + (node === this.#root
         ? 'These indexed checkpoint exchanges are staged summaries of all requested original source ranges. Consolidate them into the requested final fields. No staged checkpoint has replaced the running conversation.'
@@ -128,16 +166,37 @@ export class ContextCompactionTransaction {
    */
   retry(message: string, increaseOutput = false): boolean {
     const node = this.#current;
+    if (this.incremental) {
+      if (increaseOutput) node.outputTokens = Math.min(this.#maximumOutput, node.outputTokens * 2);
+      return this.incremental.retry(message);
+    }
     node.failures += 1;
     if (node.failures < 3) node.corrections.push(message);
     if (increaseOutput) node.outputTokens = Math.min(this.#maximumOutput, node.outputTokens * 2);
     return node.failures < 3;
   }
 
+  /** One bounded fallback, keeping existing source ownership and full Tool
+   * exchanges. Current and historical work no longer compete in one job. */
+  partitionForCorrection(): boolean {
+    if (this.incremental) return false;
+    const node = this.#current;
+    if (!this.isRoot || node.children || node.fragments.length < 2) return false;
+    const active = node.fragments.filter(fragment => fragment.active);
+    const historical = node.fragments.filter(fragment => !fragment.active);
+    const boundary = Math.ceil(node.fragments.length / 2);
+    const parts = active.length && historical.length ? [historical, active]
+      : [node.fragments.slice(0, boundary), node.fragments.slice(boundary)];
+    if (!this.#partition(parts)) return false;
+    this.#correctionRecovery = true;
+    return true;
+  }
+
   /** Return false rather than slice an indivisible message or a Tool exchange.
    * A failed merge cannot recursively summarize its own output forever.
    */
   partition(): boolean {
+    if (this.incremental) return false;
     const node = this.#current;
     if (node.children) return false;
     let parts: Fragment[][];
@@ -155,6 +214,11 @@ export class ContextCompactionTransaction {
         [{ ...fragment, startMessage: messageBoundary, units: fragment.units.slice(boundary) }],
       ];
     }
+    return this.#partition(parts);
+  }
+
+  #partition(parts: Fragment[][]): boolean {
+    const node = this.#current;
     if (this.#nodes + parts.length > 64) return false;
     this.#nodes += parts.length;
     node.children = parts.map((fragments, index) => this.#node(`${node.id}/${index}`, fragments));
@@ -173,7 +237,8 @@ export class ContextCompactionTransaction {
     if (this.#callIds.has(call.id)) {
       throw new ContextCheckpointInputError('tool_call_id', 'a unique identity for this checkpoint exchange', call.id);
     }
-    bindContextCheckpointInput(JSON.parse(call.argumentsText), this.#nodeState(this.#current));
+    if (this.incremental) return this.incremental.submit(result);
+    bindContextCheckpointInput(JSON.parse(call.argumentsText), this.#nodeState(this.#current), this.#format);
     if (this.isRoot) return true;
     this.#callIds.add(call.id);
     this.#current.result = [{ role: 'assistant', content: result.text,

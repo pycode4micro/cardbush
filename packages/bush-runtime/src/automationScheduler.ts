@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { blobCacheEntries } from './cacheMaintenance.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { automationCommandSchema, automationDefinitionSchema, runtimeSessionTurnRequestSchema, isAutomationResult, type AutomationJob, type AutomationRun, type AutomationOverview, type AutomationReminder, type AutomationConversation, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
@@ -82,6 +83,31 @@ export class AutomationScheduler {
     await this.ready; await this.queue;
     return structuredClone({ jobs: this.state.jobs.filter(job => !sessionId || job.sessionId === sessionId).map(job => ({ ...job, runs: job.runs.map(({ result: _result, ...run }) => run) })),
       sessions: Object.entries(this.state.contexts).filter(([id, context]) => (!sessionId || id === sessionId) && !context.metadata.automationRunId).map(([id, context]) => ({ id, title: context.title, model: context.model })), available: !this.closed });
+  }
+  get busy() { return this.ticking || this.executions.size > 0; }
+  async cacheEntries() {
+    await this.ready; await this.queue;
+    return blobCacheEntries(dirname(this.options.path), 'automation_temporary', name => /^automations\.json\.[a-f0-9-]{36}\.tmp$/.test(name), 24 * 60 * 60_000);
+  }
+
+  async sessionDeleted(sessionId: string) {
+    await this.ready; await this.queue;
+    if (!this.state.contexts[sessionId] && !this.state.jobs.some(job => job.sessionId === sessionId && job.state === 'active')) return;
+    await this.mutate(() => {
+      delete this.state.contexts[sessionId];
+      for (const job of this.state.jobs) if (job.sessionId === sessionId && job.state === 'active') {
+        job.state = 'paused'; job.revision++; delete job.nextRunAt;
+      }
+    });
+  }
+
+  /** Jobs and unread results are durable; only unused launch contexts are disposable. */
+  async collectContexts(sessions: Set<string>) {
+    await this.ready; await this.queue;
+    const keep = new Set([...sessions, ...this.state.jobs.map(job => job.sessionId)]);
+    const removed = Object.keys(this.state.contexts).filter(id => !keep.has(id));
+    if (removed.length) await this.mutate(() => { for (const id of removed) delete this.state.contexts[id]; });
+    return { removed: removed.length, roots: structuredClone(this.state) };
   }
   async reminder(): Promise<AutomationReminder> {
     await this.ready; await this.queue;

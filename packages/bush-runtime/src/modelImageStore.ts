@@ -1,11 +1,18 @@
+import { blobCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES } from "./modelImageCompression.js";
+import sharp from "sharp";
+import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES, MODEL_IMAGE_DECODER_OPTIONS } from "./modelImageCompression.js";
 
 export { MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_PIXELS, MODEL_IMAGE_TARGET_BYTES, MAX_MODEL_IMAGE_SOURCE_BYTES } from "./modelImageCompression.js";
 
 export const MAX_MODEL_IMAGE_BYTES = 9_000_000;
+
+// Cache only successful content digests, never source paths or image buffers.
+// Immutable history can be replayed each round without repeating pixel decoding.
+const decodedImages = new Set<string>();
+const MAX_DECODED_IMAGE_ENTRIES = 128;
 
 export class ModelImageInputError extends Error {
   constructor(readonly code: string, message: string, options?: ErrorOptions) {
@@ -23,6 +30,7 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal, ma
   if (!isAbsolute(path)) throw new ModelImageInputError("image_input_invalid", "Model image path must be absolute.");
   try {
     const file = await open(path, "r");
+    let content: Buffer;
     try {
       const before = await file.stat({ bigint: true });
       if (!before.isFile()) throw new ModelImageInputError("image_input_invalid", `Model image is not a file: ${path}`);
@@ -45,11 +53,11 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal, ma
           after.mtimeNs !== before.mtimeNs) {
         throw new ModelImageInputError("image_input_not_ready", `Model image changed while reading: ${path}. Wait for the image writer to finish, then inject it again.`);
       }
-      const content = buffer.subarray(0, length);
-      return { content, mime: imageMime(content) };
+      content = buffer.subarray(0, length);
     } finally {
       await file.close();
     }
+    return { content, mime: await imageMime(content, signal) };
   } catch (error) {
     if (error instanceof ModelImageInputError || signal?.aborted) throw error;
     throw new ModelImageInputError(
@@ -62,6 +70,10 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal, ma
 
 /** Runtime-owned content-addressed blobs. Persisted messages reference these, never mutable source files. */
 export class ModelImageStore {
+  async cacheEntries() {
+    return [...await blobCacheEntries(this.#root, 'model_images', name => /^[a-f0-9]{64}\.(png|jpeg|webp|gif|bmp)$/.test(name)), ...await temporaryCacheEntries(this.#root)];
+  }
+
   readonly #root: string;
 
   constructor(dataRoot = join(process.cwd(), ".cardbush-runtime")) {
@@ -76,7 +88,7 @@ export class ModelImageStore {
     const managed = isAbsolute(value) && dirname(resolve(value)) === this.#root;
     const maxBytes = options.original || managed ? MAX_MODEL_IMAGE_BYTES : MAX_MODEL_IMAGE_SOURCE_BYTES;
     let { content, mime } = /^data:image\//i.test(value)
-      ? readDataImage(value, maxBytes) : await readLocalModelImage(value, signal, maxBytes);
+      ? await readDataImage(value, maxBytes, signal) : await readLocalModelImage(value, signal, maxBytes);
     if (managed) {
       const expected = join(this.#root, `${createHash("sha256").update(content).digest("hex")}.${mime.slice(6)}`);
       if (resolve(value) !== expected) throw new ModelImageInputError("image_snapshot_corrupt", "Stored model image failed its content integrity check.");
@@ -116,7 +128,7 @@ export class ModelImageStore {
   }
 }
 
-function readDataImage(value: string, maxBytes: number): { content: Buffer; mime: string } {
+async function readDataImage(value: string, maxBytes: number, signal?: AbortSignal): Promise<{ content: Buffer; mime: string }> {
   const header = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(value);
   if (!header) throw new ModelImageInputError("image_input_invalid", "Data image must use base64 encoding.");
   const encoded = value.slice(header[0].length);
@@ -126,36 +138,55 @@ function readDataImage(value: string, maxBytes: number): { content: Buffer; mime
   const content = Buffer.from(encoded, "base64");
   if (content.length > maxBytes) throw new ModelImageInputError("image_input_too_large", `Model image exceeds ${maxBytes} bytes.`);
   if (content.toString("base64") !== encoded) throw new ModelImageInputError("image_input_invalid", "Data image contains invalid base64.");
-  return { content, mime: imageMime(content) };
+  return { content, mime: await imageMime(content, signal) };
 }
 
-function imageMime(content: Buffer): string {
+async function imageMime(content: Buffer, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
+  if (!content.length) throw new ModelImageInputError("image_input_invalid", "Model image is empty. Choose a complete image file.");
+  const mime = rasterMime(content);
+  if (!mime) throw new ModelImageInputError("image_input_unsupported", "Model image format is not supported. Convert it to PNG, JPEG, GIF or WebP.");
+  const digest = createHash("sha256").update(content).digest("hex");
+  if (decodedImages.has(digest)) {
+    decodedImages.delete(digest);
+    decodedImages.add(digest);
+    return mime;
+  }
+  try {
+    // Headers identify the format, not completeness. Decode every frame with
+    // strict pixel checks and bounded resources. The tiny output is discarded;
+    // validation never replaces the image or allocates a full raster in JS.
+    await sharp(content, { ...MODEL_IMAGE_DECODER_OPTIONS, animated: true })
+      .resize({ width: 1, height: 1, fit: "fill", fastShrinkOnLoad: false })
+      .timeout({ seconds: 15 }).raw().toBuffer();
+    signal?.throwIfAborted();
+  } catch (error) {
+    signal?.throwIfAborted();
+    const detail = error instanceof Error ? error.message : String(error);
+    const code = /pixel limit/i.test(detail) ? "image_input_too_large"
+      : /timeout/i.test(detail) ? "image_input_decode_timeout"
+      : /unsupported image format/i.test(detail) ? "image_input_unsupported" : "image_input_invalid";
+    throw new ModelImageInputError(code,
+      `Cannot decode model image: ${detail}. Use a complete PNG, JPEG, GIF or WebP image within the image size limits.`,
+      { cause: error });
+  }
+  decodedImages.add(digest);
+  if (decodedImages.size > MAX_DECODED_IMAGE_ENTRIES) decodedImages.delete(decodedImages.values().next().value!);
+  return mime;
+}
+
+function rasterMime(content: Buffer): string | undefined {
   if (
-    content.length >= 32 &&
-    content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
-    content.subarray(-12, -8).readUInt32BE(0) === 0 &&
-    content.subarray(-8, -4).toString("ascii") === "IEND"
+    content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   ) return "image/png";
+  if (content[0] === 0xff && content[1] === 0xd8) return "image/jpeg";
   if (
-    content.length >= 4 && content[0] === 0xff && content[1] === 0xd8 &&
-    content.at(-2) === 0xff && content.at(-1) === 0xd9
-  ) return "image/jpeg";
-  if (
-    content.length >= 14 &&
-    ["GIF87a", "GIF89a"].includes(content.subarray(0, 6).toString("ascii")) &&
-    content.at(-1) === 0x3b
+    ["GIF87a", "GIF89a"].includes(content.subarray(0, 6).toString("ascii"))
   ) return "image/gif";
   if (
-    content.length >= 20 && content.subarray(0, 4).toString("ascii") === "RIFF" &&
-    content.subarray(8, 12).toString("ascii") === "WEBP" &&
-    content.readUInt32LE(4) + 8 === content.length
+    content.subarray(0, 4).toString("ascii") === "RIFF" &&
+    content.subarray(8, 12).toString("ascii") === "WEBP"
   ) return "image/webp";
-  if (
-    content.length >= 26 && content.subarray(0, 2).toString("ascii") === "BM" &&
-    content.readUInt32LE(2) === content.length
-  ) return "image/bmp";
-  throw new ModelImageInputError(
-    "image_input_not_ready",
-    "Model image content is not a supported raster image or is incomplete. Wait for the image writer to finish, then inject a complete PNG, JPEG, GIF, WebP, or BMP file.",
-  );
+  if (content.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
+  return undefined;
 }

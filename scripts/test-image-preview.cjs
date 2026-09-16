@@ -13,9 +13,7 @@ app.whenReady().then(async () => {
     for (const file of ['theme.css', 'app.css', 'themes/cyberpunk.css']) {
       await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles', file), 'utf8'));
     }
-    const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/features/chatMessages/ImagePreviewDialog.tsx'), 'utf8'), {
-      compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-    }).outputText;
+    const code = fs.readFileSync(process.env.CARDBUSH_IMAGE_PREVIEW_MODULE, 'utf8');
     const shared = Object.fromEntries(['localPaths', 'showUiError', 'fileContextMenu'].map(name => [name, ts.transpileModule(fs.readFileSync(path.join(root, 'src/shared', name + '.ts'), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText]));

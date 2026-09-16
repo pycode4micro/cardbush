@@ -414,6 +414,9 @@ const desktopApi = {
     }>,
   readImageDataUrl: (targetPath: string) =>
     ipcRenderer.invoke('image:read-data-url', targetPath) as Promise<string>,
+  startImageGallery: (root: string, recursive: boolean) => ipcRenderer.invoke('image:gallery-start', root, recursive),
+  nextImageGallery: (id: string) => ipcRenderer.invoke('image:gallery-next', id),
+  closeImageGallery: (id: string) => ipcRenderer.invoke('image:gallery-close', id) as Promise<void>,
   setCardlingState: (payload: CardlingDesktopState) =>
     ipcRenderer.invoke('cardling:update-state', payload) as Promise<void>,
   onCardlingState: (callback: (payload: CardlingDesktopState) => void) => {

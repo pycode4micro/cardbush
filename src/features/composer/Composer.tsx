@@ -1109,6 +1109,8 @@ export function Composer({
       {previewImage && (
         <ImagePreviewDialog
           image={previewImage}
+          images={imageAttachments.map(image => ({ src: image.previewUrl, path: image.path, name: image.name }))}
+          initialScope="attachments"
           language={language}
           onClose={() => setPreviewImage(null)}
         />

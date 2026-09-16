@@ -1,3 +1,4 @@
+import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { randomUUID } from "node:crypto";
 
 import {
@@ -10,6 +11,7 @@ import {
 } from "@cardbush/bush-protocol";
 
 export interface SubagentTaskPersistence {
+  cacheEntries?(): Promise<CacheEntry[]>;
   load(parentSessionId: string): SubagentEvent[];
   append(event: SubagentEvent): void;
 }
@@ -28,6 +30,11 @@ export class SubagentTaskStore {
     this.#persistence = options.persistence;
     this.#createEventId = options.createEventId ?? (() => `subagent_event_${randomUUID()}`);
     this.#now = options.now ?? (() => new Date().toISOString());
+  }
+
+  async cacheEntries(): Promise<CacheEntry[]> {
+    return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#events].map(([id, rows]) =>
+      memoryCacheEntry('subagents', id, this.#persistence?.cacheEntries ? [] : rows, () => this.#events.delete(id)))];
   }
 
   start(input: {

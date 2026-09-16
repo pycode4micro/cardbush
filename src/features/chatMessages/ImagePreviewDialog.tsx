@@ -1,4 +1,4 @@
-import { Minus, Plus, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Minus, Plus, X } from 'lucide-react';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   type PointerEvent as ReactPointerEvent,
@@ -12,14 +12,9 @@ import { createPortal } from 'react-dom';
 
 import type { AppLanguage } from '../../types';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
-
-export type ImagePreviewSource = {
-  src: string;
-  name: string;
-  path?: string;
-  naturalWidth?: number;
-  naturalHeight?: number;
-};
+import { useImageGallery } from './useImageGallery';
+import { galleryImageKey, type ImageGalleryScope, type ImagePreviewSource } from './imageGallery';
+export type { ImagePreviewSource } from './imageGallery';
 
 const minimumZoom = 0.25;
 const maximumZoom = 5;
@@ -53,14 +48,22 @@ function previewNaturalSize(image: ImagePreviewSource) {
 }
 
 export function ImagePreviewDialog({
-  image,
+  image: initialImage,
+  images,
+  initialScope,
   language,
   onClose,
 }: {
   image: ImagePreviewSource;
+  images?: ImagePreviewSource[];
+  initialScope?: ImageGalleryScope;
   language: AppLanguage;
   onClose: () => void;
 }) {
+  const gallery = useImageGallery(initialImage, { images, initialScope, onClose });
+  const { image } = gallery;
+  const imageKey = galleryImageKey(image);
+  const dialogRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
   const imageRef = useRef<HTMLImageElement>(null);
@@ -72,7 +75,17 @@ export function ImagePreviewDialog({
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [dragging, setDragging] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [fallback, setFallback] = useState<{ key: string; src: string } | null>(null);
+  const currentKey = useRef(imageKey);
+  currentKey.current = imageKey;
+  const source = fallback?.key === imageKey ? fallback.src : image.src;
   const { zoom } = view;
+
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus({ preventScroll: true });
+    return () => { if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, []);
 
   const updateView = useCallback((next: ImageView) => {
     const constrained = constrainView(next, geometryRef.current);
@@ -103,7 +116,7 @@ export function ImagePreviewDialog({
     setNaturalSize(element?.complete && element.naturalWidth > 0
       ? { width: element.naturalWidth, height: element.naturalHeight }
       : previewNaturalSize(image));
-  }, [image.src]);
+  }, [imageKey, image.src]);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -122,7 +135,25 @@ export function ImagePreviewDialog({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopImmediatePropagation();
         onClose();
+        return;
+      }
+      if (event.key === 'Tab') {
+        const controls = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), select') ?? [])];
+        const current = controls.indexOf(document.activeElement as HTMLElement);
+        if (current < 0 || (event.shiftKey && current === 0) || (!event.shiftKey && current === controls.length - 1)) {
+          event.preventDefault();
+          controls[event.shiftKey ? controls.length - 1 : 0]?.focus();
+        }
+        event.stopPropagation();
+        return;
+      }
+      if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.ctrlKey && !event.metaKey && !event.altKey &&
+        !(event.target instanceof HTMLSelectElement)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        gallery.move(event.key === 'ArrowLeft' ? -1 : 1);
         return;
       }
       const isZoomIn = keyboardShortcuts.matches('imageZoomIn', event);
@@ -135,7 +166,7 @@ export function ImagePreviewDialog({
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [applyZoom, keyboardShortcuts, onClose]);
+  }, [applyZoom, keyboardShortcuts, onClose, gallery.move]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -213,6 +244,8 @@ export function ImagePreviewDialog({
   return createPortal(
     <div className="modal-backdrop image-preview-backdrop" onMouseDown={onClose}>
       <section
+        ref={dialogRef}
+        tabIndex={-1}
         className="image-preview-dialog"
         role="dialog"
         aria-modal="true"
@@ -221,6 +254,17 @@ export function ImagePreviewDialog({
       >
         <header>
           <strong title={image.path ?? image.name}>{image.name}</strong>
+          {gallery.scopes.length > 0 && <select className="image-preview-scope" value={gallery.scope}
+            aria-label={language === 'zh' ? '图片范围' : 'Image scope'}
+            onChange={event => gallery.changeScope(event.target.value as ImageGalleryScope)}>
+            {gallery.scopes.map(scope => <option key={scope} value={scope}>{({
+              session: language === 'zh' ? '会话' : 'Conversation',
+              attachments: language === 'zh' ? '附件' : 'Attachments',
+              directory: language === 'zh' ? '目录' : 'Folder',
+              workspace: language === 'zh' ? '工作区' : 'Workspace',
+            })[scope]}</option>)}
+          </select>}
+          <span className="image-preview-position" aria-live="polite">{gallery.index + 1} / {gallery.images.length}{gallery.loading || gallery.more ? '+' : ''}</span>
           <div className="image-preview-zoom-controls" aria-label={language === 'zh' ? '图片缩放' : 'Image zoom'}>
             <button
               type="button"
@@ -264,6 +308,13 @@ export function ImagePreviewDialog({
             <X size={16} />
           </button>
         </header>
+        {(gallery.loading || gallery.error || gallery.skipped > 0 || gallery.more) && <div className="image-preview-gallery-status" role="status">
+          <span>{gallery.error ? (language === 'zh' ? '无法读取图片列表，可继续查看已有图片。' : 'Unable to read the image list. Available images can still be viewed.')
+            : gallery.loading ? (language === 'zh' ? '正在查找图片…' : 'Finding images…')
+            : gallery.skipped ? (language === 'zh' ? '部分目录无法读取。' : 'Some folders could not be read.') : ''}</span>
+          {gallery.more && <button type="button" onClick={gallery.loadMore}>{language === 'zh' ? '加载更多' : 'Load more'}</button>}
+          {gallery.error && <button type="button" onClick={gallery.retry}>{language === 'zh' ? '重试' : 'Retry'}</button>}
+        </div>}
         <div
           ref={stageRef}
           className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
@@ -285,6 +336,13 @@ export function ImagePreviewDialog({
           }}
           onContextMenu={event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
         >
+          {gallery.images.length > 1 && <div className="image-preview-navigation"
+            onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+            <button type="button" disabled={gallery.index === 0} onClick={() => gallery.move(-1)}
+              aria-label={language === 'zh' ? '上一张图片' : 'Previous image'} title="←"><ChevronLeft size={22} /></button>
+            <button type="button" disabled={gallery.index === gallery.images.length - 1} onClick={() => gallery.move(1)}
+              aria-label={language === 'zh' ? '下一张图片' : 'Next image'} title="→"><ChevronRight size={22} /></button>
+          </div>}
           {!ready && <p className="image-preview-status" role="status">{failed
             ? language === 'zh' ? '图片无法预览' : 'Image preview unavailable'
             : language === 'zh' ? '正在加载图片…' : 'Loading image…'}</p>}
@@ -295,11 +353,21 @@ export function ImagePreviewDialog({
           >
             <img
               ref={imageRef}
-              src={image.src}
+              key={imageKey}
+              src={source}
               alt={image.name}
               draggable={false}
               decoding="sync"
-              onError={() => setFailed(true)}
+              onError={() => {
+                const read = window.cardbushDesktop?.readImageDataUrl;
+                if (read && image.path && !/^(?:https?:|data:|blob:)/i.test(image.path) && !source.startsWith('data:')) {
+                  void read(image.path).then(src => {
+                    if (currentKey.current !== imageKey) return;
+                    if (src.startsWith('data:image/')) setFallback({ key: imageKey, src });
+                    else setFailed(true);
+                  }).catch(() => { if (currentKey.current === imageKey) setFailed(true); });
+                } else setFailed(true);
+              }}
               onLoad={(event) => {
                 setNaturalSize({
                   width: event.currentTarget.naturalWidth,

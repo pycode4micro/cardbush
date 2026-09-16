@@ -1,3 +1,4 @@
+import { blobCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -13,6 +14,7 @@ type Journal = { sequence: number; events: AppObservation[] };
 export class McpAppObservations {
   private readonly writes = new Map<string, Promise<void>>();
   constructor(private readonly root: string) {}
+  async cacheEntries() { await this.flush(); return [...await blobCacheEntries(this.root, 'mcp_app_observations', name => /^[a-f0-9]{64}\.json$/.test(name)), ...await temporaryCacheEntries(this.root)]; }
   private file(session: string) { return join(this.root, createHash('sha256').update(session).digest('hex') + '.json'); }
   private async read(session: string): Promise<Journal> {
     try { return JSON.parse(await readFile(this.file(session), 'utf8')); }

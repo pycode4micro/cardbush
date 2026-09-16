@@ -25,9 +25,12 @@ module.exports = async ({ run, until, window: win, root, click }) => {
       if (command.kind === 'maintenance.runtime_assets.plan') return { protocol: command.protocol, ok: true, value: base };
       if (command.kind === 'maintenance.runtime_assets.reset') return { protocol: command.protocol, ok: true,
         value: { ...base, selected_categories: [...command.categories, 'teams', 'agent_profiles'], changed: true, restart_required: false } };
+      if (command.kind === 'maintenance.clear_cache') return { protocol: command.protocol, ok: true,
+        value: { target: 'application-cache', cleared: true, counts: { files: 2 }, errors: ['fixture: one locked cache file'] } };
       throw Error('Unexpected maintenance command: ' + command.kind);
     };
     settingsProps.backendCapabilities = { ...settingsProps.backendCapabilities, maintenanceRuntimeAssetsReset: true,
+      maintenanceLogsCacheClear: true, maintenanceConversationHistoryClear: true,
       runtimeAssetResetProtocol: 'cardbush.runtime_asset_reset.v1', runtimeAssetResetCategories: ['prompts', 'skills', 'agent_profiles', 'teams'], subagents: false };
     settingsProps.onRuntimeAssetsReloaded = async categories => { maintenanceReloads.push(categories); };
     renderSettings();
@@ -49,6 +52,13 @@ module.exports = async ({ run, until, window: win, root, click }) => {
   assert.deepEqual(await run("maintenanceCommands.filter(command => command.kind.endsWith('.reset')).map(command => command.categories)"), [['prompts', 'skills']]);
   assert.deepEqual(await run('maintenanceReloads'), [['prompts', 'skills']]);
   assert.doesNotMatch(await run('document.body.innerText'), /\bTeams\b|Agent Profiles/);
+  assert.match(await run('document.body.innerText'), /清理应用缓存/);
+  await run("Array.from(document.querySelectorAll('.maintenance-action-row')).find(row => row.innerText.includes('清理应用缓存')).querySelector('button').click()");
+  await until("document.body.innerText.includes('fixture: one locked cache file')");
+  assert.equal(await run("maintenanceCommands.filter(command => command.kind === 'maintenance.clear_cache').length"), 1);
+  await run("settingsProps.runtimeBusy = true; renderSettings()");
+  await until("Array.from(document.querySelectorAll('.maintenance-action-row')).find(row => row.innerText.includes('清理应用缓存')).querySelector('button').disabled");
+  await run("settingsProps.runtimeBusy = false; renderSettings()");
   fs.writeFileSync(path.join(root, 'tmp/settings-maintenance-dark.png'), (await win.webContents.capturePage()).toPNG());
 
   await run("document.querySelector('.runtime-asset-category-grid input').click()");

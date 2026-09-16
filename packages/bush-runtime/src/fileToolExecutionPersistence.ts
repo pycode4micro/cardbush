@@ -1,3 +1,4 @@
+import { journalCacheEntries } from './cacheMaintenance.js';
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -116,6 +117,13 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
     fsyncSync(descriptor);
     const marker = this.#descriptor(resolve(this.#root, '.file-memo-references-created'));
     fsyncSync(marker);
+  }
+
+  cacheEntries() {
+    return journalCacheEntries(this.#root, 'tool_executions', RECORD_PROTOCOL, 'record', 'sessionId', path => {
+      const descriptor = this.#descriptors.get(path);
+      if (descriptor !== undefined) { closeSync(descriptor); this.#descriptors.delete(path); }
+    }, false);
   }
 
   close(): void {

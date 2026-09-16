@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from '../../bush-runtime/test/helpers/orderedCheckpoint.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -54,7 +55,6 @@ test('byte pressure below the token limit partitions old image observations, com
         output = [{ type: 'function_call', id: 'fc_' + requests.length, call_id: 'cp_' + requests.length,
           name: 'checkpoint_context', arguments: JSON.stringify({
             summaries: sources.filter(source => source.target.startsWith('summaries[')).map(() => 'Preserved the inspected image and pending verification.'),
-            active_summary: sources.some(source => source.target === 'active_summary') ? 'Continue verification.' : '',
           }) }];
       } else {
         output = [{ type: 'message', id: 'final', role: 'assistant', status: 'completed',
@@ -92,7 +92,7 @@ test('byte pressure below the token limit partitions old image observations, com
       baseURL: `http://127.0.0.1:${server.address().port}/v1`, timeoutMs: 3000 }) });
   const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'bytes',
     sessionId: 'bytes', turnId: 'current', model: 'fixture', maxOutputTokens: 8192,
-    prefixMessages: [{ role: 'system', content: 'Keep the verified facts.' }],
+    tools: [orderedCheckpointTool], prefixMessages: [{ role: 'system', content: 'Keep the verified facts.' }],
     inputMessages: [{ messageId: 'current', message: { role: 'user', content: 'Continue.' } }],
     metadata: { contextWindowTokens: 400000 } });
   assert.equal(result.payload.status, 'completed', JSON.stringify(result.payload));

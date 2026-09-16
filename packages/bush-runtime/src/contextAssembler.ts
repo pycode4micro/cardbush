@@ -176,7 +176,13 @@ export function assembleContextProjection(input: AssembleContextInput): {
         }),
       }];
     }
-    return [{ turnId: turn.turnId, source, messages: source.map((message) => message.message) }];
+    return [{ turnId: turn.turnId, source, messages: source.filter(item => {
+      // A stopped incremental checkpoint retains its actual calls/receipts,
+      // but its expired maintenance authorization must not direct a new Turn.
+      const message = item.message;
+      return !(item.metadata?.contextCompactionId && message.role === 'user' &&
+        (message.name === 'context_pressure' || message.name === 'context_compaction_correction'));
+    }).map((message) => message.message) }];
   }).map(({ turnId, source, messages }) => ({
     turnId,
     source,

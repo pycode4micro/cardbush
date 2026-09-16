@@ -5,6 +5,7 @@ import { readHandleBytes } from './fileRead';
 import { extractLocalPluginArchive, pluginArchiveLimits } from './pluginArchives';
 import { findPluginPackageRoot } from './pluginManifest';
 import { installProductPlugin } from './productPlugins';
+import { collectTemporaryDirectories, leaseTemporaryDirectory } from './cacheMaintenance';
 
 export function localPluginInstallDialog(kind: unknown = 'directory'): OpenDialogOptions {
   if (kind === 'directory') return { title: 'Install plugin from folder', properties: ['openDirectory'] };
@@ -28,14 +29,25 @@ export async function installLocalProductPlugin(sourcePath: string, userPluginRo
   const parent = dirname(resolve(userPluginRoot));
   await mkdir(parent, { recursive: true });
   const stage = await mkdtemp(join(parent, '.cardbush-plugin-import-'));
+  const release = await leaseTemporaryDirectory(stage);
   try {
-    await extractLocalPluginArchive(archive, stage);
-    return await installProductPlugin(await findPluginPackageRoot(stage), userPluginRoot);
+    const payload = join(stage, 'package');
+    await mkdir(payload);
+    await extractLocalPluginArchive(archive, payload);
+    return await installProductPlugin(await findPluginPackageRoot(payload), userPluginRoot);
   } finally {
+    release();
     const child = relative(parent, resolve(stage));
     if (isAbsolute(child) || child.startsWith('..') || !child.startsWith('.cardbush-plugin-import-')) throw new Error('Invalid plugin import staging path.');
     await rm(stage, { recursive: true, force: true }).catch(error => {
       console.warn('Plugin import cleanup deferred:', stage, error instanceof Error ? error.message : String(error));
     });
   }
+}
+
+export async function collectPluginInstallCache(userPluginRoot: string) {
+  const parent = dirname(resolve(userPluginRoot));
+  const results = [];
+  for (const prefix of ['.cardbush-plugin-import-', '.cardbush-plugin-install-']) results.push(await collectTemporaryDirectories(parent, prefix, 24 * 60 * 60_000));
+  return results;
 }

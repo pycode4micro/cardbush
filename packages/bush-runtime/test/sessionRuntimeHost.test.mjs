@@ -1,3 +1,4 @@
+import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,13 +38,14 @@ function hasOrdinaryResult(messages) {
 
 const NOW = "2026-08-29T00:00:00.000Z";
 
-for (const actionable of [false, true]) test(`plan handoff ${actionable ? 'still continues actionable work' : 'retains waiting verification without forcing more execution'}`, async () => {
+for (const hasPending of [false, true]) test(`normal final reply preserves ${hasPending ? 'waiting and pending work' : 'waiting verification'} without forced execution`, async () => {
   const coordination = new CoordinationStore();
   coordination.setPlan({ sessionId: 'session_1', expectedRevision: 0, plan: {
     protocol: 'bush.task_plan.v1', plan_id: 'waiting-plan', session_id: 'session_1', active: true, explanation: 'Await browser sign-in',
     nodes: [{ id: 'verify', step: 'Verify calendar access', status: 'waiting', waitingFor: 'User completes sign-in' },
-      ...(actionable ? [{ id: 'docs', step: 'Read setup docs', status: 'pending' }] : [])],
+      ...(hasPending ? [{ id: 'docs', step: 'Read setup docs', status: 'pending' }] : [])],
   } });
+  const recorded = coordination.getPlan('session_1');
   let calls = 0;
   const host = new InMemoryRuntimeHost({ coordinationStore: coordination, provider: { async *stream(request) {
     calls++; yield event(request.requestId, 0, 'text_delta', { delta: 'Sign in, then calendar access still needs verification.' });
@@ -52,9 +54,10 @@ for (const actionable of [false, true]) test(`plan handoff ${actionable ? 'still
   const request = sessionRequest('waiting', 'waiting', 'waiting-user', 'Configure the calendar');
   request.metadata.planEnabled = true;
   const terminal = await host.runSessionTurn(request);
-  assert.equal(terminal.payload.reason, actionable ? 'open_task_plan_not_resolved' : 'task_plan_waiting');
-  assert.equal(calls, actionable ? 3 : 1);
-  assert.equal(coordination.getPlan('session_1').plan.nodes[0].status, 'waiting');
+  assert.equal(terminal.payload.reason, 'task_plan_waiting');
+  assert.equal(terminal.payload.status, 'completed');
+  assert.equal(calls, 1);
+  assert.deepEqual(coordination.getPlan('session_1'), recorded);
 });
 
 test("detaching a UI stream keeps its Turn running and resumes from the cursor exactly once", async () => {
@@ -477,7 +480,7 @@ test('summary preparation and validation retries preserve the prefix until the c
       if (request.messages.some(message => message.name === 'context_pressure')) {
         attempts++;
         yield event(request.requestId, 0, 'tool_call_delta', { index: 0, toolCallId: `checkpoint_${attempts}`, nameDelta: 'checkpoint_context',
-          argumentsDelta: JSON.stringify({ summaries: attempts === 1 ? ['missing a summary'] : ['First facts.', 'Second facts.'], active_summary: '' }) });
+          argumentsDelta: JSON.stringify({ summaries: attempts === 1 ? ['missing a summary'] : ['First facts.', 'Second facts.'] }) });
         yield event(request.requestId, 1, 'response_completed', { finishReason: 'tool_calls' });
         return;
       }
@@ -546,7 +549,6 @@ test("forces atomic context compaction and resumes the same active Turn", async 
         ) {
           const argumentsText = JSON.stringify({
             summaries: ["The user supplied a large prior payload; the Turn completed without external side effects."],
-            active_summary: "",
           });
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
@@ -591,7 +593,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     "user_compact_2",
     "continue",
   );
-  second.tools = [ordinaryToolDefinition()];
+  second.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   second.maxOutputTokens = 1000;
   second.metadata = { contextWindowTokens: 4000 };
   await host.runSessionTurn(second);
@@ -723,19 +725,13 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
         const pressure = request.messages.find((message) =>
           message.name === "context_pressure");
         if (pressure) {
-          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
-          const throughMessageId = pressure.content.match(
-            /- through_message_id: (.+)/,
-          )?.[1];
-          assert.ok(activeTurnId);
-          assert.ok(throughMessageId);
+          assert.match(pressure.content, /summaries\[0\]: current Turn/);
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: "call_active_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              summaries: [],
-              active_summary: "The user requested an active-loop continuation. The first observation completed successfully with no external side effect; next execute the second observation and then report completion.",
+              summaries: ["The user requested an active-loop continuation. The first observation completed successfully with no external side effect; next execute the second observation and then report completion."],
             }),
           });
           yield event(request.requestId, 2, "usage", { inputTokens: 2_900 });
@@ -778,7 +774,7 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
     "user_active_checkpoint",
     "perform both observations and finish",
   );
-  request.tools = [ordinaryToolDefinition()];
+  request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   request.maxOutputTokens = 1_000;
   request.metadata = { contextWindowTokens: 4_000 };
 
@@ -912,22 +908,13 @@ test("bounds a parallel Tool batch before it can consume the checkpoint reserve"
         const pressure = request.messages.find((message) =>
           message.name === "context_pressure");
         if (pressure) {
-          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
-          const throughMessageId = pressure.content.match(
-            /- through_message_id: (.+)/,
-          )?.[1];
+          assert.match(pressure.content, /summaries\[0\]: current Turn/);
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: "call_parallel_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 1,
-              summaries: [],
-              active_turn: {
-                turn_id: activeTurnId,
-                through_message_id: throughMessageId,
-                summary: "Five large observations were persisted and projected through durable archive locators; continue without repeating them.",
-              },
+              summaries: ["Five large observations were persisted and projected through durable archive locators; continue without repeating them."],
             }),
           });
           yield event(request.requestId, 2, "usage", {
@@ -977,7 +964,7 @@ test("bounds a parallel Tool batch before it can consume the checkpoint reserve"
     "user_parallel_budget",
     "inspect five large sources and finish",
   );
-  request.tools = [ordinaryToolDefinition()];
+  request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   request.metadata = { contextWindowTokens: 256_000 };
 
   const terminal = await host.runSessionTurn(request);
@@ -1066,21 +1053,15 @@ test("replaces an active-Turn checkpoint cumulatively when the same Loop fills a
           message.name === "context_pressure");
         if (pressure) {
           checkpointRound += 1;
-          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
-          const throughMessageId = pressure.content.match(
-            /- through_message_id: (.+)/,
-          )?.[1];
-          assert.ok(activeTurnId);
-          assert.ok(throughMessageId);
+          assert.match(pressure.content, /summaries\[0\]: current Turn/);
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: `call_repeated_checkpoint_${checkpointRound}`,
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              summaries: [],
-              active_summary: checkpointRound === 1
+              summaries: [checkpointRound === 1
                 ? "Checkpoint one: the first observation completed; next run the second observation."
-                : "Checkpoint two is cumulative: both the first and second observations completed; next return the final answer.",
+                : "Checkpoint two is cumulative: both the first and second observations completed; next return the final answer."],
             }),
           });
           yield event(request.requestId, 2, "response_completed", {
@@ -1118,7 +1099,7 @@ test("replaces an active-Turn checkpoint cumulatively when the same Loop fills a
     "user_repeated_checkpoint",
     "perform two observations and finish",
   );
-  request.tools = [ordinaryToolDefinition()];
+  request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   request.maxOutputTokens = 1_000;
   request.metadata = { contextWindowTokens: 4_000 };
 
@@ -1188,22 +1169,13 @@ test("applies user guidance queued during context maintenance before the resumed
         if (pressure) {
           markMaintenanceStarted();
           await maintenanceGate;
-          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
-          const throughMessageId = pressure.content.match(
-            /- through_message_id: (.+)/,
-          )?.[1];
+          assert.match(pressure.content, /summaries\[0\]: current Turn/);
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: "call_guidance_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 1,
-              summaries: [],
-              active_turn: {
-                turn_id: activeTurnId,
-                through_message_id: throughMessageId,
-                summary: "The first observation completed; continue using any newly queued user guidance.",
-              },
+              summaries: ["The first observation completed; continue using any newly queued user guidance."],
             }),
           });
           yield event(request.requestId, 2, "response_completed", {
@@ -1237,7 +1209,7 @@ test("applies user guidance queued during context maintenance before the resumed
     "user_checkpoint_guidance",
     "inspect and continue",
   );
-  request.tools = [ordinaryToolDefinition()];
+  request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   request.maxOutputTokens = 1_000;
   request.metadata = { contextWindowTokens: 4_000 };
   const running = host.runSessionTurn(request);
@@ -1272,7 +1244,7 @@ test("applies user guidance queued during context maintenance before the resumed
     message.message.name === "turn_guidance"), true);
 });
 
-test("rejects a stale active-Turn boundary and accepts only the exact authorized retry", async () => {
+test("rejects model-supplied boundaries and binds the corrected slots to the authorized boundary", async () => {
   const observedRequests = [];
   const registry = new ToolRegistry().register({
     definition: ordinaryToolDefinition(),
@@ -1308,26 +1280,16 @@ test("rejects a stale active-Turn boundary and accepts only the exact authorized
           message.name === "context_pressure").at(-1);
         if (pressure) {
           checkpointAttempt += 1;
-          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
-          const exactBoundary = pressure.content.match(
-            /- through_message_id: (.+)/,
-          )?.[1];
+          assert.match(pressure.content, /summaries\[0\]: current Turn/);
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: `call_boundary_checkpoint_${checkpointAttempt}`,
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 1,
-              summaries: [],
-              active_turn: {
-                turn_id: activeTurnId,
-                through_message_id: checkpointAttempt === 1
-                  ? "forged_stale_boundary"
-                  : exactBoundary,
-                summary: checkpointAttempt === 1
+              ...(checkpointAttempt === 1 ? { through_message_id: 'forged_stale_boundary' } : {}),
+              summaries: [checkpointAttempt === 1
                   ? "This forged summary must never be persisted."
-                  : "The exact completed observation is preserved; return the final answer.",
-              },
+                  : "The exact completed observation is preserved; return the final answer."],
             }),
           });
           yield event(request.requestId, 2, "response_completed", {
@@ -1361,7 +1323,7 @@ test("rejects a stale active-Turn boundary and accepts only the exact authorized
     "user_boundary_checkpoint",
     "inspect and finish",
   );
-  request.tools = [ordinaryToolDefinition()];
+  request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   request.maxOutputTokens = 1_000;
   request.metadata = { contextWindowTokens: 4_000 };
 
@@ -1435,17 +1397,14 @@ test("calibrates unsupported Provider token counts before an append-only Loop ca
         if (request.messages.some((message) => message.name === "context_pressure")) {
           const pressure = request.messages.find((message) =>
             message.name === "context_pressure").content;
-          const activeTurnId = pressure.match(/- turn_id: (.+)/)?.[1];
-          const throughMessageId = pressure.match(/- through_message_id: (.+)/)?.[1];
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
             toolCallId: "call_calibrated_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              summaries: ["A large preceding Turn established the working context without external side effects."],
-              active_summary: activeTurnId && throughMessageId
-                ? "The active Turn inspected the ordinary fixture and must now finish the requested work without repeating that observation."
-                : "",
+              summaries: ["A large preceding Turn established the working context without external side effects.",
+                ...(/: current Turn/.test(pressure)
+                  ? ["The active Turn inspected the ordinary fixture and must now finish the requested work without repeating that observation."] : [])],
             }),
           });
           yield event(request.requestId, 2, "usage", { inputTokens: 89_000 });
@@ -1475,7 +1434,7 @@ test("calibrates unsupported Provider token counts before an append-only Loop ca
     "user_calibration_2",
     "continue",
   );
-  second.tools = [ordinaryToolDefinition()];
+  second.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
   second.maxOutputTokens = 8_000;
   second.metadata = { contextWindowTokens: 100_000 };
   await host.runSessionTurn(second);
@@ -1523,11 +1482,7 @@ test("an earlier oversized provider response is not permission to exceed the con
             toolCallId: "call_over_limit_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 2,
-              summaries: [{
-                turn_id: "turn_over_limit_1",
-                summary: "The preceding oversized Turn completed without external side effects.",
-              }],
+              summaries: ["The preceding oversized Turn completed without external side effects."],
             }),
           });
           yield event(request.requestId, 2, "usage", { inputTokens: 106_000 });
@@ -1584,8 +1539,7 @@ test("keeps checkpoint_context visible but rejects proactive compaction below 95
             toolCallId: "call_proactive_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 2,
-              summaries: [{ turn_id: "turn_proactive_1", summary: "Should be rejected." }],
+              summaries: ["Should be rejected."],
             }),
           });
           yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
@@ -1800,9 +1754,9 @@ for (const recover of [true, false]) {
           if (request.messages.some(m => m.name === "context_pressure")) {
             maintenance += 1;
             const args = maintenance === 1
-              ? { summaries: [], active_summary: { private: "SUMMARY_TEXT_MUST_NOT_LEAK" } }
-              : maintenance === 2 ? { summaries: ["unexpected preceding Turn"], active_summary: "Current verified facts." }
-              : { summaries: [], active_summary: recover ? "The observation completed. Return the final answer; do not rerun it." : null };
+              ? { summaries: [{ private: "SUMMARY_TEXT_MUST_NOT_LEAK" }] }
+              : maintenance === 2 ? { summaries: ["unexpected preceding Turn", "Current verified facts."] }
+              : { summaries: [recover ? "The observation completed. Return the final answer; do not rerun it." : null] };
             argumentsByAttempt.push(JSON.stringify(args));
             yield event(request.requestId, 1, "tool_call_delta", {
               index: 0, toolCallId: `checkpoint_${maintenance}`, nameDelta: "checkpoint_context", argumentsDelta: JSON.stringify(args),
@@ -1823,7 +1777,7 @@ for (const recover of [true, false]) {
       },
     });
     const request = sessionRequest("request_binding", "turn_binding", "user_binding", "Observe once and finish.");
-    request.tools = [ordinaryToolDefinition()];
+    request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
     request.maxOutputTokens = 1000;
     request.metadata = { contextWindowTokens: 4000 };
     const terminal = await host.runSessionTurn(request);
@@ -1832,7 +1786,7 @@ for (const recover of [true, false]) {
     assert.equal(maintenance, 3);
     const events = host.events("session_1", "turn_binding");
     const retries = events.filter(e => e.kind === "context_compaction_retrying");
-    assert.deepEqual(retries.map(e => e.payload.diagnostics.field), ["active_summary", "summaries"]);
+    assert.deepEqual(retries.map(e => e.payload.diagnostics.field), ["summaries[0]", "summaries"]);
     assert.deepEqual(retries.map(e => e.payload.attempt), [2, 3]);
     assert.equal(retries[0].payload.diagnostics.argumentsChars, argumentsByAttempt[0].length);
     assert.equal(retries[0].payload.diagnostics.argumentsSha256.length, 64);
@@ -1850,8 +1804,8 @@ for (const recover of [true, false]) {
       assert.equal(events.filter(e => e.kind === "context_compaction_completed").length, 1);
     } else {
       assert.equal(session.turns[0].contextCheckpoint, undefined);
-      assert.equal(terminal.payload.details.checkpointDiagnostics.field, "active_summary");
-      assert.equal(events.find(e => e.kind === "context_compaction_failed").payload.diagnostics.field, "active_summary");
+      assert.equal(terminal.payload.details.checkpointDiagnostics.field, "summaries[0]");
+      assert.equal(events.find(e => e.kind === "context_compaction_failed").payload.diagnostics.field, "summaries[0]");
       assert.equal(events.some(e => e.kind === "context_compaction_completed"), false);
     }
   });
@@ -1868,7 +1822,7 @@ test('continues after a successful checkpoint with a half-window output allowanc
       yield event(request.requestId, 0, 'response_started');
       if (request.messages.some(m => m.name === 'context_pressure')) {
         yield event(request.requestId, 1, 'tool_call_delta', { index: 0, toolCallId: 'checkpoint',
-          nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ summaries: ['Prior work retained.'], active_summary: '' }) });
+          nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ summaries: ['Prior work retained.'] }) });
         yield event(request.requestId, 2, 'response_completed', { finishReason: 'tool_calls' });
       } else {
         yield event(request.requestId, 1, 'text_delta', { delta: observed.length === 1 ? 'large-prior' : 'continued successfully' });
@@ -1952,7 +1906,7 @@ function sessionRequest(requestId, turnId, messageId, content) {
     model: "model",
     prefixMessages: [{ role: "system", content: "fixed-prefix" }],
     inputMessages: [{ messageId, createdAt: NOW, message: { role: "user", content } }],
-    tools: [],
+    tools: [orderedCheckpointTool],
     metadata: {},
   };
 }
