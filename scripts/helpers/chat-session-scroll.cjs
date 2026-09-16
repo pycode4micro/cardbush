@@ -120,10 +120,24 @@ module.exports = async ({ run, until, pause, theme = 'theme-dark' }) => {
   await run("scrollSessions.a.sending = true; scrollSessions.a.activeTurnId = 'scroll-turn-a-15'; selectScrollSession('a')");
   await pause(180);
   const followingTop = await run('scrollList().scrollTop');
+  await run(`window.readFollowingTail = () => {
+    const list = scrollList();
+    const item = list.querySelector('[data-message-id="scroll-a-31"]');
+    const tail = item.classList.contains('assistant-render-stage') ? item.querySelector('.message-row.assistant') : item;
+    const style = getComputedStyle(list);
+    return { top: list.scrollTop, height: tail.getBoundingClientRect().height,
+      bottom: tail.getBoundingClientRect().bottom,
+      visibleBottom: list.getBoundingClientRect().bottom - (parseFloat(style.getPropertyValue('--quick-context-bottom-inset')) || 0) - 18 };
+  }; void 0;`);
+  const followingBefore = await run('readFollowingTail()');
   await run(`scrollSessions.a.messages = scrollSessions.a.messages.map((message, i) =>
     i === 31 ? { ...message, content: message.content + 'Follow new live output.\\n\\n'.repeat(10) } : message); selectScrollSession('a')`);
-  await pause(550);
-  assert.ok(await run('scrollList().scrollTop') > followingTop + 100, 'a restored following reader keeps following new output');
+  // Live follow reveals the response tail; footer spacing and fonts make a
+  // fixed 100px displacement unrelated to whether the new output is visible.
+  await until(`(() => { const tail = readFollowingTail(); return tail.height > ${followingBefore.height} && tail.top > ${followingTop} && tail.bottom <= tail.visibleBottom + 2; })()`, 'restored live output grows and follows into view');
+  const followingAfter = await run('readFollowingTail()');
+  assert.ok(followingAfter.top > followingTop && followingAfter.bottom <= followingAfter.visibleBottom + 2,
+    'a restored following reader keeps the response tail visible: ' + JSON.stringify({followingBefore,followingAfter}));
 
   // Leave with a live-follow callback queued, then change again during the
   // next restoration. Neither callback may move the other conversation.

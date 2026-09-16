@@ -1,6 +1,9 @@
 // Actual extracted views in isolated Chromium: no product profile, real files,
 // network requests, model calls or Runtime subscriptions.
 const { app, BrowserWindow } = require('electron');
+// Xvfb runners have no hardware GPU. Keep offscreen fixtures on software
+// rendering so Viz crashes do not interrupt unrelated UI assertions.
+if (process.env.CI === 'true' && process.platform === 'linux') app.disableHardwareAcceleration();
 // CI Windows Server disables system animations. Motion regressions need an
 // explicit baseline; reduced-motion cases below still use media emulation.
 app.commandLine.appendSwitch('force-prefers-no-reduced-motion');
@@ -221,7 +224,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering', 'session-scroll'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -410,6 +413,12 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.welcome-project-menu')", 'welcome project menu');
     await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
     await until("!document.querySelector('.welcome-project-menu')", 'Escape closes only the project menu');
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll') {
+      for (const theme of ['theme-dark', 'theme-cyberpunk']) await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme });
+      assert.deepEqual(await run('failures'), [], 'no session scroll renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'file-drop') {
       await require('./helpers/chat-file-drop.cjs')({ run, until, pause });
     }
