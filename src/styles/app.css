@@ -1659,6 +1659,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .right-inspector-resizer {
+  --panel-resize-hit-width: 8px;
   position: absolute;
   z-index: 20;
   top: 0;
@@ -19491,6 +19492,7 @@ body.change-review-resizing {
 .file-memo-reference > img, .file-memo-reference > video, .file-memo-reference > audio { max-width: 100%; }
 
 .inline-html-preview {
+  position: relative;
   display: block;
   width: 100%;
   min-width: 0;
@@ -19499,6 +19501,57 @@ body.change-review-resizing {
   border: 1px solid var(--border);
   border-radius: 12px;
 }
+
+.loop-execution-previews {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px;
+  margin: 6px 0 10px; min-width: 0;
+}
+.loop-execution-previews .tool-image-artifacts { margin: 0; }
+.loop-image-preview { min-width: 0; max-width: 100%; }
+.loop-subagent-preview, .loop-execution-preview-label {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 36px;
+  padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
+  border-radius: 9px; background: color-mix(in srgb, var(--surface) 54%, transparent);
+  color: var(--text-mid); font: inherit; font-size: 12px; text-align: left;
+}
+.loop-subagent-preview > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loop-subagent-preview > svg, .loop-subagent-preview > small { flex-shrink: 0; }
+.loop-subagent-preview small, .loop-execution-preview-label small { color: var(--text-soft); }
+.loop-subagent-preview:disabled { opacity: 1; cursor: default; }
+.loop-subagent-preview:not(:disabled):hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.loop-subagent-preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.loop-preview-retry { border: 0; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; }
+.inline-html-preview.is-visualization { overflow: visible; border: 0; border-radius: 0; scroll-margin-top: 16px; }
+.inline-html-heading, .inline-html-footer {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  color: var(--text-soft); font-size: 12px; line-height: 1.4;
+}
+.inline-html-heading { min-height: 32px; margin-bottom: 8px; }
+.inline-html-footer { min-height: 36px; margin-top: 8px; flex-wrap: wrap; }
+.inline-html-rule { flex: 1; min-width: 12px; height: 1px; background: var(--border); }
+.inline-html-expand-toggle, .inline-html-collapse-top, .inline-html-open-full {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  min-height: 28px; padding: 4px 8px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--text-mid); font: inherit; cursor: pointer;
+}
+.inline-html-expand-toggle:hover, .inline-html-collapse-top:hover, .inline-html-open-full:hover {
+  color: var(--text); background: var(--surface-raised);
+}
+.inline-html-expand-toggle:focus-visible, .inline-html-collapse-top:focus-visible, .inline-html-open-full:focus-visible, .inline-html-menu-toggle:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.is-folded .inline-html-viewport::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 32px;
+  background: linear-gradient(transparent, var(--inline-html-background, var(--surface)));
+  pointer-events: none;
+}
+.is-section-folded .inline-html-viewport::after { display: none; }
+.inline-html-menu-toggle {
+  display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px;
+  border: 0; border-radius: 6px; padding: 0;
+  background: var(--inline-html-background, var(--surface)); color: var(--text-soft); cursor: pointer;
+}
+.inline-html-menu-toggle:hover { color: var(--text); background: var(--surface-raised); }
 .inline-html-toolbar, .inline-html-actions {
   display: flex;
   align-items: center;
@@ -19511,6 +19564,18 @@ body.change-review-resizing {
   font-size: 12px;
   line-height: 1.4;
 }
+.is-visualization > .inline-html-toolbar {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 3;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 6px 20px #0002;
+}
+.inline-html-toolbar[hidden] { display: none; }
 .inline-html-toolbar > .local-file-reference { min-width: 0; }
 .inline-html-toolbar > .local-file-reference > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inline-html-actions { flex: 0 0 auto; }
@@ -19533,6 +19598,7 @@ body.change-review-resizing {
   height: clamp(300px, 55vh, 520px);
   contain: layout paint;
 }
+.is-visualization > .inline-html-viewport { overflow: hidden; }
 .inline-html-webview { display: flex; width: 100%; height: 100%; border: 0; }
 .inline-html-viewport.is-loading .inline-html-webview { visibility: hidden; }
 .inline-html-status {

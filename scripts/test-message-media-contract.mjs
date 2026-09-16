@@ -20,6 +20,7 @@ const css = read('src', 'styles', 'app.css');
 const electronMain = read('electron', 'main.ts');
 const electronPreload = read('electron', 'preload.ts');
 const localFileProtocol = read('electron', 'localFileProtocol.ts');
+const localFileStream = read('electron', 'localFileStream.ts');
 
 assert.match(localPaths, /export function isVideoPath/);
 assert.match(localPaths, /export function isAudioPath/);
@@ -82,9 +83,10 @@ assert.match(
   'Message image strips must resolve their width from the current bubble instead of intrinsic media width',
 );
 assert.match(css, /\.image-preview-stage\.is-dragging\s*\{[\s\S]*?cursor:\s*grabbing/);
-assert.match(electronMain, /status:\s*206/);
-assert.match(electronMain, /'content-range':\s*`bytes/);
-assert.match(electronMain, /'accept-ranges':\s*'bytes'/);
+assert.match(electronMain, /localFileResponse\(/);
+assert.match(localFileStream, /status:\s*range\s*\?\s*206\s*:\s*200/);
+assert.match(localFileStream, /'content-range':\s*`bytes/);
+assert.match(localFileStream, /'accept-ranges':\s*'bytes'/);
 assert.match(electronMain, /function videoMimeTypeForPath/);
 assert.match(electronMain, /ipcMain\.handle\('image:read-data-url'/);
 assert.match(electronMain, /function readLocalImageDataUrl/);

@@ -93,6 +93,7 @@ import {
   themeClassNames,
 } from './features/appearance/themeRuntime';
 import { useWindowAppearance, readWindowMaterialPreference, WINDOW_MATERIAL_STORAGE_KEY, type WindowMaterialPreference } from './features/appearance/windowAppearance';
+import { useVisualThemeContext } from './features/appearance/useVisualThemeContext';
 import { useKeyboardShortcuts } from './features/shortcuts/useKeyboardShortcuts';
 import { ConversationSearchDialog } from './features/search/ConversationSearchDialog';
 import { useConversationSearch } from './features/search/useConversationSearch';
@@ -422,6 +423,7 @@ function CardbushApp() {
     importedThemeVariables['--accent'] ?? themeAccentColor(theme);
 
   useWindowAppearance(theme, themePreference, windowMaterial);
+  useVisualThemeContext(theme, themePreference);
 
   useEffect(() => {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
@@ -959,6 +961,7 @@ function CardbushApp() {
     setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
+    if (closingTabs.length === inspectorTabs.length) closeInspector();
   };
   const closeInspectorTab = (closingIdentity: string) => {
     closeInspectorTabs(new Set([closingIdentity]));

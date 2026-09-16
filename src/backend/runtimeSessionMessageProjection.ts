@@ -63,18 +63,31 @@ export function projectRuntimeTurnMessages(
   // The model journal retains the real checkpoint exchange. The existing
   // compaction event supplies its UI; do not render its reasoning as a reply.
   turn = { ...turn, messages: turn.messages.filter(message =>
-    message.metadata?.runtimeMaintenance !== 'context_compaction') };
+    message.metadata?.runtimeMaintenance !== 'context_compaction' &&
+    !(message.message.role === 'user' && (message.message.visibility === 'internal' ||
+      message.message.name === 'subagent_result'))) };
   let assistantSegmentIndex = 0;
   let segmentStartedAt = turn.createdAt;
   const lastAssistantIndex = findLastAssistantIndex(turn.messages);
   const turnStartedAt = visibleTurnUserStartedAt(turn) ?? turn.createdAt;
+  const guidanceAfterAssistant = new Map<number, RuntimeSessionMessage>();
+  let precedingAssistantIndex = -1;
+  turn.messages.forEach((message, index) => {
+    if (message.message.role === 'assistant') precedingAssistantIndex = index;
+    if (isRuntimeGuidanceMessage(message) && precedingAssistantIndex >= 0) {
+      guidanceAfterAssistant.set(precedingAssistantIndex, message);
+      precedingAssistantIndex = -1;
+    } else if (message.message.role === 'user' && message.message.visibility !== 'internal') {
+      precedingAssistantIndex = -1;
+    }
+  });
 
   return turn.messages.map((message, index) => {
-    const next = turn.messages[index + 1];
+    const nextGuidance = guidanceAfterAssistant.get(index);
     const previous = turn.messages[index - 1];
     const isGuidance = isRuntimeGuidanceMessage(message);
     const isGuidanceBoundary =
-      message.message.role === 'assistant' && isRuntimeGuidanceMessage(next);
+      message.message.role === 'assistant' && Boolean(nextGuidance);
 
     if (isGuidance) {
       segmentStartedAt = message.createdAt;
@@ -103,10 +116,10 @@ export function projectRuntimeTurnMessages(
           ? 'assistant_final'
           : 'assistant_segment';
 
-      if (isGuidanceBoundary && next) {
+      if (isGuidanceBoundary && nextGuidance) {
         metadata.segment_complete = true;
         metadata.segment_boundary = 'turn_guidance';
-        metadata.sealed_by_client_message_id = next.messageId;
+        metadata.sealed_by_client_message_id = nextGuidance.messageId;
         metadata.next_assistant_segment_index = assistantSegmentIndex + 1;
       }
 

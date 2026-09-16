@@ -21,6 +21,8 @@ export type FileMemo = z.infer<typeof fileMemoSchema>;
 export const fileMemoResolutionSchema = z.union([z.object({
   memo: fileMemoSchema,
   status: z.enum(['available', 'changed', 'unavailable']),
+  // The memo is an immutable observation; previews track the file on disk.
+  currentVersion: z.object({ size: z.number().nonnegative(), mtimeMs: z.number() }).optional(),
   recovered: z.boolean().optional(),
 }), z.object({
   status: z.literal('unresolved'),

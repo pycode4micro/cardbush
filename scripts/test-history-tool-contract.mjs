@@ -610,6 +610,10 @@ const sessionMessage = (message) => ({
   createdAt: '2026-08-30T00:00:00.000Z',
   message,
 });
+assert.equal(isInternalRuntimeMessage(sessionMessage({role:'user',name:'subagent_result',content:'child result'})), true,
+  'Persisted subagent returns are model context, including older rows without visibility.');
+assert.equal(isInternalRuntimeMessage(sessionMessage({role:'user',content:'<subagent_result>quoted by the user</subagent_result>'})), false,
+  'User-authored examples must not be hidden by matching XML text.');
 assert.equal(
   isInternalRuntimeMessage(sessionMessage({
     role: 'user',

@@ -79,13 +79,15 @@ module.exports = async ({ run, until, pause, window }) => {
 
   let origin;
   const begin = async () => {
+    // Finish the previous width/presence transition before rounding native pointer coordinates.
+    await pause(300);
     origin = await run('inspectorRect()');
-    const point = { x: Math.round(origin.left - 6), y: Math.round(origin.top + 85) };
+    const point = { x: Math.round(origin.left - 2), y: Math.round(origin.top + 85) };
     origin.pointerX = point.x;
     origin.pointerY = point.y;
     window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
     window.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
-    await until("document.body.classList.contains('right-inspector-resizing')", 'native drag starts outside the panel in the enlarged edge handle');
+    await until("document.body.classList.contains('right-inspector-resizing')", 'native drag starts close to the panel boundary in the narrow edge handle');
   };
   const move = width => {
     origin.endX = Math.round(origin.pointerX + origin.width - width);

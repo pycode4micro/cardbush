@@ -6,16 +6,16 @@
 
 ## 下载
 
-当前版本：**1.0.0-beta.1**。按操作系统选择安装包。
+当前版本：**1.0.0-beta.2**。按操作系统选择安装包。
 
 | 系统 | 下载 | 适用电脑 |
 | --- | --- | --- |
-| Windows 10 / 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-windows-x64-b7e0b7d.exe) | Intel / AMD 64 位 |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x86_64.AppImage) | x86-64 桌面 Linux，建议 Ubuntu 22.04 或更新版本 |
+| Windows 10 / 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.2/CardBush-1.0.0-beta.2-windows-x64.exe) | Intel / AMD 64 位 |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.2/CardBush-1.0.0-beta.2-linux-x86_64.AppImage) | x86-64 桌面 Linux，建议 Ubuntu 22.04 或更新版本 |
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-Windows 安装包已于 2026-09-15 更新，构建提交为 [`b7e0b7d`](https://github.com/pycode4micro/cardbush/commit/b7e0b7ded0542a0f9e7558aac93ca25762159a42)，包含主操作配色、插件导航状态保留和 Windows 图标修复。请使用 `SHA256SUMS-win32-x64-b7e0b7d.txt` 校验本次更新包。Linux 下载仍为首发 Beta 构建。
+两个平台均使用同一 Beta 2 源码标签构建。本次更新包含主题适配与交互图表、HTML 预览高度限制及展开、文件更新自动刷新、子 agent 和图像执行预览，以及引导消息与侧栏行为修复。详见[发布说明](docs/releases/1.0.0-beta.2.md)，SHA-256 校验文件随安装包提供。
 
 Windows 10 和 11 使用同一个安装包，无需按 Intel、AMD 或显卡型号区分。本次不提供 ARM64、32 位 Windows、Windows 7/8 或 macOS 安装包。Beta 安装包尚未进行代码签名。
 
@@ -26,8 +26,8 @@ Windows 10 和 11 使用同一个安装包，无需按 Intel、AMD 或显卡型�
 **Linux：** 下载后赋予执行权限并启动：
 
 ```sh
-chmod +x CardBush-1.0.0-beta.1-linux-x86_64.AppImage
-./CardBush-1.0.0-beta.1-linux-x86_64.AppImage
+chmod +x CardBush-1.0.0-beta.2-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.2-linux-x86_64.AppImage
 ```
 
 AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）。没有 FUSE 时可使用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。Chromium 需要正常的沙箱环境，不建议通过关闭沙箱解决安装问题。

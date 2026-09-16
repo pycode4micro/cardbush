@@ -1085,6 +1085,80 @@ assert.deepEqual(
   'a guidance boundary must remain a visible assistant/user/assistant sequence while streaming',
 );
 
+// Guidance can follow several model rounds, with tool results between the
+// assistant owning the last call and the applied user message.
+const multiRoundTurn = {
+  turnId: 'multi-guidance-turn', status: 'completed',
+  createdAt: '2026-09-15T10:00:00Z', completedAt: '2026-09-15T10:00:12Z',
+  messages: [
+    ['user', 'Original request'],
+    ['assistant', 'Before guidance: diagnosis'],
+    ['tool', 'Diagnostic result'],
+    ['assistant', 'Before guidance: explanation'],
+    ['assistant', ''],
+    ['tool', 'Last tool result before guidance'],
+    ['user', 'First guidance', 'turn_guidance'],
+    ['assistant', 'After first guidance'],
+    ['assistant', ''],
+    ['tool', 'Another result'],
+    ['user', 'Second guidance', 'turn_guidance'],
+    ['assistant', 'After second guidance'],
+    ['assistant', 'Final answer'],
+  ].map(([role, content, name], index) => ({
+    messageId: `multi-${index}`, turnId: 'multi-guidance-turn',
+    turnSequence: 1, messageIndex: index,
+    createdAt: new Date(Date.parse('2026-09-15T10:00:00Z') + index * 1000).toISOString(),
+    message: { role, content, ...(name ? { name } : {}) },
+  })),
+};
+const multiRoundProjected = projectRuntimeTurnMessages(multiRoundTurn, 'multi-guidance-session');
+assert.equal(multiRoundProjected[4].metadata.segment_boundary, 'turn_guidance',
+  'tool results must not hide the preceding assistant guidance boundary');
+assert.equal(multiRoundProjected[8].metadata.segment_boundary, 'turn_guidance');
+const multiRoundVisible = multiRoundProjected.filter(message => message.role !== 'tool').map(message => ({
+  ...message,
+  ...(message.id === 'multi-4' || message.id === 'multi-8' ? { toolExecutions: [{
+    id: `tool-${message.id}`, name: 'terminal', state: 'completed', success: true,
+    summary: 'Run check', output: '', durationMs: 1, metadata: {}, contentOffset: 0,
+    createdAt: message.createdAt, assistantMessageId: message.id,
+  }] } : {}),
+}));
+function assertGuidanceGroups(messages, stage) {
+  const assistants = messages.filter(message => message.role === 'assistant');
+  assert.deepEqual(plain(assistants.map(message => [
+    ...(message.loopHistory ?? []).map(item => item.content).filter(Boolean),
+    message.content,
+  ].filter(Boolean))), [
+    ['Before guidance: diagnosis', 'Before guidance: explanation'],
+    ['After first guidance'],
+    ['After second guidance', 'Final answer'],
+  ], `${stage}: earlier narration must stay above its guidance boundary`);
+  assert.deepEqual(plain(messages.map(message => message.id)),
+    ['multi-0', 'multi-4', 'multi-6', 'multi-8', 'multi-10', 'multi-12'],
+    `${stage}: preserve assistant/user group order`);
+  assert.equal(assistants.flatMap(message => [...(message.loopHistory ?? []), message])
+    .flatMap(message => message.toolExecutions ?? []).length, 2, `${stage}: keep each tool once`);
+}
+assertGuidanceGroups(normalizeChatMessagesForDisplay(multiRoundVisible), 'history');
+const multiRoundLive = multiRoundVisible.map(message => message.role !== 'assistant' ? message : ({
+  ...message, status: message.metadata.segment_boundary ? 'completed' : 'streaming',
+  metadata: { ...message.metadata, transcript_kind: undefined },
+}));
+assertGuidanceGroups(normalizeActiveTurnTranscriptForDisplay(
+  normalizeChatMessagesForDisplay(multiRoundLive), 'multi-guidance-turn'), 'live');
+const multiRoundLegacyLoops = multiRoundVisible.map(message =>
+  ['multi-1', 'multi-3', 'multi-7', 'multi-11'].includes(message.id)
+    ? { ...message, status: 'superseded', metadata: { ...message.metadata, transcript_kind: 'assistant_loop' } }
+    : message);
+assertGuidanceGroups(normalizeChatMessagesForDisplay(multiRoundLegacyLoops), 'archived loops');
+const multiRoundLocal = multiRoundLive.map(message => message.id === 'multi-1'
+  ? { ...message, id: 'local-placeholder', messageId: message.id, assistantMessageId: message.id }
+  : message);
+assertGuidanceGroups(normalizeChatMessagesForDisplay(mergeFinalStreamMessages(
+  { 'multi-guidance-session': multiRoundLocal }, 'multi-guidance-session', multiRoundVisible,
+  { turnId: 'multi-guidance-turn', temporaryMessageIds: ['local-placeholder'], toolSourceMessageId: 'local-placeholder' },
+)['multi-guidance-session']), 'terminal replacement');
+
 console.log('turn guidance contract tests passed');
 
 function plain(value) {

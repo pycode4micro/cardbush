@@ -51,7 +51,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
     </span>;
   }
   if (!current?.result) return <span aria-busy="true">{children || (language === 'zh' ? '正在读取文件…' : 'Loading file…')}</span>;
-  const { memo, status } = current.result;
+  const { memo, status, currentVersion } = current.result;
   const label = children || memo.file.name;
   const path = memo.file.path;
   if (status === 'unavailable') return <span className="local-file-reference-unavailable">
@@ -59,10 +59,14 @@ export function FileMemoReference({ reference, children, inline = false, languag
     {' '}<button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button>
   </span>;
   const mediaKey = JSON.stringify([reference, sessionId, memo.file.size, memo.file.mtimeMs]);
-  const media = inline && status === 'available' && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
+  const html = isHtmlPreviewPath(path);
+  // HTML embeds present the current local document, including later edits.
+  // Only a new disk version reloads the guest; focus refreshes retain its state.
+  const htmlVersion = currentVersion ? [currentVersion.size, currentVersion.mtimeMs] : [status, memo.file.size, memo.file.mtimeMs];
+  const media = inline && (status === 'available' || html) && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
   const source = fileUrl(path);
   return <span className="file-memo-reference" title={`${language === 'zh' ? '模型备注' : 'Model note'}: ${memo.note.purpose}`}>
-    {media && isHtmlPreviewPath(path) ? <InlineHtmlPreview key={path} path={path} title={typeof label === 'string' ? label : memo.file.name} language={language} />
+    {media && html ? <InlineHtmlPreview key={path} path={path} fileVersion={JSON.stringify(htmlVersion)} title={typeof label === 'string' ? label : memo.file.name} language={language} />
       : media && isImagePath(path) ? <img src={source} alt={typeof children === 'string' ? children : memo.file.name}
       onError={() => setFailedMedia(mediaKey)}
       onClick={() => openInspector(path, memo.file.name)}
@@ -70,7 +74,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
       : media && isVideoPath(path) ? <video src={source} controls preload="metadata" onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : media && isAudioPath(path) ? <audio src={source} controls preload="metadata" onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : <LocalFileReferenceLink path={path} knownFileName={memo.file.name}>{label}</LocalFileReferenceLink>}
-    {status === 'changed' && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
+    {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
     {status === 'available' && inline && failedMedia === mediaKey && <small role="status"> · {language === 'zh' ? '无法预览，打开文件查看' : 'Preview unavailable; open the file'}</small>}
   </span>;
 }

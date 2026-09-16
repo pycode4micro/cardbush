@@ -15,6 +15,7 @@ import {
   isGuidanceSealedAssistantSegment,
   numericOrderValue,
   normalizeLoopContent,
+  createAssistantTranscriptGroupKey,
 } from './messageFacts';
 import {
   shouldPreserveExistingAsLoopHistory,
@@ -507,7 +508,10 @@ const normalizedChatMessageDisplayCache = new WeakMap<
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
   const cached = normalizedChatMessageDisplayCache.get(messages);
   if (cached) return cached;
-  const timedMessages = hydrateAssistantTurnTiming(messages);
+  // Older cached UI snapshots may already contain model-only child results.
+  // Use the transport name, never XML-looking text a user may have pasted.
+  const timedMessages = hydrateAssistantTurnTiming(messages.filter(message =>
+    !(message.role === 'user' && message.metadata?.name === 'subagent_result')));
   const visibleMessages = timedMessages.filter(
     (message) =>
       !isGoalSelfCheckMessage(message) && !isBackendSupersededMessage(message),
@@ -551,6 +555,31 @@ export function normalizeActiveTurnTranscriptForDisplay(
   if (!turnId) {
     return messages;
   }
+  const groupKey = createAssistantTranscriptGroupKey(messages);
+  const groups = new Map<string, ChatMessage[]>();
+  for (const message of messages) {
+    if (message.role !== 'assistant' || chatMessageTurnId(message) !== turnId) continue;
+    const key = groupKey(message);
+    const group = groups.get(key) ?? [];
+    group.push(message);
+    groups.set(key, group);
+  }
+  const replacements = new Map<ChatMessage, ChatMessage>();
+  const removed = new Set<ChatMessage>();
+  for (const group of groups.values()) {
+    const normalized = normalizeActiveAssistantGroup(group, turnId);
+    const kept = new Set(normalized.map(message => message.id));
+    for (const message of group) if (!kept.has(message.id)) removed.add(message);
+    for (const message of normalized) {
+      const source = group.find(candidate => candidate.id === message.id)!;
+      if (source !== message) replacements.set(source, message);
+    }
+  }
+  if (!removed.size && !replacements.size) return messages;
+  return messages.flatMap(message => removed.has(message) ? [] : [replacements.get(message) ?? message]);
+}
+
+function normalizeActiveAssistantGroup(messages: ChatMessage[], turnId: string) {
   const activeAssistantIndex = findLastIndex(
     messages,
     (message) =>

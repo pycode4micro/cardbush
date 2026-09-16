@@ -1,0 +1,4 @@
+interface:
+  display_name: "视觉"
+  short_description: "在对话中直接呈现趋势图、BI 指标和交互分析，贴合界面主题"
+  default_prompt: "使用 $visualize，先读取当前 CardBush 主题，再把数据展示为适配该主题的内嵌图表，标明口径与来源。"

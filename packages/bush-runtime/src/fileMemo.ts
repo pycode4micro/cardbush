@@ -73,8 +73,10 @@ export async function resolveFileMemo(store: ToolExecutionStore, reference: stri
   if (scope.fileName && scope.fileName !== entry.memo.file.name) return { status: 'unresolved', reason: 'reference_mismatch' };
   try {
     const current = await stat(memo.file.path);
-    return { memo, ...(recovered ? { recovered } : {}), status: !current.isFile() ? 'unavailable' :
-      current.size === memo.file.size && current.mtimeMs === memo.file.mtimeMs ? 'available' : 'changed' };
+    if (!current.isFile()) return { memo, ...(recovered ? { recovered } : {}), status: 'unavailable' };
+    return { memo, ...(recovered ? { recovered } : {}),
+      currentVersion: { size: current.size, mtimeMs: current.mtimeMs },
+      status: current.size === memo.file.size && current.mtimeMs === memo.file.mtimeMs ? 'available' : 'changed' };
   } catch { return { memo, status: 'unavailable' }; }
 }
 

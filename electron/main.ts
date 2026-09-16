@@ -2,6 +2,7 @@ import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledTo
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
+import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
 import { McpDesktopHost } from './mcpDesktopHost';
 import {
@@ -2118,6 +2119,14 @@ ipcMain.handle('appearance:wallpaper-accent', () => {
   return readWallpaperAccent();
 });
 
+let visualThemeContextStore: VisualThemeContextStore | undefined;
+function visualThemeContextPath() { return path.join(app.getPath('userData'), 'appearance', 'current-theme.json'); }
+ipcMain.handle('appearance:publish-visual-theme', (event, context) => {
+  assertMainWindowSender(event.sender.id);
+  visualThemeContextStore ??= new VisualThemeContextStore(visualThemeContextPath());
+  return visualThemeContextStore.write(context);
+});
+
 ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode, options?: WindowAppearanceOptions) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow || sourceWindow == null || sourceWindow.isDestroyed()) {
@@ -2288,7 +2297,7 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
       path: targetPath,
       name: path.basename(targetPath),
       kind: stats.isDirectory() ? 'folder' as const : 'file' as const,
-      ...(stats.isFile() ? { size: stats.size } : {}),
+      ...(stats.isFile() ? { size: stats.size, mtimeMs: stats.mtimeMs } : {}),
     };
   }));
   return inspected.filter((item) => item != null);
@@ -3532,6 +3541,7 @@ async function initializeRuntimeHostWithinDeadline() {
           'subagents.json',
         ),
         CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify(productSkillRoots()),
+        CARDBUSH_THEME_CONTEXT_PATH: visualThemeContextPath(),
         CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify(productPluginRoots()),
         CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT: path.join(app.getPath('userData'), 'plugin-data'),
         ...(bundledRipgrep ? { CARDBUSH_RG_PATH: bundledRipgrep } : {}),

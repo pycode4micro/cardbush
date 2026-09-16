@@ -23,6 +23,7 @@ import {
 } from '../chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
+import { isGuidanceSealedAssistantSegment } from '../chatMessages/transcript/messageFacts';
 import {
   MessageListFooter,
   absoluteBottomScrollTop,
@@ -341,6 +342,18 @@ export function ChatPanel({
       : normalized;
     return projectRenderableChatMessages(activeTranscript);
   }, [activeTurnId, visibleMessages, sending]);
+  const completedGuidanceTurnMessages = useMemo(() => {
+    const byTurn = new Map<string, ChatMessage[]>();
+    for (const message of renderMessages) {
+      if (message.role !== 'assistant' || !message.turnId || (sending && message.turnId === activeTurnId)) continue;
+      const group = byTurn.get(message.turnId) ?? [];
+      group.push(message);
+      byTurn.set(message.turnId, group);
+    }
+    return new Map([...byTurn.values()]
+      .filter(group => group.some(isGuidanceSealedAssistantSegment))
+      .map(group => [group[group.length - 1].id, group]));
+  }, [renderMessages, sending, activeTurnId]);
   const [refreshError, setRefreshError] = useState('');
   const refreshBackendWithFeedback = useCallback(async (
     options?: { silent?: boolean },
@@ -2593,6 +2606,7 @@ export function ChatPanel({
                   >
                     <MessageBubble
                       message={message}
+                      changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
                       language={language}
                       sending={sending}
                       activeTurnId={activeTurnId}

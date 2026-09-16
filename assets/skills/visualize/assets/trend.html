@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="cardbush:preview" content="visualization">
+<title>月度趋势示例</title>
+<style>
+:root { color-scheme: light dark; --background: #fff; --foreground: #222; --muted-foreground: #626262; --border: #dedede; --popover: #fff; --popover-foreground: #222; --viz-series-1: #2468c4; --font-sans: system-ui, sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --background: #1c1b19; --foreground: #f0ede7; --muted-foreground: #b7afa5; --border: #393734; --popover: #32312f; --popover-foreground: #f0ede7; --viz-series-1: #6aa9ff; } }
+* { box-sizing: border-box; }
+html, body, body * { scrollbar-width: none; scrollbar-gutter: auto; }
+::-webkit-scrollbar { display: none; width: 0; height: 0; }
+html { background: var(--background); color: var(--foreground); font: 14px var(--font-sans); }
+body { margin: 0; background: transparent; }
+main { position: relative; padding: 8px 0; }
+header { padding-right: 36px; }
+h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+p { color: var(--muted-foreground); margin: 0 0 12px; line-height: 1.5; }
+svg { display: block; width: 100%; overflow: visible; }
+svg text { fill: var(--foreground); font: 12px var(--font-sans); }
+.grid { stroke: var(--border); stroke-width: 1; }
+.series { stroke: var(--viz-series-1); stroke-width: 2.5; fill: none; }
+.point { fill: var(--viz-series-1); }
+label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted-foreground); }
+select { color: var(--foreground); background: var(--background); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font: inherit; }
+output { color: var(--foreground); font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { select { min-height: 44px; font-size: 16px; } }
+</style>
+</head>
+<body>
+<main data-chart-section>
+  <header><h1>月度趋势示例</h1><p>模拟数据，仅用于展示 · 月度金额，单位：万元</p></header>
+  <svg role="img" aria-label="模拟月度金额趋势，从一月 36.5 万元变化至十二月 49.6 万元"></svg>
+  <label>查看数值 <select aria-label="选择月份"></select><output aria-live="polite"></output></label>
+</main>
+<script>
+// Replace this complete dataset, its units, source note and accessible title.
+const data = [36.5, 38.9, 41.2, 39.8, 41.8, 43.6, 42.4, 43.1, 45.8, 47.1, 46.3, 49.6].map((value, i) => ({ label: `${i + 1}月`, value }));
+const svg = document.querySelector('svg');
+const select = document.querySelector('select');
+const output = document.querySelector('output');
+data.forEach((point, i) => select.add(new Option(point.label, String(i))));
+const show = i => { select.value = String(i); output.textContent = `${data[i].label}：${data[i].value.toFixed(1)} 万元`; };
+select.addEventListener('change', () => show(Number(select.value)));
+function draw() {
+  const width = svg.getBoundingClientRect().width;
+  if (!width) return;
+  const height = width < 480 ? 280 : 350;
+  const left = 48, right = width - 14, top = 30, bottom = height - 48;
+  const low = Math.floor(Math.min(...data.map(d => d.value)) / 5) * 5;
+  const high = Math.ceil(Math.max(...data.map(d => d.value)) / 5) * 5;
+  const x = i => left + i / (data.length - 1) * (right - left);
+  const y = value => bottom - (value - low) / (high - low || 1) * (bottom - top);
+  svg.replaceChildren(); svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.style.height = `${height}px`;
+  function node(tag, attrs, text) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, String(value)));
+    if (text !== undefined) el.textContent = text;
+    svg.append(el); return el;
+  }
+  for (let tick = low; tick <= high; tick += 5) {
+    node('line', { x1: left, x2: right, y1: y(tick), y2: y(tick), class: 'grid' });
+    node('text', { x: left - 10, y: y(tick) + 4, 'text-anchor': 'end' }, tick.toFixed(0));
+  }
+  node('text', { x: left, y: 15 }, '金额（万元）');
+  node('text', { x: right, y: height - 3, 'text-anchor': 'end' }, '月份');
+  node('path', { d: data.map((d, i) => `${i ? 'L' : 'M'}${x(i)},${y(d.value)}`).join(' '), class: 'series' });
+  data.forEach((point, i) => {
+    const marker = node('circle', { cx: x(i), cy: y(point.value), r: 3.5, class: 'point' });
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = `${point.label}：${point.value} 万元`; marker.append(title);
+    if (width >= 600 || [0, 3, 7, 11].includes(i)) node('text', { x: x(i), y: bottom + 22, 'text-anchor': i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle' }, point.label);
+  });
+  svg.onpointermove = event => { const bounds = svg.getBoundingClientRect(); show(Math.max(0, Math.min(data.length - 1, Math.round((event.clientX - bounds.left - left) / (right - left) * (data.length - 1))))); };
+  svg.onclick = svg.onpointermove;
+}
+new ResizeObserver(draw).observe(svg.parentElement);
+show(0); draw();
+</script>
+</body>
+</html>

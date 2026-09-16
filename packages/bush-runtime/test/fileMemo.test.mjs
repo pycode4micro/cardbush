@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, readFile, appendFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, appendFile, rm, realpath, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { FileToolExecutionPersistence, InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, ToolExecutionCoordinator, registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from '../dist/index.js';
-import { RESOLVE_FILE_MEMO_COMMAND, fileMemoReference, parseFileMemoReference } from '@cardbush/bush-protocol';
+import { RESOLVE_FILE_MEMO_COMMAND, fileMemoReference, parseFileMemoReference, fileMemoResolutionSchema } from '@cardbush/bush-protocol';
 
 test('memos reuse durable execution facts, update by file identity, and keep immutable references', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-file-memo-'));
@@ -40,9 +40,22 @@ test('memos reuse durable execution facts, update by file identity, and keep imm
   assert.equal((await resolveFileMemo(store, first.result.reference, { sessionId: 's' })).memo.note.purpose, '商品参考');
   assert.equal((await resolveFileMemo(store, first.result.reference, { sessionId: 's' })).status, 'available');
   await writeFile(path, 'different, longer content');
-  assert.equal((await resolveFileMemo(store, first.result.reference, { sessionId: 's' })).status, 'changed');
+  const changed = fileMemoResolutionSchema.parse(await resolveFileMemo(store, first.result.reference, { sessionId: 's' }));
+  assert.equal(changed.status, 'changed');
+  assert.deepEqual(changed.memo.file, first.result.file, 'the original observation is immutable');
+  const disk = await stat(path);
+  assert.deepEqual(changed.currentVersion, { size: disk.size, mtimeMs: disk.mtimeMs }, 'preview version survives protocol parsing');
+  await writeFile(path, 'Different, longer content');
+  await utimes(path, disk.atime, new Date(disk.mtimeMs + 2000));
+  const editedAgain = await resolveFileMemo(store, first.result.reference);
+  assert.equal(editedAgain.status, 'changed');
+  assert.equal(editedAgain.currentVersion.size, changed.currentVersion.size);
+  assert.notEqual(editedAgain.currentVersion.mtimeMs, changed.currentVersion.mtimeMs, 'same-size edits still get a new preview version');
+  assert.deepEqual((await resolveFileMemo(store, first.result.reference)).currentVersion, editedAgain.currentVersion, 'unchanged files keep a stable preview version');
   await rm(path);
-  assert.equal((await resolveFileMemo(store, first.result.reference, { sessionId: 's' })).status, 'unavailable');
+  const unavailable = await resolveFileMemo(store, first.result.reference, { sessionId: 's' });
+  assert.equal(unavailable.status, 'unavailable');
+  assert.equal(unavailable.currentVersion, undefined);
 });
 
 test('memo fields reject verbose/history-shaped payloads and arbitrary references', () => {

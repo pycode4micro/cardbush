@@ -20,6 +20,7 @@ import {
   optionalFiniteNumber,
   sortMessagesByTranscriptOrder,
   chatMessageClientMessageId,
+  createAssistantTranscriptGroupKey,
 } from './messageFacts';
 import {
   mergeToolExecutionLists,
@@ -54,22 +55,24 @@ function nextLocalLoopIndex(message: ChatMessage) {
 }
 
 export function hasIntermediateAssistantSegments(messages: ChatMessage[]) {
-  const finalByTurn = finalAssistantSegmentsByTurn(messages);
+  const groupKey = createAssistantTranscriptGroupKey(messages);
+  const finalByTurn = finalAssistantSegmentsByTurn(messages, groupKey);
   return messages.some((message) => {
-    const final = finalByTurn.get(turnTranscriptKey(message));
+    const final = finalByTurn.get(groupKey(message));
     return Boolean(final && shouldArchiveAssistantSegment(message, final));
   });
 }
 
 export function collapseIntermediateAssistantSegments(messages: ChatMessage[]) {
-  const finalByTurn = finalAssistantSegmentsByTurn(messages);
+  const groupKey = createAssistantTranscriptGroupKey(messages);
+  const finalByTurn = finalAssistantSegmentsByTurn(messages, groupKey);
   if (finalByTurn.size === 0) {
     return messages;
   }
   const historyByFinalId = new Map<string, ChatMessage[]>();
   const visible: ChatMessage[] = [];
   for (const message of messages) {
-    const final = finalByTurn.get(turnTranscriptKey(message));
+    const final = finalByTurn.get(groupKey(message));
     if (!final || !shouldArchiveAssistantSegment(message, final)) {
       visible.push(message);
       continue;
@@ -91,13 +94,13 @@ export function collapseIntermediateAssistantSegments(messages: ChatMessage[]) {
   });
 }
 
-function finalAssistantSegmentsByTurn(messages: ChatMessage[]) {
+function finalAssistantSegmentsByTurn(messages: ChatMessage[], groupKey: (message: ChatMessage) => string) {
   const byTurn = new Map<string, ChatMessage>();
   for (const message of messages) {
     if (message.role !== 'assistant' || !isAssistantFinalTranscript(message)) {
       continue;
     }
-    const turnKey = turnTranscriptKey(message);
+    const turnKey = groupKey(message);
     const current = byTurn.get(turnKey);
     if (!current || compareAssistantSegments(current, message) <= 0) {
       byTurn.set(turnKey, message);
@@ -242,7 +245,6 @@ function backendLoopMessageMatchesTemporary(
 ) {
   if (
     temporaryIds.has(candidate.id) ||
-    !isSupersededLoopAssistant(candidate) ||
     turnTranscriptKey(candidate) !== turnTranscriptKey(temporary)
   ) {
     return false;
@@ -250,6 +252,7 @@ function backendLoopMessageMatchesTemporary(
   if (messageIdentityMatches(candidate, temporary)) {
     return true;
   }
+  if (!isSupersededLoopAssistant(candidate)) return false;
   const candidateSegment = optionalFiniteNumber(
     candidate.metadata?.assistant_segment_index,
   );
@@ -294,6 +297,7 @@ export function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
     return messages;
   }
   const sorted = sortMessagesByTranscriptOrder(messages);
+  const groupKey = createAssistantTranscriptGroupKey(sorted);
   const loopHistoryByTurn = new Map<string, ChatMessage[]>();
   const visible: ChatMessage[] = [];
   for (const message of sorted) {
@@ -307,7 +311,7 @@ export function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
       continue;
     }
     if (isSupersededLoopAssistant(message)) {
-      const key = turnTranscriptKey(message);
+      const key = groupKey(message);
       loopHistoryByTurn.set(key, [
         ...(loopHistoryByTurn.get(key) ?? []),
         snapshotLoopHistoryMessage(message),
@@ -321,7 +325,7 @@ export function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
       visible,
       (message) =>
         message.role === 'assistant' &&
-        turnTranscriptKey(message) === turnKey &&
+        groupKey(message) === turnKey &&
         !isSupersededLoopAssistant(message),
     );
     if (targetIndex < 0) {

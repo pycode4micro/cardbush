@@ -99,7 +99,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await pause();
   assert.equal(await run(`document.querySelector('.assistant-changed-files-summary') === null`), true,
     'the live turn keeps its existing progress presentation');
-  for (const status of ['stopped', 'failed', 'completed']) {
+  await run("showTerminalChanges('failed')");
+  await pause();
+  assert.equal(await run("document.querySelector('.assistant-changed-files-summary') === null"), true,
+    'failure does not expose the completion-only changed-files summary');
+  for (const status of ['stopped', 'completed']) {
     await run(`showTerminalChanges('${status}')`);
     await until(`document.querySelector('.assistant-changed-files-title')?.textContent === '已编辑 1 个文件'`,
       status + ' retains changes even without a final answer');
@@ -112,14 +116,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
       document.querySelector('.assistant-changed-file').click();
       document.querySelector('${inline}').click();`);
   }
-  assert.deepEqual(await run('terminalReviewCalls'), ['all', 'src/file.ts', 'all', 'src/file.ts', 'all', 'src/file.ts']);
+  assert.deepEqual(await run('terminalReviewCalls'), ['all', 'src/file.ts', 'all', 'src/file.ts']);
   assert.deepEqual(await run(`terminalRevertCalls.map(call => ({ turnId: call.turnId, files: call.report.files.map(file => file.path) }))`),
-    Array.from({ length: 3 }, () => ({ turnId: 'one', files: ['src/file.ts'] })),
+    Array.from({ length: 2 }, () => ({ turnId: 'one', files: ['src/file.ts'] })),
     'terminal summaries retain review and revert actions with the original turn');
   await run(`showTerminalChanges('stopped', false)`);
   await pause();
   assert.equal(await run(`document.querySelector('.assistant-changed-files-summary') === null`), true,
     'stopping without file changes does not create an empty summary');
   await run('renderView(null)');
-  console.log('Undo revert UI passed: inline/review/bulk actions, history replay, session isolation, both themes, and stopped/failed/completed change summaries.');
+  console.log('Undo revert UI passed: inline/review/bulk actions, history replay, session isolation, both themes, and stopped/completed change summaries.');
 };

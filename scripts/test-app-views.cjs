@@ -54,7 +54,11 @@ async function buildViews() {
     'src/hooks/useCapabilityCatalogRefresh.ts',
     'src/hooks/useSoftPanelPresence.ts',
     'src/features/chatMessages/MessageBubble.tsx',
+    'src/features/appearance/useVisualThemeContext.ts',
     'src/features/chatMessages/FileMemoReference.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' ? [
+      'src/backend/runtimeSessionMessageProjection.ts', 'src/features/chatMessages/transcript/messageProjection.ts',
+    ] : []),
     'src/features/tools/WorkspaceChangeStateContext.ts',
     'src/features/tools/toolChangeReports.ts',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' ? ['src/ShadowWindow.tsx'] : []),
@@ -74,10 +78,11 @@ async function buildViews() {
       name: 'app-view-test-entry',
       enforce: 'pre',
       resolveId: (value, importer) => {
+        if (process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0loop-preview-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' && value === './backend/api' && importer?.endsWith('ShadowWindow.tsx')) return '\0shadow-view-api';
         return value.endsWith('__app_view_test__.ts') ? entryId : undefined;
       },
-      load: value => value === '\0shadow-view-api'
+      load: value => value === '\0loop-preview-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.loopFixtureClient};}` : value === '\0shadow-view-api'
         ? ['closeShadowConversation', 'createShadowConversation', 'fetchSessionMessages', 'recordAssistantLogicFeedback', 'streamShadowConversationMessage', 'updateShadowConversationMode']
           .map(name => `export const ${name} = (...args) => window.shadowFixture.${name}(...args);`).join('\n')
         : value === entryId ? exports : undefined,
@@ -192,6 +197,12 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews') {
+      await require('./helpers/loop-execution-previews.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no loop preview renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state') {
       await require('./helpers/shadow-state.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no Shadow renderer errors');
@@ -210,7 +221,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['tool-update-stability', 'composer-input', 'previous-conversation'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -443,6 +454,14 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'solution-selection') {
       assert.deepEqual(await run('failures'), [], 'no solution selection renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'guidance-rendering') {
+      await require('./helpers/chat-guidance-rendering.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'guidance-rendering') {
+      assert.deepEqual(await run('failures'), [], 'no guidance renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

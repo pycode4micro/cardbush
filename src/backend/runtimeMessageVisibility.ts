@@ -5,6 +5,7 @@ const legacyInternalRuntimeMessageNames = new Set([
   'tool_image_observation',
   'task_plan_continuation',
   'empty_stop_recovery',
+  'subagent_result',
 ]);
 
 export function isInternalRuntimeMessage(message: Pick<RuntimeSessionMessage, 'message'>): boolean {

@@ -74,6 +74,7 @@ import {
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { modelFailurePresentation } from './modelFailurePresentation';
 import { MessageToolArtifact, MessageToolOutputs } from '../tools/MessageToolOutputs';
+import { LoopExecutionPreviews, isLoopPreviewExecution } from '../tools/LoopExecutionPreviews';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import {
   localFileReference,
@@ -617,6 +618,7 @@ function reactNodeText(node: ReactNode): string {
 
 function MessageBubbleView({
   message,
+  changeSummaryMessages,
   language,
   sending,
   activeTurnId,
@@ -634,6 +636,7 @@ function MessageBubbleView({
   onAssistantFeedback,
 }: {
   message: ChatMessage;
+  changeSummaryMessages?: ChatMessage[];
   language: AppLanguage;
   sending: boolean;
   activeTurnId: string;
@@ -1001,8 +1004,10 @@ function MessageBubbleView({
       : [];
   const stoppedAssistantRound = isStoppedAssistantMessage(message);
   const failedAssistantRound = isFailedAssistantMessage(message);
+  const guidanceBoundaryRound =
+    !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
   const freezeTerminalTranscript =
-    (stoppedAssistantRound || failedAssistantRound) && loopHistory.length > 0;
+    (stoppedAssistantRound || failedAssistantRound || guidanceBoundaryRound) && loopHistory.length > 0;
   const visibleLoopHistory =
     isActiveAssistantTurn || freezeTerminalTranscript ? [] : loopHistory;
   const activeTranscriptMessages = isActiveAssistantTurn || freezeTerminalTranscript
@@ -1015,8 +1020,6 @@ function MessageBubbleView({
     isActiveAssistantTurn ||
     activeTranscriptMessages.length > 1 ||
     (freezeTerminalTranscript && activeTranscriptMessages.length > 0);
-  const guidanceBoundaryRound =
-    !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
   const preserveTerminalExecutionRecord =
     (stoppedAssistantRound || failedAssistantRound) &&
     !visibleLoopHistory.some(
@@ -1053,10 +1056,11 @@ function MessageBubbleView({
     !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
   const showFinalAnswer = finalAssistantRound &&
     !guidanceBoundaryRound && !stoppedAssistantRound && !failedAssistantRound;
-  // Stopping or failing a turn does not undo file changes already made by its tools.
-  const completedChangeReport = !isActiveAssistantTurn &&
-    (finalAssistantRound || stoppedAssistantRound || failedAssistantRound)
-    ? completedAssistantChangeReport(message)
+  // Guidance completes a segment, not the Turn. Only normal completion and
+  // an explicit Stop expose the changed-files summary and its actions.
+  const completedChangeReport = !isActiveAssistantTurn && !guidanceBoundaryRound &&
+    (stoppedAssistantRound || (finalAssistantRound && !failedAssistantRound))
+    ? completedAssistantChangeReport(message, changeSummaryMessages)
     : null;
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const failurePresentation = assistantFailurePresentation(message, language);
@@ -1331,13 +1335,14 @@ function MessageBubbleView({
 }
 
 const completedAssistantChangeReportCache = new WeakMap<
-  ChatMessage,
+  ChatMessage | ChatMessage[],
   ReturnType<typeof toolChangeReportFromExecutions>
 >();
 
-function completedAssistantChangeReport(message: ChatMessage) {
-  if (completedAssistantChangeReportCache.has(message)) {
-    return completedAssistantChangeReportCache.get(message) ?? null;
+function completedAssistantChangeReport(message: ChatMessage, turnMessages?: ChatMessage[]) {
+  const source = turnMessages ?? message;
+  if (completedAssistantChangeReportCache.has(source)) {
+    return completedAssistantChangeReportCache.get(source) ?? null;
   }
   const executions = new Map<string, ChatToolExecution>();
   const collect = (candidate: ChatMessage) => {
@@ -1348,10 +1353,10 @@ function completedAssistantChangeReport(message: ChatMessage) {
       executions.set(execution.id, execution);
     }
   };
-  collect(message);
+  for (const candidate of turnMessages ?? [message]) collect(candidate);
   const report = toolChangeReportFromExecutions(Array.from(executions.values()));
   const visibleReport = report?.files.length ? report : null;
-  completedAssistantChangeReportCache.set(message, visibleReport);
+  completedAssistantChangeReportCache.set(source, visibleReport);
   return visibleReport;
 }
 
@@ -1664,6 +1669,7 @@ function AssistantMessageContent({
 
   groups.forEach((group, index) => {
     const groupKey = group.executions[0]?.id || String(index);
+    const listedExecutions = group.executions.filter(execution => !isLoopPreviewExecution(execution));
     const segment = displayContent.slice(cursor, group.offset);
     if (segment.trim()) {
       blocks.push(
@@ -1674,10 +1680,11 @@ function AssistantMessageContent({
         />,
       );
     }
-    blocks.push(
+    if (listedExecutions.length) blocks.push(
       <ToolExecutionBlock
         key={`tools-${groupKey || index}`}
-        executions={group.executions}
+        executions={listedExecutions}
+        showImagePreviews={false}
         language={language}
         message={message}
         active={active}
@@ -1686,7 +1693,9 @@ function AssistantMessageContent({
         onOpenScene={onOpenScene}
       />,
     );
-    // Tool images open on demand through "View image" in the execution details.
+    blocks.push(<LoopExecutionPreviews key={`previews-${groupKey}`} executions={group.executions}
+      message={message} language={language} active={active} />);
+    // Images open on demand from the separate execution preview row.
     const media = group.executions.flatMap(execution => mediaByExecution.get(execution.id) ?? [])
       .filter(artifact => artifact.type !== 'image');
     if (media.length) {

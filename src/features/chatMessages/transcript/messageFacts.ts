@@ -237,6 +237,27 @@ export function findUserMessageForAssistantRegenerate(
   return persistedChatMessageId(user) ? user : undefined;
 }
 
+// One Turn may contain several replies separated by applied guidance. Process
+// history belongs to the next sealed reply, or to the remaining open tail.
+export function createAssistantTranscriptGroupKey(messages: ChatMessage[]) {
+  const boundariesByTurn = new Map<string, ChatMessage[]>();
+  for (const message of messages) {
+    if (message.role !== 'assistant' || !isGuidanceSealedAssistantSegment(message)) continue;
+    const turnKey = turnTranscriptKey(message);
+    const boundaries = boundariesByTurn.get(turnKey) ?? [];
+    boundaries.push(message);
+    boundariesByTurn.set(turnKey, boundaries);
+  }
+  for (const boundaries of boundariesByTurn.values()) boundaries.sort(compareAssistantSegments);
+  return (message: ChatMessage) => {
+    const turnKey = turnTranscriptKey(message);
+    const boundary = boundariesByTurn.get(turnKey)?.find(candidate =>
+      compareAssistantSegments(message, candidate) <= 0,
+    );
+    return `${turnKey}\u0000${boundary?.id ?? 'tail'}`;
+  };
+}
+
 export function isBackendSupersededMessage(message: ChatMessage) {
   const metadata = message.metadata ?? {};
   return (

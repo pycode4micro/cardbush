@@ -131,6 +131,7 @@ declare global {
         source: 'wallpaper' | 'fallback';
       }>;
       setWindowTheme: (theme: 'bright' | 'dark' | 'cyberpunk', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
+      publishVisualTheme: (context: import('../../electron/visualThemeContextSchema').VisualThemeContext) => Promise<void>;
       onWindowAppearanceChanged: (callback: (state: import('../../electron/windowAppearance').WindowAppearanceState) => void) => () => void;
       productHostCommand: (command: unknown) => Promise<unknown>;
       mcpRequests: () => Promise<import('../../electron/mcpDesktopHost').McpUserRequest[]>;
@@ -189,6 +190,7 @@ declare global {
         name: string;
         kind: 'file' | 'folder';
         size?: number;
+        mtimeMs?: number;
       }>>;
       inspectLocalReference: (targetPath: string) => Promise<{
         path: string;

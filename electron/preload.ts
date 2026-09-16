@@ -214,6 +214,8 @@ const desktopApi = {
     }>,
   setWindowTheme: (theme: 'bright' | 'dark' | 'cyberpunk', options?: import('./windowAppearance').WindowAppearanceOptions) =>
     ipcRenderer.invoke('appearance:set-window-theme', theme, options) as Promise<import('./windowAppearance').WindowAppearanceState | undefined>,
+  publishVisualTheme: (context: import('./visualThemeContextSchema').VisualThemeContext) =>
+    ipcRenderer.invoke('appearance:publish-visual-theme', context) as Promise<void>,
   onWindowAppearanceChanged: (callback: (state: import('./windowAppearance').WindowAppearanceState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: import('./windowAppearance').WindowAppearanceState) => callback(state);
     ipcRenderer.on('appearance:window-changed', listener);
@@ -248,6 +250,7 @@ const desktopApi = {
       name: string;
       kind: 'file' | 'folder';
       size?: number;
+      mtimeMs?: number;
     }>>,
   inspectLocalReference: (targetPath: string) =>
     ipcRenderer.invoke('files:inspect-local-reference', targetPath) as Promise<{

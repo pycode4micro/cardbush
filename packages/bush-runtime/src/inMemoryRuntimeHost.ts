@@ -2890,14 +2890,18 @@ export class InMemoryRuntimeHost {
     generatedMessages: GeneratedMessageFact[],
     results: SettledAgentGuidance[],
   ): ModelMessage[] {
-    for (const result of results) {
+    // Child results are model context, not messages authored by the user.
+    const internalResults = results.map(result => ({ ...result, message: {
+      ...result.message, visibility: 'internal' as const,
+    } }));
+    for (const result of internalResults) {
       generatedMessages.push({
         messageId: `msg_subagent_result_${turnId}_${result.taskId}`,
         createdAt: this.#sessionNow(),
         message: result.message,
       });
     }
-    return [...messages, ...results.map((result) => result.message)];
+    return [...messages, ...internalResults.map((result) => result.message)];
   }
 
   #automationReminderMessage(reminder: Awaited<ReturnType<AutomationScheduler['reminder']>>): ModelMessage {

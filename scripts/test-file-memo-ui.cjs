@@ -37,6 +37,8 @@ app.whenReady().then(async () => {
         new Function('require','module','exports',sources[name])(id => {
           if(id.endsWith('/localPaths'))return loadModule('paths');
           if(id==='./LocalFileReferenceLink')return loadModule('link');
+          // This fixture exercises image references; HTML uses the real webview suite.
+          if(id==='./InlineHtmlPreview')return {isHtmlPreviewPath:()=>false,InlineHtmlPreview:()=>{throw Error('Unexpected HTML in the image fixture');}};
           if(id==='./mediaPresentation')return loadModule('presentation');
           if(id==='./FileMemoScope')return loadModule('memoScope');
           if(id.endsWith('/conversationScope'))return loadModule('scope');

@@ -409,6 +409,8 @@ test("keeps the parent non-blocking while sibling Subagents run and joins before
     .filter((message) => message.name === "subagent_result")
     .map((message) => message.content);
   assert.equal(reconciledResults.length, 2);
+  assert.ok(parentFollowups[1].messages.filter(message => message.name === 'subagent_result')
+    .every(message => message.visibility === 'internal'), 'child results reach the model as internal context');
   assert.match(reconciledResults[0], /status="completed">\nresult A\n/);
   assert.match(reconciledResults[1], /status="completed">\nresult B\n/);
 });

@@ -51,7 +51,8 @@ test('Windows PowerShell finds and runs a bare command from a mixed-case Path ov
   transport.stderr.on('data', chunk => { output += chunk.toString(); });
   const finished = new Promise((resolve, reject) => {
     transport.onclose = resolve;
-    timer = setTimeout(() => reject(Error('Command probe did not finish')), 5_000);
+    // Cold PowerShell startup can exceed five seconds on shared Windows runners.
+    timer = setTimeout(() => reject(Error('Command probe did not finish: ' + output)), 12_000);
   });
   try { await transport.start(); await finished; }
   finally { clearTimeout(timer); await transport.close(); }

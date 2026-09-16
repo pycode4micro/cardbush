@@ -57,6 +57,14 @@ for (const journal of paths) {
   await api.streamRuntimeTurnEvents({ sessionId, turnId,
     onDelta: (delta, route) => chunks.push(delta, route),
     onAssistantSegmentCompleted: (content, route) => { pending.push(chunks.completeSegment(content, route)); },
+    onExecution: update => {
+      if (update.reason !== 'turn_guidance_applied') return;
+      if (!state[sessionId].some(message => message.id === update.guidanceMessageId)) {
+        state[sessionId].push({ id: update.guidanceMessageId, role: 'user', content: 'Applied guidance',
+          turnId, createdAt: update.createdAt, metadata: { turn_guidance: true } });
+      }
+      state = api.applyAssistantSegmentBoundary(state, sessionId, assistantId, update);
+    },
     onToolExecution: execution => {
       pending.push(chunks.releaseToolBoundary().then(() => {
         state = api.appendToolExecution(state, sessionId, assistantId, execution);
@@ -70,7 +78,13 @@ for (const journal of paths) {
   const expectedText = new Map();
   const expectedTools = new Map();
   const expectedOrder = new Set();
+  const expectedGuidanceGroup = new Map();
+  let guidanceGroup = 0;
   for (const event of events) {
+    if (event.kind === 'guidance_applied') guidanceGroup++;
+    const assistantId = event.kind === 'tool_queued' ? event.payload.assistantMessageId
+      : event.kind.startsWith('assistant_segment_') ? event.payload.messageId : undefined;
+    if (assistantId && !expectedGuidanceGroup.has(assistantId)) expectedGuidanceGroup.set(assistantId, guidanceGroup);
     if (event.kind === 'assistant_segment_started') expectedOrder.add(event.payload.messageId);
     if (event.kind === 'assistant_segment_completed') {
       const { messageId, content } = event.payload;
@@ -90,6 +104,14 @@ for (const journal of paths) {
     const duplicateKeys = visible.map(message => message.id).filter((id, index, ids) => ids.indexOf(id) !== index);
     const toolIds = visible.flatMap(message => message.toolExecutions ?? []).map(tool => tool.id).filter(id => expectedTools.has(id));
     const duplicateToolCount = toolIds.length - new Set(toolIds).size;
+    const crossedGuidanceGroups = projected.filter(message => message.role === 'assistant').filter(message =>
+      new Set([...(message.loopHistory ?? []), message].map(item => expectedGuidanceGroup.get(identity(item)))
+        .filter(group => group != null)).size > 1).length;
+    if (process.env.CARDBUSH_REPLAY_DETAILS === '1') console.log(JSON.stringify({ stage, rows: projected.map(message => ({
+      id: identity(message), role: message.role, sealed: message.metadata?.segment_boundary,
+      segments: [...(message.loopHistory ?? []), message].map(item => ({ id: identity(item),
+        group: expectedGuidanceGroup.get(identity(item)), tools: item.toolExecutions?.map(tool => tool.id) })),
+    })) }));
     const actualOrder = visible.map(identity).filter(id => expectedOrder.has(id));
     const orderMatches = JSON.stringify(actualOrder) === JSON.stringify([...expectedOrder]);
     const packages = api.coalesceAssistantTranscript(visible);
@@ -101,8 +123,8 @@ for (const journal of paths) {
     console.log(JSON.stringify({ stage, turnId, eventCount: events.length, assistantTexts: expectedText.size, toolCalls: expectedTools.size,
       visibleSegments: visible.length, missingTextIds: missingText.map(([id]) => id), misplacedToolCount: misplacedTools.length,
       missingToolCount: missingTools.length, duplicateToolCount, duplicateKeys, orderMatches,
-      presentationSegments: packages.length, packageContentMatches }));
-    if (missingText.length || misplacedTools.length || duplicateKeys.length || duplicateToolCount || !orderMatches || !packageContentMatches) process.exitCode = 1;
+      presentationSegments: packages.length, packageContentMatches, crossedGuidanceGroups }));
+    if (missingText.length || misplacedTools.length || duplicateKeys.length || duplicateToolCount || !orderMatches || !packageContentMatches || crossedGuidanceGroups) process.exitCode = 1;
   };
   inspect('live');
   const committed = commits.find(event => event.payload.turnId === turnId)?.payload;

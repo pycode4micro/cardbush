@@ -169,6 +169,7 @@ export function applyAssistantSegmentBoundary(
         messages[index] = {
           ...message,
           messageId: guidanceMessageId,
+          sequence: update.sequence ?? message.sequence,
           status: 'sent',
           metadata: {
             ...(message.metadata ?? {}),

@@ -63,6 +63,7 @@ export function ToolExecutionBlock({
   message,
   active,
   historyLabel = !active,
+  showImagePreviews = true,
   onRevertChangeReport,
   onOpenScene,
 }: {
@@ -71,6 +72,7 @@ export function ToolExecutionBlock({
   message: ChatMessage;
   active: boolean;
   historyLabel?: boolean;
+  showImagePreviews?: boolean;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -327,6 +329,7 @@ export function ToolExecutionBlock({
               language={language}
               active={active}
               onOpenScene={onOpenScene}
+              showImagePreviews={showImagePreviews}
             />
           ))}
           {changes}
@@ -753,6 +756,7 @@ function stringArray(value: unknown) {
 function ToolExecutionRow({
   execution, message, language, active, expanded, onToggle, onOpenScene,
   detailsDeferred, detailsStatus, onRetryDetails,
+  showImagePreviews,
 }: {
   execution: ChatToolExecution;
   message: ChatMessage;
@@ -764,6 +768,7 @@ function ToolExecutionRow({
   detailsDeferred: boolean;
   detailsStatus?: 'loading' | 'loaded' | 'failed';
   onRetryDetails: () => void;
+  showImagePreviews: boolean;
 }) {
   const rowRef = useRef<HTMLElement>(null);
   const detailId = useId();
@@ -805,7 +810,7 @@ function ToolExecutionRow({
           ) : isContextCompactionPresentationExecution(execution) ? (
             <RuntimeContextCompactionDetail execution={execution} active={active} language={language} embedded />
           ) : (
-            <ToolExecutionDetail execution={execution} message={message} language={language} active={active} onOpenScene={onOpenScene} />
+            <ToolExecutionDetail execution={execution} message={message} language={language} active={active} onOpenScene={onOpenScene} showImagePreviews={showImagePreviews} />
           )}
         </div>
       )}
@@ -819,12 +824,14 @@ function ToolExecutionDetail({
   language,
   active,
   onOpenScene,
+  showImagePreviews,
 }: {
   execution: ChatToolExecution;
   message: ChatMessage;
   language: AppLanguage;
   active: boolean;
   onOpenScene: (scene: CardlingScene) => void;
+  showImagePreviews: boolean;
 }) {
   const [outputWrapped, setOutputWrapped] = useState(false);
   const scene = cardlingSceneFromToolExecution(execution, message);
@@ -879,10 +886,10 @@ function ToolExecutionDetail({
         language={language}
         isFailed={(child) => isToolFailedInContext(child, active)}
       />
-      <ToolImageArtifactViewer
+      {showImagePreviews && <ToolImageArtifactViewer
         artifacts={execution.artifacts}
         language={language}
-      />
+      />}
       {output.trim() && !goalUpdate && (
         <div className="tool-execution-output-panel">
           <div className="tool-output-actions">

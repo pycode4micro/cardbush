@@ -1,6 +1,6 @@
 {
   "name": "cardbush",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "description": "CardBush desktop AI workspace",
   "author": {
     "name": "CardBush"
@@ -45,6 +45,7 @@
     "test:video-skill": "node scripts/test-video-understanding-skill-contract.mjs",
     "test:xlsx-recalc": "node scripts/test-xlsx-recalc.mjs",
     "test:product-skills": "tsc -p tsconfig.node.json && node scripts/test-product-skills-contract.mjs",
+    "test:visualize": "tsc -p tsconfig.node.json && node scripts/test-visual-theme-context.mjs && node scripts/run-app-views-test.mjs html-references",
     "test:product-plugins": "npm run build --workspace @cardbush/product-host && tsc -p tsconfig.node.json && node scripts/test-product-plugins-contract.mjs",
     "test:plugin-install-transaction": "tsc -p tsconfig.node.json && node scripts/test-plugin-install-transaction.mjs",
     "test:plugin-local-install": "tsc -p tsconfig.node.json && node --test scripts/test-plugin-local-install.mjs && node scripts/test-plugin-install-transaction.mjs",
