@@ -17,6 +17,11 @@ module.exports = async ({ run, until, pause }) => {
       views.usePreviousConversationShortcut({ activeConversationId: chatProps.activeConversationId,
         conversations: previousTargets, preparedConversations: previousPrepared, enabled: previousEnabled,
         onOpenConversation: id => { previousOpened.push(id); selectPreviousFixture(id); } });
+      const committedTargets = previousTargets, committedEnabled = previousEnabled;
+      React.useLayoutEffect(() => {
+        window.previousCommittedTargets = committedTargets;
+        window.previousCommittedEnabled = committedEnabled;
+      });
       return h(views.ChatPanel, chatProps);
     };
     window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(PreviousHarness)); };
@@ -74,6 +79,7 @@ module.exports = async ({ run, until, pause }) => {
     await run('previousKey({}, "#previous-modal input")');
     assert.equal(await run('chatProps.activeConversationId'), 'previous-a', 'dialog keyboard input stays local');
     await run('document.querySelector("#previous-modal").remove(); previousEnabled = false; updateChat({})');
+    await until('previousCommittedEnabled === false', 'disabled shortcut state committed');
     await run('previousKey()');
     assert.equal(await run('chatProps.activeConversationId'), 'previous-a', 'disabled app sections do not switch chats');
     await run('previousEnabled = true; updateChat({}); views.saveKeyboardShortcuts({ previousConversation: null })');
@@ -90,6 +96,9 @@ module.exports = async ({ run, until, pause }) => {
     assert.equal(await run('document.querySelector("[data-composer-input]").value'), '尚未发送的新会话', 'prepared conversations and their drafts can be revisited');
     for (const id of ['previous-c', 'previous-a', 'previous-b']) { await run(`selectPreviousFixture('${id}')`); await selected(id); }
     await run('previousTargets = previousTargets.filter(item => item.id !== "previous-a"); updateChat({})');
+    // Updating fixture props schedules a React commit. A synthetic key must not
+    // run against the previous render's still-valid list of conversations.
+    await until('previousCommittedTargets === previousTargets', 'deleted conversation list committed');
     await run('previousKey()'); await selected('previous-c');
     console.log('Previous conversation passed: MRU toggle, background order, repeats/IME, saved drafts/reading position, live task isolation, slash menu, dialogs, disable/rebind, prepared and deleted conversations.');
   } finally {

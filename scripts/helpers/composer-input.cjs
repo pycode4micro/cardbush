@@ -5,6 +5,10 @@ const path = require('node:path');
 module.exports = async ({ run, until, pause, window, root }) => {
   const styleKey = await window.webContents.insertCSS('.app { width: 100% !important; }');
   const originalBounds = window.getBounds();
+  // The prior fixture can still have a textarea while its replacement is
+  // pending. Mount this fixture before sending input to its event handlers.
+  await run('renderView(null)');
+  await until('!document.querySelector(".chat-panel")', 'prior composer fixture unmounted');
   await run(`
     window.inputSavedProps = { ...chatProps }; window.inputSavedTheme = window.viewTheme;
     window.inputSent = [];
