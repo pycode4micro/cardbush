@@ -50,7 +50,7 @@ for (const rejected of [true, false]) {
   let conversations = [{ id: 's' }, { id: 'other' }];
   let messages = { s: ['original'], other: ['other'] };
   let active = 's';
-  let error;
+  let error = 'Previous deletion failed';
   let settle;
   let clearedAttention = 0;
   const invalidatedReads = [];
@@ -68,6 +68,7 @@ for (const rejected of [true, false]) {
     setError: (value) => { error = value; }, errorMessage: (value) => value.message,
   });
   const pending = ctx.run('s');
+  assert.equal(error, null, 'retrying deletion clears the previous visible error');
   assert.equal(conversations.length, 2, 'The pending delete stays visible');
   assert.deepEqual(messages.s, ['original']);
   active = 'other'; // A late deletion must not switch away from another task.

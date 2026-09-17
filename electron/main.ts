@@ -1946,7 +1946,7 @@ ipcMain.handle('window:restore-editor-focus', (event, state?: { documentFocused?
   const target = mainWindow?.webContents === event.sender
     ? mainWindow : shadowWindows.get(event.sender.id)?.window ?? null;
   const wasFocused = !event.sender.isDestroyed() && event.sender.isFocused();
-  const restored = restoreEditorFocus(event, target);
+  const restored = restoreEditorFocus(event, target, state);
   if (!wasFocused || state?.documentFocused === false || !restored) {
     appendDebugLog('input-focus', {
       stage: 'editor-pointer-focus', windowId: target?.id,

@@ -281,8 +281,8 @@ assert.doesNotMatch(
 );
 assert.match(
   styleSource,
-  /\.message-list-item\.assistant-render-stage\s*\{[\s\S]*?--message-list-viewport-height[\s\S]*?--quick-context-bottom-inset/,
-  'assistant layout reservation must use the measured viewport and composer rather than a generic vh clamp',
+  /\.assistant-response-spacer\s*\{[\s\S]*?height:\s*0;[\s\S]*?overflow-anchor:\s*none/,
+  'response reservation must not give individual message rows synthetic heights',
 );
 
 console.log('ui performance isolation contract tests passed');

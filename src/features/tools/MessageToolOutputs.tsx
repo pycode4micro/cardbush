@@ -11,6 +11,7 @@ import './message-tool-outputs.css';
 
 type Interface = { sessionId: string; turnId: string; toolCallId: string; source: string; resourceUri: string; title?: string; serverTitle?: string; resultError?: { text: string; truncated: boolean } };
 const interfaceKey = (view: Interface) => `${view.turnId}:${view.toolCallId}`;
+const interfaceSourceKey = (view: Interface) => JSON.stringify([view.turnId, view.source, view.resourceUri]);
 const sourceUrl = (path: string) => /^(?:https?:|data:|blob:)/i.test(path) ? path : fileUrl(path);
 
 /** Only explicit artifacts and host-bound UI declarations are promoted out of tool logs. */
@@ -24,7 +25,7 @@ export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, l
     .map(execution => ({ turnId: execution.turnId ?? turnId, toolCallId: execution.id })));
   useEffect(() => {
     const ids = JSON.parse(identities) as Array<{ turnId: string; toolCallId: string }>;
-    if (!sessionId || !ids.length) { setInterfaces([]); return; }
+    if (!sessionId || !ids.length) { setInterfaces([]); setError(''); return; }
     const controller = new AbortController();
     const groups = new Map<string, string[]>();
     for (const id of ids) if (id.turnId) groups.set(id.turnId, [...(groups.get(id.turnId) ?? []), id.toolCallId]);
@@ -40,29 +41,41 @@ export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, l
       .catch(cause => { if (!controller.signal.aborted) setError(String(cause instanceof Error ? cause.message : cause)); });
     return () => controller.abort();
   }, [sessionId, identities, retry]);
-  const selected = interfaces.find(view => interfaceKey(view) === selection) ?? interfaces.at(-1);
+  // Failed attempts stay in the audit disclosure; they must not replace a
+  // usable preview or keep a large error card mounted after a later success.
+  const outputs = interfaces.filter(view => !view.resultError);
+  const latestSuccess = new Map<string, number>();
+  interfaces.forEach((view, index) => { if (!view.resultError) latestSuccess.set(interfaceSourceKey(view), index); });
+  const failures = interfaces.flatMap((view, index) => view.resultError
+    ? [{ view, followedBySuccess: (latestSuccess.get(interfaceSourceKey(view)) ?? -1) > index }] : []);
+  const outstandingFailures = failures.filter(failure => !failure.followedBySuccess).length;
+  const selected = outputs.find(view => interfaceKey(view) === selection) ?? outputs.at(-1);
   const label = (view: Interface) => view.title || view.serverTitle || (zh ? '插件界面' : 'Plugin interface');
-  const optionLabel = (view: Interface) => `${label(view)}${view.resultError ? (zh ? ' · 调用失败' : ' · Call failed') : ''}`;
   if (!artifacts.length && !interfaces.length && !error) return null;
   return <section className="message-tool-outputs" aria-label={language === 'zh' ? '工具输出' : 'Tool outputs'}>
     {artifacts.map(artifact => <MessageToolArtifact key={`${mediaPresentationKey(artifact.path)}:${artifact.id}`} artifact={artifact} language={language} />)}
     {selected && <section className="message-plugin-outputs" aria-label={zh ? '插件结果' : 'Plugin results'}>
-      {interfaces.length > 1 && <header className="message-plugin-outputs-heading">
-        <span><PanelsTopLeft size={15} />{zh ? '插件结果' : 'Plugin results'}<small>{interfaces.length}</small></span>
-        <select aria-label={zh ? '选择插件结果' : 'Select plugin result'} value={interfaces.some(view => interfaceKey(view) === selection) ? selection : ''} onChange={event => setSelection(event.target.value)}>
-          <option value="">{zh ? '最新' : 'Latest'} · {optionLabel(interfaces.at(-1)!)}</option>
-          {interfaces.map((view, index) => <option key={interfaceKey(view)} value={interfaceKey(view)}>{index + 1} · {optionLabel(view)}</option>)}
+      {outputs.length > 1 && <header className="message-plugin-outputs-heading">
+        <span><PanelsTopLeft size={15} />{zh ? '插件结果' : 'Plugin results'}<small>{outputs.length}</small></span>
+        <select aria-label={zh ? '选择插件结果' : 'Select plugin result'} value={outputs.some(view => interfaceKey(view) === selection) ? selection : ''} onChange={event => setSelection(event.target.value)}>
+          <option value="">{zh ? '最新' : 'Latest'} · {label(outputs.at(-1)!)}</option>
+          {outputs.map((view, index) => <option key={interfaceKey(view)} value={interfaceKey(view)}>{index + 1} · {label(view)}</option>)}
         </select>
       </header>}
-      {selected.resultError ? <div className="mcp-app-panel mcp-app-tool-error">
-        <header className="mcp-app-heading"><span className="mcp-app-title"><PanelsTopLeft size={16} /><strong>{label(selected)}</strong></span></header>
-        <div className="mcp-app-error" role="alert"><CircleAlert size={16} /><div>
-          <p>{zh ? '工具返回了错误' : 'The tool returned an error'}</p>
-          <span>{zh ? '本次调用未成功。' : 'This call did not succeed.'}</span>
-          {selected.resultError.text && <details><summary>{zh ? '查看工具返回' : 'View tool response'}</summary><pre>{selected.resultError.text}</pre>{selected.resultError.truncated && <small>{zh ? '内容较长，完整返回可在工具详情中查看。' : 'The complete response is available in tool details.'}</small>}</details>}
-        </div></div>
-      </div> : <McpAppPanel key={`${sessionId}:${interfaceKey(selected)}`} sessionId={sessionId} turnId={selected.turnId} toolCallId={selected.toolCallId} title={selected.title} serverTitle={selected.serverTitle} language={language} autoOpen />}
+      <McpAppPanel key={`${sessionId}:${interfaceKey(selected)}`} sessionId={sessionId} turnId={selected.turnId} toolCallId={selected.toolCallId} title={selected.title} serverTitle={selected.serverTitle} language={language} autoOpen />
     </section>}
+    {!!failures.length && <details key={outstandingFailures ? 'outstanding' : 'history'} className="message-plugin-errors">
+      <summary><CircleAlert size={14} /><span>{outstandingFailures
+        ? (zh ? `${outstandingFailures} 次插件调用未成功` : `${outstandingFailures} unsuccessful plugin calls`)
+        : (zh ? `${failures.length} 条先前失败记录` : `${failures.length} earlier failed attempts`)}</span></summary>
+      {failures.map(({ view, followedBySuccess }) => <div className="mcp-app-tool-error" key={interfaceKey(view)}>
+        <strong>{label(view)}</strong><small>{followedBySuccess
+          ? (zh ? '同一工具后续调用已成功' : 'A later call to this tool succeeded')
+          : (zh ? '本次调用未成功' : 'This call did not succeed')}</small>
+        <pre>{view.resultError!.text || (zh ? '工具未提供错误详情。' : 'The tool did not provide error details.')}</pre>
+        {view.resultError!.truncated && <small>{zh ? '完整返回可在工具详情中查看。' : 'The complete response is available in tool details.'}</small>}
+      </div>)}
+    </details>}
     {error && <div role="alert"><span>{language === 'zh' ? '无法读取插件界面信息' : 'Unable to read plugin interface information'}</span><button type="button" onClick={() => setRetry(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button><details><summary>{language === 'zh' ? '错误详情' : 'Details'}</summary>{error}</details></div>}
   </section>;
 }

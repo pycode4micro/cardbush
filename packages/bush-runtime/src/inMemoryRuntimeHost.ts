@@ -367,7 +367,7 @@ export class InMemoryRuntimeHost {
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
   readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
   #shuttingDown = false;
-  #cacheMaintenance = false;
+  #cacheMaintenance: Promise<void> | undefined;
   #activeAppCommands = 0;
 
   readonly #workspaceRedo: WorkspaceRedoStore;
@@ -798,7 +798,14 @@ export class InMemoryRuntimeHost {
     command: RuntimeHostCommand,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    if (this.#cacheMaintenance) throw new Error('Cache maintenance is in progress. Retry after it settles.');
+    // Deletion also collects caches. Concurrent reads and subsequent deletes
+    // wait for that transaction instead of surfacing a transient global error.
+    if (this.#cacheMaintenance) command = structuredClone(command);
+    while (this.#cacheMaintenance) {
+      await settleAtAbort(this.#cacheMaintenance, signal, 'Runtime command cancelled while waiting for cache maintenance.');
+      signal?.throwIfAborted();
+    }
+    signal?.throwIfAborted();
     for (const { extension, enabled } of this.#extensions.values()) {
       const handler = Object.hasOwn(extension.commands, command.kind) ? extension.commands[command.kind] : undefined;
       if (handler) {
@@ -3124,10 +3131,15 @@ export class InMemoryRuntimeHost {
     if (this.#activeAppCommands || this.#mcpApps.busy || this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size) {
       throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
     }
-    return this.#withWorkspaceAction(async () => {
-      this.#cacheMaintenance = true;
-      try { return await operation(); } finally { this.#cacheMaintenance = false; }
-    });
+    let release!: () => void;
+    this.#cacheMaintenance = new Promise<void>(resolve => { release = resolve; });
+    try { return await this.#withWorkspaceAction(operation); }
+    finally {
+      // Release only after the workspace guard is gone. Waiting callers must
+      // neither collide with that guard nor inherit this operation's failure.
+      this.#cacheMaintenance = undefined;
+      release();
+    }
   }
 
   async #assertSessionDeletable(sessionId: string) {

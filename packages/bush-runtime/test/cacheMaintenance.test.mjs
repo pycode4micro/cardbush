@@ -109,6 +109,72 @@ test('busy maintenance rejects before deleting any session or blob', async t => 
   assert.equal(result.counts.sessions, 2);
 });
 
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+
+test('list refreshes and consecutive deletes wait through each cache sweep without changing queued identities', async t => {
+  const f = await fixture(t);
+  for (const id of ['first', 'second', 'keep']) f.sessionStore.ensureSession(id);
+  const gates = [deferred(), deferred()], entered = [deferred(), deferred()];
+  const entries = f.eventLog.cacheEntries.bind(f.eventLog); let sweep = 0;
+  f.eventLog.cacheEntries = async () => { const index = sweep++; entered[index]?.resolve(); await gates[index]?.promise; return entries(); };
+  const removed = [], remove = f.sessionStore.deleteSession.bind(f.sessionStore);
+  f.sessionStore.deleteSession = id => { removed.push(id); return remove(id); };
+  const jobs = [];
+  try {
+    const first = f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'first' } }); jobs.push(first);
+    await entered[0].promise;
+    const command = { kind: 'runtime.delete_session', payload: { sessionId: 'second' } };
+    let secondSettled = false, readSettled = false;
+    const second = f.runtime.sendCommand(command).then(result => { secondSettled = true; return result; }); jobs.push(second);
+    const listing = f.runtime.sendCommand({ kind: 'runtime.list_sessions', payload: {} }).then(result => { readSettled = true; return result; }); jobs.push(listing);
+    command.payload.sessionId = 'keep';
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(secondSettled, false); assert.equal(readSettled, false);
+    assert.deepEqual(removed, ['first']); assert.ok(f.sessionStore.snapshot('second'));
+    gates[0].resolve(); await entered[1].promise;
+    assert.equal((await first).deleted, true);
+    assert.equal(readSettled, false, 'the refresh waits again when the next deletion acquires the guard');
+    gates[1].resolve();
+    assert.equal((await second).sessionId, 'second'); assert.equal((await second).deleted, true);
+    assert.deepEqual((await listing).map(session => session.sessionId), ['keep']);
+    assert.deepEqual(removed, ['first', 'second'], 'each accepted deletion executes once against its original target');
+    assert.equal(f.runtime.hasActiveSession('keep'), false);
+  } finally { gates.forEach(gate => gate.resolve()); await Promise.allSettled(jobs); }
+});
+
+test('maintenance failure releases waiting reads and deletes without forwarding its error', async t => {
+  const f = await fixture(t); f.sessionStore.ensureSession('remove'); f.sessionStore.ensureSession('keep');
+  const gate = deferred(), entered = deferred(), entries = f.eventLog.cacheEntries.bind(f.eventLog); let reads = 0;
+  f.eventLog.cacheEntries = async () => { if (++reads === 1) { entered.resolve(); await gate.promise; throw Error('Fixture cache scan failed'); } return entries(); };
+  const maintenance = assert.rejects(f.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} }), /Fixture cache scan failed/);
+  const jobs = [maintenance];
+  try {
+    await entered.promise;
+    const deletion = f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'remove' } }); jobs.push(deletion);
+    const listing = f.runtime.sendCommand({ kind: 'runtime.list_sessions', payload: {} }); jobs.push(listing);
+    gate.resolve(); await maintenance;
+    assert.equal((await deletion).deleted, true);
+    assert.deepEqual((await listing).map(session => session.sessionId), ['keep']);
+    assert.equal(reads, 2); assert.equal(f.runtime.hasActiveSession('keep'), false);
+  } finally { gate.resolve(); await Promise.allSettled(jobs); }
+});
+
+for (const releaseImmediately of [false, true]) test(`a cancelled queued deletion never executes (release immediately: ${releaseImmediately})`, async t => {
+  const f = await fixture(t); f.sessionStore.ensureSession('keep');
+  const gate = deferred(), entered = deferred(), entries = f.eventLog.cacheEntries.bind(f.eventLog);
+  f.eventLog.cacheEntries = async () => { entered.resolve(); await gate.promise; return entries(); };
+  const maintenance = f.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  try {
+    await entered.promise;
+    const controller = new AbortController();
+    const cancelled = assert.rejects(f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'keep' } }, controller.signal), { name: 'AbortError' });
+    controller.abort(); if (releaseImmediately) gate.resolve();
+    await cancelled; gate.resolve(); await maintenance;
+    assert.ok(f.sessionStore.snapshot('keep'));
+    assert.deepEqual((await f.runtime.sendCommand({ kind: 'runtime.list_sessions', payload: {} })).map(session => session.sessionId), ['keep']);
+  } finally { gate.resolve(); await maintenance; }
+});
+
 test('a recoverable checkpoint protects snapshots even without a committed session', async t => {
   const checkpoints = new InMemoryRuntimeCheckpointStore();
   const f = await fixture(t, { checkpointStore: checkpoints });

@@ -25,6 +25,7 @@
 .mcp-app-error { display: flex; align-items: flex-start; gap: 10px; margin: 0 12px 12px; padding: 12px; border-radius: 9px; background: color-mix(in srgb, var(--text-soft) 8%, transparent); font-size: 12px; color: var(--text-mid); }
 .mcp-app-error > svg { margin-top: 2px; flex-shrink: 0; }
 .mcp-app-error > div { flex: 1; min-width: 0; }
+.mcp-app-error > details { flex: 1; min-width: 0; padding-top: 4px; }
 .mcp-app-error p { margin: 0 0 4px; }
 .mcp-app-error summary { cursor: pointer; color: var(--text-soft); }
 .mcp-app-error pre { margin: 8px 0 0; max-height: 120px; overflow: auto; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -4,7 +4,7 @@ import { cssEscape } from '../../shared/cssEscape';
 export type ConversationScrollPosition = {
   scrollTop: number;
   followLatest: boolean;
-  assistantStageReserved: boolean;
+  responseAnchorKey: string;
   submittedUserReadingAnchor: string;
   anchor: { messageId: string; offset: number } | null;
 };
@@ -28,7 +28,7 @@ export function captureConversationScrollPosition(
   return {
     scrollTop: scroller.scrollTop,
     followLatest,
-    assistantStageReserved: Boolean(scroller.querySelector('.assistant-render-stage')),
+    responseAnchorKey: scroller.querySelector<HTMLElement>('.assistant-response-spacer')?.dataset.anchorKey ?? '',
     submittedUserReadingAnchor: scroller.style.getPropertyValue('--submitted-user-reading-anchor'),
     anchor,
   };
@@ -57,7 +57,8 @@ export function restoreConversationScrollPosition(
     item.style.containIntrinsicBlockSize = `auto ${Math.max(0, contentHeight)}px`;
   }
   const maximum = absoluteBottomScrollTop(scroller);
-  const stage = scroller.querySelector<HTMLElement>('.assistant-render-stage .message-row.assistant');
+  const stage = scroller.querySelector<HTMLElement>('.assistant-response-spacer')?.dataset.anchorKey
+    ? scroller.querySelector<HTMLElement>('.message-list-item:last-child') : null;
   let top = position?.scrollTop ?? maximum;
   if (!position || (position.followLatest && !stage)) {
     top = maximum;

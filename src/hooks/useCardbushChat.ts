@@ -1859,6 +1859,7 @@ export function useCardbushChat(
   }, [setMessageHistoryLoading]);
 
   const deleteConversation = useCallback(async (conversationId: string) => {
+    setError(null);
     try {
       await deleteConversationApi(conversationId);
     } catch (caught) {

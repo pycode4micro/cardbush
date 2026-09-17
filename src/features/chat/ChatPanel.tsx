@@ -23,7 +23,7 @@ import {
 } from '../chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
-import { isGuidanceSealedAssistantSegment } from '../chatMessages/transcript/messageFacts';
+import { isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
 import {
   MessageListFooter,
   absoluteBottomScrollTop,
@@ -43,6 +43,7 @@ import {
 } from '../chatMessages';
 import { QuickContextRail } from './QuickContextRail';
 import { createChatScrollMotion } from './chatScrollMotion';
+import { submittedUserReadingOffset, updateResponseSpacer } from './responseSpacer';
 import {
   captureConversationScrollPosition,
   restoreConversationScrollPosition,
@@ -388,11 +389,19 @@ export function ChatPanel({
     () => summarizeChangeReports(currentTurnChangeReports),
     [currentTurnChangeReports],
   );
+  const activeAssistantForRender = useMemo(() => {
+    if (!sending) return null;
+    const active = streamingAssistantMessage(renderMessages, activeTurnId);
+    if (active && !['completed', 'stopped', 'failed'].includes(active.message.status ?? '')) return active;
+    const latest = lastAssistantMessage(renderMessages);
+    // Admission is marked running before persistence appends optimistic rows.
+    // Never reuse a finished response as the new turn's streaming placeholder.
+    return latest?.message.metadata?.optimistic_request_id && !latest.message.turnId
+      && !['completed', 'stopped', 'failed'].includes(latest.message.status ?? '') ? latest : null;
+  }, [activeTurnId, renderMessages, sending]);
   const activeRuntimeAssistant = useMemo(
-    () => sending
-      ? streamingAssistantMessage(renderMessages, activeTurnId)?.message ?? null
-      : null,
-    [activeTurnId, renderMessages, sending],
+    () => activeAssistantForRender?.message ?? null,
+    [activeAssistantForRender],
   );
   const activeTaskPlan = useMemo(() => {
     if (!activeRuntimeAssistant) return undefined;
@@ -432,6 +441,7 @@ export function ChatPanel({
   const userDetachedFromBottomRef = useRef(false);
   const showScrollBottomRef = useRef(false);
   const pendingSubmittedUserFocusRef = useRef(false);
+  const assistantStageAnchorRef = useRef('');
   const pendingSubmittedUserEntryUntilRef = useRef(0);
   const userMessageEntryTimersRef = useRef<Map<string, number>>(new Map());
   const programmaticScrollUntilRef = useRef(0);
@@ -455,7 +465,6 @@ export function ChatPanel({
     restoring: boolean;
   } | null>(null);
   const scrollRestoreFrameRef = useRef<number | null>(null);
-  const submittedUserFocusFrameRef = useRef<number | null>(null);
   const [scrollMountRevision, setScrollMountRevision] = useState(0);
 
   useEffect(() => {
@@ -476,8 +485,6 @@ export function ChatPanel({
   const activeScrollTraceIdRef = useRef('');
   const scrollTraceObserveUntilRef = useRef(0);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
-  const [assistantStageReservationActive, setAssistantStageReservationActive] =
-    useState(false);
   const [enteringUserMessageIds, setEnteringUserMessageIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -551,7 +558,9 @@ export function ChatPanel({
   }, []);
 
   const releaseAssistantStageReservation = useCallback(() => {
-    setAssistantStageReservationActive(false);
+    assistantStageAnchorRef.current = '';
+    const scroller = listScrollerRef.current;
+    if (scroller) updateResponseSpacer(scroller, '');
   }, []);
 
   const finishConversationScrollRestoration = useCallback(() => {
@@ -566,11 +575,11 @@ export function ChatPanel({
     }
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!sending) {
-      setAssistantStageReservationActive(false);
+      releaseAssistantStageReservation();
     }
-  }, [sending]);
+  }, [sending, activeConversationId, scrollMountRevision, releaseAssistantStageReservation]);
 
   const readBottomMetrics = useCallback((scroller: HTMLElement): ScrollBottomMetrics => {
     const absoluteBottomDistance = absoluteBottomScrollTop(scroller) - scroller.scrollTop;
@@ -802,8 +811,10 @@ export function ChatPanel({
       }
       const scrollerRect = scroller.getBoundingClientRect();
       const itemRect = item.getBoundingClientRect();
-      const desiredTop = Math.round(
-        Math.min(56, Math.max(34, scroller.clientHeight * 0.07)),
+      const footer = scroller.querySelector<HTMLElement>('.message-list-footer');
+      const desiredTop = submittedUserReadingOffset(
+        Math.max(0, scroller.clientHeight - (footer?.getBoundingClientRect().height ?? 0)),
+        itemRect.height,
       );
       scroller.style.setProperty(
         '--submitted-user-reading-anchor',
@@ -849,16 +860,9 @@ export function ChatPanel({
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
       setScrollBottomVisible(false);
-      if (submittedUserFocusFrameRef.current != null) {
-        window.cancelAnimationFrame(submittedUserFocusFrameRef.current);
-      }
-      submittedUserFocusFrameRef.current = window.requestAnimationFrame(() => {
-        submittedUserFocusFrameRef.current = window.requestAnimationFrame(() => {
-          submittedUserFocusFrameRef.current = null;
-          if (listScrollerRef.current !== scroller || userDetachedFromBottomRef.current) return;
-          positionMessageAtReadingAnchor(messageId);
-        });
-      });
+      // Set geometry and scroll ownership in the same layout commit as the
+      // optimistic message. Waiting two frames lets stream following jump first.
+      positionMessageAtReadingAnchor(messageId);
     },
     [positionMessageAtReadingAnchor, setScrollBottomVisible],
   );
@@ -876,10 +880,7 @@ export function ChatPanel({
         return;
       }
       const scrollerRect = scroller.getBoundingClientRect();
-      const stagedContent = item.classList.contains('assistant-render-stage')
-        ? item.querySelector<HTMLElement>('.message-row.assistant')
-        : null;
-      const itemRect = (stagedContent ?? item).getBoundingClientRect();
+      const itemRect = item.getBoundingClientRect();
       const visibleBottom =
         scrollerRect.bottom - Math.max(0, quickContextBottomInset) - streamStatusHeight - 18;
       if (itemRect.bottom <= visibleBottom) {
@@ -893,7 +894,7 @@ export function ChatPanel({
 
   const cancelScheduledStreamFollow = useCallback(() => {
     scrollMotion.cancel();
-    for (const pending of [streamScrollFrameRef, outerResizeFollowFrameRef, submittedUserFocusFrameRef]) {
+    for (const pending of [streamScrollFrameRef, outerResizeFollowFrameRef]) {
       if (pending.current != null) window.cancelAnimationFrame(pending.current);
       pending.current = null;
     }
@@ -1791,16 +1792,15 @@ export function ChatPanel({
           captureScrollGeometry('trace-outer-resize-follow-abort');
           return;
         }
-        const preparedStage = scroller.querySelector<HTMLElement>(
-          '.message-list-item.assistant-render-stage',
-        );
-        const preparedMessageId = preparedStage?.dataset.messageId ?? '';
+        const preparedMessageId = assistantStageAnchorRef.current
+          ? scroller.querySelector<HTMLElement>('.message-list-item:last-child')?.dataset.messageId ?? ''
+          : '';
         if (preparedMessageId) {
           ensureMessageBottomVisible(preparedMessageId);
           lastScrollTopRef.current = scroller.scrollTop;
           setScrollBottomVisible(false);
           captureScrollGeometry('trace-outer-resize-follow', {
-            strategy: 'assistant-render-stage',
+            strategy: 'response-tail-spacer',
             preparedMessageId,
             scrollTopBeforeCorrection: Math.round(scroller.scrollTop),
           });
@@ -1857,7 +1857,7 @@ export function ChatPanel({
     };
   }, [scrollMotion]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = messageSnapshotRef.current;
     const ids = renderMessages.map((message) => message.id);
     const previousIds = previous.conversationId === activeConversationId
@@ -1914,20 +1914,54 @@ export function ChatPanel({
           renderMessages.length > previous.ids.length &&
           !userDetachedFromBottomRef.current))
     ) {
-      focusSubmittedUserMessage(
-        submittedUserIndex,
-        renderMessages[submittedUserIndex].id,
-      );
+      const message = renderMessages[submittedUserIndex];
+      const scroller = listScrollerRef.current;
+      if (isTurnGuidanceMessage(message)) {
+        // Guidance extends this turn. Keep its reading position and consume the
+        // existing tail reservation, revealing the new bubble only if needed.
+        if (scroller) updateResponseSpacer(scroller, assistantStageAnchorRef.current);
+        ensureMessageBottomVisible(message.id);
+      } else {
+        assistantStageAnchorRef.current = message.renderKey ?? message.id;
+        if (scroller) updateResponseSpacer(scroller, assistantStageAnchorRef.current);
+        focusSubmittedUserMessage(submittedUserIndex, message.id);
+      }
     }
     messageSnapshotRef.current = { conversationId: activeConversationId, ids };
   }, [
     activeConversationId,
+    ensureMessageBottomVisible,
     focusSubmittedUserMessage,
     loading,
     renderMessages,
     sending,
     setScrollBottomVisible,
   ]);
+
+  useLayoutEffect(() => {
+    const scroller = listScrollerRef.current;
+    if (scroller) updateResponseSpacer(scroller, assistantStageAnchorRef.current);
+  }, [renderMessages, quickContextBottomInset, streamStatusHeight, scrollMountRevision]);
+
+  useEffect(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller) return;
+    let frame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (frame != null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        updateResponseSpacer(scroller, assistantStageAnchorRef.current);
+      });
+    });
+    for (const node of [scroller, scroller.querySelector('.message-list-content'), scroller.querySelector('.message-list-footer')]) {
+      if (node) observer.observe(node);
+    }
+    return () => {
+      observer.disconnect();
+      if (frame != null) window.cancelAnimationFrame(frame);
+    };
+  }, [activeConversationId, scrollMountRevision]);
 
   useEffect(() => {
     setActiveScene(null);
@@ -1990,9 +2024,7 @@ export function ChatPanel({
     ) {
       return;
     }
-    const activeAssistant =
-      streamingAssistantMessage(renderMessages, activeTurnId) ??
-      lastAssistantMessage(renderMessages);
+    const activeAssistant = activeAssistantForRender;
     if (!activeAssistant) {
       return;
     }
@@ -2001,6 +2033,7 @@ export function ChatPanel({
       activeAssistant.index,
     );
   }, [
+    activeAssistantForRender,
     activeTurnId,
     loading,
     renderMessages,
@@ -2008,10 +2041,6 @@ export function ChatPanel({
     sending,
     showWelcome,
   ]);
-
-  const activeAssistantForRender =
-    streamingAssistantMessage(renderMessages, activeTurnId) ??
-    (sending ? lastAssistantMessage(renderMessages) : null);
 
   const applyQuickLoad = useCallback(
     (payload: QuickLoadPayload) => {
@@ -2117,7 +2146,7 @@ export function ChatPanel({
         scrollDebug('session-scroll-save', { conversationId: activeConversationId, position });
       }
       cancelScheduledStreamFollow();
-      for (const frame of [outerResizeFollowFrameRef, scrollRestoreFrameRef, submittedUserFocusFrameRef]) {
+      for (const frame of [outerResizeFollowFrameRef, scrollRestoreFrameRef]) {
         if (frame.current != null) window.cancelAnimationFrame(frame.current);
         frame.current = null;
       }
@@ -2147,7 +2176,7 @@ export function ChatPanel({
       if (!freshSubmission) {
         pendingSubmittedUserFocusRef.current = false;
         pendingSubmittedUserEntryUntilRef.current = 0;
-        setAssistantStageReservationActive(position?.assistantStageReserved ?? false);
+        assistantStageAnchorRef.current = position?.responseAnchorKey ?? '';
         if (position?.submittedUserReadingAnchor) {
           scroller.style.setProperty('--submitted-user-reading-anchor', position.submittedUserReadingAnchor);
         }
@@ -2322,7 +2351,7 @@ export function ChatPanel({
         const shouldFollowSubmission =
           !showScrollBottomRef.current || !userDetachedFromBottomRef.current;
         pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
-        setAssistantStageReservationActive(shouldFollowSubmission);
+        releaseAssistantStageReservation();
         if (shouldFollowSubmission) {
           programmaticScrollUntilRef.current = Date.now() + 1200;
           autoFollowStreamRef.current = true;
@@ -2338,6 +2367,7 @@ export function ChatPanel({
       activeTurnId,
       guidanceDeliveryMode,
       finishConversationScrollRestoration,
+      releaseAssistantStageReservation,
       onGuideMessage,
       onSend,
       sending,
@@ -2585,6 +2615,8 @@ export function ChatPanel({
                   <div
                     key={message.renderKey ?? message.id}
                     className={`message-list-item${index === 0 ? ' first' : ''}${
+                      sending && activeTurnId && message.turnId === activeTurnId ? ' live-turn' : ''
+                    }${
                       message.role === 'user' && (
                         enteringUserMessageIds.has(message.id) ||
                         pendingSubmittedUserEntryMessageId === message.id
@@ -2596,15 +2628,9 @@ export function ChatPanel({
                       activeAssistantForRender?.message.id === message.id
                         ? ' streaming'
                         : ''
-                    }${
-                      sending &&
-                      assistantStageReservationActive &&
-                      message.role === 'assistant' &&
-                      activeAssistantForRender?.message.id === message.id
-                        ? ' assistant-render-stage'
-                        : ''
                     }`}
                     data-message-id={message.id}
+                    data-message-render-key={message.renderKey ?? message.id}
                     data-message-role={message.role}
                   >
                     <MessageBubble
@@ -2637,6 +2663,7 @@ export function ChatPanel({
                 )}
               </div>
             </MessageFileReferenceScope>
+            <div className="assistant-response-spacer" aria-hidden="true" />
             <MessageListFooter />
           </div>
         )}

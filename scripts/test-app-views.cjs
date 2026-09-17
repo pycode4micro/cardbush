@@ -224,7 +224,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering', 'session-scroll'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -496,6 +496,14 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll-logs') {
       await require('./helpers/chat-window-scroll-diagnostics.cjs')({ run, until, pause, window });
       assert.deepEqual(await run('failures'), [], 'no window diagnostic renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'submission-motion') {
+      await require('./helpers/chat-submission-motion.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'submission-motion') {
+      assert.deepEqual(await run('failures'), [], 'no submission renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

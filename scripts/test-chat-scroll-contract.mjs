@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const appSource = readAppViewSources();
 const styles = fs.readFileSync(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
+const spacerSource = fs.readFileSync(path.join(process.cwd(), 'src/features/chat/responseSpacer.ts'), 'utf8');
 const quickContextSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
   'utf8',
@@ -107,33 +108,33 @@ assert.match(
 );
 assert.match(
   appSource,
-  /const desiredTop = Math\.round\([\s\S]*?scroller\.clientHeight \* 0\.07[\s\S]*?--submitted-user-reading-anchor[\s\S]*?scrollMotion\.move\(scroller, nextTop, 'submission'\)/,
-  'A submitted user bubble must glide to a compact measured reading anchor below the title bar',
+  /const desiredTop = submittedUserReadingOffset\([\s\S]*?itemRect.height[\s\S]*?--submitted-user-reading-anchor[\s\S]*?scrollMotion\.move\(scroller, nextTop, 'submission'\)/,
+  'Submission positioning uses available viewport and bubble height, preserving context above it',
 );
 assert.match(
   styles,
-  /\.message-list-item\.assistant-render-stage\s*\{[\s\S]*?min-height:\s*max\([\s\S]*?--message-list-viewport-height[\s\S]*?--quick-context-bottom-inset[\s\S]*?--submitted-user-reading-anchor/,
-  'The active assistant must reserve the measured region between the reading anchor and composer',
+  /\.assistant-response-spacer\s*\{[\s\S]*?height:\s*0;[\s\S]*?overflow-anchor:\s*none/,
+  'Response space belongs in a separate non-anchoring tail element',
 );
 assert.match(
   appSource,
-  /setAssistantStageReservationActive\(shouldFollowSubmission\)[\s\S]*?sending &&\s*assistantStageReservationActive &&\s*message\.role === 'assistant'/,
-  'The empty response stage must exist only for a submission that is still under automatic follow',
+  /isTurnGuidanceMessage\(message\)[\s\S]*?ensureMessageBottomVisible\(message.id\)[\s\S]*?else \{\s*assistantStageAnchorRef.current = message.renderKey \?\? message.id/,
+  'Only a normal submission establishes a new reading anchor; guidance extends the current turn',
 );
 assert.match(
   appSource,
-  /const releaseAssistantStageReservation = useCallback[\s\S]*?setAssistantStageReservationActive\(false\)[\s\S]*?if \(event\.deltaY !== 0\) \{\s*releaseAssistantStageReservation\(\)/,
+  /const releaseAssistantStageReservation = useCallback[\s\S]*?assistantStageAnchorRef.current = ''[\s\S]*?if \(event\.deltaY !== 0\) \{\s*releaseAssistantStageReservation\(\)/,
   'Any manual wheel movement must release the synthetic response height instead of exposing blank scroll content',
 );
 assert.match(
-  appSource,
-  /classList\.contains\('assistant-render-stage'\)[\s\S]*?querySelector<HTMLElement>\('\.message-row\.assistant'\)/,
-  'Automatic following must measure real assistant content instead of the reserved blank stage',
+  spacerSource,
+  /availableHeight - readingAnchor - contentHeight/,
+  'Actual content and measured composer clearance must consume the response space',
 );
-assert.match(
+assert.doesNotMatch(
   chatScrollSource,
-  /classList\.contains\('assistant-render-stage'\)[\s\S]*?querySelector<HTMLElement>\('\.message-row\.assistant'\)[\s\S]*?stagedContent \?\? item/,
-  'Tail visibility must ignore the synthetic stage and measure only rendered assistant content',
+  /assistant-render-stage/,
+  'Tail visibility measures natural message rows without synthetic row height',
 );
 assert.doesNotMatch(
   styles,
@@ -152,7 +153,7 @@ assert.match(
 );
 assert.match(
   styles,
-  /@keyframes user-message-enter[\s\S]*?opacity:\s*0\.82[\s\S]*?translateY\(4px\)/,
+  /@keyframes user-message-enter\s*\{\s*from\s*\{\s*transform:\s*translateY\(4px\)/,
 );
 assert.match(
   styles,

@@ -11,6 +11,8 @@ import { settleAtAbort } from './abortSettlement.js';
 import { McpAppObservations, type AppObservation } from './mcpAppObservations.js';
 
 export const MCP_APPS_COMMAND = 'runtime.mcp_app';
+// Self-contained chart widgets bundle their scripts and styles into the HTML.
+const maxInterfaceHtmlBytes = 8 * 1024 * 1024;
 type Scope = { request: ModelRequest; names: string[] };
 type Permission = ToolPermissionRequest & { permissionId: string; toolCallId: string };
 type Registration = NonNullable<ReturnType<ToolRegistry['resolve']>>;
@@ -192,7 +194,9 @@ export class McpAppsHost {
       loadSignal.throwIfAborted();
       const content = (Array.isArray(resource.contents) ? resource.contents : []).find(item => item.uri === registration.mcpApp!.resourceUri && ['text/html;profile=mcp-app', 'text/html+skybridge', 'text/html'].includes(String(item.mimeType).replace(/;\s+/g, ';')));
       const html = typeof content?.text === 'string' ? content.text : typeof content?.blob === 'string' ? Buffer.from(content.blob, 'base64').toString('utf8') : undefined;
-      if (!html || Buffer.byteLength(html) > 2 * 1024 * 1024) throw new Error('MCP interface must supply HTML up to 2 MiB.');
+      if (!html) throw interfaceError('mcp_app_html_missing', 'MCP interface did not supply non-empty HTML with a supported MIME type for the requested resource.');
+      const htmlBytes = Buffer.byteLength(html);
+      if (htmlBytes > maxInterfaceHtmlBytes) throw interfaceError('mcp_app_html_too_large', `MCP interface HTML is ${htmlBytes} bytes; the limit is ${maxInterfaceHtmlBytes} bytes (8 MiB).`);
       const token = randomUUID();
       const result = wrapped ? object(record.result).result : record.result;
       const argumentsObject = JSON.parse(record.toolCall.argumentsText);

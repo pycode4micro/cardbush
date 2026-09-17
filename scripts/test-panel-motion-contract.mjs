@@ -32,8 +32,8 @@ assert.doesNotMatch(
 );
 assert.match(
   css,
-  /\.message-list-item\.assistant-render-stage\s*\{[\s\S]*?--message-list-viewport-height[\s\S]*?--submitted-user-reading-anchor/,
-  'the prepared response stage must derive from measured viewport geometry',
+  /\.assistant-response-spacer\s*\{[\s\S]*?height:\s*0;[\s\S]*?overflow-anchor:\s*none/,
+  'response spacing must be isolated from message row geometry',
 );
 assert.doesNotMatch(
   css,

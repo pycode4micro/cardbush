@@ -290,6 +290,40 @@ test('failed resource loading remains visible and can be retried', async t => {
   assert.equal((await host.describe('s', 't'))[0].activeViews.length, 0);
 });
 
+test('self-contained chart HTML larger than 2 MiB loads intact from text and base64 resources', async t => {
+  const { host, registry, view } = await fixture(t); await host.close(view.token);
+  const html = '<!doctype html><h1>Chart</h1><!--' + 'x'.repeat(2_440_848) + '-->';
+  for (const payload of [{ text: html }, { blob: Buffer.from(html).toString('base64') }]) {
+    registry.resolve('mcp__demo__save').mcpApp.readResource = async uri => ({ contents: [{ uri, mimeType: 'text/html;profile=mcp-app', ...payload }] });
+    const loaded = await host.command({ action: 'open', sessionId: 's', turnId: 't', toolCallId: 'original' });
+    assert.equal(loaded.html, html, 'large bundled scripts and styles must not be truncated');
+    assert.equal((await host.observations.since('s')).events.at(-1).event, 'resource_loaded');
+    await host.close(loaded.token);
+  }
+});
+
+test('HTML limit counts decoded UTF-8 bytes and reports oversize separately from missing HTML', async t => {
+  const { host, registry, view } = await fixture(t); await host.close(view.token);
+  const limit = 8 * 1024 * 1024;
+  const html = '图'.repeat(Math.floor(limit / 3)) + 'xx';
+  assert.equal(Buffer.byteLength(html), limit);
+  const app = registry.resolve('mcp__demo__save').mcpApp;
+  const open = () => host.command({ action: 'open', sessionId: 's', turnId: 't', toolCallId: 'original' });
+  app.readResource = async uri => ({ contents: [{ uri, mimeType: 'text/html', text: html }] });
+  const loaded = await open(); assert.equal(loaded.html, html); await host.close(loaded.token);
+  for (const payload of [{ text: html + 'x' }, { blob: Buffer.from(html + 'x').toString('base64') }]) {
+    app.readResource = async uri => ({ contents: [{ uri, mimeType: 'text/html', ...payload }] });
+    await assert.rejects(open(), { code: 'mcp_app_html_too_large', message: `MCP interface HTML is ${limit + 1} bytes; the limit is ${limit} bytes (8 MiB).` });
+    assert.equal((await host.describe('s', 't'))[0].activeViews.length, 0);
+    assert.match((await host.observations.since('s')).events.at(-1).detail, /8388609 bytes/);
+  }
+  for (const contents of [[], [{ uri: 'ui://wrong', mimeType: 'text/html', text: '<h1>Wrong resource</h1>' }], [{ uri: 'ui://fixture', mimeType: 'text/plain', text: 'Not HTML' }], [{ uri: 'ui://fixture', mimeType: 'text/html', text: '' }]]) {
+    app.readResource = async () => ({ contents });
+    await assert.rejects(open(), { code: 'mcp_app_html_missing' });
+    assert.equal((await host.describe('s', 't'))[0].activeViews.length, 0);
+  }
+});
+
 test('automatic UI opens reserve capacity before downloads and cancelled loads never create instances', async t => {
   const { host, view, registry } = await fixture(t); await host.close(view.token);
   let release, started, reads = 0;

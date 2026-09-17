@@ -31,7 +31,7 @@ app.whenReady().then(async () => {
   const calls = [];
   ipcMain.handle('window:restore-editor-focus', (event, state) => {
     calls.push(state);
-    return restoreEditorFocus(event, window);
+    return restoreEditorFocus(event, window, state);
   });
   const ts = require('typescript');
   const editorCode = ts.transpileModule(fs.readFileSync('src/shared/editorFocus.ts', 'utf8'), {
@@ -72,11 +72,43 @@ app.whenReady().then(async () => {
   window.webContents.sendInputEvent({ type: 'mouseUp', x: 50, y: 45, button: 'left', clickCount: 1 });
   await pause();
   assert.equal(calls.length, 1, 'real editor click reaches the production preload bridge');
+  await run('document.querySelector("textarea").focus(); document.querySelector("textarea").setSelectionRange(2, 4)');
+  let windowBlurCount = 0;
+  window.on('blur', () => { windowBlurCount++; });
+  // Reproduce the incident's exact state: the native focus manager claims
+  // success while Chromium's render widget no longer accepts keyboard input.
+  window.blurWebView();
+  await pause();
+  assert.equal(window.webContents.isFocused(), true);
+  assert.equal(await run('document.hasFocus()'), false);
+  window.webContents.focus();
+  await pause();
+  assert.equal(await run('document.hasFocus()'), false, 'the previous focus-only repair is a no-op in this state');
+  await run('window.cardbushDesktop.restoreEditorFocus({ documentFocused: document.hasFocus() })');
+  await pause();
+  assert.equal(await run('document.hasFocus()'), true, 'native/DOM focus mismatch must actually restore document keyboard focus');
+  assert.deepEqual(await run('[document.querySelector("textarea").selectionStart, document.querySelector("textarea").selectionEnd]'), [2, 4]);
+  window.webContents.sendInputEvent({ type: 'char', keyCode: '中' });
+  await pause();
+  assert.equal(await run('document.querySelector("textarea").value'), 'dr中ft', 'restored input replaces the selected range, preserving the draft');
+  for (let i = 0; i < 3; i++) {
+    window.blurWebView();
+    await pause();
+    assert.equal(await run('document.hasFocus()'), false);
+    const callCount = calls.length;
+    window.webContents.sendInputEvent({ type: 'mouseDown', x: 50, y: 45, button: 'left', clickCount: 1 });
+    window.webContents.sendInputEvent({ type: 'mouseUp', x: 50, y: 45, button: 'left', clickCount: 1 });
+    await pause();
+    assert.equal(calls.length, callCount + 1);
+    assert.equal(calls.at(-1).documentFocused, false, 'trusted click carries the real missing document focus');
+    assert.equal(await run('document.hasFocus()'), true, 'clicking the editor repairs each recurrence');
+  }
+  assert.equal(windowBlurCount, 0, 'recovery never switches or deactivates the OS window');
   window.hide();
   assert.equal(restoreEditorFocus({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, window), false);
   assert.equal(window.isVisible(), false, 'a late IPC never reveals the hidden window');
   guest.webContents.close();
-  console.log('Electron editor focus passed: guest handoff, DOM/native mismatch, caret, typing, trusted clicks and hidden-window guard.');
+  console.log('Electron editor focus passed: guest handoff, reproduced stale native focus, repeated trusted-click repair, selection/Chinese input and no OS window switching.');
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); }).finally(() => {
   clearTimeout(deadline);
   if (window && !window.isDestroyed()) window.destroy();

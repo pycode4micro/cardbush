@@ -425,7 +425,7 @@ export function chatTurnStartedAt(
   return metadataStartedAt ?? earliestValidTimestamp([fallback]);
 }
 
-function isTurnGuidanceMessage(message: ChatMessage) {
+export function isTurnGuidanceMessage(message: ChatMessage) {
   const metadata = message.metadata ?? {};
   return (
     metadata.turn_guidance === true ||

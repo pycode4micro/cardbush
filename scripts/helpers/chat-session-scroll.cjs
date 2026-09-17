@@ -123,7 +123,7 @@ module.exports = async ({ run, until, pause, theme = 'theme-dark' }) => {
   await run(`window.readFollowingTail = () => {
     const list = scrollList();
     const item = list.querySelector('[data-message-id="scroll-a-31"]');
-    const tail = item.classList.contains('assistant-render-stage') ? item.querySelector('.message-row.assistant') : item;
+    const tail = item;
     const style = getComputedStyle(list);
     return { top: list.scrollTop, height: tail.getBoundingClientRect().height,
       bottom: tail.getBoundingClientRect().bottom,
@@ -176,9 +176,9 @@ module.exports = async ({ run, until, pause, theme = 'theme-dark' }) => {
   await until("!!document.querySelector('[data-message-id=scroll-submitted-user]')", 'fresh submitted user');
   await pause(600);
   const submittedOffset = await run("document.querySelector('[data-message-id=scroll-submitted-user]').getBoundingClientRect().top - scrollList().getBoundingClientRect().top");
-  const desiredOffset = await run('Math.round(Math.min(56, Math.max(34, scrollList().clientHeight * 0.07)))');
-  assert.equal(await run("scrollList().style.getPropertyValue('--submitted-user-reading-anchor')"), desiredOffset + 'px',
-    'new requests still use the submission focus path');
+  const desiredOffset = await run("parseFloat(scrollList().style.getPropertyValue('--submitted-user-reading-anchor'))");
+  assert.ok(desiredOffset > 80 && Math.abs(submittedOffset - desiredOffset) < 2,
+    'new requests settle below the top edge with room for previous context');
   assert.ok(submittedOffset >= 0 && submittedOffset < await run("document.querySelector('.composer-dock').getBoundingClientRect().top - scrollList().getBoundingClientRect().top"),
     'new requests remain visible above the composer');
   await assertRestored('b', bTop);

@@ -117,6 +117,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector(".mcp-app-error")'), null);
     await send('script-error'); await until('document.body.innerText.includes("插件界面运行出错")');
     assert.match(await read('document.querySelector(".mcp-app-error pre").textContent'), /Fixture script could not initialize/);
+    await read('fixtureReports={};document.querySelector(".mcp-app-error button").click()');
+    await until('!!fixtureReports.result && !document.querySelector(".mcp-app-error")');
+    assert.equal(await read('operations.filter(x=>x.action==="call").length'), 2, 'document recovery reloads only the interface, never its generating tool');
     await read('clearFixture()'); await until('!document.querySelector(".mcp-app-panel")');
     await read('window.beforeFailure=operations.filter(x=>x.action==="open").length;staleOpens=10;renderFixture(false)');
     await until('!!document.querySelector(".mcp-app-error")');
@@ -142,15 +145,62 @@ app.whenReady().then(async () => {
     await until('!!document.querySelector(".mcp-app-tool-error")');
     assert.equal(await read('document.querySelector("iframe")'), null, 'a server-declared tool error does not open an empty result widget');
     assert.equal(await read('operations.filter(x=>x.action==="open").length'), await read('beforeToolError'));
-    assert.equal(await read('document.querySelector(".mcp-app-error details").open'), false);
-    await read('document.querySelector(".mcp-app-tool-error").scrollIntoView({block:"center"})');
-    await read('document.querySelector(".mcp-app-error summary").click()');
-    await until('document.querySelector(".mcp-app-error details").open && document.querySelector(".mcp-app-error pre").innerText.includes("instagram_post")');
-    assert.equal(await read('document.querySelector(".mcp-app-error pre").innerText.includes("instagram_post")'), true);
-    await read('document.querySelector(".mcp-app-tool-error").scrollIntoView({block:"center"})'); win.webContents.invalidate();
+    assert.equal(await read('document.querySelector(".message-plugin-errors").open'), false);
+    assert.ok(await read('document.querySelector(".message-plugin-errors").getBoundingClientRect().height < 48'), 'failed calls occupy only a compact disclosure by default');
+    await read('document.querySelector(".message-plugin-errors summary").click()');
+    await until('document.querySelector(".message-plugin-errors").open && document.querySelector(".mcp-app-tool-error pre").innerText.includes("instagram_post")');
+    await read('document.querySelector(".message-plugin-errors").scrollIntoView({block:"center"})'); win.webContents.invalidate();
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     writeFileSync(resolve('tmp/mcp-app-tool-error.png'), (await win.webContents.capturePage()).toPNG());
     await read('clearFixture()'); await until('!document.querySelector(".mcp-app-panel")');
+    await read(`failedResult=false;legacyOnly=false;outputIds=['attempt'];interfaceOverrides={attempt:{resultError:{text:'Unrecognized future service error',truncated:false}}};renderFixture(true)`);
+    await until('!!document.querySelector(".message-plugin-errors")');
+    await read('document.querySelector(".message-plugin-errors summary").click()');
+    await read(`outputIds.push('recovered');fixtureReports={};renderFixture(true)`);
+    await until('!!fixtureReports.result && document.querySelector(".message-plugin-errors summary").textContent.includes("先前失败记录")');
+    assert.equal(await read('document.querySelector(".message-plugin-errors").open'), false, 'a later success folds even an expanded error into history');
+    assert.equal(await read('document.querySelector(".mcp-app-tool-error pre").textContent'), 'Unrecognized future service error', 'recovery preserves the original error record');
+    await read('window.liveRecoveredFrame=document.querySelector("iframe");renderFixture(false)');
+    assert.equal(await read('document.querySelector("iframe") === liveRecoveredFrame'), true, 'turn completion retains the recovered preview');
+    win.webContents.invalidate(); await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    writeFileSync(resolve('tmp/mcp-app-recovered.png'), (await win.webContents.capturePage()).toPNG());
+    await read(`window.recoveredFrame=document.querySelector('iframe');interfaceOverrides['retry-failed']={resultError:{text:'Different unknown failure',truncated:false}};outputIds.push('retry-failed');renderFixture(false)`);
+    await until('document.querySelector(".message-plugin-errors summary").textContent.includes("1 次插件调用未成功")');
+    assert.equal(await read('document.querySelector("iframe") === recoveredFrame'), true, 'a failed later attempt does not replace the last usable result');
+    await read(`interfaceOverrides.other={source:'mcp__another__save'};outputIds.push('other');renderFixture(false)`);
+    await until('operations.filter(x=>x.action==="open").at(-1).toolCallId === "other"');
+    assert.ok(await read('document.querySelector(".message-plugin-errors summary").textContent.includes("1 次插件调用未成功")'), 'another service cannot clear this tool failure');
+    await read(`interfaceOverrides['another-turn']={turnId:'other-turn'};outputIds.push('another-turn');renderFixture(false)`);
+    await until('operations.filter(x=>x.action==="open").at(-1).toolCallId === "another-turn"');
+    assert.ok(await read('document.querySelector(".message-plugin-errors summary").textContent.includes("1 次插件调用未成功")'), 'a different turn does not mark the earlier failure followed by success');
+    await read(`outputIds.push('recovered-again');renderFixture(false)`);
+    await until('operations.filter(x=>x.action==="open").at(-1).toolCallId === "recovered-again" && document.querySelector(".message-plugin-errors summary").textContent.includes("2 条先前失败记录")');
+    await read('clearFixture()'); await until('!document.querySelector(".message-plugin-errors")');
+    await read('renderFixture(false)');
+    await until('!!document.querySelector("iframe") && !!document.querySelector(".message-plugin-errors")');
+    assert.equal(await read('document.querySelector(".message-plugin-errors").open'), false, 'history replay restores the latest result without reopening stale errors');
+    for (const failure of [
+      { code: 'mcp_app_html_too_large', message: 'HTML exceeded a bounded resource limit' },
+      { code: 'mcp_app_html_missing', message: 'Resource has an unsupported MIME type' },
+      { code: 'future_plugin_error', message: 'Previously unknown resource failure' },
+    ]) {
+      await read('clearFixture()'); await until('!document.querySelector(".mcp-app-panel")');
+      await read(`window.beforeUnknownFailure=operations.filter(x=>x.action==='open').length;openFailure=${JSON.stringify(failure)};renderFixture(false)`);
+      await until('!!document.querySelector(".mcp-app-error")');
+      assert.equal(await read('operations.filter(x=>x.action==="open").length-beforeUnknownFailure'), 1, 'deterministic and unknown errors do not auto-repeat');
+      assert.equal(await read('document.querySelector(".mcp-app-error details").open'), false);
+      assert.equal(await read('document.querySelector(".mcp-app-error pre").textContent'), failure.message);
+      await read('openFailure=null;fixtureReports={};document.querySelector(".mcp-app-error button").click()');
+      await until('!!fixtureReports.result && !document.querySelector(".mcp-app-error")');
+    }
+    await read('openFailure={code:"future_error",message:"Dismiss this failure"};document.querySelector("button[aria-label=重新加载]").click()');
+    await until('!!document.querySelector(".mcp-app-error")');
+    await read('document.querySelector("button[aria-label=关闭界面]").click()');
+    await until('!document.querySelector(".mcp-app-error") && !!document.querySelector(".mcp-app-reopen")');
+    await read('openFailure=null');
+    assert.equal(await read('operations.filter(x=>x.action==="call").length'), 2, 'failure history and UI retries never execute original tools');
+    await read('clearFixture()'); await until('!document.querySelector(".mcp-app-panel")');
+    await read('outputIds=null;interfaceOverrides={}');
     await read('failedResult=false;legacyOnly=false;overlapMode=true;fixtureReports={};renderFixture(false)');
     await until('!!fixtureReports.result');
     await send('overlap'); await until('overlapCalls.length === 3');

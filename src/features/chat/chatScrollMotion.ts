@@ -11,6 +11,7 @@ type Motion = {
   duration: number;
   overflowAnchor: string;
   complete?: () => void;
+  followTarget?: Target;
 };
 
 /** One cancellable animation owns the list; streamed targets update it in place. */
@@ -50,17 +51,27 @@ export function createChatScrollMotion() {
     item.scroller.scrollTo({ top: next, behavior: 'instant' });
     if (done) {
       const complete = item.complete;
+      const followTarget = item.followTarget;
       cancel();
       complete?.();
+      // A fast response can finish growing before placement ends. Reveal that
+      // tail afterward, but never scroll back toward an obsolete follow target.
+      if (followTarget != null && (typeof followTarget === 'function' ? followTarget() : followTarget) > item.scroller.scrollTop + 0.75) {
+        controller.move(item.scroller, followTarget, 'follow');
+      }
     } else {
       frame = window.requestAnimationFrame(tick);
     }
   };
-  return {
+  const controller = {
     cancel,
     isActive: () => motion != null,
     move(scroller: HTMLElement, target: Target, kind: MotionKind, complete?: () => void) {
-      if (motion?.scroller === scroller && motion.kind === 'jump' && kind === 'follow') return;
+      // Passive stream/resize updates must not replace explicit navigation.
+      if (motion?.scroller === scroller && motion.kind !== 'follow' && kind === 'follow') {
+        if (motion.kind === 'submission') motion.followTarget = target;
+        return;
+      }
       const now = performance.now();
       if (motion?.scroller === scroller && motion.kind === 'follow' && kind === 'follow') {
         motion.target = target;
@@ -71,7 +82,8 @@ export function createChatScrollMotion() {
       const start = scroller.scrollTop;
       const destination = typeof target === 'function' ? target() : target;
       const item: Motion = { scroller, target, kind, start, startedAt: now, updatedAt: now,
-        lastFrameAt: now, duration: kind === 'jump' ? Math.min(360, 180 + Math.sqrt(Math.abs(destination - start)) * 3) : 260,
+        lastFrameAt: now, duration: kind === 'jump' ? Math.min(360, 180 + Math.sqrt(Math.abs(destination - start)) * 3)
+          : kind === 'submission' ? 500 : 260,
         overflowAnchor: scroller.style.overflowAnchor, complete };
       if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || Math.abs(destination - start) < 0.75) {
         scroller.scrollTo({ top: targetTop(item), behavior: 'instant' });
@@ -84,4 +96,5 @@ export function createChatScrollMotion() {
       frame = window.requestAnimationFrame(tick);
     },
   };
+  return controller;
 }
