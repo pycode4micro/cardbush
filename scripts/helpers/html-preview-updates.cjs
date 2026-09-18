@@ -108,15 +108,17 @@ module.exports = async ({ run, until, pause, window, root, directory, guest, rea
     assert.deepEqual(await run('metadataCalls'), [[file]], 'duplicate file references share one metadata lookup');
     await until("[...document.querySelectorAll('.inline-html-viewport')].every(view=>view.clientHeight===330)", 'both updated layouts settle');
     await pause(100);
+    const offscreenIds = await run("[...document.querySelectorAll('webview')].map(view=>view.getWebContentsId())");
     await run("document.querySelector('.app').style.overflowY='auto'; document.querySelector('.app').scrollTop=1800; void 0");
     await pause(180);
     assert.equal(await run("[...document.querySelectorAll('.inline-html-preview')].every(view=>view.getBoundingClientRect().bottom < -240)"), true, 'all charts are outside the observation margin: '+ await run("JSON.stringify({scroll:document.querySelector('.app').scrollTop,rects:[...document.querySelectorAll('.inline-html-preview')].map(view=>view.getBoundingClientRect().toJSON())})"));
-    const offscreenIds = await run("[...document.querySelectorAll('webview')].map(view=>view.getWebContentsId())");
+    await until("document.querySelectorAll('webview').length===0", 'far offscreen previews release their guests');
+    assert.ok(offscreenIds.every(id => !webContents.fromId(id)), 'guest WebContents are destroyed, not just hidden');
     await run('metadataCalls=[]; void 0');
     await write(6, 330, 700);
     await focus(); await pause(150);
     assert.deepEqual(await run('metadataCalls'), [], 'offscreen charts stop checking files');
-    assert.deepEqual(await run("[...document.querySelectorAll('webview')].map(view=>view.getWebContentsId())"), offscreenIds, 'scrolling away preserves mounted interaction state');
+    assert.equal(await run("document.querySelectorAll('webview').length"), 0, 'disk changes cannot restart far offscreen guests');
     await run("document.querySelector('.app').scrollTop=0; void 0");
     await until(`document.querySelectorAll('.inline-html-viewport.is-ready').length===2 && [...document.querySelectorAll('webview')].every(view=>!${JSON.stringify(offscreenIds)}.includes(view.getWebContentsId()))`, 'returning to an edited offscreen chart shows the latest file');
 
@@ -158,6 +160,7 @@ module.exports = async ({ run, until, pause, window, root, directory, guest, rea
       const pids = [...new Set(guests.map(view=>view.getOSProcessId()))];
       const activeFiles = [...new Set((await run('metadataCalls')).flat())];
       assert.ok(activeFiles.length < files.length, 'file polling remains limited to near-viewport charts after visiting all charts');
+      assert.ok(guests.length < files.length, 'visiting all charts does not accumulate live guests');
       await run('renderView(null)'); await pause(300);
       assert.ok(guests.every(view=>view.isDestroyed()), 'leaving the conversation releases every guest');
       const result = {charts:12,initialGuests,visitedGuests:guests.length,activeMetadataFiles:activeFiles.length,baseline,steady,previewProcesses:steady.filter(item=>pids.includes(item.pid)),afterUnmount:metrics()};

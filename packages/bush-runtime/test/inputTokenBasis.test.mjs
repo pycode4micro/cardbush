@@ -31,6 +31,22 @@ const append = (r, content) => ({ ...r, messages: [...r.messages, { role: 'user'
 const measured = (r, tokens, projection = runtimeInputTokenProjection(r)) => ({ lastRequestInputTokens: tokens,
   lastRequestInputBasis: { ...inputTokenBasis(r), projection } });
 
+test('tool image bytes affect prefix identity but are counted as images, not Base64 text', () => {
+  const withImage = url => ({ ...request('inspect'), messages: [
+    { role: 'assistant', content: '', toolCalls: [{ id: 'image', name: 'capture', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'image', content: 'captured', images: [{ url, detail: 'high' }] },
+  ] });
+  const small = withImage('https://example.test/screen.png');
+  const large = withImage(`data:image/png;base64,${'a'.repeat(100000)}`);
+  const before = runtimeInputTokenProjection(small);
+  const after = runtimeInputTokenProjection(large);
+  assert.equal(before.tokenEstimate.tokens, after.tokenEstimate.tokens);
+  assert.notDeepEqual(before.inputDigests, after.inputDigests);
+  const noImage = { ...small, messages: small.messages.map(({ images, ...message }) => message) };
+  assert.ok(before.tokenEstimate.tokens >= runtimeInputTokenProjection(noImage).tokenEstimate.tokens + 1024);
+  assert.equal(reusableInputTokenFloor(measured(small, 10000), large), undefined);
+});
+
 test('measured prefix replaces an overestimate without discounting the unknown suffix or rewriting input', () => {
   const original = request();
   const usage = measured(original, 50000);

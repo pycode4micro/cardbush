@@ -12,10 +12,15 @@ import {
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cardbush-product-skills-'));
 try {
-  const management = await readProductSkill([path.resolve('assets/skills')], 'cardbush-plugin-management');
-  assert.equal(management.name, 'cardbush-plugin-management');
+  const management = await readProductSkill([path.resolve('assets/skills')], 'cardbush-docs');
+  assert.equal(management.name, 'cardbush-docs');
   assert.ok(management.description);
   assert.ok((await fs.readFile(path.join(management.packageDir, 'references/plugin-contract.md'), 'utf8')).length > 0);
+  const bundledNames = (await listProductSkills([path.resolve('assets/skills')])).map(skill => skill.name);
+  assert.deepEqual(bundledNames.filter(name => name.startsWith('cardbush-')), ['cardbush-docs']);
+  for (const resource of ['references/mcp-management.md', 'references/plugin-management.md', 'references/style-management.md', 'references/theme-contract.md', 'references/calendar-protocol.md', 'references/automations.md', 'scripts/convert-date.mjs']) {
+    assert.ok((await fs.stat(path.join(management.packageDir, resource))).isFile());
+  }
   // Read the bundled catalog through the product loader, preserving CardBush's
   // metadata extensions and checking every declared resource still exists.
   const bundledRoot = path.resolve('assets/skills');

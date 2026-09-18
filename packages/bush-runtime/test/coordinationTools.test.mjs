@@ -60,6 +60,40 @@ test("Tool Catalog exposes the coordination schemas registered by the Host", asy
   assert.equal(registry.definitions()[0].inputSchema.additionalProperties, false);
 });
 
+test('a new task can replace a recorded completed plan without a scope-change workaround', async () => {
+  const events = [];
+  const persistence = { load: () => structuredClone(events), append: event => events.push(structuredClone(event)) };
+  const store = new CoordinationStore({ persistence });
+  const registry = new ToolRegistry();
+  registerCoordinationTools(registry, store, { createPlanId: () => 'session-plan' });
+  const coordinator = new ToolExecutionCoordinator({ registry,
+    permissions: { request: async () => { throw new Error('unexpected permission'); } } });
+  const completed = await coordinator.execute(toolCall('old-plan', 'update_task_plan', {
+    nodes: Array.from({ length: 13 }, (_, index) => ({ id: `old-${index}`, step: `Old task ${index}`, status: 'completed' })),
+    explanation: 'The prior task is complete.', active: false,
+  }), identity(0));
+  assert.equal(completed.kind, 'returned');
+  const next = { nodes: [
+    { id: 'download', step: 'Download the subtitle source', status: 'in_progress' },
+    { id: 'locate', step: 'Locate the subtitles', status: 'pending' },
+    { id: 'erase', step: 'Run subtitle removal', status: 'pending' },
+    { id: 'verify', step: 'Download and verify the result', status: 'pending' },
+  ], explanation: 'New subtitle-removal task.', active: true };
+  const updated = await coordinator.execute(toolCall('new-plan', 'update_task_plan', next), { ...identity(1), turnId: 'next-turn' });
+  assert.equal(updated.kind, 'returned');
+  assert.equal(updated.result.revision, 2);
+  assert.deepEqual(updated.result.plan.nodes, next.nodes);
+  assert.equal(events[0].payload.plan.active, false, 'the previous Tool fact is unchanged');
+  assert.equal(events[0].payload.plan.nodes.length, 13);
+  assert.deepEqual(new CoordinationStore({ persistence }).getPlan('session_1'), updated.result);
+  const stillActive = await coordinator.execute(toolCall('drop-unfinished', 'update_task_plan', {
+    ...next, nodes: next.nodes.slice(0, 1),
+  }), { ...identity(2), turnId: 'next-turn' });
+  assert.equal(stillActive.kind, 'failed');
+  assert.match(stillActive.error.message, /scopeChangeReason/);
+  assert.equal(store.getPlan('session_1').revision, 2, 'failed updates do not change state');
+});
+
 function toolCall(id, name, input) {
   return {
     protocol: "bush.tool_call.v1",

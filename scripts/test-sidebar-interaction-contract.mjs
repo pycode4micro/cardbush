@@ -124,7 +124,7 @@ assert.match(sidebarSource, /label=\{language === 'zh' \? '新会话' : 'New cha
 assert.doesNotMatch(appSource, /工具管理|Tool management/);
 assert.match(
   appSource,
-  /label="Beta"[\s\S]*?label="Team"/,
+  /if \(actions\.openTeam\)[^\n]*label: 'Beta'[^\n]*'Team'/,
   'The experimental Team surface must live under the Beta menu',
 );
 assert.doesNotMatch(appSource, /label="OS"|onOpenOs|enterOsMode/);

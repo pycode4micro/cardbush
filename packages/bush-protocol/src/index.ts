@@ -17,6 +17,7 @@ export * from "./tool.js";
 export * from "./turn.js";
 export * from "./workspace.js";
 export * from './automation.js';
+export * from './calendar.js';
 export * from './accounts.js';
 export * from './fileMemo.js';
 export * from './proxy.js';

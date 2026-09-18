@@ -1,5 +1,6 @@
 import { AutomationReminderCard } from '../automations/AutomationReminderCard';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import { WorkspaceRevertAvailability } from '../tools/workspaceRevertAvailability';
 import {
   ArrowUp,
   Check,
@@ -89,6 +90,7 @@ import {
 } from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
+import { InlineAudio, InlineVideo } from './InlineMedia';
 import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
 import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
 import { parsePromptReference } from '../../shared/promptReferences';
@@ -418,11 +420,11 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
       if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
       if (finalAnswerMedia && isVideoPath(resolvedPath || src || '')) {
-        return <video src={resolvedSource} controls playsInline preload="metadata" aria-label={alt || undefined}
+        return <InlineVideo src={resolvedSource} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
       if (finalAnswerMedia && isAudioPath(resolvedPath || src || '')) {
-        return <audio src={resolvedSource} controls preload="metadata" aria-label={alt || undefined}
+        return <InlineAudio src={resolvedSource} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
       return (
@@ -631,6 +633,7 @@ function MessageBubbleView({
   activeAssistantMessageId,
   selectedModel = '',
   readOnlyActions = false,
+  canRevertWorkspace = true,
   goalObjective = '',
   onRegenerate,
   onEditUserMessage,
@@ -649,6 +652,7 @@ function MessageBubbleView({
   activeAssistantMessageId: string;
   selectedModel?: string;
   readOnlyActions?: boolean;
+  canRevertWorkspace?: boolean;
   goalObjective?: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
@@ -1269,7 +1273,7 @@ function MessageBubbleView({
               report={completedChangeReport}
               language={language}
               onOpenReview={onOpenChangeReview}
-              onRevert={readOnlyActions ? undefined : () => onRevertChangeReport(
+              onRevert={readOnlyActions || !canRevertWorkspace ? undefined : () => onRevertChangeReport(
                 {
                   ...completedChangeReport,
                   id: `${message.id}:completed-change-summary`,
@@ -1455,6 +1459,9 @@ function AssistantChangedFilesSummary({
                 ? `在右侧打开：${file.path}`
                 : `Open in inspector: ${file.path}`
             }
+            onContextMenu={event => openFileContextMenu(event, remapProjectPath(
+              resolveChangedFilePath(file.path, workspaceRoot), pathAliases,
+            ), { language })}
             onClick={() => {
               if (onOpenReview) {
                 onOpenReview(file.path);
@@ -2710,7 +2717,7 @@ function MessageMediaStrip({
         return (
           <figure className="message-video-player" key={`video-${pathValue}`}
             onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
-            <video
+            <InlineVideo
               controls
               playsInline
               preload="metadata"
@@ -2734,7 +2741,7 @@ function MessageMediaStrip({
             <figcaption title={pathValue}>
               {name}
             </figcaption>
-            <audio
+            <InlineAudio
               controls
               preload="metadata"
               src={messageMediaSource(pathValue)}
@@ -3077,6 +3084,7 @@ function sameMessageBubbleProps(
     previous.sending !== next.sending ||
     previous.selectedModel !== next.selectedModel ||
     previous.readOnlyActions !== next.readOnlyActions ||
+    previous.canRevertWorkspace !== next.canRevertWorkspace ||
     previous.goalObjective !== next.goalObjective ||
     previous.onRegenerate !== next.onRegenerate ||
     previous.onEditUserMessage !== next.onEditUserMessage ||
@@ -3109,7 +3117,9 @@ function isActiveMessageBubble(props: MessageBubbleViewProps) {
 
 export const MessageBubble = memo(function MessageBubble(props: MessageBubbleViewProps) {
   return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId}>
-    <MessageBubbleView {...props} />
+    <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
+      <MessageBubbleView {...props} />
+    </WorkspaceRevertAvailability.Provider>
   </FileMemoScope>;
 }, sameMessageBubbleProps);
 

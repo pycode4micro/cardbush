@@ -3,7 +3,6 @@ import { readConversationStyle } from '../features/settings/conversationStyle';
 import {
   CHILD_AGENT_SYSTEM_PROMPT,
   createProductAgentTurnRequest,
-  latestSessionEnvironmentLocalDate,
 } from '@cardbush/bush-product-agent';
 
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
@@ -188,9 +187,8 @@ export async function streamRuntimeShadowConversationMessage(
     });
     streamLease = { controller, settled, resolveSettled };
     activeStreams.set(request.conversationId, streamLease);
-    const [source, shadowSession, resolved, catalog, capabilities] = await Promise.all([
+    const [source, resolved, catalog, capabilities] = await Promise.all([
       runtime.client.getSession(state.sessionId, controller.signal),
-      runtime.client.getSession(state.runtimeSessionId, controller.signal),
       resolveProductModel(request.modelConfig.id),
       runtime.client.getToolCatalogDetails(controller.signal),
       runtime.client.getCapabilities(controller.signal),
@@ -237,8 +235,6 @@ export async function streamRuntimeShadowConversationMessage(
       turnId,
       messageId,
       createdAt: new Date().toISOString(),
-      localDate: new Date().toLocaleDateString('en-CA'),
-      sessionEnvironmentLocalDate: latestSessionEnvironmentLocalDate(shadowSession ?? undefined),
       userText: request.content,
       conversationStyle: readConversationStyle(),
       userMessageName: 'shadow_user',

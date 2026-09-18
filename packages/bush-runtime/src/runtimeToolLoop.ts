@@ -272,7 +272,10 @@ export class RuntimeToolLoop {
         toolCalls[ordinal]!.id,
         0,
       ).length, 0);
-    const imageCandidateCount = Math.min(4, new Set(imageObservations.flat().flatMap(item => 'image' in item ? [item.image.url] : [])).size);
+    // Deduplicate within each result: even identical images from different calls
+    // belong to their respective call and each attachment consumes image budget.
+    const imageCandidateCount = Math.min(4, imageObservations.reduce((total, observations) =>
+      total + new Set(observations.flatMap(item => 'image' in item ? [item.image.url] : [])).size, 0));
     const structuralTokenReserve = toolCalls.length * TOOL_MESSAGE_OVERHEAD_TOKENS;
     const availablePayloadTokens = ingressBudget === undefined
       ? undefined
@@ -300,20 +303,23 @@ export class RuntimeToolLoop {
       this.#identity.turnId,
       maxTotalResultChars,
     );
+    let remainingImages = maxModelImages;
     for (const [ordinal, projectedResult] of projectedResults.entries()) {
       const toolCall = toolCalls[ordinal]!;
+      const delivery = toolImageDelivery(imageObservations[ordinal] ?? [], remainingImages, visionEnabled);
+      remainingImages -= delivery.images.length;
       toolMessages.push({
         role: "tool",
         toolCallId: toolCall.id,
-        content: projectedResult,
+        content: delivery.receipt ? `${projectedResult}\n\n${delivery.receipt}` : projectedResult,
+        ...(delivery.images.length ? { images: delivery.images } : {}),
       });
     }
-    const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages, visionEnabled);
     const hookMessages: ModelMessage[] = outcomes.flatMap(outcome => (outcome.hookMessages ?? []).map(content => ({
       role: 'developer' as const, name: 'plugin_hook_feedback', content,
     })));
     return {
-      messages: [...toolMessages, ...hookMessages, ...(imageFollowup ? [imageFollowup] : [])],
+      messages: [...toolMessages, ...hookMessages],
       hookStopTurn: outcomes.find(outcome => outcome.hookStopTurn)?.hookStopTurn,
     };
   }
@@ -550,7 +556,7 @@ async function snapshotToolImages(
   return observations;
 }
 
-function toolImageFollowup(observations: ToolImageObservation[], maxImages = 4, visionEnabled = true): ModelMessage | undefined {
+function toolImageDelivery(observations: ToolImageObservation[], maxImages: number, visionEnabled: boolean) {
   const unique = new Map(observations.flatMap(item => 'image' in item ? [[item.image.url, item.image] as const] : []));
   const images = [...unique.values()].slice(0, Math.max(0, maxImages));
   const attached = new Set(images.map(image => image.url));
@@ -558,14 +564,15 @@ function toolImageFollowup(observations: ToolImageObservation[], maxImages = 4, 
   const receipts = observations.flatMap(item => item.receipt ? [{ ...item.receipt,
     status: 'error' in item ? 'failed' : attached.has(item.image.url) ? 'attached' : !visionEnabled ? 'vision_disabled' : 'attachment_budget',
   }] : []);
-  if (!images.length && !errors.length && !receipts.length) return undefined;
+  const omittedImages = unique.size - images.length;
   return {
-    role: "user",
-    name: "tool_image_observation",
-    visibility: "internal",
-    content: JSON.stringify({ source: "tool_output", attachedImages: images.length, ...(errors.length ? { imageInputErrors: errors } : {}),
-      ...(receipts.length ? { imageReceipts: receipts } : {}) }),
-    ...(images.length ? { images } : {}),
+    images,
+    receipt: errors.length || receipts.length || omittedImages ? JSON.stringify({
+      source: "runtime_image_delivery", attachedImages: images.length,
+      ...(errors.length ? { imageInputErrors: errors } : {}),
+      ...(receipts.length ? { imageReceipts: receipts } : {}),
+      ...(omittedImages ? { omittedImages, reason: !visionEnabled ? "vision_disabled" : "attachment_budget" } : {}),
+    }) : undefined,
   };
 }
 

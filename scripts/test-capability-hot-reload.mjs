@@ -51,7 +51,7 @@ try {
   const plugin = join(plugins, 'live');
   await mkdir(join(plugin, '.codex-plugin'), { recursive: true });
   await writeFile(join(plugin, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
-  await writeFile(join(plugin, 'server.mjs'), `
+  const source = (withMusic = false) => `
     import { McpServer } from '@modelcontextprotocol/server';
     import { serveStdio } from '@modelcontextprotocol/server/stdio';
     await serveStdio(() => {
@@ -59,17 +59,23 @@ try {
       server.registerTool('echo', { description: 'Echo fixture', inputSchema: {} }, async () => ({
         content: [{ type: 'text', text: process.env.FIXTURE_VALUE || 'first' }],
       }));
+      server.registerTool('identity', { description: 'Process identity fixture', inputSchema: {} }, async () => ({
+        content: [{ type: 'text', text: String(process.pid) }],
+      }));
+      ${withMusic ? "server.registerTool('music', { description: 'New music fixture', inputSchema: {} }, async () => ({ content: [{ type: 'text', text: 'music' }] }));" : ''}
       return server;
     });
-  `);
+  `;
+  await writeFile(join(plugin, 'server.mjs'), source());
   const mcpConfig = { mcpServers: { echo: { type: 'stdio', command: process.execPath,
     args: ['${CARDBUSH_PLUGIN_ROOT}/server.mjs'], env: { FIXTURE_VALUE: 'first' } } } };
   await writeFile(join(plugin, '.mcp.json'), JSON.stringify(mcpConfig));
-  await writeFile(join(plugin, '.codex-plugin', 'plugin.json'), JSON.stringify({
+  const manifest = {
     name: 'live', version: '1.0.0', description: 'Fixture plugin', author: { name: 'Fixture' },
     mcpServers: './.mcp.json', interface: { displayName: 'Live', shortDescription: 'Fixture',
       longDescription: 'Fixture', developerName: 'Fixture', category: 'Tests', logo: './logo.svg' },
-  }));
+  };
+  await writeFile(join(plugin, '.codex-plugin', 'plugin.json'), JSON.stringify(manifest));
   const name = 'mcp__plugin_live_echo__echo';
   await until(() => registry.resolve(name), 'new plugin tool connected without restarting manager');
   const execute = () => registry.resolve(name).execute({ requestId: 'fixture', sessionId: 'fixture', turnId: 'fixture',
@@ -96,6 +102,48 @@ try {
   await until(async () => { if (changes <= changesBeforeSearchEdit) return false; await updates; return true; }, 'search preference observed');
   assert.equal(registry.resolve(name), connectionBeforeSearchEdit, 'search preferences preserve the existing MCP registration and connection');
   assert.equal((await execute()).content[0].text, 'second');
+
+  const steady = join(plugins, 'steady');
+  await mkdir(join(steady, '.codex-plugin'), { recursive: true });
+  await writeFile(join(steady, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  await writeFile(join(steady, 'server.mjs'), source());
+  await writeFile(join(steady, '.mcp.json'), JSON.stringify(mcpConfig));
+  await writeFile(join(steady, '.codex-plugin', 'plugin.json'), JSON.stringify({ ...manifest, name: 'steady' }));
+  const identity = async (pluginId = 'live') => (await registry.resolve(`mcp__plugin_${pluginId}_echo__identity`).execute({
+    requestId: 'fixture', sessionId: 'fixture', turnId: 'fixture', toolCall: { id: 'identity', name: 'identity' }, input: {}, capabilityIds: [],
+  })).content[0].text;
+  await until(() => registry.resolve('mcp__plugin_steady_echo__identity'), 'unrelated service connected');
+  const steadyPid = await identity('steady');
+  const beforeCodePid = await identity();
+  const beforeCodeConfig = (await loadEnabledProductPluginMcpServers(roots, configPath)).find(server => server.pluginId === 'live');
+  assert.match(beforeCodeConfig.implementationFingerprint, /^[a-f0-9]{64}$/);
+  idle = false;
+  await writeFile(join(plugin, 'server.mjs'), source(true));
+  await until(() => manager.snapshot()?.applicationState === 'pending', 'source-only edit queued with identical launch arguments');
+  assert.equal(await identity(), beforeCodePid, 'active turns retain the old process');
+  assert.equal(registry.resolve('mcp__plugin_live_echo__music'), undefined);
+  idle = true;
+  await until(() => registry.resolve('mcp__plugin_live_echo__music') && manager.snapshot()?.applicationState === 'applied', 'new tool published after idle');
+  const afterCodePid = await identity();
+  assert.notEqual(afterCodePid, beforeCodePid);
+  assert.equal(await identity('steady'), steadyPid, 'another plugin is not restarted');
+  const afterCodeConfig = (await loadEnabledProductPluginMcpServers(roots, configPath)).find(server => server.pluginId === 'live');
+  assert.deepEqual(afterCodeConfig.transport, beforeCodeConfig.transport);
+  assert.notEqual(afterCodeConfig.implementationFingerprint, beforeCodeConfig.implementationFingerprint);
+
+  manifest.version = '1.1.0';
+  await writeFile(join(plugin, '.codex-plugin', 'plugin.json'), JSON.stringify(manifest));
+  await until(async () => { await updates; return manager.snapshot()?.applicationState === 'applied' && (await identity()) !== afterCodePid; }, 'version-only update refreshes installed external modules');
+  const afterVersionPid = await identity();
+  const beforeDocs = changes;
+  await writeFile(join(plugin, 'README.md'), 'Updated documentation');
+  await writeFile(join(plugin, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><title>New logo</title></svg>');
+  await mkdir(join(plugin, 'cache'), { recursive: true });
+  await writeFile(join(plugin, 'cache', 'generated.py'), 'generated data');
+  await writeFile(join(plugin, 'server.mjs'), source(true));
+  await until(async () => { if (changes <= beforeDocs) return false; await updates; return true; }, 'presentation and same-content edits observed');
+  assert.equal(await identity(), afterVersionPid, 'docs, icons, cache writes and same-content touches do not reconnect');
+  assert.equal(await identity('steady'), steadyPid);
   idle = false;
   await store.write({ serviceEnabled: true, plugins: [{ id: 'live', installed: false, enabled: false, config: {} }] });
   await until(() => manager.snapshot()?.applicationState === 'pending', 'uninstall waits for the active turn boundary');
@@ -119,7 +167,7 @@ try {
   await writeFile(join(skills, 'live-skill', 'SKILL.md'), '---\nname: stopped\n---');
   await new Promise(resolve => setTimeout(resolve, 400));
   assert.equal(changes, stoppedAt, 'watcher disposed without late notifications');
-  console.log('Capability hot reload passed: missing roots, Skill add/delete, real plugin stdio call, atomic edits, busy deferral, enable/disable, uninstall/reinstall, malformed config recovery and watcher cleanup.');
+  console.log('Capability hot reload passed: source/version updates, new tool discovery after idle, stable unrelated processes, ignored presentation/cache edits, missing roots, Skill add/delete, atomic edits, enable/disable, uninstall/reinstall, malformed config recovery and watcher cleanup.');
 } finally {
   dispose();
   await updates;

@@ -1,3 +1,5 @@
+import { recentReviewTurns } from './features/sidebar/reviewModel';
+import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
 import { defaultHostTerminalRuntime, normalizeHostTerminalRuntime } from './backend/hostPlatform';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
 import { DEFAULT_MAX_CONTEXT_TOKENS, normalizeConversationStyle } from '@cardbush/bush-product-agent';
@@ -12,7 +14,6 @@ import {
   Clock3,
   ExternalLink,
   FileText,
-  Flag,
   Folder,
   Globe2,
   LoaderCircle,
@@ -60,7 +61,8 @@ import { useOutsideDismiss } from './hooks/useOutsideDismiss';
 import { createPortal } from 'react-dom';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
-import { WindowSidebarToggle } from './components/WindowSidebarToggle';
+import { WindowFrame } from './components/WindowFrame';
+import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { inspectorMaximum } from './components/rightInspectorSizing';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
@@ -94,7 +96,6 @@ import {
 } from './features/appearance/themeRuntime';
 import { useWindowAppearance, readWindowMaterialPreference, WINDOW_MATERIAL_STORAGE_KEY, type WindowMaterialPreference } from './features/appearance/windowAppearance';
 import { useVisualThemeContext } from './features/appearance/useVisualThemeContext';
-import { useKeyboardShortcuts } from './features/shortcuts/useKeyboardShortcuts';
 import { ConversationSearchDialog } from './features/search/ConversationSearchDialog';
 import { useConversationSearch } from './features/search/useConversationSearch';
 import { usePreviousConversationShortcut } from './features/shortcuts/usePreviousConversationShortcut';
@@ -316,7 +317,6 @@ export function App() {
 }
 
 function CardbushApp() {
-  const keyboardShortcuts = useKeyboardShortcuts();
   const conversationSearch = useConversationSearch();
   const [runtimeStartup, setRuntimeStartup] = useState<RuntimeStartupStatus>(() =>
     window.cardbushDesktop?.runtimeStartupStatus
@@ -357,6 +357,7 @@ function CardbushApp() {
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectItem | null>(null);
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
+  const [reviewCommentsByConversation, setReviewCommentsByConversation] = useState<Record<string, ReviewCommentState>>({});
   const [disabledSkillNames, setDisabledSkillNames] = useState<Set<string>>(
     readDisabledSkillNames,
   );
@@ -825,6 +826,7 @@ function CardbushApp() {
             conversationId,
             changeReportsFromMessages(
               normalizeChatMessagesForDisplay(messages),
+              new Set(recentReviewTurns(messages).map(turn => turn.id)),
             ).map(report => ({ ...report, reverted: workspaceChangeReverted(revertedChangeStates, conversationId, report) })),
           ] as const)
           .filter(([, reports]) => reports.length > 0),
@@ -856,6 +858,7 @@ function CardbushApp() {
       sources.set(conversationId, messages);
       const reports = changeReportsFromMessages(
         normalizeChatMessagesForDisplay(messages),
+        new Set(recentReviewTurns(messages).map(turn => turn.id)),
       );
       const fingerprint = JSON.stringify(reports);
       if (fingerprints.get(conversationId) === fingerprint) continue;
@@ -1019,6 +1022,7 @@ function CardbushApp() {
       : displayedInspectorTarget.target
     : '';
   const [inspectorAddressDraft, setInspectorAddressDraft] = useState('');
+  const inspectorAddressRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setInspectorAddressDraft(
       /^about:blank(?:[?#]|$)/i.test(activeInspectorAddress)
@@ -1134,38 +1138,6 @@ function CardbushApp() {
   ], []);
   const inspectorMenuOpen = inspectorAddMenuOpen || inspectorTabsMenuOpen || !!inspectorTabContextMenu;
   useOutsideDismiss(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus);
-  useEffect(() => {
-    if (settingsOpen) return undefined;
-    const handleInspectorShortcut = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.repeat ||
-          event.target instanceof Element && event.target.closest('[inert], [role="dialog"], [data-shortcut-recorder]')) return;
-      if (keyboardShortcuts.matches('openReview', event) && inspectorReviewAvailable) {
-        event.preventDefault();
-        openChangeReviewInspector(chat.activeConversationId);
-      } else if (keyboardShortcuts.matches('openBrowser', event)) {
-        event.preventDefault();
-        openNewBrowserInspectorTab();
-      } else if (keyboardShortcuts.matches('openFiles', event)) {
-        event.preventDefault();
-        void openInspectorFiles();
-      } else if (keyboardShortcuts.matches('openShadow', event) && inspectorShadowAvailable) {
-        event.preventDefault();
-        openShadowInspectorTab();
-      }
-    };
-    window.addEventListener('keydown', handleInspectorShortcut);
-    return () => window.removeEventListener('keydown', handleInspectorShortcut);
-  }, [
-    keyboardShortcuts,
-    inspectorReviewAvailable,
-    inspectorShadowAvailable,
-    chat.activeConversationId,
-    openChangeReviewInspector,
-    openInspectorFiles,
-    openNewBrowserInspectorTab,
-    openShadowInspectorTab,
-    settingsOpen,
-  ]);
   const sidebarPresence = useSoftPanelPresence(
     !sidebarCollapsed,
   );
@@ -1552,6 +1524,12 @@ function CardbushApp() {
     setSection('chat');
     return true;
   }, [chat.conversations, chat.openConversation]);
+
+  const openAutomationConversation = useCallback((conversationId: string) => {
+    if (!openConversation(conversationId)) {
+      void chat.openStoredConversation(conversationId).then(opened => { if (opened) setSection('chat'); });
+    }
+  }, [openConversation, chat.openStoredConversation]);
 
   const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
     const normalized = projectDir?.trim() || null;
@@ -1976,12 +1954,6 @@ function CardbushApp() {
     if (!chat.activeConversationId) return;
     openChangeReviewInspector(chat.activeConversationId, typeof filePath === 'string' ? filePath.trim() : '');
   }, [chat.activeConversationId, openChangeReviewInspector]);
-  const revertConversationReports = useCallback((conversationId: string, reports: ConversationChangeReport[]) => {
-    const allReverted = reports.every(report => workspaceChangeReverted(revertedChangeStates, conversationId, report));
-    return setChangeReportsReverted(conversationId,
-      allReverted ? reports : reports.filter(report => !workspaceChangeReverted(revertedChangeStates, conversationId, report)),
-      !allReverted, 'conversation:' + conversationId);
-  }, [revertedChangeStates, setChangeReportsReverted]);
 
   const openSettings = useCallback((
     targetSection: SettingsSection = 'profile',
@@ -2052,17 +2024,18 @@ function CardbushApp() {
   const handleSidebarOpenSettings = useCallback(() => {
     openSettings('profile');
   }, [openSettings]);
-  const handleSidebarOpenPlugins = useCallback(() => openSettings('mcp', 'plugins'), [openSettings]);
+  const handleSidebarOpenPlugins = useCallback(() => setSection('plugins'), []);
   const handleSearchOpenConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
     openConversation(conversationId);
   }, [openConversation]);
   const handlePreviousConversation = useCallback((conversationId: string) => {
+    setSettingsOpen(false);
     chat.openConversation(conversationId);
     setSection('chat');
     setConversationPromptFocus(value => value + 1);
   }, [chat.openConversation]);
-  usePreviousConversationShortcut({
+  const conversationNavigation = usePreviousConversationShortcut({
     activeConversationId: chat.activeConversationId,
     conversations: chat.conversations,
     preparedConversations: chat.preparedConversations,
@@ -2082,6 +2055,38 @@ function CardbushApp() {
     void addProject();
   }, [addProject]);
 
+  const toggleSidebar = () => setSidebarCollapsed(collapsed => !collapsed);
+  const windowMenus = applicationMenus(language, {
+    newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
+    openProject: window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined,
+    openFiles: window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined,
+    openSettings: () => openSettings('profile'),
+    showShortcuts: () => openSettings('shortcuts'),
+    openDiagnostics: () => openSettings('diagnostics'),
+    toggleSidebar,
+    toggleInspector: () => {
+      if (settingsOpen) { setSettingsOpen(false); setInspectorOpen(true); }
+      else toggleInspector();
+    },
+    search: conversationSearch.show,
+    openBrowser: () => { setSettingsOpen(false); openNewBrowserInspectorTab(); },
+    focusBrowserAddress: !settingsOpen && inspectorOpen && displayedInspectorTarget &&
+      isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType)
+      ? () => { inspectorAddressRef.current?.focus(); inspectorAddressRef.current?.select(); } : undefined,
+    reloadBrowser: !settingsOpen && inspectorOpen && displayedInspectorTarget && activeInspectorNavigation &&
+      inspectorWebviewRefs.current.has(activeInspectorTabIdentity)
+      ? () => inspectorWebviewRefs.current.get(activeInspectorTabIdentity)?.reload() : undefined,
+    openReview: inspectorReviewAvailable ? () => { setSettingsOpen(false); openChangeReviewInspector(chat.activeConversationId); } : undefined,
+    openHistory: section === 'chat' && chat.activeConversationId
+      ? () => { setSettingsOpen(false); openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId }); } : undefined,
+    openShadow: inspectorShadowAvailable ? () => { setSettingsOpen(false); openShadowInspectorTab(); } : undefined,
+    previousConversation: conversationNavigation.canGoPrevious ? conversationNavigation.previous : undefined,
+    back: conversationNavigation.canGoBack ? conversationNavigation.goBack : undefined,
+    forward: conversationNavigation.canGoForward ? conversationNavigation.goForward : undefined,
+    openTeam: backendCapabilities.teamMode ? () => { setSettingsOpen(false); setSection('team'); } : undefined,
+  }, { sidebarVisible: !sidebarCollapsed, inspectorVisible: inspectorOpen && !settingsOpen,
+    native: Boolean(window.cardbushDesktop?.executeWindowMenuAction), externalLinks: Boolean(window.cardbushDesktop?.openExternal) });
+
   return (
     <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
     <ImageGalleryProvider sessionId={chat.activeConversationId} messages={chat.activeMessages}
@@ -2094,13 +2099,11 @@ function CardbushApp() {
       <WindowFrame
         language={language}
         sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}
-        onOpenCacheSettings={() => openSettings('cache')}
-        teamAvailable={backendCapabilities.teamMode}
-        onOpenTeam={() => {
-          setSettingsOpen(false);
-          setSection('team');
-        }}
+        onToggleSidebar={toggleSidebar}
+        menus={windowMenus}
+        onBack={conversationNavigation.canGoBack ? conversationNavigation.goBack : undefined}
+        onForward={conversationNavigation.canGoForward ? conversationNavigation.goForward : undefined}
+        onError={error => { void showUiError(language === 'zh' ? '操作失败' : 'Action failed', errorMessage(error)); }}
       />
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
@@ -2304,6 +2307,8 @@ function CardbushApp() {
             ) : (
               <FeaturePanel
                 language={language}
+                backendCapabilities={backendCapabilities}
+                onOpenPluginPrompt={openPluginPrompt}
                 onCreateAutomation={createAutomationConversation}
                 inspectorOpen={inspectorOpen}
                 onToggleInspector={toggleInspector}
@@ -2315,9 +2320,7 @@ function CardbushApp() {
                 onToggleSkill={toggleSkillEnabled}
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
-                onOpenConversation={(conversationId) => {
-                  openConversation(conversationId);
-                }}
+                onOpenConversation={openAutomationConversation}
               />
             )}
           </section>
@@ -2627,6 +2630,7 @@ function CardbushApp() {
                     >
                       <Globe2 size={13} aria-hidden="true" />
                       <input
+                        ref={inspectorAddressRef}
                         value={inspectorAddressDraft}
                         aria-label={language === 'zh' ? '网址' : 'Address'}
                         placeholder={language === 'zh' ? '输入网址' : 'Enter address'}
@@ -2678,7 +2682,7 @@ function CardbushApp() {
                           ) : tab.kind === 'shadow' ? (
                             <ShadowWindow embedded context={tab.context} />
                           ) : tab.kind === 'automation' ? (
-                            <AutomationRunPanel jobId={tab.jobId} runId={tab.runId} language={language} active={active && inspectorPresence.visible} onOpenConversation={id => { chat.openConversation(id); setSection('chat'); }}/>
+                            <AutomationRunPanel jobId={tab.jobId} runId={tab.runId} language={language} active={active && inspectorPresence.visible} onOpenConversation={openAutomationConversation}/>
                           ) : tab.kind === 'history' || tab.kind === 'subagent' ? (
                             <WorkSummaryInspector
                               detail={tab.detail}
@@ -2702,6 +2706,24 @@ function CardbushApp() {
                               language={language}
                               conversation={displayedReviewConversation}
                               reports={displayedReviewReports}
+                              reviewComments={reviewCommentsByConversation[displayedReviewConversation.id] ?? emptyReviewComments}
+                              onReviewCommentsChange={update => {
+                                const sessionId = displayedReviewConversation.id;
+                                setReviewCommentsByConversation(current => ({ ...current,
+                                  [sessionId]: typeof update === 'function' ? update(current[sessionId] ?? emptyReviewComments) : update,
+                                }));
+                              }}
+                              onComposeReviewComments={comments => {
+                                const sessionId = displayedReviewConversation.id;
+                                setDraftsByConversation(current => ({ ...current,
+                                  [sessionId]: appendReviewCommentsToDraft(current[sessionId] ?? '', comments, language),
+                                }));
+                                chat.openConversation(sessionId);
+                                setSection('chat');
+                                setSettingsOpen(false);
+                                setConversationPromptFocus(value => value + 1);
+                              }}
+                              turns={recentReviewTurns(chat.messagesByConversation[displayedReviewConversation.id] ?? [])}
                               initialFilePath={tab.initialFilePath}
                               selectionRequestId={tab.selectionRequestId}
                               notice={changeReviewNotice}
@@ -2715,10 +2737,6 @@ function CardbushApp() {
                               onRevert={(report) => revertChangeReport(
                                 displayedReviewConversation.id,
                                 report,
-                              )}
-                              onRevertAll={() => revertConversationReports(
-                                displayedReviewConversation.id,
-                                displayedReviewReports,
                               )}
                               revertAvailable={!chat.processingConversationIds.has(
                                 displayedReviewConversation.id,
@@ -3549,191 +3567,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function WindowFrame({
-  language,
-  sidebarCollapsed,
-  onToggleSidebar,
-  onOpenCacheSettings,
-  onOpenTeam,
-  teamAvailable,
-}: {
-  language: AppLanguage;
-  sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
-  onOpenCacheSettings: () => void;
-  onOpenTeam: () => void;
-  teamAvailable: boolean;
-}) {
-  const [maximized, setMaximized] = useState(false);
-  const [openMenu, setOpenMenu] = useState<'beta' | null>(null);
-  const menuRootRef = useRef<HTMLDivElement | null>(null);
-
-  const syncMaximized = useCallback(() => {
-    void window.cardbushDesktop
-      ?.isMaximized()
-      .then(setMaximized)
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    syncMaximized();
-    window.addEventListener('resize', syncMaximized);
-    return () => window.removeEventListener('resize', syncMaximized);
-  }, [syncMaximized]);
-
-  useEffect(() => {
-    if (!openMenu) return undefined;
-    const closeFromPointer = (event: globalThis.PointerEvent) => {
-      if (event.target instanceof Node && !menuRootRef.current?.contains(event.target)) {
-        setOpenMenu(null);
-      }
-    };
-    const closeFromKeyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenMenu(null);
-    };
-    document.addEventListener('pointerdown', closeFromPointer);
-    document.addEventListener('keydown', closeFromKeyboard);
-    return () => {
-      document.removeEventListener('pointerdown', closeFromPointer);
-      document.removeEventListener('keydown', closeFromKeyboard);
-    };
-  }, [openMenu]);
-
-  const runMenuAction = useCallback((action: () => void) => {
-    setOpenMenu(null);
-    action();
-  }, []);
-
-  async function toggleMaximize() {
-    await window.cardbushDesktop?.toggleMaximize();
-    syncMaximized();
-  }
-
-  return (
-    <header className="window-frame window-drag">
-      <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
-      <button
-        className="frame-chip cache-chip no-drag"
-        type="button"
-        onClick={onOpenCacheSettings}
-      >
-        {language === 'zh' ? '缓存' : 'Cache'}
-      </button>
-      <div className="window-frame-menu-group no-drag" ref={menuRootRef}>
-        {teamAvailable && <WindowFrameMenu
-          label="Beta"
-          open={openMenu === 'beta'}
-          onToggle={() => setOpenMenu((current) => current === 'beta' ? null : 'beta')}
-        >
-          <WindowFrameMenuItem
-            icon={<Flag size={14} />}
-            label="Team"
-            onClick={() => runMenuAction(onOpenTeam)}
-          />
-        </WindowFrameMenu>}
-      </div>
-      <div className="window-spacer window-drag" aria-hidden="true" />
-      <WindowButton
-        label={language === 'zh' ? '最小化' : 'Minimize'}
-        onClick={() => window.cardbushDesktop?.minimize()}
-      >
-        <span className="window-glyph minimize" aria-hidden="true" />
-      </WindowButton>
-      <WindowButton
-        label={
-          maximized
-            ? language === 'zh' ? '还原窗口' : 'Restore'
-            : language === 'zh' ? '最大化' : 'Maximize'
-        }
-        onClick={() => void toggleMaximize()}
-      >
-        <span
-          className={`window-glyph ${maximized ? 'restore' : 'maximize'}`}
-          aria-hidden="true"
-        />
-      </WindowButton>
-      <WindowButton
-        label={language === 'zh' ? '关闭' : 'Close'}
-        danger
-        onClick={() => window.cardbushDesktop?.closeToTray()}
-      >
-        <span className="window-glyph close" aria-hidden="true" />
-      </WindowButton>
-    </header>
-  );
-}
-
-function WindowFrameMenu({
-  label,
-  open,
-  onToggle,
-  children,
-}: {
-  label: string;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="window-frame-menu">
-      <button
-        className="frame-chip window-frame-menu-trigger no-drag"
-        type="button"
-        aria-expanded={open}
-        onClick={onToggle}
-      >
-        <span>{label}</span>
-      </button>
-      {open && (
-        <div className="window-frame-menu-popover no-drag" role="menu">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WindowFrameMenuItem({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" role="menuitem" onClick={onClick}>
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function WindowButton({
-  label,
-  danger,
-  onClick,
-  children,
-}: {
-  label: string;
-  danger?: boolean;
-  onClick?: () => void | Promise<void>;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      className={`window-button no-drag ${danger ? 'danger' : ''}`}
-      aria-label={label}
-      title={label}
-      type="button"
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-
 function normalizeMaxCompletionTokens(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
@@ -3771,6 +3604,8 @@ function snapshotRevertFallbackAllowed(error: unknown) {
 
 function FeaturePanel({
   language,
+  backendCapabilities,
+  onOpenPluginPrompt,
   section,
   activeProjectDir,
   workflowValidationAvailable,
@@ -3785,6 +3620,8 @@ function FeaturePanel({
   onOpenConversation,
 }: {
   language: AppLanguage;
+  backendCapabilities: BackendCapabilities;
+  onOpenPluginPrompt: (prompt: string) => void;
   section: AppSection;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
@@ -3811,6 +3648,8 @@ function FeaturePanel({
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
         <LazyFeatureContentPanel
           language={language}
+          backendCapabilities={backendCapabilities}
+          onOpenPluginPrompt={onOpenPluginPrompt}
           section={section}
           activeProjectDir={activeProjectDir}
           workflowValidationAvailable={workflowValidationAvailable}

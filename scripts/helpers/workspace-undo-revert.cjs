@@ -37,29 +37,28 @@ module.exports = async ({ run, until, pause, window, root }) => {
               conversation: { id: undoSession, title: 'Undo fixture' }, reports, notice: '',
               revertingChangeId: undoBusy ? 'conversation:' + undoSession : '',
               revertedChangeIds: new Set(restored ? reports.map(report => report.id) : []),
-              onClose: ()=>{}, onRevert: act, onRevertAll: ()=>act(reports[0]) })))));
+              onClose: ()=>{}, onRevert: act })))));
     };
     showUndo();
   `);
   const inline = '.assistant-changed-files-revert';
-  const all = '.change-review-summary .danger-soft-button';
-  const single = '.change-review-diff-pane header .secondary-button';
+  const single = '.change-review-file-heading .secondary-button';
   await until(`document.querySelector('${inline}')?.textContent === '撤回'`, 'initial inline revert');
   await run(`document.querySelector('${inline}').click()`);
-  await until(`document.querySelector('${inline}').disabled && document.querySelector('${all}').disabled && document.querySelector('${single}').disabled`, 'all entry points disable during a mutation');
+  await until(`document.querySelector('${inline}').disabled && document.querySelector('${single}').disabled`, 'both entry points disable during a mutation');
   await run('finishUndo()');
   await until(`document.querySelector('${inline}').textContent === '取消撤回'`, 'inline undo revert');
   assert.equal(await run(`document.querySelector('${single}').textContent`), '取消撤回');
-  assert.equal(await run(`document.querySelector('${all}').textContent`), '取消全部撤回');
+  assert.equal(await run("document.querySelectorAll('.change-review-summary .danger-soft-button').length"), 0, 'duplicate bulk action is removed');
   assert.equal(await run('document.querySelectorAll(".assistant-changed-file").length'), 1, 'reverted file remains reviewable');
   await run(`document.querySelector('${single}').click(); void 0;`);
   await until('undoCalls.length === 2', 'review can restore inline revert');
   await run('finishUndo()');
   await until(`document.querySelector('${inline}').textContent === '撤回'`, 'restore re-enables revert');
-  await run(`document.querySelector('${all}').click()`);
-  await until('undoCalls.length === 3', 'bulk revert');
+  await run(`document.querySelector('${single}').click()`);
+  await until('undoCalls.length === 3', 'selected turn revert');
   await run('finishUndo()');
-  await until(`document.querySelector('${all}').textContent === '取消全部撤回'`, 'bulk undo is actionable');
+  await until(`document.querySelector('${single}').textContent === '取消撤回'`, 'selected turn undo is actionable');
   await run(`undoSession = 'session-b'; showUndo()`);
   await until(`document.querySelector('${inline}').textContent === '撤回'`, 'same Turn id in another session stays independent');
   await run(`undoSession = 'session-a'; undoLanguage = 'en'; showUndo()`);
@@ -75,8 +74,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     })()`), true, 'longer undo label fits');
     fs.writeFileSync(path.join(root, 'tmp', 'undo-revert-' + theme + '.png'), (await window.webContents.capturePage()).toPNG());
   }
-  await run(`document.querySelector('${all}').click()`);
-  await until('undoCalls.length === 4', 'bulk restore after history reload');
+  await run(`document.querySelector('${single}').click()`);
+  await until('undoCalls.length === 4', 'selected turn restore after history reload');
   await run('finishUndo()');
   await until(`document.querySelector('${inline}').textContent === '撤回'`, 'successful restore overrides stale replay until next refresh');
   await run(`
@@ -125,5 +124,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run(`document.querySelector('.assistant-changed-files-summary') === null`), true,
     'stopping without file changes does not create an empty summary');
   await run('renderView(null)');
-  console.log('Undo revert UI passed: inline/review/bulk actions, history replay, session isolation, both themes, and stopped/completed change summaries.');
+  console.log('Undo revert UI passed: inline/selected-turn actions, one review toolbar, history replay, session isolation, both themes, and stopped/completed change summaries.');
 };

@@ -1,9 +1,3 @@
----
-name: cardbush-mcp-management
-description: 在 CardBush 中添加、配置、连接、检查、启停或移除第三方 MCP 服务时使用，包括让 agent 自行安装 MCP 并接入当前宿主。区分服务程序、目标软件自身的插件与 CardBush 的 MCP 连接；不用于其他客户端的 MCP 配置。
-license: Proprietary
----
-
 # CardBush MCP 接入
 
 CardBush 已有原生 MCP 客户端。通过宿主提供的管理工具注册服务，使用 Runtime 实际发现的工具名调用。
@@ -17,13 +11,14 @@ CardBush 已有原生 MCP 客户端。通过宿主提供的管理工具注册服
 | Blender、浏览器等软件自身的插件或扩展 | 该软件的安装、启用接口和文档 |
 | 本地 MCP 服务程序及依赖 | 该服务的包管理器、安装或启动说明 |
 | CardBush 的 MCP 连接 | 下述 CardBush 管理工具 |
-| 需要复用或分发的 CardBush 插件包 | `cardbush-plugin-management` |
+| 需要复用或分发的 CardBush 插件包 | [插件管理](plugin-management.md) |
 
 一个请求可能需要完成多行。第三方软件的名字说明操作对象，不代表 MCP 连接应该配置到那个软件里。单独注册 MCP 无需创建 CardBush 插件包。
 
 ## 宿主管理入口
 
 - `mcp__cardbush_management__list_mcp_servers`：读取已保存的连接标识、Runtime 应用状态、连接健康及发现的工具名。凭据值不会返回。
+- `mcp__cardbush_management__reconnect_mcp_server`：用上面返回的准确 `id` 重连一个已启用的插件或独立 MCP 服务，重新发现工具，不修改保存配置、不重启 CardBush。用于包外依赖更新或工具目录仍旧的情况；正常插件包更新自动重连。内置 CardBush 服务不接受这个操作。活动任务中返回 `pending` 时，结束本轮后再验证，不在本轮轮询等待自己结束。
 - `mcp__cardbush_management__configure_mcp_server`：新增或修改指定 `id` 的连接；只修改传入的字段。`env`、`headers` 按键合并，键值设为 `null` 表示移除该键。`enabled: false` 停用，`true` 启用。
 - `mcp__cardbush_management__remove_mcp_server`：移除指定连接，保留服务程序和外部软件插件文件。
 - `mcp__cardbush_management__list_plugin_connections`：读取已安装插件的连接别名、实际地址、OAuth 选项、工具权限和配置版本；可用 `pluginId` 限定插件。
@@ -61,5 +56,7 @@ HTTP 服务使用 `transport: "streamable_http"` 和实际 `url`；需要旧版 
 - `"failed"`、`applicationError` 或 `runtimeError`：按实际错误处理；旧连接仍可能存在，不代表新配置已成功。
 
 以目标服务实际发现的工具名做适合该服务的验证。独立客户端测试可以验证服务程序，但不能证明 CardBush 已接入。若本轮返回待生效，报告已保存、待任务结束后接入；后续读取状态并调用工具时再确认可用。外部软件需要保持运行或单独启用桥接时，说明这一实际依赖。
+
+插件新技能可见而新工具缺席时，先读取目标连接的真实状态。包版本和包内服务代码更新会自动触发本地服务重连；单独更新包外依赖时调用 `reconnect_mcp_server`。`mcp_search` 的 `load`/`reload` 是读取已发现的工具定义，不是重新连接 MCP。不要把工具缺席或 `pending` 解释为必须重启整个应用；未暴露重连工具时可指向该插件“服务与工具”中的“重新连接”。重连不会补齐凭据，也不代表实际业务调用成功。
 
 已有任务计划时，外部授权或任务结束后生效等依赖可以用 `waiting` 和具体的 `waitingFor` 表示，并保留依赖它的验证步骤。等待不等于完成；依赖解除后再显式恢复计划。

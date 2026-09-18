@@ -24,7 +24,11 @@ test("pins a native screenshot before the next sequential Tool deletes it, retai
     { protocol: "bush.tool_call.v1", id: "capture", name: "capture", argumentsText: "{}" },
     { protocol: "bush.tool_call.v1", id: "delete", name: "delete_source", argumentsText: "{}" },
   ], { round: 1, assistantMessageId: "assistant" });
-  assert.deepEqual(await readFile(result.messages.at(-1).images[0].url), png);
+  assert.equal(result.messages.length, 2);
+  assert.equal(result.messages[0].toolCallId, 'capture');
+  assert.deepEqual(await readFile(result.messages[0].images[0].url), png);
+  assert.equal(result.messages[1].toolCallId, 'delete');
+  assert.equal(result.messages[1].images, undefined);
   assert.deepEqual(executionStore.get("session", "turn", "capture").result, capture.execute());
   assert.equal(JSON.parse(result.messages[0].content).artifacts[0].path, source);
 });
@@ -38,10 +42,12 @@ test("missing native images produce an actionable observation without rewriting 
   const { messages } = await makeLoop(root, registry, executionStore).execute([
     { protocol: "bush.tool_call.v1", id: "capture", name: "capture", argumentsText: "{}" },
   ], { round: 1, assistantMessageId: "assistant" });
-  assert.equal(messages[1].images, undefined);
-  assert.equal(JSON.parse(messages[1].content).imageInputErrors[0].code, "image_input_unavailable");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].images, undefined);
+  assert.equal(JSON.parse(messages[0].content.split('\n\n').at(-1)).imageInputErrors[0].code, "image_input_unavailable");
   assert.equal(executionStore.get("session", "turn", "capture").outcome, "returned");
-  assert.deepEqual(JSON.parse(messages[0].content), capture.execute());
+  assert.deepEqual(JSON.parse(messages[0].content.split('\n\n')[0]), capture.execute());
+  assert.deepEqual(executionStore.get("session", "turn", "capture").result, capture.execute());
 });
 
 test("incomplete injection reports the actual Tool error and succeeds when the writer finishes", async (context) => {
@@ -68,8 +74,8 @@ test("incomplete injection reports the actual Tool error and succeeds when the w
   assert.deepEqual(JSON.parse(succeeded.messages[0].content), { queued: true, attached_images: 1 });
   assert.equal(succeeded.messages[0].content.includes(source), false);
   await rm(source);
-  assert.deepEqual(await readFile(succeeded.messages[1].images[0].url), png);
-  assert.equal(succeeded.messages[1].images[0].detail, "high");
+  assert.deepEqual(await readFile(succeeded.messages[0].images[0].url), png);
+  assert.equal(succeeded.messages[0].images[0].detail, "high");
 });
 
 function makeLoop(root, registry, executionStore) {

@@ -12,12 +12,22 @@ const local = file => resolve(file).replaceAll('\\', '/');
 const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationPanel} from '${local('src/features/automations/AutomationPanel.tsx')}';
-import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
+import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
+import {importedThemeStyleVariables} from '${local('src/features/appearance/importedThemeStyle.ts')}';
+import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
 window.listeners=new Set(); window.calls=[]; window.opened=[]; window.openedRuns=[]; window.setupRequests=0; window.failSave=false;
+window.pickerThemeTokens=[];window.pickerTheme=theme=>{const app=document.querySelector('.app');for(const token of pickerThemeTokens)app.style.removeProperty(token);app.className='app '+themeClassNames(theme==='custom'?'dark':theme);pickerThemeTokens=[];if(theme==='custom'){const tokens=importedThemeStyleVariables({protocol:'cardbush.appearance_style.v1',name:'测试导入配色',base:'dark',colors:{surface:'#201b2c',surfaceRaised:'#31273f',border:'#675679',text:'#f3eafc',textMuted:'#cec1db',accent:'#d2a9f4'}});for(const [token,value]of Object.entries(tokens))app.style.setProperty(token,value);pickerThemeTokens=Object.keys(tokens)}};
 window.addEventListener('cardbush:open-automation-run',event=>openedRuns.push(event.detail));
 window.state={available:true,jobs:[],sessions:[{id:'session',title:'构建与导出检查',model:'Fixture'}]};
 window.notify=()=>{for(const listener of listeners)listener()};
-window.cardbushDesktop={onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
+window.calendarState={datasets:[],chineseLunar:true};window.calendarCalls=[];window.calendarListeners=new Set();window.importCalendar=undefined;
+window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return()=>calendarListeners.delete(fn)},calendarCommand:async command=>{
+ calendarCalls.push(command);if(command.action==='import'&&importCalendar){calendarState.datasets=calendarState.datasets.filter(item=>item.calendar.id!==importCalendar.id);calendarState.datasets.push({calendar:structuredClone(importCalendar),enabled:true})}
+ if(command.action==='lunar')calendarState.chineseLunar=command.enabled;
+ if(command.action==='enabled')calendarState.datasets.find(item=>item.calendar.id===command.id).enabled=command.enabled;
+ if(command.action==='remove')calendarState.datasets=calendarState.datasets.filter(item=>item.calendar.id!==command.id);
+ return {state:structuredClone(calendarState),...(command.action==='import'&&importCalendar?{imported:importCalendar.name}:{})};
+},onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
  calls.push(command); if(command.action==='list')return structuredClone(state);
  if(failSave)throw Error('Automation changed. Refresh before saving.');
  if(command.action==='mark_read'||command.action==='mark_unread'){for(const job of state.jobs)for(const run of job.runs)if(command.runIds.includes(run.id)){if(command.action==='mark_read')run.readAt=new Date().toISOString();else delete run.readAt;}notify();return{};}
@@ -41,7 +51,7 @@ try {
   const entry = outputs.find(item => item.type === 'chunk' && item.isEntry);
   await writeFile(join(directory, 'index.html'), `<!doctype html><html><head><meta charset="utf-8">${outputs.filter(item=>item.type==='asset'&&item.fileName.endsWith('.css')).map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
   const require = createRequire(import.meta.url), env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
-  const run = spawnSync(require('electron'), ['scripts/test-automations-ui-worker.cjs', directory], { env, windowsHide: true, stdio: 'inherit', timeout: 30000 });
+  const run = spawnSync(require('electron'), ['scripts/test-automations-ui-worker.cjs', directory], { env, windowsHide: true, stdio: 'inherit', timeout: 60000 });
   assert.equal(run.status, 0, String(run.error ?? 'Automation UI fixture failed'));
 } finally {
   assert.ok(directory.startsWith(parent + sep + 'automations-ui-'));

@@ -4,6 +4,8 @@ import { workspaceChangeSchema } from "./tool.js";
 export const GET_RUNTIME_WORKSPACE_COMMAND = "runtime.get_workspace" as const;
 export const UPDATE_RUNTIME_WORKSPACE_COMMAND = "runtime.update_workspace" as const;
 export const RUNTIME_WORKSPACE_METADATA_KEY = "runtimeWorkspace" as const;
+/** Current and previous Turn are the supported workspace undo window. */
+export const WORKSPACE_REVIEW_TURN_LIMIT = 2;
 
 export const workspaceSetupSchema = z.object({
   mode: z.enum(["auto", "direct", "worktree"]),

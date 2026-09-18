@@ -1,4 +1,6 @@
-import { journalCacheEntries } from './cacheMaintenance.js';
+import { cacheFiles, fileCacheEntry, journalCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
+import { ExecutionHistoryIndex } from './executionHistoryIndex.js';
+import { summarizeExecution } from './executionHistory.js';
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -11,7 +13,7 @@ import {
   truncateSync,
   writeSync,
 } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 
 import {
   toolExecutionRecordSchema,
@@ -37,6 +39,7 @@ export class ToolExecutionJournalCorruptionError extends Error {
 export class FileToolExecutionPersistence implements ToolExecutionPersistence {
   readonly #root: string;
   readonly #descriptors = new Map<string, number>();
+  readonly #history = new ExecutionHistoryIndex();
   readonly #onTruncatedTail?: (input: { path: string; removedBytes: number }) => void;
 
   constructor(options: {
@@ -79,9 +82,13 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
   append(candidate: ToolExecutionRecord): void {
     const record = toolExecutionRecordSchema.parse(candidate);
     const serialized = JSON.stringify(record);
+    const history = summarizeExecution(record) ?? null;
     const line = JSON.stringify({
       protocol: RECORD_PROTOCOL,
       checksum: checksum(serialized),
+      // Keep a separately checksummed excerpt before the potentially huge native payload.
+      history,
+      historyChecksum: checksum(JSON.stringify(history)),
       record,
     });
     const descriptor = this.#descriptor(this.#path(record.sessionId));
@@ -119,11 +126,22 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
     fsyncSync(marker);
   }
 
-  cacheEntries() {
-    return journalCacheEntries(this.#root, 'tool_executions', RECORD_PROTOCOL, 'record', 'sessionId', path => {
+  historySummaries(sessionId: string, signal?: AbortSignal) {
+    return this.#history.read(this.#path(sessionId), sessionId, signal);
+  }
+
+  async cacheEntries() {
+    const journals = await journalCacheEntries(this.#root, 'tool_executions', RECORD_PROTOCOL, 'record', 'sessionId', path => {
       const descriptor = this.#descriptors.get(path);
       if (descriptor !== undefined) { closeSync(descriptor); this.#descriptors.delete(path); }
     }, false);
+    const indexes = (await cacheFiles(this.#root, name => /^[a-f0-9]{64}\.jsonl\.history$/.test(name))).map(file => {
+      const entry = fileCacheEntry(file, 'execution_history', [basename(file.path).split('.')[0]!]);
+      // Excerpts are derived data, never roots that keep unrelated conversations alive.
+      entry.scan = async () => {};
+      return entry;
+    });
+    return [...journals, ...indexes, ...await temporaryCacheEntries(this.#root)];
   }
 
   close(): void {

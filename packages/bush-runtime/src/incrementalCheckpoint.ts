@@ -1,5 +1,6 @@
 import type { ModelMessage } from '@cardbush/bush-protocol';
 import type { CompletedModelRound } from './modelRound.js';
+import { contextCompactionCorrectionMessage, isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { bindContextCheckpointInput, contextCheckpointSlots, type ContextCompactionState, type ContextCompactionSource } from './contextCompaction.js';
 
 /** A derived view of genuine checkpoint calls and receipts, not a semantic
@@ -15,7 +16,7 @@ export class IncrementalCheckpoint {
     this.history.push(structuredClone(saved[0] ?? notice));
     for (let index = 1; index < saved.length; index++) {
       const message = saved[index]!;
-      if (message.role === 'user' && message.name === 'context_compaction_correction') {
+      if (isContextMaintenanceNotice(message, 'context_compaction_correction')) {
         this.history.push(structuredClone(message)); this.failures++; continue;
       }
       const receipt = saved[++index];
@@ -51,7 +52,7 @@ export class IncrementalCheckpoint {
 
   retry(message: string): boolean {
     this.failures++;
-    if (this.failures < 3) this.history.push({ role: 'user', name: 'context_compaction_correction', visibility: 'internal', content: message });
+    if (this.failures < 3) this.history.push(contextCompactionCorrectionMessage(message));
     return this.failures < 3;
   }
 

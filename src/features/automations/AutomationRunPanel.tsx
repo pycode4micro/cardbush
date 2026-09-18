@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Check, Mail, RefreshCw, Square, ExternalLink } from 'lucide-react';
+import { ArrowUp, Check, Mail, RefreshCw, Square, ExternalLink, MessageSquare } from 'lucide-react';
 import { isAutomationResult, type AutomationConversation } from '@cardbush/bush-protocol';
 import { fetchSessionMessages, fetchPendingInteraction, streamChat, streamTurnEvents, stopTurn, replyInteraction, cancelInteraction, recordAssistantLogicFeedback, type ChatStreamEventHandlers } from '../../backend/api';
 import type { ChatMessage, PendingInteraction, PermissionMode, ReasoningLevel } from '../../types';
@@ -130,7 +130,7 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
   }, [sessionId, runStatus, detail?.run.turnId, handlers, runId, historyRevision]);
 
   const send = async (content = draft.trim()) => {
-    if (!detail || !content || ownSend.current || sending || continuations.has(detail.sessionId) || !isAutomationResult(detail.run)) return;
+    if (!detail || !content || ownSend.current || sending || continuations.has(detail.sessionId) || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false) return;
     const current = detail, userId = `user-${crypto.randomUUID()}`, controller = new AbortController();
     const userMessage: ChatMessage = { id: userId, role: 'user', content, conversationId: current.sessionId, createdAt: new Date().toISOString() };
     continuations.set(current.sessionId, { controller, turnId: '', userMessage });
@@ -177,9 +177,13 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
   return <section className="automation-run-panel shadow-inspector-shell">
     <header className="automation-run-heading"><div><strong>{detail?.job.name || (zh ? '执行结果' : 'Execution result')}</strong><span>{detail ? `${labels[detail.run.status]}${isAutomationResult(detail.run) ? ` · ${detail.run.readAt ? (zh ? '已读' : 'Read') : (zh ? '未读' : 'Unread')}` : ''}` : (zh ? '正在加载…' : 'Loading…')}</span></div>
       <div className="automation-actions"><button type="button" aria-label={zh ? '刷新结果' : 'Refresh result'} onClick={() => { setError(''); void refresh(); if (!sending) setHistoryRevision(value => value + 1); }}><RefreshCw size={14}/></button>
-        {detail && <button type="button" title={zh ? '在主会话打开' : 'Open full conversation'} aria-label={zh ? '在主会话打开' : 'Open full conversation'} onClick={() => onOpenConversation(detail.sessionId)}><ExternalLink size={14}/></button>}
+        {detail && <button type="button" disabled={sending || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false} title={zh ? '打开执行会话' : 'Open execution conversation'} aria-label={zh ? '打开执行会话' : 'Open execution conversation'} onClick={() => onOpenConversation(detail.sessionId)}><ExternalLink size={14}/></button>}
         {detail && isAutomationResult(detail.run) && <button type="button" disabled={readBusy} onClick={() => void toggleRead()}>{detail.run.readAt ? <Mail size={14}/> : <Check size={14}/>} {detail.run.readAt ? (zh ? '标记未读' : 'Mark unread') : (zh ? '标记已读' : 'Mark read')}</button>}
       </div></header>
+    {detail && detail.job.sessionId !== detail.sessionId && <div className="automation-run-source">
+      {detail.sourceSession ? <button type="button" title={detail.sourceSession.title} onClick={() => onOpenConversation(detail.sourceSession!.id)}><MessageSquare size={13}/>{zh ? '返回来源会话' : 'Back to source conversation'}</button>
+        : <span>{zh ? '来源会话已删除 · 本次执行结果保留' : 'Source conversation deleted · Execution result retained'}</span>}
+    </div>}
     <div className="automation-run-transcript message-list" ref={scroll} onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 70; }}>
       <MessageFileReferenceScope workspaceRoot={detail?.workspaceDir || detail?.projectDir}><div className="message-list-content">
         {rendered.map(message => <div className="message-list-item" key={message.id}><MessageBubble message={message} language={language} sending={sending} activeTurnId={turnId} activeAssistantMessageId="" selectedModel={detail?.modelName ?? detail?.model}
@@ -196,7 +200,7 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
       <textarea aria-label={zh ? '继续本次对话' : 'Continue this conversation'} placeholder={zh ? '继续本次对话…' : 'Continue this conversation…'} rows={2} value={draft} onChange={event => setDraft(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}/>
       <div><span>{detail?.modelName ?? detail?.model}</span>{sending ? <button type="button" aria-label={zh ? '停止执行' : 'Stop execution'} onClick={() => { if (detail && continuations.has(detail.sessionId)) continuations.get(detail.sessionId)!.controller.abort(); else if (turnId) void stopTurn(turnId).catch(reason => setError(String(reason))); }}><Square size={15}/></button>
-        : <button type="submit" aria-label={zh ? '发送追问' : 'Send follow-up'} disabled={!draft.trim() || !detail || !isAutomationResult(detail.run)}><ArrowUp size={17}/></button>}</div>
+        : <button type="submit" aria-label={zh ? '发送追问' : 'Send follow-up'} disabled={!draft.trim() || !detail || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false}><ArrowUp size={17}/></button>}</div>
     </form>}
   </section>;
 }

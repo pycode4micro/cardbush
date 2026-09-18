@@ -158,8 +158,9 @@ test("an unavailable legacy image is an explicit local input failure, not a retr
 });
 
 function imageMessage(messages) {
-  const found = messages.find((item) => item.name === "tool_image_observation");
+  const found = messages.find((item) => item.role === "tool" && item.toolCallId === "call_1");
   assert.ok(found?.images?.length);
+  assert.equal(messages.some(item => item.name === "tool_image_observation"), false);
   return found;
 }
 

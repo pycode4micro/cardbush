@@ -17,9 +17,9 @@ const electronTypes = read('src', 'types', 'electron.d.ts');
 const shadow = read('src', 'ShadowWindow.tsx');
 const cardling = read('src', 'CardlingWindow.tsx');
 const theme = read('src', 'styles', 'themes', 'cyberpunk.css');
-const skill = read('assets', 'skills', 'cardbush-style-management', 'SKILL.md');
+const skill = read('assets', 'skills', 'cardbush-docs', 'SKILL.md');
 const skillReference = read(
-  'assets', 'skills', 'cardbush-style-management', 'references', 'theme-contract.md',
+  'assets', 'skills', 'cardbush-docs', 'references', 'theme-contract.md',
 );
 
 assert.match(types, /ThemeMode\s*=\s*[^;]*'cyberpunk'/);
@@ -69,9 +69,9 @@ assert.match(theme, /prefers-reduced-motion/);
 assert.doesNotMatch(theme, /url\s*\(/i, 'built-in theme must not load remote or local art assets');
 assert.doesNotMatch(theme, /@keyframes/i, 'theme must not add perpetual decorative animations');
 
-assert.match(skill, /^---[\s\S]*?name:\s*cardbush-style-management/m);
+assert.match(skill, /^---[\s\S]*?name:\s*cardbush-docs/m);
 assert.match(skill, /references\/theme-contract\.md/);
-assert.match(skill, /npm run test:cyberpunk-theme/);
+assert.match(read('assets', 'skills', 'cardbush-docs', 'references', 'style-management.md'), /npm run test:cyberpunk-theme/);
 assert.match(skillReference, /src\/features\/appearance\/themeRuntime\.ts/);
 assert.match(skillReference, /No continuous scanline, glitch, glow, particle/);
 

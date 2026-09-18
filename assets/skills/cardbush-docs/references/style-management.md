@@ -1,17 +1,10 @@
----
-name: cardbush-style-management
-description: Use when creating, changing, reviewing, or debugging CardBush desktop visual themes, global design tokens, component appearance, theme switching, startup colors, or cross-window style consistency. Trigger for CardBush UI restyling, new optional themes, palette/typography/shape changes, visual polish, and theme performance work. Do not use for styling unrelated websites or documents.
-description_zh: 用于创建、修改、审查或调试 CardBush 应用主题、界面样式、配色、字体、组件外观、主题切换、启动颜色及多窗口视觉一致性；不用于无关网站或文档的样式设计。
-license: Proprietary
----
-
 # CardBush Style Management
 
 Use this skill to keep visual changes coherent across the main app, settings, inspector tabs, Shadow conversations, Cardling, and native Electron surfaces.
 
 ## Start Here
 
-Read [references/theme-contract.md](references/theme-contract.md) before adding a theme or changing global visual behavior. Treat `src/styles/themes/<theme-id>.css` as the theme-specific visual configuration and `src/features/appearance/themeRuntime.ts` as the renderer-side runtime catalog.
+Read [theme-contract.md](theme-contract.md) before adding a theme or changing global visual behavior. Treat `src/styles/themes/<theme-id>.css` as the theme-specific visual configuration and `src/features/appearance/themeRuntime.ts` as the renderer-side runtime catalog.
 
 ## Workflow
 

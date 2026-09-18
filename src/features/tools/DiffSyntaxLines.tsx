@@ -1,4 +1,6 @@
 import { Highlight, type PrismTheme } from 'prism-react-renderer';
+import { memo } from 'react';
+import { ReviewDiffLine } from '../sidebar/ReviewComments';
 
 import type { DiffLine } from './toolChangeReports';
 import {
@@ -54,7 +56,7 @@ export const cardbushSyntaxTheme: PrismTheme = {
   ],
 };
 
-export default function DiffSyntaxLines({
+export default memo(function DiffSyntaxLines({
   lines,
   path,
 }: {
@@ -72,8 +74,10 @@ export default function DiffSyntaxLines({
       {({ tokens, getTokenProps }) => (
         <div className="diff-lines syntax-highlighted">
           {lines.map((line, lineIndex) => (
-            <div
-              className={`diff-line ${line.kind}`}
+            <ReviewDiffLine
+              index={lineIndex} kind={line.kind}
+              oldLine={lineNumbers[lineIndex]?.oldLine ?? null}
+              newLine={lineNumbers[lineIndex]?.newLine ?? null}
               // A diff can contain identical lines in separate hunks.
               // eslint-disable-next-line react/no-array-index-key
               key={lineIndex}
@@ -98,10 +102,10 @@ export default function DiffSyntaxLines({
                     ))
                   : ' '}
               </code>
-            </div>
+            </ReviewDiffLine>
           ))}
         </div>
       )}
     </Highlight>
   );
-}
+});

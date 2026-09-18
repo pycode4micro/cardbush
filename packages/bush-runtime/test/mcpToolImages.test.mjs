@@ -8,6 +8,7 @@ import { imageFixture, incompletePng, png } from './helpers/modelImages.mjs';
 
 const block = (data = png) => ({ type: 'image', mimeType: 'image/png', data: data.toString('base64') });
 const call = { protocol: 'bush.tool_call.v1', id: 'capture', name: 'capture', argumentsText: '{}' };
+const deliveryReceipt = message => JSON.parse(message.content.split('\n\n').at(-1));
 
 async function fixture(t, native, settings = {}) {
   const { root } = await imageFixture(t);
@@ -38,11 +39,12 @@ for (const indirect of [false, true]) test(`MCP ${indirect ? 'mcp_call' : 'direc
   });
   const { messages } = await run();
   const observation = messages.at(-1);
-  assert.equal(messages.length, 2);
-  assert.equal(observation.visibility, 'internal');
+  assert.equal(messages.length, 1);
+  assert.equal(observation.role, 'tool');
+  assert.equal(observation.toolCallId, call.id);
   assert.equal(observation.images.length, 1);
   assert.deepEqual(await readFile(observation.images[0].url), png);
-  const receipt = JSON.parse(observation.content);
+  const receipt = deliveryReceipt(observation);
   assert.deepEqual(receipt.imageReceipts.map(item => item.status), ['attached', 'attached']);
   assert.ok(receipt.imageReceipts.every(item => item.path === observation.images[0].url));
   assert.doesNotMatch(messages[0].content, new RegExp(image.data.slice(0, 32)));
@@ -61,7 +63,7 @@ test('vision-disabled models and insufficient ingress budgets receive usable pat
     const { run } = await fixture(t, native);
     const { messages } = await run(options);
     assert.ok(messages.every(message => !message.images?.length));
-    const receipt = JSON.parse(messages.at(-1).content).imageReceipts[0];
+    const receipt = deliveryReceipt(messages.at(-1)).imageReceipts[0];
     assert.equal(receipt.status, status);
     assert.deepEqual(await readFile(receipt.path), png);
     assert.ok(messages.every(message => !message.content.includes(native.content[0].data)));
@@ -74,8 +76,8 @@ test('invalid images fail visibly while valid images and native isError status s
   const { messages } = await run();
   const observation = messages.at(-1);
   assert.equal(observation.images.length, 1);
-  assert.deepEqual(JSON.parse(observation.content).imageReceipts.map(item => item.status), ['failed', 'attached']);
-  assert.match(JSON.parse(observation.content).imageInputErrors[0].code, /^image_input_/);
+  assert.deepEqual(deliveryReceipt(observation).imageReceipts.map(item => item.status), ['failed', 'attached']);
+  assert.match(deliveryReceipt(observation).imageInputErrors[0].code, /^image_input_/);
   assert.deepEqual(executionStore.get('session', 'turn', call.id).result, native);
   assert.equal(executionStore.get('session', 'turn', call.id).outcome, 'returned');
 });
@@ -89,7 +91,7 @@ test('embedded image resources work and user-only MCP images stay out of model i
   const { messages } = await run();
   assert.equal(messages.at(-1).images.length, 1);
   assert.equal(messages.at(-1).images[0].detail, 'high');
-  assert.equal(JSON.parse(messages.at(-1).content).imageReceipts.length, 1);
+  assert.equal(deliveryReceipt(messages.at(-1)).imageReceipts.length, 1);
   assert.ok(!messages[0].content.includes(png.toString('base64')));
 });
 
@@ -101,7 +103,7 @@ test('MCP images use the existing resize budget and report excess attachments', 
   const { messages } = await run();
   const observation = messages.at(-1);
   assert.equal(observation.images.length, 4);
-  assert.equal(JSON.parse(observation.content).imageReceipts.at(-1).status, 'attachment_budget');
+  assert.equal(deliveryReceipt(observation).imageReceipts.at(-1).status, 'attachment_budget');
   const dimensions = await sharp(observation.images[0].url).metadata();
   assert.ok(dimensions.width * dimensions.height <= 4_000_000);
 });

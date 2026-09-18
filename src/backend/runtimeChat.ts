@@ -8,6 +8,7 @@ import type {
   ToolExecutionRecord,
 } from '@cardbush/bush-protocol';
 import {
+  planStateSchema,
   runtimeProviderBindingRefSchema,
   subagentTaskStatusSchema,
 } from '@cardbush/bush-protocol';
@@ -15,7 +16,6 @@ import {
   GOAL_CONTINUATION_PROMPT,
   DEFAULT_MAX_CONTEXT_TOKENS,
   createProductAgentTurnRequest,
-  latestSessionEnvironmentLocalDate,
 } from '@cardbush/bush-product-agent';
 import type { ProductSubagentConfig } from '@cardbush/product-host';
 
@@ -144,7 +144,6 @@ export async function streamRuntimeChat(
     const workspaceDir = managedWorkspace?.workspaceDir || request.workspaceDir?.trim() || request.projectDir?.trim() ||
       await window.cardbushDesktop?.ensureTaskWorkspace?.(request.sessionId);
     const instructionDocuments = await readAgentInstructions(request.projectDir, workspaceDir);
-    let sessionEnvironmentLocalDate = latestSessionEnvironmentLocalDate(existingSession ?? undefined);
     const sharedAgentInput = {
       sessionId: request.sessionId,
       model: resolvedModel.model,
@@ -174,7 +173,6 @@ export async function streamRuntimeChat(
     const initialCreatedAt = Number.isFinite(submittedAt)
       ? new Date(submittedAt).toISOString()
       : new Date().toISOString();
-    const initialLocalDate = new Date().toLocaleDateString('en-CA');
     const referencedInput = await resolvePromptReferenceContext(effectiveUserInput, request.sessionId, existingSession, request.uiLanguage,
       (turnId, messageId) => runtime.client.getUserMessage(request.sessionId, turnId, messageId, controller.signal));
     const runtimeRequest = createProductAgentTurnRequest({
@@ -184,8 +182,6 @@ export async function streamRuntimeChat(
       turnId,
       messageId: userMessageId,
       createdAt: initialCreatedAt,
-      localDate: initialLocalDate,
-      sessionEnvironmentLocalDate,
       userText: referencedInput.content,
       userMessageMetadata: referencedInput.metadata,
       ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
@@ -245,16 +241,11 @@ export async function streamRuntimeChat(
         unregisterTurn();
       }
 
-      sessionEnvironmentLocalDate = optionalString(
-        currentRequest.metadata.sessionEnvironmentLocalDate,
-      ) ?? sessionEnvironmentLocalDate;
-
       const goal = await runtime.client.getGoal(request.sessionId, controller.signal);
       if (goal?.status !== 'active' || terminal.payload.status !== 'completed' || terminal.payload.reason === 'task_plan_waiting') {
         break;
       }
       const continuationCreatedAt = new Date().toISOString();
-      const continuationLocalDate = new Date().toLocaleDateString('en-CA');
       currentRequest = createProductAgentTurnRequest({
         ...sharedAgentInput,
         conversationStyle: readConversationStyle(),
@@ -262,8 +253,6 @@ export async function streamRuntimeChat(
         turnId: `turn_${crypto.randomUUID()}`,
         messageId: `message_${crypto.randomUUID()}`,
         createdAt: continuationCreatedAt,
-        localDate: continuationLocalDate,
-        sessionEnvironmentLocalDate,
         userText: GOAL_CONTINUATION_PROMPT,
         userMessageName: 'goal_continuation',
         sessionMetadata: {},
@@ -435,6 +424,7 @@ async function consumeRuntimeEvents(
 ) {
   const liveToolExecutions = new Map<string, ChatToolExecution>();
   const liveContextCompactions = new Map<string, ChatToolExecution>();
+  let publishedPlanRevision = 0;
   // The first provider activity also clears a notice retained before cursor reattachment.
   // Cache observations and replay resets alone do not prove that a request recovered.
   let awaitingProviderRecovery = true;
@@ -572,9 +562,15 @@ async function consumeRuntimeEvents(
             const execution = record ? toolRecord(record, event) : toolLifecycle(event);
             liveToolExecutions.set(event.payload.toolCallId, execution);
             request.onToolExecution?.(execution);
-            if (record?.toolCall.name === 'update_task_plan') {
-              const plan = await runtime.client.getPlan(event.sessionId);
-              if (plan) request.onTaskPlanUpdate?.(planUpdate(plan.plan, event));
+            if (event.kind === 'tool_returned' && record?.outcome === 'returned' && record.toolCall.name === 'update_task_plan') {
+              // Use this successful Tool receipt, never the session's latest
+              // plan: a failed call must not attach an older plan to this Turn.
+              const result = planStateSchema.safeParse(record.result);
+              if (result.success && result.data.sessionId === event.sessionId && result.data.plan.session_id === event.sessionId &&
+                  result.data.revision > publishedPlanRevision) {
+                publishedPlanRevision = result.data.revision;
+                request.onTaskPlanUpdate?.(planUpdate(result.data.plan, event));
+              }
             }
             if (record && (record.toolCall.name === 'subagent' || record.toolCall.name === 'team_delegate')) {
               subagentDispatches(record, event).forEach((dispatch) =>

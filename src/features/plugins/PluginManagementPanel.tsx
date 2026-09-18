@@ -72,7 +72,7 @@ export function PluginManagementPanel({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onOpenMcp: (serverId?: string) => void;
+  onOpenMcp?: (serverId?: string) => void;
   renderMcp?: (serverId?: string) => ReactNode;
   onNotify: (message: string) => void;
   onOpenPrompt?: (prompt: string) => void;
@@ -81,7 +81,7 @@ export function PluginManagementPanel({
 }) {
   const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
   const { rootRef, entries, page, open: setPage, back, reset, dismissPlugin } = usePluginNavigation();
-  const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp(serverId);
+  const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp?.(serverId);
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [localSkills, setLocalSkills] = useState(skills);
   const [skillDetail, setSkillDetail] = useState<SkillDetail | null>(null);
@@ -547,7 +547,7 @@ export function PluginManagementPanel({
                   <FolderOpen size={15} />
                   <span><strong>{language === 'zh' ? '从文件夹安装插件' : 'Install from folder'}</strong><small>{language === 'zh' ? '选择解压后的插件目录' : 'Choose an unpacked plugin'}</small></span>
                 </button>
-                <button type="button" onClick={() => { setAddOpen(false); onOpenMcp(); }}>
+                <button type="button" onClick={() => { setAddOpen(false); openMcp(); }}>
                   <Plus size={15} />
                   <span><strong>{language === 'zh' ? '添加 MCP 服务' : 'Add MCP server'}</strong><small>{language === 'zh' ? '连接本地或远程工具服务' : 'Connect a local or remote tool service'}</small></span>
                 </button>

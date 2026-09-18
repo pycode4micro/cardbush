@@ -10,6 +10,8 @@ Settings exposes three operations. None removes project files, task workspaces, 
 
 ## Runtime retention
 
+Deleting one conversation acknowledges its durable removal before scanning unrelated caches. Consecutive deletions share a deferred collection after one idle second. The collector waits for active work to settle; session list/read requests remain available, and new execution or mutations cancel the background scan before proceeding. Cancelled scans retry from current references when idle. Explicit cache maintenance and clearing all history still return their cleanup results. Shutdown cancels deferred work; unreadable stores are left for a later deletion or explicit retry.
+
 `cacheMaintenance.ts` collects entries declared by the storage owners. It marks references from retained conversations, recovery checkpoints, automation plans/results and open MCP Apps, then follows references through retained execution journals. No secondary execution-fact database is written. Existing file-memo numbers are never reused: their small allocation/locator index remains, while unreferenced execution payloads are removed.
 
 The owners cover events, tool executions, coordination state, subagent records, MCP App scopes/context/observations, plugin hook/background delivery state, image blobs, redo blobs and expired partial files. Child sessions follow their parent unless another retained source references them; children with independent workspaces remain protected. Image and redo hashes and cross-session memo links keep the underlying records reachable.

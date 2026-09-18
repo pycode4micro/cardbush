@@ -31,7 +31,7 @@
 - 标准 `mcp.json` 声明 `$schema: https://agent-plugins.org/schemas/1.0.0/mcp.schema.json`，在 `mcpServers` 中配置服务，每项显式指定 `type: stdio` 或 `type: streamable-http`。
 - 旧 `.codex-plugin/plugin.json` 独立包继续支持相对 Skill 路径、内联或文件形式的 `mcpServers`。`author`、展示信息和图标可选；填写图标路径时文件必须存在。OpenAI 注册的 `apps` 可解析为应用别名和 ID，默认使用 CardBush 独立登录的 OpenAI 账户，也可在插件详情选择包内 MCP、已有服务或服务商地址；不能仅凭注册 ID 宣称已连接。
 - 已安装且启用的普通插件 MCP 会由 Runtime 自动加载，支持 stdio、HTTP 和 SSE；服务 ID 为 `plugin_<插件ID>_<服务ID>`（插件 ID 中的点替换为下划线），工具名以宿主实际返回为准。stdio 默认 cwd 为插件根目录，command/args/env/cwd 中可用 `${CARDBUSH_PLUGIN_ROOT}`。普通插件工具默认需要权限检查。Computer Use 和 Chrome 保留专用启动链。app 组件使用同一服务配置与命名空间，托管路线需登录 OpenAI 并在 ChatGPT 授权应用，直连路线需完成连接配置；均须验证实际工具。HTTP / SSE 支持独立 OAuth 登录、刷新与退出；凭据由桌面系统加密保管，不写进模型上下文。
-- 单独添加 MCP 连接使用 `cardbush-mcp-management` 和 `mcp__cardbush_management__*` 管理工具。这些工具管理 CardBush MCP 配置，不是通用插件包安装器，也不替代外部软件自己的扩展安装接口。
+- 单独添加 MCP 连接使用 [MCP 接入](mcp-management.md) 和 `mcp__cardbush_management__*` 管理工具。这些工具管理 CardBush MCP 配置，不是通用插件包安装器，也不替代外部软件自己的扩展安装接口。
 
 插件详情提供 `config.mcp_servers.<别名>` 配置：启停、`default_tools_approval_mode`、`enabled_tools`、`disabled_tools`、逐工具 `tools.<工具名>.approval_mode`，以及连接和 OAuth 设置。权限只来自用户配置，包声明不能自行授予调用权限。MCP 的表单和 URL 询问通过桌面弹窗处理，接收输入前校验且保留任务归属；不能伪造用户回答或自动打开 URL 询问。
 
@@ -42,7 +42,7 @@
 - 开发环境公共插件：应用根目录 `assets/plugins`，由其中的 `marketplace.json` 编目。仅在开发内置公共插件时修改该市场文件。
 - 个人插件：`app.getPath('userData')/plugins/<id>`；从宿主确定实际 userData，不将某台电脑的用户名、`APPDATA` 推测值或 Codex 目录当成固定路径。
 - 插件状态：`userData/product-host/config/apps.json`，由 Product Host 管理。
-- 此管理 skill 位于 `assets/skills/cardbush-plugin-management`，使用 CardBush 内置 skill 发现与打包流程。它本身不需要另建插件清单。
+- 此管理 skill 位于 `assets/skills/cardbush-docs`，使用 CardBush 内置 skill 发现与打包流程。它本身不需要另建插件清单。
 
 ## 现有安装与状态接口
 
@@ -84,7 +84,7 @@ const command = {
     serviceEnabled: current.serviceEnabled,
     plugins: current.plugins.map(plugin => ({
       id: plugin.id,
-      installed: plugin.id === targetId ? false : plugin.installed,
+      installed: plugin.installed,
       enabled: plugin.id === targetId ? false : plugin.enabled,
       config: plugin.config,
     })),
@@ -92,9 +92,11 @@ const command = {
 };
 ```
 
-这是卸载状态更新的内部契约示例，不是 shell 命令或现成模型工具。安装/启用改为目标的 `true/true`；单独停用只改变 `enabled`。前端已有 `fetchCardbushAppsConfiguration` / `saveCardbushAppsConfiguration`。Skill、插件清单和 MCP 配置目录的变更会通知界面并触发刷新；缺失目录新建后也会自动发现。Skill 搜索每次读取当前文件，保留用户禁用名单。MCP 空闲时应用，有活动 Turn 时自动排队，任务结束后应用，无需手动再次发送消息或重启整个 Runtime。未变更服务保留连接，变更服务重连；普通服务连接失败仅将该服务标为 unavailable，不阻止其他连接。需要 OAuth 登录的服务标为 auth_required；配置校验失败保留原有可用目录并报告错误。当前模型请求已发送的工具列表不会在请求中途被改写，新增 MCP 能力供后续任务使用。
+这是停用状态更新的内部契约示例，不是 shell 命令或现成模型工具。安装/启用改为目标的 `true/true`；单独停用只改变 `enabled`。前端已有 `fetchCardbushAppsConfiguration` / `saveCardbushAppsConfiguration`。Skill、插件清单和 MCP 配置目录的变更会通知界面并触发刷新；缺失目录新建后也会自动发现。Skill 搜索每次读取当前文件，保留用户禁用名单。MCP 空闲时应用，有活动 Turn 时自动排队，任务结束后应用，无需手动再次发送消息或重启整个 Runtime。未变更服务保留连接，变更服务重连；普通服务连接失败仅将该服务标为 unavailable，不阻止其他连接。需要 OAuth 登录的服务标为 auth_required；配置校验失败保留原有可用目录并报告错误。当前模型请求已发送的工具列表不会在请求中途被改写，新增 MCP 能力供后续任务使用。
 
-插件详情和管理列表均提供卸载入口，使用 `uninstallCardbushPlugin` 读取最新配置并通过 Product Host 更新安装状态。卸载从已安装列表移除插件，并撤下所属 Skill、MCP 和扩展；包文件与设置保留，可重新安装。保存完成与 Runtime 应用结果分别呈现：活动 Turn 可能延后移除，Runtime 更新失败不把已保存的卸载伪装成未保存。独立 MCP 与共享账号不会随插件卸载。Runtime 仍没有通用插件创建/安装/卸载 Built-in Tool；没有可调用宿主入口时，skill 不能独自补足这个能力。
+本地插件 MCP 的连接身份同时包含版本及包内运行代码的内容指纹，启动参数相同也能识别实现更新。监听包含 Python/JavaScript 等源码与依赖清单；文档、技能说明、图标、生成缓存和依赖目录不计入 MCP 实现指纹，同内容重写不重连。指纹只在宿主内部使用，不注入模型提示或服务环境变量。安装在包外的依赖应在发布新包版本前准备完成；包外单独更新后可用 `reconnect_mcp_server` 或插件详情的“重新连接”刷新，仍无需重启应用。
+
+插件详情和管理列表提供真正的卸载入口：界面 uninstallPlugin IPC 调用 Product Host 的 uninstallPlugin。先禁用并停止服务，再删除个人安装目录、插件专属数据和凭据，最后移除配置条目。共享账户及独立 MCP 保留；内置组件只能停用。活动任务占用时明确返回错误，待任务结束后重试；清理失败会保留待移除记录以便重试。不要用 apps.update 改 installed=false 代替卸载。Runtime 没有通用插件创建/安装/卸载 Built-in Tool；没有可调用宿主入口时，skill 不能独自补足能力。
 
 ## 验证
 

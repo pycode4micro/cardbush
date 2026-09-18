@@ -26,7 +26,7 @@ function provider(wait) { return { async *stream(input) {
 } }; }
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-cache-test-'));
-  const handles = [];
+  const handles = [], hosts = [];
   const open = () => {
     const sessions = new FileSessionEventPersistence({ root: join(root, 'sessions') });
     const events = new FileRuntimeEventPersistence({ root: join(root, 'events') });
@@ -36,9 +36,12 @@ async function fixture(t, overrides = {}) {
     handles.push(sessions, events, tools, coordination, subagents);
     const stores = { sessionStore: new SessionStore({ persistence: sessions }), eventLog: new InMemoryRuntimeEventLog({ persistence: events }),
       toolExecutionStore: new ToolExecutionStore({ persistence: tools }), coordinationStore: new CoordinationStore({ persistence: coordination }), subagentTaskStore: new SubagentTaskStore({ persistence: subagents }) };
-    return { ...stores, runtime: new InMemoryRuntimeHost({ dataRoot: root, ...stores, registerDefaultWorkspaceTools: false, provider: provider(), ...overrides }) };
+    const runtime = new InMemoryRuntimeHost({ dataRoot: root, ...stores, registerDefaultWorkspaceTools: false, provider: provider(), ...overrides });
+    hosts.push(runtime);
+    return { ...stores, runtime };
   };
   t.after(async () => {
+    for (const runtime of hosts) await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} });
     for (const handle of handles) handle.close();
     assert.equal(dirname(resolve(root)), resolve(tmpdir())); assert.ok(root.includes('cardbush-cache-test-'));
     await rm(root, { recursive: true, force: true });
@@ -54,13 +57,16 @@ test('deleting a session clears all owned journals, memory and unused automation
   t.after(() => automation.close());
   const runtime = new InMemoryRuntimeHost({ dataRoot: f.root, sessionStore: f.sessionStore, eventLog: f.eventLog, toolExecutionStore: f.toolExecutionStore,
     coordinationStore: f.coordinationStore, subagentTaskStore: f.subagentTaskStore, provider: provider(), automation, registerDefaultWorkspaceTools: false });
+  t.after(() => runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   await runtime.runSessionTurn(request('deleted'));
   record(f.toolExecutionStore, 'deleted');
   f.coordinationStore.createGoal({ goalId: 'goal', sessionId: 'deleted', objective: 'fixture' });
   f.subagentTaskStore.start({ taskId: 'task', parentSessionId: 'deleted', parentTurnId: 'deleted-turn', childSessionId: 'child', childTurnId: 'child-turn', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
   await new McpAppObservations(join(f.root, 'mcp-apps', 'observations')).append('deleted', { turnId: 'deleted-turn', toolCallId: 'tool-1', source: 'fixture', resourceUri: 'ui://fixture', viewId: 'view', event: 'closed' });
   const result = await runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'deleted' } });
-  assert.equal(result.deleted, true); assert.deepEqual(result.cleanup.errors, []);
+  assert.equal(result.deleted, true);
+  const cleanup = await runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.deepEqual(cleanup.errors, []);
   for (const dir of ['sessions', 'events', 'tool-executions', 'coordination', 'subagents', 'mcp-apps/observations']) assert.deepEqual(await readdir(join(f.root, dir)), [], dir);
   assert.deepEqual(f.eventLog.replay('deleted', 'deleted-turn'), []);
   assert.deepEqual(f.toolExecutionStore.listTurn('deleted', 'deleted-turn'), []);
@@ -110,13 +116,45 @@ test('busy maintenance rejects before deleting any session or blob', async t => 
 });
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+async function within(promise, timeout = 500) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('Operation did not settle promptly')), timeout); })]); }
+  finally { clearTimeout(timer); }
+}
+async function until(check) {
+  for (let attempt = 0; attempt < 150; attempt++) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw Error('Deferred cache collection did not finish');
+}
 
-test('list refreshes and consecutive deletes wait through each cache sweep without changing queued identities', async t => {
-  const f = await fixture(t);
-  for (const id of ['first', 'second', 'keep']) f.sessionStore.ensureSession(id);
+test('deletion is acknowledged before unrelated cache enumeration finishes', async t => {
+  const f = await fixture(t); f.sessionStore.ensureSession('remove');
+  const gate = deferred(), entries = f.eventLog.cacheEntries.bind(f.eventLog);
+  f.eventLog.cacheEntries = async () => { await gate.promise; return entries(); };
+  const deletion = f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'remove' } });
+  let timer;
+  try {
+    const result = await Promise.race([deletion, new Promise(resolve => { timer = setTimeout(() => resolve('still waiting for cache'), 500); })]);
+    assert.notEqual(result, 'still waiting for cache', 'A persisted deletion must not wait for a global cache sweep');
+    assert.equal(result.deleted, true);
+    assert.equal(f.sessionStore.snapshot('remove'), undefined);
+  } finally {
+    clearTimeout(timer); gate.resolve(); await deletion;
+    await f.runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  }
+});
+
+test('consecutive deletes preserve queued identities without a cache sweep per deletion', async t => {
   const gates = [deferred(), deferred()], entered = [deferred(), deferred()];
+  let deletion = 0;
+  const f = await fixture(t, { automation: { busy: false, async sessionDeleted() {
+    const index = deletion++; entered[index]?.resolve(); await gates[index]?.promise;
+  } } });
+  for (const id of ['first', 'second', 'keep']) f.sessionStore.ensureSession(id);
   const entries = f.eventLog.cacheEntries.bind(f.eventLog); let sweep = 0;
-  f.eventLog.cacheEntries = async () => { const index = sweep++; entered[index]?.resolve(); await gates[index]?.promise; return entries(); };
+  f.eventLog.cacheEntries = async () => { sweep++; return entries(); };
   const removed = [], remove = f.sessionStore.deleteSession.bind(f.sessionStore);
   f.sessionStore.deleteSession = id => { removed.push(id); return remove(id); };
   const jobs = [];
@@ -130,7 +168,7 @@ test('list refreshes and consecutive deletes wait through each cache sweep witho
     command.payload.sessionId = 'keep';
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(secondSettled, false); assert.equal(readSettled, false);
-    assert.deepEqual(removed, ['first']); assert.ok(f.sessionStore.snapshot('second'));
+    assert.deepEqual(removed, []); assert.ok(f.sessionStore.snapshot('second'));
     gates[0].resolve(); await entered[1].promise;
     assert.equal((await first).deleted, true);
     assert.equal(readSettled, false, 'the refresh waits again when the next deletion acquires the guard');
@@ -138,8 +176,82 @@ test('list refreshes and consecutive deletes wait through each cache sweep witho
     assert.equal((await second).sessionId, 'second'); assert.equal((await second).deleted, true);
     assert.deepEqual((await listing).map(session => session.sessionId), ['keep']);
     assert.deepEqual(removed, ['first', 'second'], 'each accepted deletion executes once against its original target');
+    assert.equal(sweep, 0, 'global scanning is deferred and coalesced');
     assert.equal(f.runtime.hasActiveSession('keep'), false);
   } finally { gates.forEach(gate => gate.resolve()); await Promise.allSettled(jobs); }
+});
+
+for (const foreground of ['command', 'turn']) test(`idle cleanup coalesces deletes, permits reads and yields to a new ${foreground}`, async t => {
+  const f = await fixture(t);
+  for (const id of ['first', 'second', 'keep']) f.sessionStore.ensureSession(id);
+  record(f.toolExecutionStore, 'first'); record(f.toolExecutionStore, 'second');
+  const orphan = join(f.root, 'tool-executions', `${hash('first')}.jsonl`);
+  const entered = deferred(), release = deferred(), entries = f.eventLog.cacheEntries.bind(f.eventLog);
+  let scans = 0, scanSignal;
+  f.eventLog.cacheEntries = async () => {
+    const round = ++scans;
+    return [...await entries(), { category: 'fixture', keys: ['keep'], owner: 'keep', bytes: 0, async remove() {},
+      async scan(_visit, signal) {
+        if (round !== 1) return;
+        scanSignal = signal; entered.resolve();
+        await new Promise(resolve => {
+          const done = () => { signal?.removeEventListener('abort', done); resolve(); };
+          signal?.addEventListener('abort', done, { once: true });
+          release.promise.then(done);
+        });
+        signal?.throwIfAborted();
+      },
+    }];
+  };
+  try {
+    for (const id of ['first', 'second']) assert.equal((await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: id } })).deleted, true);
+    assert.equal(scans, 0);
+    await within(entered.promise, 3000);
+    assert.deepEqual((await within(f.runtime.sendCommand({ kind: 'runtime.list_sessions', payload: {} }))).map(session => session.sessionId), ['keep']);
+    assert.equal((await within(f.runtime.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: 'keep' } }))).sessionId, 'keep');
+    assert.equal(scanSignal.aborted, false, 'read-only refreshes do not repeatedly cancel maintenance');
+    const result = await within(foreground === 'command'
+      ? f.runtime.sendCommand({ kind: 'runtime.create_session', payload: { sessionId: 'new' } })
+      : f.runtime.runSessionTurn(request('new')), 1000);
+    assert.ok(result); assert.equal(scanSignal.aborted, true);
+    assert.equal(await exists(orphan), true, 'cancelled reference scan cannot start the sweep');
+    assert.ok(f.sessionStore.snapshot('new'));
+    await until(async () => !await exists(orphan) && !f.runtime.hasActiveSession('keep'));
+    assert.equal(scans, 2, 'one coalesced scan plus one retry after foreground work');
+    assert.equal(await exists(join(f.root, 'tool-executions', `${hash('second')}.jsonl`)), false);
+    assert.ok(f.sessionStore.snapshot('keep')); assert.ok(f.sessionStore.snapshot('new'));
+  } finally { release.resolve(); }
+});
+
+test('idle collection waits for an active turn and shutdown cancels scheduled work', async t => {
+  const gate = deferred(), started = deferred();
+  const f = await fixture(t, { provider: provider(async () => { started.resolve(); await gate.promise; }) });
+  f.sessionStore.ensureSession('remove'); record(f.toolExecutionStore, 'remove');
+  const entries = f.eventLog.cacheEntries.bind(f.eventLog); let scans = 0;
+  f.eventLog.cacheEntries = async () => { scans++; return entries(); };
+  await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'remove' } });
+  const turn = f.runtime.runSessionTurn(request('running'));
+  try {
+    await started.promise;
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    assert.equal(scans, 0, 'deferred cleanup cannot sweep during a turn');
+    gate.resolve(); await turn;
+    await f.runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    assert.equal(scans, 0, 'shutdown clears the pending timer');
+    assert.equal(await exists(join(f.root, 'tool-executions', `${hash('remove')}.jsonl`)), true);
+  } finally { gate.resolve(); await turn; }
+});
+
+test('aborting a retained file scan never sweeps unmarked files', async t => {
+  const f = await fixture(t), file = join(f.root, 'retained.jsonl');
+  await writeFile(file, 'retained content\n'.repeat(10000));
+  const controller = new AbortController(), entry = fileCacheEntry({ path: file, bytes: (await stat(file)).size }, 'fixture', ['keep']);
+  const scan = entry.scan;
+  entry.scan = (visit, signal) => scan(chunk => { visit(chunk); controller.abort(); }, signal);
+  let removed = false;
+  await assert.rejects(collectUnreferencedCache([entry, { category: 'fixture', keys: [], bytes: 0, async scan() {}, async remove() { removed = true; } }], ['keep'], [], controller.signal), { name: 'AbortError' });
+  assert.equal(removed, false); assert.equal(await exists(file), true);
 });
 
 test('maintenance failure releases waiting reads and deletes without forwarding its error', async t => {
@@ -155,7 +267,8 @@ test('maintenance failure releases waiting reads and deletes without forwarding 
     gate.resolve(); await maintenance;
     assert.equal((await deletion).deleted, true);
     assert.deepEqual((await listing).map(session => session.sessionId), ['keep']);
-    assert.equal(reads, 2); assert.equal(f.runtime.hasActiveSession('keep'), false);
+    assert.equal(reads, 1, 'deletion does not immediately repeat the failed cache scan');
+    assert.equal(f.runtime.hasActiveSession('keep'), false);
   } finally { gate.resolve(); await Promise.allSettled(jobs); }
 });
 
@@ -254,9 +367,10 @@ test('automation cleanup keeps plans and results, pauses deleted targets, and re
   for (const id of ['live', 'orphan', 'scheduled']) await scheduler.remember(request(id));
   await scheduler.manage({ action: 'create', definition: { name: 'Fixture', sessionId: 'scheduled', prompt: 'Keep this plan', timeZone: 'UTC', trigger: { kind: 'once', at: '2099-01-01T00:00:00Z' } } });
   const result = await scheduler.collectContexts(new Set(['live']));
-  assert.equal(result.removed, 1); assert.ok(result.roots.contexts.live); assert.ok(result.roots.contexts.scheduled); assert.equal(result.roots.jobs.length, 1);
+  assert.equal(result.removed, 2); assert.ok(result.roots.contexts.live); assert.equal(result.roots.contexts.scheduled, undefined); assert.equal(result.roots.jobs.length, 1);
+  assert.ok(result.roots.jobContexts[result.roots.jobs[0].id], 'timer settings survive source-context collection');
   await scheduler.sessionDeleted('scheduled');
-  const overview = await scheduler.list(); assert.equal(overview.jobs[0].state, 'paused'); assert.equal(overview.jobs[0].prompt, 'Keep this plan');
+  const overview = await scheduler.list(); assert.equal(overview.jobs[0].state, 'active'); assert.equal(overview.jobs[0].prompt, 'Keep this plan');
   assert.equal(JSON.parse(await readFile(join(f.root, 'automations.json'), 'utf8')).contexts.scheduled, undefined);
 });
 
@@ -270,7 +384,9 @@ test('child sessions follow parent retention while independent conversations rem
   await f.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
   assert.ok(f.sessionStore.snapshot('child')); assert.ok(f.sessionStore.snapshot('grandchild')); assert.equal(f.sessionStore.snapshot('orphan-child'), undefined);
   const result = await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'parent' } });
-  assert.deepEqual(result.cleanup.errors, []); assert.equal(result.cleanup.counts.child_sessions, 2);
+  assert.equal(result.deleted, true);
+  const cleanup = await f.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.deepEqual(cleanup.errors, []); assert.equal(cleanup.counts.child_sessions, 2);
   assert.equal(f.sessionStore.snapshot('child'), undefined); assert.equal(f.sessionStore.snapshot('grandchild'), undefined);
   assert.ok(f.sessionStore.snapshot('unrelated'));
   assert.deepEqual(f.toolExecutionStore.listTurn('child', 'child-turn'), []);

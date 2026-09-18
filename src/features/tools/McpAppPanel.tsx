@@ -34,6 +34,17 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
   const activeToken = useRef<string | null>(null), currentLanguage = useRef(language); currentLanguage.current = language;
   const frame = useRef<HTMLIFrameElement>(null), pendingRef = useRef<PendingAction | null>(null), opening = useRef<AbortController | null>(null);
   const frameLoads = useRef(0);
+  const pendingHeight = useRef(320), heightTimer = useRef(0);
+  useEffect(() => () => { window.clearTimeout(heightTimer.current); heightTimer.current = 0; }, [view?.token]);
+  const scheduleViewport = useCallback((token: string) => {
+    if (heightTimer.current) return;
+    heightTimer.current = window.setTimeout(() => {
+      heightTimer.current = 0;
+      if (activeToken.current !== token) return;
+      if (!fullRef.current) setHeight(pendingHeight.current);
+      if (frameLoads.current > 0) setFrameReady(true);
+    }, 80);
+  }, []);
   const zh = language === 'zh';
   const setDisplayMode = useCallback((expanded: boolean) => {
     if (expanded && !fullRef.current) setInlineSpace(panel.current?.getBoundingClientRect().height ?? 0);
@@ -143,7 +154,13 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
           send({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: view.result }); return;
         }
         // Size notifications are also sent by legacy widgets without a handshake.
-        if (data.method === 'ui/notifications/size-changed') { if (!fullRef.current && Number.isFinite(params.height)) setHeight(Math.min(900, Math.max(160, Math.ceil(params.height)))); return; }
+        if (data.method === 'ui/notifications/size-changed') {
+          if (!fullRef.current && Number.isFinite(params.height)) {
+            pendingHeight.current = Math.min(900, Math.max(160, Math.ceil(params.height)));
+            scheduleViewport(view.token);
+          }
+          return;
+        }
         const legacy = typeof data.id === 'string' && data.id.startsWith('openai-');
         if (!initialized && !legacy) throw new Error('Initialize the interface before sending requests.');
         if (data.method === 'ping' || data.method === 'notifications/message') { respond({}); return; }
@@ -185,7 +202,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       }).catch(() => {}).finally(() => { polling = false; });
     }, 300);
     return () => { controller.abort(); clearInterval(timer); window.removeEventListener('message', listener); };
-  }, [view, sessionId, handleError, setDisplayMode]);
+  }, [view, sessionId, handleError, setDisplayMode, scheduleViewport]);
   if (!sessionId || !turnId) return null;
   const displayTitle = title || view?.title || serverTitle || view?.serverTitle || (zh ? '插件界面' : 'Plugin interface');
   const prefersBorder = (view?.meta.ui?.prefersBorder ?? view?.meta['openai/widgetPrefersBorder']) !== false;
@@ -219,7 +236,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
         if (++frameLoads.current > 1) {
           void command({ action: 'observe', token: view.token, event: 'failed', detail: 'Interface document navigated away.' }).catch(() => {}); close();
           setError(zh ? '界面页面已更换，请重新打开。' : 'The interface document changed. Reopen it to continue.');
-        } else { setFrameReady(true); void command({ action: 'observe', token: view.token, event: 'frame_loaded' }).catch(cause => handleError(cause, view.token)); }
+        } else { scheduleViewport(view.token); void command({ action: 'observe', token: view.token, event: 'frame_loaded' }).catch(cause => handleError(cause, view.token)); }
       }} onError={() => { if (activeToken.current !== view.token) return; setError(zh ? '插件界面加载失败，可重试。' : 'Interface failed to load. Try again.'); setErrorCode(''); setFrameReady(true); void command({ action: 'observe', token: view.token, event: 'failed', detail: 'Iframe load error.' }).catch(() => {}); }} allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" srcDoc={frameDocument} />}
     </div>}
   </dialog></div>;

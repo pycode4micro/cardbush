@@ -6,6 +6,7 @@ import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { openInspector } from '../inspector/inspectorEvents';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
+import { InlineAudio, InlineVideo } from './InlineMedia';
 import { mediaPresentationKey, PresentedMediaContext } from './mediaPresentation';
 import { FileMemoScopeContext } from './FileMemoScope';
 
@@ -71,8 +72,8 @@ export function FileMemoReference({ reference, children, inline = false, languag
       onError={() => setFailedMedia(mediaKey)}
       onClick={() => openInspector(path, memo.file.name)}
       onContextMenu={event => openFileContextMenu(event, path, { image: true, language })} />
-      : media && isVideoPath(path) ? <video src={source} controls preload="metadata" onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
-      : media && isAudioPath(path) ? <audio src={source} controls preload="metadata" onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
+      : media && isVideoPath(path) ? <InlineVideo src={source} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
+      : media && isAudioPath(path) ? <InlineAudio src={source} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : <LocalFileReferenceLink path={path} knownFileName={memo.file.name}>{label}</LocalFileReferenceLink>}
     {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
     {status === 'available' && inline && failedMedia === mediaKey && <small role="status"> · {language === 'zh' ? '无法预览，打开文件查看' : 'Preview unavailable; open the file'}</small>}

@@ -28,6 +28,7 @@ import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
 import type { ClientCredentialsPrompt, ClientCredentialsAnswer } from './pluginConnectionManagement.mjs';
 import {
   assertUserMcpServerId,
+  assertReconnectableMcpServerId,
   mergeMcpServer,
   mcpServerPatchSchema,
   publicMcpServer,
@@ -305,6 +306,16 @@ export class ElectronProductHostController {
     if (this.#clearCrashReports) results.push(await this.#clearCrashReports());
     const result = mergeCleanup(...results);
     return { target: 'logs-cache', cleared: result.counts.files! > 0, ...result };
+  }
+
+  async reconnectMcpServer(id: string, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
+    assertReconnectableMcpServerId(id);
+    // Load any newly installed package/configuration before targeting the service.
+    await this.refreshMcp();
+    signal?.throwIfAborted();
+    const snapshot = await this.#runtime.sendCommand({ kind: 'runtime.mcp_reconnect', payload: { serverId: id } }, signal);
+    return { serverId: id, runtime: mcpSnapshotResultSchema.parse(snapshot) };
   }
 
   async #clearCache(): Promise<Record<string, unknown>> {

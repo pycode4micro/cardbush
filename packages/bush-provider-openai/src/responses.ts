@@ -281,7 +281,14 @@ function toResponseInputItems(
     return [{
       type: "function_call_output",
       call_id: message.toolCallId,
-      output: message.content,
+      output: message.images?.length ? [
+        { type: "input_text", text: message.content },
+        ...message.images.map((image) => ({
+          type: "input_image" as const,
+          image_url: image.url,
+          detail: image.detail ?? "auto",
+        })),
+      ] : message.content,
     }];
   }
   if (message.role === "assistant") {

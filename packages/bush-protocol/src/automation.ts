@@ -47,6 +47,7 @@ export type AutomationReminder = {
 };
 export type AutomationConversation = {
   job: AutomationJob; run: AutomationRun; sessionId: string; model: string; modelName?: string;
+  sourceSession?: { id: string; title: string }; executionSessionAvailable?: boolean;
   projectDir?: string; workspaceDir?: string; permissionMode: string; reasoningEffort?: string;
   allowedTools: string[]; allowedSkills?: string[]; disabledSkills?: string[];
   interactiveRequests: boolean; vision: boolean;

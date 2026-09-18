@@ -24,6 +24,7 @@ import {
   type AssembleContextInput,
 } from "./contextAssembler.js";
 import { SessionStore, projectSessionSupersession, validateConversation } from "./sessionStore.js";
+import { isConversationPreference, latestConversationPreference } from "./conversationPreferences.js";
 
 export interface GeneratedMessageFact {
   messageId: string;
@@ -68,9 +69,15 @@ export class RuntimeSessionCoordinator {
     return this.#store.snapshot(sessionId);
   }
 
+  hasSession(sessionId: string): boolean {
+    return this.#store.hasSession(sessionId);
+  }
+
   list(): SessionSnapshot[] {
     return this.#store.list();
   }
+
+  listMetadata(signal?: AbortSignal) { return this.#store.listMetadata(signal); }
 
   listUserPrompts(input: RuntimeUserPromptsRequest) {
     return this.#store.listUserPrompts(input);
@@ -206,10 +213,18 @@ export class RuntimeSessionCoordinator {
       prefix: request.prefixMessages,
       current: request.inputMessages.map((item) => item.message),
     });
+    const history = context.messages.slice(0, context.messages.length - request.inputMessages.length);
+    let preference = latestConversationPreference(history);
+    const inputMessages = request.inputMessages.filter(({ message }) => {
+      if (!isConversationPreference(message)) return true;
+      const changed = preference?.content !== message.content;
+      preference = message;
+      return changed;
+    });
     const modelRequest = modelRequestSchema.parse({
       ...request,
       protocol: BUSH_MODEL_REQUEST_PROTOCOL,
-      messages: context.messages,
+      messages: [...history, ...inputMessages.map(item => item.message)],
     });
     const createdAt = this.#now();
     const prepared = {
@@ -220,7 +235,7 @@ export class RuntimeSessionCoordinator {
         createdAt,
         initialMessageCount: modelRequest.messages.length,
         prefixMessages: request.prefixMessages,
-        inputMessages: request.inputMessages.map((item) => ({
+        inputMessages: inputMessages.map((item) => ({
           messageId: item.messageId,
           createdAt: item.createdAt ?? createdAt,
           message: item.message,

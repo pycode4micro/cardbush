@@ -15,6 +15,7 @@ export function SettingsKeyboardPanel({ language }: { language: AppLanguage }) {
   const [error, setError] = useState('');
   const [errorId, setErrorId] = useState<ShortcutId | null>(null);
   const groups = [
+    { id: 'application', title: zh ? '应用' : 'Application' },
     { id: 'conversation', title: zh ? '对话' : 'Conversation' },
     { id: 'inspector', title: zh ? '右侧栏' : 'Right sidebar' },
     { id: 'image', title: zh ? '图片预览' : 'Image preview' },

@@ -1,5 +1,15 @@
 .plugin-navigation-page[hidden] { display: none; }
 
+.plugin-workspace-scroll {
+  min-width: 0;
+  scrollbar-gutter: stable;
+}
+
+.plugin-workspace-scroll > .plugin-navigation {
+  width: min(100%, 1100px);
+  margin: 0 auto;
+}
+
 .plugin-hub,
 .plugin-catalog-page,
 .plugin-detail-page,

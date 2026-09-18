@@ -107,11 +107,11 @@ test("preflights every revision before mutating any file", async (t) => {
   assert.equal(readFileSync(second, "utf8"), "second-after");
 });
 
-test("reports an unavailable Runtime snapshot instead of a false zero-file success", async (t) => {
+test("rejects a Turn outside the retained window instead of a false zero-file success", async (t) => {
   const setup = await environment(t, "missing-session");
   await assert.rejects(
     setup.revert(["turn-without-records"]),
-    (error) => error?.code === "runtime_workspace_snapshot_unavailable",
+    (error) => error?.code === "workspace_checkpoint_expired",
   );
 });
 
@@ -220,10 +220,11 @@ async function environment(t, sessionId, persistent = false) {
     permissions: { request: async () => { throw new Error("unexpected permission"); } },
   });
   const sessionStore = new SessionStore({ persistence: sessionPersistence });
+  let activeSessions = sessionStore;
   const dataRoot = persistent ? join(root, 'runtime') : undefined;
   const reopen = () => new InMemoryRuntimeHost({
     toolExecutionStore: persistent ? new ToolExecutionStore({ persistence: toolPersistence }) : store,
-    sessionStore: persistent ? new SessionStore({ persistence: sessionPersistence }) : sessionStore,
+    sessionStore: activeSessions = persistent ? new SessionStore({ persistence: sessionPersistence }) : sessionStore,
     dataRoot,
     registerDefaultWorkspaceTools: false,
   });
@@ -233,12 +234,20 @@ async function environment(t, sessionId, persistent = false) {
     payload: { sessionId, metadata: { projectDir: root } },
   });
   let ordinal = 0;
+  const recordTurn = (turnId) => {
+    const snapshot = activeSessions.snapshot(sessionId);
+    if (snapshot.turns.some(turn => turn.turnId === turnId)) return;
+    const turnSequence = snapshot.turns.length + 1, createdAt = new Date().toISOString();
+    activeSessions.commitTurn(sessionId, { turnId, turnSequence, createdAt, completedAt: createdAt, status: 'completed', reason: 'fixture',
+      messages: [{ messageId: `message-${turnId}`, turnId, turnSequence, messageIndex: 0, createdAt, message: { role: 'user', content: 'Workspace fixture' } }], usage: {} });
+  };
   return {
     root,
     sessionId,
     host,
-    reopen, dataRoot,
+    reopen, dataRoot, recordTurn,
     async execute(turnId, round, name, input) {
+      recordTurn(turnId);
       const toolCall = {
         protocol: "bush.tool_call.v1",
         id: `call_${ordinal}`,
@@ -285,3 +294,18 @@ async function environment(t, sessionId, persistent = false) {
     },
   };
 }
+
+test('legacy undo cannot bypass two-turn retention when subsequent Turns have no file edits', async t => {
+  const setup = await environment(t, 'expired-legacy', true);
+  const path = join(setup.root, 'file.txt');
+  writeFileSync(path, 'before');
+  await setup.execute('turn-1', 1, 'read_file', { path });
+  await setup.execute('turn-1', 1, 'edit_file', { path, old_text: 'before', new_text: 'after' });
+  setup.recordTurn('turn-2');
+  setup.recordTurn('turn-3');
+  await assert.rejects(setup.revert(['turn-1']), { code: 'workspace_checkpoint_expired' });
+  const host = setup.reopen();
+  await assert.rejects(host.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+    payload: { sessionId: setup.sessionId, turnIds: ['turn-1'] } }), { code: 'workspace_checkpoint_expired' });
+  assert.equal(readFileSync(path, 'utf8'), 'after');
+});

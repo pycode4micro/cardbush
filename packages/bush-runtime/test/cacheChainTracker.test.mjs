@@ -64,6 +64,24 @@ test("treats tool schema changes as stable request input breaks without tool sem
   assert.equal(observation.frozenPrefixBreak, true);
   assert.equal(observation.breakIndex, 0);
   assert.notEqual(observation.stableInputDigest, previousStableInputDigest);
+  assert.equal(observation.sharedPrefixMessages, 1);
+  assert.equal(observation.messageBreakIndex, undefined);
+});
+
+test('parameter changes do not mask an independent historical message rewrite', () => {
+  const tracker = new CacheChainTracker();
+  const messages = [{ role: 'system', content: 'fixed' }, { role: 'user', content: 'original' }];
+  tracker.observe(request({ messages }));
+  tracker.observeProviderInput({ format: 'fixture', transport: 'full', parameterDigests: { tools: 'tools-before' }, inputDigests: ['system', 'original'] });
+  const changed = tracker.observe(request({ messages: [messages[0], { role: 'user', content: 'replaced' }], temperature: 0.5 }));
+  assert.equal(changed.frozenPrefixBreak, true); assert.equal(changed.breakIndex, 0);
+  assert.equal(changed.sharedPrefixMessages, 1); assert.equal(changed.messageBreakIndex, 1);
+  const wire = tracker.observeProviderInput({ format: 'fixture', transport: 'full', parameterDigests: { tools: 'tools-after' }, inputDigests: ['system', 'replaced', 'appended'] });
+  assert.deepEqual(wire.changedParameters, ['tools']); assert.equal(wire.breakIndex, 0);
+  assert.equal(wire.sharedPrefixMessages, 1); assert.equal(wire.messageBreakIndex, 1);
+  const onlyParameters = tracker.observeProviderInput({ format: 'fixture', transport: 'full', parameterDigests: { tools: 'tools-new' }, inputDigests: ['system', 'replaced', 'appended'] });
+  assert.equal(onlyParameters.frozenPrefixBreak, true); assert.equal(onlyParameters.sharedPrefixMessages, 3);
+  assert.equal(onlyParameters.messageBreakIndex, undefined);
 });
 
 test("restores hash-only state and preserves continuity across Runtime restart", () => {

@@ -87,6 +87,9 @@ export const mcpToolPolicySchema = z.object({
 export const mcpServerSnapshotSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
   pluginId: z.string().min(1).optional(),
+  // Host-owned implementation identity for local plugin services. Never sent to
+  // the service or the model; identical launch arguments can load different code.
+  implementationFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   networkProxy: networkProxySchema.optional(),
   transport: mcpTransportConfigSchema,
   versionMode: z.enum(["auto", "legacy", "modern"]).default("auto"),

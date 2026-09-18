@@ -8,8 +8,14 @@ const legacyInternalRuntimeMessageNames = new Set([
   'subagent_result',
 ]);
 
+const internalDeveloperMessageNames = new Set([
+  'output_limit_continuation',
+  'context_pressure',
+  'context_compaction_correction',
+]);
+
 export function isInternalRuntimeMessage(message: Pick<RuntimeSessionMessage, 'message'>): boolean {
-  if (message.message.role === 'developer' && message.message.name === 'output_limit_continuation') return true;
+  if (message.message.role === 'developer' && message.message.name && internalDeveloperMessageNames.has(message.message.name)) return true;
   if (message.message.role !== 'user') return false;
   if (message.message.visibility === 'internal') return true;
   return Boolean(

@@ -38,7 +38,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Record your task plan and update it as progress changes: pending = not started; in_progress = the parent's current work (at most one); waiting = awaiting user action, an external result or a subagent result, with a concrete waitingFor; completed = finished. Preserve returned node IDs; give a scopeChangeReason when removing nodes. Keep active true while any step is unfinished. Only a successful update changes the recorded plan; a final reply, stop or error leaves it unchanged. This tool records your reported statuses without independently verifying the work. Unfinished nodes do not force another model response.",
+          "Record your task plan and update it as progress changes: pending = not started; in_progress = the parent's current work (at most one); waiting = awaiting user action, an external result or a subagent result, with a concrete waitingFor; completed = finished. While the recorded plan is active, preserve returned node IDs and give a scopeChangeReason when removing nodes. Once it is completed and inactive, you may replace its nodes for a new task without a scopeChangeReason. Keep active true while any step is unfinished. Only a successful update changes the recorded plan; a final reply, stop or error leaves it unchanged. This tool records your reported statuses without independently verifying the work. Unfinished nodes do not force another model response.",
         inputSchema: {
           type: "object",
           additionalProperties: false,

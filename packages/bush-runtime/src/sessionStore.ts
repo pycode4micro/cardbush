@@ -19,7 +19,10 @@ export interface SessionEventPersistence {
   append(event: SessionEvent): void;
   listSessionIds?(): string[];
   remove?(sessionId: string): boolean;
+  listMetadata?(skip: Set<string>, signal?: AbortSignal): Promise<SessionMetadataEntry[]>;
 }
+
+export interface SessionMetadataEntry { sessionId: string; metadata: Record<string, unknown> }
 
 export interface SessionStoreOptions {
   persistence?: SessionEventPersistence;
@@ -44,6 +47,10 @@ export class SessionStore {
     return events.length === 0 ? undefined : projectSession(sessionId, events);
   }
 
+  hasSession(sessionId: string): boolean {
+    return this.#load(sessionId).length > 0;
+  }
+
   list(): SessionSnapshot[] {
     const identities = new Set([
       ...this.#events.keys(),
@@ -53,6 +60,33 @@ export class SessionStore {
       .map((sessionId) => this.snapshot(sessionId))
       .filter((session): session is SessionSnapshot => session !== undefined)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async listMetadata(signal?: AbortSignal): Promise<SessionMetadataEntry[]> {
+    signal?.throwIfAborted();
+    const metadata = (sessionId: string, events: SessionEvent[]) => {
+      for (let index = events.length - 1; index >= 0; index--) {
+        const event = events[index]!;
+        if (event.kind === 'session_created' || event.kind === 'session_metadata_updated') {
+          return { sessionId, metadata: structuredClone(event.payload.metadata ?? {}) };
+        }
+      }
+      return undefined;
+    };
+    const known = new Set(this.#events.keys());
+    const entries = [...this.#events].flatMap(([id, events]) => {
+      const entry = metadata(id, events);
+      return entry ? [entry] : [];
+    });
+    if (this.#persistence?.listMetadata) entries.push(...await this.#persistence.listMetadata(known, signal));
+    else for (const id of this.#persistence?.listSessionIds?.() ?? []) {
+      signal?.throwIfAborted();
+      if (!known.has(id)) {
+        const entry = metadata(id, this.#load(id));
+        if (entry) entries.push(entry);
+      }
+    }
+    return entries;
   }
 
   listUserPrompts(input: RuntimeUserPromptsRequest): RuntimeUserPrompt[] {

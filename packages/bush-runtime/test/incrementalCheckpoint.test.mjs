@@ -8,7 +8,7 @@ import { InMemoryRuntimeHost, SessionStore, assembleContext, InMemoryRuntimeChec
 import { toResponsesCreateParams } from '@cardbush/bush-provider-openai';
 
 const now = '2026-09-16T09:00:00Z';
-const notice = { role: 'user', name: 'context_pressure', visibility: 'internal', content: 'Choose pending sources.' };
+const notice = { role: 'developer', name: 'context_pressure', content: 'Choose pending sources.' };
 const state = { revision: 3, totalTurns: 2, unsummarizedTurnIds: ['a', 'b'], activeTurn: { turnId: 'current', throughMessageId: 'last-tool' } };
 const result = (id, input) => ({ status: 'completed', text: '', reasoning: 'Keep source facts distinct.', usage: {}, finishReason: 'tool_calls',
   toolCalls: [{ protocol: 'bush.tool_call.v1', id, name: 'checkpoint_context', argumentsText: typeof input === 'string' ? input : JSON.stringify(input) }] });
@@ -98,6 +98,7 @@ test('same-loop partial submissions keep native input and wire prefixes stable, 
         yield event(input, 1, 'response_completed', { finishReason: 'stop' }); return;
       }
       round++;
+      assert.equal(input.messages.findLast(m => m.name === 'context_pressure').role, 'developer');
       assert.deepEqual(store.snapshot('s').turns, original, 'No partial history replacement.');
       const updates = round === 1 ? [{ source: 2, summary: summaries[2] }]
         : round === 2 ? [{ source: 0, summary: summaries[0] }, { source: 1, summary: '' }]
@@ -166,6 +167,7 @@ test('restart keeps accepted entries and the exact dispatch prefix, then only re
   const savedEvents = structuredClone(eventLog.replay('s', 'current'));
   const savedSessions = structuredClone(journal);
   assert.deepEqual(saved.request.messages, seen[1].messages);
+  assert.equal(saved.request.messages.findLast(m => m.name === 'context_pressure').role, 'developer');
   controller.abort(); await running;
   const restoredCheckpoints = new InMemoryRuntimeCheckpointStore(); restoredCheckpoints.save(saved);
   const restoredStore = new SessionStore({ persistence: { load: () => savedSessions, append: item => savedSessions.push(item) } });

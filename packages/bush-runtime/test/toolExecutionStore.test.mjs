@@ -174,6 +174,28 @@ function outcome(overrides = {}) {
   return { ...base, ...overrides };
 }
 
+test('200 Turns retain only two undo payloads in cache while old Tool facts remain readable', async () => {
+  const journal = [];
+  const persistence = { load: () => journal, append: record => journal.push(record) };
+  const store = new ToolExecutionStore({ persistence, now: () => NOW });
+  const change = { ...workspaceChange(), metadata: { beforeContentBase64: Buffer.from('before'.repeat(4096)).toString('base64'), diff: '+after\n'.repeat(1024) } };
+  const result = outcome({ workspaceChanges: [change] });
+  for (let turn = 1; turn <= 200; turn++) store.record(toolCall(), { ...identity(), turnId: `turn_${turn}` }, result);
+  let retained = 0;
+  for (const entry of await store.cacheEntries()) await entry.scan?.(json => {
+    retained += JSON.parse(json).workspaceChanges.filter(item => 'beforeContentBase64' in item.metadata).length;
+  });
+  assert.equal(retained, 2);
+  assert.equal(store.listTurnSummaries('session_1', 'turn_1')[0].workspaceChanges[0].detailAvailable, true);
+  assert.deepEqual(store.get('session_1', 'turn_1', 'call_1').workspaceChanges[0], change);
+  assert.deepEqual(store.listTurn('session_1', 'turn_1')[0].workspaceChanges[0], change);
+  assert.deepEqual(store.record(toolCall(), identity(), result).workspaceChanges[0], change, 'replaying an evicted identity remains idempotent');
+  assert.equal(journal.length, 200);
+  assert.deepEqual(journal[0].workspaceChanges[0], change, 'canonical facts were not rewritten');
+  const reopened = new ToolExecutionStore({ persistence });
+  assert.deepEqual(reopened.get('session_1', 'turn_1', 'call_1').workspaceChanges[0], change);
+});
+
 function temporaryRoot(t) {
   const root = mkdtempSync(join(tmpdir(), "cardbush-tool-facts-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

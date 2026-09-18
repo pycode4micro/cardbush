@@ -2,6 +2,7 @@ import type { ModelMessage } from '@cardbush/bush-protocol';
 import type { CompletedModelRound } from './modelRound.js';
 import { validateConversation } from './sessionStore.js';
 import { IncrementalCheckpoint } from './incrementalCheckpoint.js';
+import { contextCompactionCorrectionMessage } from './contextMaintenanceMessages.js';
 import { bindContextCheckpointInput, ContextCheckpointInputError, contextCheckpointSlots, contextPressureNotice, type ContextCompactionSource,
   type ContextCheckpointFormat, type ContextCompactionState, type ContextPressure } from './contextCompaction.js';
 
@@ -154,8 +155,7 @@ export class ContextCompactionTransaction {
         '\nOriginal source ranges (zero-based in the frozen source conversation): ' + JSON.stringify(this.#ranges(node));
     }
     messages.push(notice);
-    for (const correction of node.corrections) messages.push({ role: 'user', name: 'context_compaction_correction',
-      visibility: 'internal', content: correction });
+    for (const correction of node.corrections) messages.push(contextCompactionCorrectionMessage(correction));
     return { id: node.id, state, messages, outputTokens: node.outputTokens,
       failures: node.failures, sourceRanges: this.#ranges(node) };
   }

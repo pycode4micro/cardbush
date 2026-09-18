@@ -9,6 +9,7 @@ import {
 } from "@cardbush/bush-protocol";
 
 import { validateConversation } from "./sessionStore.js";
+import { isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 
 export interface AssembleContextInput {
   session: SessionSnapshot;
@@ -180,8 +181,7 @@ export function assembleContextProjection(input: AssembleContextInput): {
       // A stopped incremental checkpoint retains its actual calls/receipts,
       // but its expired maintenance authorization must not direct a new Turn.
       const message = item.message;
-      return !(item.metadata?.contextCompactionId && message.role === 'user' &&
-        (message.name === 'context_pressure' || message.name === 'context_compaction_correction'));
+      return !(item.metadata?.contextCompactionId && isContextMaintenanceNotice(message));
     }).map((message) => message.message) }];
   }).map(({ turnId, source, messages }) => ({
     turnId,

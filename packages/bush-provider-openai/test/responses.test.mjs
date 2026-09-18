@@ -5,6 +5,9 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { modelRequestSchema } from "@cardbush/bush-protocol";
+import { estimateResponsesInputTokens } from "../dist/responsesInputEstimate.js";
+import { imageFixture, png } from "../../bush-runtime/test/helpers/modelImages.mjs";
 
 import {
   InMemoryProviderCapabilityStore,
@@ -244,6 +247,47 @@ test("projects Bush messages into stateless Responses input items", () => {
   assert.equal(request.input[5].call_id, "call_1");
 });
 
+test("tool images use their function output while legacy observations keep their exact prefix", () => {
+  const base = modelRequestSchema.parse({
+    protocol: 'bush.model_request.v1', requestId: 'images', sessionId: 'images', turnId: 'images',
+    model: 'response-model', tools: [], messages: [
+      { role: 'user', content: 'inspect' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'old', name: 'capture', argumentsText: '{}' }] },
+      { role: 'tool', content: 'captured', toolCallId: 'old' },
+      { role: 'user', name: 'tool_image_observation', visibility: 'internal',
+        content: '{"source":"tool_output","attachedImages":1}', images: [{ url: 'https://example.test/old.png' }] },
+    ],
+  });
+  const prefix = toResponsesCreateParams(base).input;
+  const next = modelRequestSchema.parse({ ...base, messages: [...base.messages,
+    { role: 'assistant', content: '', toolCalls: [
+      { id: 'new', name: 'capture', argumentsText: '{}' },
+      { id: 'text', name: 'inspect', argumentsText: '{}' },
+    ] },
+    { role: 'tool', content: 'new capture', toolCallId: 'new',
+      images: [{ url: 'https://example.test/new.png', detail: 'high' }, { url: 'https://example.test/other.png' }] },
+    { role: 'tool', content: 'text result', toolCallId: 'text' },
+  ] });
+  const params = toResponsesCreateParams(next);
+  assert.deepEqual(params.input.slice(0, prefix.length), prefix);
+  assert.deepEqual(params.input.slice(-2), [
+    { type: 'function_call_output', call_id: 'new', output: [
+      { type: 'input_text', text: 'new capture' },
+      { type: 'input_image', image_url: 'https://example.test/new.png', detail: 'high' },
+      { type: 'input_image', image_url: 'https://example.test/other.png', detail: 'auto' },
+    ] },
+    { type: 'function_call_output', call_id: 'text', output: 'text result' },
+  ]);
+  const chained = toResponsesCreateParams({ ...next, providerState: {
+    strategy: 'response_chain', previousResponseId: 'resp_previous', inputMessageOffset: base.messages.length,
+  } });
+  assert.deepEqual(chained.input, params.input.slice(prefix.length));
+  const largeImages = structuredClone(params);
+  largeImages.input.at(-2).output[1].image_url = `data:image/png;base64,${'a'.repeat(100000)}`;
+  assert.equal(estimateResponsesInputTokens(largeImages), estimateResponsesInputTokens(params));
+  assert.deepEqual(toResponsesInputTokenCountParams(params).input, params.input);
+});
+
 test("projects an active Turn response chain as incremental Responses input", () => {
   const base = {
     protocol: "bush.model_request.v1",
@@ -349,6 +393,7 @@ test("validates and resolves an explicit local image path before provider submis
 });
 
 test("posts directly to the Responses endpoint and streams stable model events", async (context) => {
+  const { source } = await imageFixture(context);
   let received;
   const server = createServer(async (request, responseStream) => {
     const chunks = [];
@@ -407,7 +452,15 @@ test("posts directly to the Responses endpoint and streams stable model events",
     sessionId: "session_wire",
     turnId: "turn_wire",
     model: "response-model",
-    messages: [{ role: "user", content: "hello" }],
+    messages: [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "", toolCalls: [
+        { id: "capture", name: "open_page", argumentsText: "{}" },
+        { id: "inspect", name: "open_page", argumentsText: "{}" },
+      ] },
+      { role: "tool", toolCallId: "capture", content: "captured", images: [{ url: source, detail: "high" }] },
+      { role: "tool", toolCallId: "inspect", content: "inspected" },
+    ],
     tools: [{ name: "open_page", inputSchema: { type: "object" } }],
     reasoningEffort: "high",
     metadata: {},
@@ -417,6 +470,14 @@ test("posts directly to the Responses endpoint and streams stable model events",
   assert.equal(received.url, "/v1/responses");
   assert.equal(received.authorization, "Bearer response-secret");
   assert.equal(received.body.stream, true);
+  assert.deepEqual(received.body.input.slice(-2), [
+    { type: "function_call_output", call_id: "capture", output: [
+      { type: "input_text", text: "captured" },
+      { type: "input_image", image_url: `data:image/png;base64,${png.toString('base64')}`, detail: "high" },
+    ] },
+    { type: "function_call_output", call_id: "inspect", output: "inspected" },
+  ]);
+  assert.equal(received.body.input.filter(item => item.role === "user").length, 1);
   assert.equal("tool_choice" in received.body, false);
   assert.deepEqual(received.body.reasoning, { effort: "high" });
   assert.deepEqual(events.map((event) => event.kind), [

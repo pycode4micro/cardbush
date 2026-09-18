@@ -12,9 +12,9 @@
 .mcp-app-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mcp-app-actions button { width: 28px; padding: 4px; }
 .mcp-app-panel .mcp-app-reopen { justify-content: flex-start; margin: 0 10px 10px; }
-.mcp-app-viewport { position: relative; min-width: 0; overflow: hidden; transition: height var(--motion-normal, 180ms) ease; }
-.mcp-app-viewport iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; transition: opacity var(--motion-normal, 180ms) ease; }
-.mcp-app-viewport.is-loaded iframe { opacity: 1; }
+.mcp-app-viewport { position: relative; min-width: 0; overflow: hidden; }
+.mcp-app-viewport iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; }
+.mcp-app-viewport.is-loaded iframe { opacity: 1; animation: preview-reveal 280ms cubic-bezier(.2,.7,.25,1) both; }
 .mcp-app-loading { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 28px; background: var(--surface); color: var(--text-soft); animation: mcp-app-show 180ms ease both; }
 .mcp-app-loading > span { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; }
 .mcp-app-loading > span svg { animation: mcp-app-spin 1.2s linear infinite; }

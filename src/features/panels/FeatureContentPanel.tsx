@@ -17,16 +17,20 @@ import {
 import type {
   AppLanguage,
   AppSection,
+  BackendCapabilities,
   SkillDetail,
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
 import { AutomationPanel } from '../automations/AutomationPanel';
+import { PluginWorkspace } from '../plugins/PluginWorkspace';
 
 import { RuntimeDelegationSurface } from '../../plugins/runtimeWorkspaces';
 
 export function FeatureContentPanel({
   language,
+  backendCapabilities,
+  onOpenPluginPrompt,
   section,
   activeProjectDir,
   workflowValidationAvailable,
@@ -39,6 +43,8 @@ export function FeatureContentPanel({
   onOpenConversation,
 }: {
   language: AppLanguage;
+  backendCapabilities: BackendCapabilities;
+  onOpenPluginPrompt: (prompt: string) => void;
   section: AppSection;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
@@ -50,6 +56,9 @@ export function FeatureContentPanel({
   onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
+  if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
+    skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
+    onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;
   if (section === 'automations') return <AutomationPanel language={language} onOpenConversation={onOpenConversation} onCreateAutomation={onCreateAutomation} />;
   if (section === 'skills') {
     return (

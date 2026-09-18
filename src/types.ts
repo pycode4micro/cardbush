@@ -6,7 +6,7 @@ import type {
 } from '@cardbush/bush-protocol';
 import type { ConversationStyleSettings } from '@cardbush/bush-product-agent';
 
-export type AppSection = 'chat' | 'skills' | 'subagents' | 'team' | 'automations';
+export type AppSection = 'chat' | 'plugins' | 'skills' | 'subagents' | 'team' | 'automations';
 export type SettingsSection =
   | 'instructions'
   | 'profile'

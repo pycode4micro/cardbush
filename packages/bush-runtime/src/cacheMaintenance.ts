@@ -10,7 +10,7 @@ export interface CacheEntry {
   owner?: string;
   bytes: number;
   file?: string;
-  scan(visit: (text: string) => void): Promise<void>;
+  scan(visit: (text: string) => void, signal?: AbortSignal): Promise<void>;
   remove(): Promise<void>;
 }
 export interface CacheMaintenanceResult {
@@ -37,9 +37,9 @@ export async function cacheFiles(root: string, accept: (name: string) => boolean
 
 export function fileCacheEntry(file: { path: string; bytes: number }, category: string, keys: string[], owner?: string, beforeRemove?: () => void): CacheEntry {
   return { category, keys, owner, bytes: file.bytes, file: file.path,
-    async scan(visit) {
+    async scan(visit, signal) {
       // Bounded reads; a large execution journal must never be loaded just to clean it.
-      for await (const chunk of createReadStream(file.path, { encoding: 'utf8', highWaterMark: 64 * 1024 })) visit(chunk);
+      for await (const chunk of createReadStream(file.path, { encoding: 'utf8', highWaterMark: 64 * 1024, signal })) visit(chunk);
     },
     async remove() {
       const stat = await lstat(file.path).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -53,7 +53,7 @@ export function fileCacheEntry(file: { path: string; bytes: number }, category: 
 
 export function memoryCacheEntry(category: string, owner: string, rows: unknown[], remove: () => void): CacheEntry {
   return { category, owner, keys: [owner], bytes: 0,
-    async scan(visit) { for (const row of rows) visit(JSON.stringify(row)); },
+    async scan(visit, signal) { for (const row of rows) { signal?.throwIfAborted(); visit(JSON.stringify(row)); } },
     async remove() { remove(); },
   };
 }
@@ -112,7 +112,8 @@ export function temporaryCacheEntries(root: string) {
 }
 
 /** Mark all references first, then sweep. Failure to read any retained source aborts the sweep. */
-export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string }> = []): Promise<CacheMaintenanceResult> {
+export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string }> = [], signal?: AbortSignal): Promise<CacheMaintenanceResult> {
+  signal?.throwIfAborted();
   const byKey = new Map<string, Set<CacheEntry>>();
   const add = (key: string, entry: CacheEntry) => { let values = byKey.get(key); if (!values) byKey.set(key, values = new Set()); values.add(entry); };
   for (const entry of entries) {
@@ -135,10 +136,14 @@ export async function collectUnreferencedCache(entries: CacheEntry[], roots: unk
     };
   };
   const visit = scan();
-  for (const root of roots) visit(JSON.stringify(root));
-  while (pending.length) await pending.pop()!.scan(scan());
+  for (const root of roots) { signal?.throwIfAborted(); visit(JSON.stringify(root)); }
+  while (pending.length) {
+    signal?.throwIfAborted();
+    await pending.pop()!.scan(scan(), signal);
+  }
   const result: CacheMaintenanceResult = { counts: { files: 0, bytes: 0 }, errors: [] };
   for (const entry of entries) {
+    signal?.throwIfAborted();
     if (retained.has(entry)) continue;
     try {
       await entry.remove();

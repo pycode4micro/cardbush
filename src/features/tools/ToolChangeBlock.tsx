@@ -8,6 +8,7 @@ import { ToolLogo } from './ToolLogo';
 import { diffLineNumbers, diffLinePrefix, diffLineSource } from './diffSyntax';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { WorkspaceChangeStateContext, workspaceChangeReverted } from './WorkspaceChangeStateContext';
+import { ReviewDiffLine } from '../sidebar/ReviewComments';
 
 const DiffSyntaxLines = recoverableLazy<{ lines: DiffLine[]; path: string; language: AppLanguage }>(
   'diff-syntax',
@@ -232,6 +233,7 @@ function PlainDiffLines({ lines }: { lines: DiffLine[] }) {
           // eslint-disable-next-line react/no-array-index-key
           key={index}
           line={line}
+          index={index}
           oldLine={lineNumbers[index]?.oldLine ?? null}
           newLine={lineNumbers[index]?.newLine ?? null}
         />
@@ -242,20 +244,22 @@ function PlainDiffLines({ lines }: { lines: DiffLine[] }) {
 
 function DiffLineView({
   line,
+  index,
   oldLine,
   newLine,
 }: {
   line: DiffLine;
+  index: number;
   oldLine: number | null;
   newLine: number | null;
 }) {
   return (
-    <div className={`diff-line ${line.kind}`}>
+    <ReviewDiffLine index={index} kind={line.kind} oldLine={oldLine} newLine={newLine}>
       <span className="diff-marker" />
       <span className="diff-line-number old">{oldLine ?? ''}</span>
       <span className="diff-line-number new">{newLine ?? ''}</span>
       <span className="diff-prefix" aria-hidden="true">{diffLinePrefix(line)}</span>
       <code>{diffLineSource(line) || ' '}</code>
-    </div>
+    </ReviewDiffLine>
   );
 }

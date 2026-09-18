@@ -21,7 +21,7 @@ async function fixture(t, overrides = {}) {
   await scheduler.remember(context());
   return { root, scheduler, options, calls, setIdle: value => { idle = value; }, advance: ms => { now += ms; } };
 }
-test('one-time jobs wait for the target session, run once and survive reload without replay', async t => {
+test('one-time jobs wait for runtime admission, run once and survive reload without replay', async t => {
   const f = await fixture(t);
   const job = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T08:00:00+08:00' }) });
   await f.scheduler.tick(); assert.equal(f.calls.length, 0);
@@ -51,6 +51,107 @@ test('recurring missed times coalesce; pause, explicit run, revision fences and 
   await until(() => f.calls.length === 3);
   assert.equal((await f.scheduler.list('other')).jobs.length, 0);
 });
+test('temporary timers keep owned settings across source deletion, collection, restart and editing', async t => {
+  const f = await fixture(t);
+  await f.scheduler.remember({ ...context(), model: 'saved-model', temperature: 0, topP: 0.8,
+    metadata: { workspaceDir: 'fixture-project', allowedSkills: ['review'] },
+    tools: [{ name: 'inspect', description: 'Inspect', inputSchema: { type: 'object' } }] });
+  const job = await f.scheduler.manage({ action: 'create', definition: { ...definition({ kind: 'interval', at: '2026-09-09T01:00:00Z', seconds: 60 }), executionMode: 'conversation' } });
+  assert.equal(job.executionMode, 'isolated', 'clock runs always use temporary sessions');
+  await f.scheduler.remember({ ...context(), model: 'later-model', permissionMode: 'all_free' });
+  await f.scheduler.sessionDeleted('session');
+  const before = await f.scheduler.list(); assert.equal(before.jobs[0].state, 'active'); assert.equal(before.sessions.length, 0);
+  const collected = await f.scheduler.collectContexts(new Set());
+  assert.equal(collected.roots.jobContexts[job.id].model, 'saved-model', 'source turns never silently change a saved timer');
+  assert.equal(collected.roots.jobContexts[job.id].inputMessages, undefined);
+  assert.doesNotMatch(JSON.stringify(before), /saved-model|prefixMessages|jobContexts/);
+  await f.scheduler.close(); f.setIdle(true);
+  const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
+  await reloaded.manage({ action: 'update', id: job.id, definition: { ...definition(job.trigger), prompt: 'Updated self-contained task.' } });
+  await reloaded.manage({ action: 'run', id: job.id });
+  await until(async () => (await reloaded.list()).jobs[0].runs.at(-1)?.status === 'completed');
+  const first = f.calls[0]; assert.notEqual(first.run.sessionId, 'session'); assert.equal(first.ctx.model, 'saved-model');
+  assert.equal(first.ctx.permissionMode, 'task_free'); assert.equal(first.ctx.temperature, 0); assert.equal(first.ctx.topP, 0.8);
+  assert.equal(first.job.prompt, 'Updated self-contained task.');
+  const result = await reloaded.manage({ action: 'conversation', id: job.id, runIds: [first.run.id] });
+  assert.equal(result.sourceSession, undefined); assert.equal(result.job.sessionId, 'session');
+  assert.equal(result.sessionId, first.run.sessionId); assert.deepEqual(result.allowedTools, ['inspect']);
+  assert.equal(result.workspaceDir, 'fixture-project');
+  await reloaded.remember(context(first.run.sessionId));
+  assert.equal((await reloaded.list()).sessions.length, 0, 'inspector follow-ups do not turn execution settings into source choices');
+  await reloaded.manage({ action: 'run', id: job.id });
+  await until(() => f.calls.length === 2);
+  assert.notEqual(f.calls[1].run.sessionId, first.run.sessionId); assert.equal(f.calls[1].ctx.model, 'saved-model');
+  await until(async () => (await reloaded.list()).jobs[0].runs.at(-1)?.status === 'completed');
+  await assert.rejects(reloaded.manage({ action: 'create', definition: definition(job.trigger) }), /Send a message/);
+  await assert.rejects(reloaded.manage({ action: 'update', id: job.id, definition: definition(job.trigger, 'missing') }), /Send a message/);
+  await reloaded.remember({ ...context('replacement'), model: 'replacement-model' });
+  await reloaded.manage({ action: 'update', id: job.id, definition: definition(job.trigger, 'replacement') });
+  const saved = JSON.parse(await readFile(f.options.path, 'utf8')); assert.equal(saved.jobContexts[job.id].model, 'replacement-model');
+  await reloaded.manage({ action: 'delete', id: job.id });
+  const cleaned = await reloaded.collectContexts(new Set(['replacement']));
+  assert.deepEqual(cleaned.roots.jobContexts, {}); assert.deepEqual(Object.keys(cleaned.roots.contexts), ['replacement']);
+});
+
+test('busy source does not block timers; source deletion cancels event queues but preserves a timer queue', async t => {
+  let release = false;
+  const f = await fixture(t, { canRun: sessionId => release && sessionId !== 'session' });
+  const timer = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
+  const event = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'event', event: 'Stop' }) });
+  await f.scheduler.emit({ id: 'stop', sessionId: 'session', event: 'Stop' });
+  await f.scheduler.tick();
+  const queuedId = (await f.scheduler.list()).jobs[0].runs[0].id;
+  await f.scheduler.sessionDeleted('session');
+  const jobs = (await f.scheduler.list()).jobs;
+  assert.equal(jobs[0].runs[0].status, 'queued'); assert.equal(jobs[1].state, 'paused'); assert.equal(jobs[1].runs[0].status, 'stopped');
+  await assert.rejects(f.scheduler.manage({ action: 'resume', id: event.id }), /No conversation execution context/);
+  release = true; await f.scheduler.tick();
+  await until(async () => (await f.scheduler.list()).jobs[0].state === 'completed');
+  assert.equal(f.calls.length, 1); assert.equal(f.calls[0].job.id, timer.id); assert.equal(f.calls[0].run.id, queuedId);
+});
+
+test('legacy queued timers migrate once, preserve paused jobs and recorded run identities', async t => {
+  const f = await fixture(t);
+  const timer = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
+  await f.scheduler.tick(); await f.scheduler.close();
+  const legacy = JSON.parse(await readFile(f.options.path, 'utf8')); delete legacy.jobContexts;
+  delete legacy.jobs[0].executionMode; legacy.jobs[0].runs[0].sessionId = 'session';
+  const completed = { ...legacy.jobs[0].runs[0], id: 'completed', turnId: 'completed', status: 'completed', finishedAt: '2026-09-08T00:00:00Z' };
+  legacy.jobs[0].runs.unshift(completed);
+  legacy.jobs.push({ ...legacy.jobs[0], id: 'paused-timer', state: 'paused', runs: [] });
+  await writeFile(f.options.path, JSON.stringify(legacy));
+  const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
+  const migrated = (await reloaded.list()).jobs;
+  assert.equal(migrated[0].runs[0].sessionId, 'session'); assert.notEqual(migrated[0].runs[1].sessionId, 'session');
+  assert.equal(migrated[1].state, 'paused');
+  await reloaded.sessionDeleted('session'); await reloaded.close();
+  f.setIdle(true);
+  const restarted = new AutomationScheduler(f.options); t.after(() => restarted.close());
+  assert.equal((await restarted.list()).jobs[0].runs[1].sessionId, migrated[0].runs[1].sessionId);
+  await restarted.tick(); await until(() => f.calls.length === 1);
+  assert.equal(f.calls[0].job.id, timer.id); assert.equal(f.calls[0].ctx.model, 'fixture');
+});
+
+test('source links use session existence, not retained settings; missing legacy settings fail once', async t => {
+  const live = new Set(['session']);
+  const f = await fixture(t, { sessionExists: id => live.has(id) });
+  const job = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
+  await f.scheduler.tick();
+  const run = (await f.scheduler.list()).jobs[0].runs[0];
+  assert.equal((await f.scheduler.manage({ action: 'conversation', id: job.id, runIds: [run.id] })).sourceSession.id, 'session');
+  live.clear();
+  const detail = await f.scheduler.manage({ action: 'conversation', id: job.id, runIds: [run.id] });
+  assert.equal(detail.sourceSession, undefined); assert.equal(detail.executionSessionAvailable, false); assert.equal((await f.scheduler.list()).sessions.length, 0);
+  await f.scheduler.close();
+  const broken = JSON.parse(await readFile(f.options.path, 'utf8')); delete broken.jobContexts; broken.contexts = {};
+  await writeFile(f.options.path, JSON.stringify(broken));
+  f.setIdle(true);
+  const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
+  await reloaded.tick(); await until(async () => (await reloaded.list()).jobs[0].state === 'paused');
+  assert.match((await reloaded.list()).jobs[0].runs[0].error, /No conversation execution context/);
+  await reloaded.tick(); assert.equal(f.calls.length, 0); assert.equal((await reloaded.list()).jobs[0].runs.length, 1);
+});
+
 test('hook event matching, deduplication and cooldown never create overlapping runs', async t => {
   const f = await fixture(t);
   await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'event', event: 'PostToolUse', tool: 'read_file', cooldownSeconds: 60 }) });
@@ -139,7 +240,7 @@ test('read state belongs to a result, persists independently and cannot acknowle
   assert.equal((await reloaded.reminder()).total, 2, 'batch acknowledgments are atomic');
 });
 
-test('unread results survive retention, and older plans keep their existing conversation', async t => {
+test('unread results keep recorded conversations while older timers migrate future runs', async t => {
   const f = await fixture(t);
   await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
   await f.scheduler.tick(); await f.scheduler.close();
@@ -148,10 +249,11 @@ test('unread results survive retention, and older plans keep their existing conv
   job.runs = Array.from({ length: 65 }, (_, i) => ({ id: `old-${i}`, turnId: `old-turn-${i}`, queuedAt: '2026-09-08T00:00:00Z', finishedAt: '2026-09-08T00:00:01Z', status: 'completed', reason: 'schedule' }));
   await writeFile(f.options.path, JSON.stringify(stored));
   const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
-  assert.equal((await reloaded.list()).jobs[0].executionMode, 'conversation');
+  assert.equal((await reloaded.list()).jobs[0].executionMode, 'isolated');
+  assert.ok((await reloaded.list()).jobs[0].runs.every(run => run.sessionId === 'session'), 'recorded sessions are never rewritten');
   const reminder = await reloaded.reminder(); assert.equal(reminder.total, 65); assert.equal(reminder.items.length, 8);
   await reloaded.manage({ action: 'run', id: job.id });
-  const queued = (await reloaded.list()).jobs[0]; assert.equal(queued.runs.length, 66); assert.equal(queued.runs.at(-1).sessionId, 'session');
+  const queued = (await reloaded.list()).jobs[0]; assert.equal(queued.runs.length, 66); assert.notEqual(queued.runs.at(-1).sessionId, 'session');
   const results = await reloaded.manage({ action: 'results', offset: 20 }); assert.equal(results.results.length, 20); assert.equal(results.total, 66);
 });
 test('real runtime turns and schedule_task share context, events and permission scope without self-trigger loops', async t => {
@@ -187,7 +289,7 @@ test('only executed trusted hooks can request a queued agent activation through 
   assert.deepEqual(activations, [{ id: 'fixture-hook', prompt: 'Inspect the completed export.' }]); await runner.close();
 });
 
-test('live user guidance refreshes reminders without changing authored text or persisting stale app context', async t => {
+test('live user guidance appends changed reminders without rewriting sent history or authored text', async t => {
   const f = await fixture(t);
   const job = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
   f.setIdle(true); await f.scheduler.tick(); await until(async () => (await f.scheduler.reminder()).total === 1);
@@ -209,14 +311,40 @@ test('live user guidance refreshes reminders without changing authored text or p
   await host.runSessionTurn(request);
   assert.equal(requests[0].messages.at(-1).name, 'automation_unread_reminder');
   assert.ok(requests[1].messages.some(message => message.content === '按新的范围继续。'));
-  assert.ok(!requests[1].messages.some(message => message.name === 'automation_unread_reminder'), 'read changes replace the active turn reminder');
+  assert.deepEqual(requests[1].messages.slice(0, requests[0].messages.length), requests[0].messages);
+  const reminders = requests[1].messages.filter(message => message.name === 'automation_unread_reminder');
+  assert.equal(reminders.length, 2, 'the read change appends a new observation');
+  assert.equal(JSON.parse(reminders.at(-1).content.split('\n').at(-1)).total, 0);
   const history = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: 'session' } });
   const guidance = history.turns[0].messages.find(message => message.messageId === 'live-guidance');
   assert.equal(guidance.message.content, '按新的范围继续。'); assert.equal(guidance.metadata.automationReminder.total, 0);
-  assert.ok(!history.turns[0].messages.some(message => message.message.name === 'automation_unread_reminder'));
+  assert.deepEqual(history.turns[0].messages.filter(message => message.message.name === 'automation_unread_reminder').map(item => item.message), reminders);
   await f.scheduler.manage({ action: 'mark_unread', runIds: [run.id] });
   for (const [name, metadata] of [['goal_continuation', {}], ['automation_prompt', { automationRunId: run.id }]]) {
     await host.runSessionTurn({ ...context(), requestId: name, turnId: name, metadata, inputMessages: [{ messageId: name, message: { role: 'user', name, content: 'Continue' } }] });
-    assert.ok(!requests.at(-1).messages.some(message => message.name === 'automation_unread_reminder'), 'automatic inputs do not receive inbox reminders');
+    assert.deepEqual(requests.at(-1).messages.filter(message => message.name === 'automation_unread_reminder'), reminders, 'automatic inputs retain history without adding inbox reminders');
   }
+});
+
+test('saved contexts round-trip shared generation parameters without transient request state', async t => {
+  const f = await fixture(t);
+  const request = { ...context(), temperature: 0, topP: 0.73, reasoningEffort: 'high', maxOutputTokens: 8192,
+    metadata: { nested: { value: 'saved' } }, tools: [{ name: 'inspect', description: 'Inspect', inputSchema: { type: 'object', properties: { value: { type: 'string' } } } }],
+    providerState: { strategy: 'response_chain', previousResponseId: 'do-not-save', inputMessageOffset: 1 } };
+  await f.scheduler.remember(request);
+  request.metadata.nested.value = 'changed after remember'; request.tools[0].inputSchema.properties.value.type = 'number';
+  await f.scheduler.remember(context('another-session')); await f.scheduler.close();
+  const stored = JSON.parse(await readFile(f.options.path, 'utf8')).contexts.session;
+  assert.equal(stored.metadata.nested.value, 'saved'); assert.equal(stored.tools[0].inputSchema.properties.value.type, 'string');
+  for (const name of ['temperature', 'topP', 'reasoningEffort', 'maxOutputTokens']) assert.equal(stored[name], request[name]);
+  for (const name of ['providerState', 'requestId', 'turnId', 'inputMessages']) assert.equal(stored[name], undefined);
+  const runs = [];
+  const reloaded = new AutomationScheduler({ ...f.options, canRun: () => true, run: async (_job, _run, ctx) => { runs.push(ctx); return { status: 'completed', reason: 'fixture' }; } });
+  t.after(() => reloaded.close());
+  await reloaded.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
+  await reloaded.tick(); await until(() => runs.length === 1);
+  for (const name of ['temperature', 'topP', 'reasoningEffort', 'maxOutputTokens']) assert.equal(runs[0][name], request[name]);
+  await reloaded.remember(context());
+  const cleared = JSON.parse(await readFile(f.options.path, 'utf8')).contexts.session;
+  assert.equal(cleared.temperature, undefined); assert.equal(cleared.topP, undefined);
 });

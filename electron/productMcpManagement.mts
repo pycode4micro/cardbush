@@ -33,11 +33,17 @@ export type McpServerPatch = z.infer<typeof mcpServerPatchSchema>;
 
 export interface ProductMcpManagementHost {
   listMcpServers(): Promise<unknown>;
+  reconnectMcpServer(id: string, signal?: AbortSignal): Promise<unknown>;
   configureMcpServer(input: McpServerPatch, signal?: AbortSignal): Promise<unknown>;
   removeMcpServer(id: string, signal?: AbortSignal): Promise<unknown>;
   listPluginConnections(pluginId?: string): Promise<unknown>;
   configurePluginConnection(input: ConfigurePluginConnectionInput, signal?: AbortSignal): Promise<unknown>;
   requestPluginCredentials(input: PluginConnectionIdentity, signal: AbortSignal): Promise<unknown>;
+}
+
+export function assertReconnectableMcpServerId(id: string): void {
+  serverId.parse(id);
+  if (reservedIds.has(id)) throw new Error('Built-in CardBush services cannot be reconnected through this management Tool.');
 }
 
 export function assertUserMcpServerId(id: string): void {
@@ -112,6 +118,11 @@ export function createProductMcpManagementServer(getHost: () => ProductMcpManage
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async () => result(() => getHost().listMcpServers()));
+  server.registerTool('reconnect_mcp_server', {
+    description: 'Reconnect one enabled plugin or user MCP service after an external dependency update or a stale tool catalog, without restarting CardBush or changing saved settings. Use the exact id from list_mcp_servers or list_plugin_connections. Plugin package updates normally refresh automatically. Active turns defer replacement: pending is not connected; finish this Turn instead of polling. Verify the target service health and discovered tools after activation. Built-in CardBush services are excluded.',
+    inputSchema: { id: serverId },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ id }, context) => result(() => getHost().reconnectMcpServer(id, context.mcpReq.signal)));
   server.registerTool('list_plugin_connections', {
     description: 'Read installed plugins’ registered app IDs, selected and available connection sources, OpenAI app authorization URLs, effective endpoint, OAuth options, tool policies, configuration revision and Runtime state for the listed connections. Available sources describe host support, not authorization. OpenAI account sign-in and granting the service provider’s access to OpenAI are separate steps. Credential values are never returned.',
     inputSchema: { pluginId: z.string().optional() },

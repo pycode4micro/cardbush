@@ -38,6 +38,58 @@ async function action(manager, action, sessionId = 'task') {
   return manager.update(sessionId, review.workspace.revision, action, review.snapshotId);
 }
 
+test('review window migrates 200 checkpoints, protects baselines and rejects expired Runtime fallback after restart', async t => {
+  const { source, storage } = await fixture(t);
+  const managedRoot = join(storage, 'workspaces');
+  const manager = new TaskWorkspaceManager(managedRoot);
+  const descriptor = await manager.create('task', source, 'direct');
+  await manager.beginTurn('task', 'turn-199');
+  await writeFile(join(source, 'file.txt'), 'version 199');
+  await manager.finishTurn('task', 'turn-199');
+  await manager.beginTurn('task', 'turn-200');
+  await writeFile(join(source, 'file.txt'), 'version 200');
+  await manager.finishTurn('task', 'turn-200');
+  const owner = createHash('sha256').update('task').digest('hex');
+  const statePath = join(managedRoot, 'tasks', owner, 'state.json');
+  const state = JSON.parse(await readFile(statePath, 'utf8'));
+  // Old history may reference unavailable objects. Expired versions must not be
+  // hydrated merely to render the last two Turns.
+  state.checkpoints = [...Array.from({ length: 198 }, (_, index) => ({ turnId: `turn-${index + 1}`,
+    createdAt: '2026-01-01T00:00:00Z', status: 'complete', before: '1'.repeat(40), after: '2'.repeat(40) })), ...state.checkpoints];
+  const oldTree = execFileSync('git', ['-C', source, 'mktree'], { input: '', encoding: 'utf8', windowsHide: true }).trim();
+  git(source, 'update-ref', `refs/cardbush/workspaces/${owner}/snapshots/${oldTree}`, oldTree);
+  git(source, 'update-ref', 'refs/cardbush/workspaces/another-session/snapshots/' + oldTree, oldTree);
+  await writeFile(statePath, JSON.stringify(state));
+  const reopened = new TaskWorkspaceManager(managedRoot);
+  const review = await reopened.review('task', 'history');
+  assert.deepEqual(review.checkpoints.map(checkpoint => checkpoint.turnId), ['turn-199', 'turn-200']);
+  assert.match(review.checkpoints[1].changes.find(change => change.path.endsWith('file.txt')).metadata.diff, /version 200/);
+  assert.equal(JSON.parse(await readFile(statePath, 'utf8')).checkpoints.length, 2);
+  const refs = git(source, 'for-each-ref', '--format=%(objectname)', `refs/cardbush/workspaces/${owner}/snapshots/`).trim().split('\n');
+  assert.ok(refs.includes(descriptor.baselineId));
+  assert.ok(!refs.includes(oldTree), 'expired private refs are released');
+  assert.ok(refs.length <= 5, 'only the retained snapshots and protected baselines stay reachable');
+  assert.equal(git(source, 'rev-parse', 'refs/cardbush/workspaces/another-session/snapshots/' + oldTree).trim(), oldTree);
+  await assert.rejects(reopened.revert('task', ['turn-1']), { code: 'workspace_checkpoint_expired' });
+  const host = new InMemoryRuntimeHost({ dataRoot: storage });
+  await host.sendCommand({ kind: CREATE_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'task' } });
+  await assert.rejects(host.sendCommand({ kind: REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+    payload: { sessionId: 'task', turnIds: ['turn-1'] } }), { code: 'workspace_checkpoint_expired' });
+  await assert.rejects(host.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+    payload: { sessionId: 'task', turnIds: ['turn-1'] } }), { code: 'workspace_checkpoint_expired' });
+  assert.equal(await readFile(join(source, 'file.txt'), 'utf8'), 'version 200');
+  await reopened.revert('task', ['turn-200']);
+  assert.equal(await readFile(join(source, 'file.txt'), 'utf8'), 'version 199');
+  await reopened.restore('task', ['turn-200']);
+  await reopened.beginTurn('task', 'turn-201');
+  const pending = await reopened.review('task', 'history');
+  assert.deepEqual(pending.checkpoints.map(checkpoint => checkpoint.turnId), ['turn-200', 'turn-201']);
+  assert.equal(pending.checkpoints[1].status, 'pending');
+  await reopened.finishTurn('task', 'turn-201'); // No edits still consumes a Turn.
+  assert.deepEqual((await reopened.review('task', 'history')).checkpoints[1].changes, []);
+  await assert.rejects(reopened.restore('task', ['turn-199']), { code: 'workspace_checkpoint_expired' });
+});
+
 test('Windows short storage paths bind to a stable canonical workspace', { skip: process.platform !== 'win32' }, async t => {
   const { root, source } = await fixture(t);
   const alias = execFileSync('cmd.exe', ['/d', '/c', 'for %I in (.) do @echo %~sI'], {

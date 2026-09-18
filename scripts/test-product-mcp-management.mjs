@@ -18,6 +18,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
   let runtimeUnavailable = false;
   let revision = 0;
   let lastContent = '';
+  let activeSnapshot;
   const manager = new McpClientManager({ registry, canApply: () => idle });
   let host;
   const endpoint = await startProductMcpManagement(() => host);
@@ -35,10 +36,18 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
           const servers = [managementServer, ...source.servers];
           const content = JSON.stringify(servers);
           if (content !== lastContent) { revision++; lastContent = content; }
-          result = await manager.apply({ ...source, revision, servers });
+          activeSnapshot = { ...source, revision, servers };
+          result = await manager.apply(activeSnapshot);
           break;
         }
         case 'runtime.get_mcp_snapshot': result = manager.snapshot() ?? null; break;
+        case 'runtime.mcp_reconnect': {
+          const id = request.command.payload.serverId;
+          if (!activeSnapshot?.servers.some(server => server.id === id)) throw new Error('This MCP service is not enabled.');
+          activeSnapshot = { ...activeSnapshot, revision: ++revision };
+          result = manager.submit(activeSnapshot, [id]);
+          break;
+        }
         default: throw new Error(`Unexpected Runtime command: ${request.command.kind}`);
       }
       return { protocol: 'bush.runtime_ipc.v1', type: 'command_response', operationId: request.operationId, ok: true, result };
@@ -78,7 +87,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
     await client.connect(transport);
     await t.test('management is discovered through the ordinary Runtime MCP registry', async () => {
       const tools = await client.listTools();
-      assert.deepEqual(tools.tools.map(t => t.name).sort(), ['configure_mcp_server', 'configure_plugin_connection', 'list_mcp_servers', 'list_plugin_connections', 'remove_mcp_server', 'request_plugin_credentials']);
+      assert.deepEqual(tools.tools.map(t => t.name).sort(), ['configure_mcp_server', 'configure_plugin_connection', 'list_mcp_servers', 'list_plugin_connections', 'reconnect_mcp_server', 'remove_mcp_server', 'request_plugin_credentials']);
       for (const tool of tools.tools) assert.ok(registry.resolve(`mcp__cardbush_management__${tool.name}`));
       const status = await invoke('list_mcp_servers');
       assert.equal(status.runtime.applicationState, 'applied');
@@ -136,6 +145,32 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       for (const args of [{ id: 'invalid', transport: 'stdio', command: '' }, { id: 'cardbush_management', enabled: false }, { id: 'plugin_blender_main', enabled: true }]) {
         assert.equal((await client.callTool({ name: 'configure_mcp_server', arguments: args })).isError, true);
       }
+      assert.equal(await readFile(configPath, 'utf8'), before);
+    });
+    await t.test('targeted reconnect waits for idle, refreshes the process and does not alter saved settings', async () => {
+      const before = await readFile(configPath, 'utf8');
+      const pid = (await echo()).pid;
+      idle = false;
+      const result = await invoke('reconnect_mcp_server', { id: 'fixture' });
+      assert.equal(result.serverId, 'fixture');
+      assert.equal(result.runtime.applicationState, 'pending');
+      assert.equal((await echo()).pid, pid);
+      assert.equal(await readFile(configPath, 'utf8'), before);
+      idle = true;
+      await until(() => manager.snapshot()?.applicationState === 'applied');
+      assert.notEqual((await echo()).pid, pid);
+      assert.equal((await echo()).value, 'two');
+      // The management connection stayed alive throughout the targeted reconnect.
+      assert.equal((await invoke('list_mcp_servers')).runtime.applicationState, 'applied');
+    });
+    await t.test('reconnect rejects built-in, unknown and cancelled targets without changing configuration', async () => {
+      const before = await readFile(configPath, 'utf8');
+      const pid = (await echo()).pid;
+      for (const id of ['cardbush_management', 'cardbush_apps', 'chrome_devtools', 'missing']) {
+        assert.equal((await client.callTool({ name: 'reconnect_mcp_server', arguments: { id } })).isError, true);
+      }
+      await assert.rejects(host.reconnectMcpServer('fixture', AbortSignal.abort()));
+      assert.equal((await echo()).pid, pid);
       assert.equal(await readFile(configPath, 'utf8'), before);
     });
     await t.test('connection failure is reported per server while working tools stay available', async () => {

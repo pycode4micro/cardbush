@@ -17,6 +17,10 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll("table").length===1');
     assert.equal(await read('document.querySelectorAll("table").length'),1,'real conversation Markdown renders');
     assert.equal(await read('calls.some(call=>call.action==="mark_read")'),false,'opening does not acknowledge');
+    await click('返回来源会话'); assert.deepEqual(await read('opened'), ['source']);
+    await read('delete detail.sourceSession; notify()');
+    await until('document.body.innerText.includes("来源会话已删除")');
+    assert.equal(await read('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="返回来源会话")'), false);
     await click('标记已读'); await until('!!detail.run.readAt'); await click('标记未读'); await until('!detail.run.readAt');
     await read(`(()=>{const input=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'解释这两项');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await click('发送追问'); await until('document.body.innerText.includes("正在解释结果")');
@@ -30,7 +34,7 @@ app.whenReady().then(async () => {
     assert.ok(await read('document.body.innerText.includes("解释这两项")'),'uncommitted user input survives inspector reopening');
     await read('finish()'); await until('document.body.innerText.includes("追问答复已保存")');
     assert.equal(await read('detail.run.readAt'),undefined,'followup does not acknowledge the original result');
-    await click('在主会话打开'); assert.deepEqual(await read('opened'),['scheduled-session']);
+    await click('打开执行会话'); assert.deepEqual(await read('opened'),['source', 'scheduled-session']);
     assert.ok(await read('document.documentElement.scrollWidth<=innerWidth'),'narrow inspector has no horizontal overflow');
     assert.ok(await read('(()=>{const button=document.querySelector(".automation-run-composer button").getBoundingClientRect();const panel=document.querySelector(".automation-run-panel").getBoundingClientRect();return button.right<=panel.right&&button.bottom<=panel.bottom;})()'),'send button remains inside the inspector');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');

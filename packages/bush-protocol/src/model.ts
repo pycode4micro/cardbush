@@ -62,6 +62,7 @@ const toolModelMessageSchema = z.object({
   role: z.literal("tool"),
   content: z.string(),
   toolCallId: z.string().min(1),
+  images: z.array(modelImageInputSchema).max(4).optional(),
 });
 
 export const modelMessageSchema = z.union([
@@ -126,6 +127,14 @@ export const modelProviderStateSchema = z.object({
 
 export type ModelProviderState = z.infer<typeof modelProviderStateSchema>;
 
+/** Generation options shared by live requests and persisted launch contexts. */
+export const modelGenerationParametersSchema = z.object({
+  maxOutputTokens: z.number().int().positive().optional(),
+  temperature: z.number().finite().optional(),
+  topP: z.number().finite().optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
+});
+
 export const modelRequestSchema = z.object({
   protocol: z.literal(BUSH_MODEL_REQUEST_PROTOCOL),
   requestId: z.string().min(1),
@@ -135,10 +144,7 @@ export const modelRequestSchema = z.object({
   providerBinding: runtimeProviderBindingRefSchema.optional(),
   messages: z.array(modelMessageSchema),
   tools: z.array(toolDefinitionSchema).default([]),
-  maxOutputTokens: z.number().int().positive().optional(),
-  temperature: z.number().finite().optional(),
-  topP: z.number().finite().optional(),
-  reasoningEffort: reasoningEffortSchema.optional(),
+  ...modelGenerationParametersSchema.shape,
   providerState: modelProviderStateSchema.optional(),
   requestCapabilities: requestCapabilitiesSchema.default({
     vision: false,

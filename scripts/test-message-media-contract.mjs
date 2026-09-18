@@ -9,6 +9,7 @@ const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), '
 const localPaths = read('src', 'shared', 'localPaths.ts');
 const messageMedia = read('src', 'features', 'messageImages.ts');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
+const inlineMedia = read('src', 'features', 'chatMessages', 'InlineMedia.tsx');
 const imagePreviewDialog = read('src', 'features', 'chatMessages', 'ImagePreviewDialog.tsx');
 const chatHook = read('src', 'hooks', 'useCardbushChat.ts');
 const api = read('src', 'backend', 'api.ts');
@@ -38,8 +39,10 @@ assert.match(runtimeChat, /images: request\.images\?\.map\(\(image\) => image\.p
 assert.match(productAgent, /images: input\.images\.slice\(0, 4\)\.map\(\(url\) => \(\{ url \}\)\)/);
 assert.match(runtimeWorker, /"native_image_inputs"/);
 assert.doesNotMatch(api, /applyRequestCapabilityToBody/);
-assert.match(messageBubble, /<video[\s\S]*?controls[\s\S]*?preload="metadata"/);
-assert.match(messageBubble, /<audio[\s\S]*?controls[\s\S]*?preload="metadata"/);
+assert.match(messageBubble, /<InlineVideo/);
+assert.match(messageBubble, /<InlineAudio/);
+assert.match(inlineMedia, /<video[\s\S]*?controls[\s\S]*?preload="metadata"/);
+assert.match(inlineMedia, /<audio[\s\S]*?controls[\s\S]*?preload="metadata"/);
 assert.match(messageBubble, /readImageDataUrl\(pathValue\)/);
 assert.match(messageBubble, /message-image-preview-fallback/);
 assert.match(

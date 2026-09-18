@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import {
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useId,
@@ -23,6 +24,7 @@ import {
   fetchRuntimeTurnToolExecutionDetails,
   type SubagentDispatchResult,
 } from '../../backend/api';
+import { WorkspaceRevertAvailability } from './workspaceRevertAvailability';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import {
   cardlingSceneFromToolExecution,
@@ -79,6 +81,7 @@ export function ToolExecutionBlock({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
+  const canRevertWorkspace = useContext(WorkspaceRevertAvailability);
   const disclosureId = useMemo(
     () => toolExecutionDisclosureId(message, executions),
     [executions, message],
@@ -267,7 +270,7 @@ export function ToolExecutionBlock({
       detailsStatus={deferredDetailStatus}
       onRequestDetails={requestDeferredDetails}
       onRetryDetails={retryDeferredDetails}
-      onRevert={active
+      onRevert={active || !canRevertWorkspace
         ? undefined
         : () => onRevertChangeReport(messageChangeReport, message)}
     />

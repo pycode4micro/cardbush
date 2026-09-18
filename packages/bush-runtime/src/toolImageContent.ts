@@ -1,7 +1,7 @@
 import { MAX_MODEL_IMAGE_SOURCE_BYTES, ModelImageInputError, type ModelImageStore } from './modelImageStore.js';
 
 /** MCP binary content is an observation, never text for the model to reproduce. */
-const omittedImageData = '[Image bytes omitted. Use the Runtime image observation or saved image path.]';
+const omittedImageData = '[Image bytes omitted from text. Use the attached tool image or saved image path.]';
 
 export interface McpImageInput {
   data: string;

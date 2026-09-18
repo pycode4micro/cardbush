@@ -5,6 +5,7 @@ import { fileUrl, isAbsoluteLocalPath } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { ImagePreviewDialog, type ImagePreviewSource } from '../chatMessages/ImagePreviewDialog';
 import { LocalFileReferenceLink } from '../chatMessages/LocalFileReferenceLink';
+import { InlineAudio, InlineVideo } from '../chatMessages/InlineMedia';
 import { mediaPresentationKey } from '../chatMessages/mediaPresentation';
 import { McpAppPanel, mcpAppCommand } from './McpAppPanel';
 import './message-tool-outputs.css';
@@ -100,8 +101,8 @@ export const MessageToolArtifact = memo(function MessageToolArtifact({ artifact,
         setPreview({ src, name: artifact.name, path: artifact.path,
           naturalWidth: thumbnail?.naturalWidth, naturalHeight: thumbnail?.naturalHeight });
       }} aria-label={language === 'zh' ? `查看 ${artifact.name}` : `View ${artifact.name}`}><img src={src} alt={artifact.name} onError={() => void loadFallback()} /></button>
-      : artifact.type === 'video' ? <video controls preload="metadata" src={src} onError={() => setFailed(true)} />
-        : artifact.type === 'audio' ? <audio controls preload="metadata" src={src} onError={() => setFailed(true)} /> : null)}
+      : artifact.type === 'video' ? <InlineVideo src={src} onError={() => setFailed(true)} />
+        : artifact.type === 'audio' ? <InlineAudio src={src} onError={() => setFailed(true)} /> : null)}
     {failed && <p role="status">{language === 'zh' ? '预览不可用，可打开原文件。' : 'Preview unavailable. Open the original file.'}</p>}
     {!hasMediaPreview && <figcaption>{link}{artifact.size !== undefined && <small>{formatSize(artifact.size)}</small>}</figcaption>}
     {preview && <ImagePreviewDialog image={preview} language={language} onClose={() => setPreview(null)} />}

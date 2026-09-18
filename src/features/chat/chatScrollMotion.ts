@@ -18,10 +18,14 @@ type Motion = {
 export function createChatScrollMotion() {
   let motion: Motion | null = null;
   let frame: number | null = null;
-  const targetTop = (item: Motion) => Math.max(0, Math.min(
-    item.scroller.scrollHeight - item.scroller.clientHeight,
-    typeof item.target === 'function' ? item.target() : item.target,
-  ));
+  const targetTop = (item: Motion) => {
+    const destination = typeof item.target === 'function' ? item.target() : item.target;
+    // Async media/font measurements can shrink after growing. Passive follow
+    // reveals new content; it must not pull the reader upward on a later size
+    // correction. Explicit jumps/submission placement still work both ways.
+    return Math.max(0, Math.min(item.scroller.scrollHeight - item.scroller.clientHeight,
+      item.kind === 'follow' ? Math.max(item.scroller.scrollTop, destination) : destination));
+  };
   const cancel = () => {
     if (frame != null) window.cancelAnimationFrame(frame);
     frame = null;

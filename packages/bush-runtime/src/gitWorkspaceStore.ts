@@ -98,6 +98,20 @@ export class GitWorkspaceStore {
     }
   }
 
+  /** Release only this session's private snapshot refs, never user refs or Git objects. */
+  async retainSnapshots(ids: ReadonlySet<string>): Promise<void> {
+    const prefix = `${this.namespace}/snapshots/`;
+    const rows = (await this.git(["for-each-ref", "--format=%(refname) %(objectname)", prefix])).toString("utf8").trim().split("\n");
+    const deletions: string[] = [];
+    for (const row of rows) {
+      const [ref, oid] = row.trim().split(" ");
+      if (!oid || !ref.startsWith(prefix) || ref.slice(prefix.length) !== oid || ids.has(oid)) continue;
+      assertOid(oid);
+      deletions.push(`delete ${ref} ${oid}`);
+    }
+    if (deletions.length) await this.git(["update-ref", "--stdin"], Buffer.from(deletions.join("\n") + "\n"));
+  }
+
   async tree(id: string): Promise<GitFileTree> {
     assertOid(id);
     const bytes = await this.git(["ls-tree", "-rz", "--full-tree", id]);

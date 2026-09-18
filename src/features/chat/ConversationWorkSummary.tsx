@@ -8,7 +8,6 @@ import {
   LoaderCircle,
   CircleStop,
   TriangleAlert,
-  Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -16,9 +15,7 @@ import {
   fetchSubagentTask,
   fetchSubagentTasks,
 } from '../../backend/api';
-import {
-  isContextCompactionPresentationExecution,
-} from '../../backend/contextCompactionPresentation';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type {
   AppLanguage,
   ChatMessage,
@@ -26,8 +23,6 @@ import type {
   SubagentTaskSnapshot,
 } from '../../types';
 import {
-  displayToolName,
-  isToolRunning,
   summarizeChangeReports,
   type ConversationChangeReport,
 } from '../tools';
@@ -76,21 +71,6 @@ export function ConversationWorkSummary({
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
   const subagentTasks = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
-  const executions = useMemo(
-    () => messages
-      .flatMap((message) => [
-        ...(message.toolExecutions ?? []),
-        ...(message.loopHistory ?? []).flatMap((history) => history.toolExecutions ?? []),
-      ])
-      // Context compaction deliberately reuses the Tool-row presentation in
-      // the transcript, but it is Runtime maintenance rather than user work.
-      .filter((execution) => !isContextCompactionPresentationExecution(execution))
-      .filter((execution, index, all) =>
-        all.findIndex((candidate) => candidate.id === execution.id) === index)
-      .slice(-6)
-      .reverse(),
-    [messages],
-  );
   const historyGroups = useMemo(() => groupWorkSummaryHistoryByTurn(messages), [messages]);
   const historyCount = useMemo(
     () => historyGroups.reduce((total, group) => total + group.history.length, 0),
@@ -135,7 +115,6 @@ export function ConversationWorkSummary({
               </div>
               <div className="work-summary-metrics">
                 <span>{outputs.length} {language === 'zh' ? '产物' : 'outputs'}</span>
-                <span>{executions.length} {language === 'zh' ? '工具' : 'tools'}</span>
               </div>
             </header>
 
@@ -152,6 +131,7 @@ export function ConversationWorkSummary({
                       type="button"
                       key={output.key}
                       title={output.path.startsWith('data:') ? output.name : output.path}
+                      onContextMenu={event => openFileContextMenu(event, output.path, { language })}
                       onClick={() => {
                         if (output.type !== 'document') openMediaInspector(output.path, output.type, output.name);
                         else if (output.change) onOpenChangeReview(output.change.path);
@@ -189,32 +169,6 @@ export function ConversationWorkSummary({
                     </button>
                   )}
                 </div>
-              )}
-            </div>
-
-            <div className="work-summary-section">
-              <div className="work-summary-section-title">
-                <Wrench size={14} />
-                <strong>{language === 'zh' ? '工具执行' : 'Tool activity'}</strong>
-                <span>{executions.length}</span>
-              </div>
-              {executions.length > 0 ? (
-                <div className="work-summary-tool-list">
-                  {executions.slice(0, 5).map((execution) => {
-                    const running = isToolRunning(execution);
-                    return (
-                      <div className="work-summary-tool" key={execution.id}>
-                        {running ? <LoaderCircle className="spin" size={13} /> : <CheckCircle2 size={13} />}
-                        <span>
-                          <strong>{displayToolName(execution.name)}</strong>
-                          <small>{execution.summary || execution.output || (language === 'zh' ? '已完成' : 'Completed')}</small>
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="work-summary-empty">{language === 'zh' ? '尚无工具执行' : 'No tool activity yet'}</p>
               )}
             </div>
 

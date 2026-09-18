@@ -1,5 +1,5 @@
 type LogicRecord = Record<string, unknown>;
-type TermStats = { frequencies: Map<string, number>; length: number };
+export type TermStats = { frequencies: Map<string, number>; length: number };
 
 // Standard BM25 parameters, independent of tasks, Tools, domains and memory rewards.
 const BM25_K1 = 1.2;
@@ -28,12 +28,14 @@ function tokenize(text: string): TermStats {
 export class LogicRetriever {
   #terms = new Map<string, TermStats>();
 
+  constructor(private readonly tokenizeText: (text: string) => TermStats = tokenize) {}
+
   clear(): void { this.#terms.clear(); }
 
   search(records: LogicRecord[], query: unknown[]) {
     const nextTerms = new Map<string, TermStats>();
     const stats = (text: string) => {
-      const result = nextTerms.get(text) ?? this.#terms.get(text) ?? tokenize(text);
+      const result = nextTerms.get(text) ?? this.#terms.get(text) ?? this.tokenizeText(text);
       nextTerms.set(text, result);
       return result;
     };

@@ -1,4 +1,5 @@
 import { defaultHostTerminalRuntime } from './hostPlatform';
+import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import { configuredMcpServerId } from './mcpConfigurationFact';
 import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
 import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
@@ -2090,7 +2091,7 @@ export async function fetchSessionWorkspaceChanges(
     if (!snapshot) return [];
     const records = (
       await Promise.all(
-        snapshot.turns.map((turn) =>
+        snapshot.turns.slice(-WORKSPACE_REVIEW_TURN_LIMIT).map((turn) =>
           runtime.client.listTurnToolExecutions(
             { sessionId: normalized, turnId: turn.turnId },
             signal,

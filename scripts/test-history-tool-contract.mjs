@@ -649,8 +649,8 @@ const bubbleSource = fs.readFileSync(
 const appSource = readAppViewSources();
 assert.match(
   appSource,
-  /changeReportsFromMessages\(\s*normalizeChatMessagesForDisplay\(messages\)\s*,?\s*\)/m,
-  'Review availability must use the normalized transcript shown in the conversation.',
+  /changeReportsFromMessages\(\s*normalizeChatMessagesForDisplay\(messages\),\s*new Set\(recentReviewTurns\(messages\)\.map\(turn => turn\.id\)\),?\s*\)/m,
+  'Review availability must use the normalized transcript and retain only the recent review turns.',
 );
 assert.match(
   appSource,
@@ -971,11 +971,20 @@ assert.match(
   /onDone: \(terminal\) => \{[\s\S]{0,120}?setPendingInteraction\(\(current\) =>\s*current\?\.sessionId === sessionId \? null : current,/,
   'A terminal Turn must remove its obsolete permission card.',
 );
-assert.equal(
-  (chatHookSource.match(/onDone: \(terminal\) => \{\s*clearConnectionRecovery\([^)]*\);\s*markSessionDone\(/g) ?? []).length,
-  3,
-  'Every Runtime stream path must end the sidebar processing marker from the canonical done callback.',
-);
+const chatHookAst = ts.createSourceFile('useCardbushChat.ts', chatHookSource, ts.ScriptTarget.Latest, true);
+const terminalCallbacks = [];
+function findTerminalCallbacks(node) {
+  if (ts.isPropertyAssignment(node) && node.name.getText(chatHookAst) === 'onDone' && ts.isArrowFunction(node.initializer)) {
+    terminalCallbacks.push(node.initializer.body.getText(chatHookAst));
+  }
+  ts.forEachChild(node, findTerminalCallbacks);
+}
+findTerminalCallbacks(chatHookAst);
+assert.equal(terminalCallbacks.length, 3, 'All three Runtime stream paths retain a canonical done callback.');
+for (const callback of terminalCallbacks) {
+  assert.match(callback, /clearConnectionRecovery\([^)]*\);\s*markSessionDone\(/,
+    'Every done callback must clear recovery and finish the sidebar processing marker, even after checkpoint cleanup.');
+}
 const toolLogoSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolLogo.tsx'),
   'utf8',
@@ -1022,8 +1031,8 @@ assert.match(
 assert.match(toolBlockSource, /writeToolExecutionDisclosure\(browserStorage\(\), disclosureId, next\)/);
 assert.match(
   toolBlockSource,
-  /onRevert=\{active\s*\? undefined\s*:\s*\(\) => onRevertChangeReport/,
-  'Workspace-change cards must keep diff viewing available but omit revert while the Turn is active',
+  /onRevert=\{active \|\| !canRevertWorkspace\s*\? undefined\s*:\s*\(\) => onRevertChangeReport/,
+  'Workspace-change cards must keep diff viewing available but omit revert while active or outside the retained window',
 );
 assert.ok(
   (toolBlockSource.match(/<ToolLogo /g) ?? []).length >= 2,
@@ -1331,9 +1340,10 @@ const sidebarReviewSource = fs.readFileSync(
   'utf8',
 );
 assert.match(sidebarReviewSource, /groupChangeReportsByTurn\(resolvedReports\)/);
-assert.match(sidebarReviewSource, /new Set\(reviewGroups\[0\] \? \[reviewGroups\[0\]\.id\]/);
-assert.match(sidebarReviewSource, /className="change-review-group-toggle"[\s\S]*?aria-expanded=\{expanded\}/);
-assert.match(sidebarReviewSource, /initialFilePath[\s\S]*?setSelectedKey\(item\.key\)/);
+assert.match(sidebarReviewSource, /<ReviewFileTree rootPath=\{workspaceRoot\}/);
+assert.match(sidebarReviewSource, /recentTurns\.map\(\(turn, index\)/);
+assert.doesNotMatch(sidebarReviewSource, /change-review-group-toggle/);
+assert.match(sidebarReviewSource, /initialFilePath[\s\S]*?setSelectedPath\(initialFilePath\)/);
 assert.match(
   sidebarReviewSource,
   /fetchRuntimeTurnToolExecutionDetails\([\s\S]*?hydrateConversationChangeReport\(candidate, details\)/,
@@ -1356,8 +1366,8 @@ assert.doesNotMatch(
 );
 assert.match(
   sidebarReviewSource,
-  /\.catch\(\(\) => \{[\s\S]*?for \(const key of turnDetailKeys\) next\.set\(key, 'failed'\)/,
-  'Every report covered by a failed turn-detail request must leave loading state.',
+  /\.catch\(\(\) => \{[\s\S]*?for \(const key of turnDetailKeys\) if \(retainedReportKeysRef\.current\.has\(key\)\) next\.set\(key, 'failed'\)/,
+  'Failed detail requests must settle retained reports without reintroducing expired review state.',
 );
 assert.match(
   sidebarReviewSource,
@@ -1366,18 +1376,32 @@ assert.match(
 );
 assert.match(
   sidebarReviewSource,
-  /<FileTypeIcon path=\{selectedItem\.file\.path\} \/>/,
+  /<FileTypeIcon path=\{selectedPath\} \/>/,
   'The selected review file must use the shared extension-aware file icon',
+);
+const reviewFileTreeSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'sidebar', 'ReviewFileTree.tsx'),
+  'utf8',
+);
+assert.match(
+  reviewFileTreeSource,
+  /<FileTypeIcon path=\{row\.path\} \/>/,
+  'Review navigation entries must use the shared extension-aware file icon',
 );
 assert.match(
   sidebarReviewSource,
-  /<FileTypeIcon path=\{item\.file\.path\} \/>/,
-  'Review navigation entries must use the shared extension-aware file icon',
+  /const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport\.fileCount > 0;/,
+  'Revert requires an idle conversation and a selected report with changes.',
 );
-assert.equal(
-  (sidebarReviewSource.match(/\{revertAvailable && (?:resolvedReports\.length > 0 && )?\(/g) ?? []).length,
-  2,
-  'The review panel must hide both single-set and all-changes revert actions during an active Turn',
+assert.match(
+  sidebarReviewSource,
+  /<button className="secondary-button change-review-revert"[^>]*disabled=\{!canRevert\}/,
+  'The merged review toolbar keeps the revert button visible but disabled when unavailable.',
+);
+assert.doesNotMatch(
+  sidebarReviewSource,
+  /\{(?:revertAvailable|canRevert) &&/,
+  'An unavailable revert action must not disappear from the toolbar.',
 );
 assert.equal(
   (appSource.match(/if \(chat\.processingConversationIds\.has\(conversationId\)\) \{/g) ?? []).length,
@@ -1394,6 +1418,6 @@ assert.match(
   /for \(const \[id, reports\] of Object\.entries\(changeReportsByConversation\)\)[\s\S]*?byId\.set\(id, \{\s*id,/,
   'review must remain mountable before a newly created conversation reaches the sidebar list',
 );
-assert.match(stylesSource, /\.change-review-group-files\s*\{/);
+assert.match(stylesSource, /\.change-review-file-nav\s*\{/);
 
 console.log('history tool association and timestamp contract tests passed');

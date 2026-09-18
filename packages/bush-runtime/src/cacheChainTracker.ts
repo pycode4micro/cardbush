@@ -43,18 +43,12 @@ export class CacheChainTracker {
       previousStableInput !== undefined &&
       previousStableInput !== stableInputDigest;
     let sharedPrefixMessages = 0;
-    if (!stableInputChanged) {
-      const limit = Math.min(
-        this.#state.messageDigests.length,
-        messageDigests.length,
-      );
-      while (
-        sharedPrefixMessages < limit &&
-        this.#state.messageDigests[sharedPrefixMessages] ===
-          messageDigests[sharedPrefixMessages]
-      ) {
-        sharedPrefixMessages += 1;
-      }
+    const limit = Math.min(this.#state.messageDigests.length, messageDigests.length);
+    while (
+      sharedPrefixMessages < limit &&
+      this.#state.messageDigests[sharedPrefixMessages] === messageDigests[sharedPrefixMessages]
+    ) {
+      sharedPrefixMessages += 1;
     }
     const frozenPrefixBreak =
       previousStableInput !== undefined &&
@@ -73,6 +67,7 @@ export class CacheChainTracker {
           ? 0
           : sharedPrefixMessages
         : undefined,
+      ...(sharedPrefixMessages < this.#state.messageDigests.length ? { messageBreakIndex: sharedPrefixMessages } : {}),
       stableInputDigest,
       sharedPrefixDigest: digest(
         JSON.stringify({
@@ -98,7 +93,7 @@ export class CacheChainTracker {
     ])].filter(key => previous.parameterDigests[key] !== projection.parameterDigests[key]).sort() : [];
     if (previous && previous.format !== projection.format) changedParameters.unshift("projection_format");
     let shared = 0;
-    if (previous && !changedParameters.length) {
+    if (previous) {
       while (shared < Math.min(previous.inputDigests.length, projection.inputDigests.length) &&
         previous.inputDigests[shared] === projection.inputDigests[shared]) shared++;
     }
@@ -113,7 +108,8 @@ export class CacheChainTracker {
       messageCount: projection.inputDigests.length,
       previousMessageCount: previous?.inputDigests.length ?? 0,
       sharedPrefixMessages: shared, appendedMessages: projection.inputDigests.length - shared,
-      frozenPrefixBreak, ...(frozenPrefixBreak ? { breakIndex: shared } : {}),
+      frozenPrefixBreak, ...(frozenPrefixBreak ? { breakIndex: changedParameters.length ? 0 : shared } : {}),
+      ...(previous && shared < previous.inputDigests.length ? { messageBreakIndex: shared } : {}),
       stableInputDigest,
       sharedPrefixDigest: digest(JSON.stringify(projection.inputDigests.slice(0, shared))),
     };

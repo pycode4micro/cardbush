@@ -9,6 +9,8 @@ export const appViewFiles = [
   'src/features/chat/WelcomeComposer.tsx',
   'src/components/TopBar.tsx',
   'src/components/WindowSidebarToggle.tsx',
+  'src/components/WindowFrame.tsx',
+  'src/features/windowMenu/applicationMenus.ts',
   'src/features/interactions/InteractionCard.tsx',
   'src/features/inspector/inspectorTargets.ts',
   'src/features/inspector/InspectorWebview.tsx',

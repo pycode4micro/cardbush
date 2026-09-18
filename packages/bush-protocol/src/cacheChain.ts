@@ -37,6 +37,8 @@ export const cacheChainObservationPayloadSchema = z.object({
   appendedMessages: z.number().int().nonnegative(),
   frozenPrefixBreak: z.boolean(),
   breakIndex: z.number().int().nonnegative().optional(),
+  // Independent message boundary, even when a parameter change also breaks at 0.
+  messageBreakIndex: z.number().int().nonnegative().optional(),
   stableInputDigest: z.string().min(1),
   sharedPrefixDigest: z.string().min(1),
 });

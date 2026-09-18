@@ -161,6 +161,8 @@ export function conversationWorkspaceRoot(conversation?: ConversationSummary | n
   return (
     conversationProjectDir(conversation) ||
     conversation?.workspaceContext?.executionRoot?.trim() ||
+    conversation?.workspaceContext?.taskDir?.trim() ||
+    metadataText(conversation, 'task_dir', 'taskDir', 'session_workspace_dir', 'sessionWorkspaceDir') ||
     ''
   );
 }

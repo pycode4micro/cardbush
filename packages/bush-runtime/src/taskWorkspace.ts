@@ -5,6 +5,7 @@ import { canonicalStoragePath } from "@cardbush/platform";
 import { chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceCheckpoint, WorkspaceDescriptor, WorkspaceReview } from "@cardbush/bush-protocol";
+import { WORKSPACE_REVIEW_TURN_LIMIT } from "@cardbush/bush-protocol";
 import { GitWorkspaceStore, decodeGitPaths, mapFiles, type GitFileEntry, type GitFileTree } from "./gitWorkspaceStore.js";
 import { MAX_IN_PROCESS_FILE_BYTES, readFileBounded } from "./workspaceFileRead.js";
 
@@ -18,6 +19,7 @@ type State = WorkspaceDescriptor & {
   baselineId: string;
   latestId: string;
   appliedId: string;
+  reviewSnapshotId?: string;
   checkpoints: Checkpoint[];
   pending?: Transaction;
   disposal?: "discard" | "use_direct";
@@ -259,6 +261,10 @@ export class TaskWorkspaceManager {
           const current = await this.#saveSnapshot(state, await this.#capture(state, state.workspaceDir, await this.#snapshot(state, state.latestId)));
           snapshotId = current;
           changes = await this.#changes(state, state.appliedId, current, "task");
+          if (state.reviewSnapshotId !== current) {
+            state.reviewSnapshotId = current;
+            await this.#save(state);
+          }
         } catch (caught) { error = (caught as Error).message; }
       }
       return { workspace: this.#descriptor(state), checkpoints, changes, ...(error ? { error } : {}), snapshotId };
@@ -286,7 +292,7 @@ export class TaskWorkspaceManager {
       const selected: Checkpoint[] = [];
       for (const turnId of [...new Set(turnIds)]) {
         const checkpoint = state.checkpoints.find(item => item.turnId === turnId);
-        if (!checkpoint) throw problem("workspace_checkpoint_missing", `No workspace checkpoint exists for Turn ${turnId}.`);
+        if (!checkpoint) throw problem("workspace_checkpoint_expired", "Only the current and previous Turn can be reverted or restored.");
         if (checkpoint.status === (reverted ? "reverted" : "complete")) continue;
         if (checkpoint.status !== (reverted ? "complete" : "reverted") || !checkpoint.after) throw problem("workspace_checkpoint_pending", "An incomplete checkpoint cannot be reverted or restored.");
         const before = await this.#snapshot(state, checkpoint.before), after = await this.#snapshot(state, checkpoint.after);
@@ -617,8 +623,19 @@ export class TaskWorkspaceManager {
       });
       changes.push(...batchChanges as WorkspaceChange[]);
     }
-    if (this.#changeViews.size >= 128) this.#changeViews.delete(this.#changeViews.keys().next().value!);
-    this.#changeViews.set(key, changes as WorkspaceChange[]);
+    // Count retained payload bytes as well as entries. Two large Turns must not
+    // turn the diff cache into another unbounded snapshot store.
+    const bytes = JSON.stringify(changes).length * 2;
+    const budget = 8 * 1024 * 1024;
+    if (bytes <= budget) {
+      let retainedBytes = [...this.#changeViews.values()].reduce((total, value) => total + JSON.stringify(value).length * 2, 0);
+      while (this.#changeViews.size && (this.#changeViews.size >= 8 || retainedBytes + bytes > budget)) {
+        const oldest = this.#changeViews.keys().next().value!;
+        retainedBytes -= JSON.stringify(this.#changeViews.get(oldest)).length * 2;
+        this.#changeViews.delete(oldest);
+      }
+      this.#changeViews.set(key, changes);
+    }
     return project(changes as WorkspaceChange[]);
   }
 
@@ -638,7 +655,10 @@ export class TaskWorkspaceManager {
       throw problem("workspace_journal_corrupt", "Workspace identity does not match its persisted owner.");
     }
     if (state.protocol !== "bush.task_workspace.v2") {
+      state.checkpoints = state.checkpoints.slice(-WORKSPACE_REVIEW_TURN_LIMIT);
       await this.#migrate(state);
+      await this.#save(state);
+    } else if (state.checkpoints.length > WORKSPACE_REVIEW_TURN_LIMIT) {
       await this.#save(state);
     }
     return state;
@@ -666,7 +686,22 @@ export class TaskWorkspaceManager {
     const commonDir = async (path: string) => realpath((await this.#git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).toString("utf8").trim());
     if (await commonDir(expected) !== await commonDir(state.sourceDir)) throw problem("workspace_owner_mismatch", "The task copy no longer belongs to its source Git repository.");
   }
-  async #save(state: State) { await this.#atomicJson(join(this.#directory(state.sessionId), "state.json"), state); }
+  async #save(state: State) {
+    state.checkpoints = state.checkpoints.slice(-WORKSPACE_REVIEW_TURN_LIMIT);
+    await this.#atomicJson(join(this.#directory(state.sessionId), "state.json"), state);
+    // Publish the retained state before releasing reachability. A failed cleanup
+    // may leave extra private refs, but must never strand a committed checkpoint.
+    if (state.versioning === "git") {
+      const retained = new Set([state.baselineId, state.latestId, state.appliedId, state.reviewSnapshotId,
+        state.pending?.before, state.pending?.after,
+        ...state.checkpoints.flatMap(checkpoint => [checkpoint.before, checkpoint.after])].filter((id): id is string => Boolean(id)));
+      for (const key of this.#changeViews.keys()) {
+        const [sessionId, , before, after] = JSON.parse(key) as string[];
+        if (sessionId === state.sessionId && (!retained.has(before) || !retained.has(after))) this.#changeViews.delete(key);
+      }
+      await this.#store(state).retainSnapshots(retained).catch(error => console.warn("Workspace snapshot ref cleanup will retry on the next save:", error));
+    }
+  }
   #store(state: State) {
     let store = this.#stores.get(state.sessionId);
     if (!store) {

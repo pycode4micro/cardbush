@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, sta
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
 import { safePackagePath } from './pluginPackagePaths';
+import { pluginRuntimeFingerprint } from './pluginRuntimeFingerprint';
 
 import type {
   CardbushPluginCatalogEntry,
@@ -173,10 +174,16 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
     const { manifest, registeredApps } = await resolvePluginManifest(root);
     const policies = objectOrEmpty(plugin.config.mcp_servers);
     const declarations = objectOrEmpty(manifest.mcpServers);
+    let implementationFingerprint: string | undefined;
     for (const name of new Set([...Object.keys(declarations), ...Object.keys(registeredApps)])) {
       const settings = objectOrEmpty(policies[name]);
       const configured = resolvePluginMcpConnection(plugin.id, name, root, declarations, registeredApps, settings, standalone);
-      if (configured) servers.push(configured);
+      if (configured) {
+        if (configured.transport.kind === 'stdio') {
+          implementationFingerprint ??= await pluginRuntimeFingerprint(root, plugin.version);
+          servers.push({ ...configured, implementationFingerprint });
+        } else servers.push(configured);
+      }
     }
   }
   if (new Set(servers.map(server => server.id)).size !== servers.length) throw new Error('Plugin MCP server IDs collide after namespacing.');

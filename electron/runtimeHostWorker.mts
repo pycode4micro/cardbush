@@ -704,18 +704,18 @@ const pluginRoots = pluginRootsFromEnvironment();
 const automation = runtimeStateRoot ? new AutomationScheduler({
   path: join(runtimeStateRoot, 'scheduler', 'automations.json'),
   canRun: sessionId => !host.hasActiveSession(sessionId),
+  sessionExists: sessionId => host.hasSession(sessionId),
   changed: () => { void mcpHost.request('automation.changed', {}).catch(() => {}); },
   onError: error => process.stderr.write(`${JSON.stringify({ code: 'automation_error', message: errorMessage(error) })}\n`),
   run: async (job, run, context, signal) => {
     signal.throwIfAborted();
-    const session = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: job.sessionId } }, signal);
-    if (!session) throw new Error('The target conversation was removed.');
     const sessionId = run.sessionId ?? job.sessionId;
+    if (sessionId === job.sessionId && !host.hasSession(sessionId)) throw new Error('The target conversation was removed.');
     if (sessionId !== job.sessionId) {
       const workspaceDir = String(context.metadata.workspaceDir || context.metadata.projectDir || '');
       await host.sendCommand({ kind: 'runtime.create_session', payload: { sessionId,
         metadata: { title: `${job.name} · ${new Date(run.queuedAt).toLocaleString('zh-CN', { timeZone: job.timeZone })}`,
-          automationId: job.id, automationRunId: run.id, automationSourceSessionId: job.sessionId,
+          automationId: job.id, automationRunId: run.id, automationSourceSessionId: job.sessionId, hidden: true,
           ...(context.metadata.projectDir ? { projectDir: context.metadata.projectDir } : {}) },
         ...(workspaceDir ? { workspace: { mode: 'direct', sourceDir: workspaceDir } } : {}),
       } }, signal);
@@ -726,15 +726,20 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
     }
     const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number }>('automation.prepare-model', { modelId: context.providerBinding?.bindingId ?? context.model }, signal);
     signal.throwIfAborted();
-    const allowed = new Set(context.tools.map(tool => tool.name));
+    const available = new Map(toolRegistry.definitions().map(tool => [tool.name, tool]));
+    const activatedAt = run.startedAt ?? run.queuedAt;
     const request = runtimeSessionTurnRequestSchema.parse({ ...context,
       protocol: 'bush.session_turn_request.v1', sessionId, turnId: run.turnId, requestId: `request_${run.id}`,
       model: selected.model, providerBinding: selected.binding,
       maxOutputTokens: selected.maxOutputTokens ?? context.maxOutputTokens,
-      tools: toolRegistry.definitions().filter(tool => allowed.has(tool.name)),
-      prefixMessages: [...context.prefixMessages, { role: 'developer', name: 'automation_context', content:
-        `This turn was activated by the saved automation ${JSON.stringify(job.name)}. Trigger: ${run.reason}. Current time: ${new Date().toISOString()}. Time zone: ${job.timeZone}. Execute its saved prompt in this conversation. Do not infer a request to create further automations. Existing permissions still apply.` }],
-      inputMessages: [{ messageId: `message_${run.id}`, createdAt: new Date().toISOString(), message: { role: 'user', name: 'automation_prompt', content: job.prompt } }],
+      // Refresh availability/definitions without changing the source conversation's order.
+      tools: context.tools.flatMap(tool => { const current = available.get(tool.name); return current ? [current] : []; }),
+      prefixMessages: context.prefixMessages,
+      inputMessages: [
+        { messageId: `context_${run.id}`, createdAt: activatedAt, message: { role: 'developer', name: 'automation_context', content:
+          `This turn was activated by the saved automation ${JSON.stringify(job.name)}. Run: ${run.id}. Trigger: ${run.reason}. Activated at: ${activatedAt}. Time zone: ${job.timeZone}. Execute its saved prompt in this conversation. Do not infer a request to create further automations. Existing permissions still apply.` } },
+        { messageId: `message_${run.id}`, createdAt: activatedAt, message: { role: 'user', name: 'automation_prompt', content: job.prompt } },
+      ],
       sessionMetadata: {},
       metadata: { ...context.metadata, automationRunId: run.id, automationId: job.id,
         ...(selected.maxContextTokens ? { maxContextTokens: selected.maxContextTokens } : {}) },

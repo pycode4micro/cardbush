@@ -59,16 +59,21 @@ async function buildViews() {
     'src/features/chatMessages/MessageBubble.tsx',
     'src/features/appearance/useVisualThemeContext.ts',
     'src/features/chatMessages/FileMemoReference.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal' ? [
+      'src/features/chatMessages/InlineMedia.tsx', 'src/features/chat/chatScrollMotion.ts',
+    ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' ? [
       'src/backend/runtimeSessionMessageProjection.ts', 'src/features/chatMessages/transcript/messageProjection.ts',
     ] : []),
     'src/features/tools/WorkspaceChangeStateContext.ts',
     'src/features/tools/toolChangeReports.ts',
+    'src/features/sidebar/reviewCommentModel.ts',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' ? ['src/ShadowWindow.tsx'] : []),
     'src/features/inspector/InspectorErrorBoundary.tsx',
     'src/features/composer/queueOrdering.ts',
     'src/features/settings/SettingsKeyboardPanel.tsx',
     'src/features/shortcuts/useKeyboardShortcuts.ts',
+    'src/features/shortcuts/keyboardShortcuts.ts',
     'src/features/shortcuts/usePreviousConversationShortcut.ts',
     'src/features/search/ConversationSearchDialog.tsx',
     'src/features/search/useConversationSearch.ts',
@@ -113,7 +118,7 @@ app.whenReady().then(async () => {
     show: false, width: 1200, height: 800,
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: process.env.CARDBUSH_APP_VIEWS_CASE === 'html-references',
+      webviewTag: ['html-references', 'html-lifecycle', 'media-reveal'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -138,7 +143,13 @@ app.whenReady().then(async () => {
     throw new Error('Timed out: ' + label + '\n' + await run('document.body.innerText') + '\nRenderer errors: ' + await run('JSON.stringify(window.failures ?? [])'));
   };
   try {
-    await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal') {
+      const host = path.join(root, 'tmp', 'media-reveal-host.html');
+      fs.mkdirSync(path.dirname(host), { recursive: true });
+      fs.writeFileSync(host, '<html><body><div id="root"></div></body></html>');
+      await window.loadFile(host);
+      fs.unlinkSync(host);
+    } else await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
     await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/theme.css'), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8'));
     await run(`
       window.failures = [];
@@ -194,6 +205,18 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal') {
+      await require('./helpers/media-reveal.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no media reveal renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-lifecycle') {
+      await require('./helpers/html-preview-lifecycle.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no HTML lifecycle renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-references') {
       await require('./helpers/html-references.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no HTML reference renderer errors');
@@ -203,6 +226,18 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews') {
       await require('./helpers/loop-execution-previews.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no loop preview renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-comments') {
+      await require('./helpers/review-comments.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no review comment renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-file-nav') {
+      await require('./helpers/review-file-nav.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no review file navigation renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
@@ -224,7 +259,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['tool-disclosure', 'tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -471,6 +506,14 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'guidance-rendering') {
       assert.deepEqual(await run('failures'), [], 'no guidance renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'tool-disclosure') {
+      await require('./helpers/chat-tool-disclosure.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'tool-disclosure') {
+      assert.deepEqual(await run('failures'), [], 'no tool disclosure renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

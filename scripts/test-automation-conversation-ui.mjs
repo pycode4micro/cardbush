@@ -10,11 +10,15 @@ const local = file => resolve(file).replaceAll('\\', '/');
 const source = `
 import React, {useState} from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationRunPanel} from '${local('src/features/automations/AutomationRunPanel.tsx')}';
+import {projectRuntimeTurnMessages} from '${local('src/backend/runtimeSessionMessageProjection.ts')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
 const now=new Date().toISOString();
 window.calls=[];window.listeners=new Set();window.observers=new Set();window.aborts=0;window.opened=[];
-window.detail={job:{id:'plan',name:'每日简报',prompt:'检查最新结果',sessionId:'source',runs:[]},run:{id:'run',turnId:'scheduled-turn',sessionId:'scheduled-session',status:'completed',queuedAt:now,finishedAt:now},sessionId:'scheduled-session',model:'fixture-model',permissionMode:'task_free',allowedTools:['read_file'],interactiveRequests:true,vision:true};
+window.detail={job:{id:'plan',name:'每日简报',prompt:'检查最新结果',sessionId:'source',runs:[]},run:{id:'run',turnId:'scheduled-turn',sessionId:'scheduled-session',status:'completed',queuedAt:now,finishedAt:now},sessionId:'scheduled-session',sourceSession:{id:'source',title:'来源会话'},executionSessionAvailable:true,model:'fixture-model',permissionMode:'task_free',allowedTools:['read_file'],interactiveRequests:true,vision:true};
 window.historyMessages=[{id:'scheduled-user',role:'user',turnId:'scheduled-turn',content:'检查最新结果',createdAt:now,conversationId:'scheduled-session'},{id:'scheduled-answer',role:'assistant',turnId:'scheduled-turn',content:'**简报已完成**。还有两项需要确认。\\n\\n| 项目 | 状态 |\\n| --- | --- |\\n| 构建 | 通过 |',createdAt:now,conversationId:'scheduled-session',status:'completed'}];
+const sentMessages=[{role:'user',content:'检查最新结果'}, {role:'user',name:'automation_unread_reminder',visibility:'internal',content:'HIDDEN_INBOX_SNAPSHOT'}, {role:'assistant',content:historyMessages[1].content,toolCalls:[]}];
+const projected=projectRuntimeTurnMessages({turnId:'scheduled-turn',turnSequence:1,status:'completed',reason:'done',createdAt:now,completedAt:now,usage:{},messages:sentMessages.map((message,index)=>({messageId:'projection-'+index,turnId:'scheduled-turn',turnSequence:1,messageIndex:index,createdAt:now,message}))},'scheduled-session');
+if(projected.length!==2||projected.some(message=>message.content==='HIDDEN_INBOX_SNAPSHOT'))throw Error('Internal observations must remain hidden in the conversation projection');
 window.notify=()=>{for(const fn of listeners)fn()};
 window.cardbushDesktop={automationCommand:async command=>{calls.push(command);if(command.action==='conversation')return structuredClone(detail);if(command.action==='mark_read')detail.run.readAt=now;if(command.action==='mark_unread')delete detail.run.readAt;notify();return{}},onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}};
 const start=request=>{request.onStart?.({sessionId:'scheduled-session',turnId:'follow-up',userMessageId:'follow-user',userMessageMetadata:{automationReminder:{asOf:now,total:1,items:[{jobId:'plan',runId:'run',title:'每日简报',status:'completed'}]}}});request.onDelta?.('正在解释结果',{messageId:'follow-answer',turnId:'follow-up',createdAt:now});};

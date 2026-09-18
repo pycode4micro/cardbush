@@ -133,7 +133,7 @@ function buildToolChangeReport(
   };
 }
 
-export function changeReportsFromMessages(messages: ChatMessage[]): ConversationChangeReport[] {
+export function changeReportsFromMessages(messages: ChatMessage[], retainedTurnIds?: ReadonlySet<string>): ConversationChangeReport[] {
   const reports: ConversationChangeReport[] = [];
   const userTurnByTurnId = new Map<
     string,
@@ -151,6 +151,7 @@ export function changeReportsFromMessages(messages: ChatMessage[]): Conversation
     for (const nested of message.loopHistory ?? []) {
       appendMessageReport(nested, fallbackIndex);
     }
+    if (retainedTurnIds && !retainedTurnIds.has(message.turnId?.trim() ?? '')) return;
     const executions = (message.toolExecutions ?? []).filter((execution, index) => {
       const identity = execution.id.trim() || [
         message.turnId ?? '',

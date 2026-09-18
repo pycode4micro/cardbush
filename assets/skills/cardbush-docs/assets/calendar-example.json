@@ -1,0 +1,11 @@
+{
+  "protocol": "cardbush.calendar.v1",
+  "id": "example-anniversaries",
+  "name": "纪念日示例",
+  "source": "演示数据，可移除",
+  "timeZone": "Asia/Shanghai",
+  "entries": [
+    { "id": "anniversary-2026", "date": "2026-09-25", "title": "家庭纪念日", "kind": "note", "description": "农历八月十五，示例日期。" },
+    { "id": "exhibition-2026", "date": "2026-10-10", "endDate": "2026-10-13", "title": "展览", "kind": "event", "description": "10日至12日" }
+  ]
+}

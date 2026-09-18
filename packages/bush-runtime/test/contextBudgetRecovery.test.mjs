@@ -51,7 +51,12 @@ function harness(t, stream, options = {}) {
   const observed = [];
   const provider = { countInputTokens: options.count ?? (async request => ({
     inputTokens: hasCommittedCheckpoint(request) ? 500 : 260000, source: 'provider' })),
-    async *stream(request) { observed.push(structuredClone(request)); yield *stream(request, observed.length, store); } };
+    async *stream(request) {
+      for (const message of request.messages.filter(m => ['context_pressure', 'context_compaction_correction'].includes(m.name))) {
+        assert.equal(message.role, 'developer', 'New maintenance instructions must not masquerade as user turns.');
+      }
+      observed.push(structuredClone(request)); yield *stream(request, observed.length, store);
+    } };
   const host = new InMemoryRuntimeHost({ provider, sessionStore: store, registerDefaultWorkspaceTools: false,
     ...(options.toolRegistry ? { toolRegistry: options.toolRegistry } : {}) });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));

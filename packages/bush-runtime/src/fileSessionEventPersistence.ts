@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { boundedJournalLines } from './boundedJournalLines.js';
+import { cacheFiles } from './cacheMaintenance.js';
 import {
   chmodSync,
   closeSync,
@@ -16,7 +18,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import { sessionEventSchema, type SessionEvent } from "@cardbush/bush-protocol";
 
-import type { SessionEventPersistence } from "./sessionStore.js";
+import type { SessionEventPersistence, SessionMetadataEntry } from "./sessionStore.js";
 
 const RECORD_PROTOCOL = "bush.session_event_record.v1" as const;
 
@@ -48,6 +50,7 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
   readonly #root: string;
   readonly #onRecoveryIssue?: FileSessionEventPersistenceOptions["onRecoveryIssue"];
   readonly #descriptors = new Map<string, number>();
+  readonly #metadata = new Map<string, { size: number; mtimeMs: number; entry: SessionMetadataEntry }>();
 
   constructor(options: FileSessionEventPersistenceOptions) {
     const root = String(options.root || "").trim();
@@ -95,6 +98,41 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     const descriptor = this.#descriptor(path);
     writeSync(descriptor, `${record}\n`, undefined, "utf8");
     fsyncSync(descriptor);
+    this.#metadata.delete(path);
+  }
+
+  async listMetadata(skip: Set<string>, signal?: AbortSignal): Promise<SessionMetadataEntry[]> {
+    const ignored = new Set([...skip].map(id => this.#path(id)));
+    const entries: SessionMetadataEntry[] = [];
+    const files = await cacheFiles(this.#root, name => /^[a-f0-9]{64}\.jsonl$/.test(name));
+    const paths = new Set(files.map(file => file.path));
+    for (const key of this.#metadata.keys()) if (!paths.has(key)) this.#metadata.delete(key);
+    for (const file of files) {
+      const path = file.path;
+      signal?.throwIfAborted();
+      if (ignored.has(path)) continue;
+      const source = { size: file.bytes, mtimeMs: file.mtimeMs };
+      const cached = this.#metadata.get(path);
+      if (cached?.size === source.size && cached.mtimeMs === source.mtimeMs) { entries.push(structuredClone(cached.entry)); continue; }
+      let entry: SessionMetadataEntry | undefined;
+      let lineNumber = 0;
+      for await (const line of boundedJournalLines(path, { end: source.size, maxBytes: 1024 * 1024, signal,
+        skip: prefix => prefix.includes(',"payload":') && !/"kind":"session_(?:created|metadata_updated)"/.test(prefix.split(',"payload":')[0]!),
+      })) {
+        lineNumber++;
+        // The serialized envelope precedes payload; never parse large committed Turns just to find their project.
+        const envelope = line.prefix.split(',"payload":')[0]!;
+        if (!/"kind":"session_(?:created|metadata_updated)"/.test(envelope)) continue;
+        if (!line.text) throw new SessionJournalCorruptionError(path, lineNumber, 'Session metadata is too large to inspect.');
+        const raw = JSON.parse(line.text);
+        const sessionId = raw.event?.sessionId;
+        if (typeof sessionId !== 'string' || this.#path(sessionId) !== path) throw new SessionJournalCorruptionError(path, lineNumber, 'session identity mismatch');
+        const event = this.#decode(path, lineNumber, line.text, sessionId);
+        if (event.kind === 'session_created' || event.kind === 'session_metadata_updated') entry = { sessionId, metadata: event.payload.metadata ?? {} };
+      }
+      if (entry) { this.#metadata.set(path, { size: source.size, mtimeMs: source.mtimeMs, entry }); entries.push(structuredClone(entry)); }
+    }
+    return entries;
   }
 
   listSessionIds(): string[] {
@@ -123,6 +161,7 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
 
   remove(sessionId: string): boolean {
     const path = this.#path(sessionId);
+    this.#metadata.delete(path);
     const descriptor = this.#descriptors.get(path);
     if (descriptor !== undefined) {
       closeSync(descriptor);
@@ -136,6 +175,7 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
   close(): void {
     for (const descriptor of this.#descriptors.values()) closeSync(descriptor);
     this.#descriptors.clear();
+    this.#metadata.clear();
   }
 
   #decode(path: string, line: number, value: string, sessionId: string): SessionEvent {

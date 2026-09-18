@@ -81,7 +81,9 @@ export class CoordinationStore {
     );
     const nextIds = new Set(plan.nodes.flatMap((node) => (node.id ? [node.id] : [])));
     const removedIds = [...previousIds].filter((id) => !nextIds.has(id));
-    if (removedIds.length > 0 && request.scopeChangeReason.trim().length === 0) {
+    // A recorded completed plan no longer has scope to abandon. A later Tool
+    // update may replace it without pretending to remove unfinished work.
+    if (before?.plan.active && removedIds.length > 0 && request.scopeChangeReason.trim().length === 0) {
       throw new Error(
         "Removing Plan nodes requires an explicit scopeChangeReason.",
       );

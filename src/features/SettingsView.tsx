@@ -2138,7 +2138,7 @@ const emptyMcpDraft: McpServerDraft = {
   headersText: '{}',
 };
 
-function McpServersPanel({
+export function McpServersPanel({
   initialServerId,
   language,
   capabilities,

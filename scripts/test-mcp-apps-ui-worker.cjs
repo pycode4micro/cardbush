@@ -267,13 +267,14 @@ app.whenReady().then(async () => {
       await until('!document.querySelector(".image-preview-dialog")');
     }
     await read(`fixtureImage={id:'unavailable',name:'unavailable.png',path:'data:image/png;base64,bm90YW5pbWFnZQ==',type:'image',display:'inline'};renderFixture(true)`);
-    await until('document.querySelector(".tool-image-artifact-button")?.textContent.includes("unavailable.png")');
+    await until('document.querySelector(".tool-image-artifact-button")?.getAttribute("aria-label").includes("unavailable.png")');
     assert.equal(await read('document.querySelector(".message-tool-artifact img,.image-preview-dialog")'), null, 'unopened invalid images never load or show preview errors');
     const deliveredImage = {id:'apple',name:'apple.png',path:'C:\\\\fixture\\\\apple.png',type:'image',display:'inline'};
     const answer = '苹果图片已生成完毕。\n\nC:/fixture/apple.png\n\n尺寸与格式说明。';
     await read(`fixtureImage=${JSON.stringify(deliveredImage)};fixtureContent=${JSON.stringify(answer)};renderFixture(true)`);
-    await until('document.querySelector(".tool-image-artifact-button")?.textContent.includes("apple.png")');
-    assert.equal(await read('document.querySelectorAll(".assistant-active-transcript img").length'), 0, 'loop image references do not duplicate tool previews');
+    await until('document.querySelector(".tool-image-artifact-button")?.getAttribute("aria-label").includes("apple.png")');
+    assert.equal(await read('document.querySelectorAll(".assistant-active-transcript .tool-image-thumbnail img").length'), 1, 'loop retains its compact image thumbnail');
+    assert.equal(await read('Array.from(document.querySelectorAll(".assistant-active-transcript img")).filter(image=>!image.closest(".tool-image-thumbnail")).length'), 0, 'loop image references do not duplicate tool previews');
     await read('renderFixture(false)');
     await until('document.querySelector(".assistant-final-answer img")?.naturalWidth===480');
     assert.equal(await read('document.querySelector(".message-tool-artifact")'), null);
@@ -317,9 +318,9 @@ app.whenReady().then(async () => {
     await read('if(document.querySelector("[data-segment-id=image-round] .tool-execution-summary").getAttribute("aria-expanded")!=="true")document.querySelector("[data-segment-id=image-round] .tool-execution-summary").click()');
     await until('!!document.querySelector("[data-execution-id=generate-image] .tool-execution-row")');
     await read('document.querySelector("[data-execution-id=generate-image] .tool-execution-row").click()');
-    await until('!!document.querySelector("[data-execution-id=generate-image] .tool-image-artifact-button")');
+    await until('!!document.querySelector("[data-segment-id=image-round] .loop-image-previews .tool-image-artifact-button")');
     assert.deepEqual(await read('imageReads'), [], 'opening tool details does not read image data');
-    await read('document.querySelector("[data-execution-id=generate-image] .tool-image-artifact-button").click()');
+    await read('document.querySelector("[data-segment-id=image-round] .loop-image-previews .tool-image-artifact-button").click()');
     await until('document.querySelector(".image-preview-stage")?.getAttribute("aria-busy")==="false"');
     assert.equal(await read('(()=>{const image=document.querySelector(".image-preview-canvas img"),stage=document.querySelector(".image-preview-stage");return image.naturalWidth>0&&image.getBoundingClientRect().width<=stage.clientWidth&&image.getBoundingClientRect().height<=stage.clientHeight})()'),true,'View image opens at the fitted size');
     assert.deepEqual(await read('imageReads'), ['C:/fixture/apple.png'], 'image data is read only after the explicit click');
@@ -350,9 +351,9 @@ app.whenReady().then(async () => {
       await read('if(document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")!=="true")document.querySelector(".tool-execution-summary").click()');
       await until('!!document.querySelector("[data-execution-id=generate-image] .tool-execution-row")');
       await read('if(document.querySelector("[data-execution-id=generate-image] .tool-execution-row").getAttribute("aria-expanded")!=="true")document.querySelector("[data-execution-id=generate-image] .tool-execution-row").click()');
-      await until('!!document.querySelector("[data-execution-id=generate-image] .tool-image-artifact-button")');
+      await until('!!document.querySelector("[data-segment-id=image-round] .loop-image-previews .tool-image-artifact-button")');
       assert.equal(await read('document.querySelector(".message-tool-artifact img,.image-preview-dialog")'), null, status+' transcripts keep images closed');
-      assert.equal(await read('!!document.querySelector("[data-execution-id=generate-image] .tool-image-artifact-button")'), true, status+' transcripts keep the image entry available');
+      assert.equal(await read('!!document.querySelector("[data-segment-id=image-round] .loop-image-previews .tool-image-artifact-button")'), true, status+' transcripts keep the image entry available');
       assert.deepEqual(await read('imageReads'), ['C:/fixture/apple.png'], status+' transcripts do not load images when details reopen');
     }
     await read('clearFixture()');await read('renderFixture(false)');

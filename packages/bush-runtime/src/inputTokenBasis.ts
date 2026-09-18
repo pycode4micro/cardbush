@@ -102,7 +102,7 @@ export function runtimeInputTokenProjection(candidate: ModelRequest): ProviderIn
       const { providerReplay: _replay, ...canonical } = message;
       return canonical;
     }
-    if (message.role === 'user' && message.images) {
+    if ('images' in message && message.images) {
       return { ...message, images: message.images.map(image => ({ detail: image.detail })) };
     }
     return message;
@@ -110,7 +110,7 @@ export function runtimeInputTokenProjection(candidate: ModelRequest): ProviderIn
   const shape = { model: request.model, messages, tools: request.tools,
     reasoningEffort: request.reasoningEffort, requestCapabilities: request.requestCapabilities };
   const images = request.messages.reduce((total, message) =>
-    total + (message.role === 'user' ? message.images?.length ?? 0 : 0), 0);
+    total + ('images' in message ? message.images?.length ?? 0 : 0), 0);
   return { format: 'bush.runtime.input.v1', transport: 'full',
     parameterDigests: { request: inputTokenBasis(request).requestShapeDigest },
     inputDigests: request.messages.map(hash),

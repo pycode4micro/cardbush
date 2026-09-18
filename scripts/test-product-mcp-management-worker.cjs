@@ -37,13 +37,14 @@ async function run() {
   const endpoint = await startProductMcpManagement(() => host);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('CARDBUSH_')));
   const appsConfig = join(root, 'apps.json');
+  const pluginRoot = join(root, 'user-plugins');
   writeFileSync(appsConfig, JSON.stringify({ protocol: 'cardbush.apps_config.v1', revision: 1, serviceEnabled: false, plugins: [] }));
   const controller = new RuntimeUtilityProcessController({
     modulePath: resolve('dist-electron/runtimeHostWorker.mjs'),
     env: { ...env,
       CARDBUSH_RUNTIME_STATE_ROOT: join(root, 'runtime'),
       CARDBUSH_APPS_CONFIG_PATH: appsConfig,
-      CARDBUSH_RUNTIME_SKILL_ROOTS: '[]', CARDBUSH_RUNTIME_PLUGIN_ROOTS: '[]',
+      CARDBUSH_RUNTIME_SKILL_ROOTS: '[]', CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify([{ path: pluginRoot, source: 'user' }]),
       CARDBUSH_MCP_MANAGEMENT_URL: endpoint.url, CARDBUSH_MCP_MANAGEMENT_TOKEN: endpoint.token,
     },
   });
@@ -80,7 +81,7 @@ async function run() {
       requestInit: { headers: { Authorization: `Bearer ${endpoint.token}` } },
     }));
     const fixture = join(root, 'echo.mjs');
-    writeFileSync(fixture, `
+    const fixtureCode = `
       import { existsSync } from 'node:fs';
       import { createRequire } from 'node:module';
       const require = createRequire(${JSON.stringify(resolve('package.json'))});
@@ -92,7 +93,8 @@ async function run() {
         server.registerTool('echo', { inputSchema: {} }, async () => ({ content: [{ type: 'text', text: 'worker connected' }] }));
         return server;
       });
-    `);
+    `;
+    writeFileSync(fixture, fixtureCode);
     const added = await client.callTool({ name: 'configure_mcp_server', arguments: {
       id: 'worker_echo', transport: 'stdio', command: process.execPath, args: [fixture], env: { ELECTRON_RUN_AS_NODE: '1' },
     } });
@@ -118,7 +120,42 @@ async function run() {
     assert.equal(catalog.ok, true, JSON.stringify(catalog));
     assert.ok(catalog.result.some(tool => tool.name === 'mcp__worker_echo__echo'));
     assert.ok(catalog.result.some(tool => tool.name === 'mcp__cardbush_management__configure_mcp_server'));
-    console.log('Real Electron worker passed: management MCP -> Product Host -> persistent config -> Runtime worker -> discovered stdio tool.');
+    assert.ok(catalog.result.some(tool => tool.name === 'mcp__cardbush_management__reconnect_mcp_server'));
+    writeFileSync(fixture, fixtureCode.replace("registerTool('echo'", "registerTool('echo_after_update'"));
+    const reconnect = await client.callTool({ name: 'reconnect_mcp_server', arguments: { id: 'worker_echo' } });
+    assert.notEqual(reconnect.isError, true, JSON.stringify(reconnect));
+    const afterReconnect = await applied();
+    assert.equal(afterReconnect.configurationRevision, 2, 'reconnect leaves saved configuration alone');
+    assert.deepEqual(afterReconnect.servers.find(s => s.id === 'worker_echo').tools.map(t => t.remoteName), ['echo_after_update']);
+
+    const plugin = join(pluginRoot, 'hot');
+    mkdirSync(join(plugin, '.codex-plugin'), { recursive: true });
+    writeFileSync(join(plugin, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const manifest = { name: 'hot', version: '1.0.0', description: 'Worker update fixture', author: { name: 'Fixture' }, mcpServers: './.mcp.json',
+      interface: { displayName: 'Hot', shortDescription: 'Fixture', longDescription: 'Fixture', developerName: 'Fixture', category: 'Tests', logo: './logo.svg' } };
+    writeFileSync(join(plugin, '.codex-plugin', 'plugin.json'), JSON.stringify(manifest));
+    writeFileSync(join(plugin, 'server.mjs'), fixtureCode);
+    writeFileSync(join(plugin, '.mcp.json'), JSON.stringify({ mcpServers: { main: { type: 'stdio', command: process.execPath,
+      args: ['${CARDBUSH_PLUGIN_ROOT}/server.mjs'], env: { ELECTRON_RUN_AS_NODE: '1' } } } }));
+    writeFileSync(appsConfig, JSON.stringify({ protocol: 'cardbush.apps_config.v1', revision: 2, serviceEnabled: true, plugins: [] }));
+    await host.refreshMcp();
+    const beforeUpdate = await applied();
+    assert.deepEqual(beforeUpdate.servers.find(s => s.id === 'plugin_hot_main').tools.map(t => t.remoteName), ['echo']);
+    writeFileSync(join(plugin, 'server.mjs'), fixtureCode.replace("registerTool('echo'", "registerTool('new_music_tool'"));
+    await host.refreshMcp();
+    const afterUpdate = await applied();
+    assert.ok(afterUpdate.revision > beforeUpdate.revision, 'implementation changes advance the worker catalog revision');
+    assert.deepEqual(afterUpdate.servers.find(s => s.id === 'plugin_hot_main').tools.map(t => t.remoteName), ['new_music_tool']);
+    assert.deepEqual(afterUpdate.servers.find(s => s.id === 'worker_echo').tools.map(t => t.remoteName), ['echo_after_update']);
+    manifest.version = '1.1.0';
+    writeFileSync(join(plugin, '.codex-plugin', 'plugin.json'), JSON.stringify(manifest));
+    await host.refreshMcp();
+    const afterVersion = await applied();
+    assert.ok(afterVersion.revision > afterUpdate.revision);
+    const pluginReconnect = await client.callTool({ name: 'reconnect_mcp_server', arguments: { id: 'plugin_hot_main' } });
+    assert.notEqual(pluginReconnect.isError, true, JSON.stringify(pluginReconnect));
+    assert.equal((await applied()).servers.find(s => s.id === 'plugin_hot_main').health, 'ready');
+    console.log('Real Electron worker passed: management tools, targeted reconnect, unchanged saved config, source/version-only plugin replacement and new tool discovery without restarting the worker.');
   } finally {
     writeFileSync(gate, 'ready');
     clearTimeout(deadline);

@@ -16,7 +16,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     views.saveKeyboardShortcuts({}); showKeyboardSettings('zh'); void 0;`);
   await until("!!document.querySelector('[data-keyboard-settings]')", 'keyboard settings');
   try {
-    assert.equal(await run("document.querySelectorAll('[data-shortcut-row]').length"), 13);
+    assert.equal(await run("document.querySelectorAll('[data-shortcut-row]').length"), await run('views.shortcutDefinitions.length'));
     assert.equal(await run("document.querySelector('[data-shortcut-recorder=previousConversation] kbd').textContent"), 'Ctrl + Tab');
     await run("document.querySelector(keyboardRecorder('previousConversation')).click()");
     await until("document.querySelector('[data-shortcut-recorder=previousConversation]').classList.contains('recording')", 'shortcut recording ready');
@@ -121,15 +121,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run("showKeyboardSettings('zh')");
     await until("!!document.querySelector('[data-keyboard-settings]')", 'settings after default key test');
     await run(`document.querySelector(keyboardRecorder('openFiles')).click()`); await pause(25);
-    await run(`shortcutKey(keyboardRecorder('openFiles'), 'o', { ctrlKey: true })`);
-    await until("document.querySelector('[data-shortcut-recorder=openFiles]').textContent === 'Ctrl + O'", 'file shortcut remapped');
+    await run(`shortcutKey(keyboardRecorder('openFiles'), 'p', { ctrlKey: true, shiftKey: true })`);
+    await until("document.querySelector('[data-shortcut-recorder=openFiles]').textContent === 'Ctrl + Shift + P'", 'file shortcut remapped');
     await run(`renderView(h(views.InspectorActions, { language: 'zh', filesAvailable: true, shadowUnavailableReason: '',
       onOpenFiles: () => {}, onOpenBrowser: () => {}, onOpenShadow: () => {} }));`);
-    await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+O'", 'menu hint follows settings');
-    assert.equal(await run("document.querySelector('[data-inspector-action=files]').getAttribute('aria-keyshortcuts')"), 'Control+O');
-    await run(`localStorage.setItem(views.keyboardShortcutsStorageKey, JSON.stringify({openFiles:{key:'l',ctrl:true}}));
+    await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+Shift+P'", 'menu hint follows settings');
+    assert.equal(await run("document.querySelector('[data-inspector-action=files]').getAttribute('aria-keyshortcuts')"), 'Control+Shift+P');
+    await run(`localStorage.setItem(views.keyboardShortcutsStorageKey, JSON.stringify({openFiles:{key:'l',ctrl:true,shift:true}}));
       dispatchEvent(new StorageEvent('storage', { key: views.keyboardShortcutsStorageKey }));`);
-    await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+L'", 'cross-window preference changes');
+    await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+Shift+L'", 'cross-window preference changes');
     console.log('Keyboard UI passed: record/conflict/reset/disable, persistent live bindings, IME/repeat guards, draft and first-queue guidance, retained queue/draft, idle fallback and synchronized menu hints.');
   } finally {
     await run('views.saveKeyboardShortcuts({}); updateChat(keyboardSavedChat)');

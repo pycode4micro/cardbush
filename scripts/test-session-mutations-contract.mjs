@@ -47,17 +47,20 @@ const deleteStart = hook.indexOf('  const deleteConversation = useCallback(');
 const deletion = hook.slice(deleteStart, hook.indexOf('\n  const renameConversation', deleteStart));
 assert.ok(deletion.length > 0);
 for (const rejected of [true, false]) {
-  let conversations = [{ id: 's' }, { id: 'other' }];
+  let conversations = [{ id: 's', title: 'Source conversation' }, { id: 'other' }];
   let messages = { s: ['original'], other: ['other'] };
   let active = 's';
   let error = 'Previous deletion failed';
   let settle;
   let clearedAttention = 0;
+  const confirmations = [];
   const invalidatedReads = [];
   const receipt = new Promise((resolve, reject) => { settle = () => rejected
     ? reject(new Error('An active Session cannot be deleted.')) : resolve(true); });
   const ctx = evaluate(`${deletion}\nglobalThis.run = deleteConversation;`, {
     useCallback: (callback) => callback,
+    conversationsRef: { current: conversations }, localize: (_, english) => english,
+    window: { confirm: text => { confirmations.push(text); return true; } },
     historyReadsRef: { current: { invalidate: id => invalidatedReads.push(['history', id]) } },
     contextUsageReadsRef: { current: { invalidate: id => invalidatedReads.push(['usage', id]) } },
     clearSessionAttention: () => { clearedAttention++; }, setMessageHistoryLoading() {},
@@ -68,6 +71,7 @@ for (const rejected of [true, false]) {
     setError: (value) => { error = value; }, errorMessage: (value) => value.message,
   });
   const pending = ctx.run('s');
+  assert.deepEqual(confirmations, ['Delete “Source conversation”?\nScheduled tasks are unaffected.']);
   assert.equal(error, null, 'retrying deletion clears the previous visible error');
   assert.equal(conversations.length, 2, 'The pending delete stays visible');
   assert.deepEqual(messages.s, ['original']);
@@ -82,4 +86,33 @@ for (const rejected of [true, false]) {
     'Only a confirmed deletion invalidates pending reads for that exact session');
   if (rejected) assert.match(error, /active Session/);
 }
-console.log('Session mutation failure regression tests passed');
+const cancelled = evaluate(`${deletion}\nglobalThis.run = deleteConversation;`, {
+  useCallback: callback => callback, conversationsRef: { current: [{ id: 's', title: '待删除的会话' }] },
+  localize: chinese => chinese, window: { confirm: text => { assert.equal(text, '确定删除会话“待删除的会话”吗？\n定时任务不受影响。'); return false; } },
+  clearSessionAttention: () => assert.fail('Cancel must not alter attention'), setMessageHistoryLoading() {},
+  deleteConversationApi: () => assert.fail('Cancel must not send a deletion command'),
+  setError: () => assert.fail('Cancel must not alter local state'),
+});
+await cancelled.run('s');
+
+const openStart = hook.indexOf('  const openStoredConversation = useCallback(');
+const opening = hook.slice(openStart, deleteStart);
+for (const exists of [true, false]) {
+  let selected, error, loaded = [], requests = [];
+  const ctx = evaluate(`${opening}\nglobalThis.run = openStoredConversation;`, {
+    useCallback: callback => callback,
+    updateConversation: async request => {
+      requests.push(request); if (!exists) throw Error('Conversation does not exist');
+      return { id: request.sessionId, title: 'Temporary execution', metadata: { hidden: false } };
+    },
+    messagesByConversationRef: { current: {} }, setMessageHistoryLoading() {}, clearSessionAttention() {},
+    setConversations: update => { loaded = update(loaded); }, setActiveConversationId: id => { selected = id; },
+    setError: value => { error = value; }, errorMessage: value => value.message,
+  });
+  assert.equal(await ctx.run('execution'), exists);
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [{ sessionId: 'execution', metadata: { hidden: false } }]);
+  assert.equal(selected, exists ? 'execution' : undefined);
+  assert.equal(loaded.length, exists ? 1 : 0, 'a missing session never becomes a phantom conversation');
+  assert.equal(error, exists ? null : 'Conversation does not exist');
+}
+console.log('Session mutation regressions passed: confirmation, cancel without mutation, rejected delete, late receipt and explicit temporary-session promotion.');

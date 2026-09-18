@@ -48,6 +48,7 @@ const exactSkillIconKinds: Readonly<Record<string, SkillIconKind>> = {
   'skill-installer': 'tooling',
   'plugin-creator': 'tooling',
   'cardbush-style-management': 'design',
+  'cardbush-docs': 'document',
 };
 
 const skillIconRules: Array<{

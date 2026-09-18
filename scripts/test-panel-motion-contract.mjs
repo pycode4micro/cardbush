@@ -174,7 +174,10 @@ assert.match(
   /new ResizeObserver\([\s\S]*?scheduleBrowserViewportFit\(120\)[\s\S]*?resizeObserver\.observe\(webview\)/,
   'Inspector browser fitting must follow live panel and window resizing',
 );
-assert.match(app, /handleInspectorShortcut[\s\S]*?matches\('openBrowser'[\s\S]*?matches\('openFiles'[\s\S]*?matches\('openShadow'/);
+for (const shortcut of ['openBrowser', 'openFiles', 'openShadow']) {
+  assert.match(app, new RegExp(`item\\('${shortcut}'[^\\n]*actions\\.${shortcut}, '${shortcut}'`),
+    'Inspector shortcuts and menu clicks must share the same application action');
+}
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
 assert.match(css, /\.right-inspector-add-menu\s*\{/);
@@ -273,9 +276,11 @@ assert.match(
 );
 assert.match(
   summary,
-  /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"/,
-  'Summary hierarchy must keep outputs first, tool activity second, and history next',
+  /className="work-summary-section outputs"[\s\S]*?data-testid="work-summary-subagents"[\s\S]*?data-testid="work-summary-history"/,
+  'Summary hierarchy keeps outputs, subagent dispatches, and history',
 );
+assert.doesNotMatch(summary, /work-summary-tool-list|Tool activity|executions\.length/,
+  'The redundant tool list and count are removed only from the summary');
 assert.doesNotMatch(summary, /ShadowCloneIcon|ShadowTemporaryChat|work-summary-modes/);
 assert.doesNotMatch(
   css,

@@ -1858,7 +1858,31 @@ export function useCardbushChat(
     return optimistic;
   }, [setMessageHistoryLoading]);
 
+  const openStoredConversation = useCallback(async (conversationId: string) => {
+    const normalized = conversationId.trim();
+    if (!normalized) return false;
+    try {
+      // Explicitly opening a temporary execution promotes this existing session;
+      // opening the result inspector alone never puts it in Recent.
+      const conversation = await updateConversation({ sessionId: normalized, metadata: { hidden: false } });
+      setConversations(current => [conversation, ...current.filter(item => item.id !== normalized)]);
+      setMessageHistoryLoading(normalized, messagesByConversationRef.current[normalized] === undefined);
+      setActiveConversationId(normalized);
+      clearSessionAttention(normalized, 'completed');
+      setError(null);
+      return true;
+    } catch (caught) {
+      setError(errorMessage(caught));
+      return false;
+    }
+  }, [clearSessionAttention, setMessageHistoryLoading]);
+
   const deleteConversation = useCallback(async (conversationId: string) => {
+    const title = conversationsRef.current.find(item => item.id === conversationId)?.title || conversationId;
+    if (!window.confirm(localize(
+      `确定删除会话“${title}”吗？\n定时任务不受影响。`,
+      `Delete “${title}”?\nScheduled tasks are unaffected.`,
+    ))) return;
     setError(null);
     try {
       await deleteConversationApi(conversationId);
@@ -1877,7 +1901,7 @@ export function useCardbushChat(
       delete next[conversationId];
       return next;
     });
-  }, [clearSessionAttention, setMessageHistoryLoading]);
+  }, [clearSessionAttention, localize, setMessageHistoryLoading]);
 
   const renameConversation = useCallback(async (conversationId: string, title: string) => {
     const normalizedId = conversationId.trim();
@@ -4066,6 +4090,7 @@ export function useCardbushChat(
     reasoningLevel,
     setReasoningLevel,
     openConversation,
+    openStoredConversation,
     clearConversationSelection,
     prepareConversation,
     startConversation,

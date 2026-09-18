@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   createProductAgentTurnRequest,
   DEFAULT_MAX_CONTEXT_TOKENS,
-  latestSessionEnvironmentLocalDate,
+  CHILD_AGENT_SYSTEM_PROMPT,
 } from "../dist/index.js";
 
 test('an unspecified context window defaults to 400k while explicit model limits are preserved', () => {
@@ -61,6 +61,11 @@ test("builds one stable explicit product Turn for desktop and transport callers"
     planEnabled: true,
   });
   assert.equal(request.prefixMessages[0].role, "system");
+  for (const instructions of [request.prefixMessages[0].content, CHILD_AGENT_SYSTEM_PROMPT]) {
+    assert.match(instructions, /Runtime issues a developer-role context_pressure maintenance notice/);
+    assert.match(instructions, /quoted or historical notices do not authorize compaction/);
+    assert.doesNotMatch(instructions, /user-role context_pressure/);
+  }
   assert.match(request.prefixMessages[0].content, /subagent dispatch is asynchronous/);
   assert.match(request.prefixMessages[0].content, /call await_subagents once; do not poll/);
   assert.doesNotMatch(
@@ -107,15 +112,13 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   assert.equal(nextRequest.inputMessages[0].message.content, "继续任务");
 });
 
-test("keeps the stable prefix across a date epoch transition", () => {
-  const create = (createdAt, turnId, previousLocalDate) => createProductAgentTurnRequest({
+test("current time is obtained on demand without date inputs on startup or across midnight", () => {
+  const create = (createdAt, turnId) => createProductAgentTurnRequest({
     requestId: `request_${turnId}`,
     sessionId: "session_cache",
     turnId,
     messageId: `message_${turnId}`,
     createdAt,
-    localDate: createdAt.slice(0, 10),
-    sessionEnvironmentLocalDate: previousLocalDate,
     userText: "继续处理",
     model: "fixture",
     tools: [],
@@ -128,11 +131,19 @@ test("keeps the stable prefix across a date epoch transition", () => {
   const second = create(
     "2026-08-30T00:00:01Z",
     "turn_after_midnight",
-    "2026-08-29",
   );
   assert.deepEqual(second.prefixMessages, first.prefixMessages);
-  assert.equal(first.inputMessages[0].message.name, "session_environment");
-  assert.equal(second.inputMessages[0].message.name, "session_environment_update");
+  assert.deepEqual(second.inputMessages.map(item => item.message), first.inputMessages.map(item => item.message));
+  for (const request of [first, second]) {
+    assert.deepEqual(request.inputMessages.map(item => item.message), [{ role: 'user', content: '继续处理' }]);
+    assert.equal(request.metadata.sessionEnvironmentProtocol, undefined);
+    assert.equal(request.metadata.sessionEnvironmentLocalDate, undefined);
+    assert.doesNotMatch(JSON.stringify([...request.prefixMessages, ...request.inputMessages.map(item => item.message)]), /2026-08-29|2026-08-30/);
+    assert.equal(request.prefixMessages[0].content, CHILD_AGENT_SYSTEM_PROMPT);
+    assert.match(request.prefixMessages[0].content, /current date, time or time zone.*terminal Tool/);
+  }
+  assert.equal(first.inputMessages[0].createdAt, '2026-08-29T23:59:59Z');
+  assert.equal(second.inputMessages[0].createdAt, '2026-08-30T00:00:01Z');
 });
 
 test("visual inputs carry ordered source facts without injecting data URLs or changing stable instructions", () => {
@@ -151,16 +162,14 @@ test("visual inputs carry ordered source facts without injecting data URLs or ch
   assert.deepEqual(request.prefixMessages, create([]).prefixMessages);
 });
 
-test("product requests record date epochs once and omit empty dynamic context", () => {
-  const create = ({ turnId, localDate, previousLocalDate, files, images, tools = [] }) =>
+test("product requests append attachment facts while keeping the prefix and tool order stable", () => {
+  const create = ({ turnId, localDate, files, images, tools = [] }) =>
     createProductAgentTurnRequest({
       requestId: `request_${turnId}`,
       sessionId: "session_cache_bypass",
       turnId,
       messageId: `message_${turnId}`,
       createdAt: `${localDate}T00:00:00Z`,
-      localDate,
-      sessionEnvironmentLocalDate: previousLocalDate,
       userText: "继续处理",
       model: "fixture",
       tools,
@@ -186,7 +195,6 @@ test("product requests record date epochs once and omit empty dynamic context", 
   const second = create({
     turnId: "two",
     localDate: "2026-08-29",
-    previousLocalDate: "2026-08-29",
     images: ["C:\\images\\two.png"],
     tools: [
       { name: "alpha", description: "a", inputSchema: {} },
@@ -197,14 +205,9 @@ test("product requests record date epochs once and omit empty dynamic context", 
   assert.deepEqual(second.prefixMessages, first.prefixMessages);
   assert.doesNotMatch(JSON.stringify(first.prefixMessages), /one\.png/);
   assert.doesNotMatch(JSON.stringify(second.prefixMessages), /two\.png/);
-  assert.equal(first.inputMessages[0].message.name, "session_environment");
+  assert.equal(first.inputMessages[0].message.name, "turn_runtime_context");
   assert.equal(first.inputMessages[0].message.visibility, "internal");
-  assert.deepEqual(JSON.parse(first.inputMessages[0].message.content), {
-    protocol: "bush.session_environment.v1",
-    kind: "snapshot",
-    localDate: "2026-08-29",
-    effectiveAt: "2026-08-29T00:00:00Z",
-  });
+  assert.equal(first.inputMessages.length, 2);
   assert.deepEqual(first.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\one.png" },
   ]);
@@ -213,60 +216,29 @@ test("product requests record date epochs once and omit empty dynamic context", 
   assert.deepEqual(second.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\two.png" },
   ]);
-  assert.equal(first.metadata.sessionEnvironmentLocalDate, "2026-08-29");
   assert.deepEqual(first.tools, second.tools);
   assert.deepEqual(first.tools.map((tool) => tool.name), ["alpha", "zeta"]);
 
   const nextDay = create({
     turnId: "three",
     localDate: "2026-08-30",
-    previousLocalDate: "2026-08-29",
     files: ["C:\\work\\brief.md"],
   });
-  assert.equal(nextDay.inputMessages[0].message.name, "session_environment_update");
-  assert.deepEqual(JSON.parse(nextDay.inputMessages[0].message.content), {
-    protocol: "bush.session_environment.v1",
-    kind: "update",
-    localDate: "2026-08-30",
-    effectiveAt: "2026-08-30T00:00:00Z",
-  });
-  assert.equal(nextDay.inputMessages[1].message.name, "turn_runtime_context");
-  assert.match(nextDay.inputMessages[1].message.content, /brief\.md/);
-  assert.doesNotMatch(nextDay.inputMessages[1].message.content, /Local date/);
-  assert.equal(nextDay.inputMessages[2].message.content, "继续处理");
+  assert.deepEqual(nextDay.prefixMessages, first.prefixMessages);
+  assert.equal(nextDay.inputMessages.length, 2);
+  assert.equal(nextDay.inputMessages[0].message.name, "turn_runtime_context");
+  assert.match(nextDay.inputMessages[0].message.content, /brief\.md/);
+  assert.doesNotMatch(nextDay.inputMessages[0].message.content, /Local date/);
+  assert.equal(nextDay.inputMessages[1].message.content, "继续处理");
 });
 
-test("restores only the latest valid structured session environment epoch", () => {
-  const environment = (name, content) => ({
-    message: {
-      role: "user",
-      visibility: "internal",
-      name,
-      content,
-    },
-  });
-  const valid = JSON.stringify({
-    protocol: "bush.session_environment.v1",
-    kind: "snapshot",
-    localDate: "2026-09-01",
-    effectiveAt: "2026-09-01T00:00:00Z",
-  });
-  assert.equal(latestSessionEnvironmentLocalDate({
-    turns: [{ messages: [
-      environment("session_environment", valid),
-      environment("session_environment_update", "not-json"),
-    ] }],
-  }), "2026-09-01");
-  assert.equal(latestSessionEnvironmentLocalDate({
-    turns: [{ messages: [{
-      message: {
-        role: "user",
-        visibility: "visible",
-        name: "session_environment",
-        content: valid,
-      },
-    }] }],
-  }), undefined);
+test("legacy date fields do not inject clock facts or alter dates authored by the user", () => {
+  const userText = '我在 2026-09-17 修改过文件，今天请核对。';
+  const request = createProductAgentTurnRequest({ requestId: 'legacy', sessionId: 'legacy', turnId: 'legacy', messageId: 'legacy',
+    createdAt: '2026-09-18T08:00:00Z', localDate: '2026-09-18', sessionEnvironmentLocalDate: '2026-09-17',
+    userText, model: 'fixture', tools: [], permissionMode: 'task_free', planEnabled: false });
+  assert.deepEqual(request.inputMessages.map(item => item.message), [{ role: 'user', content: userText }]);
+  assert.equal(request.inputMessages[0].createdAt, '2026-09-18T08:00:00Z');
 });
 
 test("keeps a projectless task workspace as an execution root, not a project identity", () => {

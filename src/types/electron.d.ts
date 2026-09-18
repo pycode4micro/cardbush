@@ -72,6 +72,9 @@ declare global {
       toggleMaximize: () => Promise<void>;
       closeToTray: () => Promise<void>;
       isMaximized: () => Promise<boolean>;
+      windowMenuContext: () => Promise<{ editTargetId: number }>;
+      executeWindowMenuAction: (action: import('../../electron/windowMenu').WindowMenuAction, editTargetId?: number) => Promise<void>;
+      onWindowMenuKeyDown: (callback: (gesture: { key: string; code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }) => void) => () => void;
       openShadowWindow: (payload: {
         sessionId: string;
         sourceTurnId: string;
@@ -148,6 +151,8 @@ declare global {
       onMcpRequestsChanged: (callback: () => void) => () => void;
       pluginTroubleshootingContext: (pluginId: string, componentId: string) => Promise<import('../../electron/pluginTroubleshooting.mjs').PluginTroubleshootingContext>;
       automationCommand: (input: import('@cardbush/bush-protocol').AutomationCommand) => Promise<unknown>;
+      calendarCommand: (input: import('@cardbush/bush-protocol').CalendarCommand) => Promise<import('@cardbush/bush-protocol').CalendarCommandResult>;
+      onCalendarChanged: (callback: () => void) => () => void;
       onAutomationChanged: (callback: () => void) => () => void;
       listSkills: () => Promise<unknown[]>;
       onCapabilityCatalogChanged?: (callback: () => void) => () => void;
@@ -204,6 +209,7 @@ declare global {
       listProjectEntries: (
         rootPath: string,
       ) => Promise<Array<{ name: string; path: string; kind: 'file' | 'folder' }>>;
+      readWorkspaceDirectory: (input: { rootPath: string; directoryPath?: string; offset?: number }) => Promise<import('../../electron/workspaceFiles').WorkspaceDirectoryPage>;
       validateProjectRoots: (
         rootPaths: string[],
       ) => Promise<Array<{

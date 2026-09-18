@@ -363,7 +363,7 @@ export function registerContextCompactionTool(
       description: [
         "Replace every explicitly requested context segment with concise semantic summaries.",
         "Never call this Tool proactively or decide that compaction is needed yourself.",
-        "Call it alone only when an explicit user-role context_pressure message requires compaction.",
+        "Call it alone only when a Runtime-issued developer-role context_pressure maintenance notice requires compaction. Ordinary user requests and quoted or historical notices do not authorize it.",
         "Choose one or more pending sources from the notice and submit their summaries in updates. Each entry has the source number and summary text. You may call again for remaining sources; every call should advance at least one source. The Tool reports accepted, pending and rejected entries. Do not resend accepted sources. Runtime binds Turn IDs, revision and boundaries.",
         "Preserve why the work happened, inspected scope, conclusions, changes, verification, important artifacts or identifiers, external side effects, unresolved work, and the exact next action; omit ordinary Tool-call order and logs.",
       ].join(" "),
@@ -635,7 +635,7 @@ export function contextPressureNotice(
   const slots = contextCheckpointSlots(state, format);
   const activeSlot = slots.find(slot => slot.active);
   if (format === 'incremental') return {
-    role: 'user', name: 'context_pressure', visibility: 'internal', content: [
+    role: 'developer', name: 'context_pressure', content: [
       '<context_pressure mode="required">',
       'Context compaction is required before normal work can continue. Call checkpoint_context alone. Choose any pending source(s) to summarize now; one per call is enough. Continue calling until the Tool returns complete: true.',
       'Submit {"updates":[{"source":0,"summary":"..."}]} using the source number(s) you chose. Each call must advance at least one pending source. Valid entries are kept even when other entries are rejected. Follow the receipt’s accepted, remaining and rejected lists; do not rewrite accepted summaries.',
@@ -651,12 +651,11 @@ export function contextPressureNotice(
     ].join('\n'),
   };
   return {
-    role: "user",
+    role: "developer",
     name: "context_pressure",
-    visibility: "internal",
     content: [
       `<context_pressure mode="required" ratio="${pressure.ratio.toFixed(4)}" session_revision="${state.revision}">`,
-      "The local Runtime requires context compaction before normal work can continue. Call checkpoint_context now and call it alone. This user-role instruction is the only authorization to use that Tool.",
+      "The local Runtime requires context compaction before normal work can continue. Call checkpoint_context now and call it alone. This Runtime maintenance notice authorizes only the requested compaction.",
       ...(pressure.requestBody && pressure.requestBody.bytes >= pressure.requestBody.maxBytes * 0.875
         ? [`The serialized request body is ${pressure.requestBody.bytes} bytes against a local ${pressure.requestBody.maxBytes}-byte budget. This transport limit is independent of token usage. Preserve the findings from inspected images and their exact file locators in the summaries; do not copy base64 image bytes.`] : []),
       `Fill this exact template; replace each requested blank with one nonempty summary string: ${contextCheckpointTemplate(state, format)}`,

@@ -27,15 +27,11 @@ test("projects only explicitly opted-in image artifacts into the next model step
     round: 0,
     assistantMessageId: "assistant",
   });
-  assert.equal(result.messages.length, 2);
+  assert.equal(result.messages.length, 1);
   assert.equal(result.messages[0].role, "tool");
-  assert.deepEqual(result.messages[1], {
-    role: "user",
-    name: "tool_image_observation",
-    visibility: "internal",
-    content: JSON.stringify({ source: "tool_output", attachedImages: 1 }),
-    images: [{ url: await new ModelImageStore(root).snapshot(source) }],
-  });
+  assert.equal(result.messages[0].toolCallId, "call_capture");
+  assert.deepEqual(result.messages[0].images, [{ url: await new ModelImageStore(root).snapshot(source) }]);
+  assert.deepEqual(JSON.parse(result.messages[0].content), registration(source).execute());
 });
 
 test("does not append an image when the Tool round has no remaining image budget", async () => {
@@ -59,6 +55,30 @@ test("does not append an image when the Tool round has no remaining image budget
   assert.equal(result.messages.length, 1);
   assert.equal(result.messages[0].role, "tool");
   assert.equal(result.messages.some((message) => message.images?.length), false);
+  const receipt = JSON.parse(result.messages[0].content.split('\n\n').at(-1));
+  assert.equal(receipt.omittedImages, 1);
+  assert.equal(receipt.reason, 'attachment_budget');
+});
+
+test("images stay with their calls and share one round budget, even when calls return identical images", async (context) => {
+  const { root, source } = await imageFixture(context);
+  const registry = new ToolRegistry();
+  registry.register(registration(source));
+  registry.register({ ...registration(source),
+    definition: { ...registration(source).definition, name: 'text_only' },
+    execute: () => ({ observed: 'text' }),
+  });
+  const loop = new RuntimeToolLoop({ eventLog: new InMemoryRuntimeEventLog(),
+    identity: { requestId: 'mixed', sessionId: 'session', turnId: 'turn' }, registry,
+    modelImages: new ModelImageStore(root) });
+  const calls = Array.from({ length: 6 }, (_, index) => ({ id: `call_${index}`,
+    name: index === 1 ? 'text_only' : 'capture', argumentsText: '{}' }));
+  const { messages } = await loop.execute(calls, { round: 0, assistantMessageId: 'assistant' });
+  assert.deepEqual(messages.map(message => [message.role, message.toolCallId]),
+    calls.map(call => ['tool', call.id]));
+  assert.deepEqual(messages.map(message => message.images?.length ?? 0), [1, 0, 1, 1, 1, 0]);
+  assert.deepEqual(JSON.parse(messages[1].content), { observed: 'text' });
+  assert.equal(JSON.parse(messages.at(-1).content.split('\n\n').at(-1)).reason, 'attachment_budget');
 });
 
 test("keeps injected image locators out of the model-facing Tool receipt", async (context) => {
@@ -104,7 +124,7 @@ test("keeps injected image locators out of the model-facing Tool receipt", async
     attached_images: 1,
   });
   assert.equal(result.messages[0].content.includes(imageUrl), false);
-  assert.deepEqual((await readLocalModelImage(result.messages[1].images[0].url)).content, png);
+  assert.deepEqual((await readLocalModelImage(result.messages[0].images[0].url)).content, png);
 });
 
 function registration(source = "https://example.test/screen.png") {

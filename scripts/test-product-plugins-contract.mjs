@@ -132,7 +132,7 @@ try {
 
   // Exercise the management skill's documented package with the real loader
   // and lifecycle store, without touching the user's installed plugins.
-  const guide = readFileSync(resolve('assets/skills/cardbush-plugin-management/references/plugin-contract.md'), 'utf8');
+  const guide = readFileSync(resolve('assets/skills/cardbush-docs/references/plugin-contract.md'), 'utf8');
   const sample = JSON.parse(guide.match(/```json\s*([\s\S]*?)```/)[1]);
   const sampleRoot = join(temporary, 'source', sample.name);
   await mkdir(join(sampleRoot, 'assets'), { recursive: true });
@@ -164,7 +164,9 @@ try {
 console.log('CardBush Codex-compatible plugin manifest and catalog contract passed');
 
 const managementSource = readFileSync(resolve('src', 'features', 'plugins', 'PluginManagementPanel.tsx'), 'utf8');
-assert.match(managementSource, /type ManageTab = 'plugins' \| 'apps' \| 'mcp'/);
+const navigationSource = readFileSync(resolve('src', 'features', 'plugins', 'usePluginNavigation.ts'), 'utf8');
+assert.match(navigationSource, /type ManageTab = 'plugins' \| 'apps' \| 'mcp'/);
+assert.match(managementSource, /import \{ usePluginNavigation, type PluginPage as Page, type ManageTab \}/);
 assert.match(managementSource, /document\.addEventListener\('pointerdown', closeFromOutside, true\)/);
 assert.match(managementSource, /activeTab === 'apps'/);
 assert.match(managementSource, /activeTab === 'mcp'/);

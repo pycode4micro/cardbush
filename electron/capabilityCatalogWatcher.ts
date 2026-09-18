@@ -1,5 +1,6 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs';
 import { resolve } from 'node:path';
+import { ignoredCapabilityPath, pluginRuntimeSource } from './pluginRuntimeFingerprint';
 
 /** Directory watches survive atomic file replacements; missing roots are retried. */
 export function watchCapabilityCatalog(roots: string[], onChange: () => void) {
@@ -24,10 +25,10 @@ export function watchCapabilityCatalog(roots: string[], onChange: () => void) {
       try {
         const watcher = watch(root, { recursive: true, persistent: false }, (_event, filename) => {
           const name = String(filename ?? '').replaceAll('\\', '/');
-          if (/(^|\/)(node_modules|\.git|__pycache__|logs|cache)(\/|$)/i.test(name)) return;
+          if (ignoredCapabilityPath(name)) return;
           // Directory events discover new packages; descriptors and Skill docs
           // update existing packages without watching generated runtime output.
-          if (!name || /\.(json|md|svg|png|webp)$/i.test(name) || !/\.[^/]+$/.test(name)) changed();
+          if (!name || /\.(json|md|svg|png|webp)$/i.test(name) || pluginRuntimeSource(name) || !/\.[^/]+$/.test(name)) changed();
         });
         watcher.on('error', () => {
           watcher.close();

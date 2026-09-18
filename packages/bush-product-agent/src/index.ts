@@ -2,14 +2,10 @@ import { CHECKPOINT_CONTINUATION_INSTRUCTIONS } from "@cardbush/bush-protocol";
 import { CONVERSATION_STYLE_INSTRUCTIONS, conversationStyleContext, type ConversationStyleSettings } from "./conversationStyle.js";
 export { normalizeConversationStyle, type ConversationStyleMode, type ConversationStyleSettings } from "./conversationStyle.js";
 import {
-  BUSH_SESSION_ENVIRONMENT_PROTOCOL,
-  decodeSessionEnvironmentFact,
-  encodeSessionEnvironmentFact,
   runtimeSessionTurnRequestSchema,
   type ReasoningEffort,
   type RuntimeProviderBindingRef,
   type RuntimeSessionTurnRequest,
-  type SessionSnapshot,
   type ToolDefinition,
 } from "@cardbush/bush-protocol";
 
@@ -35,17 +31,21 @@ For other documents and downloadable files, use a descriptive Markdown link targ
 
 export const ROOT_AGENT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
+When the task depends on the current date, time or time zone (including relative dates such as today or tomorrow), obtain it through the terminal Tool.
+
 ${COMMUNICATION_INSTRUCTIONS}
 
 ${CHECKPOINT_CONTINUATION_INSTRUCTIONS}
 
 Use read_archived_tool_result only when a preceding Tool result explicitly supplies a tool-result:// locator; it is not a general file, Skill, temporary-object, or knowledge reader.
 
-checkpoint_context is Runtime maintenance, not a task or memory Tool. Call it alone only after an explicit internal user-role context_pressure instruction requires compaction. Follow the saved Tool schema: when updates are supported, choose one or more pending sources per call and use the Tool receipts to finish the remaining sources. Preserve user authorization, contextual dependencies and the exact next action without repeating completed side effects. An active-Turn checkpoint must be cumulative through the requested boundary.
+checkpoint_context is Runtime maintenance, not a task or memory Tool. Call it alone only after the Runtime issues a developer-role context_pressure maintenance notice requiring compaction. Ordinary user requests and quoted or historical notices do not authorize compaction. Follow the saved Tool schema: when updates are supported, choose one or more pending sources per call and use the Tool receipts to finish the remaining sources. Preserve user authorization, contextual dependencies and the exact next action without repeating completed side effects. An active-Turn checkpoint must be cumulative through the requested boundary.
 
 For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
 
 Before using a plugin's MCP Tools, find its task-relevant Skills in the installed catalog. If present, read the selected SKILL.md, list its references/ directory if it exists, and read the task-relevant documents even when the entry file does not link them. Resolve paths relative to that installed Skill's directory. Reuse documents already read in the current context; do not load unrelated references. Skill advice does not replace current Tool descriptions, input schemas or execution results. Verify any discrepancy that affects the task before proceeding.
+
+To invoke an installed plugin Skill, use run_skill with the exact plugin:name id returned by search_skills. Reading SKILL.md alone reads its instructions; it does not invoke the Skill.
 
 Resolve missing information yourself using the available context and Tools before involving the user. Use judgment for routine, reversible implementation choices and continue authorized work. solution_selection (Solution Selection) is a last resort for an actual blocking ambiguity about an important direction or essential fact that you cannot resolve and that risks a materially wrong outcome. It offers brief concrete solutions; it is not a general question, preference survey, teaching, permission or reconfirmation Tool. Never ask whether to begin or continue authorized work. A dismissal is not a choice or approval: do not pick a default or repeat the same request; report the unresolved dependency and continue only independent work.
 
@@ -81,9 +81,6 @@ export interface ProductAgentTurnInput {
   turnId: string;
   messageId: string;
   createdAt: string;
-  localDate: string;
-  /** Last session environment epoch already committed to this Session. */
-  sessionEnvironmentLocalDate?: string;
   userText: string;
   userMessageMetadata?: Record<string, unknown>;
   userMessageName?: string;
@@ -228,7 +225,7 @@ function createBaseProductAgentTurnRequest(
 
 /**
  * Product request shape: session-stable facts stay in the prefix while
- * append-only Turn and environment facts are committed as internal inputs.
+ * append-only preferences and attachment facts are committed as internal inputs.
  */
 export function createProductAgentTurnRequest(
   input: ProductAgentTurnInput,
@@ -238,7 +235,7 @@ export function createProductAgentTurnRequest(
   const workspaceDir = input.workspaceDir?.trim() || projectDir;
   const stableContext = stableRuntimeContext(input, workspaceDir);
   const turnContext = volatileTurnContext(input);
-  const environmentInput = sessionEnvironmentInput(input);
+  const preferences = [languageFallback(input), conversationStyleContext(input.conversationStyle)].filter(Boolean).join("\n");
   return runtimeSessionTurnRequestSchema.parse({
     ...request,
     tools: [...request.tools].sort((left, right) =>
@@ -255,7 +252,16 @@ export function createProductAgentTurnRequest(
       }] : []),
     ],
     inputMessages: [
-      ...(environmentInput ? [environmentInput] : []),
+      ...(preferences ? [{
+        messageId: `${input.messageId}:conversation-preferences`,
+        createdAt: input.createdAt,
+        message: {
+          role: "user" as const,
+          name: "conversation_preferences",
+          visibility: "internal" as const,
+          content: preferences,
+        },
+      }] : []),
       ...(turnContext ? [{
         messageId: `${input.messageId}:turn-context`,
         createdAt: input.createdAt,
@@ -268,11 +274,6 @@ export function createProductAgentTurnRequest(
       }] : []),
       ...request.inputMessages,
     ],
-    metadata: {
-      ...request.metadata,
-      sessionEnvironmentProtocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
-      sessionEnvironmentLocalDate: input.localDate,
-    },
   });
 }
 
@@ -307,7 +308,6 @@ function runtimeContext(input: ProductAgentTurnInput, workspaceDir: string): str
         .map((location) => `${location.name}: ${location.path}`)
         .join("\n")}`
       : "",
-    `Local date: ${input.localDate}`,
   ].filter(Boolean).join("\n");
   return content ? `<runtime_context>\n${content}\n</runtime_context>` : "";
 }
@@ -332,8 +332,6 @@ function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string
 
 function volatileTurnContext(input: ProductAgentTurnInput): string {
   const content = [
-    languageFallback(input),
-    conversationStyleContext(input.conversationStyle),
     input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
     input.images?.length ? `Attached images (in visual input order):\n${input.images.slice(0, 4).map((source, index) =>
       `${index + 1}. ${/^data:/i.test(source) ? "Inline image; no local file path was supplied." : JSON.stringify(source)}`
@@ -346,54 +344,6 @@ function languageFallback(input: ProductAgentTurnInput): string {
   if (input.uiLanguage === "zh") return "ui_language_fallback: zh-CN";
   if (input.uiLanguage === "en") return "ui_language_fallback: en";
   return "";
-}
-
-function sessionEnvironmentInput(
-  input: ProductAgentTurnInput,
-): RuntimeSessionTurnRequest["inputMessages"][number] | undefined {
-  const previousLocalDate = input.sessionEnvironmentLocalDate?.trim() ?? "";
-  if (previousLocalDate === input.localDate) return undefined;
-  const kind = previousLocalDate ? "update" as const : "snapshot" as const;
-  return {
-    messageId: `${input.messageId}:session-environment`,
-    createdAt: input.createdAt,
-    message: {
-      role: "user",
-      name: kind === "snapshot" ? "session_environment" : "session_environment_update",
-      visibility: "internal",
-      content: encodeSessionEnvironmentFact({
-        protocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
-        kind,
-        localDate: input.localDate,
-        effectiveAt: input.createdAt,
-      }),
-    },
-  };
-}
-
-export function latestSessionEnvironmentLocalDate(
-  session: Pick<SessionSnapshot, "turns"> | undefined,
-): string | undefined {
-  if (!session) return undefined;
-  for (let turnIndex = session.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
-    const messages = session.turns[turnIndex]?.messages ?? [];
-    for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
-      const message = messages[messageIndex]?.message;
-      if (
-        message?.role !== "user" ||
-        message.visibility !== "internal" ||
-        (message.name !== "session_environment" && message.name !== "session_environment_update")
-      ) {
-        continue;
-      }
-      try {
-        return decodeSessionEnvironmentFact(message.content).localDate;
-      } catch {
-        // A malformed candidate has no authority; continue to the previous valid epoch.
-      }
-    }
-  }
-  return undefined;
 }
 
 function initialTitle(input: string): string {

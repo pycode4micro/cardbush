@@ -75,11 +75,32 @@ const installPresentation = `(() => {
 
 export function connectInlineHtmlPresentation(
   element: HTMLElement, host: Element, onLayout: (layout: InlineHtmlLayout) => void, onMode: (visualization: boolean) => void,
+  onReady: () => void,
 ) {
   const guest = element as PreviewGuest;
   let disposed = false;
   let previousTheme = '';
   let started = false;
+  let published = false;
+  let pendingLayout: InlineHtmlLayout | undefined;
+  let layoutTimer = 0, layoutDeadline = 0;
+  const publishLayout = () => {
+    window.clearTimeout(layoutTimer); window.clearTimeout(layoutDeadline);
+    layoutTimer = 0; layoutDeadline = 0;
+    if (disposed || !pendingLayout) return;
+    // React batches mode, measured height and readiness into one commit. Never
+    // reveal the old file viewport before discovering the chart's dimensions.
+    onMode(true);
+    onLayout(pendingLayout);
+    pendingLayout = undefined;
+    if (!published) { published = true; onReady(); }
+  };
+  const scheduleLayout = (layout: InlineHtmlLayout) => {
+    pendingLayout = layout;
+    window.clearTimeout(layoutTimer);
+    layoutTimer = window.setTimeout(publishLayout, 80);
+    if (!layoutDeadline) layoutDeadline = window.setTimeout(publishLayout, 250);
+  };
   const appearance = host.closest('.app') ?? document.documentElement;
   const themeScript = () => {
     const style = getComputedStyle(appearance);
@@ -132,8 +153,7 @@ export function connectInlineHtmlPresentation(
       // preview. Only content designed for this host opts into chart embedding.
       const optedIn = await guest.executeJavaScript(`document.querySelector('meta[name="cardbush:preview"]')?.content === 'visualization'`);
       if (disposed) return;
-      onMode(optedIn === true);
-      if (optedIn !== true) return;
+      if (optedIn !== true) { onMode(false); onReady(); return; }
       await guest.executeJavaScript(themeScript() + ';' + installPresentation);
       if (disposed) return;
       started = true;
@@ -143,12 +163,19 @@ export function connectInlineHtmlPresentation(
         const measured = await guest.executeJavaScript(`window.__cardbushInlinePresentation?.read(${JSON.stringify(previous)})`) as InlineHtmlLayout | undefined;
         if (disposed || !measured || !Number.isFinite(measured.height) || !Array.isArray(measured.blocks)) break;
         previous = JSON.stringify(measured);
-        onLayout(measured);
+        scheduleLayout(measured);
       }
-    } catch { /* Navigation and guest disposal invalidate pending measurements. */ }
+    } catch { /* A loaded document can decline or lose its presentation bridge. */ }
+    if (!disposed && !published) {
+      // Keep an already measured layout, or use the bounded file viewport if
+      // the bridge failed/returned no layout. Never leave a loaded file waiting.
+      if (pendingLayout) publishLayout();
+      else { onMode(false); onReady(); }
+    }
   })();
   return () => {
     disposed = true;
+    window.clearTimeout(layoutTimer); window.clearTimeout(layoutDeadline);
     themeObserver.disconnect();
     // Removing the webview disposes its observers and pending read with it.
   };

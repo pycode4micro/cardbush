@@ -1,4 +1,10 @@
 import { flushSync } from 'react-dom';
+import { updateResponseSpacer } from './chat/responseSpacer';
+
+const pendingToggleGuards = new WeakMap<HTMLElement, {
+  overflowAnchor: string;
+  frame: number;
+}>();
 
 export function preserveScrollPositionForToggle(
   element: HTMLElement | null,
@@ -19,7 +25,12 @@ export function preserveScrollPositionForToggle(
   const beforeOffset = scrollerRect ? beforeTop - scrollerRect.top : 0;
   const beforeScrollTop = scroller?.scrollTop ?? 0;
   const beforeMessageTop = messageItem?.getBoundingClientRect().top ?? beforeTop;
-  const previousOverflowAnchor = scroller?.style.overflowAnchor ?? '';
+  const pendingGuard = scroller ? pendingToggleGuards.get(scroller) : undefined;
+  const previousOverflowAnchor = pendingGuard?.overflowAnchor ?? scroller?.style.overflowAnchor ?? '';
+  if (pendingGuard && scroller) {
+    window.cancelAnimationFrame(pendingGuard.frame);
+    pendingToggleGuards.delete(scroller);
+  }
   if (scroller) {
     scroller.style.overflowAnchor = 'none';
     scroller.dataset.cardbushPreserveScroll = '1';
@@ -27,6 +38,14 @@ export function preserveScrollPositionForToggle(
   flushSync(update);
   if (!scroller) {
     return;
+  }
+  // A disclosure changes only its own React state, so ChatPanel's layout effect
+  // does not run. Refill/consume the existing response space before measuring
+  // the anchor: waiting for ResizeObserver lets collapse clamp scrollTop to a
+  // temporarily shorter document and paint a jump before the space returns.
+  const spacer = scroller.querySelector<HTMLElement>('.assistant-response-spacer');
+  if (spacer?.dataset.anchorKey) {
+    updateResponseSpacer(scroller, spacer.dataset.anchorKey);
   }
   const target = anchorElement.isConnected
     ? anchorElement
@@ -67,8 +86,12 @@ export function preserveScrollPositionForToggle(
   }
   // Keep observers from interpreting the synchronous correction as user input,
   // but never write the scroll position again on later frames.
-  window.requestAnimationFrame(() => {
+  const frame = window.requestAnimationFrame(() => {
     scroller.style.overflowAnchor = previousOverflowAnchor;
     delete scroller.dataset.cardbushPreserveScroll;
+    pendingToggleGuards.delete(scroller);
   });
+  // Several disclosures can change in one frame. Only the last cleanup may
+  // release the guard, and it must restore the value before the first toggle.
+  pendingToggleGuards.set(scroller, { overflowAnchor: previousOverflowAnchor, frame });
 }

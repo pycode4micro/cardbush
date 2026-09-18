@@ -2,12 +2,44 @@ export type ShortcutBinding = { key: string; ctrl?: boolean; alt?: boolean; shif
 type ShortcutContext = 'composer' | 'queue' | 'transcript' | 'edit' | 'sidebar' | 'image';
 type Text = { zh: string; en: string };
 type ShortcutDefinition = {
-  id: string; group: 'conversation' | 'inspector' | 'image'; contexts: ShortcutContext[];
+  id: string; group: 'application' | 'conversation' | 'inspector' | 'image'; contexts: ShortcutContext[];
   title: Text; description: Text; defaultBinding: ShortcutBinding;
 };
 const appContexts: ShortcutContext[] = ['composer', 'queue', 'transcript', 'edit', 'sidebar'];
 
 export const shortcutDefinitions = [
+  { id: 'newConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'n', ctrl: true },
+    title: { zh: '新会话', en: 'New chat' }, description: { zh: '开始一个新会话。', en: 'Start a new conversation.' } },
+  { id: 'openProject', group: 'application', contexts: appContexts, defaultBinding: { key: 'o', ctrl: true },
+    title: { zh: '打开文件夹', en: 'Open folder' }, description: { zh: '选择文件夹并添加为项目。', en: 'Choose a folder to add as a project.' } },
+  { id: 'openSettings', group: 'application', contexts: appContexts, defaultBinding: { key: ',', ctrl: true },
+    title: { zh: '设置', en: 'Settings' }, description: { zh: '打开应用设置。', en: 'Open application settings.' } },
+  { id: 'showShortcuts', group: 'application', contexts: appContexts, defaultBinding: { key: '/', ctrl: true },
+    title: { zh: '显示键盘快捷键', en: 'Show keyboard shortcuts' }, description: { zh: '查看和修改快捷键。', en: 'View and customize keyboard shortcuts.' } },
+  { id: 'toggleSidebar', group: 'application', contexts: appContexts, defaultBinding: { key: 'b', ctrl: true },
+    title: { zh: '切换侧边栏', en: 'Toggle sidebar' }, description: { zh: '展开或收起左侧栏。', en: 'Show or hide the left sidebar.' } },
+  { id: 'toggleInspector', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'b', ctrl: true, alt: true },
+    title: { zh: '切换右侧栏', en: 'Toggle right sidebar' }, description: { zh: '展开或收起文件与浏览器预览。', en: 'Show or hide the file and browser preview.' } },
+  { id: 'navigateBack', group: 'conversation', contexts: appContexts, defaultBinding: { key: '[', ctrl: true },
+    title: { zh: '返回', en: 'Back' }, description: { zh: '返回访问过的会话。', en: 'Go back through visited conversations.' } },
+  { id: 'navigateForward', group: 'conversation', contexts: appContexts, defaultBinding: { key: ']', ctrl: true },
+    title: { zh: '前进', en: 'Forward' }, description: { zh: '前进到返回前的会话。', en: 'Go forward through conversation history.' } },
+  { id: 'focusBrowserAddress', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'l', ctrl: true },
+    title: { zh: '聚焦浏览器地址栏', en: 'Focus browser address' }, description: { zh: '编辑当前浏览器标签页的网址。', en: 'Edit the address of the current browser tab.' } },
+  { id: 'reloadBrowser', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'r', ctrl: true },
+    title: { zh: '重新加载页面', en: 'Reload page' }, description: { zh: '刷新当前预览页面。', en: 'Reload the current preview page.' } },
+  { id: 'appZoomIn', group: 'application', contexts: appContexts, defaultBinding: { key: 'Plus', ctrl: true },
+    title: { zh: '放大界面', en: 'Zoom interface in' }, description: { zh: '放大整个应用界面；图片预览中优先缩放图片。', en: 'Zoom the app; image previews keep their own zoom controls.' } },
+  { id: 'appZoomOut', group: 'application', contexts: appContexts, defaultBinding: { key: 'Minus', ctrl: true },
+    title: { zh: '缩小界面', en: 'Zoom interface out' }, description: { zh: '缩小整个应用界面。', en: 'Zoom the application interface out.' } },
+  { id: 'appZoomReset', group: 'application', contexts: appContexts, defaultBinding: { key: '0', ctrl: true },
+    title: { zh: '界面实际大小', en: 'Actual interface size' }, description: { zh: '恢复应用默认缩放。', en: 'Restore the default interface scale.' } },
+  { id: 'toggleFullscreen', group: 'application', contexts: appContexts, defaultBinding: { key: 'F11' },
+    title: { zh: '切换全屏', en: 'Toggle full screen' }, description: { zh: '进入或退出全屏。', en: 'Enter or leave full screen.' } },
+  { id: 'closeWindow', group: 'application', contexts: appContexts, defaultBinding: { key: 'w', ctrl: true },
+    title: { zh: '关闭窗口', en: 'Close window' }, description: { zh: '隐藏主窗口，应用继续在托盘运行。', en: 'Hide the main window and keep the app running in the tray.' } },
+  { id: 'quitApp', group: 'application', contexts: appContexts, defaultBinding: { key: 'q', ctrl: true },
+    title: { zh: '退出 CardBush', en: 'Quit CardBush' }, description: { zh: '退出应用。', en: 'Quit the application.' } },
   { id: 'searchConversations', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'f', ctrl: true },
     title: { zh: '搜索会话', en: 'Search chats' },
     description: { zh: '打开会话搜索，侧栏收起时也可使用。', en: 'Open chat search, including when the sidebar is collapsed.' } },
@@ -87,7 +119,7 @@ export function shortcutAria(binding: ShortcutBinding | null) {
 export function bindingError(id: ShortcutId, binding: ShortcutBinding, language: 'zh' | 'en'): string {
   const zh = language === 'zh';
   if (binding.key === 'Escape' || binding.key === 'Tab' && (!binding.ctrl || binding.alt) || binding.key === 'F5' ||
-      binding.ctrl && ['a', 'c', 'v', 'x', 'z', 'y', 'r'].includes(binding.key) ||
+      binding.ctrl && ['a', 'c', 'v', 'x', 'z', 'y', 'r'].includes(binding.key) && !(id === 'reloadBrowser' && binding.key === 'r') ||
       binding.alt && binding.key === 'F4' || binding.key === 'Enter' && binding.shift && !binding.ctrl && !binding.alt) {
     return zh ? '这个按键保留给换行、取消或系统操作，请换一个组合。' : 'This key is reserved for editing, dismissal, or system actions. Choose another combination.';
   }

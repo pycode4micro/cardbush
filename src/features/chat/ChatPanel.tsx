@@ -68,6 +68,7 @@ import {
   type ComposerRuntimeRailHandle,
 } from '../composer';
 import { summarizeChangeReports, type ConversationChangeReport } from '../tools';
+import { recentReviewTurns } from '../sidebar/reviewModel';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
 import { CardlingSceneHost } from '../cardling/CardlingSceneHost';
 import {
@@ -337,6 +338,7 @@ export function ChatPanel({
       value: performance.now() - chatPanelRenderStartedAt,
     });
   });
+  const reversibleTurnIds = useMemo(() => new Set(recentReviewTurns(messages).map(turn => turn.id)), [messages]);
   const visibleMessages = useBatchedTranscript(messages, activeConversationId, activeTurnId, sending,
     stopping || Boolean(pendingInteraction) || Boolean(error) || goalWaiting, transcriptDelivery);
   const renderMessages = useMemo(() => {
@@ -2639,6 +2641,7 @@ export function ChatPanel({
                       language={language}
                       sending={sending}
                       activeTurnId={activeTurnId}
+                      canRevertWorkspace={reversibleTurnIds.has(message.turnId ?? '')}
                       activeAssistantMessageId={
                         activeAssistantForRender?.message.id ?? ''
                       }

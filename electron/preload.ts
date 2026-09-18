@@ -103,6 +103,8 @@ const desktopApi = {
   savePluginConnections: (input: unknown) => ipcRenderer.invoke('plugins:save-connections', input),
   pluginTroubleshootingContext: (pluginId: string, componentId: string) => ipcRenderer.invoke('plugins:troubleshooting-context', pluginId, componentId),
   automationCommand: (input: unknown) => ipcRenderer.invoke('automation:command', input),
+  calendarCommand: (input: unknown) => ipcRenderer.invoke('calendar:command', input),
+  onCalendarChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('calendar:changed', listener); return () => ipcRenderer.removeListener('calendar:changed', listener); },
   onAutomationChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('automation:changed', listener); return () => ipcRenderer.removeListener('automation:changed', listener); },
   onMcpRequestsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('mcp:requests-changed', listener); return () => ipcRenderer.removeListener('mcp:requests-changed', listener); },
   runtime: {
@@ -160,6 +162,14 @@ const desktopApi = {
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+  windowMenuContext: () => ipcRenderer.invoke('window:menu-context') as Promise<{ editTargetId: number }>,
+  executeWindowMenuAction: (action: import('./windowMenu').WindowMenuAction, editTargetId?: number) =>
+    ipcRenderer.invoke('window:menu-action', action, editTargetId) as Promise<void>,
+  onWindowMenuKeyDown: (callback: (gesture: { key: string; code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, gesture: Parameters<typeof callback>[0]) => callback(gesture);
+    ipcRenderer.on('window:menu-keydown', listener);
+    return () => ipcRenderer.removeListener('window:menu-keydown', listener);
+  },
   openShadowWindow: (payload: Omit<ShadowWindowPayload, 'windowId'>) =>
     ipcRenderer.invoke('shadow:open-window', payload) as Promise<{
       windowId: string;
@@ -290,6 +300,8 @@ const desktopApi = {
     ipcRenderer.invoke('project:list-root', rootPath) as Promise<
       Array<{ name: string; path: string; kind: 'file' | 'folder' }>
     >,
+  readWorkspaceDirectory: (input: { rootPath: string; directoryPath?: string; offset?: number }) =>
+    ipcRenderer.invoke('files:read-workspace-directory', input) as Promise<import('./workspaceFiles').WorkspaceDirectoryPage>,
   validateProjectRoots: (rootPaths: string[]) =>
     ipcRenderer.invoke('project:validate-roots', rootPaths) as Promise<
       Array<{ rootPath: string; resolvedPath: string; exists: boolean }>

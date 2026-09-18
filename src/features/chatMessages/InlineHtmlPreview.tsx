@@ -1,5 +1,5 @@
 import { createElement, memo, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Maximize2, MoreHorizontal, RotateCw } from 'lucide-react';
+import { ChevronDown, ChevronUp, Maximize2, MoreHorizontal, Play, RotateCw, X } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { basename } from '../../shared/localPaths';
 import { resolveFilePreview } from '../inspector/filePreviewRegistry';
@@ -8,6 +8,7 @@ import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { connectInlineHtmlPresentation, foldedHtmlHeight, type InlineHtmlLayout } from './inlineHtmlPresentation';
 import { useInlineHtmlFileVersion } from './inlineHtmlFileVersions';
 import { captureInlineHtmlReadingPosition } from './inlineHtmlReadingPosition';
+import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 
 /** Uses the same file adapter as the inspector; only an authored embed mounts it. */
 export function isHtmlPreviewPath(path: string) {
@@ -24,8 +25,13 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const frame = useRef<HTMLElement>(null);
   const expansionButton = useRef<HTMLButtonElement>(null);
   const viewportId = useId();
-  const [visible, setVisible] = useState(false);
+  const [inViewport, setInViewport] = useState(false);
   const [nearViewport, setNearViewport] = useState(false);
+  const [activated, setActivated] = useState(false);
+  const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden');
+  const [closed, setClosed] = useState(false);
+  // Visible pages bypass buffer preloading, regardless of the Turn's age.
+  const visible = pageVisible && !closed && (inViewport || (nearViewport && activated));
   const [revision, setRevision] = useState(0);
   const [layout, setLayout] = useState<InlineHtmlLayout>({ height: 360, blocks: [] });
   const { height } = layout;
@@ -40,7 +46,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const reloadTicket = useRef(0);
   const restoreFrame = useRef(0);
   const readingPosition = useRef<{ anchor: ReturnType<typeof captureInlineHtmlReadingPosition>; scrollY: number } | undefined>(undefined);
-  const currentVersion = useInlineHtmlFileVersion(path, nearViewport, fileVersion);
+  const currentVersion = useInlineHtmlFileVersion(path, visible, fileVersion);
   const source = resolveFilePreview(path)?.source(path);
   const label = title || basename(path);
   const zh = language === 'zh';
@@ -93,6 +99,26 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   }, []);
 
   useEffect(() => {
+    if (visible) return;
+    // Invalidate pending guest reads as well as removing the webview itself.
+    reloadTicket.current++;
+    cancelAnimationFrame(restoreFrame.current);
+    readingPosition.current?.anchor.dispose();
+    readingPosition.current = undefined;
+    setState('loading');
+    setMenuOpen(false);
+  }, [visible]);
+
+  useEffect(() => {
+    if (closed || !pageVisible || (!nearViewport && !inViewport)) { setActivated(false); return; }
+    if (inViewport) { setActivated(true); return; }
+    if (activated) return;
+    // Give the current viewport a head start before warming adjacent pages.
+    const delay = window.setTimeout(() => setActivated(true), 250);
+    return () => window.clearTimeout(delay);
+  }, [closed, pageVisible, nearViewport, inViewport, activated]);
+
+  useEffect(() => {
     if (!visible || !visualization) return;
     const resize = () => setPreviewLimit(previewHeightLimit());
     resize();
@@ -119,43 +145,72 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   }, [menuOpen]);
 
   useEffect(() => {
-    if (!container.current) return;
-    // Load once near the viewport. Scrolling and transcript updates must retain
-    // the guest and its chart state, rather than repeatedly mounting a page.
+    const host = container.current;
+    if (!host) return;
+    let scroller = host.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+    // A placeholder retains layout outside the buffer; guests and scripts do not.
     const observer = new IntersectionObserver(entries => {
-      const near = entries.some(entry => entry.isIntersecting);
-      setNearViewport(near);
-      if (near) setVisible(true);
-    }, { rootMargin: '240px' });
-    observer.observe(container.current);
-    return () => observer.disconnect();
+      setInViewport(entries.some(entry => entry.isIntersecting && entry.intersectionRatio > 0));
+    });
+    observer.observe(host);
+    let bufferObserver: IntersectionObserver | undefined;
+    let previousHeight = -1;
+    const resize = () => {
+      const height = Math.round(scroller?.clientHeight || window.innerHeight);
+      if (height === previousHeight) return;
+      previousHeight = height;
+      bufferObserver?.disconnect();
+      bufferObserver = new IntersectionObserver(entries => {
+        setNearViewport(entries.some(entry => entry.isIntersecting && entry.intersectionRatio > 0));
+      }, { root: scroller, rootMargin: `${height}px 0px` });
+      bufferObserver.observe(host);
+    };
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(scroller ?? document.documentElement);
+    window.addEventListener('resize', resize);
+    resize();
+    return () => {
+      observer.disconnect(); bufferObserver?.disconnect(); resizeObserver.disconnect();
+      window.removeEventListener('resize', resize);
+    };
+  }, []);
+
+  useEffect(() => {
+    const update = () => setPageVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
   }, []);
 
   useEffect(() => {
     const webview = frame.current;
     if (!visible || !webview) return;
     let settled = false;
+    let failed = false;
     let disconnectPresentation: (() => void) | undefined;
     const deadline = window.setTimeout(() => fail(), 30000);
     const ready = () => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(deadline);
       disconnectPresentation = connectInlineHtmlPresentation(webview, container.current!, value => {
         setLayout(value);
         restoreReadingPosition();
       }, mode => {
         setVisualization(mode);
         if (!mode) restoreReadingPosition();
+      }, () => {
+        if (failed) return;
+        window.clearTimeout(deadline);
+        setState('ready');
       });
       const scrollY = readingPosition.current?.scrollY;
       if (scrollY) void (webview as HTMLElement & { executeJavaScript(code: string): Promise<unknown> })
         .executeJavaScript(`scrollTo(0,${JSON.stringify(scrollY)})`).catch(() => {});
-      setState('ready');
     };
     const fail = (event?: Event) => {
       const detail = event as (Event & { isMainFrame?: boolean; errorCode?: number }) | undefined;
       if (detail?.isMainFrame === false || detail?.errorCode === -3) return;
+      failed = true;
       settled = true;
       window.clearTimeout(deadline);
       disconnectPresentation?.();
@@ -168,6 +223,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     webview.addEventListener('did-fail-load', fail);
     webview.addEventListener('render-process-gone', fail);
     return () => {
+      failed = true;
       window.clearTimeout(deadline);
       disconnectPresentation?.();
       webview.removeEventListener('dom-ready', ready);
@@ -190,6 +246,28 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     });
   }
 
+  const closePreview = () => {
+    preserveScrollPositionForToggle(container.current, () => {
+      setClosed(true);
+      setMenuOpen(false);
+    });
+    container.current?.querySelector<HTMLButtonElement>('.inline-html-reopen')?.focus({ preventScroll: true });
+  };
+  const openPreview = () => {
+    setState('loading');
+    setClosed(false);
+  };
+
+  if (closed) return <span ref={container} className="inline-html-preview is-closed" aria-label={label}>
+    <span className="inline-html-toolbar">
+      <LocalFileReferenceLink path={path} knownFileName={basename(path)}>{label}</LocalFileReferenceLink>
+      <span className="inline-html-actions">
+        <button className="inline-html-reopen" type="button" onClick={openPreview} aria-label={zh ? '打开 HTML 预览' : 'Open HTML preview'} title={zh ? '打开预览' : 'Open preview'}><Play size={13} /><span>{zh ? '预览' : 'Preview'}</span></button>
+        <button type="button" onClick={() => openInspector(path, label)} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
+      </span>
+    </span>
+  </span>;
+
   // Phrasing elements keep ![] valid inside Markdown paragraphs and memo links.
   return <span ref={container} className={`inline-html-preview${visualization ? ' is-visualization' : ''}${folded ? ' is-folded' : ''}${folded && viewportHeight < previewLimit ? ' is-section-folded' : ''}`} aria-label={label}>
     {visualization && <span className="inline-html-heading">
@@ -199,15 +277,17 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         onClick={toggleExpansion}><ChevronUp size={14} />{zh ? '收起图表' : 'Collapse chart'}</button>}
       <button className="inline-html-menu-toggle" type="button" aria-label={zh ? '图表选项' : 'Visualization options'}
         aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={18} /></button>
+      <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'} title={zh ? '关闭预览' : 'Close preview'}><X size={14} /></button>
     </span>}
     <span className="inline-html-toolbar" hidden={visualization && !menuOpen && state !== 'failed'}>
       <LocalFileReferenceLink path={path} knownFileName={basename(path)}>{label}</LocalFileReferenceLink>
       <span className="inline-html-actions">
         <button type="button" onClick={reload} aria-label={zh ? '重新加载 HTML' : 'Reload HTML'} title={zh ? '重新加载' : 'Reload'}><RotateCw size={14} /></button>
         <button type="button" onClick={() => { setMenuOpen(false); openInspector(path, label); }} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
+        {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'} title={zh ? '关闭预览' : 'Close preview'}><X size={14} /></button>}
       </span>
     </span>
-    <span id={viewportId} className={`inline-html-viewport is-${state}`} style={visualization ? { height: viewportHeight } : undefined} aria-busy={visible && state === 'loading'}>
+    <span id={viewportId} className={`inline-html-viewport is-${visible ? state : 'suspended'}`} style={visualization ? { height: viewportHeight } : undefined} aria-busy={visible && state === 'loading'}>
       {visible && source && state !== 'failed' && createElement('webview', {
         key: `${path}:${revision}`,
         ref: frame,
@@ -220,11 +300,11 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         style: visualization ? { height: guestHeight } : undefined,
         webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
       })}
-      {state !== 'ready' && <span className="inline-html-status" role="status">
+      {(!visible || state !== 'ready') && <span className="inline-html-status" role="status">
         {state === 'failed' ? <>
           <span>{zh ? '预览暂时无法加载' : 'Preview could not load'}</span>
           <button type="button" onClick={reload}>{zh ? '重试' : 'Retry'}</button>
-        </> : <span>{zh ? 'HTML 预览' : 'HTML preview'}</span>}
+        </> : <span>{!visible ? (zh ? '预览已暂停' : 'Preview suspended') : (zh ? 'HTML 预览' : 'HTML preview')}</span>}
       </span>}
     </span>
     {visualization && <span className="inline-html-footer">

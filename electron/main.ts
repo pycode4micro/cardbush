@@ -1,5 +1,6 @@
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
+import { readWorkspaceDirectory } from './workspaceFiles';
 import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { VisualThemeContextStore } from './visualThemeContext';
@@ -43,6 +44,7 @@ import { inspectProjectRoots } from './projectRoots';
 import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
 import { sendToLiveRenderer } from './rendererDelivery';
 import { restoreEditorFocus } from './rendererFocus';
+import { windowMenuContext, executeWindowMenuAction } from './windowMenu';
 import { WindowScrollDiagnostics } from './windowScrollDiagnostics';
 import { windowsShellIconPath } from './windowsAppIdentity';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
@@ -189,6 +191,7 @@ let productHostController: {
   shutdown: () => Promise<void>;
   refreshMcp: () => Promise<unknown>;
   listMcpServers: () => Promise<unknown>;
+  reconnectMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
   configureMcpServer: (input: import('./productMcpManagement.mjs', { with: { 'resolution-mode': 'import' } }).McpServerPatch, signal?: AbortSignal) => Promise<unknown>;
   removeMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
   listPluginConnections: (pluginId?: string) => Promise<unknown>;
@@ -911,6 +914,14 @@ function installMainRendererResilience(target: BrowserWindow) {
     const reloadShortcut = key === 'f5' || ((input.control || input.meta) && key === 'r');
     if (!reloadShortcut) return;
     event.preventDefault();
+    // Keep the app protected from reload, but let the menu route Ctrl+R to
+    // the active preview and honor the user's configured shortcut binding.
+    if (key === 'r' && input.type === 'keyDown' && !input.isAutoRepeat) {
+      sendToLiveRenderer(target, 'window:menu-keydown', {
+        key: input.key, code: input.code, ctrlKey: input.control, metaKey: input.meta,
+        altKey: input.alt, shiftKey: input.shift,
+      });
+    }
     appendDebugLog('renderer-lifecycle', {
       stage: 'keyboard-reload-blocked',
       key: input.key,
@@ -1942,6 +1953,10 @@ ipcMain.handle('window:close-to-tray', () => {
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
+ipcMain.handle('window:menu-context', (event) => windowMenuContext(event, mainWindow));
+ipcMain.handle('window:menu-action', (event, action: unknown, editTargetId: unknown) =>
+  executeWindowMenuAction(event, mainWindow, action, editTargetId, requestAppQuit));
+
 ipcMain.handle('window:restore-editor-focus', (event, state?: { documentFocused?: boolean }) => {
   const target = mainWindow?.webContents === event.sender
     ? mainWindow : shadowWindows.get(event.sender.id)?.window ?? null;
@@ -2318,6 +2333,12 @@ ipcMain.handle('workspace:ensure-task-directory', async (event, sessionId: strin
   return workspace;
 });
 
+ipcMain.handle('files:read-workspace-directory', async (event, input: Parameters<typeof readWorkspaceDirectory>[0]) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) throw new Error('Unknown workspace window.');
+  return readWorkspaceDirectory(input);
+});
+
 ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) {
@@ -2511,6 +2532,20 @@ ipcMain.handle('automation:command', async (event, input: unknown) => {
     command: { kind: 'runtime.automation', payload: input } }) as { ok?: boolean; result?: unknown; error?: { message: string } };
   if (!response.ok) throw new Error(response.error?.message ?? 'Automation action failed.');
   return response.result;
+});
+let calendarStore: Promise<import('./calendarStore.mjs', { with: { 'resolution-mode': 'import' } }).CalendarStore> | undefined;
+ipcMain.handle('calendar:command', async (event, input: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  calendarStore ??= import('./calendarStore.mjs').then(({ CalendarStore }) => new CalendarStore(path.join(app.getPath('userData'), 'calendars', 'calendars.json')));
+  const result = await (await calendarStore).command(input, async () => {
+    const options = { title: '导入日历', properties: ['openFile'] as Array<'openFile'>, filters: [{ name: '日历数据', extensions: ['json', 'ics'] }] };
+    const chosen = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return chosen.canceled ? undefined : chosen.filePaths[0];
+  });
+  if ((input as { action?: string })?.action !== 'list' && !result.cancelled) {
+    for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'calendar:changed');
+  }
+  return result;
 });
 function pluginMarkets() {
   return pluginMarketplaceService ??= new PluginMarketplaceService({

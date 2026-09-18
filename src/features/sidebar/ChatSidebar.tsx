@@ -1,4 +1,5 @@
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
   CalendarClock,
@@ -8,6 +9,7 @@ import {
   Clipboard,
   Code2,
   Edit3,
+  FolderTree,
   Folder,
   FolderOpen,
   LoaderCircle,
@@ -32,6 +34,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -42,6 +45,7 @@ import { McpLogoIcon } from '../../components/McpLogoIcon';
 
 import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
@@ -54,9 +58,16 @@ import type {
 import { sectionLabels } from '../appSections';
 import { useAutomationUnreadCount } from '../automations/useAutomationUnreadCount';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
-import { conversationProjectDir } from '../conversationWorkspace';
+import { conversationProjectDir, conversationWorkspaceRoot } from '../conversationWorkspace';
+import { SourceInspectorPreview } from '../inspector/TextInspectorPreview';
+import { ReviewFileTree } from './ReviewFileTree';
+import { reviewPathKey, type ReviewTurn } from './reviewModel';
 import { conversationMatchesScope } from '../conversationScope';
 import { copyText } from '../messageFeedback';
+import { useReviewFileNav } from './useReviewFileNav';
+import { SettingsDropdown } from '../settings/SettingsDropdown';
+import { ReviewCommentsFooter, ReviewCommentsScope, type ReviewCommentsChange } from './ReviewComments';
+import { reviewRevision, type ReviewComment, type ReviewCommentState } from './reviewCommentModel';
 import {
   groupChangeReportsByTurn,
   hydrateConversationChangeReport,
@@ -746,6 +757,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           }
         />
         <NavRow
+          active={section === 'plugins'}
           icon={<McpLogoIcon size={16} />}
           label={language === 'zh' ? '插件' : 'Plugins'}
           onClick={onOpenPlugins}
@@ -1622,6 +1634,7 @@ export function ConversationChangeDialog({
   language,
   conversation,
   reports,
+  turns,
   initialFilePath = '',
   selectionRequestId,
   notice,
@@ -1629,14 +1642,17 @@ export function ConversationChangeDialog({
   revertedChangeIds,
   onClose,
   onRevert,
-  onRevertAll,
   revertAvailable = true,
   embedded = false,
   workspaceControls,
+  reviewComments,
+  onReviewCommentsChange,
+  onComposeReviewComments,
 }: {
   language: AppLanguage;
   conversation: ConversationSummary;
   reports: ConversationChangeReport[];
+  turns?: ReviewTurn[];
   initialFilePath?: string;
   selectionRequestId?: string;
   notice: string;
@@ -1644,11 +1660,24 @@ export function ConversationChangeDialog({
   revertedChangeIds: ReadonlySet<string>;
   onClose: () => void;
   onRevert: (report: ConversationChangeReport) => Promise<void>;
-  onRevertAll: () => Promise<void>;
   revertAvailable?: boolean;
   embedded?: boolean;
   workspaceControls?: React.ReactNode;
+  reviewComments?: ReviewCommentState;
+  onReviewCommentsChange?: ReviewCommentsChange;
+  onComposeReviewComments?: (comments: ReviewComment[]) => void;
 }) {
+  const recentTurns = useMemo(() => turns?.slice(0, WORKSPACE_REVIEW_TURN_LIMIT) ?? [...new Map([...reports].reverse().map(report => [report.turnId || report.id,
+    { id: report.turnId || report.id, prompt: report.userPrompt, createdAt: report.createdAt }])).values()].slice(0, WORKSPACE_REVIEW_TURN_LIMIT), [turns, reports]);
+  const [chosenTurn, setChosenTurn] = useState('');
+  const selectedTurnId = recentTurns.some(turn => turn.id === chosenTurn) ? chosenTurn : recentTurns[0]?.id ?? '';
+  const selectedTurn = recentTurns.find(turn => turn.id === selectedTurnId);
+  const selectedTurnIsLatest = selectedTurnId === recentTurns[0]?.id;
+  const retainedReports = useMemo(() => reports.filter(report => recentTurns.some(turn => turn.id === (report.turnId || report.id))), [reports, recentTurns]);
+  const turnReports = useMemo(() => retainedReports.filter(report => (report.turnId || report.id) === selectedTurnId), [retainedReports, selectedTurnId]);
+  const workspaceRoot = conversationWorkspaceRoot(conversation);
+  const [selectedPath, setSelectedPath] = useState(initialFilePath);
+  const previewLoadingChange = useCallback(() => undefined, []);
   const [hydratedReports, setHydratedReports] = useState<
     Map<string, ToolChangeReport>
   >(() => new Map());
@@ -1657,6 +1686,8 @@ export function ConversationChangeDialog({
   >(() => new Map());
   const [detailRetryRevision, setDetailRetryRevision] = useState(0);
   const detailViewMountedRef = useRef(true);
+  const retainedReportKeysRef = useRef(new Set<string>());
+  retainedReportKeysRef.current = new Set(retainedReports.map(report => reviewDetailKey(conversation.id, report.id)));
   const detailRequestsInFlightRef = useRef(new Set<string>());
   useEffect(() => {
     detailViewMountedRef.current = true;
@@ -1665,51 +1696,46 @@ export function ConversationChangeDialog({
     };
   }, []);
   const resolvedReports = useMemo(
-    () => reports.map((report) => {
+    () => turnReports.map((report) => {
       const hydrated = hydratedReports.get(reviewDetailKey(conversation.id, report.id));
       return hydrated ? { ...report, ...hydrated, reverted: report.reverted } : report;
     }),
-    [conversation.id, hydratedReports, reports],
+    [conversation.id, hydratedReports, turnReports],
   );
   const reviewGroups = useMemo(
     () => groupChangeReportsByTurn(resolvedReports),
     [resolvedReports],
   );
   const reviewItems = useMemo(
-    () => reviewGroups.flatMap((group) => group.items),
+    () => reviewGroups.flatMap((group) => group.items).sort((left, right) => right.reportIndex - left.reportIndex),
     [reviewGroups],
   );
-  const [selectedKey, setSelectedKey] = useState(reviewItems[0]?.key ?? '');
+  const changedPaths = useMemo(() => [...new Map(reviewItems.map(item => [reviewPathKey(item.file.path), item.file.path])).values()], [reviewItems]);
   const appliedFileSelectionRef = useRef<{ path: string; requestId?: string } | null>(null);
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
-    () => new Set(reviewGroups[0] ? [reviewGroups[0].id] : []),
-  );
-  const [fileNavWidth, setFileNavWidth] = useState(() => {
-    const stored = Number.parseFloat(window.localStorage.getItem('cardbush.review_file_nav_width') ?? '');
-    return Number.isFinite(stored) ? Math.min(420, Math.max(150, stored)) : 210;
-  });
-  const beginFileNavResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const workspace = event.currentTarget.parentElement;
-    if (!workspace) return;
-    document.body.classList.add('change-review-resizing');
-    const move = (moveEvent: PointerEvent) => {
-      const bounds = workspace.getBoundingClientRect();
-      const maximum = Math.max(150, Math.min(420, bounds.width * 0.48));
-      const next = Math.round(Math.min(maximum, Math.max(150, bounds.right - moveEvent.clientX)));
-      setFileNavWidth(next);
-      window.localStorage.setItem('cardbush.review_file_nav_width', String(next));
-    };
-    const finish = () => {
-      document.body.classList.remove('change-review-resizing');
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-  }, []);
-  const selectedItem = reviewItems.find((item) => item.key === selectedKey) ??
-    reviewItems[0] ?? null;
+  const lastSession = useRef(conversation.id);
+  useEffect(() => {
+    if (lastSession.current === conversation.id) return;
+    lastSession.current = conversation.id;
+    appliedFileSelectionRef.current = null;
+    setChosenTurn('');
+    setSelectedPath(initialFilePath);
+  }, [conversation.id, initialFilePath]);
+  const fileNav = useReviewFileNav();
+  const fileNavId = useId();
+  const fileNavToggleRef = useRef<HTMLButtonElement>(null);
+  const fileNavToggleLabel = fileNav.collapsed
+    ? (language === 'zh' ? '展开文件列表' : 'Show file list')
+    : (language === 'zh' ? '收起文件列表' : 'Hide file list');
+  const selectedItem = reviewItems.find(item => reviewPathKey(item.file.path) === reviewPathKey(selectedPath)) ?? null;
+  const selectedReport = selectedItem?.report ?? resolvedReports.at(-1);
+  const selectedReverted = !!selectedReport && revertedChangeIds.has(selectedReport.id);
+  const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport.fileCount > 0;
+  const commentRevision = useMemo(() => reviewRevision(selectedItem?.file.lines ?? []), [selectedItem?.file.lines]);
+  useEffect(() => {
+    const allowed = new Set(retainedReports.map(report => reviewDetailKey(conversation.id, report.id)));
+    setHydratedReports(previous => new Map([...previous].filter(([key]) => allowed.has(key))));
+    setDetailRequests(previous => new Map([...previous].filter(([key]) => allowed.has(key))));
+  }, [conversation.id, retainedReports]);
   const selectedDetailKey = selectedItem
     ? reviewDetailKey(conversation.id, selectedItem.report.id)
     : '';
@@ -1740,7 +1766,7 @@ export function ConversationChangeDialog({
       detailRequestsInFlightRef.current.has(selectedDetailRequestKey)
     ) return;
 
-    const turnReports = reports.filter(
+    const turnReports = retainedReports.filter(
       (candidate) =>
         candidate.turnId?.trim() === selectedDetailTurnId &&
         (candidate.executionIds?.length ?? 0) > 0,
@@ -1762,7 +1788,7 @@ export function ConversationChangeDialog({
     })
       .then((details) => {
         if (!detailViewMountedRef.current) return;
-        const hydratedByKey = turnReports.map((candidate) => ({
+        const hydratedByKey = turnReports.filter(candidate => retainedReportKeysRef.current.has(reviewDetailKey(conversation.id, candidate.id))).map((candidate) => ({
           key: reviewDetailKey(conversation.id, candidate.id),
           report: hydrateConversationChangeReport(candidate, details),
         }));
@@ -1785,7 +1811,7 @@ export function ConversationChangeDialog({
         if (!detailViewMountedRef.current) return;
         setDetailRequests((current) => {
           const next = new Map(current);
-          for (const key of turnDetailKeys) next.set(key, 'failed');
+          for (const key of turnDetailKeys) if (retainedReportKeysRef.current.has(key)) next.set(key, 'failed');
           return next;
         });
       })
@@ -1795,7 +1821,7 @@ export function ConversationChangeDialog({
   }, [
     conversation.id,
     detailRetryRevision,
-    reports,
+    retainedReports,
     selectedDetailKey,
     selectedDetailRequestKey,
     selectedDetailStatus,
@@ -1805,7 +1831,7 @@ export function ConversationChangeDialog({
     if (!selectedDetailTurnId) return;
     setDetailRequests((current) => {
       const next = new Map(current);
-      for (const report of reports) {
+      for (const report of retainedReports) {
         if (report.turnId?.trim() === selectedDetailTurnId) {
           next.delete(reviewDetailKey(conversation.id, report.id));
         }
@@ -1813,57 +1839,18 @@ export function ConversationChangeDialog({
       return next;
     });
     setDetailRetryRevision((current) => current + 1);
-  }, [conversation.id, reports, selectedDetailTurnId]);
+  }, [conversation.id, retainedReports, selectedDetailTurnId]);
   useEffect(() => {
-    if (reviewItems.length === 0) {
-      setSelectedKey('');
-      return;
-    }
-    if (!reviewItems.some((item) => item.key === selectedKey)) {
-      setSelectedKey(reviewItems[0]?.key ?? '');
-    }
-  }, [reviewItems, selectedKey]);
+    if (!selectedPath && reviewItems[0]) setSelectedPath(reviewItems[0].file.path);
+  }, [reviewItems, selectedPath]);
   useEffect(() => {
     const normalized = initialFilePath.trim().replaceAll('\\', '/').toLowerCase();
     if (!normalized) return;
     const applied = appliedFileSelectionRef.current;
     if (applied?.path === normalized && applied.requestId === selectionRequestId) return;
-    const item = reviewItems.find((candidate) =>
-      candidate.file.path.trim().replaceAll('\\', '/').toLowerCase() === normalized,
-    );
-    if (!item) return;
     appliedFileSelectionRef.current = { path: normalized, requestId: selectionRequestId };
-    setSelectedKey(item.key);
-    const group = reviewGroups.find((candidate) =>
-      candidate.items.some((groupItem) => groupItem.key === item.key),
-    );
-    if (group) {
-      setExpandedGroupIds((current) => new Set(current).add(group.id));
-    }
-  }, [initialFilePath, selectionRequestId, reviewGroups, reviewItems]);
-  const newestGroupId = reviewGroups[0]?.id ?? '';
-  useEffect(() => {
-    const availableIds = new Set(reviewGroups.map((group) => group.id));
-    setExpandedGroupIds((current) => {
-      const next = new Set([...current].filter((id) => availableIds.has(id)));
-      if (newestGroupId) next.add(newestGroupId);
-      return next;
-    });
-  }, [newestGroupId, reviewGroups]);
-  const totals = resolvedReports.reduce(
-    (sum, report) => ({
-      additions: sum.additions + report.additions,
-      deletions: sum.deletions + report.deletions,
-    }),
-    { additions: 0, deletions: 0 },
-  );
-  const uniqueFileCount = new Set(
-    reviewItems
-      .map((item) => item.file.path.trim().replaceAll('\\', '/').toLowerCase())
-      .filter(Boolean),
-  ).size;
-  const allBusy = revertingChangeId === `conversation:${conversation.id}`;
-  const allReverted = resolvedReports.every((report) => revertedChangeIds.has(report.id));
+    setSelectedPath(initialFilePath);
+  }, [initialFilePath, selectionRequestId]);
   const dialog = (
       <section className={`change-review-dialog${embedded ? ' embedded' : ''}`}>
         {!embedded && (
@@ -1877,68 +1864,45 @@ export function ConversationChangeDialog({
             </button>
           </header>
         )}
-        <div className="change-review-summary">
-          <Code2 size={16} />
-          <span>
-            {language === 'zh'
-              ? `${reviewGroups.length} 轮修改，${uniqueFileCount} 个文件 · ${reviewItems.length} 次变更`
-              : `${reviewGroups.length} turn(s), ${uniqueFileCount} file(s) · ${reviewItems.length} change record(s)`}
-          </span>
-          {totals.additions > 0 && <b className="diff-count add">+{totals.additions}</b>}
-          {totals.deletions > 0 && <b className="diff-count del">-{totals.deletions}</b>}
-          {revertAvailable && resolvedReports.length > 0 && (
-            <button
-              className="danger-soft-button"
-              type="button"
-              disabled={Boolean(revertingChangeId)}
-              onClick={() => void onRevertAll()}
-            >
-              {allBusy ? <LoaderCircle size={14} /> : allReverted ? <RotateCw size={14} /> : <RotateCcw size={14} />}
-              <span>
-                {allReverted
-                  ? (language === 'zh' ? '取消全部撤回' : 'Undo all reverts')
-                  : (language === 'zh' ? '撤回全部修改' : 'Revert all')}
-              </span>
-            </button>
-          )}
+        <div className="change-review-summary change-review-file-heading">
+          <div className="change-review-file-heading-copy">
+            <strong title={selectedPath} onContextMenu={event => selectedPath && openFileContextMenu(event, selectedPath, { language })}>
+              {selectedPath ? <><FileTypeIcon path={selectedPath} /><span>{basename(selectedPath)}</span></> : (language === 'zh' ? '文件' : 'Files')}
+            </strong>
+          </div>
+          {recentTurns.length > 0 && <div className="change-review-version-picker" title={selectedTurn?.prompt}>
+            <SettingsDropdown label={language === 'zh' ? '审查轮次' : 'Review turn'} value={selectedTurnId} onChange={setChosenTurn} minMenuWidth={144}
+              options={recentTurns.map((turn, index) => ({ value: turn.id,
+                label: index === 0 ? (language === 'zh' ? '本轮' : 'Current turn') : (language === 'zh' ? '上一轮' : 'Previous turn') }))} />
+          </div>}
+          <button className="secondary-button change-review-revert" type="button"
+            disabled={!canRevert} onClick={() => { if (canRevert && selectedReport) void onRevert(selectedReport); }}
+            title={!selectedReport || !selectedReport.fileCount ? (language === 'zh' ? '所选轮次没有可撤回的修改' : 'No changes to revert in this turn')
+              : !revertAvailable || revertingChangeId ? (language === 'zh' ? '正在处理，请稍后撤回' : 'Busy; revert will be available when processing finishes')
+              : selectedReverted ? (language === 'zh' ? '取消撤回所选轮次' : 'Undo revert of selected turn')
+              : selectedTurnIsLatest ? (language === 'zh' ? '撤回本轮' : 'Revert current turn') : (language === 'zh' ? '撤回上一轮' : 'Revert previous turn')}>
+            {selectedReport && revertingChangeId === selectedReport.id ? <LoaderCircle size={14} /> : selectedReverted ? <RotateCw size={14} /> : <RotateCcw size={14} />}
+            <span>{selectedReverted
+              ? (language === 'zh' ? '取消撤回' : 'Undo revert')
+              : (language === 'zh' ? '撤回' : 'Revert')}</span>
+          </button>
+          <button className="change-review-nav-toggle" ref={fileNavToggleRef} type="button"
+            title={fileNavToggleLabel} aria-label={fileNavToggleLabel} aria-expanded={!fileNav.collapsed}
+            aria-controls={fileNavId} onClick={() => fileNav.changeCollapsed(!fileNav.collapsed)}>
+            <FolderTree size={16} />
+          </button>
         </div>
         {workspaceControls}
         {notice && <pre className="change-review-notice">{notice}</pre>}
         <div
+          ref={fileNav.workspaceRef}
           className="change-review-workspace"
-          style={{ '--change-file-nav-width': `${fileNavWidth}px` } as React.CSSProperties}
+          data-file-nav-collapsed={fileNav.collapsed}
+          style={{ '--change-file-nav-width': `${fileNav.width}px` } as React.CSSProperties}
         >
           <section className="change-review-diff-pane">
             {selectedItem ? (
               <>
-                <header>
-                  <FileTypeIcon path={selectedItem.file.path} />
-                  <div>
-                    <strong title={selectedItem.file.path}>{selectedItem.file.path}</strong>
-                    <span>
-                      {language === 'zh'
-                        ? `第 ${selectedItem.turnIndex} 轮 · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`
-                        : `Turn ${selectedItem.turnIndex} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`}
-                    </span>
-                  </div>
-                  {revertAvailable && (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={Boolean(revertingChangeId)}
-                      onClick={() => void onRevert(selectedItem.report)}
-                    >
-                      {revertingChangeId === selectedItem.report.id
-                        ? <LoaderCircle size={14} />
-                        : revertedChangeIds.has(selectedItem.report.id) ? <RotateCw size={14} /> : <RotateCcw size={14} />}
-                      <span>
-                        {revertedChangeIds.has(selectedItem.report.id)
-                          ? (language === 'zh' ? '取消撤回' : 'Undo revert')
-                          : (language === 'zh' ? '撤回这组' : 'Revert set')}
-                      </span>
-                    </button>
-                  )}
-                </header>
                 {selectedDetailStatus === 'failed' && selectedItem.file.lines.length === 0 ? (
                   <div className="tool-change-details-failed" role="alert">
                     <span>{language === 'zh' ? '改动详情加载失败' : 'Unable to load change details'}</span>
@@ -1953,88 +1917,58 @@ export function ConversationChangeDialog({
                     <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>
                   </p>
                 ) : (
-                  <ToolFileChangeView file={selectedItem.file} language={language} />
+                  <ReviewCommentsScope language={language} path={selectedItem.file.path} turnId={selectedTurnId}
+                    lines={selectedItem.file.lines} state={reviewComments} onChange={onReviewCommentsChange}>
+                    <ToolFileChangeView file={selectedItem.file} language={language} />
+                  </ReviewCommentsScope>
                 )}
               </>
+            ) : selectedPath ? (
+              <div className="change-review-source-preview">
+                <p className="change-review-source-note">{language === 'zh' ? '所选轮次未修改此文件 · 当前内容' : 'Unchanged in this turn · Current contents'}</p>
+                <SourceInspectorPreview key={selectedPath} path={selectedPath} language={language} onLoadingChange={previewLoadingChange} />
+              </div>
             ) : (
               <div className="change-review-empty">
-                {language === 'zh' ? '暂无可审查的文件修改。' : 'No file changes to review.'}
+                {language === 'zh' ? '选择文件查看内容或本轮修改。' : 'Select a file to view its contents or changes.'}
               </div>
             )}
           </section>
           <div
-            className="change-review-column-resizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={language === 'zh' ? '调整文件列表宽度' : 'Resize file list'}
-            title={language === 'zh' ? '拖动调整 Diff 和文件列表宽度' : 'Drag to resize diff and files'}
-            onPointerDown={beginFileNavResize}
-          />
-          <aside className="change-review-file-nav">
-            <header>
-              <strong>{language === 'zh' ? '按轮次查看' : 'By turn'}</strong>
-              <span>{reviewGroups.length}</span>
-            </header>
-            <div className="change-review-file-groups">
-              {reviewGroups.map((group) => {
-                const expanded = expandedGroupIds.has(group.id);
-                return (
-                  <section className="change-review-file-group" key={group.id}>
-                    <button
-                      className="change-review-group-toggle"
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() => setExpandedGroupIds((current) => {
-                        const next = new Set(current);
-                        if (expanded) next.delete(group.id);
-                        else next.add(group.id);
-                        return next;
-                      })}
-                    >
-                      <ChevronDown size={13} className={expanded ? 'expanded' : ''} />
-                      <span>
-                        <strong>
-                          {language === 'zh'
-                            ? `第 ${group.turnIndex} 轮`
-                            : `Turn ${group.turnIndex}`}
-                        </strong>
-                        <small title={group.userPrompt || undefined}>
-                          {group.userPrompt || formatChangeTimestamp(group.createdAt, language)}
-                        </small>
-                      </span>
-                      <em>
-                        {language === 'zh'
-                          ? `${group.uniqueFileCount} 个文件`
-                          : `${group.uniqueFileCount} file(s)`}
-                      </em>
-                    </button>
-                    {expanded && (
-                      <div className="change-review-group-files">
-                        {group.items.map((item) => (
-                          <button
-                            key={item.key}
-                            className={`change-review-file-item${item.key === selectedItem?.key ? ' active' : ''}`}
-                            type="button"
-                            title={item.file.path}
-                            onClick={() => setSelectedKey(item.key)}
-                          >
-                            <FileTypeIcon path={item.file.path} />
-                            <span>
-                              <strong>{basename(item.file.path)}</strong>
-                              <small>{item.file.path}</small>
-                            </span>
-                            <b className="diff-count add">+{item.file.additions}</b>
-                            <b className="diff-count del">-{item.file.deletions}</b>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                );
-              })}
-            </div>
-          </aside>
+            id={fileNavId}
+            className={`change-review-file-nav-viewport soft-panel-motion ${fileNav.presence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
+            hidden={!fileNav.presence.mounted}
+            aria-hidden={!fileNav.presence.visible}
+            inert={!fileNav.presence.visible ? true : undefined}
+          >
+            <div
+              className="change-review-column-resizer"
+              role="separator"
+              hidden={fileNav.collapsed}
+              tabIndex={fileNav.collapsed ? -1 : 0}
+              aria-orientation="vertical"
+              aria-label={language === 'zh' ? '调整文件列表宽度' : 'Resize file list'}
+              aria-controls={fileNavId}
+              aria-valuemin={0} aria-valuemax={420} aria-valuenow={fileNav.collapsed ? 0 : fileNav.width}
+              title={language === 'zh' ? '拖动调整宽度，拖向右侧边缘收起文件列表' : 'Drag to resize; drag toward the right edge to hide files'}
+              onPointerDown={fileNav.beginResize}
+              onKeyDown={event => {
+                if (fileNav.resizeWithKeyboard(event)) fileNavToggleRef.current?.focus({ preventScroll: true });
+              }}
+            />
+            <aside className="change-review-file-nav">
+              <ReviewFileTree rootPath={workspaceRoot} selectedPath={selectedPath} changedPaths={changedPaths}
+                language={language} revision={conversation.updatedAt} onSelect={setSelectedPath} />
+            </aside>
+          </div>
         </div>
+        {reviewComments && onReviewCommentsChange && onComposeReviewComments && <ReviewCommentsFooter
+          state={reviewComments} onChange={onReviewCommentsChange} onCompose={onComposeReviewComments} language={language}
+          path={selectedItem?.file.path ?? selectedPath} turnId={selectedTurnId} revision={commentRevision}
+          onSelect={anchor => {
+            setSelectedPath(anchor.path);
+            if (recentTurns.some(turn => turn.id === anchor.turnId)) setChosenTurn(anchor.turnId);
+          }} />}
       </section>
   );
   if (embedded) {
@@ -2056,20 +1990,4 @@ export function ConversationChangeDialog({
 
 function reviewDetailKey(conversationId: string, reportId: string) {
   return `${conversationId}\u0000${reportId}`;
-}
-
-function formatChangeTimestamp(value: string | undefined, language: AppLanguage) {
-  if (!value) {
-    return language === 'zh' ? '完成后' : 'After completion';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return language === 'zh' ? '完成后' : 'After completion';
-  }
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
 }

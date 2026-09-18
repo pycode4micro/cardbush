@@ -9,7 +9,7 @@ export interface SettingsDropdownOption {
   disabled?: boolean;
 }
 
-export function SettingsDropdown({ id, name, label, describedBy, value, options, disabled, onChange }: {
+export function SettingsDropdown({ id, name, label, describedBy, value, options, disabled, onChange, minMenuWidth = 218 }: {
   id?: string;
   name?: string;
   label: string;
@@ -18,6 +18,7 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
   options: SettingsDropdownOption[];
   disabled?: boolean;
   onChange: (value: string) => void;
+  minMenuWidth?: number;
 }) {
   const generatedId = useId();
   const menuId = `${id ?? generatedId}-options`;
@@ -48,7 +49,7 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
     if (!open || disabled || !trigger.current || !menu.current) return;
     const rect = trigger.current.getBoundingClientRect();
     const gap = 6, margin = 12;
-    const width = Math.min(Math.max(rect.width, 218), window.innerWidth - margin * 2);
+    const width = Math.min(Math.max(rect.width, minMenuWidth), window.innerWidth - margin * 2);
     const below = window.innerHeight - rect.bottom - gap - margin;
     const above = rect.top - gap - margin;
     const upwards = below < Math.min(options.length * 34 + 12, 220) && above > below;
@@ -60,7 +61,7 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
       translate: upwards ? '0 -100%' : 'none',
     });
     menu.current.showPopover();
-  }, [open, disabled, options.length]);
+  }, [open, disabled, options.length, minMenuWidth]);
 
   useEffect(() => {
     const node = menu.current;

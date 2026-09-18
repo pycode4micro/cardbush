@@ -19,8 +19,7 @@ const emptySession = {
 function request(overrides = {}) {
   return createProductAgentTurnRequest({
     requestId: 'request', sessionId: 'language', turnId: 'turn', messageId: 'human',
-    createdAt: '2026-09-08T00:00:00Z', localDate: '2026-09-08',
-    sessionEnvironmentLocalDate: '2026-09-08',
+    createdAt: '2026-09-08T00:00:00Z',
     userText: '帮我安装blender的官方mcp，并且下载一点素材下来',
     uiLanguage: 'zh', model: 'fixture', tools: [], permissionMode: 'task_free',
     planEnabled: false, ...overrides,
@@ -45,7 +44,7 @@ test('first model context has one communication policy; locale changes do not ch
       current: turn.inputMessages.map(m => m.message),
     });
     assertOneCommunicationPolicy(context.messages);
-    const fallback = context.messages.find(m => m.name === 'turn_runtime_context');
+    const fallback = context.messages.find(m => m.name === 'conversation_preferences');
     assert.equal(fallback.visibility, 'internal');
     assert.ok(fallback.content.includes(`ui_language_fallback: ${locale}`));
     assert.equal(context.messages.at(-1).content, zh.inputMessages.at(-1).message.content);

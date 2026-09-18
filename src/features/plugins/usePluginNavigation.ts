@@ -13,6 +13,7 @@ export type PluginPage =
   | { kind: 'skill'; skillName: string };
 
 type Entry = { id: number; page: PluginPage; scrollTop: number; focusTarget?: HTMLElement };
+const scrollContainer = '[data-plugin-scroll-container], .settings-content';
 
 /** Retain each ancestor's filters and local state until its child is dismissed. */
 export function usePluginNavigation() {
@@ -22,7 +23,7 @@ export function usePluginNavigation() {
   const current = entries[entries.length - 1];
 
   const open = useCallback((page: PluginPage) => {
-    const scrollTop = rootRef.current?.closest('.settings-content')?.scrollTop ?? 0;
+    const scrollTop = rootRef.current?.closest(scrollContainer)?.scrollTop ?? 0;
     const active = document.activeElement;
     const focusTarget = active instanceof HTMLElement && rootRef.current?.contains(active) ? active : undefined;
     const entry: Entry = { id: ++nextId.current, page, scrollTop: 0 };
@@ -39,7 +40,7 @@ export function usePluginNavigation() {
 
   useLayoutEffect(() => {
     current.focusTarget?.focus({ preventScroll: true });
-    const scroller = rootRef.current?.closest('.settings-content');
+    const scroller = rootRef.current?.closest(scrollContainer);
     if (scroller) scroller.scrollTop = current.scrollTop;
   }, [current.id]);
 
