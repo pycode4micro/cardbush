@@ -66,7 +66,7 @@ const messages = Array.from({length:9},(_,i) => [
     loopHistory:[{id:'l'+i,role:'assistant',content:('执行记录 '+i+'：检查文件、验证构建、整理结果。\\n\\n').repeat(8)}]}
 ]).flat();
 const reports = [{id:'report',messageId:'m',turnId:'turn-1',createdAt:'2026-09-11T15:26:00Z',fileCount:2,additions:2,deletions:0,
-  files:['first.ts','second.ts'].map(path=>({path,additions:1,deletions:0,diff:'@@ -0,0 +1 @@\\n+const value = 1;',lines:[{kind:'addition',text:'const value = 1;'}]}))}];
+  files:['first.ts','second.ts'].map(name=>({path:'C:/fixture/'+name,additions:1,deletions:0,diff:'@@ -0,0 +1 @@\\n+const value = 1;',lines:[{kind:'addition',text:'const value = 1;'}]}))}];
 window.taskReads=0; window.fileReads=0; window.shadowCreates=0; window.shadowDeletes=0;
 window.runtimeTask = {protocol:'bush.subagent_task.v1',taskId:'child',parentSessionId:'a',parentTurnId:'first',childSessionId:'child-session',
   status:'running',revision:1,prompt:'独立任务',inheritContext:true,inheritedMessageCount:0,usage:{},createdAt:'2026-09-11T14:00:00Z',updatedAt:'2026-09-11T14:00:00Z'};
@@ -77,7 +77,10 @@ window.fixtureClient = {
   createSession:async()=>{window.shadowCreates++;}, deleteSession:async()=>{window.shadowDeletes++;},
   getConversationSession:async()=>null,
 };
-window.cardbushDesktop = { readTextPreview:async()=>{window.fileReads++;return {content:'# 本地文件\\n\\n预览内容',truncated:false,encoding:'utf-8'};} };
+window.cardbushDesktop = {
+  readWorkspaceDirectory:async()=>({entries:['first.ts','second.ts'].map(name=>({name,path:'C:/fixture/'+name,kind:'file'}))}),
+  readTextPreview:async()=>{window.fileReads++;return {content:'# 本地文件\\n\\n预览内容',truncated:false,encoding:'utf-8'};},
+};
 const noop=()=>{};
 function Harness() {
   const tabs=useInspectorTabs();
@@ -105,7 +108,7 @@ function Harness() {
         tab.kind==='history'||tab.kind==='subagent'?<WorkSummaryInspector active={active} language={language} detail={tab.detail} messages={messages}/>
         :tab.kind==='resource'?<InspectorWebview identity={tab.id} target={tab.detail.target} source={tab.detail.target} language={language} onOpenTarget={noop} onNavigationStateChange={noop}/>
         :tab.kind==='shadow'?<ShadowWindow embedded context={tab.context}/>
-        :<ConversationChangeDialog embedded language={language} conversation={{id:tab.conversationId,title:'审查源会话',preview:'',updatedAt:''}} reports={liveReports}
+        :<ConversationChangeDialog embedded language={language} conversation={{id:tab.conversationId,title:'审查源会话',preview:'',updatedAt:'',projectDir:'C:/fixture'}} reports={liveReports}
            initialFilePath={tab.initialFilePath} selectionRequestId={tab.selectionRequestId}
            notice="" revertingChangeId="" revertedChangeIds={new Set()} onClose={noop} onRevert={async()=>{}} onRevertAll={async()=>{}}/>
       }</InspectorTabPages></div>
