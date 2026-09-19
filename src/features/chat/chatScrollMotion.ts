@@ -1,3 +1,5 @@
+import { suspendScrollAnchoring } from '../scrollAnchoring';
+
 type MotionKind = 'follow' | 'submission' | 'jump';
 type Target = number | (() => number);
 type Motion = {
@@ -9,7 +11,7 @@ type Motion = {
   updatedAt: number;
   lastFrameAt: number;
   duration: number;
-  overflowAnchor: string;
+  releaseAnchoring?: () => void;
   complete?: () => void;
   followTarget?: Target;
 };
@@ -30,7 +32,7 @@ export function createChatScrollMotion() {
     if (frame != null) window.cancelAnimationFrame(frame);
     frame = null;
     if (motion) {
-      motion.scroller.style.overflowAnchor = motion.overflowAnchor;
+      motion.releaseAnchoring?.();
       delete motion.scroller.dataset.scrollAnimating;
     }
     motion = null;
@@ -88,14 +90,14 @@ export function createChatScrollMotion() {
       const item: Motion = { scroller, target, kind, start, startedAt: now, updatedAt: now,
         lastFrameAt: now, duration: kind === 'jump' ? Math.min(360, 180 + Math.sqrt(Math.abs(destination - start)) * 3)
           : kind === 'submission' ? 500 : 260,
-        overflowAnchor: scroller.style.overflowAnchor, complete };
+        complete };
       if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || Math.abs(destination - start) < 0.75) {
         scroller.scrollTo({ top: targetTop(item), behavior: 'instant' });
         complete?.();
         return;
       }
       motion = item;
-      scroller.style.overflowAnchor = 'none';
+      item.releaseAnchoring = suspendScrollAnchoring(scroller);
       scroller.dataset.scrollAnimating = kind;
       frame = window.requestAnimationFrame(tick);
     },

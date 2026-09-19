@@ -1,8 +1,9 @@
 import { flushSync } from 'react-dom';
 import { updateResponseSpacer } from './chat/responseSpacer';
+import { suspendScrollAnchoring } from './scrollAnchoring';
 
 const pendingToggleGuards = new WeakMap<HTMLElement, {
-  overflowAnchor: string;
+  releaseAnchoring: () => void;
   frame: number;
 }>();
 
@@ -26,13 +27,13 @@ export function preserveScrollPositionForToggle(
   const beforeScrollTop = scroller?.scrollTop ?? 0;
   const beforeMessageTop = messageItem?.getBoundingClientRect().top ?? beforeTop;
   const pendingGuard = scroller ? pendingToggleGuards.get(scroller) : undefined;
-  const previousOverflowAnchor = pendingGuard?.overflowAnchor ?? scroller?.style.overflowAnchor ?? '';
+  const releaseAnchoring = pendingGuard?.releaseAnchoring
+    ?? (scroller ? suspendScrollAnchoring(scroller) : () => {});
   if (pendingGuard && scroller) {
     window.cancelAnimationFrame(pendingGuard.frame);
     pendingToggleGuards.delete(scroller);
   }
   if (scroller) {
-    scroller.style.overflowAnchor = 'none';
     scroller.dataset.cardbushPreserveScroll = '1';
   }
   flushSync(update);
@@ -53,7 +54,7 @@ export function preserveScrollPositionForToggle(
       ? element
       : null;
   if (!target) {
-    scroller.style.overflowAnchor = previousOverflowAnchor;
+    releaseAnchoring();
     delete scroller.dataset.cardbushPreserveScroll;
     return;
   }
@@ -87,11 +88,11 @@ export function preserveScrollPositionForToggle(
   // Keep observers from interpreting the synchronous correction as user input,
   // but never write the scroll position again on later frames.
   const frame = window.requestAnimationFrame(() => {
-    scroller.style.overflowAnchor = previousOverflowAnchor;
+    releaseAnchoring();
     delete scroller.dataset.cardbushPreserveScroll;
     pendingToggleGuards.delete(scroller);
   });
   // Several disclosures can change in one frame. Only the last cleanup may
   // release the guard, and it must restore the value before the first toggle.
-  pendingToggleGuards.set(scroller, { overflowAnchor: previousOverflowAnchor, frame });
+  pendingToggleGuards.set(scroller, { releaseAnchoring, frame });
 }
