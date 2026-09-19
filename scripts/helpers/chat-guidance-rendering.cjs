@@ -20,7 +20,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
                 workspaceChanges: [{ change_id: 'guide-file', path: 'analysis.ps1', status: 'modified',
                   additions: 26, deletions: 0, metadata: { diff: '@@ -0,0 +1,1 @@\\n+check' } }] } }] },
           { id: 'guide-user', role: 'user', content: 'Could the plugin be the cause?', sequence: 3,
-            metadata: { turn_guidance: true, guidance_delivery: 'queued' } },
+            metadata: { turn_guidance: true, guidance_delivery: 'pending' } },
         ].map(message => ({ ...message, turnId: 'guide-turn', conversationId: 'guide-session',
           createdAt: '2026-09-15T10:00:0' + message.sequence + 'Z' }));
         window.showGuidanceFixture = (status = 'streaming') => {
@@ -31,9 +31,39 @@ module.exports = async ({ run, until, pause, window, root }) => {
             loading: false, historyLoading: false, goalWaiting: false, error: null, draft: '',
             pendingInteraction: null, changeReports: [] });
         };
+        window.guidanceToolMessage = guidanceFixture.find(message => message.id === 'guide-seal');
+        guidanceFixture = guidanceFixture.filter(message => message.id !== 'guide-seal');
+        window.guidancePendingFrames = [];
+        window.samplePendingGuidance = () => {
+          const rows = [...document.querySelectorAll('.message-row')];
+          const guideIndex = rows.findIndex(row => row.textContent.includes('Could the plugin be the cause?'));
+          const replyIndex = rows.findIndex(row => row.textContent.includes('The diagnosis is ready.'));
+          if (guideIndex >= 0 && replyIndex >= 0) guidancePendingFrames.push({
+            guideIndex, replyIndex,
+            gap: rows[guideIndex].getBoundingClientRect().top - rows[replyIndex].getBoundingClientRect().bottom,
+          });
+          window.guidancePendingFrame = requestAnimationFrame(samplePendingGuidance);
+        };
         showGuidanceFixture();
+        samplePendingGuidance();
       `);
       await until("document.querySelector('.message-list')?.textContent.includes('The diagnosis is ready.')", 'pre-guidance narration');
+      await pause(100);
+      await run(`
+        guidanceFixture = guidanceFixture.map(message => message.id === 'guide-user'
+          ? { ...message, status: 'queued', metadata: { ...message.metadata, guidance_delivery: 'queued' } }
+          : message);
+        guidanceFixture.push(guidanceToolMessage);
+        showGuidanceFixture();
+      `);
+      await until("!!document.querySelector('[data-message-id=guide-seal]')", 'new tool round while guidance is queued');
+      await pause(200);
+      const pendingFrames = await run('cancelAnimationFrame(guidancePendingFrame); guidancePendingFrames');
+      assert.ok(pendingFrames.length > 0);
+      assert.ok(pendingFrames.every(frame => frame.replyIndex === 1 && frame.guideIndex === 2 &&
+        frame.gap >= 0 && frame.gap < 80),
+      'queued guidance stays below prior output in every rendered frame: ' + JSON.stringify(pendingFrames));
+      await fs.writeFile(path.join(root, 'tmp/chat-guidance-queued-' + theme + '.png'), (await window.capturePage()).toPNG());
       await run(`
         guidanceFixture = views.applyAssistantSegmentBoundary({ 'guide-session': guidanceFixture },
           'guide-session', 'guide-diagnosis', { kind: 'loop_transition', reason: 'turn_guidance_applied',
@@ -65,7 +95,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       assert.equal(await run("document.querySelectorAll('.assistant-changed-files-summary').length"), 0);
     }
   } finally {
-    await run('viewTheme = guidanceOriginal.theme; updateChat(guidanceOriginal.props);');
+    await run('cancelAnimationFrame(window.guidancePendingFrame); viewTheme = guidanceOriginal.theme; updateChat(guidanceOriginal.props);');
   }
   console.log('Guidance rendering passed: chronological groups, both themes, and completion/Stop-only file summaries.');
 };

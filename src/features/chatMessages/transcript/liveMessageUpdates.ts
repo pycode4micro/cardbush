@@ -302,11 +302,14 @@ export function reconcileOptimisticGuidance(
         ? {
             ...message,
             clientMessageId,
-            status: 'queued',
+            // The applied stream event can arrive before the enqueue receipt.
+            status: message.status === 'sent' || message.metadata?.guidance_delivery === 'sent'
+              ? 'sent' : 'queued',
             metadata: {
               ...(message.metadata ?? {}),
               client_message_id: clientMessageId,
-              guidance_delivery: 'queued',
+              guidance_delivery: message.status === 'sent' || message.metadata?.guidance_delivery === 'sent'
+                ? 'sent' : 'queued',
             },
           }
         : message,

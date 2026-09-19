@@ -1152,6 +1152,84 @@ assertGuidanceGroups(normalizeChatMessagesForDisplay(mergeFinalStreamMessages(
   { turnId: 'multi-guidance-turn', temporaryMessageIds: ['local-placeholder'], toolSourceMessageId: 'local-placeholder' },
 )['multi-guidance-session']), 'terminal replacement');
 
+// A queued user row can arrive between model rounds, before the runtime seals
+// the actual guidance boundary. Check the rendered projection at every stage,
+// not just the raw array or the eventual persisted history.
+const queuedTurn = 'queued-guidance-turn';
+const queuedSession = 'queued-guidance-session';
+const queuedRoute = { turnId: queuedTurn, messageId: 'queued-assistant-2', sequence: 20,
+  createdAt: '2026-09-18T10:00:03Z' };
+const queuedInput = { ...optimisticGuidanceMessage({
+  clientMessageId: 'queued-guidance', conversationId: queuedSession, turnId: queuedTurn,
+  content: '视频用 fast', mode: 'append_context',
+}), createdAt: '2026-09-18T10:00:02Z' };
+let queuedState = { [queuedSession]: [
+  { id: 'queued-user', role: 'user', content: '制作视频', turnId: queuedTurn,
+    sequence: 1, createdAt: '2026-09-18T10:00:00Z' },
+  { id: 'queued-assistant-1', messageId: 'queued-assistant-1', role: 'assistant',
+    content: '先确认环境', turnId: queuedTurn, status: 'streaming', sequence: 2,
+    createdAt: '2026-09-18T10:00:01Z' },
+  queuedInput,
+] };
+const displayQueued = messages => normalizeActiveTurnTranscriptForDisplay(
+  normalizeChatMessagesForDisplay(messages), queuedTurn);
+const assertQueuedOrder = (messages, stage) => {
+  const visible = displayQueued(messages);
+  assert.deepEqual(plain(visible.map(message => message.role)), ['user', 'assistant', 'user'], stage);
+  assert.equal(visible.at(-1).id, queuedInput.id, stage);
+  assert.equal(visible[1].renderKey ?? visible[1].id, 'queued-assistant-1', stage);
+  return visible;
+};
+assertQueuedOrder(queuedState[queuedSession], 'initial pending guidance');
+queuedState = appendAssistantDelta(queuedState, queuedSession, 'queued-assistant-1',
+  '环境确认完成', queuedRoute);
+const pendingVisible = assertQueuedOrder(queuedState[queuedSession], 'new round while pending');
+assert.deepEqual(plain(pendingVisible[1].loopHistory.map(message => message.content)), ['先确认环境']);
+assert.deepEqual(plain(normalizeActiveTurnTranscriptForDisplay(queuedState[queuedSession], queuedTurn)
+  .map(message => message.role)), ['user', 'assistant', 'user'], 'direct live projection');
+queuedState = reconcileOptimisticGuidance(queuedState, queuedSession, queuedInput.id, queuedInput.id);
+assertQueuedOrder(queuedState[queuedSession], 'queued receipt');
+queuedState = appendToolExecution(queuedState, queuedSession, 'queued-assistant-1', {
+  id: 'queued-tool', name: 'terminal', state: 'completed', summary: 'Check Blender', output: 'ok',
+  success: true, durationMs: 1, createdAt: queuedRoute.createdAt, contentOffset: 0,
+  turnId: queuedTurn, assistantMessageId: queuedRoute.messageId, metadata: {},
+});
+assert.equal(assertQueuedOrder(queuedState[queuedSession], 'tool completion while queued')[1]
+  .toolExecutions.length, 1);
+
+// Pending guidance remains after its own turn, without crossing other turns
+// or changing the original transcript facts. Consecutive guidance keeps FIFO.
+const anotherGuidance = { ...queuedInput, id: 'queued-guidance-2',
+  content: '横屏视频', clientMessageId: 'queued-guidance-2', createdAt: '2026-09-18T10:00:02.500Z',
+  metadata: { ...queuedInput.metadata, client_message_id: 'queued-guidance-2' } };
+const anotherTurn = { id: 'another-user', role: 'user', content: 'Next request', turnId: 'another-turn',
+  createdAt: '2026-09-18T10:00:05Z' };
+const multipleQueued = [...queuedState[queuedSession].slice(0, 3), anotherGuidance,
+  queuedState[queuedSession][3], anotherTurn];
+const originalQueuedIds = plain(multipleQueued.map(message => message.id));
+assert.deepEqual(plain(displayQueued(multipleQueued).map(message => message.id)),
+  ['queued-user', 'queued-assistant-2', queuedInput.id, anotherGuidance.id, anotherTurn.id]);
+assert.deepEqual(plain(multipleQueued.map(message => message.id)), originalQueuedIds);
+assertQueuedOrder(queuedState[queuedSession].map(message => message.id === queuedInput.id
+  ? { ...message, status: 'failed', metadata: { ...message.metadata, guidance_delivery: 'failed' } }
+  : message), 'failed guidance must not move earlier output either');
+
+queuedState = applyAssistantSegmentBoundary(queuedState, queuedSession, 'queued-assistant-1', {
+  kind: 'loop_transition', reason: 'turn_guidance_applied', turnId: queuedTurn,
+  messageId: '', guidanceMessageId: queuedInput.id, previousAssistantMessageId: queuedRoute.messageId,
+  sequence: 30, createdAt: '2026-09-18T10:00:04Z',
+});
+queuedState = appendAssistantDelta(queuedState, queuedSession, 'queued-assistant-1', '开始生成 fast 视频', {
+  turnId: queuedTurn, messageId: 'queued-assistant-3', sequence: 40, createdAt: '2026-09-18T10:00:05Z',
+});
+const appliedIds = ['queued-user', 'queued-assistant-2', queuedInput.id, 'queued-assistant-3'];
+assert.deepEqual(plain(displayQueued(queuedState[queuedSession]).map(message => message.id)), appliedIds,
+  'applied guidance separates the sealed prior output from the new response');
+queuedState = reconcileOptimisticGuidance(queuedState, queuedSession, queuedInput.id, queuedInput.id);
+assert.equal(queuedState[queuedSession].find(message => message.id === queuedInput.id).status, 'sent',
+  'a late enqueue receipt must not downgrade already applied guidance');
+assert.deepEqual(plain(displayQueued(queuedState[queuedSession]).map(message => message.id)), appliedIds);
+
 console.log('turn guidance contract tests passed');
 
 function plain(value) {

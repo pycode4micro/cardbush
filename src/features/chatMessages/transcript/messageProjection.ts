@@ -16,6 +16,8 @@ import {
   numericOrderValue,
   normalizeLoopContent,
   createAssistantTranscriptGroupKey,
+  isTurnGuidanceMessage,
+  turnTranscriptKey,
 } from './messageFacts';
 import {
   shouldPreserveExistingAsLoopHistory,
@@ -505,6 +507,38 @@ const normalizedChatMessageDisplayCache = new WeakMap<
   ChatMessage[]
 >();
 
+// Until guidance is applied, all received output still precedes it. A new
+// model round may have a later timestamp and absorb earlier rounds into its
+// row; do not let that move the whole reply below the queued user message.
+// This is display order only: the applied event supplies the durable boundary.
+function positionUnappliedGuidance(messages: ChatMessage[]) {
+  const pending = messages.filter(message =>
+    message.role === 'user' && chatMessageTurnId(message) && isTurnGuidanceMessage(message) &&
+    ['pending', 'queued', 'failed'].includes(String(message.metadata?.guidance_delivery ?? message.status)),
+  );
+  if (!pending.length) return messages;
+  const pendingSet = new Set(pending);
+  const lastOutputByTurn = new Map<string, number>();
+  messages.forEach((message, index) => {
+    if (!pendingSet.has(message)) lastOutputByTurn.set(turnTranscriptKey(message), index);
+  });
+  const moved = new Set<ChatMessage>();
+  const insertAfter = new Map<number, ChatMessage[]>();
+  messages.forEach((message, index) => {
+    if (!pendingSet.has(message)) return;
+    const targetIndex = lastOutputByTurn.get(turnTranscriptKey(message));
+    if (targetIndex == null || targetIndex <= index) return;
+    moved.add(message);
+    const group = insertAfter.get(targetIndex) ?? [];
+    group.push(message);
+    insertAfter.set(targetIndex, group);
+  });
+  if (!moved.size) return messages;
+  return messages.flatMap((message, index) =>
+    moved.has(message) ? [] : [message, ...(insertAfter.get(index) ?? [])],
+  );
+}
+
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
   const cached = normalizedChatMessageDisplayCache.get(messages);
   if (cached) return cached;
@@ -518,14 +552,15 @@ export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
   );
   const hasIntermediateSegments = hasIntermediateAssistantSegments(visibleMessages);
   if (isStableVisibleTranscript(visibleMessages) && !hasIntermediateSegments) {
-    normalizedChatMessageDisplayCache.set(messages, visibleMessages);
-    return visibleMessages;
+    const normalized = positionUnappliedGuidance(visibleMessages);
+    normalizedChatMessageDisplayCache.set(messages, normalized);
+    return normalized;
   }
-  const normalized = dedupeVisibleTranscriptMessages(
+  const normalized = positionUnappliedGuidance(dedupeVisibleTranscriptMessages(
     collapseIntermediateAssistantSegments(
       collapseLoopTranscriptMessages(visibleMessages),
     ),
-  );
+  ));
   normalizedChatMessageDisplayCache.set(messages, normalized);
   return normalized;
 }
@@ -555,6 +590,7 @@ export function normalizeActiveTurnTranscriptForDisplay(
   if (!turnId) {
     return messages;
   }
+  messages = positionUnappliedGuidance(messages);
   const groupKey = createAssistantTranscriptGroupKey(messages);
   const groups = new Map<string, ChatMessage[]>();
   for (const message of messages) {
