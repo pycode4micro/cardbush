@@ -148,6 +148,20 @@ export class CardbushAppsConfigStore {
     return this.#persist(snapshot);
   }
 
+  /** Suspend discovery during replacement, preserving configuration on either outcome. */
+  async withPluginUpdate<T>(pluginId: string, replace: () => Promise<T>): Promise<T> {
+    return withConfigFileLock(this.#path, async () => {
+      const existing = await this.#read();
+      const plugin = existing.plugins.find(item => item.id === pluginId);
+      if (!plugin || plugin.source !== 'user') throw new Error('Installed user plugin not found. Refresh the list.');
+      if (plugin.removalPending) throw new Error('Finish uninstalling this plugin before updating it.');
+      const disabled = await this.#persist({ ...existing, revision: existing.revision + 1,
+        plugins: existing.plugins.map(item => item.id === pluginId ? { ...item, enabled: false } : item) });
+      try { return await replace(); }
+      finally { await this.#persist({ ...existing, revision: disabled.revision + 1 }); }
+    });
+  }
+
   /** Keep the entry retryable until the host has stopped and removed its files. */
   async uninstall(pluginId: string, remove: (
     plugin: CardbushAppPluginConfig,

@@ -290,18 +290,21 @@ async function executeRuntimeCommand(
   if (command.kind === REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND) {
     return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
   }
-  if (command.kind === APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND || command.kind === 'runtime.prepare_plugin_uninstall') {
+  if (command.kind === APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND || command.kind === 'runtime.prepare_plugin_uninstall' || command.kind === 'runtime.prepare_plugin_update') {
     const operation = mcpUpdate.then(async () => {
       const source = mcpSnapshotSchema.parse(command.payload);
       const uninstallPluginId = command.kind === 'runtime.prepare_plugin_uninstall'
         ? String((command.payload as { uninstallPluginId?: unknown }).uninstallPluginId ?? '') : undefined;
-      if (uninstallPluginId !== undefined && (!uninstallPluginId || host.hasActiveTurns() || host.isExtensionBusy(uninstallPluginId))) {
-        throw new Error('插件仍在使用中，请在当前任务结束后重试卸载。');
+      const updatePluginId = command.kind === 'runtime.prepare_plugin_update'
+        ? String((command.payload as { updatePluginId?: unknown }).updatePluginId ?? '') : undefined;
+      const suspendedPluginId = updatePluginId ?? uninstallPluginId;
+      if (suspendedPluginId !== undefined && (!suspendedPluginId || host.hasActiveTurns() || host.isExtensionBusy(suspendedPluginId))) {
+        throw new Error(updatePluginId !== undefined ? '插件仍在使用中，请在当前任务结束后重试更新。' : '插件仍在使用中，请在当前任务结束后重试卸载。');
       }
       const removedServers = uninstallPluginId ? effectiveMcp?.servers.filter(server => server.pluginId === uninstallPluginId) ?? [] : [];
       // A late UI read must not overwrite a newer saved configuration.
       if (source.snapshotId === effectiveMcp?.snapshotId && source.revision < sourceMcpRevision) {
-        if (uninstallPluginId) throw new Error('MCP configuration changed. Retry uninstalling the plugin.');
+        if (suspendedPluginId) throw new Error('MCP configuration changed. Retry the plugin operation.');
         const current = mcp.snapshot();
         return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
       }
@@ -311,10 +314,10 @@ async function executeRuntimeCommand(
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
       }));
-      if (uninstallPluginId && combined.servers.some(server => server.pluginId === uninstallPluginId)) {
-        throw new Error('Plugin is still enabled. Refresh before uninstalling.');
+      if (suspendedPluginId && combined.servers.some(server => server.pluginId === suspendedPluginId)) {
+        throw new Error('Plugin is still enabled. Refresh before replacing or uninstalling it.');
       }
-      if (uninstallPluginId) await host.preparePluginUninstall(uninstallPluginId);
+      if (suspendedPluginId) await host.preparePluginUninstall(suspendedPluginId);
       if (process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1') {
         const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
         combined.servers = combined.servers.map(server => ({
@@ -327,7 +330,7 @@ async function executeRuntimeCommand(
       effectiveMcp = { ...combined, revision };
       effectiveMcpContent = content;
       sourceMcpRevision = source.revision;
-      const result = uninstallPluginId ? await mcp.apply(effectiveMcp) : mcp.submit(effectiveMcp);
+      const result = suspendedPluginId ? await mcp.apply(effectiveMcp) : mcp.submit(effectiveMcp);
       if (uninstallPluginId && result.applicationState === 'applied') {
         for (const server of removedServers) if (server.transport.kind !== 'stdio' && server.transport.auth !== 'openai') await mcpOAuth.logout(server);
       }

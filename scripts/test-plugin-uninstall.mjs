@@ -56,10 +56,10 @@ input.on('close',()=>{appendFileSync(process.argv[2],process.argv[3]+'\\n');proc
     runtimeBridge: { command: async request => {
       state.commands.push(request.command.kind);
       if (state.failRuntime) throw Error('fixture runtime unavailable');
-      assert.ok(['runtime.apply_mcp_snapshot', 'runtime.prepare_plugin_uninstall'].includes(request.command.kind));
+      assert.ok(['runtime.apply_mcp_snapshot', 'runtime.prepare_plugin_uninstall', 'runtime.prepare_plugin_update'].includes(request.command.kind));
       const servers = await loadEnabledProductPluginMcpServers(roots, path);
       const result = await manager.apply({ ...request.command.payload, revision: ++revision, servers });
-      if (request.command.kind === 'runtime.prepare_plugin_uninstall') {
+      if (request.command.kind === 'runtime.prepare_plugin_uninstall' || request.command.kind === 'runtime.prepare_plugin_update') {
         // Retrying a partial delete may have no package left.
         state.closed = (await readFile(join(root, 'closed.txt'), 'utf8').catch(() => '')).trim().split('\n');
       }
@@ -108,6 +108,60 @@ test('pending/failed runtime cannot report success or delete files; retry remain
   state.phase = 'applied'; state.failRuntime = false;
   await api.uninstallCardbushPlugin('alpha');
   assert.equal((await store.read()).plugins.some(p => p.id === 'alpha'), false);
+});
+
+test('update stops only the old service before replacement and preserves settings, data and credentials', async t => {
+  const f = await fixture(t), { host, state, store, root, vault } = f;
+  await host.refreshMcp();
+  const before = await store.read(), secrets = [...vault];
+  const source = join(root, 'source-alpha'), sourceManifest = join(source, '.codex-plugin', 'plugin.json');
+  await writeFile(sourceManifest, JSON.stringify({ ...JSON.parse(await readFile(sourceManifest, 'utf8')), version: '2.0.0' }));
+  await installProductPlugin(source, join(root, 'plugins'), (id, replace) => host.replacePlugin(id, async () => {
+    assert.ok(state.closed.includes('alpha'), 'old MCP exited before the first rename');
+    assert.ok(!state.closed.includes('beta'), 'unrelated MCP remains connected');
+    assert.equal(JSON.parse(await readFile(f.path, 'utf8')).plugins.find(p => p.id === id).enabled, false);
+    return replace();
+  }));
+  const after = await store.read();
+  assert.equal(after.plugins.find(p => p.id === 'alpha').version, '2.0.0');
+  assert.equal(after.plugins.find(p => p.id === 'alpha').enabled, true);
+  assert.deepEqual(after.plugins.find(p => p.id === 'alpha').config, before.plugins.find(p => p.id === 'alpha').config);
+  assert.deepEqual(after.plugins.find(p => p.id === 'beta'), before.plugins.find(p => p.id === 'beta'));
+  assert.deepEqual([...vault], secrets);
+  assert.equal(await readFile(join(root, 'plugin-data', 'alpha', 'settings.json'), 'utf8'), '{"old":true}');
+  assert.deepEqual((await loadEnabledProductPluginMcpServers(f.roots, f.path)).map(s => s.id), ['plugin_alpha_echo', 'plugin_beta_echo']);
+});
+
+test('a failed or busy update leaves old files and restores the enabled state', async t => {
+  const { host, state, store, root } = await fixture(t);
+  const before = await store.read();
+  for (const phase of ['pending', 'failed', 'unavailable']) {
+    state.phase = phase === 'unavailable' ? 'applied' : phase; state.failRuntime = phase === 'unavailable';
+    let replaced = false;
+    await assert.rejects(installProductPlugin(join(root, 'source-alpha'), join(root, 'plugins'),
+      (id, replace) => host.replacePlugin(id, async () => { replaced = true; return replace(); })));
+    assert.equal(replaced, false);
+    const after = await store.read();
+    assert.deepEqual(after.plugins, before.plugins);
+    assert.ok(await readFile(join(root, 'plugins', 'alpha', '.codex-plugin', 'plugin.json')));
+  }
+  state.phase = 'applied'; state.failRuntime = false;
+  await assert.rejects(host.replacePlugin('alpha', async () => { throw new Error('fixture replacement failed'); }), /fixture replacement failed/);
+  assert.deepEqual((await store.read()).plugins, before.plugins);
+});
+
+test('updating a disabled plugin does not enable it or lose concurrent settings writes', async t => {
+  const { host, store } = await fixture(t);
+  const initial = await store.read();
+  await store.write({ ...initial, plugins: initial.plugins.map(p => ({ ...p, enabled: p.id !== 'alpha' })) });
+  const before = await store.read();
+  let enter, release;
+  const entered = new Promise(resolve => { enter = resolve; });
+  const updating = host.replacePlugin('alpha', async () => { enter(); await new Promise(resolve => { release = resolve; }); });
+  await entered;
+  const staleWrite = assert.rejects(store.write({ ...before, expectedRevision: before.revision }), /configuration changed/);
+  release(); await updating; await staleWrite;
+  assert.deepEqual((await store.read()).plugins, before.plugins);
 });
 
 test('partial removal remains retryable after restart and cannot reload broken capabilities', async t => {

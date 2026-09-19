@@ -170,7 +170,7 @@ export class ElectronProductHostController {
     return this.#resolveModel(modelId, 'The selected clean Agent model is not configured. Refresh list_subagent_options and select an available model.');
   }
 
-  async refreshMcp(uninstallPluginId?: string): Promise<unknown> {
+  async refreshMcp(uninstallPluginId?: string, updatePluginId?: string): Promise<unknown> {
     const config = await this.#mcp.read();
     const snapshot = mcpSnapshotSchema.parse({
       protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
@@ -191,9 +191,29 @@ export class ElectronProductHostController {
         toolPolicies: {},
       })),
     });
-    return this.#runtime.sendCommand(uninstallPluginId
+    return this.#runtime.sendCommand(updatePluginId
+      ? { kind: 'runtime.prepare_plugin_update', payload: { ...snapshot, updatePluginId } }
+      : uninstallPluginId
       ? { kind: 'runtime.prepare_plugin_uninstall', payload: { ...snapshot, uninstallPluginId } }
       : { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot });
+  }
+
+  async replacePlugin<T>(pluginId: string, replace: () => Promise<T>): Promise<T> {
+    let suspended = false;
+    try {
+      return await this.#apps.withPluginUpdate(pluginId, async () => {
+        suspended = true;
+        const state = mcpSnapshotResultSchema.parse(await this.refreshMcp(undefined, pluginId));
+        if (state.applicationState !== 'applied' || state.applicationError) {
+          throw new Error(state.applicationError || '插件服务尚未停止，请在当前任务结束后重试更新。');
+        }
+        return replace();
+      });
+    } finally {
+      // File replacement (or rollback) has settled and the original settings
+      // have been restored. A reconnect failure must not misreport the commit.
+      if (suspended) await this.refreshMcp().catch(error => console.warn('Plugin reconnect deferred:', pluginId, error));
+    }
   }
 
   async uninstallPlugin(pluginId: string) {

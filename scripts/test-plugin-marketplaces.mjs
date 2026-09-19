@@ -43,7 +43,8 @@ const fetcher=async input=>{
  return new Response('',{status:404});
 };
 const options={dataRoot:join(root,'markets'),userPluginRoot:join(root,'installed'),bundledPluginRoot:resolve('assets/plugins'),fetch:fetcher};
-const service=new PluginMarketplaceService(options);
+const replacements=[];
+const service=new PluginMarketplaceService({...options,replacePlugin:async(id,replace)=>{replacements.push(id);return replace();}});
 try{
  assert.deepEqual(githubSource('owner/repo@release/test'),{repo:'owner/repo',ref:'release/test'});
  assert.deepEqual(githubSource('https://github.com/owner/repo.git#v1'),{repo:'owner/repo',ref:'v1'});
@@ -84,6 +85,10 @@ try{
  assert.equal(requests.length,readsBeforeInstall,'install uses reviewed snapshot without refetching a moved branch');
  assert.equal(JSON.parse(await readFile(join(options.userPluginRoot,native.name,'.cardbush-marketplace.json'),'utf8')).revision,sha);
  await assert.rejects(service.install(preview.token),/expired/);
+ assert.deepEqual(replacements,[],'first installation does not stop any existing service');
+ const updatePreview=await service.preview(source.id,native.name);
+ await service.install(updatePreview.token);
+ assert.deepEqual(replacements,[native.name],'marketplace update runs the runtime replacement lifecycle');
  const roots=[{path:options.userPluginRoot,source:'user'}],configPath=join(root,'missing-apps.json');
  assert.equal((await loadEnabledProductPluginSkillRoots(roots,configPath)).length,1);
  const servers=await loadEnabledProductPluginMcpServers(roots,configPath);

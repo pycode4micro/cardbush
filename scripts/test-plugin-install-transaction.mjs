@@ -34,6 +34,30 @@ try {
   await assert.rejects(installProductPlugin(source,installedRoot),/Injected commit failure/);
   assert.equal(await fs.readFile(join(target,'payload.txt'),'utf8'),'old','failed replacement restores previous plugin');
   fs.rename=originalRename;
+  let prepared = 0;
+  fs.rename = async (from, to) => {
+    if (resolve(from) === resolve(target) && !prepared) throw Object.assign(new Error('Old MCP is running'), { code: 'EBUSY' });
+    return originalRename(from, to);
+  };
+  await assert.rejects(installProductPlugin(source, installedRoot), error =>
+    /目录仍被其他进程占用.*旧版本未替换/.test(error.message) && error.cause?.code === 'EBUSY');
+  assert.equal(await fs.readFile(join(target, 'payload.txt'), 'utf8'), 'old');
+  await installProductPlugin(source, installedRoot, async (id, replace) => {
+    assert.equal(id, 'fixture-plugin');
+    assert.equal((await loadProductPluginCatalog([{ path: installedRoot, source: 'user' }])).length, 1,
+      'runtime teardown can read the catalog without deadlocking the file queue');
+    prepared++;
+    return replace();
+  });
+  assert.equal(prepared, 1);
+  fs.rename=originalRename;
+  const originalManifest = await fs.readFile(join(source, '.codex-plugin', 'plugin.json'), 'utf8');
+  await assert.rejects(installProductPlugin(source, installedRoot, async (_id, replace) => {
+    await fs.writeFile(join(source, '.codex-plugin', 'plugin.json'), JSON.stringify({ ...JSON.parse(originalManifest), name: 'other-plugin' }));
+    return replace();
+  }), /manifest name changed/);
+  await fs.writeFile(join(source, '.codex-plugin', 'plugin.json'), originalManifest);
+  assert.deepEqual(await fs.readdir(installedRoot), ['fixture-plugin'], 'an identity change cannot replace an unprepared plugin');
   await Promise.all([installProductPlugin(source,installedRoot),installProductPlugin(source,installedRoot)]);
   assert.equal(await fs.readFile(join(target,'payload.txt'),'utf8'),'new');
   assert.deepEqual((await loadProductPluginCatalog([{path:installedRoot,source:'user'}])).map(p=>p.id),['fixture-plugin']);

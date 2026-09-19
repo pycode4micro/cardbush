@@ -199,6 +199,7 @@ let productHostController: {
   configurePluginConnection: (input: unknown, signal?: AbortSignal) => Promise<unknown>;
   savePluginConnections: (input: unknown) => Promise<unknown>;
   uninstallPlugin: (pluginId: string) => Promise<unknown>;
+  replacePlugin: import('./productPlugins').ProductPluginReplacement;
   requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
   resolveAutomationModel: (modelId: string) => Promise<Record<string, unknown>>;
   subagentModels: () => Promise<Array<{ id: string; model: string; maxContextTokens?: number; maxOutputTokens?: number }>>;
@@ -2411,7 +2412,7 @@ ipcMain.handle('plugins:install-local', async (event, kind: unknown = 'directory
     : await dialog.showOpenDialog(options);
   const sourcePath = result.canceled ? '' : result.filePaths[0] ?? '';
   if (!sourcePath) return null;
-  return installLocalProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'));
+  return installLocalProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'), replaceInstalledProductPlugin);
 });
 ipcMain.handle('plugins:uninstall', async (event, pluginId: unknown) => {
   assertMainWindowSender(event.sender.id);
@@ -2420,6 +2421,8 @@ ipcMain.handle('plugins:uninstall', async (event, pluginId: unknown) => {
 });
 
 let pluginMarketplaceService: PluginMarketplaceService | undefined;
+const replaceInstalledProductPlugin: import('./productPlugins').ProductPluginReplacement = async (id, replace) =>
+  (await ensureRuntimeServicesReady()).replacePlugin(id, replace);
 let pluginNetworkPromise: Promise<import('./pluginNetwork.mjs', { with: { 'resolution-mode': 'import' } }).PluginNetwork> | undefined;
 function pluginNetworking() {
   return pluginNetworkPromise ??= import('./pluginNetwork.mjs').then(({ PluginNetwork }) =>
@@ -2553,6 +2556,7 @@ function pluginMarkets() {
     userPluginRoot: path.join(app.getPath('userData'), 'plugins'),
     bundledPluginRoot: path.join(app.getAppPath(), 'assets', 'plugins'),
     fetch: pluginFetch,
+    replacePlugin: replaceInstalledProductPlugin,
     runAcquisition: async (command, args, cwd) => {
       const env = await (await pluginNetworking()).environment();
       return runAcquisitionCommand(command, command === 'git' ? ['-c', `http.proxy=${env.HTTPS_PROXY}`, ...args] : args, cwd, env);

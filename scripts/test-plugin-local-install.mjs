@@ -112,6 +112,21 @@ test('invalid packages leave the existing installation intact and clean staging'
   });
 });
 
+test('both folder and ZIP updates release the installed runtime before replacing files', async t => {
+  const { root, installed } = await fixture(t);
+  const source = join(root, 'source');
+  await save(join(source, '.codex-plugin/plugin.json'), JSON.stringify(manifest));
+  const archive = await zipFile(root, packageZip());
+  let releases = 0;
+  const replacePlugin = async (pluginId, replace) => { assert.equal(pluginId, id); releases++; return replace(); };
+  await installLocalProductPlugin(source, installed, replacePlugin);
+  assert.equal(releases, 0, 'a first installation has no runtime to stop');
+  await installLocalProductPlugin(source, installed, replacePlugin);
+  await installLocalProductPlugin(archive, installed, replacePlugin);
+  assert.equal(releases, 2);
+  await assertNoStage(root);
+});
+
 test('ZIP installation preserves file and directory link contents through the install transaction', async t => {
   const { root, installed } = await fixture(t);
   const zip = packageZip().file('AGENTS.md', 'Shared instructions')

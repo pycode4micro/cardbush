@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync } = require('node:fs');
 const { resolve, join, sep } = require('node:path');
 const { tmpdir } = require('node:os');
 const { randomUUID } = require('node:crypto');
@@ -25,13 +25,13 @@ async function run() {
   const { RuntimeUtilityProcessController } = await import('../dist-electron/runtimeHostController.mjs');
   const { ElectronProductHostController } = await import('../dist-electron/productHostController.mjs');
   const { CardbushAppsConfigStore } = await import('@cardbush/product-host');
-  const { loadProductPluginCatalog } = await import('../dist-electron/productPlugins.js');
+  const { loadProductPluginCatalog, installProductPlugin } = await import('../dist-electron/productPlugins.js');
   const plugins = join(root, 'plugins'), pkg = join(plugins, 'alpha'), data = join(root, 'plugin-data', 'alpha');
   const config = join(root, 'product', 'config', 'apps.json'), closed = join(root, 'closed.txt'), disposed = join(root, 'disposed.txt');
   mkdirSync(join(pkg, '.codex-plugin'), { recursive: true }); mkdirSync(data, { recursive: true });
   writeFileSync(join(data, 'settings.json'), '{}');
   writeFileSync(join(pkg, '.codex-plugin', 'plugin.json'), JSON.stringify({ name: 'alpha', version: '1.0.0', description: 'fixture',
-    mcpServers: { echo: { type: 'stdio', command: node, args: [join(pkg, 'server.mjs')], env: { FIXTURE_CLOSED: closed } } },
+    mcpServers: { echo: { type: 'stdio', command: node, cwd: pkg, args: [join(pkg, 'server.mjs')], env: { FIXTURE_CLOSED: closed } } },
     cardbush: { runtimeExtension: { apiVersion: 1, entry: './runtime.mjs' } } }));
   writeFileSync(join(pkg, 'server.mjs'), `import {createInterface} from 'node:readline'; import {writeFileSync} from 'node:fs';
     const lines=createInterface({input:process.stdin});lines.on('line',line=>{const r=JSON.parse(line);if(r.id===undefined)return;
@@ -61,7 +61,25 @@ async function run() {
     let snapshot;
     try { await until(async () => { snapshot = await command('runtime.get_mcp_snapshot'); return snapshot.result?.servers.some(server => server.id === 'plugin_alpha_echo' && server.health === 'ready'); }); }
     catch (error) { console.error(snapshot); throw error; }
+    await command('runtime.get_capabilities');
+    const source = join(root, 'update-alpha');
+    cpSync(pkg, source, { recursive: true });
+    const manifest = join(source, '.codex-plugin', 'plugin.json');
+    writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), version: '2.0.0' }));
+    await installProductPlugin(source, plugins, (id, replace) => host.replacePlugin(id, async () => {
+      assert.equal(readFileSync(closed, 'utf8'), 'closed', 'MCP with its cwd inside the plugin exits before rename');
+      assert.equal(readFileSync(disposed, 'utf8'), 'disposed', 'runtime extension is disposed before rename');
+      return replace();
+    }));
+    assert.equal((await store.read()).plugins[0].version, '2.0.0');
+    assert.equal((await store.read()).plugins[0].enabled, true);
+    assert.ok(existsSync(data), 'updating preserves plugin data');
+    await until(async () => (await command('runtime.get_mcp_snapshot')).result?.servers.some(server => server.id === 'plugin_alpha_echo' && server.health === 'ready'));
+    rmSync(closed); rmSync(disposed);
     const running = command('plugin.alpha.hold'); await until(() => existsSync(join(root, 'busy')));
+    await assert.rejects(installProductPlugin(source, plugins, (id, replace) => host.replacePlugin(id, replace)), /仍在使用.*更新/);
+    assert.equal((await store.read()).plugins[0].enabled, true, 'busy update restores the original enabled state');
+    assert.equal(existsSync(closed), false, 'busy update does not stop the active service');
     await assert.rejects(host.uninstallPlugin('alpha'), /仍在使用/);
     assert.ok(existsSync(pkg) && existsSync(data)); assert.equal(existsSync(disposed), false);
     assert.equal((await store.read()).plugins[0].removalPending, true);
@@ -70,6 +88,6 @@ async function run() {
     assert.equal(result.plugins.length, 0); assert.equal(existsSync(pkg), false); assert.equal(existsSync(data), false);
     assert.equal(readFileSync(closed, 'utf8'), 'closed'); assert.equal(readFileSync(disposed, 'utf8'), 'disposed');
     assert.equal((await command('runtime.get_mcp_snapshot')).result.servers.some(server => server.id === 'plugin_alpha_echo'), false);
-    console.log('Real runtime uninstall passed: busy native command blocks deletion, retry disposes extension and MCP process before deleting files.');
+    console.log('Real runtime update/uninstall passed: replacement stops MCP and extensions first, preserves data, reconnects, and busy work blocks replacement/deletion.');
   } finally { await host.shutdown(); controller.stop(); clearTimeout(deadline); }
 }

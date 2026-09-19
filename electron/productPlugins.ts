@@ -24,6 +24,10 @@ export interface EnabledProductPluginSkillRoot {
   pluginSource: PluginRoot['source'];
 }
 
+export type ProductPluginReplacement = (pluginId: string,
+  replace: () => Promise<{ id: string; manifestPath: string }>,
+) => Promise<{ id: string; manifestPath: string }>;
+
 interface MarketplaceEntry {
   name: string;
   path: string;
@@ -193,11 +197,26 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
 export async function installProductPlugin(
   sourcePath: string,
   userPluginRoot: string,
+  replacePlugin?: ProductPluginReplacement,
 ): Promise<{ id: string; manifestPath: string }> {
-  return withProductPluginLifecycle(() => {
-    const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot));
-    pluginInstallQueue = result.then(() => undefined, () => undefined);
-    return result;
+  return withProductPluginLifecycle(async () => {
+    const install = (expectedId?: string) => {
+      const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot, expectedId));
+      pluginInstallQueue = result.then(() => undefined, () => undefined);
+      return result;
+    };
+    if (replacePlugin) {
+      const manifest = await resolvePluginManifest(resolve(sourcePath));
+      const plugin = await decodeManifest({ resolved: manifest, source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
+      validateRuntimeExtensions(manifest);
+      if (await ownedDirectory(userPluginRoot, plugin.id)) {
+        // Teardown can read the catalog. Do not hold the file queue until the
+        // runtime has acknowledged that the old package is no longer in use.
+        return replacePlugin(plugin.id, () => install(plugin.id));
+      }
+      return install(plugin.id);
+    }
+    return install();
   });
 }
 
@@ -242,11 +261,12 @@ export async function inspectProductPlugin(source: string): Promise<CardbushPlug
     source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
 }
 
-async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string) {
+async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string, expectedId?: string) {
   const source = resolve(sourcePath);
   const resolved = await resolvePluginManifest(source);
   const { manifest } = resolved;
   const id = requiredString(manifest.name, 'plugin.name');
+  if (expectedId && id !== expectedId) throw new Error('Plugin manifest name changed during installation. Try again.');
   await decodeManifest({
     resolved,
     source: 'user',
@@ -277,7 +297,13 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
     if (staged.manifest.name !== id) throw new Error('Plugin manifest name changed during installation. Try again.');
     let movedExisting = false;
     try { await rename(target, backup); movedExisting = true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EBUSY' || code === 'EPERM') {
+        throw new Error(`插件 ${id} 的目录仍被其他进程占用，旧版本未替换。请关闭使用该插件目录的程序后重试。`, { cause: error });
+      }
+      if (code !== 'ENOENT') throw error;
+    }
     try { await rename(temporary, target); }
     catch (error) {
       if (movedExisting) {

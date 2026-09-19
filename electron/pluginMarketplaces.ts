@@ -4,7 +4,7 @@ import { dirname, join, resolve, relative, isAbsolute, basename } from 'node:pat
 import JSZip from 'jszip';
 import { extractPluginArchive, pluginArchiveLimits } from './pluginArchives';
 export { extractPluginArchive } from './pluginArchives';
-import { installProductPlugin, inspectProductPlugin } from './productPlugins';
+import { installProductPlugin, inspectProductPlugin, type ProductPluginReplacement } from './productPlugins';
 import { resolvePluginManifest } from './pluginManifest';
 import { safePackagePath as safeRelative, withinPackage as within } from './pluginPackagePaths';
 import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPluginArchive, acquireNpmPlugin, type NpmPluginSource, type AcquisitionCommand } from './pluginAcquisition';
@@ -38,6 +38,7 @@ export class PluginMarketplaceService {
     bundledPluginRoot: string;
     fetch: typeof fetch;
     runAcquisition?: AcquisitionCommand;
+    replacePlugin?: ProductPluginReplacement;
   }) { this.downloads = new PluginMarketDownloads(options.fetch); }
 
   async sources(): Promise<PluginMarketSource[]> {
@@ -248,7 +249,7 @@ export class PluginMarketplaceService {
       const installed = await lstat(target).catch(error => { if (missing(error)) return null; throw error; });
       const receipt = await this.receipt(prepared.preview.id);
       if (installed && receipt?.sourceId !== prepared.sourceId) throw new Error('An installed plugin from another source uses this name.');
-      const result = await installProductPlugin(prepared.root, this.options.userPluginRoot);
+      const result = await installProductPlugin(prepared.root, this.options.userPluginRoot, this.options.replacePlugin);
       this.prepared.delete(token);
       await this.cleanStage(prepared.stage).catch(() => undefined);
       return result;
