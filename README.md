@@ -6,16 +6,16 @@ A desktop AI workspace for conversations, files, coding and MCP plugins. CardBus
 
 ## Download
 
-Current release: **1.0.0-beta.2**. Choose the package for your operating system.
+Current release: **1.0.0-beta.3**. Choose the package for your operating system.
 
 | System | Download | Suitable computers |
 | --- | --- | --- |
-| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.2/CardBush-1.0.0-beta.2-windows-x64.exe) | Intel / AMD 64-bit |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.2/CardBush-1.0.0-beta.2-linux-x86_64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
+| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.3/CardBush-1.0.0-beta.3-windows-x64.exe) | Intel / AMD 64-bit |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.3/CardBush-1.0.0-beta.3-linux-x86_64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-Both packages use the same Beta 2 source tag. This update adds theme-aware interactive charts, bounded HTML previews with expansion and live file updates, compact subagent and image execution previews, and fixes guidance and inspector behavior. See the [release notes](docs/releases/1.0.0-beta.2.md); SHA-256 checksums are attached to the release.
+Both packages use the same Beta 3 source tag. This update fixes queued guidance ordering and plugin updates blocked by running services, improves streaming and scrolling, and includes scheduling, calendar, review and runtime updates since Beta 2. See the [release notes](docs/releases/1.0.0-beta.3.md); SHA-256 checksums are attached to the release.
 
 Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8 and macOS packages are not part of this release. These beta packages are unsigned.
 
@@ -26,8 +26,8 @@ Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU 
 **Linux:** download the AppImage, allow it to execute, then run it:
 
 ```sh
-chmod +x CardBush-1.0.0-beta.2-linux-x86_64.AppImage
-./CardBush-1.0.0-beta.2-linux-x86_64.AppImage
+chmod +x CardBush-1.0.0-beta.3-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.3-linux-x86_64.AppImage
 ```
 
 AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1`. Chromium also requires a working sandbox; do not disable it as an installation workaround.

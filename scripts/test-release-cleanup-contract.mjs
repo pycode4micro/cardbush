@@ -8,6 +8,7 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8');
 const app = readAppViewSources();
 const chat = read('src/hooks/useCardbushChat.ts');
 const composer = read('src/features/composer/Composer.tsx');
+const windowFrame = read('src/components/WindowFrame.tsx');
 const messageBubble = read('src/features/chatMessages/MessageBubble.tsx');
 const api = read('src/backend/api.ts');
 const styles = read('src/styles/app.css');
@@ -91,10 +92,12 @@ assert(
   'retired product-side Git and terminal consoles must not return',
 );
 assert(
-  app.includes("language === 'zh' ? '缓存' : 'Cache'") &&
-    app.includes("language === 'zh' ? '最小化' : 'Minimize'"),
+  windowFrame.includes("const zh = language === 'zh'") &&
+    ["zh ? '最小化' : 'Minimize'", "zh ? '最大化' : 'Maximize'",
+      "zh ? '还原窗口' : 'Restore'", "zh ? '关闭' : 'Close'"].every(label => windowFrame.includes(label)),
   'window frame actions must support both UI languages',
 );
+assert(!windowFrame.includes('cache-chip'), 'the retired title-bar cache button must not return');
 assert(
   messageBubble.includes("language === 'zh' ? '复制' : 'Copy'"),
   'markdown copy action must support both UI languages',
