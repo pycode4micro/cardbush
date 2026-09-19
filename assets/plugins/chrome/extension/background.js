@@ -1,3 +1,4 @@
+importScripts('downloads.js');
 const NATIVE_HOST = 'com.cardbush.browser_connector';
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const CONTROL_IDLE_TIMEOUT_MS = 60_000;
@@ -18,6 +19,8 @@ let nativePort = null;
 let lastError = '';
 let activeScope = null;
 const attachedTabs = new Map();
+const viewportTabs = new Set();
+const downloadManager = createDownloadManager(chrome);
 const pendingScreenshots = new Map();
 const sessionGrants = new Map();
 const scopeLeases = new Map();
@@ -42,6 +45,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  viewportTabs.delete(tabId);
   interruptScreenshot(tabId);
   attachedTabs.delete(tabId);
   void managedScopesReady.then(async () => {
@@ -53,6 +57,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.debugger.onDetach.addListener((source) => {
+  if (source.tabId != null) viewportTabs.delete(source.tabId);
   if (source.tabId != null) interruptScreenshot(source.tabId);
   if (source.tabId != null) attachedTabs.delete(source.tabId);
   void publishStatus();
@@ -134,6 +139,12 @@ async function dispatch(method, params, progress = () => {}) {
   progress('scope_ready');
 
   if (method === 'connector.status') return await connectorState(scope);
+  if (method === 'downloads.start') {
+    await requireTabAccess(scope, requiredTabId(params.tabId));
+    return downloadManager.start(scope, params);
+  }
+  if (method === 'downloads.status') return downloadManager.status(scope, params);
+  if (method === 'downloads.cancel') return downloadManager.cancel(scope, params);
   if (method === 'tabs.list') return await listScopeTabs(scope);
   if (method === 'tabs.activate') {
     const tabId = requiredTabId(params.tabId);
@@ -203,6 +214,8 @@ async function dispatch(method, params, progress = () => {}) {
         : {},
     );
     const result = command === 'Page.captureScreenshot' ? await captureScreenshot(tabId, run) : await run();
+    if (command === 'Emulation.setDeviceMetricsOverride') viewportTabs.add(tabId);
+    if (command === 'Emulation.clearDeviceMetricsOverride') viewportTabs.delete(tabId);
     progress('command_finished');
     if (attachedTabs.get(tabId) === scope.id) touchControlTimer(scope.id);
     return result || {};
@@ -370,6 +383,9 @@ async function ensureAttached(scope, tabId) {
 
 async function detachTab(tabId) {
   interruptScreenshot(tabId);
+  if (viewportTabs.delete(tabId) && attachedTabs.has(tabId)) {
+    try { await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride'); } catch { /* Chrome may already have detached. */ }
+  }
   if (!attachedTabs.has(tabId)) return;
   try {
     await chrome.debugger.detach({ tabId });

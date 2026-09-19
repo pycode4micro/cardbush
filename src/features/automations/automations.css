@@ -1,7 +1,8 @@
-.automation-panel { max-width: 1100px; margin: 0 auto; padding: 20px 28px 28px; width: 100%; min-width: 0; box-sizing: border-box; overflow-y: auto; color: var(--text); font-family: var(--app-font-family, inherit); }
+.feature-content.automation-panel { max-width: 1100px; margin: 0 auto; padding: 14px 20px 16px; width: 100%; min-width: 0; min-height: 0; box-sizing: border-box; overflow-y: auto; color: var(--text); font-family: var(--app-font-family, inherit); }
 .automation-heading, .automation-card header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.automation-heading { margin-bottom: 12px; }
+.automation-heading { margin-bottom: 8px; }
 .automation-heading > .automation-actions { margin-left: auto; }
+.automation-heading .automation-actions button { padding: 6px 9px; }
 .automation-hint { color: var(--text-mid); font-size: 13px; line-height: 1.7; }
 .automation-panel input, .automation-panel textarea, .automation-panel select { box-sizing: border-box; min-width: 0; width: 100%; color: inherit; font: inherit; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 9px 12px; }
 .automation-panel textarea { resize: vertical; }
@@ -16,7 +17,7 @@
 .automation-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .automation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 14px 0; }
 .automation-form label { display: grid; gap: 7px; font-size: 13px; }
-.automation-search { margin: 8px 0; }
+.automation-panel .automation-search { margin: 4px 0; padding: 7px 10px; font-size: 13px; line-height: 18px; }
 .automation-empty { display: grid; justify-items: center; text-align: center; padding: 48px 20px; color: var(--text-mid); }
 .automation-state { font-size: 12px; border: 1px solid var(--border); border-radius: 18px; padding: 4px 10px; }
 .automation-state[data-state=running], .automation-state[data-state=queued] { color: var(--accent); }
@@ -29,7 +30,7 @@
 .automation-error { color: var(--danger, #f06b79); overflow-wrap: anywhere; }
 .automation-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 .automation-nav-count { margin-left: auto; padding: 2px 7px; border-radius: 12px; background: var(--surface-hover, var(--border)); font-size: 10px; color: var(--text); line-height: 1.4; }
-.automation-tabs button { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 20px; padding: 9px 14px; background: transparent; color: var(--text-mid); font: inherit; font-size: 13px; cursor: pointer; }
+.automation-tabs button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 20px; padding: 7px 12px; background: transparent; color: var(--text-mid); font: inherit; font-size: 13px; cursor: pointer; }
 .automation-tabs button[aria-pressed=true] { background: var(--surface-hover, var(--border)); color: var(--text); }
 .automation-tabs button span { font-size: 11px; opacity: .7; }
 .automation-inbox-heading { margin: 6px 0 20px; }
@@ -91,24 +92,24 @@
 .automation-plan-details .automation-prompt { margin-top: 0; font-size: 13px; }
 .automation-plan-details .automation-actions { justify-content: flex-start; gap: 6px; }
 .automation-plan-details .automation-actions button { padding: 6px 8px; font-size: 12px; }
-.automation-calendar { margin-top: 18px; min-width: 0; }
+.automation-calendar { margin-top: 12px; min-width: 0; }
 .automation-calendar-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); gap: 20px; }
 .automation-calendar-month { min-width: 0; }
-.automation-calendar-heading, .automation-agenda-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; margin-bottom: 14px; }
+.automation-calendar-heading, .automation-agenda-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; margin-bottom: 10px; }
 .automation-calendar-heading h2, .automation-agenda-heading h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .automation-calendar-controls { display: flex; align-items: center; gap: 4px; }
 .automation-calendar-controls button { display: flex; align-items: center; justify-content: center; height: 29px; min-width: 29px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; cursor: pointer; }
 .automation-calendar-controls button:hover { color: var(--text); background: var(--surface-hover, var(--border)); }
 .automation-calendar-weekdays, .automation-calendar-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.automation-calendar-weekdays { margin-bottom: 6px; color: var(--text-mid); font-size: 11px; text-align: center; }
-.automation-calendar-weekdays span { padding: 6px 0; }
+.automation-calendar-weekdays { margin-bottom: 4px; color: var(--text-mid); font-size: 11px; text-align: center; }
+.automation-calendar-weekdays span { padding: 4px 0; }
 .automation-calendar-week { border-top: 1px solid var(--border); }
 .automation-calendar-week > div { min-width: 0; }
-.automation-calendar-date { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px; width: 100%; height: 68px; padding: 4px 3px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.automation-calendar-date { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 1px; width: 100%; height: 56px; padding: 3px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
 .automation-calendar-date:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
 .automation-calendar-date[data-selected=true] { background: var(--surface-hover, color-mix(in srgb, var(--text) 8%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 15%, transparent); }
 .automation-calendar-date:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
-.automation-calendar-date-number { display: grid; place-items: center; align-self: center; width: 23px; height: 23px; border-radius: 50%; font-size: 12px; line-height: 1; }
+.automation-calendar-date-number { display: grid; place-items: center; align-self: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; line-height: 1; }
 .automation-calendar-date[data-today=true] .automation-calendar-date-number { background: var(--action); color: var(--on-action); font-weight: 600; }
 .automation-calendar-date[data-outside=true] { color: var(--text-mid); }
 .automation-calendar-date[data-outside=true] .automation-calendar-date-items { opacity: .55; }
@@ -125,7 +126,7 @@
 .automation-agenda-heading { flex-wrap: wrap; }
 .automation-agenda-heading h2 { font-size: 15px; }
 .automation-agenda-heading > span { color: var(--text-mid); font-size: 11px; }
-.automation-agenda-list { max-height: 416px; overflow-y: auto; scrollbar-gutter: stable; }
+.automation-agenda-list { max-height: 320px; overflow-y: auto; scrollbar-gutter: stable; }
 .automation-agenda-list .automation-card:first-child { margin-top: 0; }
 .automation-agenda-list .automation-plan-toggle { padding: 12px 10px; gap: 8px; }
 .automation-agenda-list .automation-plan-copy strong { font-size: 13px; }
@@ -138,7 +139,8 @@
 .automation-calendar-events:hover { color: var(--text); }
 .automation-calendar-notice { display: flex; gap: 8px; align-items: center; color: var(--text-mid); font-size: 12px; }
 .automation-calendar-notice > svg { flex: none; }
-.calendar-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.automation-calendar-notice p { margin-block: 6px; line-height: 18px; }
+.calendar-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
 .calendar-toolbar .automation-calendar-heading { margin: 0; gap: 18px; }
 .calendar-period-title { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 7px; padding: 4px 5px; margin-left: -5px; color: var(--text); background: transparent; font: inherit; cursor: pointer; }
 .calendar-period-title svg { color: var(--text-mid); flex: none; }
@@ -212,7 +214,7 @@
 .calendar-import-entry[open] summary svg { transform: rotate(180deg); }
 .calendar-import-entry > div { padding: 0 12px 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .calendar-import-entry small { color: var(--text-mid); font-size: 10px; }
-.calendar-data-controls { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 10px; font-size: 12px; color: var(--text-mid); }
+.calendar-data-controls { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 8px; font-size: 12px; color: var(--text-mid); }
 .calendar-data-controls > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; width: fit-content; }
 .calendar-data-controls > summary::after { content: '+'; margin-left: 4px; }
 .calendar-data-controls[open] > summary::after { content: '−'; }
@@ -237,7 +239,7 @@
   .calendar-toolbar .automation-calendar-heading { gap: 8px; }
   .automation-calendar-controls button { min-width: 25px; padding-inline: 4px; }
   .calendar-period-title { gap: 4px; }
-  .automation-calendar-date { height: 62px; gap: 2px; }
+  .automation-calendar-date { height: 56px; }
   .calendar-year-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .calendar-year-month { padding: 9px; }
   .automation-calendar-date-items { display: none; }
@@ -245,4 +247,4 @@
   .automation-plan-toggle { padding: 12px 10px; gap: 8px; }
   .automation-calendar-heading h2 { font-size: 16px; }
 }
-@media (max-width: 640px) { .automation-panel { padding: 18px; } .automation-fields { grid-template-columns: minmax(0, 1fr); } .automation-form { padding: 16px; } .automation-actions { justify-content: flex-start; } }
+@media (max-width: 640px) { .feature-content.automation-panel { padding: 12px 16px; } .automation-fields { grid-template-columns: minmax(0, 1fr); } .automation-form { padding: 16px; } .automation-actions { justify-content: flex-start; } }

@@ -9,6 +9,7 @@ import {
   Clipboard,
   Code2,
   Edit3,
+  Eye,
   FolderTree,
   Folder,
   FolderOpen,
@@ -59,7 +60,9 @@ import { sectionLabels } from '../appSections';
 import { useAutomationUnreadCount } from '../automations/useAutomationUnreadCount';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { conversationProjectDir, conversationWorkspaceRoot } from '../conversationWorkspace';
-import { SourceInspectorPreview } from '../inspector/TextInspectorPreview';
+import { ReviewFilePreview } from './ReviewFilePreview';
+import { DeferredResizePreview } from '../inspector/DeferredResizePreview';
+import { resolveFilePreview } from '../inspector/filePreviewRegistry';
 import { ReviewFileTree } from './ReviewFileTree';
 import { reviewPathKey, type ReviewTurn } from './reviewModel';
 import { conversationMatchesScope } from '../conversationScope';
@@ -1677,7 +1680,7 @@ export function ConversationChangeDialog({
   const turnReports = useMemo(() => retainedReports.filter(report => (report.turnId || report.id) === selectedTurnId), [retainedReports, selectedTurnId]);
   const workspaceRoot = conversationWorkspaceRoot(conversation);
   const [selectedPath, setSelectedPath] = useState(initialFilePath);
-  const previewLoadingChange = useCallback(() => undefined, []);
+  const [previewPath, setPreviewPath] = useState('');
   const [hydratedReports, setHydratedReports] = useState<
     Map<string, ToolChangeReport>
   >(() => new Map());
@@ -1718,6 +1721,7 @@ export function ConversationChangeDialog({
     lastSession.current = conversation.id;
     appliedFileSelectionRef.current = null;
     setChosenTurn('');
+    setPreviewPath('');
     setSelectedPath(initialFilePath);
   }, [conversation.id, initialFilePath]);
   const fileNav = useReviewFileNav();
@@ -1727,6 +1731,10 @@ export function ConversationChangeDialog({
     ? (language === 'zh' ? '展开文件列表' : 'Show file list')
     : (language === 'zh' ? '收起文件列表' : 'Hide file list');
   const selectedItem = reviewItems.find(item => reviewPathKey(item.file.path) === reviewPathKey(selectedPath)) ?? null;
+  const selectedAdapter = resolveFilePreview(selectedPath);
+  const nativeFilePreview = !!selectedAdapter && selectedAdapter.renderer !== 'text'
+    && selectedAdapter.renderer !== 'markdown' && selectedAdapter.id !== 'html' && !/\.svg$/i.test(selectedPath);
+  const showCurrentContents = nativeFilePreview || previewPath === selectedPath;
   const selectedReport = selectedItem?.report ?? resolvedReports.at(-1);
   const selectedReverted = !!selectedReport && revertedChangeIds.has(selectedReport.id);
   const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport.fileCount > 0;
@@ -1745,6 +1753,7 @@ export function ConversationChangeDialog({
   const selectedDetailTurnId = selectedItem?.report.turnId?.trim() ?? '';
   const selectedDetailRequired = Boolean(
     selectedItem &&
+    !showCurrentContents &&
     selectedDetailKey &&
     selectedDetailTurnId &&
     (selectedItem.report.executionIds?.length ?? 0) > 0 &&
@@ -1875,6 +1884,13 @@ export function ConversationChangeDialog({
               options={recentTurns.map((turn, index) => ({ value: turn.id,
                 label: index === 0 ? (language === 'zh' ? '本轮' : 'Current turn') : (language === 'zh' ? '上一轮' : 'Previous turn') }))} />
           </div>}
+          {selectedItem && selectedAdapter && !nativeFilePreview && <button
+            className="change-review-preview-toggle" type="button" aria-pressed={showCurrentContents}
+            title={showCurrentContents ? (language === 'zh' ? '查看改动' : 'Show changes') : (language === 'zh' ? '预览当前文件' : 'Preview current file')}
+            aria-label={showCurrentContents ? (language === 'zh' ? '查看改动' : 'Show changes') : (language === 'zh' ? '预览当前文件' : 'Preview current file')}
+            onClick={() => setPreviewPath(showCurrentContents ? '' : selectedPath)}>
+            {showCurrentContents ? <Code2 size={15} /> : <Eye size={15} />}
+          </button>}
           <button className="secondary-button change-review-revert" type="button"
             disabled={!canRevert} onClick={() => { if (canRevert && selectedReport) void onRevert(selectedReport); }}
             title={!selectedReport || !selectedReport.fileCount ? (language === 'zh' ? '所选轮次没有可撤回的修改' : 'No changes to revert in this turn')
@@ -1901,8 +1917,8 @@ export function ConversationChangeDialog({
           style={{ '--change-file-nav-width': `${fileNav.width}px` } as React.CSSProperties}
         >
           <section className="change-review-diff-pane">
-            {selectedItem ? (
-              <>
+            {selectedItem && !showCurrentContents ? (
+              <DeferredResizePreview className="change-review-diff-content">
                 {selectedDetailStatus === 'failed' && selectedItem.file.lines.length === 0 ? (
                   <div className="tool-change-details-failed" role="alert">
                     <span>{language === 'zh' ? '改动详情加载失败' : 'Unable to load change details'}</span>
@@ -1922,12 +1938,9 @@ export function ConversationChangeDialog({
                     <ToolFileChangeView file={selectedItem.file} language={language} />
                   </ReviewCommentsScope>
                 )}
-              </>
+              </DeferredResizePreview>
             ) : selectedPath ? (
-              <div className="change-review-source-preview">
-                <p className="change-review-source-note">{language === 'zh' ? '所选轮次未修改此文件 · 当前内容' : 'Unchanged in this turn · Current contents'}</p>
-                <SourceInspectorPreview key={selectedPath} path={selectedPath} language={language} onLoadingChange={previewLoadingChange} />
-              </div>
+              <ReviewFilePreview key={selectedPath} path={selectedPath} language={language} changed={!!selectedItem} />
             ) : (
               <div className="change-review-empty">
                 {language === 'zh' ? '选择文件查看内容或本轮修改。' : 'Select a file to view its contents or changes.'}

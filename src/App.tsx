@@ -1,4 +1,5 @@
 import { recentReviewTurns } from './features/sidebar/reviewModel';
+import { newBrowserTab } from './features/browser/browserStartPage';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
 import { defaultHostTerminalRuntime, normalizeHostTerminalRuntime } from './backend/hostPlatform';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
@@ -424,7 +425,7 @@ function CardbushApp() {
   const shadowAccentColor =
     importedThemeVariables['--accent'] ?? themeAccentColor(theme);
 
-  useWindowAppearance(theme, themePreference, windowMaterial);
+  useWindowAppearance(theme, themePreference, windowMaterial, importedThemeVariables['--text']);
   useVisualThemeContext(theme, themePreference);
 
   useEffect(() => {
@@ -766,7 +767,7 @@ function CardbushApp() {
       ...(detail.title?.trim() ? { title: detail.title.trim() } : {}),
       ...(detail.mediaType ? { mediaType: detail.mediaType } : {}),
     };
-    const identity = `resource:${inspectorTargetIdentity(target)}`;
+    const identity = detail.newTab ? `browser:${crypto.randomUUID()}` : `resource:${inspectorTargetIdentity(target)}`;
     const nextTab: InspectorResourceTab = {
       id: identity,
       kind: 'resource',
@@ -1051,11 +1052,9 @@ function CardbushApp() {
         : !selectedInspectorModelConfig
           ? language === 'zh' ? '请先选择可用模型' : 'Select an available model first'
           : language === 'zh' ? '完成一轮会话后可创建 Shadow 对话' : 'Complete a conversation turn to create a Shadow chat';
-  const openNewBrowserInspectorTab = useCallback(() => {
-    openInspectorTarget({
-      target: `about:blank?cardbush-tab=${crypto.randomUUID()}`,
-      title: language === 'zh' ? '新标签页' : 'New tab',
-    });
+  const openNewBrowserInspectorTab = useCallback(async () => {
+    try { openInspectorTarget(await newBrowserTab()); }
+    catch (error) { window.alert(`${language === 'zh' ? '无法读取浏览器设置' : 'Unable to read browser settings'}: ${String(error)}`); }
   }, [language, openInspectorTarget]);
   const openInspectorFiles = useCallback(async () => {
     setInspectorAddMenuOpen(false);

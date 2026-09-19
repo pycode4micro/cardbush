@@ -17,7 +17,7 @@ const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', n
 run(['--test', '--test-concurrency=3', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs']);
 run(['--test', 'scripts/test-file-preview-registry.mjs']);
-run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs']);
+run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
 for (const script of ['test-background-startup.mjs', 'test-startup-runtime-contract.mjs',
   'test-local-path-metadata.mjs', 'test-settings-layout-contract.mjs', 'test-panel-motion-contract.mjs',
@@ -28,7 +28,7 @@ for (const script of ['test-background-startup.mjs', 'test-startup-runtime-contr
 if (!process.argv.includes('--no-ui')) {
   for (const script of ['run-app-views-test.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
-  for (const view of ['html-references', 'loop-previews']) run(['scripts/run-app-views-test.mjs', view]);
+  for (const view of ['html-references', 'loop-previews', 'startup-presentation', 'composer-resize']) run(['scripts/run-app-views-test.mjs', view]);
   run(['scripts/test-plugin-uninstall-worker.cjs']);
   run(['scripts/test-window-menu.mjs']);
 }

@@ -15,6 +15,7 @@ import { InspectorErrorBoundary } from './InspectorErrorBoundary';
 import { MediaInspectorPreview } from './MediaInspectorPreview';
 import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
+import { DeferredResizePreview } from './DeferredResizePreview';
 import {
   normalizeInspectorBrowserAddress,
   inspectorFilePath,
@@ -40,7 +41,6 @@ export type InspectorWebviewHandle = {
 type ElectronInspectorWebview = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
-  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
   getTitle?: () => string;
   getURL?: () => string;
   getWebContentsId?: () => number;
@@ -50,39 +50,6 @@ type ElectronInspectorWebview = HTMLElement & {
   reload?: () => void;
   setZoomFactor?: (factor: number) => void;
 };
-
-type InspectorBrowserViewportMeasurement = {
-  viewportWidth: number;
-  contentWidth: number;
-};
-
-const inspectorBrowserViewportMeasurementScript = `(() => {
-  const root = document.documentElement;
-  const body = document.body;
-  const viewportWidth = Math.max(0, window.innerWidth || root?.clientWidth || 0);
-  const contentWidth = Math.max(
-    viewportWidth,
-    root?.scrollWidth || 0,
-    body?.scrollWidth || 0
-  );
-  return { viewportWidth, contentWidth };
-})()`;
-
-function inspectorBrowserFitZoom(measurement: unknown) {
-  if (!measurement || typeof measurement !== 'object') return 1;
-  const value = measurement as Partial<InspectorBrowserViewportMeasurement>;
-  const viewportWidth = Number(value.viewportWidth);
-  const contentWidth = Number(value.contentWidth);
-  if (
-    !Number.isFinite(viewportWidth) ||
-    !Number.isFinite(contentWidth) ||
-    viewportWidth <= 0 ||
-    contentWidth <= viewportWidth + 2
-  ) {
-    return 1;
-  }
-  return Math.max(0.5, Math.min(1, viewportWidth / contentWidth));
-}
 
 export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   identity: string;
@@ -108,8 +75,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
   const webviewDomReadyRef = useRef(false);
-  const browserFitRevisionRef = useRef(0);
-  const browserFitTimerRef = useRef(0);
   const requestedUrlRef = useRef(source);
   const filePath = inspectorFilePath(target);
   const media = mediaType ? inspectorMediaTarget(target, mediaType) : null;
@@ -121,56 +86,13 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const [filePreviewRevision, setFilePreviewRevision] = useState(0);
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
+  const [hasDocument, setHasDocument] = useState(false);
   const [webviewRevision, setWebviewRevision] = useState(0);
-  const [previewError, setPreviewError] = useState(false);
+  const [previewError, setPreviewError] = useState<'timeout' | 'load' | 'crash' | null>(null);
 
   useEffect(() => {
     requestedUrlRef.current = source;
   }, [source]);
-
-  const applyBrowserViewportFit = useCallback(async (revision: number) => {
-    const webview = webviewRef.current;
-    if (
-      rendererPreview ||
-      !webview?.isConnected ||
-      !webviewDomReadyRef.current ||
-      webview.getBoundingClientRect().width <= 0
-    ) {
-      return;
-    }
-    try {
-      // Measure at the natural page scale so responsive pages remain at 100%,
-      // while fixed-width desktop pages are fitted into the inspector viewport.
-      webview.setZoomFactor?.(1);
-      const measurement = await webview.executeJavaScript?.(
-        inspectorBrowserViewportMeasurementScript,
-      );
-      if (
-        revision !== browserFitRevisionRef.current ||
-        webview !== webviewRef.current ||
-        !webview.isConnected ||
-        !webviewDomReadyRef.current
-      ) {
-        return;
-      }
-      webview.setZoomFactor?.(inspectorBrowserFitZoom(measurement));
-    } catch {
-      // A navigation can dispose the guest while an async measurement is in
-      // flight. The next dom-ready/resize observation will retry safely.
-    }
-  }, [rendererPreview]);
-
-  const scheduleBrowserViewportFit = useCallback((delay = 0) => {
-    const revision = browserFitRevisionRef.current + 1;
-    browserFitRevisionRef.current = revision;
-    if (browserFitTimerRef.current) {
-      window.clearTimeout(browserFitTimerRef.current);
-    }
-    browserFitTimerRef.current = window.setTimeout(() => {
-      browserFitTimerRef.current = 0;
-      void applyBrowserViewportFit(revision);
-    }, delay);
-  }, [applyBrowserViewportFit]);
 
   const publishNavigation = useCallback(() => {
     const webview = webviewRef.current;
@@ -226,7 +148,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       }
     },
     reload: () => {
-      setPreviewError(false);
+      setPreviewError(null);
       loadingRef.current = true;
       setLoading(true);
       if (rendererPreview) {
@@ -305,37 +227,37 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     const armDeadline = () => {
       window.clearTimeout(deadline);
       deadline = window.setTimeout(() => {
-        setPreviewError(true);
+        setPreviewError('timeout');
         loadingRef.current = false;
         setLoading(false);
         publishNavigation();
       }, 30000);
     };
-    setPreviewError(false);
+    setPreviewError(null);
+    setHasDocument(false);
     loadingRef.current = true;
     setLoading(true);
     armDeadline();
     const ready = () => {
       webviewDomReadyRef.current = true;
+      setHasDocument(true);
+      setPreviewError(current => current === 'timeout' ? null : current);
+      // Clear zoom inherited from the former fit-to-width behavior. Wide pages
+      // keep their normal font size and scroll; resizing never changes zoom.
+      try { webview.setZoomFactor?.(1); } catch { /* Guest may be navigating away. */ }
       window.clearTimeout(deadline);
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
-      scheduleBrowserViewportFit();
     };
-    const start = () => {
-      setPreviewError(false);
+    const start = (event: Event) => {
+      const detail = event as Event & { isMainFrame?: boolean; isInPlace?: boolean; url?: string };
+      // Lazy frames and in-page navigation can start the browser's spinner too.
+      // Only a new top-level document changes this preview's loading lifecycle.
+      if (!detail.isMainFrame || detail.isInPlace) return;
+      if (detail.url) requestedUrlRef.current = detail.url;
+      setPreviewError(null);
       armDeadline();
-      browserFitRevisionRef.current += 1;
-      if (browserFitTimerRef.current) {
-        window.clearTimeout(browserFitTimerRef.current);
-        browserFitTimerRef.current = 0;
-      }
-      try {
-        webview.setZoomFactor?.(1);
-      } catch {
-        webviewDomReadyRef.current = false;
-      }
       loadingRef.current = true;
       setLoading(true);
       publishNavigation();
@@ -345,13 +267,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
-      scheduleBrowserViewportFit(80);
     };
     const fail = (event: Event) => {
       const detail = event as Event & { isMainFrame?: boolean; errorCode?: number };
       if (detail.isMainFrame === false || detail.errorCode === -3) return;
       window.clearTimeout(deadline);
-      setPreviewError(true);
+      setPreviewError(event.type === 'render-process-gone' ? 'crash' : 'load');
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
@@ -362,12 +283,13 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       publishNavigation();
     };
     const updateTitle = () => publishNavigation();
-    const openWindow = (event: Event) => {
-      const target = (event as Event & { url?: string }).url?.trim();
-      if (!target) return;
-      event.preventDefault();
-      onOpenTarget({ target, title: target });
-    };
+    const stopOpenLink = window.cardbushDesktop?.onInspectorOpenLink?.((detail) => {
+      if (!webview.isConnected) return;
+      try {
+        if (webview.getWebContentsId?.() !== detail.guestWebContentsId) return;
+      } catch { return; } // A guest can be replaced while its IPC event is in flight.
+      onOpenTarget({ target: detail.target });
+    });
     const contextMenu = (event: Event) => {
       const params = (event as Event & {
         params?: {
@@ -402,14 +324,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         isEditable: params.isEditable,
       });
     };
-    const resizeObserver = new ResizeObserver((entries) => {
-      if ((entries[0]?.contentRect.width ?? 0) > 0) {
-        scheduleBrowserViewportFit(120);
-      }
-    });
-    resizeObserver.observe(webview);
     webview.addEventListener('dom-ready', ready);
-    webview.addEventListener('did-start-loading', start);
+    webview.addEventListener('did-start-navigation', start);
     webview.addEventListener('did-finish-load', finish);
     webview.addEventListener('did-stop-loading', finish);
     webview.addEventListener('did-fail-load', fail);
@@ -417,18 +333,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webview.addEventListener('did-navigate', navigate);
     webview.addEventListener('did-navigate-in-page', navigate);
     webview.addEventListener('page-title-updated', updateTitle);
-    webview.addEventListener('new-window', openWindow);
     webview.addEventListener('context-menu', contextMenu);
     return () => {
+      stopOpenLink?.();
       window.clearTimeout(deadline);
-      browserFitRevisionRef.current += 1;
-      if (browserFitTimerRef.current) {
-        window.clearTimeout(browserFitTimerRef.current);
-        browserFitTimerRef.current = 0;
-      }
-      resizeObserver.disconnect();
       webview.removeEventListener('dom-ready', ready);
-      webview.removeEventListener('did-start-loading', start);
+      webview.removeEventListener('did-start-navigation', start);
       webview.removeEventListener('did-finish-load', finish);
       webview.removeEventListener('did-stop-loading', finish);
       webview.removeEventListener('did-fail-load', fail);
@@ -436,21 +346,19 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('did-navigate', navigate);
       webview.removeEventListener('did-navigate-in-page', navigate);
       webview.removeEventListener('page-title-updated', updateTitle);
-      webview.removeEventListener('new-window', openWindow);
       webview.removeEventListener('context-menu', contextMenu);
     };
   }, [
     onOpenTarget,
     publishNavigation,
     rendererPreview,
-    scheduleBrowserViewportFit,
     source,
     target,
     webviewRevision,
   ]);
 
   return (
-    <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
+    <DeferredResizePreview className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
       <InspectorErrorBoundary
         key={`${target}:${filePreviewRevision}:${webviewRevision}`}
         target={target}
@@ -483,6 +391,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           ref: webviewRef,
           className: 'right-inspector-webview',
           src: source,
+          // The main-process handler forwards these requests to inspector tabs and denies native popups.
+          allowpopups: '',
           webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
         })}
       </InspectorErrorBoundary>
@@ -494,7 +404,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           </button>
         </div>
       )}
-      {loading && (
+      {loading && (rendererPreview || !hasDocument) && (
         <div className="right-inspector-preview-loading" role="status">
           <span />
           <span />
@@ -502,6 +412,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           <small>{language === 'zh' ? '正在加载预览' : 'Loading preview'}</small>
         </div>
       )}
-    </div>
+    </DeferredResizePreview>
   );
 });

@@ -1,9 +1,17 @@
-import { shouldUsePlainTextPreview } from '../../shared/textPreview';
+import { Suspense } from 'react';
+import { shouldVirtualizeSource } from './sourcePreviewBlocks';
+import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
+
+const VirtualSourceLines = recoverableLazy<{ content: string }>('virtual-source',
+  () => import('./VirtualSourceLines').then(module => ({ default: module.VirtualSourceLines })),
+  ({ content }) => <><DeferredModuleNotice language="en" basicPreview /><pre className="source-plain-text">{content}</pre></>);
 
 export function PlainSourceLines({ content }: { content: string }) {
   const normalized = content.replace(/\r\n?/g, '\n');
-  if (shouldUsePlainTextPreview(normalized)) {
-    return <pre className="source-plain-text" data-render-mode="plain">{normalized}</pre>;
+  if (shouldVirtualizeSource(normalized)) {
+    return <Suspense fallback={<pre className="source-plain-text" aria-busy="true">{normalized.slice(0, 8192)}</pre>}>
+      <VirtualSourceLines content={normalized} />
+    </Suspense>;
   }
   return (
     <div className="source-code-lines" data-render-mode="plain">

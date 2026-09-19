@@ -1,6 +1,6 @@
 import type { SettingsSection } from '../../types';
 
-export type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'subagents' | 'instructions' | 'about' | 'browser'>;
+export type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'subagents' | 'instructions' | 'about'>;
 type LocalizedText = { zh: string; en: string };
 
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
@@ -10,6 +10,8 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
   usage: { zh: '使用统计', en: 'Usage' },
   models: { zh: '模型管理', en: 'Models' },
   mcp: { zh: '插件', en: 'Plugins' },
+  browser: { zh: '浏览器', en: 'Browser' },
+  'computer-use': { zh: '电脑操控', en: 'Computer Use' },
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '网络代理', en: 'Network proxy' },
   cache: { zh: '数据与维护', en: 'Data & maintenance' },
@@ -23,6 +25,8 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   usage: { zh: '查看实际记录的 Token 用量和使用活动。', en: 'Review recorded token usage and activity.' },
   models: { zh: '管理模型服务、输入能力和上下文长度。', en: 'Manage model services, input capabilities, and context limits.' },
   mcp: { zh: '管理插件、技能和应用连接。', en: 'Manage plugins, skills, and app connections.' },
+  browser: { zh: '设置默认主页、Chrome 连接和浏览器自动化。', en: 'Configure the start page, Chrome connection, and browser automation.' },
+  'computer-use': { zh: '管理桌面控制、截图和用户输入优先设置。', en: 'Manage desktop control, screenshots, and user input priority.' },
   runtime: { zh: '选择工具执行命令时使用的终端。', en: 'Choose the terminal used by tools to run commands.' },
   proxy: { zh: '管理模型、插件市场及 MCP 的网络连接。', en: 'Manage connections for models, the plugin marketplace, and MCP.' },
   cache: { zh: '管理对话数据、日志和内置配置。', en: 'Manage conversation data, logs, and bundled configuration.' },
@@ -30,7 +34,7 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
 };
 
 export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
-  { label: { zh: '能力', en: 'Capabilities' }, sections: ['mcp', 'models'] },
+  { label: { zh: '能力', en: 'Capabilities' }, sections: ['browser', 'computer-use', 'mcp', 'models'] },
   { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'shortcuts', 'usage', 'appearance'] },
   { label: { zh: '系统', en: 'System' }, sections: ['runtime', 'proxy', 'cache', 'diagnostics'] },
 ];
@@ -42,6 +46,8 @@ const keywords: Record<VisibleSettingsSection, string> = {
   usage: '统计 Token 用量 活跃 热力图 会话次数 usage activity',
   models: '模型 API key 密钥 服务商 上下文 输出 视觉 图片 provider context vision',
   mcp: '插件 市场 技能 账号 授权 浏览器 Chrome MCP skills marketplace accounts OAuth search browser',
+  browser: '浏览器 Chrome 主页 初始页 Google 扩展 权限 登录 连接 browser home start page extension',
+  'computer-use': '电脑 桌面 操控 截图 鼠标 键盘 用户输入 computer desktop screenshot pointer',
   runtime: '终端 命令 PowerShell WSL Bash terminal runtime',
   proxy: '代理 网络 插件市场 MCP HTTP HTTPS SOCKS NO_PROXY proxy network',
   cache: '清理 删除 历史 日志 缓存 恢复 重置 配置包 cache history logs reset restore',
@@ -55,7 +61,6 @@ export function settingsSectionMatchesQuery(section: VisibleSettingsSection, que
 }
 
 export function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection {
-  if (value === 'browser') return 'mcp';
   if (value === 'about') return 'diagnostics';
   if (value === 'instructions' || value === 'companion' || value === 'subagents') return 'profile';
   return value;

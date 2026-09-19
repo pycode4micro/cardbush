@@ -29,6 +29,7 @@ app.whenReady().then(async () => {
     } });
   const run = code => window.webContents.executeJavaScript(code);
   const calls = [];
+  ipcMain.handle('debug:append-log', () => 'fixture-log');
   ipcMain.handle('window:restore-editor-focus', (event, state) => {
     calls.push(state);
     return restoreEditorFocus(event, window, state);
@@ -41,6 +42,7 @@ app.whenReady().then(async () => {
   await run(`(() => {
     const exports = {};
     ${editorCode}
+    window.editorFocus = exports;
     const editor = document.querySelector('textarea');
     editor.addEventListener('pointerdown', exports.restoreNativeEditorFocus);
     editor.focus(); editor.setSelectionRange(2, 2);
@@ -104,11 +106,55 @@ app.whenReady().then(async () => {
     assert.equal(await run('document.hasFocus()'), true, 'clicking the editor repairs each recurrence');
   }
   assert.equal(windowBlurCount, 0, 'recovery never switches or deactivates the OS window');
+
+  window.blurWebView();
+  await pause();
+  await run('editorFocus.focusEditor(document.querySelector("textarea"))');
+  await pause();
+  assert.equal(await run('document.hasFocus()'), true, 'explicit activation repairs an already-active DOM editor without another pointer event');
+
+  await run('window.stopFocusObserver = editorFocus.observeEditorFocus(document.querySelector("textarea")); document.querySelector("textarea").setSelectionRange(2, 3)');
+  for (let i = 0; i < 3; i++) {
+    const callCount = calls.length;
+    window.blurWebView();
+    await pause();
+    assert.equal(await run('document.hasFocus()'), true, 'losing widget focus while editing recovers without a click');
+    assert.equal(calls.length, callCount + 1);
+    assert.equal(calls.at(-1).passive, true);
+    assert.deepEqual(await run('[document.querySelector("textarea").selectionStart, document.querySelector("textarea").selectionEnd]'), [2, 3]);
+  }
+  window.webContents.sendInputEvent({ type: 'char', keyCode: '文' });
+  await pause();
+  assert.equal(await run('document.querySelector("textarea").value'), 'dr文ft', 'typing continues after passive recovery');
+
+  guest.webContents.focus();
+  await pause();
+  assert.equal(guest.webContents.isFocused(), true, 'a preview keeps native focus despite the stale DOM editor');
+  assert.equal(await run('document.hasFocus()'), false);
+  assert.equal(calls.at(-1).passive, true);
+  await run('editorFocus.focusEditor(document.querySelector("textarea"))');
+  await pause();
+  assert.equal(await run('document.hasFocus()'), true, 'explicit editor activation can return from the preview');
+
+  await run('const other = document.createElement("input"); document.body.append(other); other.focus();');
+  const otherCallCount = calls.length;
+  window.blurWebView();
+  await pause();
+  assert.equal(calls.length, otherCallCount, 'the composer observer does not redirect other inputs');
+  assert.equal(await run('document.activeElement.tagName'), 'INPUT');
+  await run('editorFocus.focusEditor(document.querySelector("textarea")); stopFocusObserver();');
+  await pause();
+  const stoppedCallCount = calls.length;
+  window.blurWebView();
+  await pause();
+  assert.equal(calls.length, stoppedCallCount, 'unmounted observers stop repairing focus');
+  assert.equal(await run('document.hasFocus()'), false);
+  assert.equal(windowBlurCount, 0, 'automatic recovery never deactivates the OS window');
   window.hide();
   assert.equal(restoreEditorFocus({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, window), false);
   assert.equal(window.isVisible(), false, 'a late IPC never reveals the hidden window');
   guest.webContents.close();
-  console.log('Electron editor focus passed: guest handoff, reproduced stale native focus, repeated trusted-click repair, selection/Chinese input and no OS window switching.');
+  console.log('Electron editor focus passed: guest handoff, stale native focus, click/explicit/passive recovery, selection/Chinese input, observer cleanup and no OS window switching.');
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); }).finally(() => {
   clearTimeout(deadline);
   if (window && !window.isDestroyed()) window.destroy();

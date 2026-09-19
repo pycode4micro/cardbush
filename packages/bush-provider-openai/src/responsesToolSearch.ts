@@ -85,18 +85,3 @@ export function discoveryInputProjection(request: ModelRequest) {
     return pendingCalls.size ? items : [...items, ...supplementalItems.splice(0)];
   };
 }
-
-/** Recognize a protocol rejection, never infer capability from authentication or outages. */
-export function isToolSearchUnsupported(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const value = error as { status?: number; error?: unknown; code?: unknown; param?: unknown; message?: unknown };
-  if (value.status !== 400 && value.status !== 422) return false;
-  const body = value.error && typeof value.error === "object" ? value.error as Record<string, unknown> : value;
-  const code = String(body.code ?? value.code ?? "");
-  const param = String(body.param ?? value.param ?? "");
-  const message = String(body.message ?? value.message ?? "").toLowerCase();
-  if (!message.includes("tool_search")) return false;
-  if (param && !/^(?:tools(?:\[\d+\]|\.\d+)?(?:\.(?:type|execution))?|tool_search)$/.test(param)) return false;
-  if (code && !["unsupported_value", "unsupported_parameter", "unsupported_tool", "unsupported_tool_type", "invalid_value", "invalid_request_error", "not_supported"].includes(code)) return false;
-  return /not supported|does not support|unsupported|unknown tool (?:type|kind)|invalid tool (?:type|kind)|supported (?:values|types|tools) (?:are|include)/.test(message);
-}

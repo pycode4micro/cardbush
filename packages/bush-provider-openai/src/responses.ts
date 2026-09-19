@@ -13,6 +13,7 @@ import {
   type ModelEvent,
   type ModelMessage,
   type ModelRequest,
+  type ProviderCompatibilityDiagnostic,
 } from "@cardbush/bush-protocol";
 import type {
   ModelInputTokenCount,
@@ -22,11 +23,12 @@ import type {
 import { readLocalModelImage } from "@cardbush/bush-runtime";
 import { providerFailureEvent } from "./providerFailure.js";
 import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from "./requestBodyBudget.js";
-import { isClientToolSearchCall, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
+import { historicalCompatibilityMode, isClientToolSearchCall, portableResponsesReplay, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
 import { ResponseToolCalls, ResponseToolCallError } from "./responsesToolCalls.js";
 import { ResponseText, ResponseTextError } from "./responsesText.js";
 import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
-import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, isToolSearchUnsupported, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
+import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
+import { compatibleToolImageProjection, RESPONSES_COMPATIBILITY_CAPABILITY } from "./responsesCompatibility.js";
 import { responseToolAliases, responseToolName } from "./responsesToolNames.js";
 import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
 import { responsesInputFingerprint } from "./responsesInputFingerprint.js";
@@ -51,6 +53,7 @@ export interface OpenAIResponsesProviderConfig {
 export interface ResponseCreateProjectionOptions {
   disableProviderState?: boolean;
   toolSearchMode?: ResponsesToolSearchMode;
+  compatibilityMode?: boolean;
 }
 
 interface ResponsesProjection {
@@ -58,11 +61,10 @@ interface ResponsesProjection {
   params: ResponseCreateParamsStreaming;
   usesProviderState: boolean;
   toolSearchMode: ResponsesToolSearchMode;
+  compatibilityMode: boolean;
 }
 
 const INPUT_TOKEN_COUNT_CAPABILITY = "input_token_count";
-const TOOL_SEARCH_TOKEN_COUNT_CAPABILITY = "input_token_count.client_tool_search";
-const UNSUPPORTED_INPUT_TOKEN_COUNT_STATUSES = new Set([404, 405, 501]);
 
 export interface ResponseNormalizationState {
   requestId: string;
@@ -70,6 +72,7 @@ export interface ResponseNormalizationState {
   started: boolean;
   terminal?: boolean;
   toolSearchMode?: ResponsesToolSearchMode;
+  compatibilityMode?: boolean;
   toolAliases?: Map<string, string>;
   toolCalls?: ResponseToolCalls;
   text?: ResponseText;
@@ -141,7 +144,7 @@ export function normalizeResponseStreamEvent(
         append({ kind: "response_completed",
           finishReason: event.type === "response.incomplete" ? incompleteFinishReason(event.response)
             : toolCalls.hasCalls ? "tool_calls" : responseFinishReason(event.response),
-          providerReplay: responsesReplayData(event.response, state.toolSearchMode) });
+          providerReplay: responsesReplayData(event.response, state.toolSearchMode, state.compatibilityMode) });
         state.terminal = true;
         break;
       }
@@ -222,10 +225,11 @@ export function toResponsesCreateParams(
   request: ModelRequest,
   options: ResponseCreateProjectionOptions = {},
 ): ResponseCreateParamsStreaming {
-  const providerState = options.disableProviderState
+  const compatibilityMode = options.compatibilityMode ?? historicalCompatibilityMode(request);
+  const providerState = options.disableProviderState || compatibilityMode
     ? undefined
     : request.providerState;
-  const toolSearchMode = options.toolSearchMode ?? historicalToolSearchMode(request) ?? "function";
+  const toolSearchMode = compatibilityMode ? "function" : options.toolSearchMode ?? historicalToolSearchMode(request) ?? "function";
   const inputMessageOffset = providerState?.previousResponseId
     ? providerState.inputMessageOffset!
     : 0;
@@ -235,9 +239,10 @@ export function toResponsesCreateParams(
     );
   }
   const projectDiscovery = discoveryInputProjection(request);
+  const projectImages = compatibilityMode ? compatibleToolImageProjection() : (items: ResponseInputItem[]) => items;
   const projected = uniqueToolDeclarations(request.messages.map((message, messageIndex) => ({
     messageIndex,
-    items: projectDiscovery(messageIndex, toResponseInputItems(message, messageIndex, request, toolSearchMode)),
+    items: projectImages(projectDiscovery(messageIndex, toResponseInputItems(message, messageIndex, request, toolSearchMode))),
   })), responseTools(request, toolSearchMode), inputMessageOffset);
   return {
     model: request.model,
@@ -293,7 +298,7 @@ function toResponseInputItems(
   }
   if (message.role === "assistant") {
     const replay = replayResponsesOutput(message, request);
-    if (replay) return replay;
+    if (replay) return mode === "function" ? portableResponsesReplay(replay) : replay;
     const items: ResponseInputItem[] = [];
     if (message.reasoningContent) {
       items.push({
@@ -381,6 +386,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
   readonly #capabilityStore: ProviderCapabilityStore;
   readonly #capabilityScope: string;
   readonly #maxRequestBodyBytes: number;
+  readonly #diagnosticSecrets: string[];
 
   constructor(config: OpenAIResponsesProviderConfig) {
     this.#maxRequestBodyBytes = config.maxRequestBodyBytes ?? DEFAULT_REQUEST_BODY_MAX_BYTES;
@@ -396,13 +402,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
     });
     this.#capabilityStore = config.capabilityStore ?? new InMemoryProviderCapabilityStore();
     this.#capabilityScope = config.capabilityScope ?? openAIResponsesCapabilityScope(config);
+    this.#diagnosticSecrets = [config.apiKey, ...Object.values(config.defaultHeaders ?? {})].filter(Boolean);
   }
 
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
     const projection = await this.#project(request);
     options.signal?.throwIfAborted();
-    const full = toResponsesCreateParams(projection.request, { disableProviderState: true, toolSearchMode: projection.toolSearchMode });
+    const full = toResponsesCreateParams(projection.request, { disableProviderState: true,
+      toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
     const fingerprint = responsesInputFingerprint(full, full, request.providerBinding);
     options.onInputProjection?.(fingerprint);
     options.onRequestBodyBudget?.(requestBodyBudget(projection.params, this.#maxRequestBodyBytes));
@@ -413,7 +421,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
     request: ModelRequest,
     options: ModelStreamOptions = {},
   ): Promise<ModelInputTokenCount | undefined> {
-    if (this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
+    options.signal?.throwIfAborted();
+    if (this.#compatibilityMode(request) || this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
       return undefined;
     }
     const projection = await this.#project(request);
@@ -422,39 +431,29 @@ export class OpenAIResponsesProvider implements ModelProvider {
     // Do not send an oversized body to the counting endpoint either. Runtime
     // can use the local estimate and the independent byte budget to compact.
     if (budget.bytes > budget.maxBytes) return undefined;
-    if (projection.toolSearchMode === "native" &&
-      this.#readCapability(request.model, TOOL_SEARCH_TOKEN_COUNT_CAPABILITY) === "unsupported") return undefined;
+    if (projection.compatibilityMode) return undefined;
     try {
       const result = await this.#client.responses.inputTokens.count(
         toResponsesInputTokenCountParams(projection.params), { signal: options.signal });
+      if (!Number.isSafeInteger(result.input_tokens) || result.input_tokens < 0) {
+        throw new Error("The provider returned an invalid input token count.");
+      }
       this.#observeCapability(
         request.model,
         INPUT_TOKEN_COUNT_CAPABILITY,
         "supported",
         "provider_count_succeeded",
       );
-      if (projection.toolSearchMode === "native") this.#observeCapability(request.model,
-        TOOL_SEARCH_TOKEN_COUNT_CAPABILITY, "supported", "native_tool_search_count_succeeded");
       return {
         inputTokens: result.input_tokens,
         source: "provider",
       };
     } catch (error) {
-      if (projection.toolSearchMode === "native" && isToolSearchUnsupported(error)) {
-        this.#observeCapability(request.model, TOOL_SEARCH_TOKEN_COUNT_CAPABILITY, "unsupported", "native_tool_search_count_rejected");
-        return undefined;
-      }
-      const status = providerHttpStatus(error);
-      if (status !== undefined && UNSUPPORTED_INPUT_TOKEN_COUNT_STATUSES.has(status)) {
-        this.#observeCapability(
-          request.model,
-          INPUT_TOKEN_COUNT_CAPABILITY,
-          "unsupported",
-          `http_${status}`,
-        );
-        return undefined;
-      }
-      throw error;
+      if (options.signal?.aborted || error instanceof OpenAI.APIUserAbortError) throw error;
+      this.#enableCompatibility(request, "input_token_count");
+      this.#compatibilityDiagnostic(request, options, "input_token_count", "local_estimate",
+        providerFailureEvent(request.requestId, 0, error, false));
+      return undefined;
     }
   }
 
@@ -462,111 +461,111 @@ export class OpenAIResponsesProvider implements ModelProvider {
     request: ModelRequest,
     options: ModelStreamOptions = {},
   ): AsyncIterable<ModelEvent> {
-    const state: ResponseNormalizationState = {
-      requestId: request.requestId,
-      sequence: 0,
-      started: false,
-    };
     try {
-      const initialProjection = await this.#project(request);
-      // Only an explicit pre-stream protocol rejection can retry with portable tools.
-      // Once any response is accepted, never replay it under another protocol.
-      const { result: stream, projection } = await this.#withToolSearchFallback(request, initialProjection,
-        (params, activeProjection) => {
-          const budget = requestBodyBudget(params, this.#maxRequestBodyBytes);
-          options.onRequestBodyBudget?.(budget);
-          assertRequestBodyBudget(budget);
-          if (options.onInputProjection) {
-            const full = toResponsesCreateParams(activeProjection.request, {
-              disableProviderState: true, toolSearchMode: activeProjection.toolSearchMode,
-            });
-            options.onInputProjection(responsesInputFingerprint(full, params, request.providerBinding));
-          }
-          return this.#client.responses.create(params, { signal: options.signal });
-        });
-      const resolvedRequest = projection.request;
-      const activeProviderState = projection.usesProviderState;
-      if (hasMcpDiscovery(resolvedRequest)) state.toolSearchMode = projection.toolSearchMode;
-      state.toolAliases = responseToolAliases(resolvedRequest);
-      for await (const providerEvent of stream) {
-        if (projection.toolSearchMode === "native") {
-          const response = responseFromEvent(providerEvent);
-          if (response?.tools?.some(tool => tool.type === "tool_search" && tool.execution === "client") ||
-            (providerEvent.type === "response.output_item.done" && isClientToolSearchCall(providerEvent.item))) {
-            this.#observeCapability(resolvedRequest.model, TOOL_SEARCH_CAPABILITY, "supported", "client_tool_search_observed");
-          }
+      let projection = await this.#project(request);
+      // One collective fallback, regardless of the provider's error vocabulary.
+      // Buffer only response_started: a header/created event is not usable output.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        options.signal?.throwIfAborted();
+        const { params, request: resolvedRequest } = projection;
+        const budget = requestBodyBudget(params, this.#maxRequestBodyBytes);
+        options.onRequestBodyBudget?.(budget);
+        assertRequestBodyBudget(budget);
+        if (options.onInputProjection) {
+          const full = toResponsesCreateParams(resolvedRequest, { disableProviderState: true,
+            toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
+          options.onInputProjection(responsesInputFingerprint(full, params, request.providerBinding));
         }
-        if (
-          activeProviderState &&
-          providerEvent.type === "response.created" &&
-          responseStore(providerEvent.response) !== true
-        ) {
-          this.#observeCapability(
-            resolvedRequest.model,
-            "response_continuation",
-            "unsupported",
-            "response_not_stored",
-          );
-        } else if (
-          activeProviderState &&
-          providerEvent.type === "response.created" &&
-          responseStore(providerEvent.response) === true
-        ) {
-          this.#observeCapability(
-            resolvedRequest.model,
-            "response_continuation",
-            "supported",
-            "response_stored",
-          );
-        }
-        for (const event of normalizeResponseStreamEvent(providerEvent, state)) {
-          if (options.signal?.aborted) {
-            yield providerFailureEvent(request.requestId, state.sequence++, undefined, true);
+        const state: ResponseNormalizationState = {
+          requestId: request.requestId, sequence: 0, started: false,
+          ...(hasMcpDiscovery(resolvedRequest) ? { toolSearchMode: projection.toolSearchMode } : {}),
+          compatibilityMode: projection.compatibilityMode,
+          toolAliases: responseToolAliases(resolvedRequest),
+        };
+        let pendingStart: ModelEvent | undefined;
+        let outputExposed = false;
+        try {
+          const stream = await this.#client.responses.create(params, { signal: options.signal });
+          for await (const providerEvent of stream) {
+            options.signal?.throwIfAborted();
+            const response = responseFromEvent(providerEvent);
+            if (projection.toolSearchMode === "native" &&
+                (response?.tools?.some(tool => tool.type === "tool_search" && tool.execution === "client") ||
+                 (providerEvent.type === "response.output_item.done" && isClientToolSearchCall(providerEvent.item)))) {
+              this.#observeCapability(resolvedRequest.model, TOOL_SEARCH_CAPABILITY, "supported", "client_tool_search_observed");
+            }
+            if (projection.usesProviderState && providerEvent.type === "response.created") {
+              const stored = responseStore(providerEvent.response) === true;
+              this.#observeCapability(resolvedRequest.model, "response_continuation",
+                stored ? "supported" : "unsupported", stored ? "response_stored" : "response_not_stored");
+            }
+            for (const event of normalizeResponseStreamEvent(providerEvent, state)) {
+              options.signal?.throwIfAborted();
+              if (event.kind === "response_started") { pendingStart = event; continue; }
+              if (event.kind === "response_failed") throw new ResponseAttemptFailure(event);
+              if (pendingStart) { yield pendingStart; pendingStart = undefined; }
+              options.signal?.throwIfAborted();
+              outputExposed = true;
+              if (event.kind === "response_completed" && attempt > 0) {
+                this.#compatibilityDiagnostic(request, options, "generation", "recovered");
+              }
+              yield event;
+              // Ignore a late socket error after an authoritative completion.
+              if (event.kind === "response_completed") return;
+            }
+          }
+          throw new ResponseAttemptFailure({
+            protocol: BUSH_MODEL_EVENT_PROTOCOL, requestId: request.requestId,
+            sequence: state.sequence++, createdAt: new Date().toISOString(), kind: "response_failed",
+            code: "provider_stream_incomplete", message: "The Responses API stream ended without a terminal event.", retryable: true,
+          });
+        } catch (error) {
+          if (options.signal?.aborted || error instanceof OpenAI.APIUserAbortError) {
+            yield providerFailureEvent(request.requestId, state.sequence++, error, true);
             return;
           }
-          yield event;
-          // Completion is authoritative. Closing the iterator here also avoids
-          // a late socket failure turning an already completed response into failure.
-          if (event.kind === "response_completed" || event.kind === "response_failed") return;
+          const failure = error instanceof ResponseAttemptFailure ? error.failure
+            : providerFailureEvent(request.requestId, state.sequence++, error, false);
+          const retry = !projection.compatibilityMode && attempt === 0 && !outputExposed;
+          this.#enableCompatibility(request, "generation");
+          this.#compatibilityDiagnostic(request, options, "generation",
+            retry ? "retry" : projection.compatibilityMode ? "failed" : "next_request", failure);
+          if (!retry) { yield failure; return; }
+          projection = await this.#project(request, true);
         }
       }
-      if (!state.terminal) {
-        yield {
-          protocol: BUSH_MODEL_EVENT_PROTOCOL,
-          requestId: request.requestId,
-          sequence: state.sequence++,
-          createdAt: new Date().toISOString(),
-          kind: "response_failed",
-          code: "provider_stream_incomplete",
-          message: "The Responses API stream ended without a terminal event.",
-          retryable: true,
-        };
-      }
     } catch (error) {
-      yield providerFailureEvent(
-        request.requestId,
-        state.sequence++,
-        error,
-        options.signal?.aborted === true,
-      );
+      // Local projection/size errors and cancellation are not provider capability evidence.
+      yield providerFailureEvent(request.requestId, 0, error, options.signal?.aborted === true);
     }
   }
 
-  async #withToolSearchFallback<T>(request: ModelRequest, projection: ResponsesProjection,
-    operation: (params: ResponseCreateParamsStreaming, projection: ResponsesProjection) => Promise<T>): Promise<{ result: T; projection: ResponsesProjection }> {
-    try {
-      return { result: await operation(projection.params, projection), projection };
-    } catch (error) {
-      if (projection.toolSearchMode !== "native" || !isToolSearchUnsupported(error)) throw error;
-      this.#observeCapability(request.model, TOOL_SEARCH_CAPABILITY, "unsupported", "client_tool_search_rejected");
-      if (historicalToolSearchMode(request) !== undefined || request.providerState?.previousResponseId) throw error;
-      const fallback = await this.#project(request, "function");
-      return { result: await operation(fallback.params, fallback), projection: fallback };
+  #compatibilityMode(request: ModelRequest): boolean {
+    return historicalCompatibilityMode(request) ||
+      this.#readCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY) === "supported";
+  }
+
+  #enableCompatibility(request: ModelRequest, source: ProviderCompatibilityDiagnostic["source"]): void {
+    if (this.#readCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY) !== "supported") {
+      this.#observeCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY, "supported", `${source}_failed`);
     }
   }
 
-  async #project(request: ModelRequest, mode?: ResponsesToolSearchMode): Promise<ResponsesProjection> {
+  #compatibilityDiagnostic(request: ModelRequest, options: ModelStreamOptions,
+    source: ProviderCompatibilityDiagnostic["source"], action: ProviderCompatibilityDiagnostic["action"],
+    failure?: Extract<ModelEvent, { kind: "response_failed" }>): void {
+    const diagnostic: ProviderCompatibilityDiagnostic = { model: request.model, source, action,
+      ...(failure ? { error: { code: failure.code,
+        message: this.#diagnosticSecrets.reduce((text, secret) => text.split(secret).join("[redacted]"), failure.message),
+        status: failure.status, providerRequestId: failure.providerRequestId, diagnostics: failure.diagnostics } } : {}) };
+    options.onCompatibilityDiagnostic?.(diagnostic);
+    console.warn("[bush-provider-openai]", JSON.stringify({ type: "provider_compatibility",
+      sessionId: request.sessionId, turnId: request.turnId, requestId: request.requestId, ...diagnostic }));
+  }
+
+  async #project(request: ModelRequest, forceCompatibility = false): Promise<ResponsesProjection> {
     const resolvedRequest = await resolveLocalImageInputs(request);
+    const compatibilityMode = forceCompatibility || this.#compatibilityMode(resolvedRequest);
     const continuation = this.#readCapability(
       resolvedRequest.model,
       "response_continuation",
@@ -575,10 +574,10 @@ export class OpenAIResponsesProvider implements ModelProvider {
       resolvedRequest.providerState?.previousResponseId,
     );
     const usesProviderState = Boolean(
-      resolvedRequest.providerState &&
+      !compatibilityMode && resolvedRequest.providerState &&
       (!hasPreviousResponse || continuation === "supported"),
     );
-    const toolSearchMode = mode ?? (hasMcpDiscovery(resolvedRequest)
+    const toolSearchMode = compatibilityMode ? "function" : (hasMcpDiscovery(resolvedRequest)
       ? historicalToolSearchMode(resolvedRequest) ??
         (this.#readCapability(resolvedRequest.model, TOOL_SEARCH_CAPABILITY) === "unsupported" ? "function" : "native")
       : "function");
@@ -587,9 +586,11 @@ export class OpenAIResponsesProvider implements ModelProvider {
       params: toResponsesCreateParams(resolvedRequest, {
         disableProviderState: !usesProviderState,
         toolSearchMode,
+        compatibilityMode,
       }),
       usesProviderState,
       toolSearchMode,
+      compatibilityMode,
     };
   }
 
@@ -620,11 +621,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
   }
 }
 
-function providerHttpStatus(error: unknown): number | undefined {
-  if (error instanceof OpenAI.APIError && Number.isInteger(error.status)) {
-    return error.status;
+class ResponseAttemptFailure extends Error {
+  constructor(readonly failure: Extract<ModelEvent, { kind: "response_failed" }>) {
+    super(failure.message);
   }
-  if (!error || typeof error !== "object") return undefined;
-  const status = (error as { status?: unknown }).status;
-  return Number.isInteger(status) ? Number(status) : undefined;
 }

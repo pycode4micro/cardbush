@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const { resolveWindowAppearance, WindowAppearanceController } = require('../dist-electron/windowAppearance.js');
+const { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController } = require('../dist-electron/windowAppearance.js');
 const root = path.resolve(__dirname, '..');
 const preview = process.argv.includes('--preview');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -15,7 +15,7 @@ async function bundleViews() {
   const { build } = await import('vite');
   const { default: react } = await import('@vitejs/plugin-react');
   const files = [
-    'src/features/appearance/windowAppearance.ts', 'src/components/WindowSidebarToggle.tsx',
+    'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx',
     'src/components/TopBar.tsx', 'src/features/sidebar/ChatSidebar.tsx',
     'src/features/chat/WelcomeComposer.tsx',
   ];
@@ -38,10 +38,11 @@ app.whenReady().then(async () => {
   const bundle = await bundleViews();
   const win = new BrowserWindow({
     title: 'CardBush · 窗口材质预览', width: 1180, height: 760, minWidth: 960,
-    minHeight: 620, frame: false, show: false, backgroundColor: backgrounds.dark,
+    minHeight: 620, ...mainWindowFrameOptions(process.platform), show: false, backgroundColor: backgrounds.dark,
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
       partition: 'cardbush-window-material-fixture' },
   });
+  win.setMenu(null);
   const errors = [];
   const controller = new WindowAppearanceController(win, process.platform, error => errors.push(String(error)));
   let lastRequest = { theme: 'dark', material: 'auto', customTheme: false, themeSource: 'dark' };
@@ -54,7 +55,7 @@ app.whenReady().then(async () => {
       platform: process.platform, release: os.release(), reducedTransparency: reducedTransparency || nativeTheme.prefersReducedTransparency,
       highContrast: nativeTheme.shouldUseHighContrastColors || nativeTheme.inForcedColorsMode,
       gpuCompositing: app.getGPUFeatureStatus().gpu_compositing,
-    }), backgrounds[lastRequest.theme]);
+    }), backgrounds[lastRequest.theme], lastRequest.captionColor);
     win.webContents.send('fixture:appearance', state);
     return state;
   };
@@ -98,6 +99,9 @@ app.whenReady().then(async () => {
       removeItem: key => values.delete(key),
     }});
     window.cardbushDesktop = {
+      platform: ${JSON.stringify(process.platform)},
+      isMaximized: async () => false,
+      windowMenuContext: async () => ({}),
       setWindowTheme: (theme, options) => ipcRenderer.invoke('fixture:theme', theme, options),
       onWindowAppearanceChanged: callback => {
         const listener = (_event, state) => callback(state);
@@ -124,13 +128,11 @@ app.whenReady().then(async () => {
       };
       views.useWindowAppearance(theme, themePreference, material);
       return h('div', { className: 'app ' + (theme === 'cyberpunk' ? 'theme-dark theme-cyberpunk' : 'theme-' + theme), style: { '--sidebar-width':'252px' } },
-        h('header', { className:'window-frame window-drag' },
-          h(views.WindowSidebarToggle, { language:'zh', collapsed, onToggle:() => setCollapsed(!collapsed) }),
-          h('button', { className:'frame-chip cache-chip' }, '缓存'), h('button', { className:'frame-chip' }, '插件'),
-          h('div', { className:'window-spacer window-drag' }),
-          h('button', { className:'frame-chip cache-chip', onClick:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material) }, theme === 'dark' ? '浅色' : '深色'),
-          h('button', { className:'frame-chip cache-chip', onClick:() => setMaterial(material === 'auto' ? 'solid' : 'auto') }, material === 'auto' ? '玻璃 · 开' : '玻璃 · 关'),
-          ...['minimize','maximize','close'].map(action => h('button', { key:action, className:'window-button' + (action === 'close' ? ' danger' : ''), onClick:() => ipcRenderer.send('fixture:window',action) }, h('span',{className:'window-glyph ' + action})))),
+        h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed, onToggleSidebar:() => setCollapsed(!collapsed),
+          onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
+            {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
+            {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
+          ]}] }),
         h('main', { className: settings ? 'settings-shell' : 'desktop-shell' },
           settings ? h('aside', { className:'settings-sidebar' }, h('button', { className:'back-button', onClick:() => setSettings(false) }, '返回应用'), h('button', { className:'settings-nav active' }, '个性化')) :
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
@@ -138,7 +140,7 @@ app.whenReady().then(async () => {
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),
           h('section', { className: settings ? 'settings-content' : 'main-stage' }, h('div', { className:'chat-panel' },
             h(views.TopBar, { title:settings ? '个性化' : '新会话', language:'zh', inspectorOpen:false, onToggleInspector:noop }),
-            settings ? h('div', { style:{padding:32} }, '顶栏右侧可切换玻璃 / 纯色与浅色 / 深色。') :
+            settings ? h('div', { style:{padding:32} }, '通过视图菜单切换玻璃 / 纯色与浅色 / 深色。') :
             h(views.WelcomeComposer, { language:'zh', draft, onDraftChange:setDraft, sending:false, stopping:false, guidanceDeliveryMode:'immediate', cancelEnabled:false,
               queuedMessageCount:0, queuedMessagePreview:'', queuedMessages:[], selectedModel:'preview', availableModels:[{id:'preview',provider:'preview',modelName:'CardBush 预览'}],
               goalAvailable:false, referencePlanAvailable:false, referencePlanMode:'off', permissionMode:'full-access', subagentPermissionRouting:'inherit', reasoningLevelAvailable:false, reasoningLevel:'medium', reasoningLevels:[],
@@ -205,6 +207,7 @@ app.whenReady().then(async () => {
     await run(`changeAppearance(${JSON.stringify(theme)}); openFixtureSettings(false)`);
     await until("!!document.querySelector('.main-stage')", 'home surface');
     await until(`document.documentElement.dataset.startTheme === ${JSON.stringify(theme)} && document.documentElement.dataset.windowMaterial === ${JSON.stringify(nativeState.material)}`, 'surface material acknowledgement');
+    assert.equal(await run('getComputedStyle(document.documentElement).colorScheme'), theme === 'bright' ? 'light' : 'dark', 'native color scheme follows live theme changes');
     const homeSurface = await run("({radius:getComputedStyle(document.querySelector('.main-stage')).borderRadius, background:getComputedStyle(document.querySelector('.main-stage')).backgroundColor})");
     await run('openFixtureSettings(true)'); await until("!!document.querySelector('.settings-content')", 'settings surface');
     // Share the palette and corners; the conversation's right divider belongs to the inspector.

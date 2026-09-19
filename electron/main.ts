@@ -1,7 +1,7 @@
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
-import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
+import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
@@ -52,6 +52,8 @@ import { PluginMarketplaceService } from './pluginMarketplaces';
 import { collectPluginAcquisitionCache, runAcquisitionCommand } from './pluginAcquisition';
 import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess, setHostApplicationMemoryProvider } from './hostProcesses';
 import { applicationMemoryBytes, installPreviewResourceProtection, relievePreviewForMemoryPressure } from './previewResourceProtection';
+import { installInspectorWindowOpen } from './inspectorWindowOpen';
+import { browserConfigurationPath, browserConfigurationStore } from './browserSettings';
 import { collectPluginInstallCache, installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
 import { clearBrowserCaches, clearDiagnosticFiles, mergeCleanup } from './cacheMaintenance';
 import { appendRotatingLog } from './rotatingLog';
@@ -345,6 +347,7 @@ const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
 let lastMainWindowTheme: AppThemeMode = 'dark';
 let lastMainWindowMaterialPreference: WindowMaterialPreference = 'auto';
 let lastMainWindowCustomTheme = false;
+let lastMainWindowCaptionColor: string | undefined;
 const windowAppearanceControllers = new WeakMap<BrowserWindow, WindowAppearanceController>();
 const windowAppearanceStates = new WeakMap<BrowserWindow, WindowAppearanceState>();
 const windowScrollDiagnostics = new WeakMap<BrowserWindow, WindowScrollDiagnostics>();
@@ -567,7 +570,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
     height: 760,
     minWidth: 960,
     minHeight: 620,
-    frame: false,
+    ...mainWindowFrameOptions(process.platform),
     title: 'cardbush',
     icon: windowIcon,
     backgroundColor: mainWindowThemeBackgrounds.dark,
@@ -834,7 +837,7 @@ function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMod
     reducedTransparency: nativeTheme.prefersReducedTransparency,
     highContrast: nativeTheme.shouldUseHighContrastColors || nativeTheme.inForcedColorsMode,
     gpuCompositing: app.getGPUFeatureStatus().gpu_compositing,
-  }), background);
+  }), background, lastMainWindowCaptionColor);
   const previous = windowAppearanceStates.get(target);
   windowAppearanceStates.set(target, state);
   if (JSON.stringify(previous) !== JSON.stringify(state)) {
@@ -863,6 +866,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   installPreviewResourceProtection(target.webContents);
+  installInspectorWindowOpen(target.webContents);
   installSandboxFrameNavigationGuard(target.webContents);
   target.webContents.setWindowOpenHandler(({ url }) => {
     if (sendUiPreviewToInspector(target, url)) {
@@ -1958,14 +1962,14 @@ ipcMain.handle('window:menu-context', (event) => windowMenuContext(event, mainWi
 ipcMain.handle('window:menu-action', (event, action: unknown, editTargetId: unknown) =>
   executeWindowMenuAction(event, mainWindow, action, editTargetId, requestAppQuit));
 
-ipcMain.handle('window:restore-editor-focus', (event, state?: { documentFocused?: boolean }) => {
+ipcMain.handle('window:restore-editor-focus', (event, state?: { documentFocused?: boolean; passive?: boolean }) => {
   const target = mainWindow?.webContents === event.sender
     ? mainWindow : shadowWindows.get(event.sender.id)?.window ?? null;
   const wasFocused = !event.sender.isDestroyed() && event.sender.isFocused();
   const restored = restoreEditorFocus(event, target, state);
   if (!wasFocused || state?.documentFocused === false || !restored) {
     appendDebugLog('input-focus', {
-      stage: 'editor-pointer-focus', windowId: target?.id,
+      stage: 'editor-focus-request', windowId: target?.id, passive: state?.passive === true,
       documentFocused: state?.documentFocused === true, wasFocused, restored,
     });
   }
@@ -2158,6 +2162,7 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode, optio
       : 'dark';
   lastMainWindowMaterialPreference = options?.material === 'solid' ? 'solid' : 'auto';
   lastMainWindowCustomTheme = options?.customTheme === true;
+  lastMainWindowCaptionColor = typeof options?.captionColor === 'string' ? options.captionColor : undefined;
   lastMainWindowTheme = normalizedTheme;
   const source = options?.themeSource === 'dark' || options?.themeSource === 'light'
     ? options.themeSource : 'system';
@@ -2846,6 +2851,15 @@ ipcMain.handle('image:gallery-start', (event, root: string, recursive: boolean) 
   imageGalleryScanner.start(imageGalleryOwner(event), normalizeShellPath(root), recursive === true));
 ipcMain.handle('image:gallery-next', (event, id: string) => imageGalleryScanner.next(imageGalleryOwner(event), id));
 ipcMain.handle('image:gallery-close', (event, id: string) => imageGalleryScanner.close(imageGalleryOwner(event), id));
+
+ipcMain.handle('browser:settings-read', async event => {
+  assertMainWindowSender(event.sender.id);
+  return (await browserConfigurationStore()).read();
+});
+ipcMain.handle('browser:settings-update', async (event, input: { startPage: string; expectedRevision: number }) => {
+  assertMainWindowSender(event.sender.id);
+  return (await browserConfigurationStore()).update(input);
+});
 
 ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   guestWebContentsId?: number;
@@ -3643,6 +3657,7 @@ async function initializeRuntimeHostWithinDeadline() {
         CARDBUSH_THEME_CONTEXT_PATH: visualThemeContextPath(),
         CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify(productPluginRoots()),
         CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT: path.join(app.getPath('userData'), 'plugin-data'),
+        CARDBUSH_BROWSER_CONFIG_PATH: browserConfigurationPath(),
         ...(bundledRipgrep ? { CARDBUSH_RG_PATH: bundledRipgrep } : {}),
         CARDBUSH_APPS_MCP_ENTRY: platformFeatures(process.platform, process.arch).computerUse ? path.join(
           app.getAppPath(),

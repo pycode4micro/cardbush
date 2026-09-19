@@ -16,6 +16,7 @@ type Props = {
 export function WindowFrame(props: Props) {
   const { language, sidebarCollapsed, onToggleSidebar, menus, onBack, onForward } = props;
   const zh = language === 'zh';
+  const nativeControls = window.cardbushDesktop?.platform === 'win32';
   const shortcuts = useKeyboardShortcuts();
   const [maximized, setMaximized] = useState(false);
   const [open, setOpen] = useState<OpenMenu | null>(null);
@@ -41,9 +42,10 @@ export function WindowFrame(props: Props) {
     void window.cardbushDesktop?.isMaximized().then(setMaximized).catch(() => undefined);
   }, []);
   useEffect(() => {
+    if (nativeControls) return;
     syncMaximized(); window.addEventListener('resize', syncMaximized);
     return () => window.removeEventListener('resize', syncMaximized);
-  }, [syncMaximized]);
+  }, [nativeControls, syncMaximized]);
 
   const run = useCallback((item: WindowMenuItem) => {
     if (item.disabled || item.children) return;
@@ -154,6 +156,7 @@ export function WindowFrame(props: Props) {
     </MenuPopup>;
 
   return <header className="window-frame window-drag" ref={root} data-menu-input={menuInput}
+    data-native-controls={nativeControls ? 'true' : undefined}
     onPointerMoveCapture={event => {
       const previous = pointerPosition.current;
       pointerPosition.current = { x: event.clientX, y: event.clientY };
@@ -203,10 +206,12 @@ export function WindowFrame(props: Props) {
     {open && activeMenu && popup(activeMenu.items, open, false, activeMenu.label)}
     {submenu && activeSubmenu?.children && popup(activeSubmenu.children, submenu, true, activeSubmenu.label)}
     <div className="window-spacer window-drag" aria-hidden="true" />
-    <WindowButton label={zh ? '最小化' : 'Minimize'} glyph="minimize" onClick={() => window.cardbushDesktop?.minimize()} />
-    <WindowButton label={maximized ? (zh ? '还原窗口' : 'Restore') : (zh ? '最大化' : 'Maximize')}
-      glyph={maximized ? 'restore' : 'maximize'} onClick={async () => { await window.cardbushDesktop?.toggleMaximize(); syncMaximized(); }} />
-    <WindowButton label={zh ? '关闭' : 'Close'} glyph="close" danger onClick={() => window.cardbushDesktop?.closeToTray()} />
+    {!nativeControls && <>
+      <WindowButton label={zh ? '最小化' : 'Minimize'} glyph="minimize" onClick={() => window.cardbushDesktop?.minimize()} />
+      <WindowButton label={maximized ? (zh ? '还原窗口' : 'Restore') : (zh ? '最大化' : 'Maximize')}
+        glyph={maximized ? 'restore' : 'maximize'} onClick={async () => { await window.cardbushDesktop?.toggleMaximize(); syncMaximized(); }} />
+      <WindowButton label={zh ? '关闭' : 'Close'} glyph="close" danger onClick={() => window.cardbushDesktop?.closeToTray()} />
+    </>}
   </header>;
 }
 

@@ -11,10 +11,13 @@
 | Theme tokens and component overrides | `src/styles/themes/<theme-id>.css` | Keep all optional-theme rules scoped and import the file from `src/main.tsx` |
 | First paint | `index.html` | Resolve the saved choice before React and provide the correct splash/background colors |
 | Native Electron windows | `electron/main.ts` | Add the theme to sanitizers and native window background maps |
+| Windows caption controls | `electron/windowAppearance.ts`, `src/components/WindowFrame.tsx` | Keep native `titleBarOverlay` controls and their safe area; update caption colors with the theme, including imported palettes |
 | Renderer bridge types | `electron/preload.ts`, `src/types/electron.d.ts` | Keep theme unions aligned across the process boundary |
 | Secondary renderers | `src/ShadowWindow.tsx`, `src/CardlingWindow.tsx` | Apply runtime theme classes and background colors |
 
 Missing any one of these can produce a white flash, a rejected IPC value, or a secondary window that falls back to ordinary dark mode.
+
+The Windows main window uses native minimize/maximize/close controls. Do not add DOM caption buttons on top: Windows owns their non-client hit targets and maximize hover behavior. Reserve `env(titlebar-area-*)` space in the menu rail. Run `node scripts/run-window-appearance.mjs` after changes; its isolated HWND checks scrolling, zoom, native caption/drag regions and window commands without touching the product profile.
 
 ## Theme CSS Configuration
 

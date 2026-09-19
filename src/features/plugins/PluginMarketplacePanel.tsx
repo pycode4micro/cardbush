@@ -9,7 +9,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   language: AppLanguage;
   onBack: () => void;
   onOpenBundled: (id: string) => void;
-  onInstalled: (id: string) => Promise<void>;
+  onInstalled: (id: string, enabled: boolean) => Promise<void>;
   onNotify: (message: string) => void;
   onOpenNetwork?: () => void;
 }) {
@@ -33,6 +33,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const retryAt = marketRetryAt(error || catalog?.error || '');
   const now = Math.max(clock, Date.now());
   const retrySeconds = Math.max(0, Math.ceil(((retryAt ?? now) - now) / 1000));
+  const needsConfiguration = Boolean(preview?.warnings?.some(warning => warning.code === 'variables'));
 
   useEffect(() => {
     if (retryAt === undefined || retryAt <= Date.now()) return;
@@ -111,11 +112,12 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         const result = await bridge.installMarketPlugin(preview.token);
         id = result.id; setInstalledId(id);
       }
-      await onInstalled(id); setActivated(true);
+      await onInstalled(id, !needsConfiguration); setActivated(true);
       if (preview.authentication === 'ON_INSTALL') onOpenBundled(id);
-      onNotify(zh ? '插件已安装，可在已添加列表查看状态。' : 'Plugin installed. Check its status in Added.');
+      onNotify(needsConfiguration ? (zh ? '插件已安装，配置所需环境变量后可启用。' : 'Plugin installed. Configure the required environment variables before enabling it.')
+        : (zh ? '插件已安装，可在已添加列表查看状态。' : 'Plugin installed. Check its status in Added.'));
     } catch (caught) {
-      setError(`${id ? (zh ? '插件文件已安装，启用未完成：' : 'Plugin files installed; activation incomplete: ') : ''}${message(caught)}`);
+      setError(`${id ? (needsConfiguration ? (zh ? '插件文件已安装，状态保存未完成：' : 'Plugin files installed; saving state incomplete: ') : (zh ? '插件文件已安装，启用未完成：' : 'Plugin files installed; activation incomplete: ')) : ''}${message(caught)}`);
     } finally { setBusy(''); }
   };
   const entries = catalog?.entries.filter(entry => [entry.name, entry.description, entry.category].join(' ').toLowerCase().includes(query.trim().toLowerCase())) ?? [];
@@ -147,10 +149,13 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
       {preview.notes?.length ? <div className="plugin-market-notes"><strong>{zh ? '适配说明' : 'Adaptation notes'}</strong><ul>{preview.notes.map((note, index) => <li key={index}>{adaptationNote(note, zh)}</li>)}</ul></div> : null}
       {preview.requirements.length > 0 && <p className="plugin-market-hint">{zh ? '需要本机可运行：' : 'Requires local executables: '}{preview.requirements.join(', ')}</p>}
       {preview.issues.length > 0 ? <div className="plugin-market-issues" role="status"><strong>{zh ? '当前暂不能完整加载' : 'Not fully supported yet'}</strong><ul>{preview.issues.map((issue, index) => <li key={index}>{issueText(issue.code, zh)}{issue.detail && `：${issue.detail}`}</li>)}</ul></div>
-        : <p className="plugin-market-hint">{zh ? '结构检查通过。安装后启用插件；MCP 是否连接成功以运行状态为准。' : 'Structure checks passed. Installation enables the plugin; MCP connection health is shown separately.'}</p>}
+        : !needsConfiguration && <p className="plugin-market-hint">{zh ? '结构检查通过。安装后启用插件；MCP 是否连接成功以运行状态为准。' : 'Structure checks passed. Installation enables the plugin; MCP connection health is shown separately.'}</p>}
+      {!!preview.warnings?.length && <div className="plugin-market-notes" role="status"><strong>{zh ? '可安装，使用前需配置' : 'Ready to install; configuration needed before use'}</strong>
+        <ul>{preview.warnings.map((warning, index) => <li key={index}>{issueText(warning.code, zh)}{warning.detail && `：${warning.detail}`}</li>)}</ul>
+        <p>{zh ? '可以先安装文件，补齐配置后再启用插件。' : 'Install the files now, then enable the plugin after configuration.'}</p></div>}
       <button className="plugin-detail-primary" type="button" disabled={Boolean(busy) || preview.issues.length > 0 || activated} onClick={() => void install()}>
         {busy === 'install' ? <LoaderCircle className="spin" size={16} /> : activated ? <Check size={16} /> : <Download size={16} />}
-        {busy === 'install' ? (zh ? '正在安装…' : 'Installing…') : activated ? (zh ? '已安装' : 'Installed') : installedId ? (zh ? '重试启用' : 'Retry activation') : preview.updating ? (zh ? '更新并启用' : 'Update and enable') : (zh ? '安装并启用' : 'Install and enable')}
+        {busy === 'install' ? (zh ? '正在安装…' : 'Installing…') : activated ? (zh ? '已安装' : 'Installed') : needsConfiguration ? (installedId ? (zh ? '重试保存状态' : 'Retry saving state') : preview.updating ? (zh ? '更新，稍后配置' : 'Update, configure later') : (zh ? '安装，稍后配置' : 'Install, configure later')) : installedId ? (zh ? '重试启用' : 'Retry activation') : preview.updating ? (zh ? '更新并启用' : 'Update and enable') : (zh ? '安装并启用' : 'Install and enable')}
       </button>
       {activated && <button className="plugin-back" type="button" onClick={() => onOpenBundled(installedId)}>{zh ? '配置连接与权限' : 'Configure connections and approval'}</button>}
     </div> : <>

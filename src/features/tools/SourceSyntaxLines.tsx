@@ -1,10 +1,12 @@
 import { Highlight } from 'prism-react-renderer';
+import { memo, useCallback, useMemo } from 'react';
 
 import { cardbushSyntaxTheme } from './DiffSyntaxLines';
 import { diffLanguageForPath } from './diffSyntax';
-import { shouldUsePlainTextPreview } from '../../shared/textPreview';
+import { VirtualSourceLines, SourcePreviewRows } from './VirtualSourceLines';
+import { shouldVirtualizeSource, type SourcePreviewBlock } from './sourcePreviewBlocks';
 
-export default function SourceSyntaxLines({
+export default memo(function SourceSyntaxLines({
   content,
   path,
   language = 'en',
@@ -13,18 +15,10 @@ export default function SourceSyntaxLines({
   path: string;
   language?: 'zh' | 'en';
 }) {
-  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  if (shouldUsePlainTextPreview(normalized)) {
-    return (
-      <div className="source-plain-preview" data-render-mode="plain">
-        <div className="inspector-preview-notice source">
-          {language === 'zh'
-            ? '文本较大或行过长，已使用纯文本预览以避免界面卡顿。'
-            : 'Large text or long lines · using plain text to keep the preview responsive.'}
-        </div>
-        <pre className="source-plain-text">{normalized}</pre>
-      </div>
-    );
+  const normalized = useMemo(() => content.replace(/\r\n?/g, '\n'), [content]);
+  const renderBlock = useCallback((block: SourcePreviewBlock) => <HighlightedBlock block={block} path={path} />, [path]);
+  if (shouldVirtualizeSource(normalized)) {
+    return <VirtualSourceLines content={normalized} renderBlock={renderBlock} language={language} />;
   }
   const lines = normalized.split('\n');
 
@@ -64,4 +58,12 @@ export default function SourceSyntaxLines({
       )}
     </Highlight>
   );
-}
+});
+
+const HighlightedBlock = memo(function HighlightedBlock({ block, path }: { block: SourcePreviewBlock; path: string }) {
+  if (!block.highlight) return <SourcePreviewRows block={block} />;
+  return <Highlight code={block.rows.map(row => row.text).join('\n')} language={diffLanguageForPath(path)} theme={cardbushSyntaxTheme}>
+    {({ tokens, getTokenProps }) => <SourcePreviewRows block={block} renderLine={index => tokens[index]?.map((token, tokenIndex) =>
+      <span {...getTokenProps({ token })} key={tokenIndex} />)} />}
+  </Highlight>;
+});

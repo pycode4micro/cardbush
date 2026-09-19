@@ -21,6 +21,28 @@ requires an explicit target-session selection. Temporary grants are kept in
 `chrome.storage.session`, while per-site and all-site grants remain explicitly
 revocable persistent settings.
 
+Visual verification uses `take_screenshot`, `resize_page`, and `export_image`.
+An accidental viewport narrower than 320 CSS pixels (or shorter than 180) is
+repaired before capture; explicitly requested sizes are preserved. `fullPage`
+uses document bounds, while `selector` captures a chart or other element.
+Viewport emulation is cleared when the debugger is released or suspended.
+`export_image` exports canvas pixels or captures SVG/HTML elements. Explicit
+image values from `evaluate_script` are also attached automatically, including
+JSON-stringified `{url: dataURL}` results. Use `resultType: "json"` only when
+literal JSON is required. No browser download is needed for visual inspection.
+Original images are saved under CardBush's browser-connector artifact directory,
+isolated per session; the runtime separately prepares bounded vision copies.
+
+Version 1.0.2 adds the Chrome `downloads` permission. Reload an unpacked extension
+after updating these files. `download_file` creates a task in
+`Downloads/CardBush/<task-id>/` with `saveAs: false`; `download_status` follows
+that task and `cancel_download` cancels it. Repeated requests reuse the task,
+including while Chrome has not acknowledged the start. Only Chrome's `complete`
+state promotes a file into the task's artifact directory. Pending `.tmp` files
+are never returned as finished artifacts. Browser interruptions and cancellations
+do not trigger automatic retries. Task ownership and request keys survive worker
+restarts in `chrome.storage.session`; unrelated downloads are not tracked.
+
 Production releases should publish the extension through the Chrome Web Store.
 After the first store upload, copy the store public key into `manifest.json`
 and verify that its derived id matches `chromeConnectorExtensionId`; if the

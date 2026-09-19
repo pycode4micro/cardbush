@@ -5,6 +5,7 @@ export type InspectorOpenDetail = {
   target: string;
   title?: string;
   sourceTabId?: string;
+  newTab?: boolean;
   mediaType?: InspectorMediaType;
 };
 

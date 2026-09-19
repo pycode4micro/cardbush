@@ -124,11 +124,21 @@ try {
     computerUsePlugin?.skillRoots,
   );
 
-  const installed = await installProductPlugin(join(bundledRoot, 'chrome'), temporary);
-  assert.equal(installed.id, 'chrome');
+  await assert.rejects(installProductPlugin(join(bundledRoot, 'chrome'), temporary), /core capability/);
+  // Old user installs with reserved names cannot shadow product-owned capabilities.
+  for (const name of ['chrome', 'computer-use', 'computer_use', 'Chrome']) {
+    const collision = join(temporary, 'source', name);
+    await mkdir(join(collision, '.codex-plugin'), { recursive: true });
+    await writeFile(join(collision, '.codex-plugin', 'plugin.json'), JSON.stringify({ name, version: '1.0.0' }));
+    await assert.rejects(installProductPlugin(collision, temporary), /core capability/);
+  }
+  await mkdir(join(temporary, 'chrome', '.codex-plugin'), { recursive: true });
+  await writeFile(join(temporary, 'chrome', '.codex-plugin', 'plugin.json'), JSON.stringify({ name: 'chrome', version: '99.0.0' }));
   const userCatalog = await loadProductPluginCatalog([{ path: temporary, source: 'user' }]);
-  assert.deepEqual(userCatalog.map((plugin) => plugin.id), ['chrome']);
-  assert.equal(userCatalog[0].installation, 'INSTALLED_BY_DEFAULT');
+  assert.deepEqual(userCatalog, []);
+  const roots = [{ path: bundledRoot, source: 'bundled' }, { path: temporary, source: 'user' }];
+  const protectedCatalog = await loadProductPluginCatalog(roots);
+  assert.deepEqual(protectedCatalog, catalog);
 
   // Exercise the management skill's documented package with the real loader
   // and lifecycle store, without touching the user's installed plugins.
@@ -140,9 +150,8 @@ try {
   await writeFile(join(sampleRoot, 'plugin.json'), JSON.stringify(sample));
   await writeFile(join(sampleRoot, 'assets', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   await writeFile(join(sampleRoot, 'skills', sample.name, 'SKILL.md'), `---\nname: ${sample.name}\ndescription: Test helper\n---\n\nTest helper.\n`);
-  // Install beside chrome, so each state change can also verify preservation.
+  // An ordinary plugin still installs and its lifecycle preserves the built-in Chrome entry.
   await installProductPlugin(sampleRoot, temporary);
-  const roots = [{ path: temporary, source: 'user' }];
   const statePath = join(temporary, 'lifecycle.json');
   const store = new CardbushAppsConfigStore(statePath, { loadCatalog: () => loadProductPluginCatalog(roots) });
   const initial = await store.read();

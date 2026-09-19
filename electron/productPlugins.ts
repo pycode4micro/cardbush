@@ -1,10 +1,12 @@
 import { leaseTemporaryDirectory } from './cacheMaintenance';
+import { isCoreCapabilityId } from './coreCapabilities';
 import { resolveRuntimePluginPackage, readRuntimePluginBundle } from './runtimePluginPackage';
 import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
 import { safePackagePath } from './pluginPackagePaths';
 import { pluginRuntimeFingerprint } from './pluginRuntimeFingerprint';
+import { MissingPluginEnvironmentError, pluginDataDirectory } from './pluginEnvironment';
 
 import type {
   CardbushPluginCatalogEntry,
@@ -59,6 +61,7 @@ export async function loadProductPluginCatalog(
       if (!inside(rootPath, pluginRoot)) continue;
       const resolved = await resolvePluginManifest(pluginRoot).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (!resolved) continue;
+      if (root.source === 'user' && isCoreCapabilityId(String(resolved.manifest.name ?? ''))) continue;
       const plugin = await decodeManifest({
         resolved,
         source: root.source,
@@ -169,7 +172,7 @@ export async function loadEnabledProductRuntimeRenderers(roots: PluginRoot[], co
 }
 
 /** External plugin MCP servers use their own namespace and explicit permission. */
-export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string, standalone: Array<Record<string, unknown>> = []) {
+export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string, standalone: Array<Record<string, unknown>> = [], dataRoot = join(dirname(configPath), 'plugin-data')) {
   const { resolvePluginMcpConnection } = await import('./pluginMcpConfiguration.mjs');
   const servers: Record<string, unknown>[] = [];
   for (const plugin of await loadEnabledProductPlugins(roots, configPath)) {
@@ -181,8 +184,16 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
     let implementationFingerprint: string | undefined;
     for (const name of new Set([...Object.keys(declarations), ...Object.keys(registeredApps)])) {
       const settings = objectOrEmpty(policies[name]);
-      const configured = resolvePluginMcpConnection(plugin.id, name, root, declarations, registeredApps, settings, standalone);
+      let configured;
+      try { configured = resolvePluginMcpConnection(plugin.id, name, root, declarations, registeredApps, settings, standalone, dataRoot); }
+      catch (error) {
+        // An incomplete optional connection must not stop unrelated plugins.
+        // PluginConnectionManager exposes its specific configuration error.
+        if (error instanceof MissingPluginEnvironmentError && !error.required) continue;
+        throw error;
+      }
       if (configured) {
+        if (configured.transport.kind === 'stdio' || ('headersHelper' in configured.transport && configured.transport.headersHelper)) await mkdir(pluginDataDirectory(plugin.id, dataRoot), { recursive: true });
         if (configured.transport.kind === 'stdio') {
           implementationFingerprint ??= await pluginRuntimeFingerprint(root, plugin.version);
           servers.push({ ...configured, implementationFingerprint });
@@ -366,6 +377,7 @@ async function decodeManifest(input: {
   const { source, installation, resolved } = input;
   const { manifest, manifestPath, root: pluginRoot, skillRoots } = resolved;
   const id = requiredString(manifest.name, 'plugin.name');
+  if (source === 'user' && isCoreCapabilityId(id)) throw new Error(`${id} is a CardBush core capability and cannot be replaced by a plugin.`);
   if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(id)) {
     throw new Error(`Invalid CardBush plugin name: ${id}`);
   }

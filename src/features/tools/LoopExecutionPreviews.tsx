@@ -11,7 +11,8 @@ import { ToolImageArtifactViewer } from './ToolImageArtifactViewer';
 import { asRecord, parseToolOutputJson } from './toolPayload';
 import { activeToolStatusLabel, isToolRunningInContext } from './toolExecutionState';
 
-const agentTools = new Set(['subagent', 'await_subagents', 'team_delegate']);
+// Only dispatches create child previews; waiting uses the ordinary tool row.
+const agentTools = new Set(['subagent', 'team_delegate']);
 const imageTools = new Set(['inject_image_input', 'view_image']);
 export const isLoopPreviewExecution = (execution: ChatToolExecution) => agentTools.has(execution.name) || imageTools.has(execution.name);
 
@@ -74,7 +75,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
     const slots = ids.size ? [...ids] : [''];
     for (const taskId of slots) {
       const key = taskId || execution.id;
-      // Dispatch and wait tools can refer to the same child. Show that task once.
+      // Repeated dispatch results can refer to the same child. Show that task once.
       if (agentRows.has(key)) continue;
       const task = tasks.find(item => item.parentTurnId === (execution.turnId ?? turnId) && item.taskId === taskId);
       const running = task ? task.status === 'running' : isToolRunningInContext(execution, active) || output.status === 'running';
@@ -82,9 +83,8 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       failedAgents += Number(task ? task.status === 'failed' : execution.state === 'failed');
       const status = task ? subagentTaskPresentation(task, language).label :
         running ? (zh ? '运行中' : 'Running') : execution.state === 'failed' ? (zh ? '执行失败' : 'Failed') :
-        execution.state === 'cancelled' ? (zh ? '已停止' : 'Stopped') :
-        execution.name === 'await_subagents' ? (zh ? '等待结束' : 'Wait ended') : (zh ? '已派发' : 'Dispatched');
-      const title = task?.agentName || task?.agentProfileId || task?.teamMemberId || (!taskId && execution.name === 'await_subagents' ? (zh ? '等待子 Agent' : 'Wait for subagents') : (zh ? '子 Agent' : 'Subagent'));
+        execution.state === 'cancelled' ? (zh ? '已停止' : 'Stopped') : (zh ? '已派发' : 'Dispatched');
+      const title = task?.agentName || task?.agentProfileId || task?.teamMemberId || (zh ? '子 Agent' : 'Subagent');
       const Icon = running ? LoaderCircle : task?.status === 'failed' || execution.state === 'failed' ? TriangleAlert :
         task?.status === 'stopped' || execution.state === 'cancelled' ? CircleStop : task?.status === 'completed' ? CheckCircle2 : GitFork;
       agentRows.set(key, <button key={key} type="button" className="tool-preview-card loop-subagent-preview"

@@ -2378,6 +2378,7 @@ export function ChatPanel({
   );
 
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
+  const [workSummaryDocked, setWorkSummaryDocked] = useState(false);
   const [workSummaryAnchorRight, setWorkSummaryAnchorRight] = useState(12);
   const openChangeReview = useCallback((filePath?: string) => {
     onOpenChangeReview(filePath);
@@ -2390,8 +2391,7 @@ export function ChatPanel({
   } as CSSProperties;
   const showWorkSummary = workSummaryVisible;
   const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
-  const updateRestoredWorkSummaryAnchor = useCallback((anchor?: HTMLElement | null) => {
-    if (windowMaximized) return;
+  const updateWorkSummaryLayout = useCallback((anchor?: HTMLElement | null) => {
     const chatBody = chatBodyRef.current;
     const toggle = anchor ?? chatBody
       ?.closest('.chat-panel')
@@ -2399,25 +2399,30 @@ export function ChatPanel({
     if (!chatBody || !toggle) return;
     const bodyBounds = chatBody.getBoundingClientRect();
     const toggleBounds = toggle.getBoundingClientRect();
-    const summaryWidth = Math.min(336, Math.max(0, bodyBounds.width - 24));
-    const maximumRight = Math.max(12, bodyBounds.width - summaryWidth - 12);
+    // Measure the whole chat pane, not the content frame that we shrink.
+    // 1100px leaves about 600px of readable text beside the 336px summary.
+    setWorkSummaryDocked(bodyBounds.width >= 1100);
+    const maximumRight = Math.max(12, bodyBounds.width - 24);
     setWorkSummaryAnchorRight(Math.min(
       maximumRight,
       Math.max(12, Math.round(bodyBounds.right - toggleBounds.right)),
     ));
-  }, [windowMaximized]);
+  }, []);
+  useLayoutEffect(() => {
+    const chatBody = chatBodyRef.current;
+    if (!workSummaryPresence.mounted || !chatBody) return undefined;
+    updateWorkSummaryLayout();
+    // Sidebars can resize the chat without a window resize. Also remeasure
+    // when the inspector toggle disappears, moving the summary button.
+    const observer = new ResizeObserver(() => updateWorkSummaryLayout());
+    observer.observe(chatBody);
+    return () => observer.disconnect();
+  }, [workSummaryPresence.mounted, inspectorOpen, updateWorkSummaryLayout]);
   useEffect(() => {
-    if (!showWorkSummary || windowMaximized) return undefined;
-    const refreshAnchor = () => updateRestoredWorkSummaryAnchor();
-    refreshAnchor();
-    window.addEventListener('resize', refreshAnchor);
-    return () => window.removeEventListener('resize', refreshAnchor);
-  }, [showWorkSummary, updateRestoredWorkSummaryAnchor, windowMaximized]);
-  useEffect(() => {
-    if (!showWorkSummary || windowMaximized) {
+    if (!showWorkSummary || workSummaryDocked) {
       return undefined;
     }
-    const closeRestoredSummary = (event: PointerEvent) => {
+    const closeOverlaySummary = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) {
         return;
@@ -2432,18 +2437,18 @@ export function ChatPanel({
       }
       setWorkSummaryVisible(false);
     };
-    const closeRestoredSummaryWithKeyboard = (event: KeyboardEvent) => {
+    const closeOverlaySummaryWithKeyboard = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setWorkSummaryVisible(false);
       }
     };
-    document.addEventListener('pointerdown', closeRestoredSummary);
-    document.addEventListener('keydown', closeRestoredSummaryWithKeyboard);
+    document.addEventListener('pointerdown', closeOverlaySummary);
+    document.addEventListener('keydown', closeOverlaySummaryWithKeyboard);
     return () => {
-      document.removeEventListener('pointerdown', closeRestoredSummary);
-      document.removeEventListener('keydown', closeRestoredSummaryWithKeyboard);
+      document.removeEventListener('pointerdown', closeOverlaySummary);
+      document.removeEventListener('keydown', closeOverlaySummaryWithKeyboard);
     };
-  }, [showWorkSummary, windowMaximized]);
+  }, [showWorkSummary, workSummaryDocked]);
   useEffect(() => {
     setWorkSummaryVisible(false);
   }, [activeConversationId]);
@@ -2474,7 +2479,7 @@ export function ChatPanel({
   return (
     <ComposerReferenceContext.Provider value={{ sessionId: activeConversationId, browserTabs, messages }}>
     <div
-      className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
+      className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
       <TopBar
         title={title}
@@ -2488,7 +2493,7 @@ export function ChatPanel({
                 setWorkSummaryVisible(false);
                 return;
               }
-              updateRestoredWorkSummaryAnchor(anchor);
+              updateWorkSummaryLayout(anchor);
               setWorkSummaryVisible(true);
             }
           : undefined}

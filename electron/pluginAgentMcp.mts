@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { mcpSnapshotSchema, BUSH_MCP_SNAPSHOT_PROTOCOL } from '@cardbush/bush-protocol';
 import { ToolRegistry, type PluginAgent } from '@cardbush/bush-runtime';
 import type { RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import type { McpClientManager } from '@cardbush/bush-mcp-client';
 import { pluginMcpServer } from './pluginMcpConfiguration.mjs';
+import { pluginDataDirectory } from './pluginEnvironment.js';
 
 /** Desktop transport adapter. Runtime owns scope lifetime; this module owns connection configuration. */
-export async function openPluginAgentMcp(manager: McpClientManager, agent: PluginAgent, request: RuntimeSessionTurnRequest, signal?: AbortSignal) {
+export async function openPluginAgentMcp(manager: McpClientManager, agent: PluginAgent, request: RuntimeSessionTurnRequest, signal?: AbortSignal, dataRoot?: string) {
   const registry = new ToolRegistry(), scoped = manager.fork(registry);
   const suffix = createHash('sha256').update(request.sessionId).digest('hex').slice(0, 16);
   const aliases = new Set<string>();
@@ -15,13 +17,14 @@ export async function openPluginAgentMcp(manager: McpClientManager, agent: Plugi
     if (aliases.has(alias)) throw new Error(`Duplicate Agent MCP alias: ${alias}`); aliases.add(alias);
     const expand = (value: unknown): unknown => typeof value === 'string' ? value.replaceAll('${CLAUDE_PROJECT_DIR}', String(request.metadata.workspaceDir || request.metadata.projectDir || '')) : Array.isArray(value) ? value.map(expand) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item)])) : value;
     const expanded = expand(declaration) as Record<string, unknown>;
-    const server = pluginMcpServer(agent.pluginId, alias, agent.root, expanded, { required: true });
+    const server = pluginMcpServer(agent.pluginId, alias, agent.root, expanded, { required: true }, dataRoot);
     if (!server) throw new Error(`Agent MCP ${alias} is not configured.`);
     return server;
   }));
   const abort = () => { void scoped.close(); }; signal?.addEventListener('abort', abort, { once: true });
   try {
     signal?.throwIfAborted();
+    if (dataRoot && servers.length) await mkdir(pluginDataDirectory(agent.pluginId, dataRoot), { recursive: true });
     await scoped.apply(mcpSnapshotSchema.parse({ protocol: BUSH_MCP_SNAPSHOT_PROTOCOL, snapshotId: `agent:${request.sessionId}`, revision: 1, servers }));
     await scoped.prepareAgentScope(request, signal);
     signal?.throwIfAborted();

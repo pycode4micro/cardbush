@@ -1,6 +1,11 @@
 // Actual extracted views in isolated Chromium: no product profile, real files,
 // network requests, model calls or Runtime subscriptions.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol } = require('electron');
+if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-preview') {
+  protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: {
+    standard: true, secure: true, supportFetchAPI: true, stream: true,
+  } }]);
+}
 // Xvfb runners have no hardware GPU. Keep offscreen fixtures on software
 // rendering so Viz crashes do not interrupt unrelated UI assertions.
 if (process.env.CI === 'true' && process.platform === 'linux') app.disableHardwareAcceleration();
@@ -118,10 +123,19 @@ app.whenReady().then(async () => {
     show: false, width: 1200, height: 800,
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['html-references', 'html-lifecycle', 'media-reveal'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['html-references', 'html-lifecycle', 'media-reveal', 'review-preview'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
+  if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-preview') {
+    const { net } = require('electron');
+    const { pathToFileURL } = require('node:url');
+    window.webContents.session.protocol.handle('cardbush-file', request => {
+      const url = new URL(request.url);
+      const file = /^[a-z]$/i.test(url.hostname) ? url.hostname + ':' + decodeURIComponent(url.pathname) : decodeURIComponent(url.pathname).replace(/^\/([a-z]:)/i, '$1');
+      return net.fetch(pathToFileURL(file).href);
+    });
+  }
   const errors = [];
   window.webContents.on('console-message', event => {
     if (/Maximum update depth|Invalid hook call|ResizeObserver loop|passive event listener|Encountered two children with the same key/.test(event.message)) errors.push(event.message);
@@ -197,8 +211,14 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (!['conversation-titles', 'conversation-search'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
+      if (!['conversation-titles', 'conversation-search', 'review-preview'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'startup-presentation') {
+      await require('./helpers/startup-presentation.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no startup presentation renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'conversation-search') {
       await require('./helpers/conversation-search.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no conversation search renderer errors');
@@ -214,6 +234,12 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-lifecycle') {
       await require('./helpers/html-preview-lifecycle.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no HTML lifecycle renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-preview') {
+      await require('./helpers/review-preview.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no review preview renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
@@ -259,7 +285,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['tool-disclosure', 'tool-update-stability', 'composer-input', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -316,10 +342,11 @@ app.whenReady().then(async () => {
       await run(`preview('D:/fixture/huge.${extension}')`);
       await until(`reads.some(read => read.path.endsWith('huge.${extension}'))`, 'large text read');
       await run(`window.largePreviewText = '# many lines\\n'.repeat(20000); resolveReads('D:/fixture/huge.${extension}', largePreviewText, true)`);
-      await until("!!document.querySelector('[data-render-mode=plain]')", 'large text skips parsing and highlighting');
-      assert.equal(await run("document.querySelector('.source-plain-text').textContent === largePreviewText"), true, 'plain mode retains all byte-bounded text');
-      assert.equal(await run("document.querySelectorAll('.source-code-line').length"), 0, 'large text must not allocate one DOM row per line');
-      assert.ok(await run("document.querySelectorAll('*').length") < 100);
+      await until("!!document.querySelector('[data-render-mode=virtual] .source-code-line')", 'large text renders only nearby blocks');
+      assert.ok(await run("document.querySelectorAll('.source-code-line').length") < 200, 'large text must not allocate one DOM row per line');
+      await run("window.largeScroller = document.querySelector('.source-inspector-document, .markdown-inspector-document'); largeScroller.scrollTop = largeScroller.scrollHeight;");
+      await until("!!document.querySelector('[data-source-line=\"20001\"]')", 'all byte-bounded text remains reachable at the tail');
+      assert.ok(await run("document.querySelectorAll('.source-code-line').length") < 200);
     }
     await run("preview('D:/fixture/binary.txt')");
     await until("reads.some(read => read.path.endsWith('binary.txt'))", 'binary file read');
@@ -448,6 +475,22 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.welcome-project-menu')", 'welcome project menu');
     await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
     await until("!document.querySelector('.welcome-project-menu')", 'Escape closes only the project menu');
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-resize') {
+      await require('./helpers/composer-resize.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-resize') {
+      assert.deepEqual(await run('failures'), [], 'no composer resize renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'work-summary-layout') {
+      await require('./helpers/work-summary-layout.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'work-summary-layout') {
+      assert.deepEqual(await run('failures'), [], 'no work summary layout renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll') {
       for (const theme of ['theme-dark', 'theme-cyberpunk']) await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme });
       assert.deepEqual(await run('failures'), [], 'no session scroll renderer errors');

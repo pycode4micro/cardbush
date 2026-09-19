@@ -1,5 +1,4 @@
 import {
-  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -175,7 +174,6 @@ export function ConversationWorkSummary({
             {subagentTasks.length > 0 && (
               <div className="work-summary-section work-summary-subagents" data-testid="work-summary-subagents">
                 <div className="work-summary-section-title">
-                  <Bot size={14} />
                   <strong>{language === 'zh' ? '子 Agent 派发' : 'Subagent dispatches'}</strong>
                   <span>{subagentTasks.length}</span>
                 </div>

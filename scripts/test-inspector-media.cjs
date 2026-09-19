@@ -58,6 +58,8 @@ app.whenReady().then(async () => {
       'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
       'src/features/inspector/MediaInspectorPreview.tsx',
       'src/features/tools/PlainSourceLines.tsx',
+      'src/features/tools/VirtualSourceLines.tsx', 'src/features/tools/sourcePreviewBlocks.ts',
+      'src/features/inspector/DeferredResizePreview.tsx',
       'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',
       'src/features/inspector/TextInspectorPreview.tsx', 'src/features/inspector/filePreviewRegistry.ts',
       'src/features/inspector/inspectorFilePreviewRenderers.tsx',

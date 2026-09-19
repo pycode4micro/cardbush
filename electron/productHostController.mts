@@ -108,6 +108,7 @@ export class ElectronProductHostController {
     this.#subagents = new ProductSubagentConfigStore(join(dataRoot, 'config', 'subagents.json'));
     this.#pluginConnections = new PluginConnectionManager({
       apps: this.#apps, mcp: this.#mcp, credentials: options.credentials,
+      pluginDataRoot: join(this.#runtimeStateRoot, 'plugin-data'),
       requestCredentials: options.requestClientCredentials,
       refresh: () => this.refreshMcp(),
       runtime: async () => {

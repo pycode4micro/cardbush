@@ -64,6 +64,12 @@ const wrapped = toolArtifactsFromPayload({ result: { mcp: { name: 'mcp__fixture_
 } } });
 assert.deepEqual(Array.from(wrapped, artifact => artifact.type), ['image', 'document']);
 assert.equal(wrapped[1].display, 'attachment');
+const screenshot = toolArtifactsFromPayload({ result: { mcp: { name: 'mcp__chrome_devtools__take_screenshot' }, result: {
+  content: [{ type: 'image', data: 'image-bytes', mimeType: 'image/png', annotations: { audience: ['assistant'] } }],
+  structuredContent: { artifacts: [{ type: 'image', path: 'C:/workspace/capture.png', mimeType: 'image/png', display: 'inline' }] },
+} } });
+assert.equal(screenshot.length, 1, 'persisted screenshot is displayed once; model-only bytes are not a duplicate UI artifact');
+assert.equal(screenshot[0].path, 'C:/workspace/capture.png');
 
 const undeclared = toolArtifactsFromPayload({
   metadata: {

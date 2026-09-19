@@ -1,4 +1,7 @@
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
+import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
+import { ChromeConnectionSettings } from './browser/ChromeConnectionSettings';
+import { ComputerUseSettings, ComputerUseSettingsPanel } from './computerUse/ComputerUseSettings';
 import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
 import { SettingsDropdown } from './settings/SettingsDropdown';
 import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
@@ -80,7 +83,6 @@ import {
   parseImportedThemeStyle,
 } from './appearance/importedThemeStyle';
 import {
-  ChromeConnectionSettings,
   PluginManagementPanel,
 } from './plugins/PluginManagementPanel';
 import type {
@@ -122,7 +124,7 @@ const defaultFontSettings = {
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
   profile: SlidersHorizontal, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
-  models: Cpu, mcp: McpLogoIcon,
+  models: Cpu, mcp: McpLogoIcon, browser: Monitor, 'computer-use': Keyboard,
   runtime: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
 export function SettingsView({
@@ -542,6 +544,8 @@ export function SettingsView({
 
   const content = (() => {
     if (section === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
+    if (section === 'browser') return <BrowserSettingsPanel language={language} />;
+    if (section === 'computer-use') return <ComputerUseSettingsPanel language={language} />;
     if (section === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
       reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
     if (section === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
@@ -2740,74 +2744,11 @@ function CardbushAppsPanel({
                 )}
               </div>
 
-              {expanded && plugin.id === 'computer_use' && (
-                <div className="cardbush-app-config">
-                  <label className="settings-field cardbush-app-path-field">
-                    <span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span>
-                    <input
-                      value={String(plugin.config.screenshotDirectory ?? '')}
-                      placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Leave empty to use the system temp directory'}
-                      onChange={(event) => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, screenshotDirectory: event.currentTarget.value },
-                      })}
-                    />
-                  </label>
-                  <label className="cardbush-app-option">
-                    <input
-                      type="checkbox"
-                      checked={plugin.config.yieldToUser !== false}
-                      onChange={(event) => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, yieldToUser: event.currentTarget.checked },
-                      })}
-                    />
-                    <span>{language === 'zh' ? '用户输入优先（检测到操作时主动让行）' : 'Yield when user input is detected'}</span>
-                  </label>
-                  <label className="cardbush-app-option">
-                    <input
-                      type="checkbox"
-                      checked={plugin.config.restorePointer !== false}
-                      onChange={(event) => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, restorePointer: event.currentTarget.checked },
-                      })}
-                    />
-                    <span>{language === 'zh' ? '鼠标操作后恢复原位置' : 'Restore pointer after mouse actions'}</span>
-                  </label>
-                  <label className="cardbush-app-option">
-                    <input
-                      type="checkbox"
-                      checked={plugin.config.allowOpenApp !== false}
-                      onChange={(event) => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, allowOpenApp: event.currentTarget.checked },
-                      })}
-                    />
-                    <span>{language === 'zh' ? '允许启动应用' : 'Allow opening applications'}</span>
-                  </label>
-                  <label className="cardbush-app-option">
-                    <input
-                      type="checkbox"
-                      checked={plugin.config.allowWindowClose !== false}
-                      onChange={(event) => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, allowWindowClose: event.currentTarget.checked },
-                      })}
-                    />
-                    <span>{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</span>
-                  </label>
-                  <div className="cardbush-app-config-actions">
-                    <button
-                      className="primary-button compact"
-                      type="button"
-                      disabled={Boolean(busyKey)}
-                      onClick={() => void persist(configuration, `config:${plugin.id}`, '插件配置已保存', 'Plugin settings saved')}
-                    >
-                      {language === 'zh' ? '保存配置' : 'Save settings'}
-                    </button>
-                  </div>
-                </div>
+              {expanded && ['computer-use', 'computer_use'].includes(plugin.id) && (
+                <ComputerUseSettings language={language} plugin={plugin} busy={Boolean(busyKey)} onReplace={replacePlugin}
+                  onPersist={(next, message) => void persist({ ...configuration,
+                    plugins: configuration.plugins.map(item => item.id === next.id ? next : item),
+                  }, 'config:' + plugin.id, message, message)} />
               )}
               {expanded && plugin.id === 'chrome' && (
                 <div className="cardbush-app-config chrome-connector-settings-wrap">

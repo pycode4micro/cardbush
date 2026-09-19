@@ -125,7 +125,7 @@ declare global {
       windowScrollDiagnosticConfig?: () => Promise<import('../../electron/windowScrollDiagnostics').WindowScrollDiagnosticConfig | undefined>;
       onWindowScrollDiagnosticEvent?: (callback: (event: Record<string, unknown>) => void) => () => void;
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
-      restoreEditorFocus?: (state: { documentFocused: boolean }) => Promise<boolean>;
+      restoreEditorFocus?: (state: { documentFocused: boolean; passive?: boolean }) => Promise<boolean>;
       wallpaperAccent: () => Promise<{
         r: number;
         g: number;
@@ -365,6 +365,9 @@ declare global {
         truncated: boolean;
         encoding?: string;
       }>;
+      onInspectorOpenLink: (callback: (detail: { guestWebContentsId: number; target: string }) => void) => () => void;
+      readBrowserConfiguration: () => Promise<import('@cardbush/bush-protocol').BrowserConfiguration>;
+      updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) => Promise<import('@cardbush/bush-protocol').BrowserConfiguration>;
       showInspectorContextMenu: (payload: {
         guestWebContentsId: number;
         target: string;

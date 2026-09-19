@@ -151,7 +151,7 @@ try {
       toolPolicies: {},
     }],
   });
-  assert.equal(applied.servers[0].tools.length, 15);
+  assert.equal(applied.servers[0].tools.length, 20);
   const runtimeToolName = 'mcp__chrome_devtools__list_pages';
   assert.ok(registry.resolve(runtimeToolName));
   const coordinator = new ToolExecutionCoordinator({

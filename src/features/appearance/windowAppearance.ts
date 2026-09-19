@@ -14,6 +14,7 @@ export function applyDocumentBackdrop(theme: ThemeMode, material: 'mica' | 'none
   const background = material === 'mica' ? 'transparent' : themeBackgroundColor(theme);
   const html = document.documentElement;
   html.dataset.startTheme = theme;
+  html.style.colorScheme = theme === 'bright' ? 'light' : 'dark';
   html.dataset.windowMaterial = material;
   html.style.setProperty('--cardbush-window-bg', background);
   html.style.backgroundColor = background;
@@ -29,6 +30,7 @@ export function useWindowAppearance(
   theme: ThemeMode,
   themePreference: ThemePreference,
   preference: WindowMaterialPreference,
+  captionColor?: string,
 ) {
   useEffect(() => {
     let disposed = false;
@@ -51,6 +53,7 @@ export function useWindowAppearance(
     void desktop?.setWindowTheme?.(theme, {
       material: preference,
       customTheme,
+      captionColor,
       themeSource: themePreference === 'system' ? 'system' :
         theme === 'dark' || theme === 'cyberpunk' ? 'dark' : 'light',
     }).then(receive).catch(() => {
@@ -66,5 +69,5 @@ export function useWindowAppearance(
       window.removeEventListener('pageshow', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [theme, themePreference, preference]);
+  }, [theme, themePreference, preference, captionColor]);
 }

@@ -28,6 +28,7 @@ export function TopBar({
           className={`topbar-inspector-action icon-only ${workSummaryVisible ? 'active' : ''}`}
           type="button"
           data-work-summary-toggle
+          aria-expanded={Boolean(workSummaryVisible)}
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
           title={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
           aria-label={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}

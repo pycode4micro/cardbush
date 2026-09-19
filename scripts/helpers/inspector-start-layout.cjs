@@ -21,7 +21,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelectorAll('[data-inspector-action]').length === 3", 'three empty sidebar actions');
   await run("startProps.onOpenReview = () => inspectorActions.push('review'); showInspectorStart()");
   await until("document.querySelectorAll('[data-inspector-action]').length === 4", 'project review remains reachable without file changes');
-  for (const theme of ['theme-dark', 'theme-light']) {
+  for (const theme of ['theme-dark', 'theme-bright']) {
     for (const width of [620, 320]) {
       await run(`window.viewTheme = ${JSON.stringify(theme)}; showInspectorStart(${width})`);
       await pause();

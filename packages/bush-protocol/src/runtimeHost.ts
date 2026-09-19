@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema, providerInputObservationSchema } from "./cacheChain.js";
 import { toolErrorKindSchema } from "./tool.js";
-import { modelEventSchema, modelFailureDiagnosticsSchema } from "./model.js";
+import { modelEventSchema, modelFailureDiagnosticsSchema, providerCompatibilityDiagnosticSchema } from "./model.js";
 import { runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema } from './solutionSelection.js';
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
@@ -65,6 +65,7 @@ export const runtimeEventKindSchema = z.enum([
   "solution_selection_cancelled",
   "cache_chain_observed",
   "provider_input_observed",
+  "provider_compatibility",
   "model_request_usage",
   "model_maintenance_response",
   "context_compaction_started",
@@ -305,6 +306,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("provider_input_observed"),
     payload: providerInputObservationSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("provider_compatibility"),
+    payload: providerCompatibilityDiagnosticSchema,
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("model_request_usage"),

@@ -1166,13 +1166,17 @@ export function Composer({
       <div
         className={`composer-surface${fileDragActive ? ' is-file-dragging' : ''}`}
         onPointerDown={(event) => {
+          if (event.button !== 0) return;
           const target = event.target;
           if (
             target instanceof Element &&
-            target.closest('button, input, select, textarea, [role="button"]')
+            target.closest('button, input, select, textarea, a, [contenteditable], [role="textbox"], [role="button"]')
           ) {
             return;
           }
+          // Focusing on pointerdown is otherwise undone by the padding's
+          // default mouse action, leaving the composer without a caret.
+          event.preventDefault();
           textareaRef.current?.focus();
         }}
         onPaste={(event) => void pasteAttachments(event)}

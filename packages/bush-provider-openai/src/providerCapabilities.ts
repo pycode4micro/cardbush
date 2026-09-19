@@ -196,7 +196,7 @@ function capabilityKey(identity: ProviderCapabilityIdentity): string {
 function positiveTtl(value: number | undefined): number {
   return Number.isFinite(value) && Number(value) > 0
     ? Math.floor(Number(value))
-    : 24 * 60 * 60 * 1_000;
+    : 7 * 24 * 60 * 60 * 1_000;
 }
 
 function validStoredObservation(value: unknown): value is StoredObservation {

@@ -104,6 +104,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run("document.querySelector('.change-review-version-picker [role=combobox]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   }
   await run("commentWidth=360;showComments()"); await pause();
+  await until("!document.querySelector('.deferred-resize-preview[data-resizing]')", 'comment preview settles after the width change');
   assert.equal(await run("(()=>{const editor=document.querySelector('.review-comment-editor'),pane=document.querySelector('.change-review-dialog');return editor.getBoundingClientRect().right<=pane.getBoundingClientRect().right})()"), true, 'comment editor fits a narrow panel');
   console.log('Review comments: themed menu, disabled revert, line ranges, editing, session/turn isolation, compose and 3 themes passed.');
 };

@@ -1,4 +1,15 @@
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron';
+
+// Keep the menu in the existing title bar, with Windows owning caption controls
+// and their non-client hit testing (including maximize hover / Snap Layouts).
+export function mainWindowFrameOptions(platform: string): Pick<BrowserWindowConstructorOptions,
+  'frame' | 'titleBarStyle' | 'titleBarOverlay'> {
+  return platform === 'win32' ? {
+    frame: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: '#eeeeee', height: 36 },
+  } : { frame: false };
+}
 
 export type WindowTheme = 'bright' | 'dark' | 'cyberpunk';
 export type WindowMaterialPreference = 'auto' | 'solid';
@@ -6,6 +17,7 @@ export type WindowAppearanceOptions = {
   material?: WindowMaterialPreference;
   themeSource?: 'system' | 'light' | 'dark';
   customTheme?: boolean;
+  captionColor?: string;
 };
 export type WindowAppearanceState = {
   revision: number;
@@ -41,12 +53,20 @@ export function resolveWindowAppearance(input: {
 }
 
 type AppearanceWindow = Pick<BrowserWindow,
-  'isDestroyed' | 'setBackgroundColor' | 'setBackgroundMaterial' | 'contentView'>;
+  'isDestroyed' | 'setBackgroundColor' | 'setBackgroundMaterial' | 'setTitleBarOverlay' | 'contentView'>;
+
+function captionSymbolColor(theme: WindowTheme, customColor?: string) {
+  const color = typeof customColor === 'string' ? customColor.trim() : '';
+  if (color.length <= 96 && (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color) ||
+      /^(rgb|rgba|hsl|hsla)\([\d\s.,%/+\-]+\)$/.test(color))) return color;
+  return theme === 'bright' ? '#1e1c1a' : theme === 'cyberpunk' ? '#f4f3dc' : '#eeeeee';
+}
 
 export class WindowAppearanceController {
   #key = '';
   #revision = 0;
   #state: WindowAppearanceState | undefined;
+  #captionColor = '';
 
   constructor(
     private readonly target: AppearanceWindow,
@@ -54,8 +74,19 @@ export class WindowAppearanceController {
     private readonly onError: (error: unknown) => void,
   ) {}
 
-  apply(request: WindowAppearanceRequest, opaqueBackground: string): WindowAppearanceState {
+  apply(request: WindowAppearanceRequest, opaqueBackground: string, captionColor?: string): WindowAppearanceState {
     if (this.target.isDestroyed()) return { ...request, material: 'none', revision: this.#revision };
+    const symbolColor = captionSymbolColor(request.theme, request.customTheme ? captionColor : undefined);
+    if (this.platform === 'win32' && symbolColor !== this.#captionColor) {
+      try {
+        this.target.setTitleBarOverlay({ color: '#00000000', symbolColor, height: 36 });
+      } catch (error) {
+        this.onError(error);
+        // An invalid imported color must not prevent window startup.
+        this.target.setTitleBarOverlay({ color: '#00000000', symbolColor: captionSymbolColor(request.theme), height: 36 });
+      }
+      this.#captionColor = symbolColor;
+    }
     const key = JSON.stringify([request, opaqueBackground]);
     if (this.#key === key && this.#state) return this.#state;
     let state = request;

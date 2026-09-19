@@ -12,7 +12,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
     import.meta.dirname,
     '../../../assets/plugins/chrome/extension/background.js',
   );
-  const source = await readFile(workerPath, 'utf8');
+  const source = await readFile(path.join(path.dirname(workerPath), 'downloads.js'), 'utf8') + '\n' + await readFile(workerPath, 'utf8');
   const nativeMessages = event();
   const nativeDisconnects = event();
   const runtimeMessages = event();
@@ -133,6 +133,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   };
 
   vm.runInNewContext(source, {
+    importScripts: () => {},
     chrome,
     URL,
     setTimeout: (callback, ms) => {
@@ -344,7 +345,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
     import.meta.dirname,
     '../../../assets/plugins/chrome/extension/background.js',
   );
-  const source = await readFile(workerPath, 'utf8');
+  const source = await readFile(path.join(path.dirname(workerPath), 'downloads.js'), 'utf8') + '\n' + await readFile(workerPath, 'utf8');
   const nativeMessages = event();
   const runtimeMessages = event();
   const posted = [];
@@ -419,6 +420,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
   };
 
   vm.runInNewContext(source, {
+    importScripts: () => {},
     chrome,
     URL,
     setTimeout,

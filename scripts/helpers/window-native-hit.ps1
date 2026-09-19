@@ -42,4 +42,8 @@ $commands = @(for ($index=0; $index -lt [NativeTitlebarProbe]::GetMenuItemCount(
 if ($request.menu) {
   if (-not [NativeTitlebarProbe]::PostMessage($targetHandle, 0x106, [IntPtr]32, [IntPtr]0)) { throw 'Menu event failed' }
 }
+if ($null -ne $request.command) {
+  if ([int]$request.command -notin @(0xf030, 0xf120, 0xf020, 0xf060)) { throw 'Unsupported test window command' }
+  if (-not [NativeTitlebarProbe]::PostMessage($targetHandle, 0x112, [IntPtr]([int]$request.command), [IntPtr]0)) { throw 'Window command failed' }
+}
 @{hits=$hits; commands=$commands} | ConvertTo-Json -Depth 4 -Compress

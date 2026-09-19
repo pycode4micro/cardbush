@@ -187,7 +187,7 @@ assert.match(
 );
 assert.match(
   styles,
-  /\.chat-panel \.composer-dock\s*\{\s*right:\s*var\(--message-list-scrollbar-inset, 0px\);/,
+  /\.chat-panel \.composer-dock\s*\{\s*right:\s*calc\(var\(--work-summary-content-inset\) \+ var\(--message-list-scrollbar-inset, 0px\)\);/,
   'The composer content track must align with the real message viewport on every platform',
 );
 assert.doesNotMatch(

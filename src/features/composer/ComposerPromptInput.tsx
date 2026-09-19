@@ -1,7 +1,7 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import type { AppLanguage, CardbushAppPlugin, SkillSummary } from '../../types';
 import { fileUrl } from '../../shared/localPaths';
-import { restoreNativeEditorFocus } from '../../shared/editorFocus';
+import { focusEditor, observeEditorFocus, restoreNativeEditorFocus } from '../../shared/editorFocus';
 import { pluginPromptParts, type PluginPromptPart } from '../plugins/pluginPrompts';
 import { promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
 import { skillPromptParts, type SkillLinkReference } from '../skills/skillReferences';
@@ -41,7 +41,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
   const rich = parts.some(isReference);
   useImperativeHandle(ref, () => ({
-    focus: () => (rich ? editor.current : textarea.current)?.focus(),
+    focus: () => focusEditor(rich ? editor.current : textarea.current),
     setSelectionRange: (start, end) => {
       lastCaret.current = end;
       if (rich && editor.current) selectOffsets(editor.current, start, end);
@@ -87,7 +87,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
         const current = readPrompt(node);
         change.current(current.slice(0, start) + current.slice(start + part.text.length), start);
         requestAnimationFrame(() => {
-          (editor.current ?? textarea.current)?.focus();
+          focusEditor(editor.current ?? textarea.current);
           if (editor.current) selectOffsets(editor.current, start, start);
           else textarea.current?.setSelectionRange(start, start);
         });
@@ -101,29 +101,21 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   });
 
   useLayoutEffect(() => {
-    if (autoFocus) (editor.current ?? textarea.current)?.focus();
+    composing.current = false;
+    const node = editor.current ?? textarea.current;
+    if (node) return observeEditorFocus(node);
+  }, [rich]);
+
+  useLayoutEffect(() => {
+    if (autoFocus) focusEditor(editor.current ?? textarea.current);
   }, [autoFocus]);
 
   useLayoutEffect(() => {
     if (!focused.current) return;
-    (editor.current ?? textarea.current)?.focus();
+    focusEditor(editor.current ?? textarea.current);
     if (editor.current) selectOffsets(editor.current, lastCaret.current, lastCaret.current);
     else textarea.current?.setSelectionRange(lastCaret.current, lastCaret.current);
   }, [rich]);
-
-  useLayoutEffect(() => {
-    const resize = () => {
-      const node = textarea.current;
-      if (!node) return;
-      const line = Number.parseFloat(getComputedStyle(node).lineHeight) || 20;
-      const maximum = Math.max(line * 2, Math.min(innerHeight * .32, line * 10));
-      node.style.height = 'auto';
-      node.style.height = `${Math.max(line * 2, Math.min(node.scrollHeight, maximum))}px`;
-      node.style.overflowY = node.scrollHeight > maximum ? 'auto' : 'hidden';
-    };
-    resize(); window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, [value, rich]);
 
   const publish = () => {
     if (editor.current && !composing.current) {
@@ -147,9 +139,14 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   return rich ? <div ref={editor} className="composer-prompt-editor" data-composer-input
     role="textbox" aria-label={language === 'zh' ? '消息' : 'Message'} aria-multiline="true"
     contentEditable suppressContentEditableWarning data-placeholder={placeholder}
-    onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; }}
+    onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; composing.current = false; }}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
-    onInput={publish} onClick={select} onKeyUp={select} onKeyDown={keyDown}
+    onInput={event => {
+      // An interrupted IME session may never emit compositionend. The next
+      // committed input is authoritative and must not stay blocked forever.
+      if (event.nativeEvent instanceof InputEvent) composing.current = event.nativeEvent.isComposing;
+      publish();
+    }} onClick={select} onKeyUp={select} onKeyDown={keyDown}
     onCompositionStart={() => { composing.current = true; }}
     onCompositionEnd={() => { composing.current = false; publish(); }}
     onPaste={event => {

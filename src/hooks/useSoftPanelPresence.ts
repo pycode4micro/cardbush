@@ -18,6 +18,14 @@ export function useSoftPanelPresence(
     let timer = 0;
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (open) {
+      // The initial open state is already laid out. Replaying an entrance here
+      // briefly hides the startup sidebar, including under StrictMode.
+      if (visible) return;
+      if (reduceMotion) {
+        setMounted(true);
+        setVisible(true);
+        return;
+      }
       setVisible(false);
       setMounted(true);
       mountFrame = window.requestAnimationFrame(() => {

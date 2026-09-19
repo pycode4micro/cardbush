@@ -45,6 +45,31 @@ test("persists observations and scopes them to endpoint configuration and model"
   assert.equal(restarted.read({ ...identity, model: "model_2" }).status, "unknown");
 });
 
+test("defaults to seven days and keeps the original expiry across reads and restart", (context) => {
+  const root = mkdtempSync(join(tmpdir(), "cardbush-provider-capabilities-"));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "capabilities.json");
+  let now = Date.parse("2026-09-19T00:00:00.000Z");
+  const options = { now: () => now };
+  const policy = { ...identity, capability: "responses_compatibility" };
+  const first = new FileProviderCapabilityStore(path, options);
+  first.observe(policy, { status: "supported", reason: "generation_failed" });
+  const expected = first.read(policy);
+  assert.equal(expected.expiresAt, "2026-09-26T00:00:00.000Z");
+
+  now += 7 * 24 * 60 * 60 * 1_000 - 1;
+  const restarted = new FileProviderCapabilityStore(path, options);
+  assert.deepEqual(restarted.read(policy), expected);
+  assert.equal(restarted.read({ ...policy, model: "model_2" }).status, "unknown");
+  assert.equal(restarted.read({ ...policy, scope: "scope_2" }).status, "unknown");
+  assert.deepEqual(new FileProviderCapabilityStore(path, options).read(policy), expected);
+
+  now += 1;
+  assert.equal(first.read(policy).status, "unknown");
+  assert.equal(restarted.read(policy).status, "unknown");
+  assert.equal(new FileProviderCapabilityStore(path, options).read(policy).status, "unknown");
+});
+
 test("derives opaque capability scopes without exposing credentials", () => {
   const first = openAIResponsesCapabilityScope({
     apiKey: "secret-one",

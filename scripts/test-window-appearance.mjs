@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { resolveWindowAppearance, WindowAppearanceController } from '../dist-electron/windowAppearance.js';
+import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController } from '../dist-electron/windowAppearance.js';
 
 const input = {
   theme: 'dark', preference: 'auto', customTheme: false,
@@ -20,17 +20,18 @@ test('native backdrop requires OS, compositor, theme and accessibility support',
 });
 
 function fixture({ fails = false } = {}) {
-  const calls = [], errors = [];
+  const calls = [], errors = [], captions = [];
   const target = {
     isDestroyed: () => false,
     setBackgroundColor: value => calls.push(['window', value]),
+    setTitleBarOverlay: value => captions.push(value),
     contentView: { setBackgroundColor: value => calls.push(['view', value]) },
     setBackgroundMaterial: value => {
       calls.push(['material', value]);
       if (value === 'mica' && fails) throw Error('Native backdrop unavailable');
     },
   };
-  return { calls, errors, target, controller: new WindowAppearanceController(target, 'win32', error => errors.push(error)) };
+  return { calls, errors, captions, target, controller: new WindowAppearanceController(target, 'win32', error => errors.push(error)) };
 }
 
 test('focus/restore does not repeatedly recreate a material; disabling restores both opaque layers', () => {
@@ -57,4 +58,25 @@ test('failed native material is reported once and leaves a readable opaque windo
   target.isDestroyed = () => true;
   controller.apply(mica, '#1a1a1a');
   assert.equal(calls.length, count);
+});
+
+test('native captions follow themes and palette edits without recreating the backdrop', () => {
+  assert.equal(mainWindowFrameOptions('win32').frame, true);
+  assert.equal(mainWindowFrameOptions('win32').titleBarStyle, 'hidden');
+  assert.ok(mainWindowFrameOptions('win32').titleBarOverlay);
+  const { controller, calls, captions } = fixture();
+  const custom = resolveWindowAppearance({ ...input, customTheme: true });
+  controller.apply(custom, '#181818', '#c8b5ee');
+  assert.equal(captions.at(-1).symbolColor, '#c8b5ee');
+  const count = calls.length;
+  controller.apply(custom, '#181818', '#dfc9ff');
+  assert.equal(captions.at(-1).symbolColor, '#dfc9ff');
+  assert.equal(calls.length, count, 'caption color changes must not reset the native backdrop');
+  controller.apply(custom, '#181818', 'var(--text)');
+  assert.equal(captions.at(-1).symbolColor, '#eeeeee', 'invalid native colors use the readable base palette');
+  controller.apply(resolveWindowAppearance({ ...input, theme: 'bright' }), '#f5f3ef');
+  assert.equal(captions.at(-1).symbolColor, '#1e1c1a');
+  controller.apply(resolveWindowAppearance({ ...input, theme: 'cyberpunk' }), '#050607');
+  assert.equal(captions.at(-1).symbolColor, '#f4f3dc');
+  assert.ok(captions.every(caption => caption.color === '#00000000'), 'native captions retain the themed backdrop');
 });

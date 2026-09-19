@@ -10,10 +10,13 @@ await mkdir(parent, { recursive: true });
 const directory = await mkdtemp(join(parent, 'plugin-connections-ui-'));
 const local = file => resolve(file).replaceAll('\\', '/');
 const appearanceNavigation = process.argv.includes('--appearance-navigation');
+const coreSettings = process.argv.includes('--core-settings');
 let source = `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
+import {BrowserSettingsPanel} from '${local('src/features/browser/BrowserSettingsPanel.tsx')}';
+import {ComputerUseSettingsPanel} from '${local('src/features/computerUse/ComputerUseSettings.tsx')}';
 import {Composer as CoreComposer} from '${local('src/features/composer/Composer.tsx')}';
 import {ComposerReferenceContext} from '${local('src/features/composer/ComposerReferenceContext.ts')}';
 import {promptReferenceMarkdown} from '${local('src/shared/promptReferences.ts')}';
@@ -70,7 +73,7 @@ Object.assign(window.cardbushDesktop,{
 window.showMcpRequests=value=>{window.mcpRequests=value;for(const fn of mcpListeners)fn()};
 window.marketSources=[{id:'builtin',kind:'local',location:'bundled',builtin:true}];
 window.marketInstalls=0;window.marketSaveFails=false;window.marketSlow=false;window.marketCached=false;window.marketAddFails=false;
-window.marketRateLimitUntil=0;window.marketPreviewReads=0;
+window.marketRateLimitUntil=0;window.marketPreviewReads=0;window.marketMissingVariables=false;
 Object.assign(window.cardbushDesktop,{
  pluginMarketSources:async()=>marketSources,
  addPluginMarket:async value=>{if(marketAddFails)throw Error("Error invoking remote method 'plugins:market-add': Error: net::ERR_CONNECTION_RESET");const source={id:'remote',kind:'github',location:value,ref:'HEAD'};marketSources.push(source);return source},
@@ -79,8 +82,8 @@ Object.assign(window.cardbushDesktop,{
  {name:'claude-example',description:'Claude Skills 与 MCP',category:'Tools',available:true},
  {name:'hook-example',description:'依赖 Hooks 的插件',category:'Tools',available:true},
  {name:'unavailable',description:'发布者未开放安装',category:'Tools',available:false,unavailableReason:'policy'}]}),
- previewMarketPlugin:async(id,name)=>{marketPreviewReads++;if(marketRateLimitUntil>Date.now())throw Error("Error invoking remote method 'plugins:market-preview': Error: codeload.github.com: Marketplace requests are temporarily rate limited (HTTP 429). [market-rate-limit:"+marketRateLimitUntil+"]");const value={token:'token-'+name,id:name,name,description:'示例插件',version:'1.0.0',developerName:'Fixture',source:'https://github.com/fixture/plugins',revision:'a'.repeat(40),format:'claude',components:[{kind:'skill',name:'Example',description:'示例技能'},{kind:'mcp',name:'Echo',description:'MCP service'}],requirements:['node'],issues:name==='hook-example'?[{code:'components',detail:'hooks'}]:[],updating:false};if(marketSlow)return new Promise(resolve=>{window.finishMarketPreview=()=>resolve(value)});return value},
- installMarketPlugin:async token=>{marketInstalls++;fixtureApps={...fixtureApps,plugins:[...fixtureApps.plugins,plugin('claude-example','Claude Example','echo','user')]};return{id:'claude-example',manifestPath:'fixture'}},
+ previewMarketPlugin:async(id,name)=>{marketPreviewReads++;if(marketRateLimitUntil>Date.now())throw Error("Error invoking remote method 'plugins:market-preview': Error: codeload.github.com: Marketplace requests are temporarily rate limited (HTTP 429). [market-rate-limit:"+marketRateLimitUntil+"]");const value={token:'token-'+name,id:name,name,description:'示例插件',version:'1.0.0',developerName:'Fixture',source:'https://github.com/fixture/plugins',revision:'a'.repeat(40),format:'claude',components:[{kind:'skill',name:'Example',description:'示例技能'},{kind:'mcp',name:'Echo',description:'MCP service'}],requirements:['node'],issues:name==='hook-example'?[{code:'components',detail:'hooks'}]:[],warnings:marketMissingVariables?[{code:'variables',detail:'FIXTURE_API_KEY'}]:[],updating:false};if(marketSlow)return new Promise(resolve=>{window.finishMarketPreview=()=>resolve(value)});return value},
+ installMarketPlugin:async token=>{marketInstalls++;if(!fixtureApps.plugins.some(item=>item.id==='claude-example'))fixtureApps={...fixtureApps,plugins:[...fixtureApps.plugins,plugin('claude-example','Claude Example','echo','user')]};return{id:'claude-example',manifestPath:'fixture'}},
 });
 window.refreshFixture=()=>{for(const fn of listeners)fn()};
 window.fixtureCatalogReads=0;window.inspectedPaths=[];
@@ -96,6 +99,18 @@ let fixtureRoot=createRoot(document.getElementById('root'));
 fixtureRoot.render(<Fixture/>);
 window.remountPlugins=()=>{fixtureRoot.unmount();fixtureRoot=createRoot(document.getElementById('root'));fixtureRoot.render(<Fixture/>)};
 `;
+if (coreSettings) {
+  source = source.replace('let fixtureRoot=createRoot', `
+    import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
+    window.fixtureBrowser={protocol:'cardbush.browser_config.v1',revision:1,startPage:'https://www.google.com/'};
+    Object.assign(window.cardbushDesktop,{
+      readBrowserConfiguration:async()=>structuredClone(fixtureBrowser),
+      updateBrowserConfiguration:async input=>{fixtureBrowser={...fixtureBrowser,startPage:input.startPage,revision:fixtureBrowser.revision+1};return structuredClone(fixtureBrowser)},
+      chromeConnectorStatus:async()=>({extensionConnected:true,bridgeRegistered:true,bridgeRunning:true,activeTabTitle:'当前授权页面',controlledTabCount:1}),
+    });
+    function CoreFixture(){const [section,setSection]=React.useState('browser'),[theme,setTheme]=React.useState('bright');window.coreSection=setSection;window.coreTheme=setTheme;return <div className={'app '+themeClassNames(theme==='custom'?'dark':theme)} style={{height:'100vh',...(theme==='custom'?{'--surface':'#201b2c','--surface-strong':'#31273f','--border':'#675679','--text':'#f3eafc','--text-mid':'#cec1db','--text-soft':'#c1afce','--accent':'#d2a9f4'}:{})}}><main className="settings-shell"><aside className="settings-sidebar"><button onClick={()=>setSection('browser')}>浏览器</button><button onClick={()=>setSection('computer-use')}>电脑操控</button></aside><section className="settings-content" style={{overflow:'auto',flex:1}}><div className="settings-panel"><header className="settings-section-header"><h2>{section==='browser'?'浏览器':'电脑操控'}</h2></header>{section==='browser'?<BrowserSettingsPanel language="zh"/>:<ComputerUseSettingsPanel language="zh"/>}</div></section></main></div>}
+    let fixtureRoot=createRoot`).replaceAll('fixtureRoot.render(<Fixture/>);','fixtureRoot.render(<CoreFixture/>);');
+}
 if (appearanceNavigation) {
   source = source.replace('className="app theme-cyberpunk"', 'className="app theme-bright"')
     .replace('<main style={{padding:26,width:', '<main className="settings-shell" style={{width:')
@@ -108,7 +123,7 @@ try {
     name:'plugin-connections-fixture',enforce:'pre',
     resolveId(id,importer){
       if(id.endsWith('__plugin_connections_fixture__.tsx'))return '\0plugin-fixture.tsx';
-      if(id==='../../backend/api'&&/(?:Plugin(?:ManagementPanel|McpSettings)\.tsx|pluginCatalog\.ts)$/.test(importer??''))return '\0plugin-fixture-api';
+      if(id==='../../backend/api'&&/(?:Plugin(?:ManagementPanel|McpSettings)\.tsx|CoreCapabilitySettings\.tsx|pluginCatalog\.ts)$/.test(importer??''))return '\0plugin-fixture-api';
     },
     load(id){
       if(id==='\0plugin-fixture.tsx')return source;
@@ -129,7 +144,7 @@ try {
   await writeFile(join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8">${css.map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
   const require=createRequire(import.meta.url),env={...process.env};
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
-  const worker = appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
+  const worker = coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
   const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});
   assert.equal(run.status,0,String(run.error??'Plugin UI fixture failed'));
 } finally {

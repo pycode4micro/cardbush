@@ -29,25 +29,29 @@ export async function compressModelImage(content: Buffer, mime: string, signal?:
     }
     return { content, mime };
   }
-  if (scale === 1 && content.length <= 256_000 && (!metadata.orientation || metadata.orientation === 1)) {
+  if (scale === 1 && content.length <= MODEL_IMAGE_TARGET_BYTES && (!metadata.orientation || metadata.orientation === 1)) {
     return { content, mime };
+  }
+  const pipeline = () => sharp(content, MODEL_IMAGE_DECODER_OPTIONS).autoOrient().resize({
+    width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)),
+    fit: "inside", withoutEnlargement: true,
+  }).timeout({ seconds: 15 });
+  // Screenshots, charts and document pages often fit losslessly. Try this at
+  // the largest permitted resolution before introducing JPEG/WebP artifacts.
+  // JPEG photos already have a lossy source, so avoid a redundant PNG encode.
+  if (mime !== "image/jpeg") {
+    const lossless = await pipeline().png({ compressionLevel: 6, adaptiveFiltering: true, palette: false }).toBuffer();
+    signal?.throwIfAborted();
+    if (lossless.length <= MODEL_IMAGE_TARGET_BYTES) return { content: lossless, mime: "image/png" };
   }
   for (let attempt = 0; attempt < 8; attempt++) {
     signal?.throwIfAborted();
-    const pipeline = sharp(content, MODEL_IMAGE_DECODER_OPTIONS).autoOrient().resize({
-      width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)),
-      fit: "inside", withoutEnlargement: true,
-    }).timeout({ seconds: 15 });
     const quality = attempt === 0 ? 88 : 80;
     const encoded = await (metadata.hasAlpha
-      ? pipeline.webp({ quality, alphaQuality: 100 })
-      : pipeline.jpeg({ quality, chromaSubsampling: "4:4:4" })).toBuffer();
+      ? pipeline().webp({ quality, alphaQuality: 100 })
+      : pipeline().jpeg({ quality, chromaSubsampling: "4:4:4" })).toBuffer();
     signal?.throwIfAborted();
     if (encoded.length <= MODEL_IMAGE_TARGET_BYTES) {
-      // A small, already-efficient image need not pay for another lossy generation.
-      if (scale === 1 && encoded.length >= content.length && (!metadata.orientation || metadata.orientation === 1)) {
-        return { content, mime };
-      }
       return { content: encoded, mime: metadata.hasAlpha ? "image/webp" : "image/jpeg" };
     }
     scale *= Math.min(0.9, Math.sqrt(MODEL_IMAGE_TARGET_BYTES / encoded.length) * 0.94);

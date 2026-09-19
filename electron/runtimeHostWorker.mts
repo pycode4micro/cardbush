@@ -310,6 +310,7 @@ async function executeRuntimeCommand(
       }
       const pluginServers = await loadEnabledProductPluginMcpServers(
         pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '', source.servers,
+        join(runtimeStateRoot || process.cwd(), 'plugin-data'),
       );
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
@@ -470,6 +471,7 @@ function withBundledAppsServer(input: unknown): unknown {
           } : {
             CARDBUSH_CHROME_CONNECTOR_CONFIG:
               process.env.CARDBUSH_CHROME_CONNECTOR_CONFIG?.trim() ?? '',
+            CARDBUSH_BROWSER_CONFIG_PATH: process.env.CARDBUSH_BROWSER_CONFIG_PATH?.trim() ?? '',
           }),
         }),
       },
@@ -809,7 +811,7 @@ host = new InMemoryRuntimeHost({
     },
   },
   loadPluginExtensions: () => loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),
-  openAgentMcpScope: (agent, request, signal) => openPluginAgentMcp(mcp, agent, request, signal),
+  openAgentMcpScope: (agent, request, signal) => openPluginAgentMcp(mcp, agent, request, signal, join(runtimeStateRoot || process.cwd(), 'plugin-data')),
   requestBackgroundPermission: async (input, signal) => {
     const result = await mcpHost.request<{ action: string; content?: { allow?: boolean } }>('elicitation', {
       serverId: 'cardbush_background_agent', sessionId: input.sessionId, turnId: input.turnId, toolCallId: input.toolCallId,

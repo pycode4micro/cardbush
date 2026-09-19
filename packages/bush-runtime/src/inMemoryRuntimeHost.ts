@@ -613,6 +613,7 @@ export class InMemoryRuntimeHost {
           "permission_rejected",
           "permission_cancelled",
           "cache_chain_observed",
+          "provider_compatibility",
           "model_request_usage",
           "context_compaction_started",
           "context_compaction_retrying",
@@ -2050,6 +2051,9 @@ export class InMemoryRuntimeHost {
                 roundRequest,
                 {
                   signal: input.signal,
+                  onCompatibilityDiagnostic: payload => {
+                    this.#eventLog.append(identity, { kind: "provider_compatibility", payload });
+                  },
                   onInputProjection: projection => {
                     dispatchedInputProjection = structuredClone(projection);
                     this.#eventLog.append(identity, {
@@ -2776,7 +2780,10 @@ export class InMemoryRuntimeHost {
       const measurement = await settleAtAbort(
         Promise.resolve(this.#provider.countInputTokens?.(
           { ...request, messages, providerState },
-          { signal, onRequestBodyBudget },
+          { signal, onRequestBodyBudget, onCompatibilityDiagnostic: payload => {
+            this.#eventLog.append({ requestId: request.requestId, sessionId: request.sessionId, turnId: request.turnId },
+              { kind: "provider_compatibility", payload });
+          } },
         )),
         signal,
         "Provider input-token counting was cancelled.",

@@ -5,6 +5,7 @@ export {
   decodeProductHostCommand,
 } from "./productHost.js";
 export { ProductModelConfigStore } from "./modelConfigStore.js";
+export { BrowserConfigStore } from './browserConfigStore.js';
 export { replaceFile, withConfigFileLock } from './atomicFiles.js';
 export {
   CARDBUSH_SUBAGENT_CONFIG_PROTOCOL,

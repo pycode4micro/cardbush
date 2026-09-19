@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type { BrowserConfiguration, ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import type { AgentInstructionDocument } from '@cardbush/bush-product-agent' with { 'resolution-mode': 'import' };
 import type { readTextPreviewResult } from './textPreview';
 import type { TerminalRuntime } from '@cardbush/platform' with { 'resolution-mode': 'import' };
@@ -212,7 +212,7 @@ const desktopApi = {
   },
   showErrorDialog: (error: { title: string; message: string }) =>
     ipcRenderer.invoke('app:show-error', error) as Promise<void>,
-  restoreEditorFocus: (state: { documentFocused: boolean }) =>
+  restoreEditorFocus: (state: { documentFocused: boolean; passive?: boolean }) =>
     ipcRenderer.invoke('window:restore-editor-focus', state) as Promise<boolean>,
   wallpaperAccent: () =>
     ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<{
@@ -470,6 +470,14 @@ const desktopApi = {
     ipcRenderer.invoke('shell:file-context-menu', targetPath, options) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
+  readBrowserConfiguration: () => ipcRenderer.invoke('browser:settings-read') as Promise<BrowserConfiguration>,
+  updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) =>
+    ipcRenderer.invoke('browser:settings-update', input) as Promise<BrowserConfiguration>,
+  onInspectorOpenLink: (callback: (detail: { guestWebContentsId: number; target: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, detail: { guestWebContentsId: number; target: string }) => callback(detail);
+    ipcRenderer.on('inspector:open-link', listener);
+    return () => ipcRenderer.removeListener('inspector:open-link', listener);
+  },
   readTextPreview: (targetPath: string) =>
     ipcRenderer.invoke('shell:read-text-preview', targetPath).then(
       (result: Awaited<ReturnType<typeof readTextPreviewResult>>) => {

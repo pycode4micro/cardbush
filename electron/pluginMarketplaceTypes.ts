@@ -44,6 +44,7 @@ export interface PluginMarketPreview {
   components: Array<{ kind: string; name: string; description: string }>;
   requirements: string[];
   issues: Array<{ code: string; detail: string }>;
+  warnings?: Array<{ code: string; detail: string }>;
   notes?: string[];
   updating: boolean;
   format: 'agent-plugins' | 'openai' | 'claude';

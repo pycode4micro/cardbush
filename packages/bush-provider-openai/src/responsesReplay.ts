@@ -7,11 +7,27 @@ const REPLAY_FORMAT = "openai.responses.output.v1";
 export type ResponsesToolSearchMode = "native" | "function";
 
 /** Store output items and their projection mode, never transport or credentials. */
-export function responsesReplayData(response: Response, toolSearchMode?: ResponsesToolSearchMode): ModelReplayData | undefined {
+export function responsesReplayData(response: Response, toolSearchMode?: ResponsesToolSearchMode, compatibilityMode = false): ModelReplayData | undefined {
   const items = Array.isArray(response.output) && response.output.every(isReplayItem) ? response.output : [];
-  if (!items.length && !toolSearchMode) return undefined;
+  if (!items.length && !toolSearchMode && !compatibilityMode) return undefined;
   return { format: REPLAY_FORMAT, data: { items: structuredClone(items),
+    ...(compatibilityMode ? { compatibilityMode: true } : {}),
     ...(toolSearchMode ? { toolSearchMode } : {}) } };
+}
+
+/** A successful compatible response pins subsequent projections after store expiry. */
+export function historicalCompatibilityMode(request: ModelRequest): boolean {
+  return request.messages.some(message => message.role === "assistant" &&
+    message.providerReplay?.format === REPLAY_FORMAT && modelReplayMatches(message, request) &&
+    message.providerReplay.data.compatibilityMode === true);
+}
+
+/** Translate the wire view only; keep reasoning and persisted provider output intact. */
+export function portableResponsesReplay(items: ResponseInputItem[]): ResponseInputItem[] {
+  return items.map(item => isClientToolSearchCall(item) ? {
+    type: "function_call", call_id: item.call_id, name: "mcp_search",
+    arguments: clientToolSearchArguments(item),
+  } : item);
 }
 
 export function replayResponsesOutput(

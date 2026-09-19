@@ -14,6 +14,7 @@ export type SettingsSection =
   | 'shortcuts'
   | 'usage'
   | 'browser'
+  | 'computer-use'
   | 'companion'
   | 'runtime'
   | 'proxy'

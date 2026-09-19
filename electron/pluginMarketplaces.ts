@@ -11,6 +11,7 @@ import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPlugi
 import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, PluginMarketSource } from './pluginMarketplaceTypes';
 import { readPluginPresentation } from './pluginPresentation';
 import { pluginChild } from './pluginExtensions';
+import { missingPluginVariables } from './pluginEnvironment';
 import { PluginMarketDownloads, MarketplaceRateLimitError } from './pluginMarketDownloads';
 import { collectTemporaryDirectories, leaseTemporaryDirectory, removeTemporaryDirectory, mergeCleanup, type CleanupResult } from './cacheMaintenance';
 
@@ -222,6 +223,8 @@ export class PluginMarketplaceService {
       if (manifest.name !== entry.name) throw new Error('Marketplace entry does not match the plugin manifest name.');
       const plugin = await inspectProductPlugin(root);
       const issues = [...importIssues, ...await compatibilityIssues(root, manifest)];
+      const variables = missingPluginVariables(await mcpConfig(root, manifest));
+      const warnings = variables.length ? [{ code: 'variables', detail: variables.join(', ') }] : [];
       if (!plugin.components.some(component => ['skill', 'mcp', 'app', 'agent', 'hook', 'command'].includes(component.kind))) issues.push({ code: 'empty', detail: '' });
       if (reserved.has(name)) issues.push({ code: 'reserved', detail: name });
       const receipt = await this.receipt(name);
@@ -232,7 +235,7 @@ export class PluginMarketplaceService {
       const view: PluginMarketPreview = { token, id: name, name: plugin.name, description: plugin.longDescription,
         version: plugin.version, developerName: plugin.developerName,
         source: sourceLabel,
-        revision, format, components: plugin.components, requirements, issues, notes, updating: Boolean(installed), authentication: object(entry.policy).authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE' };
+        revision, format, components: plugin.components, requirements, issues, warnings, notes, updating: Boolean(installed), authentication: object(entry.policy).authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE' };
       // The user installs this exact staged snapshot, even if a branch moves after preview.
       this.prepared.set(token, { sourceId, root, stage, preview: view, expiresAt: Date.now() + 30 * 60_000 });
       return view;
@@ -453,12 +456,10 @@ async function mcpRequirements(root: string, manifest: Json): Promise<string[]> 
 async function compatibilityIssues(root: string, manifest: Json): Promise<PluginMarketPreview['issues']> {
   const issues: PluginMarketPreview['issues'] = [];
   const config = await mcpConfig(root, manifest);
-  const variables = [...JSON.stringify(config).matchAll(/\$\{([^}]+)\}/g)].map(match => match[1]).filter(name => !['PLUGIN_ROOT', 'CARDBUSH_PLUGIN_ROOT', 'CODEX_PLUGIN_ROOT', 'CLAUDE_PLUGIN_ROOT'].includes(name) && !/^[A-Za-z_][A-Za-z0-9_]*:-/.test(name) && !process.env[name]);
-  if (variables.length) issues.push({ code: 'variables', detail: [...new Set(variables)].join(', ') });
   for (const [name, raw] of Object.entries(config)) {
     const server = object(raw), kind = string(server.type ?? server.transport) || (server.url ? 'http' : 'stdio');
     if (!['stdio', 'http', 'streamable_http', 'sse'].includes(kind)) issues.push({ code: 'transport', detail: `${name}: ${kind}` });
-    if (kind === 'stdio' ? !string(server.command) : !/^https?:\/\//i.test(string(server.url))) issues.push({ code: 'configuration', detail: name });
+    if (kind === 'stdio' ? !string(server.command) : !/^https?:\/\//i.test(string(server.url)) && !/\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}/.test(string(server.url))) issues.push({ code: 'configuration', detail: name });
 
   }
   return issues;

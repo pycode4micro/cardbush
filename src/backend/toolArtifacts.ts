@@ -51,6 +51,8 @@ function collectMcpContent(value: unknown, artifacts: ChatToolArtifact[]) {
   if (!Array.isArray(value)) return;
   value.forEach((candidate, index) => {
     const block = asRecord(candidate);
+    const audience = asRecord(block.annotations).audience;
+    if (Array.isArray(audience) && !audience.includes('user')) return;
     const type = stringValue(block.type).toLowerCase();
     const mimeType = stringValue(block.mimeType ?? block.mime_type);
     const data = stringValue(block.data);

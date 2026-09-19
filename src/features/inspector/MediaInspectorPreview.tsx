@@ -66,7 +66,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
           onClick={event => {
             const image = event.currentTarget.querySelector('img');
             setPreview({ src: source, path, name, naturalWidth: image?.naturalWidth, naturalHeight: image?.naturalHeight });
-          }}><img key={revision} src={source} alt={name} /></button>
+          }}><img key={revision} src={source} alt={name} decoding="async" /></button>
       ) : kind === 'video' ? (
         <video key={revision} src={source} controls playsInline preload="metadata" aria-label={name} />
       ) : (

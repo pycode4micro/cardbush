@@ -23,3 +23,4 @@ export * from './fileMemo.js';
 export * from './proxy.js';
 export * from './search.js';
 export * from './solutionSelection.js';
+export * from './browser.js';

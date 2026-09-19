@@ -145,7 +145,7 @@ assert.match(
 );
 assert.match(app, /tab\.kind === 'review'[\s\S]*?<Clipboard/);
 assert.match(app, /tab\.kind === 'shadow'[\s\S]*?<ShadowWindow embedded context=\{tab\.context\}/);
-assert.match(app, /target: `about:blank\?cardbush-tab=\$\{crypto\.randomUUID\(\)\}`/);
+assert.match(app, /openInspectorTarget\(await newBrowserTab\(\)\)/);
 assert.match(app, /className="right-inspector-address editable"[\s\S]*?\.navigate\(inspectorAddressDraft\)/);
 assert.match(app, /const webviewDomReadyRef = useRef\(false\)/);
 assert.match(app, /webview\.addEventListener\('dom-ready', ready\)/);
@@ -159,21 +159,8 @@ assert.match(
   /try \{[\s\S]*?webview\.loadURL\(destination\)[\s\S]*?\} catch \{/,
   'Inspector navigation must contain synchronous Electron webview lifecycle errors',
 );
-assert.match(
-  app,
-  /setZoomFactor\?\.\(1\)[\s\S]*?executeJavaScript\?\.\([\s\S]*?inspectorBrowserViewportMeasurementScript[\s\S]*?setZoomFactor\?\.\(inspectorBrowserFitZoom\(measurement\)\)/,
-  'Inspector browser pages must be measured at natural scale before fitting fixed-width content',
-);
-assert.match(
-  app,
-  /contentWidth <= viewportWidth \+ 2[\s\S]*?Math\.max\(0\.5, Math\.min\(1, viewportWidth \/ contentWidth\)\)/,
-  'Inspector browser fitting must preserve responsive pages and keep a readable minimum zoom',
-);
-assert.match(
-  app,
-  /new ResizeObserver\([\s\S]*?scheduleBrowserViewportFit\(120\)[\s\S]*?resizeObserver\.observe\(webview\)/,
-  'Inspector browser fitting must follow live panel and window resizing',
-);
+// Normal-scale wide pages and resizing are verified in real Electron by
+// test-inspector-browser-navigation.cjs; fitting content into the panel is disabled.
 for (const shortcut of ['openBrowser', 'openFiles', 'openShadow']) {
   assert.match(app, new RegExp(`item\\('${shortcut}'[^\\n]*actions\\.${shortcut}, '${shortcut}'`),
     'Inspector shortcuts and menu clicks must share the same application action');
@@ -201,7 +188,7 @@ assert.doesNotMatch(
   /window\.innerWidth\s*<\s*1220[\s\S]{0,120}setSidebarCollapsed\(true\)/,
   'Opening or resizing the inspector must squeeze the chat stage without automatically hiding the left sidebar',
 );
-assert.match(app, /!showWorkSummary \|\| windowMaximized/);
+assert.match(app, /!showWorkSummary \|\| workSummaryDocked/);
 assert.match(app, /target\.closest\('\.conversation-work-summary'\)/);
 assert.match(app, /target\.closest\('\[data-work-summary-toggle\]'\)/);
 assert.match(app, /target\.closest\('\[data-inspector-toggle\]'\)/);
@@ -222,6 +209,8 @@ assert.doesNotMatch(app, /onToggleTerminal|ConsoleDock|consoleMode|终端控制�
 assert.match(app, /--work-summary-anchor-right/);
 assert.match(app, /bodyBounds\.right - toggleBounds\.right/);
 assert.match(app, /onToggleWorkSummary\(event\.currentTarget\)/);
+assert.match(app, /setWorkSummaryDocked\(bodyBounds\.width >= 1100\)/);
+assert.match(app, /new ResizeObserver\(\(\) => updateWorkSummaryLayout\(\)\)/);
 assert.match(
   app,
   /const showWorkSummary = workSummaryVisible;/,
@@ -245,13 +234,13 @@ assert.doesNotMatch(
 assert.doesNotMatch(css, /\.right-inspector-summary\s*\{/);
 assert.match(
   css,
-  /\.window-restored \.conversation-work-summary\s*\{[\s\S]*?top:\s*8px;[\s\S]*?right:\s*var\(--work-summary-anchor-right, 12px\)/,
-  'Restored windows must anchor the summary below its toolbar button instead of presenting it as a right sidebar',
+  /\.conversation-work-summary\s*\{[\s\S]*?right:\s*var\(--work-summary-anchor-right, 12px\);[\s\S]*?top:\s*8px/,
+  'Both layout modes must align the summary below the same toolbar button',
 );
 assert.match(
   css,
-  /\.window-maximized\.work-summary-requested \.chat-content-frame\s*\{[\s\S]*?right:\s*328px/,
-  'A maximized conversation must keep its summary indentation even while the external inspector is open',
+  /\.work-summary-docked\.work-summary-visible \.chat-content-frame\s*\{[\s\S]*?--work-summary-content-inset:\s*calc\(336px \+ var\(--work-summary-anchor-right, 12px\) \+ 12px\)/,
+  'A docked summary must reserve its column without narrowing the scroll viewport',
 );
 assert.match(app, /const \[inspectorOpen, setInspectorOpen\] = useState\(false\)/);
 assert.doesNotMatch(app, /sidebarPreviewWidth/);
@@ -418,12 +407,12 @@ assert.match(messageBubble, /key=\{segment\.id\}/);
 assert.doesNotMatch(messageBubble, /key=\{`\$\{segment\.id\}-\$\{index\}`\}/);
 assert.match(
   css,
-  /\.window-restored \.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateY\(-8px\)/,
+  /\.work-summary-overlay \.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateY\(-8px\)/,
 );
 assert.match(
   css,
   /\.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateX\(14px\)/,
-  'Maximized summary must keep the existing right-side exit motion',
+  'Docked summary must keep the existing right-side exit motion',
 );
 assert.doesNotMatch(featureContent, /tool-install|tool-manager/);
 assert.doesNotMatch(css, /tool-install|tool-manager|tools-manager/);

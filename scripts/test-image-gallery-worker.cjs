@@ -37,7 +37,12 @@ app.whenReady().then(async()=>{
     assert.equal(await run('document.querySelector(".image-preview-dialog header strong").textContent'),'2.svg');
     await run('document.querySelector("[aria-label=放大图片]").click()'); await pause();
     await key('Right'); await ready();
-    assert.equal(await run('document.querySelector(".image-preview-zoom-value").textContent'),'100%');
+    const resetZoom = await run(`(()=>{const stage=document.querySelector('.image-preview-stage'),img=stage.querySelector('img');return {
+      actual:document.querySelector('.image-preview-zoom-value').textContent,
+      expected:Math.round(Math.min(1,(stage.clientWidth-32)/img.naturalWidth,(stage.clientHeight-32)/img.naturalHeight)*100)+'%',
+      fitted:document.querySelector('[aria-label=恢复适应窗口]').getAttribute('aria-pressed')};})()`);
+    assert.equal(resetZoom.actual,resetZoom.expected,'switching images restores fit and reports the actual scale');
+    assert.equal(resetZoom.fitted,'true');
     assert.equal(await run('document.querySelector(".image-preview-dialog header strong").textContent'),'outside.svg','external referenced images remain browsable');
     await run('galleryControls.setMessages([...galleryControls.original,{id:"late",role:"assistant",content:"",attachments:[{id:"late-image",type:"image",path:files.late,name:"later.svg"}]}])');
     await until('document.querySelector(".image-preview-position").textContent==="4 / 5"','appended image, stable selection');

@@ -95,11 +95,14 @@ module.exports = async ({run, until, pause, window, root}) => {
     loopMoreTasks=[{...loopTask,taskId:'child-2',childSessionId:'child-2',agentProfileId:'视觉检查',status:'completed'}];
     loopReply={...loopReply,toolExecutions:loopExecutions.map(item=>item.id==='image'?{...item,artifacts:loopImages}:item).concat([
       {...loopExecutions[1],id:'repeated-image',sequence:5,artifacts:[loopImages[0]]},
-      {...loopExecutions[2],id:'wait',name:'await_subagents',sequence:6,metadata:{nativeResult:{taskIds:['child-1','child-2'],status:'completed'}}},
+      {...loopExecutions[2],id:'team',name:'team_delegate',sequence:6,metadata:{nativeResult:{members:[{taskId:'child-1'},{taskId:'child-2'}]}}},
+      {...loopExecutions[2],id:'wait',name:'await_subagents',summary:'等待子 Agent',sequence:7,metadata:{nativeResult:{taskIds:['child-1','child-2','wait-only-child'],status:'completed'}}},
     ])};
     showArchivedLoop(); dispatchEvent(new Event('focus')); void 0;
   `);
-  await until("document.querySelectorAll('.loop-subagent-preview').length===2 && document.querySelectorAll('.tool-image-thumbnail img').length===4", 'actual children and images are grouped without duplicate dispatch/wait or image entries');
+  await until("document.querySelectorAll('.loop-subagent-preview').length===2 && document.querySelectorAll('.tool-image-thumbnail img').length===4", 'only dispatched children and images appear in preview groups');
+  assert.equal(await run("document.querySelectorAll('.loop-subagent-preview[data-execution-id=wait]').length"), 0, 'await never creates child cards, even when its result contains task IDs');
+  assert.match(await run("document.querySelector('.tool-execution-block').textContent"), /2 项操作/, 'await is counted with ordinary tools');
   await until("[...document.querySelectorAll('.tool-image-thumbnail img')].every(img=>img.complete&&img.naturalWidth===240)", 'all thumbnails decode');
   assert.match(await run("document.querySelector('.loop-image-previews .loop-preview-summary').textContent"), /已查看 4 张图像/);
   assert.match(await run("document.querySelector('.loop-subagent-previews .loop-preview-summary').textContent"), /2 个子 Agent/);

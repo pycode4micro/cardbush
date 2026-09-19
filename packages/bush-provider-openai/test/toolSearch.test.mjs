@@ -11,6 +11,7 @@ import { InMemoryProviderCapabilityStore, normalizeResponseStreamEvent, OpenAIRe
 
 const scope = 'arbitrary-service', model = 'arbitrary-model-714';
 const capability = { scope, model, capability: 'client_tool_search' };
+const compatibility = { scope, model, capability: 'responses_compatibility' };
 const registry = new ToolRegistry(); registerMcpDiscovery(registry);
 const request = overrides => modelRequestSchema.parse({
   protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model,
@@ -256,7 +257,8 @@ test('explicit rejection falls back once, caches the fact, and pins portable his
   const first = request(), round = await executeModelRound(provider, first);
   assert.equal(round.status, 'completed');
   assert.deepEqual(f.calls.map(call => isNative(call.body)), [true, false]);
-  assert.equal(capabilities.read(capability).status, 'unsupported');
+  assert.equal(capabilities.read(compatibility).status, 'supported');
+  assert.equal(capabilities.read(capability).status, 'unknown');
   const history = [...first.messages, assistant(round), { role: 'user', content: 'Continue' }];
   now = 2000;
   const restarted = new OpenAIResponsesProvider({ ...f.config, capabilityStore: capabilities });
@@ -270,7 +272,7 @@ test('explicit rejection falls back once, caches the fact, and pins portable his
   assert.equal(isNative(f.calls.at(-1).body), false);
 });
 
-test('authentication, rate limits, outages and schema mistakes never become unsupported capability facts', async t => {
+test('all remote errors attempt collective compatibility once without inventing unsupported capability facts', async t => {
   for (const failure of [
     ...[401, 403, 429, 500].map(status => ({ ...unsupported, status })),
     { status: 400, error: { code: 'invalid_value', param: 'tools[0].parameters', message: 'Invalid tool_search schema: unsupported property' } },
@@ -279,27 +281,31 @@ test('authentication, rate limits, outages and schema mistakes never become unsu
     await t.test(`${failure.status} ${failure.error.param ?? ''}`, async t => {
       const f = await fixture(t, () => failure);
       assert.equal((await executeModelRound(f.provider, request())).status, 'failed');
-      assert.equal(f.calls.length, 1); assert.equal(f.store.read(capability).status, 'unknown');
+      assert.equal(f.calls.length, 2); assert.equal(f.store.read(capability).status, 'unknown');
+      assert.deepEqual(f.calls.map(call => isNative(call.body)), [true, false]);
+      assert.equal(f.store.read(compatibility).status, 'supported');
     });
   }
 });
 
-test('accepted streams never retry under another protocol, and native history cannot silently downgrade', async t => {
+test('native history can fall back without replaying partially exposed output', async t => {
   let reject = false;
   const f = await fixture(t, () => reject ? unsupported : { output: [searchItem()] });
   const first = request(), round = await executeModelRound(f.provider, first);
   reject = true;
   const next = request({ messages: [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: searchResult() }] });
   assert.equal((await executeModelRound(f.provider, next)).status, 'failed');
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 3);
   assert.equal(isNative(f.calls[1].body), true);
-  assert.equal(f.store.read(capability).status, 'unsupported');
+  assert.equal(isNative(f.calls[2].body), false);
+  assertClosedToolBatches(f.calls[2].body.input);
+  assert.equal(f.store.read(compatibility).status, 'supported');
   const g = await fixture(t, () => ({ output: [textItem('Partial')], streamError: { code: 'unsupported_tool_type', message: 'tool_search is unsupported' } }));
   assert.equal((await executeModelRound(g.provider, request())).status, 'failed');
   assert.equal(g.calls.length, 1);
 });
 
-test('token counting and generation negotiate independently without an extra model probe', async t => {
+test('token counting failure selects compatible generation without a second native probe', async t => {
   const f = await fixture(t, body => isNative(body) ? unsupported : {});
   assert.equal(await f.provider.countInputTokens(request()), undefined);
   assert.equal(f.calls.length, 1); assert.ok(f.calls.every(call => call.path.endsWith('/input_tokens')));
@@ -307,11 +313,12 @@ test('token counting and generation negotiate independently without an extra mod
   assert.equal(await f.provider.countInputTokens(request()), undefined);
   assert.equal(f.calls.length, 1);
   assert.equal((await executeModelRound(f.provider, request())).status, 'completed');
-  assert.equal(f.calls.length, 3); assert.equal(isNative(f.calls.at(-1).body), false);
-  const g = await fixture(t, (_body, path) => path.endsWith('/input_tokens') ? unsupported : { output: [searchItem()] });
+  assert.equal(f.calls.length, 2); assert.equal(isNative(f.calls.at(-1).body), false);
+  const g = await fixture(t, (_body, path) => path.endsWith('/input_tokens') ? unsupported : {});
   assert.equal(await g.provider.countInputTokens(request()), undefined);
   assert.equal((await executeModelRound(g.provider, request())).status, 'completed');
-  assert.equal(g.calls.length, 2); assert.equal(g.store.read(capability).status, 'supported');
+  assert.equal(g.calls.length, 2); assert.equal(g.store.read(compatibility).status, 'supported');
+  assert.equal(isNative(g.calls.at(-1).body), false);
 });
 
 test('archived search definitions are injected only after all exact chunks, preserving earlier input', () => {

@@ -653,6 +653,16 @@ app.whenReady().then(async()=>{
   await read('marketSaveFails=false');await click('重试启用');
   await until('document.querySelector(".plugin-detail-primary").textContent.includes("已安装")');
   assert.equal(await read('marketInstalls'),1,'activation retries never repeat file installation');
+  await click('返回市场');await read('marketMissingVariables=true');await open('claude-example');
+  await until('document.body.innerText.includes("可安装，使用前需配置")');
+  assert.equal(await read('document.querySelector(".plugin-detail-primary").disabled'),false,'missing environment variables do not block installation');
+  await click('安装，稍后配置');
+  await until('document.querySelector(".plugin-detail-primary").textContent.includes("已安装")');
+  assert.equal(await read('fixtureApps.plugins.find(plugin=>plugin.id==="claude-example").installed'),true);
+  assert.equal(await read('fixtureApps.plugins.find(plugin=>plugin.id==="claude-example").enabled'),false,'installation can finish without starting an unconfigured plugin');
+  assert.equal(await read('marketInstalls'),2);
+  await capture('plugin-marketplace-configure-later.png');
+  await read('marketMissingVariables=false');
   await click('返回市场');await search('');await read('marketCached=true');await click('刷新市场');
   await until('document.body.innerText.includes("当前显示缓存目录")');
   await read('marketSlow=true');await open('claude-example');

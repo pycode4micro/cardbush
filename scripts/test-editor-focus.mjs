@@ -30,6 +30,24 @@ test('a lost document focus repairs the render widget even when native focus alr
   assert.equal(f.widgetCalls(), 1);
 });
 
+test('healthy editor activation leaves native focus and active IME composition untouched', () => {
+  const f = fixture(); f.state.pageFocused = true;
+  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: true }), true);
+  assert.equal(f.calls(), 0);
+  assert.equal(f.widgetCalls(), 0);
+});
+
+test('passive recovery repairs a stale editor widget without stealing native focus from a preview', () => {
+  const f = fixture();
+  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: false, passive: true }), false);
+  assert.equal(f.calls(), 0);
+  assert.equal(f.widgetCalls(), 0);
+  f.state.pageFocused = true;
+  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: false, passive: true }), true);
+  assert.equal(f.calls(), 0);
+  assert.equal(f.widgetCalls(), 1);
+});
+
 test('late editor clicks cannot steal focus from other apps, hidden windows or modal dialogs', () => {
   for (const [key, value] of Object.entries({ destroyed: true, contentsDestroyed: true,
     crashed: true, focused: false, visible: false, minimized: true, enabled: false })) {

@@ -24,6 +24,8 @@ const expectedSections = [
   'appearance',
   'shortcuts',
   'usage',
+  'browser',
+  'computer-use',
   'runtime',
   'proxy',
   'mcp',

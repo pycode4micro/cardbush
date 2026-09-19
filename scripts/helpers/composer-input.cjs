@@ -37,6 +37,18 @@ module.exports = async ({ run, until, pause, window, root }) => {
   `);
   try {
     await until('!!document.querySelector("textarea[data-composer-input]")', 'plain composer ready');
+    await run('document.querySelector(".message-list").focus()');
+    const paddingPoint = await run(`(() => {
+      const surface = document.querySelector('.composer-surface'), rect = surface.getBoundingClientRect();
+      const x = Math.ceil(rect.left + 6), y = Math.ceil(rect.top + 6);
+      if (document.elementFromPoint(x, y) !== surface) throw Error('Fixture must click composer padding');
+      return { x, y };
+    })()`);
+    window.webContents.sendInputEvent({ type: 'mouseDown', ...paddingPoint, button: 'left', clickCount: 1 });
+    window.webContents.sendInputEvent({ type: 'mouseUp', ...paddingPoint, button: 'left', clickCount: 1 });
+    await until('document.activeElement === document.querySelector("textarea[data-composer-input]")', 'padding click keeps the editor focused after the default mouse action');
+    await window.webContents.insertText('留白点击后可以输入');
+    await until('chatProps.draft === "留白点击后可以输入"', 'typing after a real padding click');
     await run('inputType("/")');
     await until('document.querySelectorAll(".composer-command-row").length > 15', 'scrollable quick actions');
     const choices = await run('[...document.querySelectorAll(".composer-command-row")].map(row => row.dataset.commandId)');
@@ -111,7 +123,37 @@ module.exports = async ({ run, until, pause, window, root }) => {
     }
     await until('!!document.querySelector("textarea[data-composer-input]")', 'Backspace removes the atomic reference');
     assert.equal(await run('chatProps.draft.trim()'), '', 'no hidden path fragments remain');
-    console.log('Composer input passed: held arrows/wrap/local scroll, repeat and IME guards, skill chips, exact copy/send, remove/Backspace, narrow light/dark layouts.');
+    await run(`inputType(inputSkillLink + ' ');`);
+    await until('!!document.querySelector(".composer-skill-token")', 'rich input ready for interrupted composition');
+    await run(`(() => {
+      const editor = document.querySelector('.composer-prompt-editor');
+      editor.focus(); editor.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: 'ni' }));
+      document.querySelector('.message-list').focus();
+      inputSelectAll(); getSelection().collapseToEnd();
+    })()`);
+    await window.webContents.insertText('恢复输入');
+    await until('chatProps.draft.endsWith("恢复输入")', 'an interrupted IME composition cannot permanently block rich input');
+    window.webContents.debugger.attach('1.3');
+    try {
+      for (const rich of [true, false]) {
+        await run(`updateChat({ draft: ${rich ? 'inputSkillLink + " "' : '"普通输入 "'} })`);
+        await until(`!!document.querySelector('${rich ? '.composer-prompt-editor' : 'textarea[data-composer-input]'}')`, 'IME editor ready');
+        await run(rich ? 'inputSelectAll(); getSelection().collapseToEnd()' : 'inputType(chatProps.draft)');
+        const before = await run('chatProps.draft');
+        const sentCount = await run('inputSent.length');
+        await run('window.composingNode = document.querySelector("[data-composer-input]"); void 0');
+        await window.webContents.debugger.sendCommand('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 });
+        await until('document.querySelector("[data-composer-input]").textContent.endsWith("ni") || document.querySelector("[data-composer-input]").value?.endsWith("ni")', 'native IME preedit reaches the editor');
+        if (rich) assert.equal(await run('chatProps.draft'), before, 'unconfirmed rich-editor composition is not published');
+        await run('updateChat({})');
+        await pause(40);
+        assert.equal(await run('document.querySelector("[data-composer-input]") === composingNode'), true, 'rerender preserves the composing node');
+        await window.webContents.debugger.sendCommand('Input.insertText', { text: '你好' });
+        await until(`chatProps.draft === ${JSON.stringify(before + '你好')}`, 'native IME commit replaces the preedit without losing the draft');
+        assert.equal(await run('inputSent.length'), sentCount, 'confirming Chinese text never submits the message');
+      }
+    } finally { window.webContents.debugger.detach(); }
+    console.log('Composer input passed: padding focus, held arrows, native Chinese composition across rerenders, interrupted IME recovery, skill chips, exact copy/send, remove/Backspace and narrow layouts.');
   } finally {
     window.setBounds(originalBounds);
     await run('window.viewTheme = inputSavedTheme; updateChat(inputSavedProps)');

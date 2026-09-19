@@ -27,6 +27,7 @@ test('troubleshooting drafts resolve the CardBush installation and overrides wit
   const mcp = { revision: 9, servers: [] };
   let mutations = 0;
   const manager = new PluginConnectionManager({ apps: { read: async () => structuredClone(apps) }, mcp: { read: async () => structuredClone(mcp) },
+    pluginDataRoot: join(root, 'plugin-data'),
     refresh: async () => { mutations++; }, runtime: async () => { mutations++; return { runtime: null }; },
   });
   try {
@@ -40,7 +41,7 @@ test('troubleshooting drafts resolve the CardBush installation and overrides wit
     assert.equal(context.configuredLaunch.command, 'node', 'the saved launch override wins over the package default');
     assert.equal(context.configuredLaunch.cwd, join(root, 'run'));
     assert.equal(context.configuredLaunch.args[0].replaceAll('\\', '/'), root.replaceAll('\\', '/') + '/managed.mjs', 'CODEX_PLUGIN_ROOT is resolved to this CardBush installation');
-    assert.deepEqual(context.configuredLaunch.environmentNames, ['API_TOKEN', 'CACHE_ROOT']);
+    assert.deepEqual(context.configuredLaunch.environmentNames, ['API_TOKEN', 'CACHE_ROOT', 'PLUGIN_ROOT', 'CARDBUSH_PLUGIN_ROOT', 'CODEX_PLUGIN_ROOT', 'CLAUDE_PLUGIN_ROOT', 'PLUGIN_DATA', 'CLAUDE_PLUGIN_DATA']);
     assert.doesNotMatch(JSON.stringify(context), /PRIVATE_ARGUMENT|PRIVATE_POSITIONAL|package-default/);
     assert.equal(mutations, 0, 'building a draft does not refresh, launch, reconnect or enumerate runtime tools');
     apps.revision++;

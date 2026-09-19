@@ -47,6 +47,7 @@ export type ClientCredentialsAnswer = { action: string; content?: { clientId: st
 export class PluginConnectionManager {
   constructor(private readonly options: {
     apps: CardbushAppsConfigStore; mcp: ProductMcpConfigStore; credentials?: McpCredentialStore;
+    pluginDataRoot?: string;
     refresh: () => Promise<unknown>; runtime: () => Promise<{ runtime: unknown; runtimeError?: string }>;
     requestCredentials?: (input: ClientCredentialsPrompt, signal: AbortSignal) => Promise<ClientCredentialsAnswer>;
   }) {}
@@ -230,7 +231,7 @@ export class PluginConnectionManager {
       kind: 'stdio', command: server.command, args: server.args, cwd: server.cwd, env: server.env,
     } : { kind: server.transport === 'sse' ? 'sse' : 'streamable_http', url: server.url, headers: server.headers,
       oauth: mcpOAuthFromConfig(server.oauth), auth: server.auth } }));
-    const value = resolvePluginMcpConnection(plugin.id, name, root, record(manifest.manifest.mcpServers), manifest.registeredApps, settings, standalone);
+    const value = resolvePluginMcpConnection(plugin.id, name, root, record(manifest.manifest.mcpServers), manifest.registeredApps, settings, standalone, this.options.pluginDataRoot);
     return value ? mcpServerSnapshotSchema.parse(value) : null;
   }
 }

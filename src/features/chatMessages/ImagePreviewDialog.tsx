@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Minus, Plus, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize, Minus, Plus, X } from 'lucide-react';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   type PointerEvent as ReactPointerEvent,
@@ -28,17 +28,24 @@ type ImageDragState = {
   y: number;
 };
 
-type ImageView = { zoom: number; x: number; y: number };
+type ImageView = { zoom: number; x: number; y: number; fitted: boolean };
 type ImageGeometry = { width: number; height: number; viewportWidth: number; viewportHeight: number };
 
-function constrainView(view: ImageView, geometry: ImageGeometry): ImageView {
-  const limitX = Math.max(0, (geometry.width * view.zoom - (geometry.viewportWidth - 32)) / 2);
-  const limitY = Math.max(0, (geometry.height * view.zoom - (geometry.viewportHeight - 32)) / 2);
-  return { zoom: view.zoom, x: Math.max(-limitX, Math.min(limitX, view.x)), y: Math.max(-limitY, Math.min(limitY, view.y)) };
+function fitZoom(geometry: ImageGeometry) {
+  if (!geometry.width || !geometry.height || !geometry.viewportWidth || !geometry.viewportHeight) return 1;
+  return Math.min(1, Math.max(1, geometry.viewportWidth - 32) / geometry.width,
+    Math.max(1, geometry.viewportHeight - 32) / geometry.height);
 }
 
-function clampZoom(value: number) {
-  return Math.min(maximumZoom, Math.max(minimumZoom, value));
+function constrainView(view: ImageView, geometry: ImageGeometry): ImageView {
+  if (view.fitted) return { zoom: fitZoom(geometry), x: 0, y: 0, fitted: true };
+  const limitX = Math.max(0, (geometry.width * view.zoom - (geometry.viewportWidth - 32)) / 2);
+  const limitY = Math.max(0, (geometry.height * view.zoom - (geometry.viewportHeight - 32)) / 2);
+  return { ...view, x: Math.max(-limitX, Math.min(limitX, view.x)), y: Math.max(-limitY, Math.min(limitY, view.y)) };
+}
+
+function clampZoom(value: number, geometry: ImageGeometry) {
+  return Math.min(maximumZoom, Math.max(Math.min(minimumZoom, fitZoom(geometry)), value));
 }
 
 function previewNaturalSize(image: ImagePreviewSource) {
@@ -68,7 +75,7 @@ export function ImagePreviewDialog({
   const keyboardShortcuts = useKeyboardShortcuts();
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<ImageDragState | null>(null);
-  const viewRef = useRef<ImageView>({ zoom: 1, x: 0, y: 0 });
+  const viewRef = useRef<ImageView>({ zoom: 1, x: 0, y: 0, fitted: true });
   const geometryRef = useRef<ImageGeometry>({ width: 0, height: 0, viewportWidth: 0, viewportHeight: 0 });
   const [view, setView] = useState(viewRef.current);
   const [naturalSize, setNaturalSize] = useState(() => previewNaturalSize(image));
@@ -79,7 +86,6 @@ export function ImagePreviewDialog({
   const currentKey = useRef(imageKey);
   currentKey.current = imageKey;
   const source = fallback?.key === imageKey ? fallback.src : image.src;
-  const { zoom } = view;
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -90,23 +96,25 @@ export function ImagePreviewDialog({
   const updateView = useCallback((next: ImageView) => {
     const constrained = constrainView(next, geometryRef.current);
     viewRef.current = constrained;
-    setView(current => current.zoom === constrained.zoom && current.x === constrained.x && current.y === constrained.y ? current : constrained);
+    setView(current => current.zoom === constrained.zoom && current.x === constrained.x && current.y === constrained.y && current.fitted === constrained.fitted ? current : constrained);
   }, []);
+
+  const fitToWindow = useCallback(() => updateView({ zoom: 1, x: 0, y: 0, fitted: true }), [updateView]);
 
   const applyZoom = useCallback((value: number, focalPoint?: { x: number; y: number }) => {
     const current = viewRef.current;
-    const next = clampZoom(Math.round(value * 100) / 100);
     const geometry = geometryRef.current;
-    if (next === current.zoom || !geometry.width || !geometry.height) return;
+    const next = clampZoom(Math.round(value * 100) / 100, geometry);
+    if (!geometry.width || !geometry.height) return;
     const dx = focalPoint ? focalPoint.x - geometry.viewportWidth / 2 : 0;
     const dy = focalPoint ? focalPoint.y - geometry.viewportHeight / 2 : 0;
     const ratio = next / current.zoom;
     // Commit scale and focal-point positioning together, before the same paint.
-    updateView({ zoom: next, x: dx - (dx - current.x) * ratio, y: dy - (dy - current.y) * ratio });
+    updateView({ zoom: next, x: dx - (dx - current.x) * ratio, y: dy - (dy - current.y) * ratio, fitted: false });
   }, [updateView]);
 
   useLayoutEffect(() => {
-    viewRef.current = { zoom: 1, x: 0, y: 0 };
+    viewRef.current = { zoom: 1, x: 0, y: 0, fitted: true };
     setView(viewRef.current);
     setFailed(false);
     dragRef.current = null;
@@ -162,11 +170,12 @@ export function ImagePreviewDialog({
       if (!isZoomIn && !isZoomOut && !isReset) return;
       event.preventDefault();
       event.stopPropagation();
-      applyZoom(isReset ? 1 : viewRef.current.zoom + (isZoomIn ? zoomStep : -zoomStep));
+      if (isReset) fitToWindow();
+      else applyZoom(viewRef.current.zoom + (isZoomIn ? zoomStep : -zoomStep));
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [applyZoom, keyboardShortcuts, onClose, gallery.move]);
+  }, [applyZoom, fitToWindow, keyboardShortcuts, onClose, gallery.move]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -218,22 +227,17 @@ export function ImagePreviewDialog({
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    updateView({ zoom: viewRef.current.zoom, x: drag.x + event.clientX - drag.startX, y: drag.y + event.clientY - drag.startY });
+    updateView({ ...viewRef.current, x: drag.x + event.clientX - drag.startX, y: drag.y + event.clientY - drag.startY });
     event.preventDefault();
   }, [updateView]);
 
-  const availableWidth = Math.max(1, stageSize.width - 32);
-  const availableHeight = Math.max(1, stageSize.height - 32);
   const ready = !failed && naturalSize.width > 0 && naturalSize.height > 0 && stageSize.width > 0 && stageSize.height > 0;
-  const fitScale = ready
-    ? Math.min(1, availableWidth / naturalSize.width, availableHeight / naturalSize.height)
-    : 1;
-  const canvasWidth = ready
-    ? Math.max(1, Math.round(naturalSize.width * fitScale))
-    : 0;
-  const canvasHeight = ready
-    ? Math.max(1, Math.round(naturalSize.height * fitScale))
-    : 0;
+  // Keep the image plane at its natural resolution. 100% is one source pixel
+  // per CSS pixel, not a magnification of the fitted thumbnail.
+  const canvasWidth = ready ? naturalSize.width : 0;
+  const canvasHeight = ready ? naturalSize.height : 0;
+  const fitScale = fitZoom({ width: canvasWidth, height: canvasHeight, viewportWidth: stageSize.width, viewportHeight: stageSize.height });
+  const zoom = view.fitted ? fitScale : view.zoom;
   const percentage = Math.round(zoom * 100);
 
   useLayoutEffect(() => {
@@ -269,7 +273,7 @@ export function ImagePreviewDialog({
             <button
               type="button"
               onClick={() => applyZoom(viewRef.current.zoom - zoomStep)}
-              disabled={!ready || zoom <= minimumZoom}
+              disabled={!ready || zoom <= Math.min(minimumZoom, fitScale)}
               aria-label={language === 'zh' ? '缩小图片' : 'Zoom out'}
               title={[language === 'zh' ? '缩小' : 'Zoom out', keyboardShortcuts.label('imageZoomOut')].filter(Boolean).join(' · ')}
               aria-keyshortcuts={keyboardShortcuts.aria('imageZoomOut')}
@@ -281,9 +285,8 @@ export function ImagePreviewDialog({
               type="button"
               onClick={() => applyZoom(1)}
               disabled={!ready}
-              aria-label={language === 'zh' ? '恢复适应窗口' : 'Fit to window'}
-              title={[language === 'zh' ? '适应窗口' : 'Fit to window', keyboardShortcuts.label('imageReset')].filter(Boolean).join(' · ')}
-              aria-keyshortcuts={keyboardShortcuts.aria('imageReset')}
+              aria-label={language === 'zh' ? '原始尺寸（100%）' : 'Actual size (100%)'}
+              title={language === 'zh' ? '按原始尺寸查看（100%）' : 'View at actual size (100%)'}
             >
               {percentage}%
             </button>
@@ -296,6 +299,17 @@ export function ImagePreviewDialog({
               aria-keyshortcuts={keyboardShortcuts.aria('imageZoomIn')}
             >
               <Plus size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={fitToWindow}
+              disabled={!ready}
+              aria-label={language === 'zh' ? '恢复适应窗口' : 'Fit to window'}
+              aria-pressed={view.fitted}
+              title={[language === 'zh' ? '适应窗口' : 'Fit to window', keyboardShortcuts.label('imageReset')].filter(Boolean).join(' · ')}
+              aria-keyshortcuts={keyboardShortcuts.aria('imageReset')}
+            >
+              <Maximize size={15} />
             </button>
           </div>
           <button
@@ -332,7 +346,8 @@ export function ImagePreviewDialog({
           }}
           onDoubleClick={(event) => {
             const bounds = event.currentTarget.getBoundingClientRect();
-            applyZoom(viewRef.current.zoom === 1 ? 2 : 1, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+            if (viewRef.current.zoom === 1) fitToWindow();
+            else applyZoom(1, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
           }}
           onContextMenu={event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
         >

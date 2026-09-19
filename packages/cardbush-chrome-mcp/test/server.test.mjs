@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import sharp from 'sharp';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -20,8 +22,13 @@ test('keeps the established Chrome DevTools tool vocabulary', () => {
     'type_text',
     'press_key',
     'hover',
+    'resize_page',
     'take_screenshot',
+    'export_image',
     'evaluate_script',
+    'download_file',
+    'download_status',
+    'cancel_download',
     'wait_for',
     'release_browser',
   ]);
@@ -29,21 +36,25 @@ test('keeps the established Chrome DevTools tool vocabulary', () => {
   assert.equal(createCardbushChromeServer()._registeredTools.close_page.annotations.destructiveHint, true);
 });
 
-test('screenshot failure feedback is scoped, preserves native images, and resets after recovery', async () => {
+test('screenshot failure feedback is scoped, preserves native images, and resets after recovery', async t => {
+  const artifactsDirectory = await mkdtemp(path.join(tmpdir(), 'cardbush-capture-test-'));
+  t.after(() => rm(artifactsDirectory, { recursive: true, force: true }));
+  const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'white' } }).png().toBuffer();
   let succeeds = false;
   let submitted = 0;
   const connector = async (method, params, options) => {
     if (method === 'tabs.list') return [{ id: 42, active: true, title: 'test' }];
     if (method === 'debugger.detachScope') return { detached: true };
+    if (params.command === 'Runtime.evaluate') return { result: { value: { width: 1280, height: 800, deviceScaleFactor: 1 } } };
     assert.equal(params.command, 'Page.captureScreenshot');
     submitted++;
     const diagnostics = { requestId: 'sample', method, command: params.command, tabId: 42,
       elapsedMs: 25_000, stage: 'command_pending', stages: [{ stage: 'command_pending', elapsedMs: 1 }] };
     options.onDiagnostics?.(diagnostics);
     if (!succeeds) throw new ChromeConnectorError('screenshot_timeout', 'capture timed out', { diagnostics });
-    return { data: 'AQI=' };
+    return { data: png.toString('base64') };
   };
-  const server = createCardbushChromeServer({ connector });
+  const server = createCardbushChromeServer({ connector, artifactsDirectory });
   const context = id => ({ mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: id } } });
   const capture = (id, format = 'png') => server._registeredTools.take_screenshot.handler({ format }, context(id));
   const first = await capture('a');
@@ -57,8 +68,8 @@ test('screenshot failure feedback is scoped, preserves native images, and resets
   assert.equal((await capture('a:child')).structuredContent.error.details.consecutiveFailures, 1);
   succeeds = true;
   const successful = await capture('a');
-  assert.equal(successful.content[1].data, 'AQI=');
-  assert.equal(successful.structuredContent.bytes, 2);
+  assert.equal(successful.content[1].data, png.toString('base64'));
+  assert.equal(successful.structuredContent.bytes, png.length);
   assert.ok(successful.structuredContent.timings.elapsedMs >= 0);
   succeeds = false;
   assert.equal((await capture('a')).structuredContent.error.details.consecutiveFailures, 1);

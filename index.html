@@ -22,6 +22,7 @@
           cyberpunk: '#050607',
         };
         let theme = 'dark';
+        let customColors = {};
         try {
           const preference = localStorage.getItem('cardbush_theme_mode');
           const legacy = preference ? null : localStorage.getItem('cardbush.theme');
@@ -31,9 +32,22 @@
               const imported = JSON.parse(
                 localStorage.getItem('cardbush_imported_theme_style') || 'null',
               );
-              importedBase = ['light', 'dark'].includes(imported?.base)
-                ? imported.base
-                : imported?.base === 'parchment' ? 'light' : '';
+              const colorKeys = ['background', 'surface', 'surfaceStrong', 'surfaceRaised', 'border',
+                'accent', 'accentSoft', 'text', 'textMuted', 'textSoft', 'userBubble', 'terminalBackground', 'danger'];
+              const safeColor = value => typeof value === 'string' && value.trim().length <= 96 &&
+                (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value.trim()) ||
+                  /^(rgb|rgba|hsl|hsla)\([\d\s.,%/+\-]+\)$/.test(value.trim()));
+              if (imported?.protocol === 'cardbush.appearance_style.v1' && typeof imported.name === 'string' &&
+                  imported.name.trim().length > 0 && imported.name.trim().length <= 64 && imported.colors &&
+                  typeof imported.colors === 'object' && !Array.isArray(imported.colors)) {
+                const palette = Object.fromEntries(Object.entries(imported.colors)
+                  .filter(([key, value]) => colorKeys.includes(key) && safeColor(value)));
+                if (Object.keys(palette).length) {
+                  importedBase = ['light', 'dark'].includes(imported.base)
+                    ? imported.base : imported.base === 'parchment' ? 'light' : '';
+                  if (importedBase) customColors = palette;
+                }
+              }
             } catch {
               importedBase = '';
             }
@@ -59,8 +73,13 @@
           theme = 'dark';
         }
         document.documentElement.dataset.startTheme = theme;
-        const background = colors[theme] || colors.dark;
+        const background = customColors.background || colors[theme] || colors.dark;
+        const text = customColors.text || (theme === 'bright' ? '#1e1c1a' : '#f0ede7');
+        const accent = customColors.accent || (theme === 'cyberpunk' ? '#00e7f0' : '#7b9e87');
+        document.documentElement.style.colorScheme = theme === 'bright' ? 'light' : 'dark';
         document.documentElement.style.setProperty('--cardbush-window-bg', background);
+        document.documentElement.style.setProperty('--cardbush-startup-text', text);
+        document.documentElement.style.setProperty('--cardbush-startup-accent', accent);
         document.documentElement.style.backgroundColor = background;
       })();
     </script>
@@ -75,28 +94,16 @@
         background: var(--cardbush-window-bg, #1a1a1a);
       }
 
-      html[data-start-theme='bright'],
-      html[data-start-theme='bright'] body,
-      html[data-start-theme='bright'] #root {
-        --cardbush-window-bg: #f5f3ef;
-      }
-
-      html[data-start-theme='cyberpunk'],
-      html[data-start-theme='cyberpunk'] body,
-      html[data-start-theme='cyberpunk'] #root {
-        --cardbush-window-bg: #050607;
-      }
-
       #cardbush-startup-splash {
         position: fixed;
         inset: 0;
         z-index: 5;
         display: grid;
         place-items: center;
-        color: #f6f1e9;
+        color: var(--cardbush-startup-text, #f0ede7);
         background:
-          radial-gradient(circle at 50% 46%, rgba(123, 158, 135, 0.18), transparent 34%),
-          #121311;
+          radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--cardbush-startup-accent, #7b9e87) 18%, transparent), transparent 34%),
+          var(--cardbush-window-bg, #1a1a1a);
         font-family:
           "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC",
           Arial, sans-serif;
@@ -134,7 +141,7 @@
         width: 4px;
         height: 9px;
         border-radius: 999px;
-        background: #7b9e87;
+        background: var(--cardbush-startup-accent, #7b9e87);
         opacity: 0.58;
         animation: cardbush-startup-rhythm 960ms ease-in-out infinite;
       }
@@ -196,6 +203,14 @@
         45% {
           height: 22px;
           opacity: 0.96;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .cardbush-startup-rhythm span {
+          animation: none;
+          height: 12px;
+          opacity: 0.7;
         }
       }
 

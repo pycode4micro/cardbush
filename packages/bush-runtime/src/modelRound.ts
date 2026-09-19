@@ -83,7 +83,11 @@ export async function executeModelRound(
   let lastSequence = -1;
   const usage: ModelRoundUsage = {};
 
-  for await (const candidate of provider.stream(request, { signal: options.signal, onInputProjection: options.onInputProjection })) {
+  for await (const candidate of provider.stream(request, {
+    signal: options.signal, onInputProjection: options.onInputProjection,
+    onRequestBodyBudget: options.onRequestBodyBudget,
+    onCompatibilityDiagnostic: options.onCompatibilityDiagnostic,
+  })) {
     const event = modelEventSchema.parse(candidate);
     if (event.requestId !== request.requestId) {
       failure = localFailure(

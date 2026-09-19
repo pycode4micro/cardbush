@@ -170,6 +170,20 @@ export const modelFailureDiagnosticsSchema = z.object({
   causeCodes: z.array(z.string().max(80)).max(8),
 });
 
+export const providerCompatibilityDiagnosticSchema = z.object({
+  model: z.string().min(1),
+  source: z.enum(["generation", "input_token_count"]),
+  action: z.enum(["retry", "local_estimate", "next_request", "recovered", "failed"]),
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    status: z.number().int().optional(),
+    providerRequestId: z.string().optional(),
+    diagnostics: modelFailureDiagnosticsSchema.optional(),
+  }).optional(),
+});
+export type ProviderCompatibilityDiagnostic = z.infer<typeof providerCompatibilityDiagnosticSchema>;
+
 export const modelEventSchema = z.discriminatedUnion("kind", [
   eventBaseSchema.extend({
     kind: z.literal("response_started"),
