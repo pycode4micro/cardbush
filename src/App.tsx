@@ -57,6 +57,8 @@ import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
+import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
+import { forkConversation } from './backend/api';
 import { workSummaryInspectorTab, type InspectorTab, type InspectorResourceTab, type InspectorReviewTab } from './features/inspector/inspectorTabs';
 import { useOutsideDismiss } from './hooks/useOutsideDismiss';
 import { createPortal } from 'react-dom';
@@ -2088,6 +2090,13 @@ function CardbushApp() {
 
   return (
     <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
+    <ConversationExtractionProvider activeSessionId={chat.activeConversationId} language={language}
+      contextWindowTokens={appSettings.managedModelConfigs.find(config => config.id === chat.selectedModel)?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS}
+      onOpen={handlePreviousConversation} onFork={async sessionId => {
+        const fork = await forkConversation(sessionId);
+        await chat.reloadConversations();
+        handlePreviousConversation(fork.id);
+      }}>
     <ImageGalleryProvider sessionId={chat.activeConversationId} messages={chat.activeMessages}
       workspaceRoot={activeProjectDir} pathAliases={activeProjectPathAliases} language={language}>
     <div
@@ -2132,6 +2141,12 @@ function CardbushApp() {
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
             conversations={chat.conversations}
+            projects={projectItems}
+            onRestoreProjects={ids => {
+              const restoredIds = new Set(ids);
+              setProjectItems(current => current.map(project =>
+                restoredIds.has(project.id) ? { ...project, archived: false } : project));
+            }}
             skills={chat.skills}
             disabledSkillNames={disabledSkillNames}
             runtimeBusy={runningConversationIds.size > 0}
@@ -2191,6 +2206,7 @@ function CardbushApp() {
                   onRenameConversation={chat.renameConversation}
                   onOpenConversationChanges={handleSidebarOpenConversationChanges}
                   onOpenSettings={handleSidebarOpenSettings}
+                  onOpenArchives={() => openSettings('cache')}
                   onOpenPlugins={handleSidebarOpenPlugins}
                   onOpenSearch={conversationSearch.show}
                   softVisible={sidebarPresence.visible}
@@ -2281,6 +2297,7 @@ function CardbushApp() {
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={handleSidebarCreateConversation}
+                onOpenConversation={openConversation}
                 onToggleSkill={toggleSkillEnabled}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
@@ -2772,6 +2789,7 @@ function CardbushApp() {
       <McpUserRequests language={language} />
     </div>
     </ImageGalleryProvider>
+    </ConversationExtractionProvider>
     </WorkspaceChangeStateContext.Provider>
   );
 }

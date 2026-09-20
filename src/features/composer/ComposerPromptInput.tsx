@@ -4,6 +4,8 @@ import { fileUrl } from '../../shared/localPaths';
 import { focusEditor, observeEditorFocus, restoreNativeEditorFocus } from '../../shared/editorFocus';
 import { pluginPromptParts, type PluginPromptPart } from '../plugins/pluginPrompts';
 import { promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
+import { openPromptReference } from './PromptReferenceLink';
+import { CONVERSATION_DRAG_TYPE } from '../chat/ConversationExtraction';
 import { skillPromptParts, type SkillLinkReference } from '../skills/skillReferences';
 
 type ComposerPromptPart = PluginPromptPart & { contextReference?: PromptReference; skillReference?: SkillLinkReference; skill?: SkillSummary };
@@ -146,7 +148,14 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       // committed input is authoritative and must not stay blocked forever.
       if (event.nativeEvent instanceof InputEvent) composing.current = event.nativeEvent.isComposing;
       publish();
-    }} onClick={select} onKeyUp={select} onKeyDown={keyDown}
+    }} onClick={event => {
+      select();
+      const token = (event.target as Element).closest<HTMLElement>('[data-context-reference]');
+      const reference = token && promptReferenceParts(token.dataset.contextReference ?? '')[0]?.reference;
+      if (reference?.kind === 'conversation-extract' && !(event.target as Element).closest('button')) {
+        event.preventDefault(); void openPromptReference(reference);
+      }
+    }} onKeyUp={select} onKeyDown={keyDown}
     onCompositionStart={() => { composing.current = true; }}
     onCompositionEnd={() => { composing.current = false; publish(); }}
     onPaste={event => {
@@ -165,7 +174,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       document.execCommand('delete');
     }}
     onDrop={event => {
-      if (event.dataTransfer.files.length || event.dataTransfer.types.includes('application/x-cardbush-quickload')) return;
+      if (event.dataTransfer.files.length || event.dataTransfer.types.includes('application/x-cardbush-quickload') || event.dataTransfer.types.includes(CONVERSATION_DRAG_TYPE)) return;
       event.preventDefault(); document.execCommand('insertText', false, event.dataTransfer.getData('text/plain'));
     }}
   /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2}
@@ -230,7 +239,7 @@ function referenceGlyph(kind: PromptReference['kind'] | 'plugin'): SVGSVGElement
   const path = document.createElementNS(svg.namespaceURI, 'path');
   path.setAttribute('d', kind === 'browser'
     ? 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c4 4 4 14 0 18-4-4-4-14 0-18Z'
-    : kind === 'user-turn' ? 'M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3ZM7 8h10M7 12h7'
+    : kind === 'user-turn' || kind === 'conversation-extract' ? 'M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3ZM7 8h10M7 12h7'
     : 'M8 3h3a3 3 0 1 1 6 0h4v6a3 3 0 1 0 0 6v6h-6a3 3 0 1 0-6 0H3v-6a3 3 0 1 0 0-6V3Z');
   svg.append(path); return svg;
 }

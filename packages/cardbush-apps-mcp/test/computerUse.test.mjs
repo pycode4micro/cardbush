@@ -155,6 +155,8 @@ test('preserves Unicode in generic application resolution failures', {
     (error) => {
       assert.match(error.message, /CardBush-不存在的应用-测试/);
       assert.doesNotMatch(error.message, /�/);
+      assert.doesNotMatch(error.message, /EncodedCommand|CLIXML|<Objs/);
+      assert.ok(error.message.length < 1601);
       return true;
     },
   );

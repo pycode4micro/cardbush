@@ -1,5 +1,5 @@
 import { defaultHostTerminalRuntime } from './hostPlatform';
-import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
+import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
 import { configuredMcpServerId } from './mcpConfigurationFact';
 import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
 import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
@@ -285,6 +285,7 @@ export interface EditMessageRequest extends ControlStreamRequest {
 }
 
 export interface SendGuidanceRequest {
+  contextWindowTokens?: number;
   sessionId: string;
   turnId: string;
   guidance: string;
@@ -1588,6 +1589,23 @@ export async function createConversation({
   }
 }
 
+export async function forkConversation(sourceSessionId: string): Promise<ConversationSummary> {
+  const runtime = createDesktopRuntimeSession();
+  let target: ConversationSummary | undefined;
+  try {
+    const source = await runtime.client.getSession(sourceSessionId);
+    if (!source) throw new Error(localizedClientMessage('来源会话不存在。', 'Source conversation does not exist.'));
+    const summary = runtimeConversation(source);
+    target = await createConversation({ title: `${summary.title} · Fork`, projectId: summary.projectId, projectDir: summary.projectDir });
+    const snapshot = await runtime.client.command({ kind: FORK_RUNTIME_SESSION_COMMAND,
+      payload: { sourceSessionId, sessionId: target.id } }, value => sessionSnapshotSchema.parse(value));
+    return runtimeConversation(snapshot);
+  } catch (error) {
+    if (target) await runtime.client.deleteSession(target.id).catch(() => undefined);
+    throw error;
+  } finally { runtime.dispose(); }
+}
+
 export async function updateConversation({
   sessionId,
   title,
@@ -2640,7 +2658,7 @@ export async function sendGuidance(request: SendGuidanceRequest) {
     const snapshot = promptReferenceParts(guidance).some(part => part.reference?.kind === 'user-turn')
       ? await runtime.client.getSession(sessionId, request.signal) : undefined;
     const referencedInput = await resolvePromptReferenceContext(guidance, sessionId, snapshot, undefined,
-      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal));
+      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens);
     await runtime.client.enqueueGuidance({
       protocol: 'bush.runtime_guidance.v1',
       sessionId,

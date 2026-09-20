@@ -1,0 +1,23 @@
+.extract-dialog-backdrop { position: fixed; inset: 0; z-index: 1600; background: #0007; display: grid; place-items: center; padding: 24px; }
+.extract-dialog { width: min(540px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface-strong, #262626); color: var(--text); border: 1px solid var(--border, #444); border-radius: 18px; padding: 24px; box-shadow: 0 16px 60px #0005; }
+.extract-dialog header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.extract-dialog h2 { font-size: 18px; margin: 0; flex: 1; }
+.extract-dialog button, .extract-selection-bar button { border: 1px solid var(--border, #555); border-radius: 8px; background: transparent; color: inherit; padding: 8px 10px; cursor: pointer; }
+.extract-dialog button:disabled { opacity: .4; cursor: not-allowed; }
+.extract-dialog label { display: grid; gap: 7px; margin: 14px 0; font-size: 13px; }
+.extract-dialog input, .extract-dialog textarea, .extract-dialog select { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border, #555); border-radius: 9px; background: var(--bg, #1c1c1c); color: inherit; font: inherit; }
+.extract-dialog textarea { resize: vertical; }
+.extract-hint { color: var(--text-soft, #aaa); font-size: 12px; line-height: 1.6; }
+.extract-budget { border-radius: 9px; padding: 12px; background: #8881; font-size: 13px; font-variant-numeric: tabular-nums; }
+.extract-budget small { display: block; margin-top: 6px; opacity: .7; }
+.extract-error, .extract-budget.over { color: #ee8e7b; font-size: 12px; }
+.extract-dialog footer { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; justify-content: flex-end; }
+.extract-dialog .primary, .extract-selection-bar .primary { background: var(--text, #ddd); color: var(--bg, #181818); }
+.extract-selection-bar { position: fixed; z-index: 1000; top: 50px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 40px); display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; background: var(--surface-strong, #282828); color: var(--text); box-shadow: 0 8px 32px #0005; border: 1px solid var(--border, #555); border-radius: 12px; font-size: 12px; }
+.message-list-item:has(.extract-message-choice) { position: relative; padding-inline: 30px; }
+.extract-message-choice { position: absolute; inset-inline-start: 0; top: 18px; z-index: 2; display: flex; align-items: center; gap: 6px; }
+.extract-message-choice.user { inset-inline-start: auto; inset-inline-end: 0; }
+.extract-circle { width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--text-muted, #999); border-radius: 50%; background: var(--bg, #181818); color: var(--text); cursor: pointer; padding: 0; }
+.extract-message-choice.selected .extract-circle { background: #b8e5ce; border-color: #b8e5ce; color: #162b21; }
+.extract-summary-note { position: absolute; left: 30px; top: -18px; white-space: nowrap; font-size: 10px; color: var(--text-muted, #aaa); }
+.extract-bulb { color: #daba71; }

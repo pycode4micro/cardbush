@@ -24,6 +24,12 @@ module.exports = async ({ run, until, pause, window, theme = 'theme-dark' }) => 
   window.webContents.debugger.attach('1.3');
   const focus = enabled => window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled });
   try {
+    // The earlier IME fixture uses Input.insertText, which focuses Chromium's
+    // page even in a hidden offscreen window. Reset that native focus so
+    // disabling emulation below can actually exercise a blurred document.
+    await focus(false);
+    window.blur();
+    await until('!document.hasFocus()', 'prior native input focus cleared');
     await focus(true);
     for (const mode of ['tail', 'history']) {
       if (mode === 'history') {
@@ -72,7 +78,8 @@ module.exports = async ({ run, until, pause, window, theme = 'theme-dark' }) => 
         code: referenceScrollCode === document.querySelector('.markdown-code-block'),
         wrapped: !!document.querySelector('.markdown-code-block.wrapped'), removed: referenceScrollRemoved })`);
       assert.deepEqual(stable, { link: true, code: true, wrapped: true, removed: 0 }, `${theme}/${mode}: refreshing conversation metadata must retain resolved links and code state`);
-      assert.ok(frames.some(frame => frame.focused) && frames.some(frame => !frame.focused), 'real browser focus transitions');
+      assert.ok(frames.some(frame => frame.focused) && frames.some(frame => !frame.focused),
+        `${theme}/${mode}: real browser focus transitions (${frames.length} frames, states ${JSON.stringify([...new Set(frames.map(frame => frame.focused))])})`);
       for (const key of ['top', 'height', 'anchor', 'title', 'dock']) {
         const values = frames.map(frame => frame[key]);
         assert.ok(Math.max(...values) - Math.min(...values) < 1, `${theme}/${mode}: ${key} moved: ${JSON.stringify(frames)}`);
@@ -86,6 +93,8 @@ module.exports = async ({ run, until, pause, window, theme = 'theme-dark' }) => 
     console.log('Window reference scroll passed (' + theme + '): repeated focus/metadata refresh, retained file DOM and code state, stable tail/history, live path remapping.');
   } finally {
     await run('cancelAnimationFrame(window.referenceScrollFrame); window.referenceScrollObserver?.disconnect(); window.viewTheme = referenceScrollSaved.theme; updateChat(referenceScrollSaved.props); void 0');
+    await focus(false);
+    window.blur();
     window.webContents.debugger.detach();
     await pause(200);
   }

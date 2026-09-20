@@ -2,6 +2,7 @@ import { usePluginCatalog } from '../plugins/pluginCatalog';
 import { pluginReference } from '../plugins/pluginPrompts';
 import { PluginGlyph } from '../plugins/PluginGlyph';
 import { ComposerReferenceContext, referenceableUserMessages } from './ComposerReferenceContext';
+import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionBulbs } from '../chat/ConversationExtraction';
 import { promptReferenceMarkdown } from '../../shared/promptReferences';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import { useFileDropZone } from './useFileDropZone';
@@ -161,7 +162,7 @@ type ComposerCommandState = {
 };
 
 type ComposerCommandItem = {
-  category?: 'actions' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns';
+  category?: 'actions' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns' | 'extracts';
   id: string;
   title: string;
   subtitle: string;
@@ -408,6 +409,14 @@ export function Composer({
   const plugins = usePluginCatalog();
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
   const referenceContext = useContext(ComposerReferenceContext);
+  const extraction = useContext(ConversationExtractionContext);
+  const draftForExtraction = useRef({ draft, onDraftChange });
+  draftForExtraction.current = { draft, onDraftChange };
+  const insertExtraction = (text: string) => {
+    const current = draftForExtraction.current;
+    current.onDraftChange(`${current.draft}${current.draft && !/\s$/.test(current.draft) ? ' ' : ''}${text} `);
+    textareaRef.current?.focus();
+  };
   useEffect(() => {
     const desktop = window.cardbushDesktop;
     if (!desktop?.pluginCommands) return;
@@ -672,6 +681,8 @@ export function Composer({
   }, [commandState]);
 
   async function handleDrop(transfer: DataTransfer) {
+    const sessionId = transfer.getData(CONVERSATION_DRAG_TYPE);
+    if (sessionId && extraction) { insertExtraction(await extraction.referenceSession(sessionId)); return; }
     const raw = transfer.getData('application/x-cardbush-quickload');
     if (raw) {
       try {
@@ -937,6 +948,11 @@ export function Composer({
         id: `browser:${tab.tabId}`, category: 'browser' as const, title: tab.title, subtitle: tab.url,
         icon: <Globe size={18} />, value: `${promptReferenceMarkdown(tab)} `, searchText: `browser 浏览器 ${tab.title} ${tab.url}`,
       })),
+      ...(extraction?.permanent ?? []).map(item => ({
+        id: `extract:${item.id}`, category: 'extracts' as const, title: item.title, subtitle: item.description,
+        icon: <MessageSquare size={18} />, value: `${promptReferenceMarkdown({ kind: 'conversation-extract', id: item.id, title: item.title })} `,
+        searchText: `conversation 会话 提取 ${item.title} ${item.description}`,
+      })),
       ...referenceableUserMessages(referenceContext.messages, referenceContext.sessionId).map((message, index) => {
         const title = message.content.trim().replace(/\s+/g, ' ').slice(0, 80) || message.attachments?.map(item => item.name).join(', ') || '';
         const turnLabel = language === 'zh' ? `用户指令 ${index + 1}` : `User instruction ${index + 1}`;
@@ -947,10 +963,10 @@ export function Composer({
           searchText: `turn 用户 指令 ${turnLabel} ${message.content}` };
       }).reverse(),
     ] : commandState.mode === 'plugin' ? pluginCommandItems : slashCommands;
-    const order = ['actions', 'files', 'browser', 'turns', 'plugins', 'skills', 'commands'];
+    const order = ['actions', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
     return rankComposerCommandItems(items, commandState.query).slice(0, 50)
       .sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
-  }, [commandState, slashCommands, pluginCommandItems, referenceContext, language]);
+  }, [commandState, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -1426,6 +1442,7 @@ export function Composer({
               <span>{permissionLabel}</span>
               <ChevronDown size={13} />
             </button>
+            <ExtractionBulbs onInsert={insertExtraction} />
             {queuedMessageCount > 0 && onShowQueue && (
               <button className="composer-queue-button" type="button"
                 title={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}
@@ -1510,8 +1527,8 @@ function ComposerCommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
   const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的浏览器或用户指令' : 'No matching browser tabs or user instructions') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   const categories = language === 'zh'
-    ? { actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', turns: '当前对话 · 用户指令' }
-    : { actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', turns: 'This conversation · User instructions' };
+    ? { actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
+    : { actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
   useLayoutEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     const list = listRef.current;

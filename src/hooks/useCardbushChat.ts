@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
 
@@ -3536,6 +3537,7 @@ export function useCardbushChat(
       try {
         guidanceRequestIdsRef.current.add(clientMessageId);
         const result = await sendGuidance({
+          contextWindowTokens: modelConfigFor(managedModelConfigs, selectedModel)?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,
           sessionId: conversationId,
           turnId,
           guidance: text,
@@ -3589,6 +3591,7 @@ export function useCardbushChat(
       conversations,
       isSessionSending,
       sendMessage,
+      managedModelConfigs, selectedModel,
       requestContext.terminalRuntime,
       requestContext.interactiveRequestsAvailable,
     ],
@@ -3627,6 +3630,7 @@ export function useCardbushChat(
       try {
         guidanceRequestIdsRef.current.add(clientMessageId);
         const result = await sendGuidance({
+          contextWindowTokens: modelConfigFor(managedModelConfigs, selectedModel)?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,
           sessionId: conversationId,
           turnId: active,
           guidance: text,
@@ -3677,6 +3681,7 @@ export function useCardbushChat(
       isSessionSending,
       removeQueuedMessage,
       requestContext.interactiveRequestsAvailable,
+      managedModelConfigs, selectedModel,
       requestContext.terminalRuntime,
     ],
   );
@@ -3712,6 +3717,7 @@ export function useCardbushChat(
       );
       try {
         const result = await sendGuidance({
+          contextWindowTokens: modelConfigFor(managedModelConfigs, selectedModel)?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,
           sessionId: conversationId,
           turnId,
           guidance: text,
@@ -3766,6 +3772,7 @@ export function useCardbushChat(
       applyConnectionRecoveryUpdate,
       conversations,
       requestContext.interactiveRequestsAvailable,
+      managedModelConfigs, selectedModel,
       requestContext.terminalRuntime,
     ],
   );

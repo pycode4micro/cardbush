@@ -163,6 +163,9 @@ app.whenReady().then(async () => {
     window.setContentSize(1200,800); await pause();
     await run('flushSync(()=>document.querySelector(".image-preview-stage").dispatchEvent(new MouseEvent("dblclick",{bubbles:true})))');
     assert.ok(Math.abs((await geometry()).width-fitted.width)<1,'double-click returns from actual size to fit');
+    await run('flushSync(()=>document.querySelector(".image-preview-stage").dispatchEvent(new MouseEvent("dblclick",{bubbles:true})))');
+    assert.equal((await geometry()).width,1600,'double-click from fit restores actual source pixels rather than a fixed multiplier');
+    await run('flushSync(()=>document.querySelector("[aria-label=恢复适应窗口]").click())');
     await run('document.querySelector("[aria-label=放大图片]").click()');await pause();
     const portrait = {src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="9000"><rect width="900" height="9000" fill="#a88037"/></svg>'),name:'portrait.svg'};
     const coldFrames=await sampleOpening(JSON.stringify(portrait),900,9000);

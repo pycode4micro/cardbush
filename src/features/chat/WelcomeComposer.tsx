@@ -5,6 +5,7 @@ import { Composer } from '../composer';
 import { basename, samePath } from '../../shared/localPaths';
 import { StarWordmark } from './StarWordmark';
 import { WelcomeSuggestions } from './WelcomeSuggestions';
+import type { WelcomeSuggestion } from './welcomeSuggestionRanking';
 import type {
   AppLanguage,
   AppSettingsState,
@@ -53,6 +54,7 @@ export function WelcomeComposer({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
+  onOpenConversation,
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
@@ -94,6 +96,7 @@ export function WelcomeComposer({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
+  onOpenConversation: (conversationId: string) => void;
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage: (queuedId: string) => void;
@@ -103,8 +106,13 @@ export function WelcomeComposer({
   const welcomeRef = useRef<HTMLDivElement>(null);
   const selectedProjectTitle = availableProjects.find(project => samePath(project.rootPath, selectedProjectDir))?.title
     || basename(selectedProjectDir);
-  function selectSuggestion(text: string) {
-    if (sending || draft.trim()) return;
+  function selectSuggestion({ text, sessionId }: WelcomeSuggestion) {
+    if (sending) return;
+    if (sessionId) {
+      onOpenConversation(sessionId);
+      return;
+    }
+    if (draft.trim()) return;
     onDraftChange(text);
     requestAnimationFrame(() => {
       const input = welcomeRef.current?.querySelector<HTMLElement>('[data-composer-input]');
@@ -166,7 +174,7 @@ export function WelcomeComposer({
               : `What would you like to do in ${selectedProjectTitle}?`
             : language === 'zh' ? '你想做些什么？' : 'What would you like to do?'}
         </h2>
-        <WelcomeSuggestions language={language} disabled={sending || Boolean(draft.trim())} onSelect={selectSuggestion} />
+        <WelcomeSuggestions language={language} disabled={sending} hasDraft={Boolean(draft.trim())} onSelect={selectSuggestion} />
       </div>
       <div className="welcome-input-stack">
         <WelcomeProjectSwitcher

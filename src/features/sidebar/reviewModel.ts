@@ -29,3 +29,29 @@ export function reviewRelativePath(root: string, path: string): string | null {
   if (!reviewPathKey(normalized).startsWith(reviewPathKey(prefix) + '/')) return null;
   return normalized.slice(prefix.length);
 }
+
+/** External edits start at their containing folders, without rebuilding drive/home ancestors. */
+export function reviewExternalRoots(root: string, paths: string[]) {
+  const parents = new Map<string, string>();
+  for (const path of paths) {
+    if (reviewRelativePath(root, path) !== null) continue;
+    const normalized = path.replaceAll('\\', '/');
+    if (!/^(?:[a-z]:\/|\/)/i.test(normalized)) continue;
+    let parent = normalized.slice(0, normalized.lastIndexOf('/')) || '/';
+    if (/^[a-z]:$/i.test(parent)) parent += '/';
+    parents.set(reviewPathKey(parent), parent);
+  }
+  // A folder with direct edits already owns any edited descendants.
+  const roots: string[] = [];
+  for (const parent of [...parents.values()].sort((a, b) => a.length - b.length)) {
+    if (!roots.some(ancestor => reviewRelativePath(ancestor, parent) !== null)) roots.push(parent);
+  }
+  const segments = roots.map(path => path.replace(/\/+$/, '').split('/'));
+  return roots.map((path, index) => {
+    const parts = segments[index];
+    let length = 1;
+    const suffix = (other: string[]) => other.slice(-length).join('/');
+    while (length < parts.length && segments.some((other, otherIndex) => otherIndex !== index && suffix(other) === suffix(parts))) length++;
+    return { path, name: parts.slice(-length).join('/') || path };
+  }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}

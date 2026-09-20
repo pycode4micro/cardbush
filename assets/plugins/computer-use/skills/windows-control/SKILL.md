@@ -19,7 +19,7 @@ Use `computer_use` only for visible native Windows UI as the final fallback. It 
 1. Identify the intended application and target state.
 2. Call `observe` without a selector only to discover available windows. This discovery step intentionally does not capture the full desktop.
 3. Choose exactly one returned window, then call `observe` again with its exact `hwnd`. This returns a window screenshot, accessibility elements, and a one-use `state_id`.
-4. Prefer semantic UI Automation: use `click` with `element_index`, `invoke`, or `set_value`. These normally avoid moving the pointer. Use window-relative coordinates only when no suitable accessibility element exists.
+4. Check each element's `supported_actions` before using `click` with `element_index`, `invoke`, or `set_value`. Semantic click/invoke requires Invoke, Toggle, SelectionItem, or ExpandCollapse; Value/Text alone does not support clicking. `set_value` replaces the entire value and requires writable Value or RangeValue. To focus a text editor without replacing content, use an observed window-relative coordinate.
 5. Pass the returned `state_id` and `hwnd` to the next action within 30 seconds. One action consumes the state. Never reuse a state, element index, or coordinate after any action, user input, or another session changes the desktop.
 6. Wait for the visible state to settle, then observe the exact window again before the next dependent action.
 7. Verify the requested result in the UI before claiming success.
@@ -42,6 +42,27 @@ and a two-minute idle limit clean up the presentation. The idle limit is a local
 lease expiry, not evidence that the model turn completed.
 
 For a requested desktop or native-window screenshot, use `screenshot` directly and return the resulting image artifact. A saved path by itself is not evidence that the pixels were inspected.
+
+## Launching and typing
+
+Discover existing windows before `open_app`. Its `dispatched` flag means a launch
+request was sent, not that the application is ready. Inspect `window_check`:
+`new_window_observed` identifies a newly observed matching window;
+`existing_window_candidate` may be an existing instance reused by the application;
+`unconfirmed` means no matching window was confirmed within the bounded check.
+Candidates include the match basis and whether the same HWND/process existed
+before launch. Always observe the exact candidate HWND before input. If no window
+is confirmed, discover windows rather than launching again blindly.
+
+For demonstrations, use a verified empty editor window or a new empty tab. An
+application may reuse a process or window; never assume `open_app` creates a clean
+document, and never type demo content into an existing user document.
+
+`type` sends Unicode text and converts LF (`\n`), CRLF (`\r\n`), and CR (`\r`)
+to one Enter each, preserving blank lines. In a terminal or submit-on-Enter field,
+these line breaks can execute or submit, so only use multiline input when that
+effect is intended. Use `key` for other shortcuts. Input acknowledgements still
+require a subsequent observation to verify the application result.
 
 ## Safety Boundaries
 

@@ -36,7 +36,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     window.sidebarGeometry = index => {
       const row = sidebarRow(index), title = row.querySelector('.conversation-title');
       const text = title.querySelector('.conversation-title-text');
-      const pin = row.querySelector('.conversation-pin'), menu = row.querySelector('.conversation-more');
+      const pin = row.querySelector('.conversation-pin'), menu = row.querySelector('.conversation-archive');
       const s = getComputedStyle(title), rect = node => node.getBoundingClientRect();
       const actions = Number.parseFloat(s.getPropertyValue('--conversation-title-hover-actions'));
       const fade = Number.parseFloat(s.getPropertyValue('--conversation-title-trailing-fade'));
@@ -116,12 +116,6 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
   assert.equal(await run('sidebarGeometry(0).animation'), 'none', 'pointer focus must not retain the action mask');
   assert.equal(await run('sidebarGeometry(0).pinOpacity'), '0');
   assert.deepEqual(await run('sidebarSelections'), ['sidebar-active']);
-  await run("sidebarRow(0).querySelector('.conversation-more').click()");
-  await until("!!sidebarRow(0).querySelector('.sidebar-menu')", 'conversation menu opens');
-  await until("sidebarGeometry(0).menuOpacity === '1'", 'menu action lane finishes its transition');
-  assert.equal(await run('sidebarGeometry(0).menuOpacity'), '1', 'open menus keep their action lane');
-  await run("sidebarRow(0).querySelector('.conversation-more').click()");
-  await until("!sidebarRow(0).querySelector('.sidebar-menu')", 'conversation menu closes');
   // The hidden offscreen test window needs focus emulation to receive keyboard input.
   window.webContents.debugger.attach('1.3');
   await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });

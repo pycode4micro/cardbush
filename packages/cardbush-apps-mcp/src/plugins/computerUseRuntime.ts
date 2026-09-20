@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -7,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { ComputerUsePluginConfig } from '../config.js';
 import { computerUsePresentation } from './computerUsePresentation.js';
+import { formatComputerUseError } from './computerUseErrors.js';
 
 export interface ComputerUseArtifact {
   artifact_id: string;
@@ -428,11 +430,15 @@ export async function executeComputerUse(
       await yieldForUserIfNeeded(config, computerUseSafety.expectedInputTick(scopeId), signal);
       const app = requiredString(input.app, 'app');
       actionMayHaveDispatched = true;
-      const launch = record(json(await powershell(openApplicationScript, {
+      const launch = record(json(await powershell(`${windowListScript}\n${openApplicationScript}`, {
         CARDBUSH_APP_TARGET: app,
       }, signal)));
       computerUseSafety.recordAction(scopeId, input);
-      return plain({ action, app, launch });
+      return plain({
+        action, app, launch,
+        actionable: false,
+        next_step: 'Launch was dispatched, not verified ready. Observe an exact window_check candidate hwnd before input. If unconfirmed, discover windows; do not launch again blindly.',
+      });
     }
     if (action === 'window') {
       const observation = computerUseSafety.claimObservation(scopeId, input);
@@ -449,14 +455,13 @@ export async function executeComputerUse(
     }
     if (['click', 'invoke', 'set_value', 'type', 'key', 'scroll', 'drag'].includes(action)) {
       const observation = computerUseSafety.claimObservation(scopeId, input);
+      const semanticAction = action === 'invoke' || action === 'set_value' ||
+        (action === 'click' && optionalInteger(input.element_index) != null);
+      if (semanticAction) validateAccessibilityAction(action, input, observation);
       presentationAction = await computerUsePresentation.action(scopeId, input, observation, signal);
       signal = presentationAction.signal;
       actionMayHaveDispatched = true;
-      if (
-        action === 'invoke' ||
-        action === 'set_value' ||
-        (action === 'click' && optionalInteger(input.element_index) != null)
-      ) {
+      if (semanticAction) {
         const output = await runAccessibilityAction(
           action,
           input,
@@ -508,15 +513,61 @@ const openApplicationScript = String.raw`
 $requested = $env:CARDBUSH_APP_TARGET.Trim()
 if (-not $requested) { throw 'Application target is empty.' }
 
-function Launch-CardBushApplication([string]$target, [string]$resolution) {
-  $process = Start-Process -FilePath $target -PassThru
+function Get-CardBushLaunchWindows { @([CardBushWindowList]::Read()) }
+
+function Complete-CardBushLaunch([string]$target, [string]$resolution, $processId, [string]$workingDirectory, $before, [bool]$beforeAvailable) {
+  $candidates = @()
+  $status = 'unconfirmed'
+  $checkError = $null
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $names = @([IO.Path]::GetFileNameWithoutExtension($requested))
+  if ($resolution -ne 'start_app') { $names += [IO.Path]::GetFileNameWithoutExtension($target) }
+  try {
+    do {
+      $candidates = @(Get-CardBushLaunchWindows | ForEach-Object {
+        $item = $_
+        $match = if ($null -ne $processId -and $item.process_id -eq $processId) { 'process_id' }
+          elseif ($names -icontains $item.process_name) { 'process_name' } else { $null }
+        if ($match) {
+          $existed = if ($beforeAvailable) { @($before | Where-Object { $_.hwnd -eq $item.hwnd -and $_.process_id -eq $item.process_id }).Count -gt 0 } else { $null }
+          [PSCustomObject]@{ hwnd=$item.hwnd; process_id=$item.process_id; process_name=$item.process_name; title=$item.title; match_basis=$match; existed_before_launch=$existed }
+        }
+      })
+      if (@($candidates | Where-Object { $_.existed_before_launch -eq $false }).Count -gt 0) {
+        $status = 'new_window_observed'
+        break
+      }
+      if ($watch.ElapsedMilliseconds -ge 1500) { break }
+      Start-Sleep -Milliseconds 100
+    } while ($true)
+    if ($status -eq 'unconfirmed' -and $beforeAvailable -and $candidates.Count -gt 0) { $status = 'existing_window_candidate' }
+  } catch {
+    $checkError = 'Window inspection was unavailable after launch. Discover windows before input or another launch.'
+  }
   [PSCustomObject]@{
     requested = $requested
     target = $target
     resolution = $resolution
-    process_id = if ($null -ne $process) { $process.Id } else { $null }
-  } | ConvertTo-Json -Compress
+    process_id = $processId
+    working_directory = $workingDirectory
+    dispatched = $true
+    window_check = [PSCustomObject]@{ status=$status; candidates=@($candidates); elapsed_ms=$watch.ElapsedMilliseconds; error=$checkError }
+  } | ConvertTo-Json -Depth 5 -Compress
   exit 0
+}
+
+function Launch-CardBushApplication([string]$target, [string]$resolution) {
+  $workingDirectory = (Get-Location).Path
+  # Keep a resolved executable's own directory; shell shortcuts retain their launch semantics.
+  if ([IO.Path]::GetExtension($target) -ieq '.exe') {
+    $parent = [IO.Path]::GetDirectoryName($target)
+    if ($parent -and (Test-Path -LiteralPath $parent -PathType Container)) { $workingDirectory = $parent }
+  }
+  $beforeAvailable = $true
+  try { $before = @(Get-CardBushLaunchWindows) } catch { $before = @(); $beforeAvailable = $false }
+  $process = Start-Process -FilePath $target -WorkingDirectory $workingDirectory -PassThru
+  $processId = if ($null -ne $process) { $process.Id } else { $null }
+  Complete-CardBushLaunch $target $resolution $processId $workingDirectory $before $beforeAvailable
 }
 
 if (Test-Path -LiteralPath $requested -PathType Leaf) {
@@ -554,9 +605,11 @@ $startAppMatches = @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object 
 })
 if ($startAppMatches.Count -eq 1) {
   $appId = $startAppMatches[0].AppID
-  Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appId"
-  [PSCustomObject]@{ requested=$requested; target=$appId; resolution='start_app'; process_id=$null } | ConvertTo-Json -Compress
-  exit 0
+  $workingDirectory = (Get-Location).Path
+  $beforeAvailable = $true
+  try { $before = @(Get-CardBushLaunchWindows) } catch { $before = @(); $beforeAvailable = $false }
+  Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appId" -WorkingDirectory $workingDirectory
+  Complete-CardBushLaunch $appId 'start_app' $null $workingDirectory $before $beforeAvailable
 }
 
 $startMenuRoots = @(
@@ -942,8 +995,7 @@ if ($visibleText.Length -gt 0) {
   }
 } | ConvertTo-Json -Depth 8 -Compress`;
 
-async function listWindows(signal?: AbortSignal): Promise<unknown[]> {
-  const output = await powershell(String.raw`
+const windowListScript = String.raw`
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -972,7 +1024,10 @@ public static class CardBushWindowList {
   }
 }
 '@
-@([CardBushWindowList]::Read()) | ConvertTo-Json -Compress`, {}, signal);
+`;
+
+async function listWindows(signal?: AbortSignal): Promise<unknown[]> {
+  const output = await powershell(`${windowListScript}\n@([CardBushWindowList]::Read()) | ConvertTo-Json -Compress`, {}, signal);
   if (!output.trim()) return [];
   const value = json(output);
   return Array.isArray(value) ? value : [value];
@@ -1090,6 +1145,35 @@ function windowDescription(window: Record<string, unknown>) {
   return `hwnd=${Number(window.hwnd) || 0} process=${String(window.process_name ?? '')} title="${title}"`;
 }
 
+export function supportedAccessibilityActions(element: Pick<ComputerUseObservedElement, 'patterns' | 'enabled' | 'offscreen' | 'password' | 'readOnly'>): string[] {
+  if (!element.enabled || element.offscreen) return [];
+  const actions: string[] = [];
+  if (element.patterns.some((pattern) => ['Invoke', 'Toggle', 'SelectionItem', 'ExpandCollapse'].includes(pattern))) {
+    actions.push('click', 'invoke');
+  }
+  if (!element.password && !element.readOnly && element.patterns.some((pattern) => ['Value', 'RangeValue'].includes(pattern))) {
+    actions.push('set_value');
+  }
+  return actions;
+}
+
+export function validateAccessibilityAction(
+  action: string,
+  input: Record<string, unknown>,
+  observation: ComputerUseObservationBinding,
+): ComputerUseObservedElement {
+  const elementIndex = optionalInteger(input.element_index);
+  if (elementIndex == null) throw new Error(`${action} requires element_index.`);
+  const element = observation.elements.find((candidate) => candidate.index === elementIndex);
+  if (!element) throw new Error(`Accessibility element_index=${elementIndex} is not part of this observation. Observe the target window again.`);
+  if (action === 'set_value' && element.password) throw new Error('Computer Use refuses to set password fields through UI Automation. Ask the user to take over.');
+  if (action === 'set_value' && element.readOnly) throw new Error('The observed accessibility value is read-only. Observe again and choose a writable element.');
+  if (!supportedAccessibilityActions(element).includes(action)) {
+    throw new Error(`Element ${elementIndex} does not support ${action} (patterns: ${element.patterns.join(', ') || 'none'}). Observe again; use supported_actions to choose a semantic action or a window-relative coordinate to focus the control. set_value replaces the entire value.`);
+  }
+  return element;
+}
+
 async function runAccessibilityAction(
   action: string,
   input: Record<string, unknown>,
@@ -1098,18 +1182,8 @@ async function runAccessibilityAction(
   expectedInputTick: number | undefined,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const elementIndex = optionalInteger(input.element_index);
-  if (elementIndex == null) throw new Error(`${action} requires element_index.`);
-  const element = observation.elements.find((candidate) => candidate.index === elementIndex);
-  if (!element) {
-    throw new Error(`Accessibility element_index=${elementIndex} is not part of state_id=${observation.stateId}. Observe the target window again.`);
-  }
-  if (action === 'set_value' && element.password) {
-    throw new Error('Computer Use refuses to set password fields through UI Automation. Ask the user to take over.');
-  }
-  if (action === 'set_value' && element.readOnly) {
-    throw new Error('The observed accessibility value is read-only. Observe again and choose a writable element.');
-  }
+  const element = validateAccessibilityAction(action, input, observation);
+  const elementIndex = element.index;
   const value = input.value == null ? '' : String(input.value);
   const absoluteBounds = element.bounds
     ? {
@@ -1445,9 +1519,14 @@ public static class CardBushInput {
     timeBeginPeriod(1);
     try{for(int index=0;index<text.Length;index++){
       CheckTarget();
-      int length=char.IsHighSurrogate(text[index])&&index+1<text.Length&&char.IsLowSurrogate(text[index+1])?2:1;
-      INPUT[] inputs=new INPUT[length*2];
-      for(int part=0;part<length;part++){
+      bool enter=text[index]=='\r'||text[index]=='\n';
+      int length=enter?(text[index]=='\r'&&index+1<text.Length&&text[index+1]=='\n'?2:1)
+        :(char.IsHighSurrogate(text[index])&&index+1<text.Length&&char.IsLowSurrogate(text[index+1])?2:1);
+      INPUT[] inputs=new INPUT[enter?2:length*2];
+      if(enter){
+        inputs[0]=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{virtualKey=13,extraInfo=InputTag}}};
+        inputs[1]=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{virtualKey=13,flags=2,extraInfo=InputTag}}};
+      }else for(int part=0;part<length;part++){
         ushort character=text[index+part];
         inputs[part*2]=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=4,extraInfo=InputTag}}};
         inputs[part*2+1]=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=6,extraInfo=InputTag}}};
@@ -1616,23 +1695,40 @@ async function powershell(
     script,
   ].join('\n');
   const encodedCommand = Buffer.from(utf8Script, 'utf16le').toString('base64');
-  const { stdout } = await execFileAsync('powershell.exe', [
-    '-NoLogo',
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-EncodedCommand',
-    encodedCommand,
-  ], {
-    windowsHide: true,
-    timeout: timeoutMs,
-    signal,
-    maxBuffer: 8 * 1024 * 1024,
-    encoding: 'utf8',
-    env: { ...process.env, ...extraEnv },
-  });
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      encodedCommand,
+    ], {
+      windowsHide: true,
+      timeout: timeoutMs,
+      signal,
+      maxBuffer: 8 * 1024 * 1024,
+      encoding: 'utf8',
+      cwd: powerShellWorkingDirectory(),
+      env: { ...process.env, ...extraEnv },
+    });
+    return stdout;
+  } catch (error) {
+    throwIfAborted(signal);
+    if (isAbortError(error)) throw error;
+    throw new Error(formatComputerUseError(error));
+  }
+}
+
+function powerShellWorkingDirectory(): string {
+  let current = '';
+  try { current = process.cwd(); } catch { /* The service's original directory may have been removed. */ }
+  for (const candidate of [current, tmpdir(), process.env.SystemRoot]) {
+    if (!candidate) continue;
+    try { if (statSync(candidate).isDirectory()) return candidate; } catch { /* Try the next existing directory. */ }
+  }
+  throw new Error('Computer Use could not find an existing working directory for PowerShell.');
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -1752,6 +1848,7 @@ function publicObservedElement(element: ComputerUseObservedElement) {
     password: element.password,
     ...(element.bounds ? { bounds: element.bounds } : {}),
     patterns: element.patterns,
+    supported_actions: supportedAccessibilityActions(element),
     ...(element.value !== undefined ? { value: element.value } : {}),
     ...(element.state !== undefined ? { state: element.state } : {}),
     ...(element.readOnly !== undefined ? { read_only: element.readOnly } : {}),

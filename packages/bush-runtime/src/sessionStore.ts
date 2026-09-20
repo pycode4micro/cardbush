@@ -147,6 +147,41 @@ export class SessionStore {
     return true;
   }
 
+  /** Fork committed history only, into a separately created workspace/session. */
+  fork(sourceSessionId: string, sessionId: string): SessionSnapshot {
+    if (sourceSessionId === sessionId) throw new Error('Fork requires a different session.');
+    const source = this.snapshot(sourceSessionId), target = this.snapshot(sessionId);
+    if (!source || !target) throw new Error('Fork source or destination does not exist.');
+    if (target.turns.length || target.metadata?.forkSourceSessionId) throw new Error('Fork destination must be empty.');
+    const rebase = (text: string) => text.replaceAll(`tool-result://${encodeURIComponent(sourceSessionId)}/`, `tool-result://${encodeURIComponent(sessionId)}/`);
+    try {
+      for (const sourceTurn of source.turns) {
+        const turn = structuredClone(sourceTurn);
+        delete turn.cacheChainState;
+        delete turn.usage.lastRequestInputBasis;
+        if (turn.contextSummary) turn.contextSummary = rebase(turn.contextSummary);
+        if (turn.contextCheckpoint && 'summary' in turn.contextCheckpoint) turn.contextCheckpoint.summary = rebase(turn.contextCheckpoint.summary);
+        for (const item of turn.messages) {
+          if (item.message.role === 'tool') item.message.content = rebase(item.message.content);
+          if (item.message.role === 'assistant') {
+            delete item.message.providerReplay;
+            item.message.content = rebase(item.message.content);
+            for (const call of item.message.toolCalls) if (call.name === 'checkpoint_context') call.argumentsText = rebase(call.argumentsText);
+          }
+        }
+        this.#append(sessionId, { kind: 'turn_committed', payload: turn });
+      }
+      if (source.supersededMessageIds.length) this.#append(sessionId, { kind: 'messages_superseded',
+        payload: { messageIds: [...source.supersededMessageIds], reason: 'Preserved fork history' } });
+      const current = this.snapshot(sessionId)!;
+      return this.updateMetadata({ sessionId, expectedRevision: current.revision,
+        metadata: { ...target.metadata, forkSourceSessionId: sourceSessionId, forkSourceRevision: source.revision } });
+    } catch (error) {
+      this.deleteSession(sessionId);
+      throw error;
+    }
+  }
+
   updateMetadata(input: {
     sessionId: string;
     expectedRevision: number;

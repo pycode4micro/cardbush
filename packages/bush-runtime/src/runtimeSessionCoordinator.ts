@@ -87,6 +87,11 @@ export class RuntimeSessionCoordinator {
     return this.#store.ensureSession(sessionId, metadata);
   }
 
+  fork(sourceSessionId: string, sessionId: string): SessionSnapshot {
+    if (this.#activeSessions.has(sessionId)) throw new Error('Cannot fork into an active session.');
+    return this.#store.fork(sourceSessionId, sessionId);
+  }
+
   updateMetadata(input: {
     sessionId: string;
     expectedRevision: number;

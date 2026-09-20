@@ -1,7 +1,8 @@
 /** Explicit, portable Markdown references created by the composer. No ambient context. */
 export type BrowserPromptReference = { kind: 'browser'; tabId: string; url: string; title: string };
 export type TurnPromptReference = { kind: 'user-turn'; sessionId: string; turnId: string; messageId: string; title: string };
-export type PromptReference = BrowserPromptReference | TurnPromptReference;
+export type ConversationExtractReference = { kind: 'conversation-extract'; id: string; title: string };
+export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference;
 export type PromptReferencePart = { text: string; start: number; reference?: PromptReference };
 
 export function promptReferenceHref(reference: PromptReference): string {
@@ -22,6 +23,9 @@ export function parsePromptReference(href: string): PromptReference | null {
     const title = value('title');
     const valid = (text: string) => Boolean(text.trim()) && !/[\x00-\x1f\x7f]/.test(text);
     if (!valid(title)) return null;
+    if (url.hostname === 'conversation-extract' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value('id'))) {
+      return { kind: 'conversation-extract', id: value('id'), title };
+    }
     if (url.hostname === 'browser' && valid(value('tabId')) && isBrowserReferenceUrl(value('url'))) {
       return { kind: 'browser', tabId: value('tabId'), url: value('url'), title };
     }

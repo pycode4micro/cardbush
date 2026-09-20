@@ -22,7 +22,7 @@ const panelDefaults: Omit<ComponentProps<typeof ChatPanel>, 'messages' | 'sendin
   reasoningLevelAvailable: false, reasoningLevel: 'high', reasoningLevels: [],
   onModelChange: noop, onReferencePlanModeChange: noop, onPermissionModeChange: noop,
   onSubagentPermissionRoutingChange: noop, onReasoningLevelChange: noop, onConfigureModels: noop,
-  onCreateConversation: noop, onToggleSkill: noop, onRefreshActiveSession: asyncNoop, onSend: asyncNoop,
+  onCreateConversation: noop, onOpenConversation: noop, onToggleSkill: noop, onRefreshActiveSession: asyncNoop, onSend: asyncNoop,
   onRetryMessage: asyncNoop, onRegenerate: asyncNoop, onEditUserMessage: asyncNoop,
   onGuideMessage: asyncNoop, onRetryGuidance: asyncNoop, onGuideQueuedMessage: asyncNoop,
   onRemoveQueuedMessage: noop, onReorderQueuedMessage: noop, onRevertChangeReport: asyncNoop,

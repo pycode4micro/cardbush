@@ -5,7 +5,7 @@ import type { AppLanguage } from '../../types';
 import { basename } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
-import { reviewPathKey, reviewRelativePath } from './reviewModel';
+import { reviewExternalRoots, reviewPathKey, reviewRelativePath } from './reviewModel';
 
 type Directory = { entries: WorkspaceDirectoryEntry[]; nextOffset?: number; loading?: boolean; error?: string };
 type Row = WorkspaceDirectoryEntry & { depth: number; virtual?: boolean; action?: 'more' | 'retry' | 'loading' };
@@ -28,6 +28,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
   const pendingReveal = useRef('');
   const generation = useRef(0);
   const loading = useRef(new Set<string>());
+  const outsideRoots = useMemo(() => reviewExternalRoots(rootPath, changedPaths), [rootPath, changedPaths]);
   const load = useCallback(async (path: string, offset = 0) => {
     const key = reviewPathKey(path), request = `${key}:${offset}`;
     if (loading.current.has(request)) return;
@@ -80,7 +81,8 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
   }, []);
   useEffect(() => {
     const relative = reviewRelativePath(rootPath, selectedPath);
-    const externalRoot = relative === null ? selectedPath.replaceAll('\\', '/').match(/^(?:[a-z]:\/|\/\/[^/]+\/[^/]+\/|\/)/i)?.[0] : undefined;
+    const externalRoot = relative === null
+      ? outsideRoots.find(root => reviewRelativePath(root.path, selectedPath) !== null)?.path : undefined;
     const base = externalRoot || rootPath;
     const local = relative ?? (externalRoot ? reviewRelativePath(externalRoot, selectedPath) : null);
     if (!local) return;
@@ -90,7 +92,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
     const paths = [...(externalRoot ? [externalRoot] : []), ...folders.map(folder => parent += '/' + folder)];
     setExpanded(previous => new Set([...previous, ...paths.map(reviewPathKey)]));
     if (!externalRoot) for (const path of paths) if (!directoriesRef.current.has(reviewPathKey(path))) void load(path);
-  }, [selectedPath, rootPath, load]);
+  }, [selectedPath, rootPath, outsideRoots, load]);
   const changed = useMemo(() => {
     const paths = new Set<string>();
     for (let path of changedPaths.map(reviewPathKey)) {
@@ -99,16 +101,15 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
     }
     return paths;
   }, [changedPaths]);
-  // Edits outside the execution root retain their own directory branch. They do
-  // not change the root or trigger a scan of the user's home directory/drive.
-  const outsideRoots = useMemo(() => [...new Set(changedPaths.filter(path => reviewRelativePath(rootPath, path) === null)
-    .map(path => path.replaceAll('\\', '/').match(/^(?:[a-z]:\/|\/\/[^/]+\/[^/]+\/|\/)/i)?.[0]).filter((path): path is string => !!path))], [changedPaths, rootPath]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     const append = (parent: string, depth: number, virtual = false) => {
       const directory = virtual ? undefined : directories.get(reviewPathKey(parent));
       const entries = new Map((directory?.entries ?? []).map(entry => [reviewPathKey(entry.path), entry]));
       for (const path of changedPaths) {
+        // External branches contain only reported outside edits, even when their
+        // containing folder happens to be an ancestor of the task directory.
+        if (virtual && reviewRelativePath(rootPath, path) !== null) continue;
         const relative = reviewRelativePath(parent, path);
         if (!relative) continue;
         const [name, ...children] = relative.split('/');
@@ -125,8 +126,8 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
       else if (directory?.nextOffset !== undefined) result.push({ name: zh ? '加载更多文件' : 'Load more files', path: parent, kind: 'file', depth, action: 'more' });
     };
     if (rootPath) append(rootPath, 0);
-    for (const path of outsideRoots) {
-      result.push({ name: `${path} · ${zh ? '其他位置' : 'Other location'}`, path, kind: 'folder', depth: 0, virtual: true });
+    for (const { path, name } of outsideRoots) {
+      result.push({ name: `${name} · ${zh ? '其他位置' : 'Other location'}`, path, kind: 'folder', depth: 0, virtual: true });
       if (expanded.has(reviewPathKey(path))) append(path, 1, true);
     }
     return result;

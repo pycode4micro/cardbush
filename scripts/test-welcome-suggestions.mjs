@@ -84,7 +84,7 @@ test('frequency ranks real sentences with distinct topics; repeated retries do n
   ];
   const result = buildWelcomeSuggestions(history, 'zh', now);
   assert.equal(result.length, 3);
-  assert.ok(result.every(item => item.fromHistory && history.some(source => source.content === item.text)));
+  assert.ok(result.every(item => item.fromHistory && history.some(source => source.content === item.text && source.sessionId === item.sessionId)));
   assert.ok(result.some(item => item.text.includes('缓存')));
   assert.ok(result.some(item => item.text.includes('插件')));
   assert.ok(result.some(item => /图片|照片/.test(item.text)));
@@ -101,7 +101,7 @@ test('seven-day boundary, code, attachment wrappers, quote injection and identif
   assert.equal(result.filter(item => item.fromHistory).length, 1);
   assert.equal(result[0].text, '优化缓存命中率并检查历史拼接。');
   assert.equal(buildWelcomeSuggestions([], 'en', now).length, 3);
-  assert.ok(buildWelcomeSuggestions([], 'en', now).every(item => !item.fromHistory));
+  assert.ok(buildWelcomeSuggestions([], 'en', now).every(item => !item.fromHistory && !item.sessionId));
 });
 
 test('colors respond to local time and date, including midnight and light theme', () => {

@@ -75,7 +75,11 @@ function TurnHistoryInspector({
   language: AppLanguage;
   active: boolean;
 }) {
-  const groups = useMemo(() => groupWorkSummaryHistoryByTurn(messages), [messages]);
+  const historyGroups = useMemo(() => groupWorkSummaryHistoryByTurn(messages), [messages]);
+  const requestedTurnId = detail.turnId?.trim() || '';
+  const groups = useMemo(() => requestedTurnId
+    ? historyGroups.filter(group => (group.turnId || group.id) === requestedTurnId)
+    : historyGroups, [historyGroups, requestedTurnId]);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectedTurnId, setSelectedTurnId] = useState('');
   const selectorId = useId();
@@ -108,24 +112,30 @@ function TurnHistoryInspector({
     setSelectorOpen(false);
   }, []);
 
-  // A requested turn is an anchor in the session's history, not a separate page.
-  // Tab activation alone must not reset the reader's position.
+  // Explicit requests switch between one turn and all details in this session's
+  // tab. Tab activation alone must not reset the reader's position.
   useLayoutEffect(() => {
     if (!active || appliedRequestRef.current === detail) return;
-    if (detail.turnId) {
-      const group = groups.find(item => (item.turnId || item.id) === detail.turnId);
+    setSelectorOpen(false);
+    if (requestedTurnId) {
+      const group = groups[0];
       if (!group) return;
       jumpToTurn(group.id, 'instant');
+    } else {
+      scrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+      setSelectedTurnId('');
     }
     appliedRequestRef.current = detail;
-  }, [active, detail, groups, jumpToTurn]);
+  }, [active, detail, groups, jumpToTurn, requestedTurnId]);
 
   return (
     <section className="work-summary-inspector work-summary-turn-inspector" ref={scrollRef}>
       <header className="work-summary-inspector-heading" ref={headingRef}>
         <Clock3 size={17} />
         <div>
-          <strong>{detail.title || (language === 'zh' ? '回合执行详情' : 'Turn execution details')}</strong>
+          <strong>{detail.title || (requestedTurnId
+            ? language === 'zh' ? '回合执行详情' : 'Turn execution details'
+            : language === 'zh' ? '全部回合详情' : 'All turn details')}</strong>
           <small>
             {language === 'zh' ? '完整消息、计划与工具记录' : 'Messages, plans, and tool activity'}
           </small>

@@ -2542,6 +2542,44 @@ ipcMain.handle('automation:command', async (event, input: unknown) => {
   return response.result;
 });
 let calendarStore: Promise<import('./calendarStore.mjs', { with: { 'resolution-mode': 'import' } }).CalendarStore> | undefined;
+let conversationExtractStore: Promise<import('./conversationExtracts.mjs', { with: { 'resolution-mode': 'import' } }).ConversationExtractStore> | undefined;
+function conversationExtracts() {
+  return conversationExtractStore ??= import('./conversationExtracts.mjs').then(({ ConversationExtractStore }) => {
+    const store = new ConversationExtractStore(path.join(app.getPath('userData'), 'conversation-extracts'), async (sessionId, keys) => {
+      if (!runtimeHostController) throw new Error('Runtime is not ready.');
+      const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+        command: { kind: 'runtime.extract_session', payload: { sessionId, keys } } }) as { ok?: boolean;
+          result?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).ConversationExtractSource; error?: { message: string } };
+      if (!response.ok || !response.result) throw new Error(response.error?.message ?? '无法读取会话。');
+      return response.result;
+    }, { notify: () => { for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'conversation-extracts:changed'); } });
+    app.once('will-quit', () => store.close());
+    return store;
+  });
+}
+ipcMain.handle('conversation-extracts:command', async (event, input: { action?: string; selection?: unknown; kind?: string; id?: string; contextWindowTokens?: number }) => {
+  assertMainWindowSender(event.sender.id);
+  if (!input || typeof input !== 'object') throw new Error('Invalid extraction request.');
+  const store = await conversationExtracts();
+  switch (input.action) {
+    case 'list': return store.list();
+    case 'preview': return store.preview(input.selection);
+    case 'save': {
+      if (!['temporary', 'permanent', 'reference'].includes(input.kind ?? '')) throw new Error('Invalid extraction save mode.');
+      return store.save(input.selection, input.kind as 'temporary' | 'permanent' | 'reference');
+    }
+    case 'consume': return store.consume(String(input.id));
+    case 'resolve': return store.resolve(String(input.id), input.contextWindowTokens);
+    case 'remove': return store.remove(String(input.id));
+    case 'export': return store.export(input.selection, async title => {
+      const options = { title: '保存会话提取', defaultPath: `${title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100) || 'conversation'}.md`,
+        filters: [{ name: 'Markdown', extensions: ['md'] }] };
+      const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+      return result.canceled ? undefined : result.filePath;
+    });
+    default: throw new Error('Unknown extraction action.');
+  }
+});
 ipcMain.handle('calendar:command', async (event, input: unknown) => {
   assertMainWindowSender(event.sender.id);
   calendarStore ??= import('./calendarStore.mjs').then(({ CalendarStore }) => new CalendarStore(path.join(app.getPath('userData'), 'calendars', 'calendars.json')));

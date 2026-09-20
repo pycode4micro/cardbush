@@ -4,6 +4,7 @@ export interface WelcomeSuggestion {
   text: string;
   topic: string;
   fromHistory: boolean;
+  sessionId?: string;
 }
 
 const stopWords = new Set(`的 了 是 在 和 与 或 有 把 对 给 用 为 到 从 中 内 上 下 这个 那个 这些 那些 这里 那里 这样 那样 一个 一下 一些 什么 怎么 为什么 如何 是否 能不能 可以 可能 需要 应该 已经 现在 目前 还是 还有 但是 因为 所以 然后 如果 就是 不是 不要 不用 不能 没有 没什么 不会 不太 先 再 都 也 很 更 最 我 我们 你 你们 他 它 自己 用户 请 帮 帮我 谢谢 看看 看下 帮忙 继续 完成 执行 修改 优化 支持 问题 功能 内容 使用 设置 增加 实现 进行 通过 根据 一直 直接 具体 相关 进行 最后 the a an and or but for with from to of in on at by is are was were be been being it its this that these those i me my we our you your he she they their please can could would should will do does did have has had not no yes so if then than as how what why when where which help make use using used want need let's let also just about into more some any all now already thanks must really don't doesn't`.split(/\s+/));
@@ -76,19 +77,20 @@ const starters = {
  * sentences from those prompts. No model call or mutation of model context. */
 export function buildWelcomeSuggestions(history: RuntimeUserPrompt[], language: 'zh' | 'en', now = Date.now()): WelcomeSuggestion[] {
   const since = now - 7 * 86400000;
-  const unique = new Map<string, { prose: string; terms: string[]; time: number; truncated: boolean }>();
-  for (const row of [...history].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))) {
+  const unique = new Map<string, { prose: string; terms: string[]; time: number; truncated: boolean; sessionId: string }>();
+  for (const row of [...history].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+    || a.sessionId.localeCompare(b.sessionId) || a.messageId.localeCompare(b.messageId))) {
     const time = Date.parse(row.createdAt);
     if (!Number.isFinite(time) || time < since || time > now) continue;
     const prose = welcomePromptProse(row.content);
     const identity = `${row.sessionId}:${key(prose).replace(/\s/g, '')}`;
     if (!prose || unique.has(identity)) continue; // Retries/pastes in one conversation do not inflate frequency.
-    unique.set(identity, { prose, terms: welcomeTerms(prose), time, truncated: row.truncated });
+    unique.set(identity, { prose, terms: welcomeTerms(prose), time, truncated: row.truncated, sessionId: row.sessionId });
   }
   const frequencies = new Map<string, number>();
   for (const row of unique.values()) for (const term of row.terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
 
-  const candidates: { text: string; terms: string[]; score: number }[] = [];
+  const candidates: { text: string; terms: string[]; score: number; sessionId: string }[] = [];
   const texts = new Set<string>();
   for (const row of unique.values()) {
     const sentences = row.prose.split(/\n+/).flatMap(line => Array.from(sentenceSegmenter.segment(line), part => part.segment));
@@ -105,7 +107,7 @@ export function buildWelcomeSuggestions(history: RuntimeUserPrompt[], language: 
       const frequency = terms.map(term => frequencies.get(term) ?? 0).sort((a, b) => b - a);
       const score = frequency.slice(0, 3).reduce((sum, count) => sum + count, 0) / Math.sqrt(Math.max(2, terms.length)) +
         0.4 * (row.time - since) / (now - since);
-      candidates.push({ text, terms, score });
+      candidates.push({ text, terms, score, sessionId: row.sessionId });
     }
   }
   const chosen: typeof candidates = [];
@@ -121,7 +123,7 @@ export function buildWelcomeSuggestions(history: RuntimeUserPrompt[], language: 
     const rankedTerms = [...candidate.terms].sort((a, b) => (frequencies.get(b) ?? 0) - (frequencies.get(a) ?? 0));
     const topic = rankedTerms.find(term => !usedTopics.has(term)) ?? rankedTerms[0];
     usedTopics.add(topic);
-    suggestions.push({ text: candidate.text, topic, fromHistory: true });
+    suggestions.push({ text: candidate.text, topic, fromHistory: true, sessionId: candidate.sessionId });
   }
   for (const [topic, text] of starters[language]) {
     if (suggestions.length === 3) break;

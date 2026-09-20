@@ -3,6 +3,7 @@ import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
 import { ChromeConnectionSettings } from './browser/ChromeConnectionSettings';
 import { ComputerUseSettings, ComputerUseSettingsPanel } from './computerUse/ComputerUseSettings';
 import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
+import { ArchivedItemsPanel } from './settings/ArchivedItemsPanel';
 import { SettingsDropdown } from './settings/SettingsDropdown';
 import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
 import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
@@ -94,6 +95,7 @@ import type {
   CardbushAppPlugin,
   ConversationSummary,
   ManagedModelConfig,
+  ProjectItem,
   McpServerConfig,
   McpServerValidationResult,
   McpTransport,
@@ -141,6 +143,9 @@ export function SettingsView({
   availableModels,
   backendCapabilities,
   runtimeBusy,
+  conversations,
+  projects,
+  onRestoreProjects,
   skills,
   disabledSkillNames,
   initialSection,
@@ -179,6 +184,8 @@ export function SettingsView({
   backendCapabilities: BackendCapabilities;
   runtimeBusy: boolean;
   conversations: ConversationSummary[];
+  projects?: ProjectItem[];
+  onRestoreProjects?: (ids: string[]) => void;
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   initialSection: SettingsSection;
@@ -829,6 +836,9 @@ export function SettingsView({
     }
     if (section === 'cache') {
       return (
+        <div className="settings-stack">
+        <ArchivedItemsPanel language={language} conversations={conversations} projects={projects}
+          onRestoreProjects={onRestoreProjects} onNotify={notify} />
         <CacheMaintenancePanel
           language={language}
           capabilities={backendCapabilities}
@@ -837,6 +847,7 @@ export function SettingsView({
           runtimeBusy={runtimeBusy}
           onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
         />
+        </div>
       );
     }
     if (section === 'diagnostics') {

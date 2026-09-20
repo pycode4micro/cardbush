@@ -70,6 +70,25 @@ and becomes stale whenever another Turn changes the shared desktop. Semantic ele
 index, `invoke`, and `set_value`) are preferred because they do not normally move
 the pointer; window-relative SendInput remains a guarded fallback.
 
+Observed elements expose `supported_actions`. Semantic clicks require Invoke,
+Toggle, SelectionItem or ExpandCollapse; writable Value/RangeValue supports
+`set_value`, which replaces the entire value. Value/Text alone does not make an
+editor clickable. Unsupported semantic actions fail before launching a native
+action or presenting an action pointer, and still consume the observation token.
+
+`open_app` uses an existing working directory and performs window enumeration
+before launch plus a bounded 1.5-second check afterward in the same PowerShell
+process. Its `window_check` distinguishes newly observed matching windows,
+existing candidates and an unconfirmed result. Matching is by launch PID or exact
+process name, never merely by an unrelated new window. Candidates are not proof
+of application readiness; the caller must observe the exact HWND before input.
+Shell handoffs can reuse a process or delay a window beyond the check. An
+unconfirmed result must not trigger automatic relaunch.
+
+PowerShell failures retain bounded readable diagnostics and decode CLIXML error
+records, omitting progress XML and encoded commands. Timeouts explicitly leave
+the action outcome uncertain; cancellation remains cancellation.
+
 Observation never activates a background window. Target observations report
 `is_foreground`; `actionable` means input is ready in the foreground, while
 `window_action_available` permits window operations with the fresh state ID.
@@ -102,6 +121,11 @@ process checks between characters. The presentation hook drops tagged input
 downs after focus loss or pause; release events remain allowed to avoid stuck
 keys/buttons. Dragging rechecks the target and path. This remains cooperative
 desktop control, not an OS security boundary.
+
+LF, CRLF and CR in `type` each dispatch one Enter key pair, preserving blank lines
+without doubling Windows line endings. Other text retains Unicode/surrogate-pair
+handling and the existing per-character foreground checks. Enter can execute or
+submit in some applications, which is documented in the tool schema and skill.
 
 Progress detection includes a bounded hash of visible, non-password UIA
 TextPattern content, so small terminal/document changes need not exceed a global

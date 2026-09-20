@@ -57,10 +57,10 @@ module.exports = async function testConversationTitleRendering({ run, until, pau
     }
   }
   await run('showTitleFixture(0)');
-  await until("document.querySelector('.conversation-row.active .conversation-title')?.textContent === 'video-face-stylizer' && !!document.querySelector('.conversation-row.active .conversation-more')", 'legacy conversation');
-  await run("document.querySelector('.conversation-row.active .conversation-more').click()");
-  await until("!!document.querySelector('.sidebar-menu')", 'rename menu');
-  await run("[...document.querySelectorAll('.sidebar-menu button')].find(button => button.textContent.includes('重命名')).click()");
+  await until("document.querySelector('.conversation-row.active .conversation-title')?.textContent === 'video-face-stylizer' && !!document.querySelector('.conversation-row.active .conversation-archive')", 'legacy conversation');
+  await run("document.querySelector('.conversation-row.active').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 160, clientY: 240 }))");
+  await until("!!document.querySelector('.sidebar-context-menu')", 'rename menu');
+  await run("[...document.querySelectorAll('.sidebar-context-menu button')].find(button => button.textContent.includes('重命名')).click()");
   await until("!!document.querySelector('.conversation-row input')", 'rename editor');
   assert.equal(await run("document.querySelector('.conversation-row input').value"), 'video-face-stylizer');
   await run("document.querySelector('[aria-label=保存标题]').click()");

@@ -24,3 +24,4 @@ export * from './proxy.js';
 export * from './search.js';
 export * from './solutionSelection.js';
 export * from './browser.js';
+export * from './extraction.js';

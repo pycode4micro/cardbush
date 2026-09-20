@@ -2,10 +2,10 @@ import { ArrowUpRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 import { fetchWelcomeHistory } from '../../backend/welcomeHistory';
-import { buildWelcomeSuggestions } from './welcomeSuggestionRanking';
+import { buildWelcomeSuggestions, type WelcomeSuggestion } from './welcomeSuggestionRanking';
 
-export function WelcomeSuggestions({ language, disabled, onSelect }: {
-  language: 'zh' | 'en'; disabled: boolean; onSelect: (text: string) => void;
+export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect }: {
+  language: 'zh' | 'en'; disabled: boolean; hasDraft: boolean; onSelect: (suggestion: WelcomeSuggestion) => void;
 }) {
   const [history, setHistory] = useState<RuntimeUserPrompt[]>([]);
   useEffect(() => {
@@ -37,7 +37,8 @@ export function WelcomeSuggestions({ language, disabled, onSelect }: {
       : language === 'zh' ? '从一个想法开始' : 'Start with an idea'}</p>
     <div className="welcome-suggestions-list">
       {suggestions.map(item => <button key={item.text} type="button" className="welcome-suggestion"
-        disabled={disabled} onClick={() => onSelect(item.text)} title={item.text}>
+        disabled={disabled || (hasDraft && !item.sessionId)} onClick={() => onSelect(item)}
+        title={item.sessionId ? `${language === 'zh' ? '打开会话' : 'Open conversation'}: ${item.text}` : item.text}>
         <span className="welcome-suggestion-topic">{item.topic}<span>{item.fromHistory
           ? language === 'zh' ? '最近常聊' : 'Recent'
           : language === 'zh' ? '试一试' : 'Try this'}</span></span>

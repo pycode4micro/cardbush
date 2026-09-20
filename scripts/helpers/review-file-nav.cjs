@@ -7,6 +7,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     localStorage.removeItem('cardbush.review_file_nav_width');
     localStorage.removeItem('cardbush.review_file_nav_collapsed');
     window.reviewWidth=600; window.reviewEmbedded=true; window.reviewReverts=[];
+    window.reviewConversation={id:'review-fixture',title:'Review',projectDir:'C:/fixture'};
     window.reviewDirectoryReads=[]; window.reviewInitialPath=''; window.reviewTurns=undefined;
     cardbushDesktop.readWorkspaceDirectory=async ({directoryPath})=>{
       reviewDirectoryReads.push(directoryPath);
@@ -26,7 +27,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       }]}]);
     window.showReview=()=>renderView(h('aside',{className:'right-inspector',style:{position:'relative',width:reviewWidth,
       height:660,maxWidth:'none',flex:'none',margin:12}},h(views.ConversationChangeDialog,{
-        embedded:reviewEmbedded,language:'zh',conversation:{id:'review-fixture',title:'Review',projectDir:'C:/fixture'},reports:reviewReports,
+        embedded:reviewEmbedded,language:'zh',conversation:reviewConversation,reports:reviewReports,
         turns:reviewTurns,initialFilePath:reviewInitialPath,
         notice:'',revertingChangeId:'',revertedChangeIds:new Set(),onClose:()=>{},
         onRevert:async report=>reviewReverts.push({id:report.id,turnId:report.turnId}),onRevertAll:async()=>{},
@@ -236,6 +237,36 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("Array.from(document.querySelectorAll('.change-review-file-item')).find(row=>row.textContent.includes('加载更多')).click()");
   await until('pagedReads.some(read=>read.offset===200)', 'next page requested explicitly');
   assert.ok(await run("document.querySelectorAll('.change-review-file-item').length<80"), 'loading another page keeps DOM bounded');
+  await run('renderView(null)'); await pause();
+  window.setSize(1200,800);
+  await run(`
+    window.taskRoot='C:/Users/yusite/AppData/Roaming/cardbush/task-workspaces/task-a';
+    window.pluginRoot='C:/Users/yusite/AppData/Roaming/cardbush/plugins/volcengine-plugins';
+    window.otherTaskRoot='C:/Users/yusite/AppData/Roaming/cardbush/task-workspaces/task-b';
+    window.externalReviewReads=[];
+    cardbushDesktop.readWorkspaceDirectory=async ({directoryPath})=>{
+      externalReviewReads.push(directoryPath);
+      return {entries:[{name:'verify_launch.py',path:taskRoot+'/verify_launch.py',kind:'file'}]};
+    };
+    reviewConversation={id:'task-review',title:'Task review',metadata:{workspace_mode:'task',task_dir:taskRoot}};
+    const externalBase=reviewReports.at(-1);
+    reviewReports=[{...externalBase,fileCount:3,files:[taskRoot+'/verify_launch.py',pluginRoot+'/.mcp.json',otherTaskRoot+'/notes.md']
+      .map(path=>({...externalBase.files[0],path}))}];
+    reviewInitialPath=pluginRoot+'/.mcp.json';
+    reviewEmbedded=true; reviewWidth=600; viewTheme='theme-dark'; showReview();
+  `);
+  await until("document.querySelector('.change-review-file-item.active')?.dataset.path===pluginRoot+'/.mcp.json' && navOpen()", 'outside edit revealed from its containing folder');
+  assert.equal(await run("document.querySelector('.change-review-tree-root span[title]').title"), await run('taskRoot'), 'task directory remains the tree root');
+  assert.equal(await run("document.querySelector('.change-review-file-item.active').getAttribute('aria-level')"), '2', 'outside edit has only one folder above it');
+  assert.equal(await run("Array.from(document.querySelectorAll('.change-review-file-item')).some(row=>['C:/','C:/Users','C:/Users/yusite/AppData'].includes(row.dataset.path))"), false, 'drive and user-profile ancestors are absent');
+  assert.equal(await run("Array.from(document.querySelectorAll('.change-review-file-item')).find(row=>row.dataset.path===pluginRoot).textContent"), 'volcengine-plugins · 其他位置');
+  assert.equal(await run("document.querySelector('.change-review-file-item.active').title"), await run("pluginRoot+'/.mcp.json'"), 'full paths remain available in tooltips');
+  await run("Array.from(document.querySelectorAll('.change-review-file-item')).find(row=>row.dataset.path===otherTaskRoot).click()");
+  await until("Array.from(document.querySelectorAll('.change-review-file-item')).some(row=>row.dataset.path===otherTaskRoot+'/notes.md')", 'another task starts at its own folder');
+  await run("Array.from(document.querySelectorAll('.change-review-file-item')).find(row=>row.dataset.path===otherTaskRoot+'/notes.md').click()");
+  await until("document.querySelector('.change-review-file-item.active')?.dataset.path===otherTaskRoot+'/notes.md'", 'external file remains selectable');
+  assert.equal(await run('externalReviewReads.every(path=>path===taskRoot)'), true, 'external branches never scan parent directories');
+  await fs.writeFile(path.join(root,'tmp/review-compact-task-tree.png'),(await window.capturePage()).toPNG());
   await run("localStorage.removeItem('cardbush.review_file_nav_width'); localStorage.removeItem('cardbush.review_file_nav_collapsed'); renderView(null)");
   window.setSize(1200,800);
   console.log('Review passed: two-turn window over 200 Turns, no-edit Turns, merged toolbar, actual directory/unchanged-file reads, lazy folders, virtualized pagination, original-turn revert, shared sidebar motion, drag/edge snap, keyboard, cancellation, three themes, narrow layouts and reduced motion.');

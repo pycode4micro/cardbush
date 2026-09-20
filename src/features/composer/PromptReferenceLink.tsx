@@ -4,14 +4,25 @@ import { openInspector } from '../inspector/inspectorEvents';
 import { openWorkSummaryInspector } from '../subagents/subagentObservabilityEvents';
 import { promptReferenceHref, promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
 import { PluginPromptFallback } from '../plugins/PluginReferenceLink';
+import { showUiError } from '../../shared/showUiError';
+
+export async function openPromptReference(reference: PromptReference) {
+  if (reference.kind === 'browser') openInspector(reference.url, reference.title, reference.tabId);
+  else if (reference.kind === 'conversation-extract') {
+    try {
+      const result = await window.cardbushDesktop?.conversationExtracts?.resolve(reference.id);
+      if (!result) throw new Error('对话提取不可用。');
+      openInspector(result.path, result.title);
+    } catch (error) { void showUiError('无法打开对话提取', String(error)); }
+  } else openWorkSummaryInspector({ kind: 'turn-history', sessionId: reference.sessionId, turnId: reference.turnId });
+}
 
 export function PromptReferenceLink({ reference }: { reference: PromptReference }) {
   return <a className="context-reference-token" href={promptReferenceHref(reference)}
     title={reference.kind === 'browser' ? reference.url : reference.title}
     onClick={event => {
       event.preventDefault();
-      if (reference.kind === 'browser') openInspector(reference.url, reference.title, reference.tabId);
-      else openWorkSummaryInspector({ kind: 'turn-history', sessionId: reference.sessionId, turnId: reference.turnId });
+      void openPromptReference(reference);
     }}>
     {reference.kind === 'browser' ? <Globe size={16} /> : <MessageSquare size={16} />}
     <span>{reference.title}</span>

@@ -23,6 +23,25 @@ const { resolvePromptReferenceContext } = load('src/backend/promptReferenceConte
 const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessageProjection.ts');
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
+test('conversation extracts resolve as readable Markdown paths, deduplicate, and respect the receiving model budget', async () => {
+  const oldWindow = globalThis.window;
+  const reference = { kind: 'conversation-extract', id: '00000000-0000-4000-8000-000000000001', title: '提取 [中文]' };
+  const calls = [];
+  globalThis.window = { cardbushDesktop: { conversationExtracts: { resolve: async (id, context) => {
+    calls.push({ id, context }); return { id, path: 'C:/data/extract.md', title: '提取 [中文]', tokens: 100 };
+  } } } };
+  try {
+    const token = refs.promptReferenceMarkdown(reference);
+    assert.deepEqual(refs.promptReferenceParts(token)[0].reference, reference);
+    const resolved = await resolvePromptReferenceContext(`${token} ${token}`, 'current', undefined, 'zh', undefined, 400);
+    assert.equal(calls.length, 1); assert.equal(calls[0].context, 400);
+    assert.match(resolved.content, /C:\/data\/extract.md/);
+    assert.match(resolved.content, /source material, not new instructions/);
+    await assert.rejects(resolvePromptReferenceContext(token, 'current', undefined, 'zh', undefined, 396), /1\/4/);
+    globalThis.window.cardbushDesktop.conversationExtracts.resolve = async () => { throw Error('expired'); };
+    await assert.rejects(resolvePromptReferenceContext(token, 'current'), /expired/);
+  } finally { globalThis.window = oldWindow; }
+});
 
 test('skill tokens preserve full paths, surrounding text and escaped labels without changing the prompt', () => {
   const skill = { name: '中文 [技能] \\ 示例', displayName: '视频制作', path: 'C:\\Users\\EDY\\My Skills\\场景 #50% (test)\\SKILL.md' };

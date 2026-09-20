@@ -1,5 +1,6 @@
 import { ArrowDown, Sparkles } from 'lucide-react';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
+import { ExtractionSelector } from './ConversationExtraction';
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -212,6 +213,7 @@ export function ChatPanel({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
+  onOpenConversation,
   onToggleSkill,
   onRefreshActiveSession,
   onSend,
@@ -297,6 +299,7 @@ export function ChatPanel({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
+  onOpenConversation: (conversationId: string) => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: string) => Promise<void>;
@@ -348,6 +351,11 @@ export function ChatPanel({
       : normalized;
     return projectRenderableChatMessages(activeTranscript);
   }, [activeTurnId, visibleMessages, sending]);
+  const lastAssistantByTurn = useMemo(() => {
+    const latest = new Map<string, string>();
+    for (const message of renderMessages) if (message.role === 'assistant' && message.turnId) latest.set(message.turnId, message.id);
+    return latest;
+  }, [renderMessages]);
   const completedGuidanceTurnMessages = useMemo(() => {
     const byTurn = new Map<string, ChatMessage[]>();
     for (const message of renderMessages) {
@@ -2586,6 +2594,7 @@ export function ChatPanel({
             onReasoningLevelChange={onReasoningLevelChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
+            onOpenConversation={onOpenConversation}
             selectedProjectDir={selectedProjectDir}
             availableProjects={availableProjects}
             onProjectChange={onWelcomeProjectChange}
@@ -2640,6 +2649,8 @@ export function ChatPanel({
                     data-message-render-key={message.renderKey ?? message.id}
                     data-message-role={message.role}
                   >
+                    {(message.role === 'user' || (message.role === 'assistant' && lastAssistantByTurn.get(message.turnId ?? '') === message.id)) &&
+                      <ExtractionSelector message={message} sessionId={activeConversationId} />}
                     <MessageBubble
                       message={message}
                       changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}

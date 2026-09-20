@@ -32,7 +32,7 @@ assert.match(
 );
 assert.match(
   sidebarSource,
-  /className="conversation-more"[\s\S]*?event\.currentTarget\.blur\(\)/,
+  /className="conversation-archive"[\s\S]*?event\.currentTarget\.blur\(\)/,
   'Mouse activation must not leave conversation actions visibly focused',
 );
 assert.doesNotMatch(
@@ -53,12 +53,12 @@ assert.match(
 assert.match(sidebarSource, /aria-label=\{actionLabel\}/);
 assert.match(
   stylesSource,
-  /\.row-new-chat,\s*\.row-more,\s*\.conversation-pin,\s*\.conversation-more\s*\{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?margin-block:\s*auto;/,
+  /\.row-new-chat,\s*\.row-archive,\s*\.conversation-pin,\s*\.conversation-archive\s*\{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?margin-block:\s*auto;/,
   'Sidebar row actions must be centered without a transform that the global active state can overwrite',
 );
 assert.doesNotMatch(
   stylesSource,
-  /\.row-new-chat,\s*\.row-more,\s*\.conversation-pin,\s*\.conversation-more\s*\{[^}]*translateY\(-50%\)/,
+  /\.row-new-chat,\s*\.row-archive,\s*\.conversation-pin,\s*\.conversation-archive\s*\{[^}]*translateY\(-50%\)/,
   'Sidebar row actions must not jump when the global button press scale is applied',
 );
 assert.match(

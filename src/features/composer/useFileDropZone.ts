@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { CONVERSATION_DRAG_TYPE } from '../chat/ConversationExtraction';
 
 function hasFiles(transfer: DataTransfer) {
   return transfer.files.length > 0 || transfer.types.includes('Files');
@@ -15,9 +16,9 @@ export function useFileDropZone(targetRef: RefObject<HTMLElement | null>, onDrop
     let depth = 0;
     const reset = () => { depth = 0; setActive(false); };
     const accepts = (event: DragEvent) => event.dataTransfer &&
-      (hasFiles(event.dataTransfer) || event.dataTransfer.types.includes('application/x-cardbush-quickload'));
+      (hasFiles(event.dataTransfer) || event.dataTransfer.types.includes('application/x-cardbush-quickload') || event.dataTransfer.types.includes(CONVERSATION_DRAG_TYPE));
     const enter = (event: DragEvent) => {
-      if (!event.dataTransfer || !hasFiles(event.dataTransfer)) return;
+      if (!accepts(event)) return;
       event.preventDefault();
       depth += 1;
       setActive(true);

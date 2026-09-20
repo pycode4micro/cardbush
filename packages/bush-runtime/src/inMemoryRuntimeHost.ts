@@ -4,6 +4,8 @@ import { canonicalStoragePath } from '@cardbush/platform';
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
 import { isDeepStrictEqual } from 'node:util';
 import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
+import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
+import { extractSessionSource } from './sessionExtraction.js';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND,
@@ -642,6 +644,8 @@ export class InMemoryRuntimeHost {
         GET_RUNTIME_USER_MESSAGE_COMMAND,
         LIST_RUNTIME_USER_PROMPTS_COMMAND,
         CREATE_RUNTIME_SESSION_COMMAND,
+        EXTRACT_RUNTIME_SESSION_COMMAND,
+        FORK_RUNTIME_SESSION_COMMAND,
         DELETE_RUNTIME_SESSION_COMMAND,
         CLEAR_RUNTIME_SESSIONS_COMMAND,
         COLLECT_RUNTIME_CACHE_COMMAND,
@@ -861,6 +865,20 @@ export class InMemoryRuntimeHost {
         const snapshot = this.#sessions.snapshot(input.sessionId);
         if (!snapshot || input.messageProjection === "full") return snapshot ?? null;
         return conversationSessionSnapshot(snapshot);
+      }
+      case EXTRACT_RUNTIME_SESSION_COMMAND: {
+        const input = sessionExtractionRequestSchema.parse(command.payload);
+        const snapshot = this.#sessions.snapshot(input.sessionId);
+        if (!snapshot) throw new Error('会话不存在。');
+        return extractSessionSource(snapshot, input.keys);
+      }
+      case FORK_RUNTIME_SESSION_COMMAND: {
+        const input = forkRuntimeSessionRequestSchema.parse(command.payload);
+        const snapshot = this.#sessions.fork(input.sourceSessionId, input.sessionId);
+        try {
+          this.#toolExecutions.fork(input.sourceSessionId, input.sessionId, new Set(snapshot.turns.map(turn => turn.turnId)));
+          return snapshot;
+        } catch (error) { await this.#deleteSession(input.sessionId); this.#scheduleCacheCleanup(); throw error; }
       }
       case CREATE_RUNTIME_SESSION_COMMAND: {
         const input = createRuntimeSessionRequestSchema.parse(command.payload);

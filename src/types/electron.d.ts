@@ -37,6 +37,7 @@ declare global {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
     __cardbushUiPerformance?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
+      conversationExtracts?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
       platform: string;
       hostCapabilities: () => Promise<{ platform: string; arch: string; terminalRuntimes: import('../types').TerminalRuntime[]; defaultTerminalRuntime: import('../types').TerminalRuntime; computerUse: boolean; chromeNativeConnector: boolean; nativeProcessLimits: boolean }>;
       runtime: {

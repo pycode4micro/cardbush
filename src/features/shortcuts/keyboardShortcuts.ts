@@ -8,6 +8,8 @@ type ShortcutDefinition = {
 const appContexts: ShortcutContext[] = ['composer', 'queue', 'transcript', 'edit', 'sidebar'];
 
 export const shortcutDefinitions = [
+  { id: 'extractConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'e', ctrl: true, shift: true },
+    title: { zh: '提取对话', en: 'Extract conversation' }, description: { zh: '打开当前会话的提取弹窗。', en: 'Extract the current conversation as Markdown.' } },
   { id: 'newConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'n', ctrl: true },
     title: { zh: '新会话', en: 'New chat' }, description: { zh: '开始一个新会话。', en: 'Start a new conversation.' } },
   { id: 'openProject', group: 'application', contexts: appContexts, defaultBinding: { key: 'o', ctrl: true },

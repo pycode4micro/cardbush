@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { executeComputerUse, type ComputerUseArtifact } from './computerUseRuntime.js';
 import type { ComputerUsePluginConfig } from '../config.js';
+import { formatComputerUseError } from './computerUseErrors.js';
 
 const inputSchema = z.object({
   action: z.enum([
@@ -31,10 +32,12 @@ const inputSchema = z.object({
     'One-use state identifier returned by a target-specific observe call. Required for every action against an existing window.',
   ),
   element_index: z.number().int().min(0).optional().describe(
-    'Accessibility element index returned by the target-specific observe call. Prefer this over coordinates.',
+    'Accessibility element index returned by observe. Check its supported_actions before choosing click, invoke, or set_value; Text or Value alone does not support semantic click.',
   ),
   value: z.string().max(8192).optional(),
-  text: z.string().max(8192).optional(),
+  text: z.string().max(8192).optional().describe(
+    'Text to type. LF, CRLF, and CR each send one Enter; in terminals or submit-on-Enter fields this can execute or submit. Use only when that effect is intended. Other characters use Unicode input.',
+  ),
   key: z.string().trim().min(1).max(64).optional(),
   keys: z.array(z.string().trim().min(1).max(64)).min(1).max(8).optional(),
   delta: z.number().int().min(-20).max(20).optional(),
@@ -168,8 +171,11 @@ export function registerComputerUsePlugin(
       'Call observe once to discover windows, then observe an exact hwnd to receive a one-use state_id, a window screenshot, and accessibility elements.',
       'Every action against an existing window must include that state_id and hwnd. The state is consumed after one action and becomes stale if another turn changes the desktop.',
       'Observation does not activate a window. actionable describes foreground input readiness; window_action_available allows window operations even in the background. If is_foreground is false, use window/activate with the observed state_id and hwnd, then observe again before input. Do not retry activation blindly if Windows refuses it.',
-      'For a desktop-control demo, open a fresh text-editor window and verify the displayed text; do not type demo commands into an existing terminal or claim interaction succeeded from observation alone.',
+      'For a desktop-control demo, discover existing windows first, use a verified empty editor window or new empty tab, and verify the displayed text; do not type demo commands into an existing terminal or existing user document.',
+      'open_app reports launch dispatch and a bounded window_check, not application readiness. An existing_window_candidate may be a reused window; unconfirmed does not mean launch failed. Observe the exact candidate hwnd, or discover windows, before input or another launch.',
       'Click with element_index, invoke, and set_value use UI Automation without moving the pointer. Coordinates are window-relative and remain available when an element has no semantic action.',
+      'Use element supported_actions: click/invoke require Invoke, Toggle, SelectionItem, or ExpandCollapse; set_value requires writable Value or RangeValue. Text alone is not clickable. To focus an editor, use an observed coordinate; set_value replaces its entire value.',
+      'type converts LF, CRLF, and CR to Enter, including blank lines. Enter may execute a command or submit a form; use multiline text only when that effect is intended. Observe after input to verify the result.',
       'Screenshots are returned as image artifacts.',
       'A successful input call acknowledges dispatch only. It does not verify that the application processed the input or that a terminal command ran. Observe the requested application result before claiming completion; an unchanged screen is not proof of a scrolling problem.',
       'Call finish when desktop work is complete or abandoned to release the window border and stop control. A user stop ends desktop control for this turn.',
@@ -246,5 +252,5 @@ function safetyScope(metadata: Record<string, unknown> | undefined): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return formatComputerUseError(error);
 }

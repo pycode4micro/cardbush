@@ -29,7 +29,7 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   'computer-use': { zh: '管理桌面控制、截图和用户输入优先设置。', en: 'Manage desktop control, screenshots, and user input priority.' },
   runtime: { zh: '选择工具执行命令时使用的终端。', en: 'Choose the terminal used by tools to run commands.' },
   proxy: { zh: '管理模型、插件市场及 MCP 的网络连接。', en: 'Manage connections for models, the plugin marketplace, and MCP.' },
-  cache: { zh: '管理对话数据、日志和内置配置。', en: 'Manage conversation data, logs, and bundled configuration.' },
+  cache: { zh: '恢复归档会话与项目，管理本地数据、日志和内置配置。', en: 'Restore archived chats and projects, and manage local data, logs, and bundled configuration.' },
   diagnostics: { zh: '检查运行状态，查看版本和环境信息。', en: 'Check runtime health, version, and environment information.' },
 };
 
@@ -50,7 +50,7 @@ const keywords: Record<VisibleSettingsSection, string> = {
   'computer-use': '电脑 桌面 操控 截图 鼠标 键盘 用户输入 computer desktop screenshot pointer',
   runtime: '终端 命令 PowerShell WSL Bash terminal runtime',
   proxy: '代理 网络 插件市场 MCP HTTP HTTPS SOCKS NO_PROXY proxy network',
-  cache: '清理 删除 历史 日志 缓存 恢复 重置 配置包 cache history logs reset restore',
+  cache: '归档 会话 项目 清理 删除 历史 日志 缓存 恢复 重置 配置包 archive archived chats projects cache history logs reset restore',
   diagnostics: '诊断 关于 版本 状态 检查 环境 Runtime Product Host version about health',
 };
 

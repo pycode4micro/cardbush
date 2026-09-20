@@ -114,6 +114,19 @@ export class ToolExecutionStore {
       .map((record) => structuredClone(record));
   }
 
+  fork(sourceSessionId: string, sessionId: string, turnIds: Set<string>): void {
+    if (sourceSessionId === sessionId || this.#load(sessionId).length) throw new Error('Tool history fork requires an empty destination.');
+    const records = this.#load(sessionId);
+    for (const source of this.#fullRecords(sourceSessionId, this.#load(sourceSessionId).filter(record => turnIds.has(record.turnId)))) {
+      // Preserve historical evidence, without claiming the fork performed file
+      // writes or granting it undo actions against the source workspace.
+      const record = toolExecutionRecordSchema.parse({ ...structuredClone(source), sessionId, workspaceChanges: [] });
+      if (record.modelText) record.modelText = record.modelText.replaceAll(`tool-result://${encodeURIComponent(sourceSessionId)}/`, `tool-result://${encodeURIComponent(sessionId)}/`);
+      this.#persistence?.append(record); records.push(record);
+    }
+    this.#releaseOldWorkspacePayloads(records);
+  }
+
   /** Filter before cloning: a small tool-owned index must not copy unrelated logs. */
   listByTool(sessionId: string, toolName: string): ToolExecutionRecord[] {
     return this.#fullRecords(sessionId, this.#load(sessionId).filter(record => record.toolCall.name === toolName))

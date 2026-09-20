@@ -1,4 +1,8 @@
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import { setConversationsArchived, useConversationArchives } from './conversationArchives';
+import { showUiError } from '../../shared/showUiError';
+import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
+import { useContext } from 'react';
 import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
@@ -17,7 +21,6 @@ import {
   Mail,
   MailOpen,
   MessageSquare,
-  MoreHorizontal,
   Pin,
   Plus,
   RefreshCw,
@@ -87,7 +90,6 @@ export type ProjectAction =
   | 'archive'
   | 'remove';
 
-const sidebarMenuCloseEvent = 'cardbush-sidebar-menu-close';
 const pinnedConversationStorageKey = 'cardbush_pinned_conversation_ids';
 const conversationReadStateStorageKey = 'cardbush_conversation_read_state_v1';
 
@@ -156,6 +158,7 @@ type SidebarContextMenuItem = {
   key: string;
   icon: ReactNode;
   label: string;
+  shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
   children?: SidebarContextMenuItem[];
@@ -182,9 +185,9 @@ type ConversationMenuOptions = {
 };
 
 function sidebarContextMenuPosition(clientX: number, clientY: number, itemCount: number) {
-  const menuWidth = 188;
-  const menuHeight = Math.min(300, Math.max(1, itemCount) * 30 + 10);
   const padding = 8;
+  const menuWidth = Math.min(260, window.innerWidth - padding * 2);
+  const menuHeight = Math.min(window.innerHeight - padding * 2, Math.max(1, itemCount) * 32 + 11);
   const pointerOffset = 2;
   const targetX = clientX + pointerOffset;
   const targetY = clientY + pointerOffset;
@@ -212,6 +215,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onRenameConversation,
   onOpenConversationChanges,
   onOpenSettings,
+  onOpenArchives,
   onOpenPlugins,
   onOpenSearch,
   softVisible = true,
@@ -233,6 +237,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
+  onOpenArchives?: () => void;
   onOpenPlugins: () => void;
   onOpenSearch: () => void;
   softVisible?: boolean;
@@ -249,11 +254,10 @@ export const ChatSidebar = memo(function ChatSidebar({
   const searchLabel = language === 'zh' ? '搜索会话' : 'Search chats';
   const searchShortcut = keyboardShortcuts.label('searchConversations');
   const unreadAutomations = useAutomationUnreadCount();
-  const [archivedConversationIds, setArchivedConversationIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const archivedConversationIds = useConversationArchives();
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
+  const extraction = useContext(ConversationExtractionContext);
+  const extractionShortcuts = useKeyboardShortcuts();
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     () => new Set(['pinned', 'projects', 'recent']),
   );
@@ -406,7 +410,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   }, [activeConversationId, visibleConversations, visibleProjects]);
 
   const closeMenus = useCallback(() => {
-    setOpenMenu(null);
     setContextMenu(null);
   }, []);
 
@@ -426,23 +429,8 @@ export const ChatSidebar = memo(function ChatSidebar({
     });
   }, []);
 
-  const toggleInlineMenu = useCallback((id: string) => {
-    setContextMenu(null);
-    setOpenMenu((current) => (current === id ? null : id));
-  }, []);
-
   useEffect(() => {
-    function closeFromMenuSelection() {
-      closeMenus();
-    }
-    window.addEventListener(sidebarMenuCloseEvent, closeFromMenuSelection);
-    return () => {
-      window.removeEventListener(sidebarMenuCloseEvent, closeFromMenuSelection);
-    };
-  }, [closeMenus]);
-
-  useEffect(() => {
-    if (!openMenu && !contextMenu) {
+    if (!contextMenu) {
       return undefined;
     }
     function closeOnOutsidePointer(event: PointerEvent) {
@@ -451,11 +439,8 @@ export const ChatSidebar = memo(function ChatSidebar({
         return;
       }
       if (
-        target.closest('.sidebar-menu') ||
         target.closest('.sidebar-context-menu') ||
-        target.closest('[data-sidebar-menu-trigger="true"]') ||
-        target.closest('.row-more') ||
-        target.closest('.conversation-more')
+        target.closest('[data-sidebar-menu-trigger="true"]')
       ) {
         return;
       }
@@ -465,7 +450,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     return () => {
       document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
     };
-  }, [closeMenus, contextMenu, openMenu]);
+  }, [closeMenus, contextMenu]);
 
   function openContextMenu(
     event: ReactMouseEvent,
@@ -475,7 +460,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     event.preventDefault();
     event.stopPropagation();
     const position = sidebarContextMenuPosition(event.clientX, event.clientY, items.length);
-    setOpenMenu(null);
     setContextMenu({ id, items, ...position });
   }
 
@@ -491,15 +475,12 @@ export const ChatSidebar = memo(function ChatSidebar({
   }
 
   function toggleConversationArchive(conversationId: string) {
-    setArchivedConversationIds((current) => {
-      const next = new Set(current);
-      if (next.has(conversationId)) {
-        next.delete(conversationId);
-      } else {
-        next.add(conversationId);
-      }
-      return next;
-    });
+    closeMenus();
+    try {
+      setConversationsArchived([conversationId], !archivedConversationIds.has(conversationId));
+    } catch (error) {
+      void showUiError(language === 'zh' ? '归档失败' : 'Archive failed', String(error));
+    }
   }
 
   function toggleSection(sectionId: string) {
@@ -621,6 +602,14 @@ export const ChatSidebar = memo(function ChatSidebar({
     }
     items.push(
       {
+        key: 'extract', icon: <ExtractionMenuIcon />, label: language === 'zh' ? '提取对话' : 'Extract conversation', shortcut: extractionShortcuts.label('extractConversation'),
+        disabled: !extraction, onClick: () => extraction?.open(conversation.id),
+      },
+      {
+        key: 'fork', icon: <ExtractionMenuIcon fork />, label: language === 'zh' ? 'Fork 会话' : 'Fork conversation',
+        disabled: !extraction, onClick: () => extraction?.fork(conversation.id),
+      },
+      {
         key: 'rename',
         icon: <Edit3 size={15} />,
         label: language === 'zh' ? '重命名对话' : 'Rename chat',
@@ -661,22 +650,17 @@ export const ChatSidebar = memo(function ChatSidebar({
         runningConversationIds={runningConversationIds}
         attentionByConversation={attentionByConversation}
         unreadConversationIds={unreadConversationIds}
-        menuOpen={openMenu === `project:${project.id}`}
         language={language}
         expanded={expandedProjectIds.has(project.id)}
         onToggleExpanded={() => toggleProject(project.id)}
         onContextMenu={(event) =>
           openContextMenu(event, `project:${project.id}`, projectMenuItems(project))
         }
-        onMenuToggle={() => toggleInlineMenu(`project:${project.id}`)}
         onProjectAction={(action) => {
-          setOpenMenu(null);
+          closeMenus();
           onProjectAction(action, project);
         }}
         onConversationChange={onConversationChange}
-        onConversationMenuToggle={(conversationId) =>
-          toggleInlineMenu(`conversation:${conversationId}`)
-        }
         onConversationArchive={toggleConversationArchive}
         onDeleteConversation={onDeleteConversation}
         onRenameConversation={onRenameConversation}
@@ -694,7 +678,6 @@ export const ChatSidebar = memo(function ChatSidebar({
         }
         changeReportsByConversation={changeReportsByConversation}
         onOpenConversationChanges={onOpenConversationChanges}
-        openMenu={openMenu}
       />
     );
   }
@@ -709,9 +692,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         attention={attentionByConversation?.[conversation.id]}
         unread={unreadConversationIds.has(conversation.id)}
         pinned={pinnedConversationIds.has(conversation.id)}
-        menuOpen={openMenu === `conversation:${conversation.id}`}
         language={language}
-        onMenuToggle={() => toggleInlineMenu(`conversation:${conversation.id}`)}
         onTogglePin={() => toggleConversationPin(conversation.id)}
         onToggleRead={() =>
           setConversationUnread(conversation.id, !unreadConversationIds.has(conversation.id))
@@ -817,9 +798,8 @@ export const ChatSidebar = memo(function ChatSidebar({
                     {
                       key: 'restore-conversations',
                       icon: <Archive size={15} />,
-                      label: language === 'zh' ? '恢复归档对话' : 'Restore archived chats',
-                      disabled: archivedConversationIds.size === 0,
-                      onClick: () => setArchivedConversationIds(new Set()),
+                      label: language === 'zh' ? '管理归档' : 'Manage archives',
+                      onClick: onOpenArchives ?? onOpenSettings,
                     },
                   ])
                 }
@@ -985,14 +965,10 @@ function ProjectBlock({
   unreadConversationIds,
   language,
   expanded,
-  menuOpen,
-  openMenu,
   onToggleExpanded,
   onContextMenu,
-  onMenuToggle,
   onProjectAction,
   onConversationChange,
-  onConversationMenuToggle,
   onConversationArchive,
   onDeleteConversation,
   onRenameConversation,
@@ -1011,14 +987,10 @@ function ProjectBlock({
   unreadConversationIds: ReadonlySet<string>;
   language: AppLanguage;
   expanded: boolean;
-  menuOpen: boolean;
-  openMenu: string | null;
   onToggleExpanded: () => void;
   onContextMenu: (event: ReactMouseEvent) => void;
-  onMenuToggle: () => void;
   onProjectAction: (action: ProjectAction) => void;
   onConversationChange: (id: string) => void;
-  onConversationMenuToggle: (conversationId: string) => void;
   onConversationArchive: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
@@ -1079,53 +1051,23 @@ function ProjectBlock({
           <Plus size={14} />
         </button>
         <button
-          className="row-more"
-          data-sidebar-menu-trigger="true"
+          className="row-archive"
           type="button"
-          aria-label="project options"
+          aria-label={language === 'zh' ? '归档项目' : 'Archive project'}
+          title={language === 'zh' ? '归档项目' : 'Archive project'}
           onClick={(event) => {
             event.stopPropagation();
             event.currentTarget.blur();
-            onMenuToggle();
+            onProjectAction('archive');
           }}
+          onKeyDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => {
             event.stopPropagation();
             onContextMenu(event);
           }}
         >
-          <MoreHorizontal size={15} />
+          <Archive size={15} />
         </button>
-        {menuOpen && (
-          <SidebarMenu>
-            <SidebarMenuButton icon={<Pin size={15} />} onClick={() => onProjectAction('pin')}>
-              {project.pinned
-                ? language === 'zh'
-                  ? '取消置顶'
-                  : 'Unpin'
-                : language === 'zh'
-                  ? '置顶项目'
-                  : 'Pin project'}
-            </SidebarMenuButton>
-            <SidebarMenuButton disabled={project.missing} icon={<FolderOpen size={15} />} onClick={() => onProjectAction('open')}>
-              {language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer'}
-            </SidebarMenuButton>
-            <SidebarMenuButton disabled={project.missing} icon={<RefreshCw size={15} />} onClick={() => onProjectAction('refreshGit')}>
-              {language === 'zh' ? '刷新 Git 状态' : 'Refresh Git status'}
-            </SidebarMenuButton>
-            <SidebarMenuButton disabled={project.missing} icon={<Edit3 size={15} />} onClick={() => onProjectAction('newChat')}>
-              {language === 'zh' ? '新建项目会话' : 'New project chat'}
-            </SidebarMenuButton>
-            <SidebarMenuButton icon={<Edit3 size={15} />} onClick={() => onProjectAction('rename')}>
-              {language === 'zh' ? '重命名项目' : 'Rename project'}
-            </SidebarMenuButton>
-            <SidebarMenuButton icon={<Archive size={15} />} onClick={() => onProjectAction('archive')}>
-              {language === 'zh' ? '归档项目' : 'Archive project'}
-            </SidebarMenuButton>
-            <SidebarMenuButton danger icon={<X size={15} />} onClick={() => onProjectAction('remove')}>
-              {language === 'zh' ? '移除' : 'Remove'}
-            </SidebarMenuButton>
-          </SidebarMenu>
-        )}
       </div>
       {expanded && projectConversations.map((conversation) => (
         <ConversationRow
@@ -1137,9 +1079,7 @@ function ProjectBlock({
           unread={unreadConversationIds.has(conversation.id)}
           nested
           pinned={pinnedConversationIds.has(conversation.id)}
-          menuOpen={openMenu === `conversation:${conversation.id}`}
           language={language}
-          onMenuToggle={() => onConversationMenuToggle(conversation.id)}
           onTogglePin={() => onToggleConversationPin(conversation.id)}
           onToggleRead={() => onToggleConversationRead(conversation.id)}
           onArchive={() => onConversationArchive(conversation.id)}
@@ -1184,8 +1124,6 @@ function ConversationRow({
   nested,
   pinned,
   language,
-  menuOpen,
-  onMenuToggle,
   onTogglePin,
   onToggleRead,
   onArchive,
@@ -1204,8 +1142,6 @@ function ConversationRow({
   nested?: boolean;
   pinned: boolean;
   language: AppLanguage;
-  menuOpen: boolean;
-  onMenuToggle: () => void;
   onTogglePin: () => void;
   onToggleRead: () => void;
   onArchive: () => void;
@@ -1218,6 +1154,7 @@ function ConversationRow({
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
+  const extraction = useContext(ConversationExtractionContext);
   const displayTitle = conversationDisplayTitle(conversation.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [renameDraft, setRenameDraft] = useState(displayTitle);
@@ -1277,6 +1214,8 @@ function ConversationRow({
   return (
     <div
       className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}`}
+      draggable={!editingTitle}
+      onDragStart={event => { event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -1286,6 +1225,9 @@ function ConversationRow({
       }}
       onContextMenu={(event) => onContextMenu?.(event, menuOptions)}
       onKeyDown={(event) => {
+        if (keyboardShortcuts.matches('extractConversation', event) && !event.nativeEvent.isComposing) {
+          event.preventDefault(); event.stopPropagation(); extraction?.open(conversation.id); return;
+        }
         if (keyboardShortcuts.matches('renameConversation', event) && !event.nativeEvent.isComposing) {
           event.preventDefault();
           event.stopPropagation();
@@ -1410,14 +1352,13 @@ function ConversationRow({
         <Pin size={14} />
       </button>}
       {!editingTitle && <button
-        className="conversation-more"
-        data-sidebar-menu-trigger="true"
+        className="conversation-archive"
         type="button"
-        aria-label={language === 'zh' ? '对话操作' : 'Conversation options'}
-        title={language === 'zh' ? '对话操作' : 'Conversation options'}
+        aria-label={language === 'zh' ? '归档对话' : 'Archive chat'}
+        title={language === 'zh' ? '归档对话' : 'Archive chat'}
         onClick={(event) => {
           event.stopPropagation();
-          onMenuToggle();
+          onArchive();
           event.currentTarget.blur();
         }}
         onKeyDown={(event) => event.stopPropagation()}
@@ -1426,48 +1367,8 @@ function ConversationRow({
           onContextMenu?.(event, menuOptions);
         }}
       >
-        <MoreHorizontal size={15} />
+        <Archive size={15} />
       </button>}
-      {!editingTitle && menuOpen && (
-        <SidebarMenu>
-          <SidebarMenuButton icon={<MessageSquare size={15} />} onClick={onClick}>
-            {language === 'zh' ? '打开对话' : 'Open chat'}
-          </SidebarMenuButton>
-          <SidebarMenuButton icon={<Pin size={15} />} onClick={onTogglePin}>
-            {pinned
-              ? language === 'zh' ? '取消置顶' : 'Unpin chat'
-              : language === 'zh' ? '置顶对话' : 'Pin chat'}
-          </SidebarMenuButton>
-          <SidebarMenuButton
-            icon={unread ? <MailOpen size={15} /> : <Mail size={15} />}
-            onClick={onToggleRead}
-          >
-            {unread
-              ? language === 'zh' ? '标记为已读' : 'Mark as read'
-              : language === 'zh' ? '标记为未读' : 'Mark as unread'}
-          </SidebarMenuButton>
-          {changeCount > 0 && (
-            <SidebarMenuButton icon={<Code2 size={15} />} onClick={() => onOpenChanges?.()}>
-              {language === 'zh' ? '查看 Diff' : 'View diff'}
-            </SidebarMenuButton>
-          )}
-          <SidebarMenuButton icon={<Edit3 size={15} />} onClick={beginRename}>
-            {language === 'zh' ? '重命名对话' : 'Rename chat'}
-          </SidebarMenuButton>
-          <SidebarMenuButton
-            icon={<Clipboard size={15} />}
-            onClick={() => void copyText(conversation.id)}
-          >
-            {language === 'zh' ? '复制会话 ID' : 'Copy session ID'}
-          </SidebarMenuButton>
-          <SidebarMenuButton icon={<Archive size={15} />} onClick={onArchive}>
-            {language === 'zh' ? '归档对话' : 'Archive chat'}
-          </SidebarMenuButton>
-          <SidebarMenuButton danger icon={<Trash2 size={15} />} onClick={onDelete}>
-            {language === 'zh' ? '删除对话' : 'Delete chat'}
-          </SidebarMenuButton>
-        </SidebarMenu>
-      )}
     </div>
   );
 }
@@ -1498,7 +1399,7 @@ function ScrollingConversationTitle({ title }: { title: string }) {
       setRestOverflowWidth((current) => current === restNext ? current : restNext);
       setOverflowWidth((current) => current === next ? current : next);
       const row = viewport.closest<HTMLElement>('.conversation-row');
-      const menu = row?.querySelector<HTMLElement>('.conversation-more') ?? null;
+      const menu = row?.querySelector<HTMLElement>('.conversation-archive') ?? null;
       if (row) {
         const rowBounds = row.getBoundingClientRect();
         const titleBounds = viewport.getBoundingClientRect();
@@ -1564,10 +1465,6 @@ function ScrollingConversationTitle({ title }: { title: string }) {
   );
 }
 
-function SidebarMenu({ children }: { children: React.ReactNode }) {
-  return <div className="sidebar-menu">{children}</div>;
-}
-
 function SidebarContextMenu({
   menu,
   onSelect,
@@ -1596,40 +1493,10 @@ function SidebarContextMenu({
         >
           {item.icon}
           <span>{item.label}</span>
+          {item.shortcut && <kbd>{item.shortcut}</kbd>}
         </button>
       ))}
     </div>
-  );
-}
-
-function SidebarMenuButton({
-  icon,
-  danger,
-  disabled,
-  onClick,
-  children,
-}: {
-  icon: React.ReactNode;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      className={`sidebar-menu-button ${danger ? 'danger' : ''}`}
-      type="button"
-      disabled={disabled}
-      onClick={(event) => {
-        if (disabled) return;
-        event.stopPropagation();
-        window.dispatchEvent(new CustomEvent(sidebarMenuCloseEvent));
-        onClick();
-      }}
-    >
-      {icon}
-      <span>{children}</span>
-    </button>
   );
 }
 

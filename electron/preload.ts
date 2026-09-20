@@ -104,6 +104,19 @@ const desktopApi = {
   pluginTroubleshootingContext: (pluginId: string, componentId: string) => ipcRenderer.invoke('plugins:troubleshooting-context', pluginId, componentId),
   automationCommand: (input: unknown) => ipcRenderer.invoke('automation:command', input),
   calendarCommand: (input: unknown) => ipcRenderer.invoke('calendar:command', input),
+  conversationExtracts: {
+    preview: (selection: unknown) => ipcRenderer.invoke('conversation-extracts:command', { action: 'preview', selection }),
+    list: () => ipcRenderer.invoke('conversation-extracts:command', { action: 'list' }),
+    save: (selection: unknown, kind: string) => ipcRenderer.invoke('conversation-extracts:command', { action: 'save', selection, kind }),
+    consume: (id: string) => ipcRenderer.invoke('conversation-extracts:command', { action: 'consume', id }),
+    resolve: (id: string, contextWindowTokens?: number) => ipcRenderer.invoke('conversation-extracts:command', { action: 'resolve', id, contextWindowTokens }),
+    export: (selection: unknown) => ipcRenderer.invoke('conversation-extracts:command', { action: 'export', selection }),
+    remove: (id: string) => ipcRenderer.invoke('conversation-extracts:command', { action: 'remove', id }),
+    onChanged: (callback: () => void) => {
+      const listener = () => callback(); ipcRenderer.on('conversation-extracts:changed', listener);
+      return () => ipcRenderer.removeListener('conversation-extracts:changed', listener);
+    },
+  },
   onCalendarChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('calendar:changed', listener); return () => ipcRenderer.removeListener('calendar:changed', listener); },
   onAutomationChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('automation:changed', listener); return () => ipcRenderer.removeListener('automation:changed', listener); },
   onMcpRequestsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('mcp:requests-changed', listener); return () => ipcRenderer.removeListener('mcp:requests-changed', listener); },

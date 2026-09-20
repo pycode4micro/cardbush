@@ -61,7 +61,8 @@ assert.match(imagePreviewDialog, /setPointerCapture\(event\.pointerId\)/);
 assert.match(imagePreviewDialog, /x: drag\.x \+ event\.clientX - drag\.startX/);
 assert.match(imagePreviewDialog, /y: drag\.y \+ event\.clientY - drag\.startY/);
 assert.match(imagePreviewDialog, /image-preview-zoom-controls/);
-assert.match(imagePreviewDialog, /viewRef\.current\.zoom === 1 \? 2 : 1/);
+// Double-click switches between fit and actual image size. Its rendered
+// geometry is verified in test-image-preview.cjs, not by a fixed 2x formula.
 assert.match(imagePreviewDialog, /import \{ createPortal \} from 'react-dom'/);
 assert.match(
   imagePreviewDialog,

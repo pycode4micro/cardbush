@@ -18,6 +18,7 @@ app.whenReady().then(async () => {
       'src/features/settings/conversationStyle.ts',
       'src/components/WindowSidebarToggle.tsx', 'src/components/SidebarResizer.tsx',
       'src/hooks/useSoftPanelPresence.ts', 'src/features/sidebar/ChatSidebar.tsx',
+      'src/features/sidebar/conversationArchives.ts',
     ].map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n')
       : undefined,
   }], build: { write: false, minify: false,
@@ -72,6 +73,7 @@ app.whenReady().then(async () => {
       const module = { exports: {} };
       new Function('require', 'module', 'exports', ${JSON.stringify(bundle)})(sourceRequire, module, module.exports);
       const views = module.exports, h = React.createElement, reactRoot = createRoot(document.getElementById('root'));
+      window.archiveFixture = { setArchived: views.setConversationsArchived, storageKey: views.conversationArchivesStorageKey };
       window.file = { path: 'C:/Users/fixture/AppData/Roaming/cardbush/AGENTS.md', content: '请使用中文，并核对交付结果。', revision: 'one' };
       window.failSave = false; window.checkouts = [];
       window.cardbushDesktop = {
@@ -114,10 +116,11 @@ app.whenReady().then(async () => {
           }),
           h('main', { className: 'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : '') + (active ? ' app-content-suspended' : ''), inert: active ? true : undefined },
             presence.mounted && h(views.ChatSidebar, {
-              language:'zh', section:'chat', activeConversationId:'', projects:[], conversations:[], changeReportsByConversation:{},
-              onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop,
-              onProjectAction:noop, onDeleteConversation:noop, onRenameConversation:noop, onOpenConversationChanges:noop,
-              onOpenSettings:() => setActive(true), softVisible:presence.visible,
+              language:'zh', section:'chat', activeConversationId:'', projects:settingsProps.projects || [], conversations:settingsProps.conversations, changeReportsByConversation:{},
+              onSectionChange:noop, onConversationChange:id => window.sidebarOpenedConversations?.push(id), onCreateConversation:noop, onAddProject:noop,
+              onProjectAction:(action, project) => settingsProps.onProjectAction?.(action, project), onDeleteConversation:noop, onRenameConversation:noop, onOpenConversationChanges:noop,
+              onOpenSettings:() => setActive(true),
+              onOpenArchives:() => { settingsProps.initialSection = 'cache'; setActive(true); renderSettings(); }, softVisible:presence.visible,
             }),
             presence.mounted && h(views.SidebarResizer, { language:'zh', width, onWidthChange:setWidth,
               onCollapse:() => setCollapsed(true), softVisible:presence.visible && !active }),
@@ -134,6 +137,13 @@ app.whenReady().then(async () => {
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'archives') {
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      await require('./helpers/settings-archives.cjs')({ run, until, window: win, root, click, edit });
+      assert.deepEqual(await run('failures'), []);
+      assert.deepEqual(errors, []);
+      win.destroy(); app.exit(0); return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'maintenance') {
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
       await require('./helpers/settings-maintenance.cjs')({ run, until, window: win, root, click });

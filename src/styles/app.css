@@ -41,6 +41,10 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   --scrollbar-thumb: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--surface) 86%, var(--text) 14%);
   --scrollbar-track: transparent;
+  --menu-surface: color-mix(in srgb, var(--surface-strong) 97%, transparent);
+  --menu-border: color-mix(in srgb, var(--border) 78%, transparent);
+  --menu-shadow: 0 12px 30px color-mix(in srgb, var(--shadow) 78%, transparent);
+  --menu-radius: 10px;
 }
 
 .soft-panel-motion {
@@ -330,10 +334,10 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   gap: 1px;
   padding: 5px;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface-strong) 97%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 10px;
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--shadow) 78%, transparent);
+  background: var(--menu-surface);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-radius);
+  box-shadow: var(--menu-shadow);
   backdrop-filter: blur(20px) saturate(1.08);
   -webkit-backdrop-filter: blur(20px) saturate(1.08);
 }
@@ -1070,14 +1074,14 @@ body.sidebar-resizing .right-inspector {
 }
 
 .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
-.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
 .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
   animation: conversation-title-marquee var(--conversation-title-duration, 5s)
     linear 140ms forwards;
 }
 
 .conversation-row:hover .conversation-title.is-hover-scrollable,
-.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-title.is-hover-scrollable,
 .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable {
   -webkit-mask-image: linear-gradient(
     90deg,
@@ -1110,7 +1114,7 @@ body.sidebar-resizing .right-inspector {
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
-  .conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
   .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
     animation: none;
   }
@@ -1297,7 +1301,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .conversation-row:hover .conversation-running-indicator,
-.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-running-indicator,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-running-indicator,
 .conversation-row:has(.sidebar-menu) .conversation-running-indicator {
   opacity: 0;
 }
@@ -1330,7 +1334,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .conversation-row:hover .conversation-attention-indicator,
-.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-attention-indicator,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-attention-indicator,
 .conversation-row:has(.sidebar-menu) .conversation-attention-indicator {
   opacity: 0;
 }
@@ -1358,9 +1362,9 @@ body.sidebar-resizing .right-inspector {
 }
 
 .row-new-chat,
-.row-more,
+.row-archive,
 .conversation-pin,
-.conversation-more {
+.conversation-archive {
   flex: 0 0 auto;
   color: var(--sidebar-text-soft, var(--text-soft));
   width: 22px;
@@ -1376,9 +1380,9 @@ body.sidebar-resizing .right-inspector {
 }
 
 .row-new-chat,
-.row-more,
+.row-archive,
 .conversation-pin,
-.conversation-more {
+.conversation-archive {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -1389,7 +1393,7 @@ body.sidebar-resizing .right-inspector {
   right: 25px;
 }
 
-.row-more {
+.row-archive {
   right: 3px;
 }
 
@@ -1400,15 +1404,15 @@ body.sidebar-resizing .right-inspector {
   pointer-events: auto;
 }
 
-.project-row:hover .row-more,
-.project-row:has(.row-more:focus-visible) .row-more,
-.project-row:has(.sidebar-menu) .row-more,
+.project-row:hover .row-archive,
+.project-row:has(.row-archive:focus-visible) .row-archive,
+.project-row:has(.sidebar-menu) .row-archive,
 .conversation-row:hover .conversation-pin,
-.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-pin,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-pin,
 .conversation-row:has(.sidebar-menu) .conversation-pin,
-.conversation-row:hover .conversation-more,
-.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-more,
-.conversation-row:has(.sidebar-menu) .conversation-more {
+.conversation-row:hover .conversation-archive,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-archive,
+.conversation-row:has(.sidebar-menu) .conversation-archive {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1418,17 +1422,17 @@ body.sidebar-resizing .right-inspector {
   z-index: 2;
 }
 
-.conversation-more {
+.conversation-archive {
   right: 3px;
   margin-left: 0;
   z-index: 2;
 }
 
-.conversation-more:hover,
+.conversation-archive:hover,
 .conversation-pin:hover,
 .conversation-pin.is-pinned,
 .row-new-chat:hover,
-.row-more:hover {
+.row-archive:hover {
   color: var(--sidebar-text, var(--text));
   background: color-mix(in srgb, gray 14%, transparent);
 }
@@ -1436,16 +1440,21 @@ body.sidebar-resizing .right-inspector {
 .sidebar-menu,
 .sidebar-context-menu {
   box-sizing: border-box;
-  width: 188px;
-  max-width: min(208px, calc(100vw - 16px));
+  width: 260px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
   gap: 1px;
   padding: 5px;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface) 98%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 9px;
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--shadow) 150%, transparent);
+  background: var(--menu-surface);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-radius);
+  box-shadow: var(--menu-shadow);
+  backdrop-filter: blur(20px) saturate(1.08);
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
 }
 
 .sidebar-menu {
@@ -1460,30 +1469,25 @@ body.sidebar-resizing .right-inspector {
   z-index: 1400;
 }
 
-.theme-dark .sidebar-menu,
-.theme-dark .sidebar-context-menu {
-  background: rgba(36, 36, 36, 0.98);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
-}
-
 .sidebar-menu-button {
   box-sizing: border-box;
   width: 100%;
-  min-height: 30px;
+  min-height: 31px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
-  color: color-mix(in srgb, var(--text) 76%, transparent);
+  padding: 5px 9px 5px 5px;
+  color: var(--text-mid);
   background: transparent;
   border-radius: 7px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   line-height: 1.25;
   text-align: left;
 }
 
-.sidebar-menu-button:hover {
+.sidebar-menu-button:hover:not(:disabled),
+.sidebar-menu-button:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
@@ -1492,7 +1496,16 @@ body.sidebar-resizing .right-inspector {
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
-  opacity: 0.82;
+  color: var(--text-soft);
+}
+
+.sidebar-menu-button kbd {
+  margin-left: auto;
+  padding-left: 18px;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .sidebar-menu-button:disabled {
@@ -1509,6 +1522,10 @@ body.sidebar-resizing .right-inspector {
 
 .sidebar-menu-button.danger {
   color: var(--danger);
+}
+
+.sidebar-menu-button.danger svg {
+  color: inherit;
 }
 
 .app.has-custom-background .sidebar-menu,
@@ -1629,6 +1646,12 @@ body.sidebar-resizing .right-inspector {
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-panel > .topbar {
+  flex-shrink: 0;
+  /* The visible divider is also the transcript's scroll boundary. */
+  border-bottom-color: color-mix(in srgb, var(--text) 16%, var(--surface));
 }
 
 .chat-panel.window-maximized .message-list {
@@ -11219,11 +11242,28 @@ body.queue-reordering * {
 }
 
 .composer-popover.more {
-  width: min(480px, calc(100vw - 24px));
+  width: min(320px, calc(100vw - 24px));
   height: auto;
   display: grid;
   grid-template-rows: auto auto;
-  border-radius: 14px;
+  background: var(--menu-surface);
+  border-color: var(--menu-border);
+  border-radius: var(--menu-radius);
+  box-shadow: var(--menu-shadow);
+  backdrop-filter: blur(20px) saturate(1.08);
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
+}
+
+.composer-popover.more header {
+  min-height: 31px;
+  padding: 5px 9px 5px 11px;
+  border-bottom-color: var(--menu-border);
+}
+
+.composer-popover.more header strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-soft);
 }
 
 .composer-popover.permissions {
@@ -11347,7 +11387,7 @@ body.queue-reordering * {
   }
 }
 
-.theme-dark .composer-popover {
+.theme-dark .composer-popover:not(.more) {
   background: rgba(36, 36, 36, 0.98);
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.38);
 }
@@ -15664,6 +15704,135 @@ body.queue-reordering * {
   }
 }
 
+.archive-manager {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.archive-manager-toolbar,
+.archive-manager-tabs,
+.archive-manager-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.archive-manager-toolbar {
+  justify-content: space-between;
+}
+
+.archive-manager-tabs {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.archive-manager-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: var(--text-soft);
+  background: transparent;
+}
+
+.archive-manager-tabs button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 35%, transparent);
+}
+
+.archive-manager-tabs span {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+.archive-manager-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 11px;
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.archive-manager-search:focus-within {
+  border-color: var(--accent);
+}
+
+.archive-manager-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.archive-manager-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  color: var(--text-soft);
+}
+
+.archive-manager-row + .archive-manager-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.archive-manager-info {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 5px;
+}
+
+.archive-manager-info strong,
+.archive-manager-info small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-manager-info strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.archive-manager-info small {
+  font-size: 11.5px;
+}
+
+.archive-manager-row > svg,
+.archive-manager-row > button {
+  flex-shrink: 0;
+}
+
+.archive-manager-empty {
+  margin: 0;
+  padding: 24px 12px;
+  color: var(--text-soft);
+  text-align: center;
+  font-size: 13px;
+}
+
+.archive-manager-pagination {
+  justify-content: flex-end;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 .maintenance-action-list {
   display: grid;
   gap: 10px;
@@ -18259,7 +18428,7 @@ body.queue-reordering * {
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
-  .conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:has(.conversation-pin:focus-visible, .conversation-archive:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
   .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
     animation: none;
   }
@@ -19140,7 +19309,58 @@ body.change-review-resizing {
 }
 
 .change-review-diff-pane .diff-lines {
+  --review-line-number-width: 44px;
   padding: 8px 0 18px;
+}
+
+/* One visible line-number column: original lines for deletions, updated lines otherwise. */
+.change-review-diff-pane .diff-line {
+  min-height: 26px;
+  grid-template-columns: 3px var(--review-line-number-width) max-content;
+}
+
+.change-review-diff-pane .diff-prefix,
+.change-review-diff-pane .diff-line:not(.deletion) .diff-line-number.old,
+.change-review-diff-pane .diff-line.deletion .diff-line-number.new,
+.change-review-diff-pane .diff-line:not(.deletion) .review-line-target.old,
+.change-review-diff-pane .diff-line.deletion .review-line-target.new {
+  display: none;
+}
+
+.change-review-diff-pane .diff-line-number {
+  padding: 1px 8px 1px 4px;
+  border-right: 0;
+  font-size: 12px;
+  line-height: 24px;
+  color: color-mix(in srgb, currentColor 75%, var(--muted));
+}
+
+.change-review-diff-pane .diff-line code {
+  padding: 1px 12px 1px 8px;
+  font-size: 14px;
+  line-height: 24px;
+}
+
+.change-review-diff-pane .review-line-actions {
+  width: calc(3px + var(--review-line-number-width));
+  height: 100%;
+}
+
+.change-review-diff-pane .review-line-target {
+  left: 3px;
+  width: var(--review-line-number-width);
+  height: 100%;
+}
+
+.change-review-diff-pane .review-add-comment {
+  left: calc(3px + var(--review-line-number-width) - 26px);
+  top: 50%;
+  width: 22px;
+  transform: translateY(-50%);
+}
+
+.change-review-diff-pane .review-commentable-line:is(:hover, :focus-within) .diff-line-number {
+  color: transparent;
 }
 
 .change-review-empty {
@@ -19647,12 +19867,12 @@ body.change-review-resizing .change-review-file-nav-viewport { transition: none;
 }
 
 /* Composer attachments and global instructions share the existing theme tokens. */
-.composer-add-menu { display: grid; gap: 4px; padding: 6px; }
-.composer-add-action { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 58px; padding: 10px; border-radius: 8px; color: var(--text); background: transparent; text-align: left; }
-.composer-add-action:hover, .composer-add-action:focus-visible { background: color-mix(in srgb, var(--text) 7%, transparent); }
-.composer-add-action > svg { color: var(--text-soft); }
-.composer-add-copy { display: grid; gap: 4px; min-width: 0; line-height: 1.4; }
-.composer-add-copy strong { font-size: 13px; font-weight: 700; }
+.composer-add-menu { display: grid; gap: 1px; padding: 5px; }
+.composer-add-action { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 50px; padding: 7px 9px 7px 5px; border-radius: 7px; color: var(--text-mid); background: transparent; text-align: left; }
+.composer-add-action:hover, .composer-add-action:focus-visible { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.composer-add-action > svg { width: 16px; height: 16px; color: var(--text-soft); }
+.composer-add-copy { display: grid; gap: 2px; min-width: 0; line-height: 1.4; }
+.composer-add-copy strong { font-size: 12px; font-weight: 500; }
 .composer-add-copy small { color: var(--text-soft); font-size: 11px; }
 .composer-add-toggle { width: 28px; height: 16px; padding: 3px; border-radius: 10px; background: color-mix(in srgb, var(--text) 18%, transparent); }
 .composer-add-toggle::after { content: ''; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-soft); transition: transform 120ms ease; }
