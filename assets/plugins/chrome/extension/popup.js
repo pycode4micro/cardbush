@@ -60,7 +60,11 @@ async function refresh() {
     ? state.controlledTabCount > 0
       ? `正在控制 ${state.controlledTabCount} 个标签页`
       : '已连接 CardBush，等待控制'
-    : 'CardBush 未连接，请先打开应用并配置本地桥';
+    : state.lastError
+      ? `CardBush 连接失败：${state.lastError}`
+      : state.nativeConnecting
+        ? '正在连接 CardBush 本地桥…'
+        : 'CardBush 未连接，请先打开应用并配置本地桥';
   connection.classList.toggle('offline', !state.nativeConnected);
   scope.textContent = state.activeScope?.groupTitle
     ? `${state.pendingAuthorization ? '等待授权' : '目标组'}：${state.activeScope.groupTitle}`

@@ -32,6 +32,10 @@ try {
     () => broker.status().extensionConnected,
     () => `${stderr} ${exited} native=${JSON.stringify(output.seen)}`,
   );
+  const ready = await withTimeout(output.next(), 5_000, () => stderr);
+  assert.deepEqual(ready.value, {
+    type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1',
+  });
 
   child.stdin.write(nativeFrame({
     type: 'status',
@@ -85,6 +89,18 @@ try {
   const restartedExit = await withTimeout(brokerClosedExit, 5_000, () => restartStderr);
   assert.equal(restartedExit.signal, null);
   assert.equal(restartedExit.code, 0);
+
+  child = spawn(executable, ['chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/'], {
+    env: { ...environment, CARDBUSH_CHROME_CONNECTOR_CONFIG: path.join(root, 'missing-config.json') },
+    stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+  });
+  const unavailableOutput = nativeMessages(child.stdout);
+  const unavailableExit = new Promise(resolve => child.once('exit', code => resolve(code)));
+  const unavailable = await withTimeout(unavailableOutput.next(), 5_000, () => 'no bridge error');
+  assert.equal(unavailable.value.type, 'connector_error');
+  assert.equal(unavailable.value.code, 'cardbush_bridge_unavailable');
+  assert.equal(await withTimeout(unavailableExit, 5_000, () => 'missing config did not exit'), 3);
+  assert.ok(!unavailableOutput.seen.some(message => message.type === 'connector_ready'));
 
   child = spawn(executable, ['chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'], {
     env: environment,

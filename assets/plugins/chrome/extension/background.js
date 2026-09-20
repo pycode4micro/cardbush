@@ -1,5 +1,6 @@
 importScripts('downloads.js');
 const NATIVE_HOST = 'com.cardbush.browser_connector';
+const CONNECTOR_PROTOCOL = 'cardbush.chrome_connector.v1';
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const CONTROL_IDLE_TIMEOUT_MS = 60_000;
 // Finish before the bridge's 30 s deadline, so the caller receives a specific cause.
@@ -16,6 +17,7 @@ const GROUP_COLOR = 'cyan';
 const GROUP_TITLE_PREFIX = 'CardBush · ';
 
 let nativePort = null;
+let nativeReady = false;
 let lastError = '';
 let activeScope = null;
 const attachedTabs = new Map();
@@ -75,13 +77,40 @@ function connectNative() {
   try {
     const port = chrome.runtime.connectNative(NATIVE_HOST);
     nativePort = port;
+    nativeReady = false;
     lastError = '';
+    let connectionError = '';
+    const handshakeTimer = setTimeout(() => {
+      if (nativePort !== port || nativeReady) return;
+      lastError = 'CardBush 本地桥握手超时，请更新应用和浏览器扩展并重新配置本地桥。';
+      nativePort = null;
+      port.disconnect();
+      void releaseAll();
+      scheduleReconnect();
+    }, 8_000);
     port.onMessage.addListener((message) => {
-      if (message?.type === 'connector_error') {
-        lastError = String(message.message || message.code || 'Connector error');
-        void publishStatus(false);
+      if (nativePort !== port) return;
+      if (message?.type === 'connector_ready' && message.protocol === CONNECTOR_PROTOCOL) {
+        clearTimeout(handshakeTimer);
+        nativeReady = true;
+        lastError = '';
+        void publishStatus();
         return;
       }
+      if (message?.type === 'connector_error') {
+        if (nativeReady && message.code === 'cardbush_command_too_large') {
+          // A rejected command does not close the authenticated native bridge.
+          lastError = String(message.message || message.code);
+          void publishStatus();
+          return;
+        }
+        clearTimeout(handshakeTimer);
+        nativeReady = false;
+        connectionError = String(message.message || message.code || 'Connector error');
+        lastError = connectionError;
+        return;
+      }
+      if (!nativeReady) return;
       if (message?.type === 'control' && message.method === 'debugger.detachAll') {
         void releaseAll();
         return;
@@ -93,15 +122,19 @@ function connectNative() {
       if (message?.type === 'request') void handleNativeRequest(message);
     });
     port.onDisconnect.addListener(() => {
-      lastError = chrome.runtime.lastError?.message || 'CardBush is not connected.';
-      if (nativePort === port) nativePort = null;
+      const disconnectError = chrome.runtime.lastError?.message;
+      clearTimeout(handshakeTimer);
+      if (nativePort !== port) return;
+      lastError = connectionError || disconnectError || 'CardBush is not connected.';
+      nativePort = null;
+      nativeReady = false;
       void releaseAll();
       scheduleReconnect();
     });
-    void publishStatus();
   } catch (error) {
     lastError = errorMessage(error);
     nativePort = null;
+    nativeReady = false;
     scheduleReconnect();
   }
 }
@@ -687,9 +720,11 @@ async function persistSessionState() {
 }
 
 async function publishStatus(includeError = true) {
-  if (!nativePort) return;
+  const port = nativePort;
+  if (!port || !nativeReady) return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  nativePort.postMessage({
+  if (nativePort !== port || !nativeReady) return;
+  port.postMessage({
     type: 'status',
     version: chrome.runtime.getManifest().version,
     activeTabId: tab?.id,
@@ -714,7 +749,8 @@ async function popupState(preferredScopeId = '') {
     : null;
   const managedTab = selectedScope && tab ? await isTabManaged(selectedScope, tab) : false;
   return {
-    nativeConnected: nativePort != null,
+    nativeConnected: nativePort != null && nativeReady,
+    nativeConnecting: nativePort != null && !nativeReady && !lastError,
     controlledTabCount: attachedTabs.size,
     activeScope: selectedScope ? {
       id: selectedScope.id,

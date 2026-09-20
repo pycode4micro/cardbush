@@ -149,6 +149,16 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   t.after(() => { nativeMessages.emit({ type: 'control', method: 'debugger.detachAll' }); });
   await flush();
 
+  const connecting = await popupRequest(runtimeMessages, 'status');
+  assert.equal(connecting.nativeConnected, false, 'allocating a native port is not a completed handshake');
+  assert.equal(connecting.nativeConnecting, true);
+  assert.equal(posted.length, 0, 'status must wait for the broker handshake');
+  nativeMessages.emit({ type: 'connector_ready', protocol: 'wrong-protocol' });
+  assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, false);
+  nativeMessages.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
+  assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, true);
+  await eventually(() => posted.some(message => message.type === 'status'));
+
   const missingScope = await nativeRequest(nativeMessages, posted, 'tabs.list', {});
   assert.equal(missingScope.error.code, 'browser_scope_missing');
 
@@ -334,8 +344,18 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(stopped.controlledTabCount, 0);
   assert.equal(nativeDisconnectCalled, false);
 
+  nativeMessages.emit({ type: 'connector_error', code: 'cardbush_command_too_large', message: 'Command is too large.' });
+  assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, true, 'a rejected command must not strand the connection');
+  nativeMessages.emit({ type: 'connector_error', message: 'The bridge configuration is missing.' });
+  const failed = await popupRequest(runtimeMessages, 'status');
+  assert.equal(failed.nativeConnected, false);
+  assert.equal(failed.lastError, 'The bridge configuration is missing.');
   nativeDisconnects.emit();
   await eventually(() => alarms.length > 0);
+  const disconnected = await popupRequest(runtimeMessages, 'status');
+  assert.equal(disconnected.nativeConnected, false);
+  assert.equal(disconnected.nativeConnecting, false);
+  assert.equal(disconnected.lastError, failed.lastError, 'disconnect must preserve the useful bridge error');
   assert.equal(alarms.at(-1).name, 'cardbush-native-reconnect');
   assert.equal(alarms.at(-1).options.delayInMinutes, 0.5);
 });
@@ -431,6 +451,9 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
   await flush();
 
   const restoredState = await popupRequest(runtimeMessages, 'status');
+  assert.equal(restoredState.nativeConnected, false);
+  nativeMessages.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
+  assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, true);
   assert.equal(restoredState.activeScope.id, SCOPE_A.scopeId);
   assert.equal(restoredState.access, 'once');
   const restoredDebug = await debug(nativeMessages, posted, SCOPE_A, 22);

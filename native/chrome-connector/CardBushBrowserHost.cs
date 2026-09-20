@@ -5,6 +5,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 internal static class CardBushBrowserHost
 {
@@ -81,6 +82,15 @@ internal static class CardBushBrowserHost
                                 if (message != null && message.TryGetValue("type", out type) &&
                                     String.Equals(Convert.ToString(type), "hello_ack", StringComparison.Ordinal))
                                 {
+                                    if (!String.Equals(RequiredString(message, "protocol"), Protocol, StringComparison.Ordinal))
+                                    {
+                                        throw new InvalidDataException("The CardBush browser bridge handshake does not match.");
+                                    }
+                                    WriteNativeMessage(Encoding.UTF8.GetBytes(Json.Serialize(new Dictionary<string, object>
+                                    {
+                                        { "type", "connector_ready" },
+                                        { "protocol", Protocol }
+                                    })));
                                     continue;
                                 }
                                 WriteNativeMessage(Encoding.UTF8.GetBytes(line));
@@ -144,7 +154,7 @@ internal static class CardBushBrowserHost
         string configPath = Environment.GetEnvironmentVariable("CARDBUSH_CHROME_CONNECTOR_CONFIG");
         if (String.IsNullOrWhiteSpace(configPath))
         {
-            configPath = Path.Combine(
+            configPath = RegisteredConfigPath() ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "cardbush",
                 "browser-connector",
@@ -157,6 +167,40 @@ internal static class CardBushBrowserHost
             throw new InvalidDataException("The CardBush browser bridge configuration is invalid.");
         }
         return config;
+    }
+
+    private static string RegisteredConfigPath()
+    {
+        // An MSIX application's Roaming directory is redirected. The browser
+        // starts this host outside that context, so use the same physical
+        // directory as the native manifest that the browser discovered.
+        const string keyPath = @"Software\Google\Chrome\NativeMessagingHosts\com.cardbush.browser_connector";
+        string executablePath = Path.GetFullPath(typeof(CardBushBrowserHost).Assembly.Location);
+        foreach (RegistryHive hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+        {
+            foreach (RegistryView view in new[] { RegistryView.Registry32, RegistryView.Registry64 })
+            {
+                using (RegistryKey registry = RegistryKey.OpenBaseKey(hive, view))
+                using (RegistryKey key = registry.OpenSubKey(keyPath))
+                {
+                    string manifestPath = key == null ? null : key.GetValue(null) as string;
+                    if (String.IsNullOrWhiteSpace(manifestPath) || !Path.IsPathRooted(manifestPath) || !File.Exists(manifestPath)) continue;
+                    Dictionary<string, object> manifest = Json.DeserializeObject(
+                        File.ReadAllText(manifestPath, Encoding.UTF8)) as Dictionary<string, object>;
+                    object hostPath;
+                    if (manifest == null || !manifest.TryGetValue("path", out hostPath) || !(hostPath is string)) continue;
+                    string registeredHost = Convert.ToString(hostPath);
+                    if (!Path.IsPathRooted(registeredHost)) continue;
+                    string fullHostPath = Path.GetFullPath(registeredHost);
+                    string aliasPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "Microsoft", "WindowsApps", "CardBushBrowserHost.exe");
+                    if (!String.Equals(fullHostPath, executablePath, StringComparison.OrdinalIgnoreCase) &&
+                        !String.Equals(fullHostPath, aliasPath, StringComparison.OrdinalIgnoreCase)) continue;
+                    return Path.Combine(Path.GetDirectoryName(manifestPath), "bridge.json");
+                }
+            }
+        }
+        return null;
     }
 
     private static string RequiredString(Dictionary<string, object> value, string key)

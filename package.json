@@ -39,6 +39,8 @@
     "runtime-tools:verify": "node scripts/install-ripgrep.mjs --verify",
     "package:dir": "npm run runtime-tools:verify && npm run build && electron-builder --dir",
     "package:win": "npm run runtime-tools:verify && npm run build && electron-builder --win nsis --x64 --publish never",
+    "package:msix": "node scripts/package-msix.mjs",
+    "test:msix": "tsc -p tsconfig.node.json && node --test scripts/test-msix-packaging.mjs",
     "smoke:packaged": "npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke --publish never && node scripts/verify-packaged-platform.mjs",
     "icon:generate": "electron scripts/generate-cardbush-icon.cjs",
     "fix:electron": "node scripts/install-electron.mjs",
