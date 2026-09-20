@@ -130,6 +130,8 @@ test('legacy queued timers migrate once, preserve paused jobs and recorded run i
   assert.equal((await restarted.list()).jobs[0].runs[1].sessionId, migrated[0].runs[1].sessionId);
   await restarted.tick(); await until(() => f.calls.length === 1);
   assert.equal(f.calls[0].job.id, timer.id); assert.equal(f.calls[0].ctx.model, 'fixture');
+  // Drain this scheduler's completion write before fixture cleanup removes its directory.
+  await restarted.close();
 });
 
 test('source links use session existence, not retained settings; missing legacy settings fail once', async t => {

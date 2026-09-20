@@ -162,7 +162,13 @@ app.whenReady().then(async () => {
     assert.equal((await geometry()).width,1600,'actual-size mode stays at source resolution when the window shrinks');
     window.setContentSize(1200,800); await pause();
     await run('flushSync(()=>document.querySelector(".image-preview-stage").dispatchEvent(new MouseEvent("dblclick",{bubbles:true})))');
-    assert.ok(Math.abs((await geometry()).width-fitted.width)<1,'double-click returns from actual size to fit');
+    // ResizeObserver and the native client area can settle after setContentSize.
+    // Fit must match the current viewport, which can differ from the initial window.
+    await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const doubleClickedFit = await geometry();
+    const restoredFitScale = Math.min(1,(doubleClickedFit.stageWidth-32)/1600,(doubleClickedFit.stageHeight-32)/900);
+    assert.ok(Math.abs(doubleClickedFit.width-1600*restoredFitScale)<1&&Math.abs(doubleClickedFit.height-900*restoredFitScale)<1,
+      'double-click returns from actual size to fit: '+JSON.stringify(doubleClickedFit));
     await run('flushSync(()=>document.querySelector(".image-preview-stage").dispatchEvent(new MouseEvent("dblclick",{bubbles:true})))');
     assert.equal((await geometry()).width,1600,'double-click from fit restores actual source pixels rather than a fixed multiplier');
     await run('flushSync(()=>document.querySelector("[aria-label=恢复适应窗口]").click())');
