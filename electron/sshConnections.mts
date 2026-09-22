@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname, posix } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { openSshTunnel } from './sshTunnel.mjs';
 import { parseSshWorkspace, sshWorkspace, type SshConnection, type SshConnectionInput, type SshTestResult } from '@cardbush/bush-protocol';
 
 type Saved = Omit<SshConnection, 'hasPassword' | 'hasPassphrase' | 'status'> & { password?: string; passphrase?: string };
@@ -19,6 +20,8 @@ const within = (root: string, path: string) => path === root || path.startsWith(
 /** Desktop-owned SSH connections. No private key or password is exposed to Runtime or models. */
 export class SshConnectionManager {
   #clients = new Map<string, Promise<Client>>();
+  #opening = new Map<string, Client>();
+  #closing = false;
   #connected = new Set<string>();
   #terminals = new Map<string, Terminal>();
   #observed = new Map<string, string>();
@@ -60,20 +63,27 @@ export class SshConnectionManager {
   }
   remove(id: string) { return this.#serial(async () => { if (this.#busy(id)) throw Error('连接中还有运行任务，请先停止。'); await this.disconnect(id); await this.#commit((await this.#read()).filter(item => item.id !== id)); return this.list(); }); }
   #busy(id: string) { return [...this.#terminals.values()].some(item => item.connectionId === id && item.state === 'running'); }
-  async disconnect(id: string) { if (this.#busy(id)) throw Error('连接中还有运行任务，请先停止。'); const pending = this.#clients.get(id); this.#clients.delete(id); this.#connected.delete(id); (await pending?.catch(() => undefined))?.end(); }
+  async disconnect(id: string) { if (this.#busy(id)) throw Error('连接中还有运行任务，请先停止。'); const pending = this.#clients.get(id); this.#clients.delete(id); this.#connected.delete(id); this.#opening.get(id)?.destroy(); (await pending?.catch(() => undefined))?.end(); }
   async #connection(id: string): Promise<Client> {
+    if (this.#closing) throw Error('SSH connections are closing.');
     const cached = this.#clients.get(id); if (cached) return cached;
-    let pending: Promise<Client>;
+    let pending!: Promise<Client>;
     pending = (async () => {
       const item = (await this.#read()).find(value => value.id === id); if (!item) throw Error('SSH 连接已删除，请在设置中重新选择连接。');
       const key = item.authentication === 'key' ? await readFile(item.privateKeyPath!) : undefined;
       if (key && key.length > 1024 * 1024) throw Error('SSH 私钥文件过大，请确认选择了正确的密钥文件。');
       if (item.authentication === 'agent' && process.platform !== 'win32' && !process.env.SSH_AUTH_SOCK) throw Error('SSH Agent 不可用，请启动 ssh-agent 或选择私钥文件。');
+      if (this.#closing || this.#clients.get(id) !== pending) throw Error('SSH 连接已关闭。');
       return new Promise<Client>((resolve, reject) => {
-        const client = new Client(); let verifiedKey: string | undefined;
+        const client = new Client(); this.#opening.set(id, client); let verifiedKey: string | undefined;
         const failure = (error: Error) => { reject(verifiedKey && verifiedKey !== item.fingerprint ? Object.assign(new Error(item.fingerprint ? 'SSH 主机指纹已变化，请核对服务器身份。' : '首次连接，请确认 SSH 主机指纹。'), { fingerprint: verifiedKey, needsTrust: !item.fingerprint }) : error); };
-        client.on('error', failure).once('ready', () => { this.#connected.add(id); resolve(client); });
+        client.on('error', failure).once('ready', () => {
+          if (this.#opening.get(id) === client) this.#opening.delete(id);
+          if (this.#closing || this.#clients.get(id) !== pending) { client.end(); reject(Error('SSH 连接已关闭。')); return; }
+          this.#connected.add(id); resolve(client);
+        });
         client.once('close', () => {
+          if (this.#opening.get(id) === client) this.#opening.delete(id);
           if (this.#clients.get(id) === pending) { this.#clients.delete(id); this.#connected.delete(id); }
           for (const terminal of this.#terminals.values()) if (terminal.client === client && terminal.state === 'running') { terminal.state = 'disconnected'; terminal.changed.emit('data'); }
           reject(Error('SSH 连接已关闭。任务不会自动重放。'));
@@ -91,6 +101,14 @@ export class SshConnectionManager {
   async test(id: string): Promise<SshTestResult> {
     try { const item = (await this.#read()).find(value => value.id === id); if (!item) throw Error('SSH connection not found'); const directory = await this.directory(sshWorkspace(id, item.defaultDirectory)); return { ok: true, directory: directory.path }; }
     catch (error) { const detail = error as Error & { fingerprint?: string; needsTrust?: boolean }; return { ok: false, error: detail.message, fingerprint: detail.fingerprint, needsTrust: detail.needsTrust }; }
+  }
+  async tunnel(id: string, localUrl: string, remoteHost: string, remotePort: number, signal: AbortSignal) {
+    signal.throwIfAborted();
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true }); });
+    const client = await Promise.race([this.#connection(id), cancelled]).finally(() => signal.removeEventListener('abort', abort));
+    signal.throwIfAborted();
+    return openSshTunnel(client, localUrl, remoteHost, remotePort, signal);
   }
   async #sftp<T>(id: string, action: (sftp: SFTPWrapper) => Promise<T>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted(); const client = await this.#connection(id); signal?.throwIfAborted();
@@ -315,5 +333,5 @@ export class SshConnectionManager {
     };
     terminal.stdout='';terminal.stderr='';return result;
   }
-  async close() { await Promise.allSettled([...this.#terminals.values()].map(item => this.#stop(item))); for (const pending of this.#clients.values()) (await pending.catch(() => undefined))?.end(); this.#clients.clear();this.#connected.clear(); }
+  async close() { this.#closing = true; for (const client of this.#opening.values()) client.destroy(); await Promise.allSettled([...this.#terminals.values()].map(item => this.#stop(item))); for (const pending of this.#clients.values()) (await pending.catch(() => undefined))?.end(); this.#clients.clear();this.#opening.clear();this.#connected.clear(); }
 }

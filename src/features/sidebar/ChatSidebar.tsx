@@ -848,6 +848,23 @@ export const ChatSidebar = memo(function ChatSidebar({
 
       <div className="sidebar-scroll">
         <div className="sidebar-sections">
+              <SectionHeader
+                title={language === 'zh' ? '置顶' : 'Pinned'}
+                action={<Pin size={14} />}
+                actionLabel={language === 'zh' ? '置顶内容' : 'Pinned items'}
+                expanded={expandedSections.has('pinned')}
+                onToggle={() => toggleSection('pinned')}
+              />
+              {expandedSections.has('pinned') && (
+                pinnedProjects.length > 0 || pinnedConversations.length > 0
+                  ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
+                  : (
+                    <div className="sidebar-pinned-empty">
+                      {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
+                    </div>
+                  )
+              )}
+
               <SectionHeader title="Agents" action={<Plus size={14}/>} actionLabel={language === 'zh' ? '管理 Agents' : 'Manage Agents'} expanded={expandedSections.has('agents')} onToggle={() => toggleSection('agents')} onAction={() => onAgentSelect ? onAgentSelect('') : onSectionChange('agents')} />
               {expandedSections.has('agents') && <div className="sidebar-agent-list">
                 {agents.map(agent => {
@@ -916,22 +933,6 @@ export const ChatSidebar = memo(function ChatSidebar({
                 })}
                 {agents.length === 0 && <button className="conversation-row agent-sidebar-empty" onClick={() => onSectionChange('agents')}><Plus size={15}/><span>{language === 'zh' ? '连接 Agent' : 'Connect an Agent'}</span></button>}
               </div>}
-              <SectionHeader
-                title={language === 'zh' ? '置顶' : 'Pinned'}
-                action={<Pin size={14} />}
-                actionLabel={language === 'zh' ? '置顶内容' : 'Pinned items'}
-                expanded={expandedSections.has('pinned')}
-                onToggle={() => toggleSection('pinned')}
-              />
-              {expandedSections.has('pinned') && (
-                pinnedProjects.length > 0 || pinnedConversations.length > 0
-                  ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
-                  : (
-                    <div className="sidebar-pinned-empty">
-                      {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
-                    </div>
-                  )
-              )}
 
               <SectionHeader
                 title={language === 'zh' ? '项目' : 'Projects'}

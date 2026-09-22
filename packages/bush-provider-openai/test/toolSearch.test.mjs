@@ -232,7 +232,7 @@ test('native search validates completed identities and treats argument property 
   assert.equal(completed.at(-1).kind, 'response_completed');
   assert.equal(completed.some(event => event.kind === 'tool_call_delta'), false);
   for (const item of [{ ...searchItem(), arguments: 'invalid' }, { ...searchItem(), execution: 'server' },
-    { ...searchItem(), call_id: null }, { ...searchItem(), status: 'incomplete' }]) {
+    { ...searchItem(), call_id: null }]) {
     const events = normalizeResponseStreamEvent({ type: 'response.output_item.done', output_index: 0, item },
       { requestId: 'r', sequence: 0, started: false, toolSearchMode: 'native' });
     assert.equal(events.at(-1).kind, 'response_failed');

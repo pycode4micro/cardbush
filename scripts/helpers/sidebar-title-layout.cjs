@@ -54,7 +54,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     };
     undefined;
   `);
-  await until("document.querySelectorAll('.conversation-row').length === 5", 'sidebar fixture rows');
+  await until("document.querySelectorAll('.conversation-row .conversation-title').length === 5", 'sidebar fixture rows');
   const moveAway = async () => {
     window.webContents.sendInputEvent({ type: 'mouseMove', x: 450, y: 10 });
     await pause(130);

@@ -1,21 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
-import { createProductAgentTurnRequest } from '@cardbush/bush-product-agent';
-import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, reasoningEffortSchema, decodeSessionSnapshot, type SessionSnapshot, type RuntimeEvent, type RuntimeProviderBindingRef, type ToolDefinition } from '@cardbush/bush-protocol';
+import { runtimeSessionReadRequestSchema } from '@cardbush/bush-protocol';
+import { createProductAgentTurnRequest, GOAL_CONTINUATION_PROMPT } from '@cardbush/bush-product-agent';
+import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, sessionSupersessionSchema, reasoningEffortSchema, decodeSessionSnapshot, type SessionSnapshot, type RuntimeEvent, type RuntimeProviderBindingRef, type ConversationExtractSource, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AgentRuntimeHost } from './agentRuntimeHost.mjs';
 import { ElectronProductHostController } from './productHostController.mjs';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions.js';
 import { installProductPlugin } from './productPlugins.js';
 import { loadEnabledProductPluginExtensions } from './productPlugins.js';
-import { listProductSkills } from './productSkills.js';
+import { listProductSkills, readProductSkill } from './productSkills.js';
 import { agentFileRead, agentFileUpload } from './agentFiles.mjs';
 import { readWorkspaceDirectory } from './workspaceFiles.js';
 import type { AgentEventRequest, AgentInfo, AgentJob, AgentOperation, AgentProject } from './agentTypes.js';
 
 const id = z.string().min(1).max(160);
 const sendSchema = z.object({
+  userMessageMetadata: z.record(z.string(), z.unknown()).optional(),
+  visionEnabled: z.boolean().optional(),
+  turnId: id.optional(), supersession: sessionSupersessionSchema.extend({ expectedRevision: z.number().int().nonnegative() }).optional(), files: z.array(z.string()).optional(), images: z.array(z.string()).optional(), goalObjective: z.string().trim().min(1).optional(),
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
   permissionMode: z.enum(['task_free', 'user_free', 'all_free']).default('task_free'),
   language: z.enum(['zh', 'en']).default('zh'),
@@ -116,7 +120,7 @@ export class AgentService {
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
-    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true } }; }
+    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -152,7 +156,7 @@ export class AgentService {
   #idle(sessionId?: string) { if (sessionId ? this.#active(sessionId) : this.#state.jobs.some(job => ['queued', 'running'].includes(job.status))) throw new Error('Wait for this Agent’s tasks to finish or stop them first.'); }
 
   call(operation: AgentOperation, input: unknown = {}, readSignal?: AbortSignal): Promise<unknown> {
-    const serialized = ['files.upload', 'delegation.submit', 'chat.send', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
+    const serialized = ['files.upload', 'delegation.submit', 'chat.send', 'chat.queue', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
     const workspaceMutation = operation === 'runtime.command' && /(?:revert|restore|update)_workspace|delete_session|clear_sessions|switch_workspace/.test(String((input as { kind?: string })?.kind));
     if (!serialized.includes(operation) && !workspaceMutation) return this.#call(operation, input, readSignal);
     const result = this.#mutations.then(() => this.#call(operation, input));
@@ -167,6 +171,13 @@ export class AgentService {
       case 'conversation.catalog': {
         const roots = [{ path: join(this.bundledRoot, 'plugins'), source: 'bundled' as const }, { path: join(this.root, 'plugins'), source: 'user' as const }];
         const extensions = await loadEnabledProductPluginExtensions(roots, join(this.root, 'config', 'apps.json'));
+        if (data.action === 'read') {
+          const name = z.string().trim().min(1).parse(data.name);
+          const extension = extensions.skills.find(skill => skill.id === name);
+          if (extension) return { name, description: extension.description, path: extension.path, packageDir: dirname(extension.path),
+            content: await readFile(extension.path, 'utf8'), routingHidden: false, requires: [], conflictsWith: [], companionTools: [], blockedTools: [], requiredReads: [], conditionalReads: [], resourceQuickRefs: [] };
+          return readProductSkill([{ path: join(this.bundledRoot, 'skills'), source: 'bundled' }, { path: join(this.root, 'skills'), source: 'user' }], name);
+        }
         const skills = await listProductSkills([{ path: join(this.bundledRoot, 'skills'), source: 'bundled' }, { path: join(this.root, 'skills'), source: 'user' }]);
         return { skills: [...skills.map(skill => ({ ...skill, logoPath: '', logoDarkPath: '' })), ...extensions.skills.map(skill => ({ name: skill.id, path: skill.path, description: skill.description }))],
           pluginCommands: extensions.commands.filter(command => command.userInvocable).map(command => ({ id: command.id, pluginId: command.pluginId, name: command.name, path: command.path, description: command.description, argumentHint: command.argumentHint, kind: command.kind ?? 'command' })) };
@@ -204,7 +215,7 @@ export class AgentService {
         return { defaultProjectId: projectId };
       }
       case 'sessions.list': return (await this.#command('runtime.list_sessions') as SessionSnapshot[]).map(session => this.#present(session));
-      case 'sessions.get': { const snapshot = await this.#command('runtime.get_session', { sessionId: sessionId() }); return snapshot ? this.#present(decodeSessionSnapshot(snapshot)) : null; }
+      case 'sessions.get': { const snapshot = await this.#command('runtime.get_session', runtimeSessionReadRequestSchema.parse(data)); return snapshot ? this.#present(decodeSessionSnapshot(snapshot)) : null; }
       case 'sessions.create': {
         const key = data.sessionId ? sessionId() : `session-${randomUUID()}`;
         if (await this.#command('runtime.get_session', { sessionId: key })) throw new Error('This conversation ID already exists.');
@@ -280,10 +291,53 @@ export class AgentService {
         await this.#write(state => {
           const existing = state.jobs.find(job => job.id === value.requestId);
           if (existing) { if (JSON.stringify(existing.input) !== JSON.stringify(value)) throw new Error('Request ID was already used for different content.'); return; }
-          state.jobs.push({ id: value.requestId, sessionId: value.sessionId, turnId: `turn-${randomUUID()}`, input: value, createdAt: new Date().toISOString(), status: 'queued' });
+          state.jobs.push({ id: value.requestId, sessionId: value.sessionId, turnId: value.turnId ?? `turn-${randomUUID()}`, input: value, createdAt: new Date().toISOString(), status: 'queued' });
         });
         this.#pump();
         return publicJob(this.#state.jobs.find(job => job.id === value.requestId)!);
+      }
+      case 'chat.queue': {
+        const value = z.object({ action: z.enum(['remove', 'reorder', 'guide']), id, targetId: id.optional(), turnId: id.optional() }).strict().parse(data);
+        const job = this.#state.jobs.find(item => item.id === value.id);
+        if (!job) throw new Error('Unknown queued message.');
+        if (value.action === 'guide' && job.guidance?.applied) return { accepted: true };
+        if (job.status !== 'queued' || this.#assigned.get(job.sessionId) === job.id) throw new Error('This message has already started. Refresh before changing it.');
+        if (job.guidance && value.action !== 'guide') throw new Error('Guidance delivery is pending. Retry delivery before changing this message.');
+        if (value.action === 'remove') {
+          await this.#write(state => { state.jobs.find(item => item.id === job.id)!.status = 'stopped'; });
+        } else if (value.action === 'reorder') {
+          await this.#write(state => {
+            const from = state.jobs.findIndex(item => item.id === job.id);
+            const targetIndex = state.jobs.findIndex(item => item.id === value.targetId);
+            const target = state.jobs[targetIndex];
+            if (!target || target.sessionId !== job.sessionId || target.status !== 'queued' || target.guidance || this.#assigned.get(target.sessionId) === target.id) throw new Error('Queue target is no longer available.');
+            const [item] = state.jobs.splice(from, 1);
+            state.jobs.splice(targetIndex, 0, item);
+          });
+        } else {
+          const active = this.#state.jobs.find(item => item.sessionId === job.sessionId && item.status === 'running');
+          if (!job.guidance && (!active || active.turnId !== value.turnId)) throw new Error('The target turn is no longer running.');
+          // Reserve durably before delivery. A crash or an uncertain reply cannot
+          // allow the queue pump to execute the same text as an ordinary turn.
+          if (!job.guidance) await this.#write(state => { state.jobs.find(item => item.id === job.id)!.guidance = {
+            turnId: active!.turnId, messageId: `queued-guidance-${job.id}`, createdAt: new Date().toISOString() }; });
+          const reserved = this.#state.jobs.find(item => item.id === job.id)!;
+          try {
+            await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1', sessionId: job.sessionId,
+              turnId: reserved.guidance!.turnId, messageId: reserved.guidance!.messageId, createdAt: reserved.guidance!.createdAt, content: job.input.text,
+              ...(job.input.userMessageMetadata ? { metadata: job.input.userMessageMetadata } : {}) });
+          } catch (error) {
+            // These Runtime rejections occur only after durable duplicate lookup.
+            // A definitively unaccepted append can safely return to the queue.
+            if (['turn_not_active', 'turn_guidance_closed'].includes(String((error as { code?: string }).code))) {
+              await this.#write(state => { delete state.jobs.find(item => item.id === job.id)!.guidance; });
+              this.#pump();
+            }
+            throw error;
+          }
+          await this.#write(state => { const item = state.jobs.find(item => item.id === job.id)!; item.status = 'stopped'; item.guidance!.applied = true; });
+        }
+        this.#pump(); return { accepted: true };
       }
       case 'chat.jobs': return this.#state.jobs.filter(job => !data.sessionId || job.sessionId === data.sessionId).map(publicJob);
       case 'chat.stop': {
@@ -296,6 +350,29 @@ export class AgentService {
         return { accepted: true };
       }
       case 'chat.events': return this.#events(data, readSignal);
+      case 'conversation.extracts': {
+        const store = await this.#extractStore();
+        switch (z.enum(['list', 'preview', 'save', 'consume', 'resolve', 'read', 'remove', 'export']).parse(data.action)) {
+          case 'list': return store.list();
+          case 'preview': return store.preview(data.selection);
+          case 'save': return store.save(data.selection, z.enum(['temporary', 'permanent', 'reference']).parse(data.kind));
+          case 'consume': return store.consume(id.parse(data.id));
+          case 'resolve': return store.resolve(id.parse(data.id), data.contextWindowTokens === undefined ? undefined : z.number().int().positive().parse(data.contextWindowTokens));
+          case 'remove': return store.remove(id.parse(data.id));
+          case 'read': {
+            const item = await store.resolve(id.parse(data.id));
+            return { name: `${item.title}.md`, content: await readFile(item.path, 'utf8') };
+          }
+          case 'export': {
+            const selection = data.selection as { sessionId?: string };
+            const session = await this.#command('runtime.get_session', { sessionId: id.parse(selection?.sessionId) }) as SessionSnapshot;
+            const workspace = session.metadata?.runtimeWorkspace as { workspaceDir?: string } | undefined;
+            if (!workspace?.workspaceDir) throw new Error('This session has no export directory.');
+            return store.export(data.selection, async () => join(workspace.workspaceDir!, `conversation-${randomUUID()}.md`));
+          }
+        }
+        return;
+      }
       case 'runtime.command': {
         const kind = z.string().regex(/^(runtime|plugin)\./).parse(data.kind);
         // Execution always enters the service queue, not a transport-owned promise.
@@ -317,10 +394,16 @@ export class AgentService {
     }
   }
 
+  #extracts?: Promise<import('./conversationExtracts.mjs').ConversationExtractStore>;
+  #extractStore() {
+    return this.#extracts ??= import('./conversationExtracts.mjs').then(({ ConversationExtractStore }) =>
+      new ConversationExtractStore(join(this.root, 'conversation-extracts'), (sessionId, keys) =>
+        this.#command('runtime.extract_session', { sessionId, keys }) as Promise<ConversationExtractSource>));
+  }
   #pump() {
     if (this.#closing || this.#storageFailure) return;
     for (const job of this.#state.jobs) {
-      if (job.status !== 'queued' || this.#busy.has(job.sessionId)) continue;
+      if (job.status !== 'queued' || job.guidance || this.#busy.has(job.sessionId)) continue;
       const abort = new AbortController(); this.#busy.set(job.sessionId, abort);
       this.#assigned.set(job.sessionId, job.id);
       void this.#run(job.id, abort.signal).catch(error => {
@@ -343,17 +426,25 @@ export class AgentService {
       const workspace = snapshot.metadata?.runtimeWorkspace as { workspaceDir?: string; sourceDir?: string } | undefined;
       const projectDir = typeof snapshot.metadata?.projectDir === 'string' ? snapshot.metadata.projectDir : undefined;
       const workspaceDir = workspace?.workspaceDir || workspace?.sourceDir || projectDir;
+      if (job.input.goalObjective) await this.#command('runtime.create_goal', { goalId: `goal-${job.id}`, sessionId: job.sessionId, objective: job.input.goalObjective });
+      const activeGoal = await this.#command('runtime.get_goal', { sessionId: job.sessionId }) as { status: string } | null;
+      if (job.goalContinuation && activeGoal?.status !== 'active') {
+        await this.#write(state => { const current = state.jobs.find(item => item.id === jobId)!; current.status = 'stopped'; current.completedAt = new Date().toISOString(); });
+        return;
+      }
       const request = createProductAgentTurnRequest({
         requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, messageId: `message-${job.id}`, createdAt: job.createdAt,
-        userText: job.input.text, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
+        userText: job.input.text, userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
+        files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
         maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens,
-        tools: catalog, projectDir, workspaceDir,
+        tools: catalog.filter(tool => tool.name !== 'update_goal' || activeGoal?.status === 'active'), projectDir, workspaceDir,
         instructionDocuments: await readAgentInstructionDocuments(this.instructions, projectDir ?? workspaceDir, workspaceDir),
         teamInstructions: 'This is an independent headless CardBush Agent. Paths and tools belong to this server. Desktop mouse control and graphical browser control are unavailable. Never imply access to the connecting user’s computer.',
         permissionMode: job.input.permissionMode, planEnabled: job.input.planEnabled ?? true, interactiveRequestsEnabled: true,
         reasoningEffort: job.input.reasoningEffort, disabledSkills: job.input.disabledSkills, subagentPermissionRouting: job.input.subagentPermissionRouting,
         sessionTitle: String(snapshot.metadata?.title ?? ''),
       });
+      if (job.input.supersession) request.supersession = job.input.supersession;
       if (job.delegation) request.metadata = { ...request.metadata, agentRole: 'child', disabledTools: [...DEFAULT_CHILD_AGENT_DISABLED_TOOLS],
         remoteDelegation: job.delegation };
       signal.throwIfAborted();
@@ -364,6 +455,19 @@ export class AgentService {
         current.status = result.payload.status === 'completed' ? 'completed' : result.payload.status === 'stopped' ? 'stopped' : 'failed';
         current.completedAt = new Date().toISOString(); if (current.status === 'failed') current.error = result.payload.reason;
       });
+      const goal = await this.#command('runtime.get_goal', { sessionId: job.sessionId }) as { status: string } | null;
+      if (!signal.aborted && goal?.status === 'active' && result.payload.status === 'completed' && result.payload.reason !== 'task_plan_waiting') {
+        const requestId = randomUUID();
+        await this.#write(state => {
+          // A user's queued message is the next turn. That turn can schedule
+          // continuation afterward; never insert automatic work ahead of it.
+          if (signal.aborted || state.jobs.some(item => item.sessionId === job.sessionId && item.status === 'queued' && !item.guidance)) return;
+          state.jobs.push({
+            id: requestId, sessionId: job.sessionId, turnId: `turn-${randomUUID()}`, createdAt: new Date().toISOString(), status: 'queued', goalContinuation: true,
+            input: { ...job.input, requestId, text: GOAL_CONTINUATION_PROMPT, goalObjective: undefined, supersession: undefined, turnId: undefined, files: undefined, images: undefined, userMessageMetadata: undefined },
+          });
+        });
+      }
     } catch (error) {
       await this.#write(state => { const current = state.jobs.find(item => item.id === jobId)!; current.status = signal.aborted ? 'stopped' : 'failed'; current.completedAt = new Date().toISOString(); current.error = error instanceof Error ? error.message : String(error); });
     }
@@ -422,6 +526,7 @@ export class AgentService {
     await this.#mutations;
     for (const abort of this.#busy.values()) abort.abort();
     await this.runtime.close();
+    if (this.#extracts) (await this.#extracts).close();
     while (this.#busy.size) await new Promise(resolve => setTimeout(resolve, 10));
     await this.#writes; await this.#releaseLock();
   }

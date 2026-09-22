@@ -1,5 +1,12 @@
 import { z } from 'zod';
+import { Agent as HttpAgent } from 'undici';
 import { agentApiPath, type AgentEventFrame, type AgentEventRequest, type AgentInfo, type AgentOperation } from './agentTypes.js';
+
+export class AgentNetworkError extends Error {}
+export class AgentIdentityError extends Error {}
+export class AgentHttpError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
 
 function connectionError(error: unknown, url: URL): Error {
   const codes = new Set<string>();
@@ -20,7 +27,7 @@ function connectionError(error: unknown, url: URL): Error {
   const match = (...values: string[]) => values.find(value => codes.has(value));
   if ((code = match('ECONNREFUSED'))) {
     reason = local
-      ? '连接被拒绝，请确认本机服务正在监听；如果通过 SSH 隧道接入，请先启动本机隧道。CardBush 不会自动建立该隧道。'
+      ? '连接被拒绝，请确认服务正在运行；远程 Agent 可在连接设置中启用 SSH 隧道自动连接。'
       : '连接被拒绝，请检查服务是否正在监听，以及反向代理和端口配置。';
   } else if ((code = match('ENOTFOUND', 'EAI_AGAIN'))) {
     reason = '无法解析服务域名，请检查地址和 DNS 设置。';
@@ -32,7 +39,7 @@ function connectionError(error: unknown, url: URL): Error {
     reason = '连接中断，请检查服务、反向代理或 SSH 隧道是否仍在运行。';
   }
   // Only expose the origin and known error codes, never request headers, payloads or raw causes.
-  return new Error(`无法连接 Agent（${url.origin}）：${reason}${code ? ` [${code}]` : ''}`, { cause: error });
+  return new AgentNetworkError(`无法连接 Agent（${url.origin}）：${reason}${code ? ` [${code}]` : ''}`, { cause: error });
 }
 
 /** Address of the service, optionally behind a reverse proxy path prefix. */
@@ -45,9 +52,14 @@ export function agentBaseUrl(value: string) {
 }
 export class AgentHttpClient {
   readonly #closed = new AbortController();
+  readonly #direct?: HttpAgent;
   #agentId?: string;
-  constructor(readonly url: string, private readonly token: string, agentId?: string) { this.#agentId = agentId; }
-  close() { this.#closed.abort(); }
+  constructor(readonly url: string, private readonly token: string, agentId?: string) {
+    this.#agentId = agentId;
+    // A local service or SSH listener must not send its token through an environment proxy.
+    if (['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) this.#direct = new HttpAgent();
+  }
+  close() { this.#closed.abort(); void this.#direct?.destroy().catch(() => undefined); }
   async #fetch(path: string, init: RequestInit, signal?: AbortSignal) {
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${this.token}`);
@@ -55,17 +67,17 @@ export class AgentHttpClient {
     const url = new URL(`${agentApiPath.slice(1)}/${path}`, this.url);
     const requestSignal = signal ? AbortSignal.any([this.#closed.signal, signal]) : this.#closed.signal;
     let response: Response;
-    try { response = await fetch(url, { ...init, headers, redirect: 'error', signal: requestSignal }); }
+    try { response = await fetch(url, { ...init, headers, redirect: 'error', signal: requestSignal, ...(this.#direct ? { dispatcher: this.#direct } : {}) }); }
     catch (error) {
       if (requestSignal.aborted && requestSignal.reason?.name !== 'TimeoutError') throw error;
       throw connectionError(error, url);
     }
     if (!response.ok) {
       const data = await response.json().catch(() => null) as { error?: { message?: string } } | null;
-      throw new Error(data?.error?.message || `Agent HTTP request failed (${response.status}).`);
+      throw new AgentHttpError(data?.error?.message || `Agent HTTP request failed (${response.status}).`, response.status);
     }
     if (this.#agentId && response.headers.get('x-cardbush-agent-id') !== this.#agentId) {
-      await response.body?.cancel(); throw new Error('Agent identity changed. Add a new connection after verifying the server.');
+      await response.body?.cancel(); throw new AgentIdentityError('Agent identity changed. Add a new connection after verifying the server.');
     }
     return response;
   }
@@ -75,7 +87,7 @@ export class AgentHttpClient {
       eventStreams: z.tuple([z.literal('sse'), z.literal('ndjson')]), id: z.string().min(1), name: z.string(), platform: z.string(),
       capabilities: z.object({ durableQueue: z.literal(true) }).passthrough(),
     }).passthrough().parse(await response.json()) as AgentInfo;
-    if (this.#agentId && info.id !== this.#agentId) throw new Error('Agent identity changed. Add a new connection after verifying the server.');
+    if (this.#agentId && info.id !== this.#agentId) throw new AgentIdentityError('Agent identity changed. Add a new connection after verifying the server.');
     this.#agentId = info.id; return info;
   }
   async call(operation: AgentOperation, input: Record<string, unknown>) {

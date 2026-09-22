@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useState } from 'react';
+import { ConversationHostContext } from '../conversationHost';
+import { Suspense, useContext, useEffect, useState } from 'react';
 import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
 import { shouldUsePlainTextPreview, textPreviewErrorCode, textPreviewErrorMessage } from '../../shared/textPreview';
 import { showUiError } from '../../shared/showUiError';
@@ -26,6 +27,7 @@ export function MarkdownInspectorPreview({
   language: AppLanguage;
   onLoadingChange: (loading: boolean) => void;
 }) {
+  const host = useContext(ConversationHostContext);
   const [content, setContent] = useState('');
   const [truncated, setTruncated] = useState(false);
   const [encoding, setEncoding] = useState('');
@@ -38,7 +40,7 @@ export function MarkdownInspectorPreview({
     setContent('');
     setTruncated(false);
     setEncoding('');
-    const readTextPreview = window.cardbushDesktop?.readTextPreview;
+    const readTextPreview = host?.readFile ? async (path: string) => { const { blob } = await host.readFile!(path); return { content: await blob.slice(0, 2 * 1024 * 1024).text(), truncated: blob.size > 2 * 1024 * 1024, encoding: 'utf-8' }; } : window.cardbushDesktop?.readTextPreview;
     if (!readTextPreview) {
       setError(language === 'zh' ? '当前环境不支持本地 Markdown 预览。' : 'Local Markdown preview is unavailable.');
       onLoadingChange(false);
@@ -66,7 +68,7 @@ export function MarkdownInspectorPreview({
     return () => {
       disposed = true;
     };
-  }, [language, onLoadingChange, path]);
+  }, [language, onLoadingChange, path, host?.readFile]);
 
   return (
     <article className="markdown-inspector-preview">
@@ -103,6 +105,7 @@ export function SourceInspectorPreview({
   language: AppLanguage;
   onLoadingChange: (loading: boolean) => void;
 }) {
+  const host = useContext(ConversationHostContext);
   const [content, setContent] = useState('');
   const [truncated, setTruncated] = useState(false);
   const [encoding, setEncoding] = useState('');
@@ -115,7 +118,7 @@ export function SourceInspectorPreview({
     setContent('');
     setTruncated(false);
     setEncoding('');
-    const readTextPreview = window.cardbushDesktop?.readTextPreview;
+    const readTextPreview = host?.readFile ? async (path: string) => { const { blob } = await host.readFile!(path); return { content: await blob.slice(0, 2 * 1024 * 1024).text(), truncated: blob.size > 2 * 1024 * 1024, encoding: 'utf-8' }; } : window.cardbushDesktop?.readTextPreview;
     if (!readTextPreview) {
       setError(language === 'zh' ? '当前环境不支持本地源码预览。' : 'Local source preview is unavailable.');
       onLoadingChange(false);
@@ -143,7 +146,7 @@ export function SourceInspectorPreview({
     return () => {
       disposed = true;
     };
-  }, [language, onLoadingChange, path]);
+  }, [language, onLoadingChange, path, host?.readFile]);
 
   return (
     <article className="source-inspector-preview">

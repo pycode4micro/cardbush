@@ -111,6 +111,17 @@ export function useAgentConnections() {
     catch (error) { setError(message(error)); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+  const hasManagedTunnels = connections.some(item => item.sshTunnel);
+  useEffect(() => {
+    if (!hasManagedTunnels) return;
+    const timer = window.setInterval(() => { void refresh(); }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [hasManagedTunnels, refresh]);
+  useEffect(() => {
+    for (const connection of connections) if (connection.sshTunnel && connection.connected && sessionsByAgent[connection.id]?.error) {
+      void refreshSessions(connection.id).catch(() => undefined);
+    }
+  }, [connections, refreshSessions]);
   return { connections, selectedId, select, error, refresh, sessionsByAgent, selectedSessions, views, refreshSessions, createSession, renameSession, deleteSession, updateSession, forkSession, bindSession, copySession };
 }
 

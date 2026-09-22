@@ -75,6 +75,9 @@ const continuationProjection = projectionModule.exports.projectRuntimeTurnMessag
     { messageId: 'internal-continue', createdAt: '2026-09-06T00:00:20Z', message: {
       role: 'developer', name: 'output_limit_continuation', content: 'Internal continuation instruction',
     } },
+    { messageId: 'internal-repair', createdAt: '2026-09-06T00:00:30Z', message: {
+      role: 'developer', name: 'tool_call_repair', content: 'Internal tool validation correction',
+    } },
     { messageId: 'final-answer', createdAt: '2026-09-06T00:01:00Z', message: {
       role: 'assistant', content: 'Complete answer', toolCalls: [],
     } },

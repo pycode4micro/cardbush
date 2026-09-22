@@ -1,3 +1,5 @@
+import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
+import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
 import { defaultHostTerminalRuntime } from './hostPlatform';
 import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, SWITCH_RUNTIME_WORKSPACE_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
 import { configuredMcpServerId } from './mcpConfigurationFact';
@@ -69,7 +71,6 @@ import { contextCompactionPresentationExecutions } from './contextCompactionPres
 import { coverWorkspaceToolExecution, markRevertedWorkspaceToolExecution, workspaceCheckpointExecutions } from './workspaceReview';
 import {
   markRuntimeSupersededMessages,
-  projectRuntimeSessionMessage,
   projectRuntimeTurnMessages,
   restoreRuntimeTurnAttachmentMetadata,
 } from './runtimeSessionMessageProjection';
@@ -83,13 +84,6 @@ import {
 } from './productMcp';
 import { mcpConnectionState, type McpConnectionOverview } from './mcpConnectionOverview';
 import {
-  answerRuntimeInteraction,
-  runtimeSolution,
-  removeRuntimeSolution,
-  syncRuntimeSolutions,
-  runtimeInteractionsRevision,
-  hasRuntimeInteraction,
-  pendingRuntimeInteraction,
   stopActiveRuntimeTurn,
 } from '../runtime-client/RuntimeInteractionBridge';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
@@ -285,6 +279,7 @@ export interface EditMessageRequest extends ControlStreamRequest {
 }
 
 export interface SendGuidanceRequest {
+  createdAt?: string;
   contextWindowTokens?: number;
   sessionId: string;
   turnId: string;
@@ -343,24 +338,6 @@ export interface ShadowConversationStreamRequest {
     content: string;
     createdAt: string;
   }) => void;
-}
-
-interface SessionContextSearchItem {
-  messageId: string;
-  turnId: string;
-  role: ChatMessage['role'];
-  score: number;
-  snippet: string;
-  createdAt: string;
-}
-
-export interface SessionContextSearchResult {
-  requestId: string;
-  sessionId: string;
-  queryFingerprint: string;
-  items: SessionContextSearchItem[];
-  nextCursor?: string;
-  indexState: string;
 }
 
 export interface TeamWorkflowStreamEvent {
@@ -438,7 +415,7 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   contextWindowUsage: false,
   capabilityDiscovery: false,
   workspaceChanges: false,
-  sessionContextSearch: false,
+  sessionTurnHistory: false,
   sessionActivityOrdering: false,
   agentVisualScenes: false,
   browserCookiePersistence: false,
@@ -583,7 +560,7 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       workspaceChanges:
         features.has('authoritative_tool_execution_records') &&
         features.has('workspace_revert'),
-      sessionContextSearch: true,
+      sessionTurnHistory: true,
       sessionActivityOrdering: true,
       capabilityDiscovery: commands.has('runtime.get_tool_catalog_details'),
       taskPlan: features.has('explicit_plan_facts'),
@@ -643,10 +620,11 @@ export async function fetchGoalRuntimeStatus(): Promise<GoalRuntimeStatus> {
 
 export async function fetchExperimentalGoals(
   sessionId: string,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<ExperimentalGoal[]> {
   const normalized = sessionId.trim();
   if (!normalized) return [];
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const goal = await runtime.client.getGoal(normalized);
     return goal ? [runtimeExperimentalGoal(goal)] : [];
@@ -660,8 +638,10 @@ export async function updateExperimentalGoal(request: {
   status: ExperimentalGoalStatus;
   statusReason?: string;
   expectedRevision: number;
-}): Promise<ExperimentalGoal> {
-  const runtime = createDesktopRuntimeSession();
+},
+  runtimeOverride?: ConversationRuntime,
+): Promise<ExperimentalGoal> {
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const sessions = await runtime.client.listSessions();
     let current: Awaited<ReturnType<typeof runtime.client.getGoal>> = null;
@@ -1196,8 +1176,10 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
-export async function fetchConversations(): Promise<ConversationSummary[]> {
-  const runtime = createDesktopRuntimeSession();
+export async function fetchConversations(
+  runtimeOverride?: ConversationRuntime,
+): Promise<ConversationSummary[]> {
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const sessions = await runtime.client.listSessions();
     return sessions
@@ -1216,16 +1198,18 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
 export async function fetchMessages(
   sessionId: string,
   options: { includeSuperseded?: boolean } = {},
+  runtimeOverride?: ConversationRuntime,
 ): Promise<ChatMessage[]> {
-  const result = await fetchSessionMessages(sessionId, options);
+  const result = await fetchSessionMessages(sessionId, options, runtimeOverride);
   return result.messages;
 }
 
 export async function fetchSessionMessages(
   sessionId: string,
   options: { includeSuperseded?: boolean } = {},
+  runtimeOverride?: ConversationRuntime,
 ): Promise<SessionMessagesResult> {
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = await runtime.client.getConversationSession(sessionId);
     if (!snapshot) {
@@ -1324,7 +1308,7 @@ export async function fetchSessionMessages(
   }
 }
 
-function runtimeConversation(
+export function runtimeConversation(
   snapshot: RuntimeSessionSnapshot,
 ): ConversationSummary {
   const visibleMessages = snapshot.turns
@@ -1373,30 +1357,6 @@ function taskWorkspaceDirectory(metadata: Record<string, unknown> | undefined) {
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
   }
   return '';
-}
-
-function lexicalTerms(value: string) {
-  return [
-    ...new Set(
-      value
-        .normalize('NFKC')
-        .toLocaleLowerCase()
-        .split(/[^\p{L}\p{N}_]+/u)
-        .map((term) => term.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function lexicalScore(content: string, terms: string[]) {
-  if (terms.length === 0) return 0;
-  const normalized = content.normalize('NFKC').toLocaleLowerCase();
-  return (
-    terms.reduce(
-      (score, term) => score + (normalized.includes(term) ? 1 : 0),
-      0,
-    ) / terms.length
-  );
 }
 
 export function runtimeHistoryToolExecution(
@@ -1925,72 +1885,6 @@ export async function streamShadowConversationMessage(
   });
 }
 
-export async function searchSessionContext({
-  sessionId,
-  query,
-  limit = 8,
-  cursor,
-  roles = ['user'],
-  excludeMessageIds,
-  requestId,
-  signal,
-}: {
-  sessionId: string;
-  query: string;
-  limit?: number;
-  cursor?: string;
-  roles?: ChatMessage['role'][];
-  excludeMessageIds?: string[];
-  requestId?: string;
-  signal?: AbortSignal;
-}): Promise<SessionContextSearchResult> {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
-    const excluded = new Set(excludeMessageIds ?? []);
-    const terms = lexicalTerms(query);
-    const offset = Math.max(0, Number(cursor) || 0);
-    const items = (snapshot?.turns.flatMap((turn) =>
-      turn.messages.map((message) => ({ message, turn })),
-    ) ?? [])
-      .filter(({ message }) => !excluded.has(message.messageId))
-      .filter(({ message }) => !isInternalRuntimeMessage(message))
-      .map(({ message, turn }) => ({
-        message,
-        projected: projectRuntimeSessionMessage(message, sessionId, turn),
-      }))
-      .filter(({ projected }) => roles.includes(projected.role))
-      .map(({ message, projected }) => ({
-        messageId: message.messageId,
-        turnId: message.turnId,
-        role: projected.role,
-        score: lexicalScore(projected.content, terms),
-        snippet: projected.content.slice(0, 800),
-        createdAt: message.createdAt,
-      }))
-      .filter((item) => item.score > 0)
-      .sort(
-        (left, right) =>
-          right.score - left.score ||
-          right.createdAt.localeCompare(left.createdAt),
-      );
-    const page = items.slice(offset, offset + limit);
-    return {
-      requestId: requestId ?? `context_${crypto.randomUUID()}`,
-      sessionId: snapshot?.sessionId ?? sessionId,
-      queryFingerprint: lexicalTerms(query).join('|'),
-      items: page,
-      nextCursor:
-        offset + page.length < items.length
-          ? String(offset + page.length)
-          : undefined,
-      indexState: 'electron_runtime_exact_history',
-    };
-  } finally {
-    runtime.dispose();
-  }
-}
-
 export async function fetchSessionTurnMessages({
   sessionId,
   messageId,
@@ -1999,8 +1893,10 @@ export async function fetchSessionTurnMessages({
   sessionId: string;
   messageId: string;
   signal?: AbortSignal;
-}): Promise<ChatMessage[]> {
-  const runtime = createDesktopRuntimeSession();
+},
+  runtimeOverride?: ConversationRuntime,
+): Promise<ChatMessage[]> {
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
     const turn = snapshot?.turns.find((candidate) =>
@@ -2024,12 +1920,13 @@ export async function fetchSessionTurnMessages({
 export async function fetchSessionContextWindowUsage(
   sessionId: string,
   signal?: AbortSignal,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<RuntimeContextWindowUsage> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     throw new Error('session_id is required');
   }
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = await runtime.client.getSession(normalizedSessionId, signal);
     const latest = snapshot?.turns.at(-1);
@@ -2055,12 +1952,13 @@ export async function fetchSessionContextWindowUsage(
 export async function fetchSessionTokenUsage(
   sessionId: string,
   signal?: AbortSignal,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<SessionTokenUsage> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     throw new Error('session_id is required');
   }
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = await runtime.client.getSession(
       normalizedSessionId,
@@ -2090,10 +1988,11 @@ export async function fetchSessionTokenUsage(
 export async function fetchSessionWorkspaceChanges(
   sessionId: string,
   signal?: AbortSignal,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<ChatToolExecution[]> {
   const normalized = sessionId.trim();
   if (!normalized) return [];
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = await runtime.client.getSession(normalized, signal);
     if (!snapshot) return [];
@@ -2253,10 +2152,11 @@ export async function fetchSubagentRuntime(): Promise<SubagentRuntimeResult> {
 export async function fetchSubagentTasks(
   sessionId: string,
   options?: { activeOnly?: boolean; limit?: number; signal?: AbortSignal },
+  runtimeOverride?: ConversationRuntime,
 ): Promise<SubagentTaskSnapshot[]> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) return [];
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const tasks = await runtime.client.listSubagentTasks(
       { parentSessionId: normalizedSessionId },
@@ -2275,6 +2175,7 @@ export async function fetchSubagentTask(
   taskId: string,
   signal?: AbortSignal,
   parentSessionId?: string,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<SubagentTaskSnapshot> {
   const normalizedTaskId = taskId.trim();
   if (!normalizedTaskId) {
@@ -2282,7 +2183,7 @@ export async function fetchSubagentTask(
       localizedClientMessage('子任务 ID 为空', 'Subagent task ID is empty'),
     );
   }
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     // Inspectors already know the parent. Do not re-project every conversation
     // (including large completed Turns) on each active-task poll.
@@ -2310,19 +2211,20 @@ export async function fetchSubagentTask(
 export async function fetchTurnSnapshot(
   turnId: string,
   options: { sessionId: string; signal?: AbortSignal; connectionId?: string },
+  runtimeOverride?: ConversationRuntime,
 ): Promise<Record<string, unknown> | null> {
   const normalizedTurnId = turnId.trim();
   if (!normalizedTurnId) {
     throw new Error(localizedClientMessage('Turn ID 为空', 'Turn ID is empty'));
   }
-  if (options.connectionId) {
+    if (options.connectionId && !runtimeOverride) {
     options.signal?.throwIfAborted();
     const session = await window.cardbushDesktop?.agents?.call(options.connectionId, 'sessions.get', { sessionId: options.sessionId }) as import('@cardbush/bush-protocol').SessionSnapshot | undefined;
     options.signal?.throwIfAborted();
     const turn = session?.turns.find(item => item.turnId === normalizedTurnId);
     return turn ? { ...turn, sessionId: options.sessionId, source: 'remote_agent' } : null;
   }
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const session = await runtime.client.getSession(options.sessionId.trim(), options.signal);
     const turn = session?.turns.find((item) => item.turnId === normalizedTurnId);
@@ -2381,15 +2283,17 @@ export async function fetchSkillDetail(
 
 export async function fetchPendingInteraction(
   sessionId: string,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<PendingInteraction | null> {
+  const { runtimeInteractionsRevision, syncRuntimeSolutions, pendingRuntimeInteraction } = runtimeOverride?.interactions ?? defaultRuntimeInteractions;
   const normalized = sessionId.trim();
   if (!normalized) {
     return null;
   }
-  let runtime: ReturnType<typeof createDesktopRuntimeSession> | undefined;
+  let runtime: ConversationRuntime | undefined;
   const revision = runtimeInteractionsRevision(normalized);
   try {
-    runtime = createDesktopRuntimeSession();
+    runtime = conversationRuntime(runtimeOverride);
     const pending = await runtime.client.listSolutionSelections(normalized);
     if (revision === runtimeInteractionsRevision(normalized)) syncRuntimeSolutions(normalized, pending);
   }
@@ -2404,7 +2308,10 @@ export async function replyInteraction({
 }: {
   interactionId: string;
   answers: InteractionReplyAnswer[];
-}) {
+},
+  runtimeOverride?: ConversationRuntime,
+) {
+  const { runtimeSolution, removeRuntimeSolution, hasRuntimeInteraction, answerRuntimeInteraction } = runtimeOverride?.interactions ?? defaultRuntimeInteractions;
   const normalized = interactionId.trim();
   if (!normalized) {
     throw new Error(
@@ -2418,7 +2325,7 @@ export async function replyInteraction({
       (answer.selectedOptionId !== undefined) === Boolean(answer.text?.trim())) {
       throw new Error(localizedClientMessage('请选择一个方案，或填写自己的方案', 'Choose one solution or write your own.'));
     }
-    const runtime = createDesktopRuntimeSession();
+    const runtime = conversationRuntime(runtimeOverride);
     try {
       const identity = { selectionId: normalized, sessionId: solution.sessionId!, turnId: solution.turnId! };
       if (answer.selectedOptionId !== undefined) {
@@ -2473,14 +2380,17 @@ export async function replyInteraction({
   );
 }
 
-export async function cancelInteraction(interactionId: string) {
+export async function cancelInteraction(interactionId: string,
+  runtimeOverride?: ConversationRuntime,
+) {
+  const { runtimeSolution, removeRuntimeSolution, hasRuntimeInteraction, answerRuntimeInteraction } = runtimeOverride?.interactions ?? defaultRuntimeInteractions;
   const normalized = interactionId.trim();
   if (!normalized) {
     return;
   }
   const solution = runtimeSolution(normalized);
   if (solution) {
-    const runtime = createDesktopRuntimeSession();
+    const runtime = conversationRuntime(runtimeOverride);
     try {
       await runtime.client.answerSolutionSelection({ selectionId: normalized, sessionId: solution.sessionId!, turnId: solution.turnId!, kind: 'cancel' });
       removeRuntimeSolution(normalized);
@@ -2560,7 +2470,7 @@ export async function streamTurnEvents(request: TurnEventStreamRequest) {
   return streamRuntimeTurnEvents(request);
 }
 
-export async function editMessage(request: EditMessageRequest) {
+export async function editMessage(request: EditMessageRequest, runtimeOverride?: ConversationRuntime, run = streamRuntimeChat) {
   const sessionId = request.sessionId.trim();
   const messageId = request.messageId.trim();
   const content = request.content.trim();
@@ -2579,7 +2489,7 @@ export async function editMessage(request: EditMessageRequest) {
   }
   const replacementTurnId = `turn_${crypto.randomUUID()}`;
   let supersession: RuntimeSessionTurnRequest['supersession'];
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = await runtime.client.getSession(sessionId, request.signal);
     if (!snapshot) {
@@ -2625,13 +2535,15 @@ export async function editMessage(request: EditMessageRequest) {
   } finally {
     runtime.dispose();
   }
-  return streamRuntimeChat(
+  return run(
     { ...request, userInput: content },
     { turnId: replacementTurnId, supersession },
   );
 }
 
-export async function sendGuidance(request: SendGuidanceRequest) {
+export async function sendGuidance(request: SendGuidanceRequest,
+  runtimeOverride?: ConversationRuntime,
+) {
   const sessionId = request.sessionId.trim();
   const turnId = request.turnId.trim();
   const guidance = request.guidance.trim();
@@ -2650,12 +2562,12 @@ export async function sendGuidance(request: SendGuidanceRequest) {
     }).catch(() => undefined);
   };
   trace('guidance-requested');
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     const snapshot = promptReferenceParts(guidance).some(part => part.reference?.kind === 'user-turn')
       ? await runtime.client.getSession(sessionId, request.signal) : undefined;
     const referencedInput = await resolvePromptReferenceContext(guidance, sessionId, snapshot, undefined,
-      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens);
+      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract);
     await runtime.client.enqueueGuidance({
       protocol: 'bush.runtime_guidance.v1',
       sessionId,
@@ -2663,7 +2575,7 @@ export async function sendGuidance(request: SendGuidanceRequest) {
       messageId: request.clientMessageId.trim(),
       content: referencedInput.content,
       ...(referencedInput.metadata ? { metadata: referencedInput.metadata } : {}),
-      createdAt: new Date().toISOString(),
+      createdAt: request.createdAt ?? new Date().toISOString(),
     }, request.signal);
     trace('guidance-accepted');
   } catch (error) {

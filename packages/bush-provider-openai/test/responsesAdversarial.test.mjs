@@ -200,9 +200,9 @@ test('real SDK and Runtime execute a recovered call once and execute nothing aft
   for (const [name, frames, expected, completed = Boolean(expected)] of [
     ['snapshot only', [terminal([fn()])], 1],
     ['duplicate lifecycle', [itemEvent(fn(), 'added'), itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn()), itemEvent(fn()), terminal([fn()])], 1],
-    ['contradictory arguments', [itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn({ arguments: '{"path":"other.txt"}' })), terminal([fn()])], 0],
+    ['contradictory arguments', [itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn({ arguments: '{"path":"other.txt"}' })), terminal([fn()])], 0, true],
     ['stream ends before terminal', [itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn())], 0],
-    ['output limit continuation', [itemEvent(fn(), 'added'), argsEvent(fn(), 'delta'), terminal([fn({ status: 'incomplete' })], 'incomplete')], 0, true],
+    ['output limit continuation', [itemEvent(fn(), 'added'), argsEvent(fn(), 'delta'), itemEvent(fn({ status: 'incomplete' })), terminal([fn({ status: 'incomplete' })], 'incomplete')], 0, true],
   ]) await t.test(name, async t => {
     const root = await mkdtemp(join(tmpdir(), 'cardbush-adversarial-'));
     t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-adversarial-')); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });

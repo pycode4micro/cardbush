@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChatMessage } from '../../types';
 import { ImageGalleryContext } from './ImageGalleryContext';
+import { ConversationHostContext } from '../conversationHost';
 import { appendGalleryImages, galleryImage, galleryImageKey, imageDirectory, sessionGalleryImages,
   type ImageGalleryScope, type ImagePreviewSource } from './imageGallery';
 const emptyMessages: ChatMessage[] = [];
@@ -13,12 +14,13 @@ export function useImageGallery(initial: ImagePreviewSource, options: {
   onClose: () => void;
 }) {
   const context = useContext(ImageGalleryContext);
+  const host = useContext(ConversationHostContext);
   const messages = useSyncExternalStore(context?.subscribe ?? subscribeEmpty, context?.read ?? readEmpty, readEmpty);
   const sessionId = context?.sessionId;
   const openedSession = useRef(sessionId);
   const directory = imageDirectory(initial);
   const workspace = context?.workspaceRoot ?? '';
-  const canScan = Boolean(window.cardbushDesktop?.startImageGallery);
+  const canScan = !host && Boolean(window.cardbushDesktop?.startImageGallery);
   const requestedScope = options.initialScope ?? (options.images ? 'attachments' : context ? 'session' : canScan && directory ? 'directory' : 'session');
   const defaultScope = (requestedScope === 'directory' && (!canScan || !directory)) || (requestedScope === 'workspace' && (!canScan || !workspace))
     ? 'session' : requestedScope;

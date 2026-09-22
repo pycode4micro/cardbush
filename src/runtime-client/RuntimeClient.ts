@@ -8,6 +8,7 @@ export interface RuntimeStreamRequest {
   turnId?: string;
   cursor?: RuntimeStreamCursor;
   signal?: AbortSignal;
+  onTransportState?: (update: { state: 'retrying' | 'recovered'; attempt: number; nextRetryMs?: number; message?: string }) => void;
 }
 
 export interface RuntimeCommand<TPayload = unknown> {

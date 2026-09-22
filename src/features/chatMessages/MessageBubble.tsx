@@ -1,3 +1,4 @@
+import { useConversationFileSource } from '../conversationFileSource';
 import { AutomationReminderCard } from '../automations/AutomationReminderCard';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { WorkspaceRevertAvailability } from '../tools/workspaceRevertAvailability';
@@ -645,6 +646,7 @@ function MessageBubbleView({
   activeAssistantMessageId,
   selectedModel = '',
   readOnlyActions = false,
+  guidanceAvailable = !readOnlyActions,
   canRevertWorkspace = true,
   goalObjective = '',
   onRegenerate,
@@ -663,6 +665,7 @@ function MessageBubbleView({
   activeAssistantMessageId: string;
   selectedModel?: string;
   readOnlyActions?: boolean;
+  guidanceAvailable?: boolean;
   canRevertWorkspace?: boolean;
   goalObjective?: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
@@ -965,7 +968,7 @@ function MessageBubbleView({
                 <button
                   type="button"
                   className="guidance-retry-button"
-                  hidden={readOnlyActions}
+                  hidden={!guidanceAvailable}
                   onClick={() => void onRetryGuidance(message)}
                 >
                   <RefreshCw size={11} />
@@ -2704,72 +2707,29 @@ function userMessageFileAttachments(
   return Array.from(byPath.values());
 }
 
-function MessageMediaStrip({
-  videoPaths,
-  audioPaths,
-  language,
-}: {
-  videoPaths: string[];
-  audioPaths: string[];
-  language: AppLanguage;
-}) {
-  const host = useContext(ConversationHostContext);
+function MessageMediaStrip({ videoPaths, audioPaths, language }: { videoPaths: string[]; audioPaths: string[]; language: AppLanguage }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const presentedMedia = useContext(PresentedMediaContext);
-  if (videoPaths.length === 0 && audioPaths.length === 0) return null;
-  if (host) return <div className="message-file-strip">{[...videoPaths, ...audioPaths].map(path => <button key={path} className="message-file-attachment" onClick={() => host.openFile(path)}>{basename(path)}</button>)}</div>;
-  return (
-    <div className="message-media-strip">
-      {videoPaths.map((storedPathValue) => {
-        const pathValue = remapProjectPath(storedPathValue, pathAliases);
-        const name = basename(pathValue);
-        const presented = presentedMedia.get(mediaPresentationKey(pathValue));
-        if (presented) return <PresentedMediaReference key={`video-${pathValue}`} artifact={presented} />;
-        return (
-          <figure className="message-video-player" key={`video-${pathValue}`}
-            onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
-            <InlineVideo
-              controls
-              playsInline
-              preload="metadata"
-              src={messageMediaSource(pathValue)}
-              aria-label={language === 'zh' ? `播放视频 ${name}` : `Play video ${name}`}
-            />
-            <figcaption title={pathValue}>
-              {name}
-            </figcaption>
-          </figure>
-        );
-      })}
-      {audioPaths.map((storedPathValue) => {
-        const pathValue = remapProjectPath(storedPathValue, pathAliases);
-        const name = basename(pathValue);
-        const presented = presentedMedia.get(mediaPresentationKey(pathValue));
-        if (presented) return <PresentedMediaReference key={`audio-${pathValue}`} artifact={presented} />;
-        return (
-          <figure className="message-audio-player" key={`audio-${pathValue}`}
-            onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
-            <figcaption title={pathValue}>
-              {name}
-            </figcaption>
-            <InlineAudio
-              controls
-              preload="metadata"
-              src={messageMediaSource(pathValue)}
-              aria-label={language === 'zh' ? `播放音频 ${name}` : `Play audio ${name}`}
-            />
-          </figure>
-        );
-      })}
-    </div>
-  );
+  if (!videoPaths.length && !audioPaths.length) return null;
+  return <div className="message-media-strip">{[...videoPaths.map(path => ({ path, kind: 'video' as const })), ...audioPaths.map(path => ({ path, kind: 'audio' as const }))].map(item => {
+    const path = remapProjectPath(item.path, pathAliases), presented = presentedMedia.get(mediaPresentationKey(path));
+    return presented ? <PresentedMediaReference key={path} artifact={presented}/> : <MessagePlayableMedia key={path} path={path} kind={item.kind} language={language}/>;
+  })}</div>;
 }
 
-function messageMediaSource(pathValue: string) {
-  return /^(?:https?:|data:|blob:)/i.test(pathValue.trim())
-    ? pathValue.trim()
-    : fileUrl(pathValue);
+function MessagePlayableMedia({ path, kind, language }: { path: string; kind: 'video' | 'audio'; language: AppLanguage }) {
+  const host = useContext(ConversationHostContext);
+  const file = useConversationFileSource(path);
+  const name = basename(path);
+  const Player = kind === 'video' ? InlineVideo : InlineAudio;
+  const caption = <figcaption title={path}>{name}</figcaption>;
+  return <figure className={`message-${kind}-player`} onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { language })}>
+    {kind === 'audio' && caption}
+    {file.error ? <span role="alert">{file.error}</span> : file.source ? <Player controls preload="metadata" src={file.source} aria-label={language === 'zh' ? `播放${kind === 'video' ? '视频' : '音频'} ${name}` : `Play ${kind} ${name}`}/> : <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>}
+    {kind === 'video' && caption}
+  </figure>;
 }
+
 
 function messageFileExtension(value: string) {
   return (basename(value).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? '').slice(0, 5);
@@ -2920,12 +2880,10 @@ function MessageImageStrip({
   paths: string[];
   language: AppLanguage;
 }) {
-  const host = useContext(ConversationHostContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const presentedMedia = useContext(PresentedMediaContext);
   const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
   const [preview, setPreview] = useState<ImagePreview | null>(null);
-  if (host) return <div className="message-file-strip">{paths.map(path => <button key={path} className="message-file-attachment" onClick={() => host.openFile(path)}>{basename(path)}</button>)}</div>;
   if (resolvedPaths.length === 0) {
     return null;
   }
@@ -2999,20 +2957,22 @@ function MessageImagePreviewButton({
   language: AppLanguage;
   onPreview: (image: ImagePreview) => void;
 }) {
+  const host = useContext(ConversationHostContext);
+  const source = useConversationFileSource(pathValue);
   const name = basename(pathValue);
-  const [src, setSrc] = useState(() => messageMediaSource(pathValue));
+  const [src, setSrc] = useState(source.source);
   const [failed, setFailed] = useState(false);
   const fallbackAttemptedRef = useRef(false);
 
   useEffect(() => {
     fallbackAttemptedRef.current = false;
-    setSrc(messageMediaSource(pathValue));
-    setFailed(false);
-  }, [pathValue]);
+    setSrc(source.source);
+    setFailed(Boolean(source.error));
+  }, [pathValue, source.source, source.error]);
 
   const recoverLocalImage = useCallback(async () => {
     if (
-      fallbackAttemptedRef.current ||
+      host || fallbackAttemptedRef.current ||
       /^(?:https?:|data:|blob:)/i.test(pathValue.trim()) ||
       !window.cardbushDesktop?.readImageDataUrl
     ) {
@@ -3038,7 +2998,7 @@ function MessageImagePreviewButton({
       className={`message-image-preview${failed ? ' is-failed' : ''}`}
       type="button"
       title={name}
-      onContextMenu={event => openFileContextMenu(event, pathValue, { image: true, language })}
+      onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { image: true, language })}
       onClick={event => {
         const thumbnail = event.currentTarget.querySelector('img');
         if (!failed) onPreview({ src, name, path: pathValue,
@@ -3050,7 +3010,7 @@ function MessageImagePreviewButton({
           <FileIcon size={20} />
           <span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>
         </span>
-      ) : (
+      ) : !src ? <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span> : (
         <img
           src={src}
           alt={name}
@@ -3102,6 +3062,7 @@ function sameMessageBubbleProps(
     previous.sending !== next.sending ||
     previous.selectedModel !== next.selectedModel ||
     previous.readOnlyActions !== next.readOnlyActions ||
+    previous.guidanceAvailable !== next.guidanceAvailable ||
     previous.canRevertWorkspace !== next.canRevertWorkspace ||
     previous.goalObjective !== next.goalObjective ||
     previous.onRegenerate !== next.onRegenerate ||

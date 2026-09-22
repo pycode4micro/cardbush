@@ -298,7 +298,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['ssh', 'compact-window', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['ssh', 'compact-window', 'quick-context', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -462,7 +462,7 @@ app.whenReady().then(async () => {
         availableProjects: [{ id: 'project', title: 'Fixture project', rootPath: 'D:/fixture' }],
         projectContext: '', messages: [], activeGoal: null, goalAvailable: false,
         goalCancelling: false, goalWaiting: false, changeReports: [], skills: [], disabledSkillNames: new Set(),
-        visualInputAvailable: false, visualInputEnabled: false, contextSearchAvailable: false,
+        visualInputAvailable: false, visualInputEnabled: false, turnHistoryAvailable: false,
         subagentObservabilityAvailable: false, shadowAvailable: false, shadowAccentColor: '#999999',
         shadowThemeVariables: {}, thinkingVisible: false, guidanceDeliveryMode: 'queue',
         loading: true, historyLoading: false, sending: false, stopping: false, activeTurnId: '',
@@ -476,6 +476,12 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'quick-context') {
+      await require('./helpers/quick-context-layout.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no context rail renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh') {
       await require('./helpers/ssh-ui.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []); return;

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { ConversationHostContext, type ConversationHost } from '../conversationHost';
+import { useContext, useEffect, useState } from 'react';
 import { fetchSubagentTasks } from '../../backend/api';
 import type { SubagentTaskSnapshot } from '../../types';
 import { SUBAGENT_DISPATCH_UI_EVENT } from './subagentObservabilityEvents';
@@ -10,14 +11,14 @@ const empty: SubagentTaskSnapshot[] = [];
 
 // A conversation can contain many loops. They share one status request and
 // never fetch child transcripts or put child prompts in the message list.
-function createFeed(sessionId: string): Feed {
+function createFeed(sessionId: string, host?: ConversationHost): Feed {
   const controller = new AbortController();
   let pending = false;
   const feed: Feed = { tasks: [], listeners: new Set(), refresh: () => {}, dispose: () => {} };
   feed.refresh = () => {
     if (pending || controller.signal.aborted || document.visibilityState === 'hidden') return;
     pending = true;
-    void fetchSubagentTasks(sessionId, { signal: controller.signal, limit: 1000 }).then(tasks => {
+    void fetchSubagentTasks(host?.sessionId ?? sessionId, { signal: controller.signal, limit: 1000 }, host?.runtime).then(tasks => {
       if (controller.signal.aborted) return;
       feed.tasks = tasks;
       for (const listener of feed.listeners) listener.notify(tasks);
@@ -42,20 +43,22 @@ function createFeed(sessionId: string): Feed {
 }
 
 export function useLoopSubagentTasks(sessionId: string, enabled: boolean, active: boolean) {
+  const host = useContext(ConversationHostContext);
+  const key = host ? `${host.id}:${sessionId}` : sessionId;
   const [value, setValue] = useState<{ sessionId: string; tasks: SubagentTaskSnapshot[] }>();
   useEffect(() => {
     if (!enabled || !sessionId) return;
-    let feed = feeds.get(sessionId);
+    let feed = feeds.get(key);
     const fresh = !feed;
-    if (!feed) { feed = createFeed(sessionId); feeds.set(sessionId, feed); }
+    if (!feed) { feed = createFeed(sessionId, host); feeds.set(key, feed); }
     const listener = { active, notify: (tasks: SubagentTaskSnapshot[]) => setValue({ sessionId, tasks }) };
     feed.listeners.add(listener);
     listener.notify(feed.tasks);
     if (fresh || active) feed.refresh();
     return () => {
       feed.listeners.delete(listener);
-      if (!feed.listeners.size) { feed.dispose(); feeds.delete(sessionId); }
+      if (!feed.listeners.size) { feed.dispose(); feeds.delete(key); }
     };
-  }, [sessionId, enabled, active]);
+  }, [sessionId, key, host, enabled, active]);
   return enabled && value?.sessionId === sessionId ? value.tasks : empty;
 }

@@ -1,3 +1,4 @@
+import { ConversationHostContext } from '../conversationHost';
 import { useContext, useEffect, useId, useState, type ReactNode } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, CircleStop, GitFork, LoaderCircle, TriangleAlert, Images } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ChatToolArtifact, ChatToolExecution } from '../../types';
@@ -37,6 +38,8 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
     return () => { disposed = true; };
   }, [sessionId, turnId, deferred, retry]);
   const agents = executions.filter(execution => agentTools.has(execution.name));
+  const host = useContext(ConversationHostContext);
+  const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const tasks = useLoopSubagentTasks(sessionId, agents.length > 0, active);
   const zh = language === 'zh';
   const imagesByPath = new Map<string, ChatToolArtifact>();
@@ -89,7 +92,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
         task?.status === 'stopped' || execution.state === 'cancelled' ? CircleStop : task?.status === 'completed' ? CheckCircle2 : GitFork;
       agentRows.set(key, <button key={key} type="button" className="tool-preview-card loop-subagent-preview"
         data-execution-id={execution.id} data-task-id={taskId || undefined} disabled={!task} title={`${title} · ${status}`}
-        onClick={() => task && openWorkSummaryInspector({ kind: 'subagent-task', sessionId, task, title })}>
+        onClick={() => task && openSummary({ kind: 'subagent-task', sessionId, task, title })}>
         <span className="tool-preview-icon" aria-hidden="true"><Icon size={14} className={running ? 'spin' : undefined} /></span>
         <span className="tool-preview-content"><strong>{title}</strong><small>{status}</small></span>
         {task && <ChevronRight size={14} aria-hidden="true" />}

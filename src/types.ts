@@ -130,7 +130,7 @@ export interface BackendCapabilities {
   contextWindowUsage: boolean;
   capabilityDiscovery: boolean;
   workspaceChanges: boolean;
-  sessionContextSearch: boolean;
+  sessionTurnHistory: boolean;
   sessionActivityOrdering: boolean;
   agentVisualScenes: boolean;
   browserCookiePersistence: boolean;
@@ -623,6 +623,7 @@ export interface TurnTerminalSnapshot {
 }
 
 export interface StreamExecutionUpdate extends AssistantStreamChunk {
+  guidanceMessage?: ChatMessage;
   kind: string;
   userMessageMetadata?: Record<string, unknown>;
   reason?: string;

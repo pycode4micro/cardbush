@@ -13,7 +13,7 @@ const panelDefaults: Omit<ComponentProps<typeof ChatPanel>, 'messages' | 'sendin
   activeProjectDir: '', projectPathAliases: [], selectedProjectDir: '', availableProjects: [],
   onWelcomeProjectChange: asyncNoop, activeGoal: null, goalAvailable: false,
   goalCancelling: false, goalWaiting: false, changeReports: [], skills: [], disabledSkillNames: new Set(),
-  contextSearchAvailable: false, subagentObservabilityAvailable: false, shadowAvailable: false,
+  turnHistoryAvailable: false, subagentObservabilityAvailable: false, shadowAvailable: false,
   shadowAccentColor: '#999999', shadowThemeVariables: {}, thinkingVisible: false, guidanceDeliveryMode: 'queue',
   loading: false, historyLoading: false, stopping: false, activeTurnId: replayTurn,
   queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], pendingInteraction: null,

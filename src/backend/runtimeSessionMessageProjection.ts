@@ -155,7 +155,7 @@ export function projectRuntimeTurnMessages(
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
   }).filter((message) => !(message.role === 'system' &&
-    message.metadata?.name === 'output_limit_continuation'));
+    ['output_limit_continuation', 'tool_call_repair'].includes(String(message.metadata?.name))));
 }
 
 export function projectRuntimeSessionMessage(

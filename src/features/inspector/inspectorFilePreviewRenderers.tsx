@@ -13,7 +13,7 @@ export type InspectorFilePreviewProps = {
 };
 
 function mediaRenderer(kind: 'image' | 'video' | 'audio'): ComponentType<InspectorFilePreviewProps> {
-  return props => <MediaInspectorPreview {...props} kind={kind} source={fileUrl(props.path)} />;
+  return props => <MediaInspectorPreview {...props} kind={kind} source={props.source.startsWith('blob:') ? props.source : fileUrl(props.path)} />;
 }
 
 /** Add a renderer here, then register its supported formats in filePreviewRegistry.ts. */

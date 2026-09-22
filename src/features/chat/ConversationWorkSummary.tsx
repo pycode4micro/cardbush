@@ -1,3 +1,4 @@
+import { ConversationHostContext } from '../conversationHost';
 import {
   CheckCircle2,
   ChevronDown,
@@ -8,7 +9,7 @@ import {
   CircleStop,
   TriangleAlert,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import {
   fetchSubagentTask,
@@ -66,6 +67,8 @@ export function ConversationWorkSummary({
   subagentObservabilityAvailable?: boolean;
   softVisible?: boolean;
 }) {
+  const host = useContext(ConversationHostContext);
+  const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const [visibleHistoryTurnCount, setVisibleHistoryTurnCount] = useState(historyTurnPageSize);
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
@@ -130,8 +133,9 @@ export function ConversationWorkSummary({
                       type="button"
                       key={output.key}
                       title={output.path.startsWith('data:') ? output.name : output.path}
-                      onContextMenu={event => openFileContextMenu(event, output.path, { language })}
+                      onContextMenu={host ? undefined : event => openFileContextMenu(event, output.path, { language })}
                       onClick={() => {
+                        if (host) { if (output.change && output.type === 'document') onOpenChangeReview(output.change.path); else host.openFile(output.path); return; }
                         if (output.type !== 'document') openMediaInspector(output.path, output.type, output.name);
                         else if (output.change) onOpenChangeReview(output.change.path);
                         else openInspector(output.path, output.name);
@@ -185,7 +189,7 @@ export function ConversationWorkSummary({
                         className="work-summary-subagent-task"
                         type="button"
                         key={subagentTaskIdentity(task)}
-                        onClick={() => openWorkSummaryInspector({
+                        onClick={() => openSummary({
                           kind: 'subagent-task',
                           sessionId,
                           task,
@@ -250,7 +254,7 @@ export function ConversationWorkSummary({
                   <button
                     className="work-summary-history-all"
                     type="button"
-                    onClick={() => openWorkSummaryInspector({
+                    onClick={() => openSummary({
                       kind: 'turn-history',
                       sessionId,
                       title: language === 'zh' ? '全部回合详情' : 'All turn details',
@@ -266,7 +270,7 @@ export function ConversationWorkSummary({
                       className="work-summary-history-turn"
                       type="button"
                       key={group.id}
-                      onClick={() => openWorkSummaryInspector({
+                      onClick={() => openSummary({
                         kind: 'turn-history',
                         sessionId,
                         turnId: group.turnId || group.id,
@@ -304,6 +308,8 @@ export function ConversationWorkSummary({
 }
 
 function useSubagentTaskFeed(sessionId: string, available: boolean) {
+  const host = useContext(ConversationHostContext);
+  sessionId = host?.sessionId ?? sessionId;
   const [tasks, setTasks] = useState<SubagentTaskSnapshot[]>([]);
   const hasActiveTasks = tasks.some(subagentTaskActive);
 
@@ -314,7 +320,7 @@ function useSubagentTaskFeed(sessionId: string, available: boolean) {
   const refresh = useCallback((signal?: AbortSignal) => {
     const normalized = sessionId.trim();
     if (!available || !normalized) return Promise.resolve();
-    return fetchSubagentTasks(normalized, { limit: 100, signal }).then((snapshots) => {
+    return fetchSubagentTasks(normalized, { limit: 100, signal }, host?.runtime).then((snapshots) => {
       if (signal?.aborted) return;
       mergeTasks(snapshots);
     });
@@ -332,7 +338,7 @@ function useSubagentTaskFeed(sessionId: string, available: boolean) {
       const provisional = subagentTaskFromDispatchEvent(event);
       mergeTasks([provisional]);
       if (event.taskId) {
-        void fetchSubagentTask(event.taskId, controller.signal, sessionId)
+        void fetchSubagentTask(event.taskId, controller.signal, sessionId, host?.runtime)
           .then((task) => mergeTasks([task]))
           .catch(() => undefined);
       }

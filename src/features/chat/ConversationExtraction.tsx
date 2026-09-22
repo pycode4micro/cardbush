@@ -38,11 +38,12 @@ function defaultKeys(preview: ConversationExtractPreview): string[] {
 const emptyDraft = (sessionId: string): Draft => ({ sessionId, title: '', description: '', mode: 'default', selecting: false, keys: [], busy: false });
 const markdown = (item: ConversationExtractItem) => promptReferenceMarkdown({ kind: 'conversation-extract', id: item.id, title: item.title });
 
-export function ConversationExtractionProvider({ activeSessionId, contextWindowTokens, onOpen, onFork, language, children }: {
+export function ConversationExtractionProvider({ activeSessionId, contextWindowTokens, onOpen, onFork, language, children, api: suppliedApi }: {
+  api?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
   activeSessionId: string; contextWindowTokens: number; onOpen: (sessionId: string) => void;
   onFork: (sessionId: string) => Promise<void>; language: AppLanguage; children: ReactNode;
 }) {
-  const api = window.cardbushDesktop?.conversationExtracts;
+  const api = suppliedApi ?? window.cardbushDesktop?.conversationExtracts;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [items, setItems] = useState<{ permanent: ConversationExtractItem[]; pending: ConversationExtractItem[] }>({ permanent: [], pending: [] });
   const generation = useRef(0), shortcuts = useKeyboardShortcuts();

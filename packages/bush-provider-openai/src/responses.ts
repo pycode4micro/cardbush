@@ -20,7 +20,7 @@ import type {
   ModelProvider,
   ModelStreamOptions,
 } from "@cardbush/bush-runtime";
-import { readLocalModelImage } from "@cardbush/bush-runtime";
+import { readLocalModelImage, isToolCallValidationFailure } from "@cardbush/bush-runtime";
 import { providerFailureEvent } from "./providerFailure.js";
 import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from "./requestBodyBudget.js";
 import { historicalCompatibilityMode, isClientToolSearchCall, portableResponsesReplay, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
@@ -526,6 +526,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
           }
           const failure = error instanceof ResponseAttemptFailure ? error.failure
             : providerFailureEvent(request.requestId, state.sequence++, error, false);
+          if (isToolCallValidationFailure(failure)) {
+            // Runtime repairs the call by appending guidance. An invalid call
+            // is not evidence to switch schemas and invalidate the cache prefix.
+            this.#compatibilityDiagnostic(request, options, "generation", "failed", failure);
+            yield failure;
+            return;
+          }
           const retry = !projection.compatibilityMode && attempt === 0 && !outputExposed;
           this.#enableCompatibility(request, "generation");
           this.#compatibilityDiagnostic(request, options, "generation",

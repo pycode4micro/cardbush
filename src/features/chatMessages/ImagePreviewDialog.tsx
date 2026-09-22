@@ -3,6 +3,7 @@ import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -13,6 +14,8 @@ import { createPortal } from 'react-dom';
 import type { AppLanguage } from '../../types';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { useImageGallery } from './useImageGallery';
+import { ConversationHostContext } from '../conversationHost';
+import { useConversationFileSource } from '../conversationFileSource';
 import { galleryImageKey, type ImageGalleryScope, type ImagePreviewSource } from './imageGallery';
 export type { ImagePreviewSource } from './imageGallery';
 
@@ -69,6 +72,8 @@ export function ImagePreviewDialog({
 }) {
   const gallery = useImageGallery(initialImage, { images, initialScope, onClose });
   const { image } = gallery;
+  const host = useContext(ConversationHostContext);
+  const remoteSource = useConversationFileSource(host ? image.path || image.src : image.src);
   const imageKey = galleryImageKey(image);
   const dialogRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -85,7 +90,7 @@ export function ImagePreviewDialog({
   const [fallback, setFallback] = useState<{ key: string; src: string } | null>(null);
   const currentKey = useRef(imageKey);
   currentKey.current = imageKey;
-  const source = fallback?.key === imageKey ? fallback.src : image.src;
+  const source = host ? remoteSource.source || undefined : fallback?.key === imageKey ? fallback.src : image.src;
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -349,7 +354,7 @@ export function ImagePreviewDialog({
             if (viewRef.current.zoom === 1) fitToWindow();
             else applyZoom(1, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
           }}
-          onContextMenu={event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
+          onContextMenu={host ? undefined : event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
         >
           {gallery.images.length > 1 && <div className="image-preview-navigation"
             onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
@@ -374,8 +379,8 @@ export function ImagePreviewDialog({
               draggable={false}
               decoding="sync"
               onError={() => {
-                const read = window.cardbushDesktop?.readImageDataUrl;
-                if (read && image.path && !/^(?:https?:|data:|blob:)/i.test(image.path) && !source.startsWith('data:')) {
+                const read = host ? undefined : window.cardbushDesktop?.readImageDataUrl;
+                if (read && image.path && !/^(?:https?:|data:|blob:)/i.test(image.path) && !source?.startsWith('data:')) {
                   void read(image.path).then(src => {
                     if (currentKey.current !== imageKey) return;
                     if (src.startsWith('data:image/')) setFallback({ key: imageKey, src });

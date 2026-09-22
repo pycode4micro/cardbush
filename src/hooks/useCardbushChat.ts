@@ -1,34 +1,11 @@
+import { localConversationBackend, type ConversationBackend } from '../backend/conversationBackend';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
 
 import { useCapabilityCatalogRefresh } from './useCapabilityCatalogRefresh';
 import {
-  cancelInteraction,
-  createConversation,
-  deleteConversationApi,
-  editMessage,
-  fetchConversations,
-  fetchGoalRuntimeStatus,
-  fetchExperimentalGoals,
-  fetchMessages,
-  fetchPendingInteraction,
-  fetchSessionContextWindowUsage,
-  fetchSessionWorkspaceChanges,
-  fetchSkillDetail,
-  fetchSkills,
-  fetchSessionMessages,
-  fetchTeamFlow,
   isPendingInteractionConflictError,
-  replyInteraction,
-  sendGuidance,
-  sendTeamFlowAction,
-  stopTurn,
-  streamChat,
-  streamTurnEvents,
-  updateConversation,
-  switchConversationWorkspace,
-  updateExperimentalGoal,
   type SceneStreamEvent,
   type TeamWorkflowStreamEvent,
   type ExperimentalGoal,
@@ -68,7 +45,6 @@ import type {
   TurnTerminalSnapshot,
 } from '../types';
 import { keepFirstPendingInteraction } from '../features/interactions/pendingInteractionQueue';
-import { onRuntimeInteractionsChanged } from '../runtime-client/RuntimeInteractionBridge';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
   assistantTurnTimingFingerprint,
@@ -207,7 +183,15 @@ export function useCardbushChat(
     contextWindowUsageAvailable?: boolean;
     workspaceChangesAvailable?: boolean;
   } = {},
+  backend: ConversationBackend = localConversationBackend,
 ) {
+  const { cancelInteraction, createConversation, deleteConversationApi, editMessage, fetchConversations, fetchGoalRuntimeStatus, fetchExperimentalGoals, fetchMessages, fetchPendingInteraction, fetchSessionContextWindowUsage, fetchSessionWorkspaceChanges, fetchSkillDetail, fetchSkills, fetchSessionMessages, fetchTeamFlow, replyInteraction, sendGuidance, sendTeamFlowAction, stopTurn, streamChat, streamTurnEvents, updateConversation, switchConversationWorkspace, updateExperimentalGoal, onRuntimeInteractionsChanged } = backend;
+  // A host is fixed for this hook lifetime; changing it remounts the conversation.
+  const preferenceStorage = useMemo(() => ({
+    getItem: (key: string) => window.localStorage.getItem(backend.scope ? `${backend.scope}:${key}` : key),
+    setItem: (key: string, value: string) => window.localStorage.setItem(backend.scope ? `${backend.scope}:${key}` : key, value),
+    removeItem: (key: string) => window.localStorage.removeItem(backend.scope ? `${backend.scope}:${key}` : key),
+  }), [backend.scope]);
   const languageRef = useRef<AppLanguage>(requestContext.language ?? 'zh');
   languageRef.current = requestContext.language ?? 'zh';
   const localize = useCallback(
@@ -235,7 +219,7 @@ export function useCardbushChat(
   );
   const [attentionByConversation, setAttentionByConversation] = useState<
     Record<string, SessionAttentionState>
-  >(readSessionAttentionState);
+  >(() => backend.scope ? {} : readSessionAttentionState());
   const [teamFlowsByConversation, setTeamFlowsByConversation] = useState<
     Record<string, TeamFlowState | null>
   >({});
@@ -261,20 +245,21 @@ export function useCardbushChat(
   const [pendingInteraction, setPendingInteraction] =
     useState<PendingInteraction | null>(null);
   const [selectedModel, setSelectedModelState] = useState(() =>
-    readInitialSelectedModel(availableModels),
+    readInitialSelectedModel(availableModels, preferenceStorage),
   );
   const [referencePlanMode, setReferencePlanModeState] = useState<ReferencePlanMode>(
-    readInitialReferencePlanMode,
+    () => readInitialReferencePlanMode(preferenceStorage),
   );
   const [permissionMode, setPermissionModeState] = useState<PermissionMode>(
-    readInitialPermissionMode,
+    () => readInitialPermissionMode(preferenceStorage),
   );
   const [subagentPermissionRouting, setSubagentPermissionRoutingState] =
-    useState<SubagentPermissionRouting>(readInitialSubagentPermissionRouting);
+    useState<SubagentPermissionRouting>(() => readInitialSubagentPermissionRouting(preferenceStorage));
   const [reasoningLevel, setReasoningLevelState] = useState<ReasoningLevel>(() =>
     readInitialReasoningLevel(
       requestContext.reasoningLevels,
       requestContext.defaultReasoningLevel,
+      preferenceStorage,
     ),
   );
   const controllersRef = useRef<Record<string, AbortController>>({});
@@ -454,10 +439,11 @@ export function useCardbushChat(
     };
     attentionByConversationRef.current = next;
     setAttentionByConversation(next);
-    void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
+    if (!backend.scope) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
   }, [clearSessionAttention, localize]);
 
   useEffect(() => {
+    if (backend.scope) return;
     persistSessionAttentionState(attentionByConversation);
     void window.cardbushDesktop
       ?.setSessionAttentionCount?.(Object.keys(attentionByConversation).length)
@@ -492,6 +478,7 @@ export function useCardbushChat(
   }, [activeConversationId, clearSessionAttention]);
 
   useEffect(() => () => {
+    if (backend.scope) for (const controller of Object.values(controllersRef.current)) controller.abort();
     for (const { controller } of Object.values(goalTurnControllersRef.current)) {
       controller.abort();
     }
@@ -532,6 +519,7 @@ export function useCardbushChat(
   }, []);
 
   const removeQueuedMessage = useCallback((queuedId: string) => {
+    if (backend.queue) { void backend.queue.remove(queuedId).catch(caught => setError(errorMessage(caught))); return; }
     queuedMessagesRef.current = queuedMessagesRef.current.filter(
       (item) => item.id !== queuedId,
     );
@@ -539,6 +527,7 @@ export function useCardbushChat(
   }, []);
 
   const reorderQueuedMessage = useCallback((queuedId: string, targetQueuedId: string) => {
+    if (backend.queue) { void backend.queue.reorder(queuedId, targetQueuedId).catch(caught => setError(errorMessage(caught))); return; }
     const reordered = reorderScopedQueue(
       queuedMessagesRef.current,
       queuedId,
@@ -554,6 +543,7 @@ export function useCardbushChat(
   }, []);
 
   const dequeueMessageForConversation = useCallback((conversationId: string) => {
+    if (backend.queue) return undefined;
     const normalized = conversationId.trim();
     const index = queuedMessagesRef.current.findIndex(
       (item) => queuedMessageConversationId(item) === normalized,
@@ -684,15 +674,15 @@ export function useCardbushChat(
       const selected = modelConfigFor(availableModels, current);
       if (selected) {
         if (selected.id !== current) {
-          window.localStorage.setItem('cardbush.selected_model', selected.id);
+          preferenceStorage.setItem('cardbush.selected_model', selected.id);
         }
         return selected.id;
       }
       const next = availableModels[0]?.id ?? '';
       if (next) {
-        window.localStorage.setItem('cardbush.selected_model', next);
+        preferenceStorage.setItem('cardbush.selected_model', next);
       } else {
-        window.localStorage.removeItem('cardbush.selected_model');
+        preferenceStorage.removeItem('cardbush.selected_model');
       }
       return next;
     });
@@ -700,32 +690,32 @@ export function useCardbushChat(
 
   const setSelectedModel = useCallback((model: string) => {
     setSelectedModelState(model);
-    window.localStorage.setItem('cardbush.selected_model', model);
+    preferenceStorage.setItem('cardbush.selected_model', model);
   }, []);
 
 
   const setReferencePlanMode = useCallback((mode: ReferencePlanMode) => {
     const normalized = normalizeReferencePlanMode(mode);
     setReferencePlanModeState(normalized);
-    window.localStorage.setItem('cardbush.reference_plan_mode', normalized);
-    window.localStorage.setItem('cardbush.reference_plan_mode_explicit', 'true');
+    preferenceStorage.setItem('cardbush.reference_plan_mode', normalized);
+    preferenceStorage.setItem('cardbush.reference_plan_mode_explicit', 'true');
   }, []);
 
   const setPermissionMode = useCallback((mode: PermissionMode) => {
     const normalized = normalizePermissionMode(mode);
     setPermissionModeState(normalized);
-    window.localStorage.setItem('cardbush.permission_mode', normalized);
+    preferenceStorage.setItem('cardbush.permission_mode', normalized);
   }, []);
 
   const setSubagentPermissionRouting = useCallback((routing: SubagentPermissionRouting) => {
     const normalized = normalizeSubagentPermissionRouting(routing);
     setSubagentPermissionRoutingState(normalized);
-    window.localStorage.setItem('cardbush.subagent_permission_routing', normalized);
+    preferenceStorage.setItem('cardbush.subagent_permission_routing', normalized);
   }, []);
 
   const setReasoningLevel = useCallback((level: ReasoningLevel) => {
     setReasoningLevelState(level);
-    window.localStorage.setItem('cardbush.reasoning_level', level);
+    preferenceStorage.setItem('cardbush.reasoning_level', level);
   }, []);
 
   useEffect(() => {
@@ -738,7 +728,7 @@ export function useCardbushChat(
         requestContext.defaultReasoningLevel,
         levels,
       );
-      window.localStorage.setItem('cardbush.reasoning_level', next);
+      preferenceStorage.setItem('cardbush.reasoning_level', next);
       return next;
     });
   }, [requestContext.defaultReasoningLevel, requestContext.reasoningLevels]);
@@ -1367,7 +1357,7 @@ export function useCardbushChat(
       onThinking: (event) => {
         if (requestContext.reasoningTraceVisible !== true) return;
         window.dispatchEvent(new CustomEvent('cardbush:thinking', {
-          detail: { ...event, sessionId: normalizedSessionId },
+          detail: { ...event, sessionId: backend.scope ? `${backend.scope}:${normalizedSessionId}` : normalizedSessionId },
         }));
       },
       onConnectionState: (update) =>
@@ -1511,11 +1501,38 @@ export function useCardbushChat(
     beginHistoryLoading,
   ]);
 
+  // Reattach to work owned by the host, using the same stream handlers as local
+  // background turns. Closing this view never cancels a service-owned job.
+  useEffect(() => {
+    if (!backend.watchSession || !activeConversationId) return;
+    let alive = true, revision = '', reading = false;
+    const sessionId = activeConversationId;
+    const stop = backend.watchSession(sessionId, state => {
+      if (!alive) return;
+      queuedMessagesRef.current = state.queued;
+      setQueuedMessages(current => JSON.stringify(current) === JSON.stringify(state.queued) ? current : state.queued);
+      if (reading) return;
+      const changed = revision !== state.revision;
+      const attach = state.activeTurnId && !controllersRef.current[sessionId] &&
+        goalTurnControllersRef.current[sessionId]?.turnId !== state.activeTurnId;
+      if (!changed && !attach) return;
+      reading = true;
+      void (async () => {
+        if (changed && !controllersRef.current[sessionId]) await refreshActiveSession({ silent: true });
+        if (!alive) return;
+        revision = state.revision;
+        if (state.activeTurnId) subscribeGoalTurn(sessionId, state.activeTurnId);
+      })().catch(caught => { if (alive) setError(errorMessage(caught)); }).finally(() => { reading = false; });
+    }, caught => { if (alive) setConnectionRecoveryByConversation(current => ({ ...current,
+      [sessionId]: { state: 'retrying', source: 'network', sessionId, message: errorMessage(caught), createdAt: new Date().toISOString() } })); });
+    return () => { alive = false; stop(); };
+  }, [backend, activeConversationId, refreshActiveSession, subscribeGoalTurn]);
+
   // Notifications can arrive while the previous read is in flight, or after a
   // short turn has already finished. Preserve both updates and committed history.
   const automationHistoryRef = useRef(new Map<string, string>());
   useEffect(() => {
-    if (!window.cardbushDesktop?.automationCommand) return;
+    if (backend.scope || !window.cardbushDesktop?.automationCommand) return;
     let disposed = false, reading = false, dirty = false, timer = 0;
     const refresh = async () => {
       if (disposed) return;
@@ -2182,7 +2199,7 @@ export function useCardbushChat(
         return;
       }
       const outbound = splitStreamAttachmentMentions(trimmed);
-      const optimisticAttachments = await chatAttachmentsFromOutbound(outbound);
+      const optimisticAttachments = await chatAttachmentsFromOutbound(outbound, !backend.scope);
       const attachments = streamAttachmentsForVision(
         outbound,
         requestContext.standardImageInputEnabled === true,
@@ -2217,6 +2234,18 @@ export function useCardbushChat(
       const previousMessages = messagesByConversation[sessionId] ?? [];
       const titleSource = firstUserTitleSource(previousMessages, visibleUserInput);
       if (isSessionSending(sessionId)) {
+        if (backend.queue) {
+          try {
+            await backend.queue.enqueue({ sessionId, userInput: outbound.userInput, model: selectedModel,
+              modelConfig: modelConfigFor(managedModelConfigs, selectedModel), uiLanguage: languageRef.current,
+              permissionMode, subagentPermissionRouting, reasoningLevel, referencePlanMode,
+              files: attachments.files, images: attachments.images, attachments: optimisticAttachments,
+              standardImageInputEnabled: requestContext.standardImageInputEnabled,
+              disabledSkills: [...(requestContext.disabledSkillNames ?? [])] });
+            setError(null);
+          } catch (caught) { setError(errorMessage(caught)); }
+          return;
+        }
         enqueueMessage({
           id: `queued-${crypto.randomUUID()}`,
           text: trimmed,
@@ -2498,7 +2527,7 @@ export function useCardbushChat(
           onThinking: (event) => {
             if (requestContext.reasoningTraceVisible !== true) return;
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
-              detail: { ...event, sessionId },
+              detail: { ...event, sessionId: backend.scope ? `${backend.scope}:${sessionId}` : sessionId },
             }));
           },
           onConnectionState: (update) => {
@@ -2738,7 +2767,8 @@ export function useCardbushChat(
 
   useEffect(() => {
     const listener = (event: Event) => {
-      const { sessionId, text, resolve, reject } = (event as CustomEvent).detail;
+      const { sessionId, hostId, text, resolve, reject } = (event as CustomEvent).detail;
+      if ((hostId ?? '') !== (backend.scope ? `${backend.scope}:${sessionId}` : '')) return;
       const conversation = conversationsRef.current.find(item => item.id === sessionId);
       if (!conversation || typeof text !== 'string' || !text.trim() || text.length > 32_000) { reject(new Error('The conversation is unavailable.')); return; }
       if (sendingSessionsRef.current.has(sessionId)) { reject(new Error('Wait for the current task to finish.')); return; }
@@ -3014,7 +3044,7 @@ export function useCardbushChat(
           onThinking: (event) => {
             if (requestContext.reasoningTraceVisible !== true) return;
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
-              detail: { ...event, sessionId },
+              detail: { ...event, sessionId: backend.scope ? `${backend.scope}:${sessionId}` : sessionId },
             }));
           },
           onConnectionState: (update) => {
@@ -3320,7 +3350,7 @@ export function useCardbushChat(
         outbound,
         requestContext.standardImageInputEnabled === true,
       );
-      const optimisticAttachments = await chatAttachmentsFromOutbound(outbound);
+      const optimisticAttachments = await chatAttachmentsFromOutbound(outbound, !backend.scope);
       const conversationId = message.conversationId?.trim() || activeConversationId;
       if (isSessionSending(conversationId)) {
         return;
@@ -3527,6 +3557,7 @@ export function useCardbushChat(
           turnId,
           guidance: text,
           clientMessageId,
+          createdAt: optimisticMessage.createdAt,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
@@ -3599,6 +3630,11 @@ export function useCardbushChat(
         setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
         return;
       }
+      if (backend.queue) {
+        try { await backend.queue.guide(queuedId, active); setError(null); }
+        catch (caught) { setError(errorMessage(caught)); }
+        return;
+      }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
       const optimisticMessage = optimisticGuidanceMessage({
         clientMessageId,
@@ -3620,6 +3656,7 @@ export function useCardbushChat(
           turnId: active,
           guidance: text,
           clientMessageId,
+          createdAt: optimisticMessage.createdAt,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
@@ -3707,6 +3744,7 @@ export function useCardbushChat(
           turnId,
           guidance: text,
           clientMessageId,
+          createdAt: message.createdAt,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
@@ -4113,8 +4151,8 @@ export function useCardbushChat(
   };
 }
 
-function readInitialSelectedModel(availableModels: ManagedModelConfig[]) {
-  const stored = window.localStorage.getItem('cardbush.selected_model')?.trim();
+function readInitialSelectedModel(availableModels: ManagedModelConfig[], storage: Pick<Storage, 'getItem'> = window.localStorage) {
+  const stored = storage.getItem('cardbush.selected_model')?.trim();
   const selected = stored ? modelConfigFor(availableModels, stored) : undefined;
   if (selected) {
     return selected.id;
@@ -4122,34 +4160,35 @@ function readInitialSelectedModel(availableModels: ManagedModelConfig[]) {
   return availableModels[0]?.id ?? '';
 }
 
-function readInitialReferencePlanMode(): ReferencePlanMode {
-  if (window.localStorage.getItem('cardbush.reference_plan_mode_explicit') !== 'true') {
+function readInitialReferencePlanMode(storage: Pick<Storage, 'getItem'> = window.localStorage): ReferencePlanMode {
+  if (storage.getItem('cardbush.reference_plan_mode_explicit') !== 'true') {
     return 'auto';
   }
   return normalizeReferencePlanMode(
-    window.localStorage.getItem('cardbush.reference_plan_mode') ?? 'auto',
+    storage.getItem('cardbush.reference_plan_mode') ?? 'auto',
   );
 }
 
-function readInitialPermissionMode(): PermissionMode {
+function readInitialPermissionMode(storage: Pick<Storage, 'getItem'> = window.localStorage): PermissionMode {
   return normalizePermissionMode(
-    window.localStorage.getItem('cardbush.permission_mode') ?? 'task_free',
+    storage.getItem('cardbush.permission_mode') ?? 'task_free',
   );
 }
 
-function readInitialSubagentPermissionRouting(): SubagentPermissionRouting {
+function readInitialSubagentPermissionRouting(storage: Pick<Storage, 'getItem'> = window.localStorage): SubagentPermissionRouting {
   return normalizeSubagentPermissionRouting(
-    window.localStorage.getItem('cardbush.subagent_permission_routing') ?? 'user',
+    storage.getItem('cardbush.subagent_permission_routing') ?? 'user',
   );
 }
 
 function readInitialReasoningLevel(
   available?: ReasoningLevel[],
   fallback?: ReasoningLevel,
+  storage: Pick<Storage, 'getItem'> = window.localStorage,
 ): ReasoningLevel {
   const levels = normalizeReasoningLevels(available);
   return normalizeReasoningLevel(
-    window.localStorage.getItem('cardbush.reasoning_level') ?? fallback,
+    storage.getItem('cardbush.reasoning_level') ?? fallback,
     levels,
   );
 }
@@ -4355,7 +4394,7 @@ function conversationPreviewFromMessages(messages: ChatMessage[]) {
 
 function shouldAutoTitleConversation(title: string | undefined, sessionId?: string) {
   const normalized = String(title ?? '').trim();
-  if (!normalized || normalized === '新会话' || normalized === 'New chat') {
+  if (!normalized || ['新会话', '新对话', 'New chat', 'New conversation'].includes(normalized)) {
     return true;
   }
   const normalizedId = String(sessionId ?? '').trim();
@@ -4412,10 +4451,11 @@ function splitStreamAttachmentMentions(content: string) {
 
 async function chatAttachmentsFromOutbound(
   outbound: ReturnType<typeof splitStreamAttachmentMentions>,
+  inspectLocal = true,
 ): Promise<ChatAttachment[]> {
-  const inspected = await window.cardbushDesktop
+  const inspected = inspectLocal ? await window.cardbushDesktop
     ?.inspectAttachments?.(outbound.files)
-    .catch(() => []);
+    .catch(() => []) : [];
   const kindByPath = new Map(
     (inspected ?? []).map((item) => [
       item.path.replace(/\\/g, '/').toLowerCase(),

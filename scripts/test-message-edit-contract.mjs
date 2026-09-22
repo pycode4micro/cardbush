@@ -77,9 +77,11 @@ assert.match(
 );
 assert.match(
   apiSource,
-  /streamRuntimeChat\([\s\S]{0,120}?userInput: content[\s\S]{0,120}?turnId: replacementTurnId, supersession/,
+  /run\([\s\S]{0,120}?userInput: content[\s\S]{0,120}?turnId: replacementTurnId, supersession/,
   'The rerun must carry its supersession in the replacement Turn request',
 );
+assert.match(apiSource, /export async function editMessage\([^\n]*run = streamRuntimeChat\)/,
+  'The local default and injected remote executor must use the same edit admission');
 assert.match(
   apiSource,
   /markRuntimeSupersededMessages\(projected, superseded\)/,

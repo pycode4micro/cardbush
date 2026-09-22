@@ -1,3 +1,4 @@
+import { conversationRuntime, conversationInteractions, type ConversationRuntime } from './conversationRuntime';
 import { readAgentInstructions } from './globalInstructions';
 import { readConversationStyle } from '../features/settings/conversationStyle';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
@@ -20,19 +21,12 @@ import {
 import type { ProductSubagentConfig } from '@cardbush/product-host';
 
 import type {
-  AssistantStreamChunk,
   ChatToolExecution,
   PendingInteraction,
   TaskPlanStreamUpdate,
-  ThinkingStreamEvent,
-  TurnTerminalSnapshot,
 } from '../types';
 import {
   registerActiveRuntimeTurn,
-  registerRuntimePermission,
-  registerRuntimeSolution,
-  removeRuntimeSolution,
-  removeRuntimePermission,
   removeRuntimePermissionsForTurn,
 } from '../runtime-client/RuntimeInteractionBridge';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
@@ -49,6 +43,8 @@ import { parseGoalCommand } from './goalCommand';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
 import { contextWindowMetrics } from './contextWindowUsage';
+import { runtimeThinkingEvent } from './runtimeThinking';
+import { streamChunk, assistantStreamChunk, toolLifecycle, terminalSnapshot, guidanceAppliedUpdate } from './runtimeTranscriptEvents';
 import { contextCompactionPresentationExecution } from './contextCompactionPresentation';
 
 export async function streamRuntimeChat(
@@ -378,8 +374,9 @@ async function readProductSubagentConfig(): Promise<ProductSubagentConfig> {
 
 export async function streamRuntimeTurnEvents(
   request: TurnEventStreamRequest,
+  runtimeOverride?: ConversationRuntime,
 ): Promise<void> {
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   const pendingToolLoads = new Set<Promise<void>>();
   let terminal: Extract<RuntimeEvent, { kind: 'turn_terminal' }> | undefined;
   try {
@@ -413,7 +410,7 @@ export async function streamRuntimeTurnEvents(
 }
 
 async function consumeRuntimeEvents(
-  runtime: ReturnType<typeof createDesktopRuntimeSession>,
+  runtime: ConversationRuntime,
   runtimeRequest: Pick<RuntimeSessionTurnRequest, 'sessionId' | 'turnId'> & Partial<Pick<RuntimeSessionTurnRequest, 'inputMessages'>>,
   request: ChatStreamEventHandlers,
   pendingToolLoads: Set<Promise<void>>,
@@ -422,6 +419,7 @@ async function consumeRuntimeEvents(
   signal: AbortSignal,
   cursor?: { afterSequence?: number; lastEventId?: string },
 ) {
+  const { registerRuntimeSolution, removeRuntimeSolution, removeRuntimePermission } = conversationInteractions(runtime);
   const liveToolExecutions = new Map<string, ChatToolExecution>();
   const liveContextCompactions = new Map<string, ChatToolExecution>();
   let publishedPlanRevision = 0;
@@ -433,6 +431,10 @@ async function consumeRuntimeEvents(
     turnId: runtimeRequest.turnId,
     cursor,
     signal,
+    onTransportState: (update) => request.onConnectionState?.({
+      ...update, source: 'network', sessionId: runtimeRequest.sessionId,
+      turnId: runtimeRequest.turnId, createdAt: new Date().toISOString(),
+    }),
   })) {
     request.onEventCursor?.({
       eventName: event.kind,
@@ -466,13 +468,9 @@ async function consumeRuntimeEvents(
         break;
       }
       case 'reasoning_segment_started':
-        request.onThinking?.(thinking(event, 'start', ''));
-        break;
       case 'reasoning_segment_delta':
-        request.onThinking?.(thinking(event, 'delta', event.payload.delta));
-        break;
       case 'reasoning_segment_completed':
-        request.onThinking?.(thinking(event, 'end', ''));
+        request.onThinking?.(runtimeThinkingEvent(event));
         break;
       case 'assistant_segment_delta':
         onAssistantMessage(event.payload.messageId);
@@ -488,13 +486,11 @@ async function consumeRuntimeEvents(
       case 'guidance_applied': {
         const storedUser = await runtime.client.getUserMessage(event.sessionId, event.turnId, event.payload.messageId, signal).catch(() => null);
         request.onExecution?.({
-          ...streamChunk(event, ''),
-          kind: 'loop_transition',
-          reason: 'turn_guidance_applied',
-          guidanceMessageId: event.payload.messageId,
-          previousAssistantMessageId: event.payload.previousAssistantMessageId,
-          pendingGuidanceCount: event.payload.queueDepth,
-          guidanceRoundIndex: event.payload.afterRound,
+          ...guidanceAppliedUpdate(event),
+          ...(storedUser ? { guidanceMessage: { id: storedUser.messageId, messageId: storedUser.messageId,
+            clientMessageId: storedUser.messageId, role: 'user' as const, content: typeof storedUser.metadata?.composerReferenceContent === 'string' ? storedUser.metadata.composerReferenceContent : storedUser.message.content,
+            conversationId: event.sessionId, turnId: event.turnId, createdAt: storedUser.createdAt, sequence: event.sequence,
+            metadata: { ...storedUser.metadata, turn_guidance: true, guidance_delivery: 'sent' } } } : {}),
           ...(storedUser?.metadata?.automationReminder ? { userMessageMetadata: { automationReminder: storedUser.metadata.automationReminder } } : {}),
         });
         break;
@@ -691,10 +687,10 @@ async function consumeRuntimeEvents(
 }
 
 function permissionInteraction(
-  runtime: ReturnType<typeof createDesktopRuntimeSession>,
+  runtime: ConversationRuntime,
   event: Extract<RuntimeEvent, { kind: 'permission_requested' }>,
 ): PendingInteraction {
-  return registerRuntimePermission({
+  return conversationInteractions(runtime).registerRuntimePermission({
     permissionId: event.payload.permissionId,
     sessionId: event.sessionId,
     turnId: event.turnId,
@@ -719,78 +715,6 @@ function permissionInteraction(
     permissionRouting: event.payload.permissionRouting,
     answer: (answer) => runtime.answerPermission(answer),
   });
-}
-
-function streamChunk(
-  event: Pick<RuntimeEvent, 'turnId' | 'createdAt' | 'sequence' | 'requestId' | 'eventId'>,
-  messageId: string,
-): AssistantStreamChunk {
-  return {
-    messageId,
-    turnId: event.turnId,
-    createdAt: event.createdAt,
-    sequence: event.sequence,
-    requestId: event.requestId,
-    eventId: event.eventId,
-  };
-}
-
-function assistantStreamChunk(
-  event: Extract<RuntimeEvent, {
-    kind: 'assistant_segment_delta' | 'assistant_segment_completed';
-  }>,
-): AssistantStreamChunk {
-  return {
-    ...streamChunk(event, event.payload.messageId),
-    // This ordinal orders content blocks inside one model response, not
-    // assistant messages across the Turn's tool loop. Route by messageId.
-    segmentId: event.payload.segmentId,
-    segmentOrdinal: event.payload.ordinal,
-  };
-}
-
-function thinking(
-  event: Extract<RuntimeEvent, {
-    kind: 'reasoning_segment_started' | 'reasoning_segment_delta' | 'reasoning_segment_completed';
-  }>,
-  phase: ThinkingStreamEvent['phase'],
-  delta: string,
-): ThinkingStreamEvent {
-  return {
-    id: event.payload.segmentId,
-    channel: 'reasoning',
-    turnId: event.turnId,
-    generationId: event.payload.segmentId,
-    phase,
-    delta,
-    content: event.kind === 'reasoning_segment_completed' ? event.payload.content : '',
-    preview: delta,
-    createdAt: event.createdAt,
-  };
-}
-
-function toolLifecycle(
-  event: Extract<RuntimeEvent, {
-    kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled';
-  }>,
-): ChatToolExecution {
-  return {
-    id: event.payload.toolCallId,
-    name: event.payload.toolName,
-    state: toolLifecycleState(event.kind),
-    summary: event.payload.display?.summary || event.payload.display?.title || event.payload.toolName,
-    output: '',
-    success: event.kind === 'tool_returned',
-    durationMs: 0,
-    createdAt: event.createdAt,
-    contentOffset: 0,
-    sequence: event.sequence,
-    turnId: event.turnId,
-    assistantMessageId: event.payload.assistantMessageId,
-    metadata: {
-      ...('error' in event.payload ? { error: event.payload.error } : {}),
-    },
-  };
 }
 
 function toolRecord(
@@ -881,22 +805,6 @@ function subagentDispatches(
   });
 }
 
-function terminalSnapshot(
-  event: Extract<RuntimeEvent, { kind: 'turn_terminal' }>,
-): TurnTerminalSnapshot {
-  return {
-    turnId: event.turnId,
-    status: event.payload.status,
-    stopped: event.payload.status === 'stopped',
-    stopReason: event.payload.reason,
-    stopScenario: event.payload.reason,
-    stopDetails: event.payload.details,
-    completedAt: event.createdAt,
-    terminalEventSequence: event.sequence,
-    raw: event,
-  };
-}
-
 function reasoningEffort(
   value: ChatStreamRequest['reasoningLevel'],
 ): 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
@@ -908,20 +816,8 @@ function reasoningEffort(
     : undefined;
 }
 
-function toolLifecycleState(
-  kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled',
-): ChatToolExecution['state'] {
-  switch (kind) {
-    case 'tool_queued': return 'queued';
-    case 'tool_running': return 'running';
-    case 'tool_returned': return 'completed';
-    case 'tool_failed': return 'failed';
-    case 'tool_cancelled': return 'cancelled';
-  }
-}
-
 async function loadToolExecutionWithTimeout(
-  runtime: ReturnType<typeof createDesktopRuntimeSession>,
+  runtime: ConversationRuntime,
   input: { sessionId: string; turnId: string; toolCallId: string },
   parentSignal: AbortSignal,
   timeoutMs = 5_000,

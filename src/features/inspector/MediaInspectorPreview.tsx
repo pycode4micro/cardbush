@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { ConversationHostContext } from '../conversationHost';
 import { basename } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage } from '../../types';
@@ -12,6 +13,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
   language: AppLanguage;
   onLoadingChange: (loading: boolean) => void;
 }) {
+  const host = useContext(ConversationHostContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<'load' | 'timeout' | null>(null);
   const [revision, setRevision] = useState(0);
@@ -60,7 +62,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
   const name = displayName || basename(path);
   return (
     <div className="inspector-media-preview" ref={containerRef}
-      onContextMenu={event => openFileContextMenu(event, path, { image: kind === 'image', language })}>
+      onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { image: kind === 'image', language })}>
       {kind === 'image' ? (
         <button type="button" className="inspector-image-open" aria-label={language === 'zh' ? `查看 ${name}` : `View ${name}`}
           onClick={event => {

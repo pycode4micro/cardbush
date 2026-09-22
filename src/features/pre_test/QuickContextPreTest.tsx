@@ -18,12 +18,12 @@ const preTestMessages: ChatMessage[] = [
   assistant('pt-12', '输出正文保持横向滚动，工具栏独立于内容滚动，并使用 Unicode 安全的预览截断。'),
   user('pt-13', 'Shadow 消息只在 loop 中出现，贴在输入框上沿，点击后接管输入区进行独立回复。'),
   assistant('pt-14', 'Shadow 与普通对话隔离，运行结束自动隐藏，默认使用淡绿色作为提示色。'),
-  user('pt-14a', '快速上下文需要根据当前输入检索本会话里的相关历史提问，最好沿着左侧时间轴渐进显示。'),
-  assistant('pt-14b', '可以先在本地建立轻量索引，悬停相关锚点时再懒加载前后消息，避免一次渲染整段历史。'),
+  user('pt-14a', '会话很长时，需要沿着左侧刻度条回看前面的提问和回复。'),
+  assistant('pt-14b', '悬停刻度时预览提问，点击后再展开本轮会话。'),
   user('pt-15', 'Thinking 也放在输入框上沿，但是只读，不要写进主消息流，颜色需要在设置中选择。'),
   assistant('pt-16', 'Thinking 使用独立 SSE 事件和淡蓝色标签，与 Shadow 互斥展开。'),
-  user('pt-17', '快速上下文应该根据当前输入检索本会话里的相关提问，输入为空就使用上一条用户消息。'),
-  assistant('pt-18', '检索会在输入停止后延迟执行，并在左侧时间轨道显示相关锚点。长停后再加载完整上下文。'),
+  user('pt-17', '展开历史会话后，希望可以直接跳回原位置，或者复制当时的回复。'),
+  assistant('pt-18', '会话预览底部保留跳转和复制操作，输入新内容不会打断回看。'),
 ];
 
 export function isQuickContextPreTestEnabled() {
@@ -52,7 +52,7 @@ export function QuickContextPreTest({ language }: { language: AppLanguage }) {
         <small>{language === 'zh' ? '本地占位数据，不连接运行服务' : 'Local fixtures, no Runtime required'}</small>
       </header>
       <div className="chat-body" style={style}>
-        <QuickContextRail language={language} messages={preTestMessages} draft={draft} />
+        <QuickContextRail language={language} messages={preTestMessages} />
         <div className="quick-context-pre-test-feed">
           {preTestMessages.map((message) => (
             <article className={message.role} key={message.id}>
@@ -65,10 +65,10 @@ export function QuickContextPreTest({ language }: { language: AppLanguage }) {
         <div className="quick-context-pre-test-composer">
           <textarea
             value={draft}
-            placeholder={language === 'zh' ? '清空后将使用上一条用户输入检索' : 'Clear to search from the latest user prompt'}
+            placeholder={language === 'zh' ? '输入内容不会改变已展开的会话预览' : 'Typing keeps the selected turn open'}
             onChange={(event) => setDraft(event.currentTarget.value)}
           />
-          <small>{language === 'zh' ? '停止输入约 1 秒后检索' : 'Search starts after about 1 second of inactivity'}</small>
+          <small>{language === 'zh' ? '悬停刻度预览提问，点击展开本轮会话' : 'Hover a tick to preview its prompt; click to open the turn'}</small>
         </div>
       </div>
     </div>

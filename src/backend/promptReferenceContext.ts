@@ -6,7 +6,7 @@ import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 /** Resolve only explicit selections, once, at the new user-message boundary. */
 export async function resolvePromptReferenceContext(content: string, sessionId: string, snapshot?: SessionSnapshot | null, language = 'zh',
   readUserMessage?: (turnId: string, messageId: string) => Promise<Pick<SessionMessage, 'messageId' | 'message' | 'metadata'> | null>,
-  contextWindowTokens?: number) {
+  contextWindowTokens?: number, resolveExtract?: (id: string, contextWindowTokens?: number) => Promise<{ path: string; tokens: number }>) {
   const references = promptReferenceParts(content).flatMap(part => part.reference ? [part.reference] : []);
   if (!references.length) return { content, metadata: undefined };
   const seen = new Set<string>();
@@ -26,7 +26,7 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
     if (seen.has(key)) continue;
     seen.add(key);
     if (reference.kind === 'conversation-extract') {
-      const resolved = await window.cardbushDesktop?.conversationExtracts?.resolve(reference.id, contextWindowTokens);
+      const resolved = await (resolveExtract ?? window.cardbushDesktop?.conversationExtracts?.resolve)?.(reference.id, contextWindowTokens);
       if (!resolved) throw new Error('无法读取对话提取，请重新选择。');
       extractTokens += resolved.tokens;
       if (contextWindowTokens && extractTokens > Math.floor(contextWindowTokens / 4)) throw new Error('引用的对话提取合计超过当前模型上下文的 1/4，请减少引用。');

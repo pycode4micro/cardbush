@@ -22,7 +22,8 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
         content: '我先全面盘点项目现状，找出所有缺口再补。\\n\\n' +
           ('项目文档挺完整。检查代码里是否有未完成部分，以及最近一次改动是什么。继续读取后台、数据结构和实际页面，验证后再更新结论。\\n\\n').repeat(24) },
     ]).flat();
-    updateChat({ language: 'zh', activeConversationId: 'session-context-layout', contextSearchAvailable: false, messages: contextMessages, draft: '' });
+    updateChat({ language: 'zh', activeConversationId: 'session-context-layout', turnHistoryAvailable: false,
+      loading: false, historyLoading: false, messages: contextMessages, draft: '' });
     const inspector = document.createElement('div');
     inspector.className = 'context-layout-inspector';
     inspector.textContent = '右侧浏览器区域\\n\\n预览浮层不应侵入这里';
@@ -46,6 +47,14 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await run("document.querySelector('.quick-context-tick').click()");
   await until("document.querySelector('.quick-context-panel.detail')?.textContent.includes('我先全面')", 'full turn preview');
   await run("window.retainedContextPanel = document.querySelector('.quick-context-panel'); undefined");
+  await run("updateChat({ draft: '输入新问题时继续回看这轮会话' })");
+  await pause(1100);
+  assert.equal(await run("document.querySelector('.quick-context-panel.detail') === retainedContextPanel"), true, 'typing must keep the selected turn open');
+  await run(`updateChat({ draft: '', messages: [...chatProps.messages,
+    { id: 'context-new-user', role: 'user', content: '追加一个新的问题', createdAt: '2026-09-05T00:01:00Z' }] });`);
+  await until("document.querySelector('.message-list')?.textContent.includes('追加一个新的问题')", 'new user turn');
+  assert.equal(await run("document.querySelector('.quick-context-panel.detail') === retainedContextPanel"), true, 'new messages must preserve the selected turn');
+  assert.equal(await run("!!document.querySelector('.quick-context-back, .quick-context-request-list')"), false, 'turn previews have no related-request navigation');
 
   const assertFits = async (label, selector) => {
     await pause(220);
@@ -98,9 +107,13 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
     fs.writeFileSync(process.env.CARDBUSH_QUICK_CONTEXT_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
     console.log('Context preview screenshot: ' + process.env.CARDBUSH_QUICK_CONTEXT_SCREENSHOT);
   }
-  await run("document.querySelector('.quick-context-back').click()");
-  await until("!!document.querySelector('.quick-context-panel.list')", 'related-request list');
-  await assertFits('request list');
+  await run(`window.contextClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async text => { window.copiedContextReply = text; },
+  } });
+  [...document.querySelectorAll('.quick-context-panel footer button')].find(button => button.textContent.includes('复制')).click();`);
+  await until("document.querySelector('.quick-context-panel footer')?.textContent.includes('已复制')", 'copy reply confirmation');
+  assert.equal(await run('copiedContextReply'), await run("chatProps.messages.find(message => message.role === 'assistant').content.trim()"), 'copy retains the complete assistant reply');
   await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
   await until("!document.querySelector('.quick-context-panel')", 'close context panel');
   window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
@@ -117,6 +130,22 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await until("!!document.querySelector('.quick-context-panel')", 'reopen');
   await run("document.querySelector('.message-list').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))");
   await until("!document.querySelector('.quick-context-panel')", 'outside click still closes panel');
-  await run("document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest");
-  console.log('Quick context layout passed: split-pane widths, live resize, short window, expanded composer, themes, scroll isolation, edge tooltips and reachable controls.');
+  await run("document.querySelector('.quick-context-tick').click()");
+  await until("!!document.querySelector('.quick-context-panel.detail')", 'reopen before jump');
+  await run(`window.contextJump = null;
+    window.contextJumpScroller = document.querySelector('.message-list');
+    window.contextOriginalScrollTo = contextJumpScroller.scrollTo;
+    contextJumpScroller.scrollTo = options => { window.contextJump = options; };
+    [...document.querySelectorAll('.quick-context-panel footer button')].find(button => button.textContent.includes('跳转')).click();`);
+  await until("contextJump !== null && !document.querySelector('.quick-context-panel')", 'jump closes preview and scrolls the transcript');
+  assert.ok(await run('contextJump.top >= 0'), 'jump targets a valid transcript position');
+  await run('contextJumpScroller.scrollTo = contextOriginalScrollTo; undefined');
+  await run("document.querySelector('.quick-context-tick').click()");
+  await until("!!document.querySelector('.quick-context-panel.detail')", 'reopen before session switch');
+  await run("updateChat({ activeConversationId: 'session-context-other' })");
+  await until("!document.querySelector('.quick-context-panel')", 'session switch closes the previous turn preview');
+  await run(`document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest;
+    if (contextClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', contextClipboardDescriptor);
+    else delete navigator.clipboard;`);
+  console.log('Quick context layout passed: retained turn previews, copy, jump, session isolation, split-pane widths, live resize, short window, expanded composer, themes, scroll isolation and edge tooltips.');
 };

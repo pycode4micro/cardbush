@@ -2358,13 +2358,17 @@ ipcMain.handle('files:read-workspace-directory', async (event, input: Parameters
 let sshConnectionsPromise: Promise<import('./sshConnections.mjs', { with: { 'resolution-mode': 'import' } }).SshConnectionManager> | undefined;
 let agentConnectionsPromise: Promise<import('./agentConnections.mjs', { with: { 'resolution-mode': 'import' } }).AgentConnectionManager> | undefined;
 function agentConnections() {
-  return agentConnectionsPromise ??= import('./agentConnections.mjs').then(({ AgentConnectionManager }) => new AgentConnectionManager(path.join(app.getPath('userData'), 'agents', 'connections.json'), {
+  return agentConnectionsPromise ??= import('./agentConnections.mjs').then(async ({ AgentConnectionManager }) => {
+    const manager = new AgentConnectionManager(path.join(app.getPath('userData'), 'agents', 'connections.json'), {
     encrypt: value => {
       if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw new Error('Secure credential storage is unavailable.');
       return safeStorage.encryptString(value).toString('base64');
     },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-  }));
+    }, { ssh: await sshConnections() });
+    await manager.restore();
+    return manager;
+  });
 }
 ipcMain.handle('agents:command', async (event, action: string, input: unknown) => {
   assertMainWindowSender(event.sender.id);
@@ -4352,8 +4356,8 @@ app.on('before-quit', (event) => {
       productMcpManagement = null;
       await modelPreviewService?.dispose();
       await processesClosed;
-      await (await sshConnectionsPromise)?.close();
       await (await agentConnectionsPromise)?.close();
+      await (await sshConnectionsPromise)?.close();
       modelPreviewService = undefined;
       hostShutdownComplete = true;
       app.quit();

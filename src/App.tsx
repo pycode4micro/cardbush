@@ -61,6 +61,7 @@ import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
 import { useCompactSidebar } from './hooks/useCompactSidebar';
 import { CompactSidebarBackdrop } from './components/CompactSidebarBackdrop';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
+import { ConversationInspectorContext, ConversationInspectorOutlet, useConversationInspectorOutlets } from './features/inspector/ConversationInspector';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
 import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
@@ -725,6 +726,14 @@ function CardbushApp() {
     tabs: inspectorTabs, activeTab: activeInspectorTab,
     openTab: openInspectorTab, activateTab: selectInspectorTab, closeTabs: removeInspectorTabs,
   } = useInspectorTabs();
+  const { outlets: conversationInspectorOutlets, register: registerConversationInspectorOutlet } = useConversationInspectorOutlets();
+  const openConversationInspector = useCallback((id: string, title: string) => {
+    openInspectorTab({ id, title, kind: 'conversation' });
+    setInspectorOpen(true);
+    setInspectorAddMenuOpen(false);
+    setInspectorTabsMenuOpen(false);
+    setInspectorTabContextMenu(null);
+  }, [openInspectorTab]);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorAddMenuOpen, setInspectorAddMenuOpen] = useState(false);
   const [inspectorTabsMenuOpen, setInspectorTabsMenuOpen] = useState(false);
@@ -2221,6 +2230,7 @@ function CardbushApp() {
           />
         </Suspense>
       )}
+      <ConversationInspectorContext.Provider value={{ open: openConversationInspector, close: closeInspectorTab, outlets: conversationInspectorOutlets, visible: inspectorOpen }}>
       <main
         className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
         aria-hidden={settingsVisible}
@@ -2277,7 +2287,7 @@ function CardbushApp() {
           )}
           <section className="main-stage" inert={compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
             {section === 'agents' ? (
-              <Suspense fallback={<FeaturePanelLoading language={language} />}><LazyAgentsView language={language} agents={agents} /></Suspense>
+              <Suspense fallback={<FeaturePanelLoading language={language} />}><LazyAgentsView language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>
             ) : section === 'chat' ? (
               <ChatPanel
                 browserTabs={composerBrowserTabs}
@@ -2305,7 +2315,7 @@ function CardbushApp() {
                 }
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
-                contextSearchAvailable={backendCapabilities.sessionContextSearch}
+                turnHistoryAvailable={backendCapabilities.sessionTurnHistory}
                 subagentObservabilityAvailable={
                   backendCapabilities.subagentObservability &&
                   backendCapabilities.subagentObservabilityProtocol ===
@@ -2439,7 +2449,7 @@ function CardbushApp() {
                             ? tab.detail.target
                             : tab.kind === 'review'
                               ? `${label} · ${tab.conversationId}`
-                              : tab.kind === 'automation' ? `${label} · ${tab.runId}` : tab.kind === 'shadow'
+                              : tab.kind === 'conversation' ? label : tab.kind === 'automation' ? `${label} · ${tab.runId}` : tab.kind === 'shadow'
                                 ? tab.context.title
                                 : `${label} · ${tab.detail.sessionId}`;
                           return (
@@ -2464,7 +2474,7 @@ function CardbushApp() {
                                   ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
                                     ? <Globe2 size={13} aria-hidden="true" />
                                     : <FileText size={13} aria-hidden="true" />
-                                  : tab.kind === 'review'
+                                  : tab.kind === 'review' || tab.kind === 'conversation'
                                     ? <Clipboard size={13} aria-hidden="true" />
                                     : tab.kind === 'history' || tab.kind === 'automation'
                                       ? <Clock3 size={13} aria-hidden="true" />
@@ -2537,7 +2547,7 @@ function CardbushApp() {
                                       ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
                                         ? <Globe2 size={14} aria-hidden="true" />
                                         : <FileText size={14} aria-hidden="true" />
-                                      : tab.kind === 'review'
+                                      : tab.kind === 'review' || tab.kind === 'conversation'
                                         ? <Clipboard size={14} aria-hidden="true" />
                                         : tab.kind === 'history' || tab.kind === 'automation'
                                           ? <Clock3 size={14} aria-hidden="true" />
@@ -2752,6 +2762,8 @@ function CardbushApp() {
                               onNavigationStateChange={updateInspectorNavigation}
                               onOpenTarget={openInspectorTarget}
                             />
+                          ) : tab.kind === 'conversation' ? (
+                            <ConversationInspectorOutlet id={tab.id} register={registerConversationInspectorOutlet} />
                           ) : tab.kind === 'shadow' ? (
                             <ShadowWindow embedded context={tab.context} />
                           ) : tab.kind === 'automation' ? (
@@ -2831,6 +2843,7 @@ function CardbushApp() {
             </aside>
           ) : null}
       </main>
+      </ConversationInspectorContext.Provider>
       {projectRenameTarget && (
         <ProjectRenameDialog
           key={projectRenameTarget.id}

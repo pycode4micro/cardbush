@@ -1,9 +1,9 @@
 import { RESOLVE_FILE_MEMO_COMMAND, fileMemoResolutionSchema, parseFileMemoReference } from '@cardbush/bush-protocol';
-import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
+import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 
-export async function fetchFileMemo(reference: string, signal?: AbortSignal, scope: { sessionId?: string; turnId?: string; fileName?: string } = {}) {
+export async function fetchFileMemo(reference: string, signal?: AbortSignal, scope: { sessionId?: string; turnId?: string; fileName?: string } = {}, runtimeOverride?: ConversationRuntime) {
   if (!parseFileMemoReference(reference)) return fileMemoResolutionSchema.parse({ status: 'unresolved', reason: 'invalid_reference' });
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try {
     return await runtime.client.command({ kind: RESOLVE_FILE_MEMO_COMMAND, payload: { reference, ...scope } },
       value => fileMemoResolutionSchema.parse(value),

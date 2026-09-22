@@ -253,7 +253,7 @@ assert.match(
 assert.match(quickContextSource, /--quick-context-preview-top/);
 assert.match(
   quickContextSource,
-  /fetchSessionTurnMessages\(\{[\s\S]*?sessionId,[\s\S]*?messageId: match\.serverMessageId/,
+  /fetchSessionTurnMessages\(\{[\s\S]*?sessionId,[\s\S]*?messageId: turn\.serverMessageId/,
   'Quick Turn details must fetch the complete committed Turn instead of a truncated message window',
 );
 assert.doesNotMatch(

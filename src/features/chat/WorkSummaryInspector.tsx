@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import {
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -19,6 +20,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { ConversationHostContext } from '../conversationHost';
 import { fetchSubagentTask, fetchTurnSnapshot } from '../../backend/api';
 import { openAgentConversation } from '../agents/agentNavigation';
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss';
@@ -223,6 +225,7 @@ function SubagentTaskInspector({
   language: AppLanguage;
   active: boolean;
 }) {
+  const host = useContext(ConversationHostContext);
   const [task, setTask] = useState(detail.task);
   const [childTurn, setChildTurn] = useState<Record<string, unknown> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -240,13 +243,13 @@ function SubagentTaskInspector({
     const isCurrent = () => !signal?.aborted && sequence === refreshSequence.current;
     setRefreshing(true);
     try {
-      const next = await fetchSubagentTask(taskId, signal, detail.sessionId);
+      const next = await fetchSubagentTask(taskId, signal, host?.sessionId ?? detail.sessionId, host?.runtime);
       if (!isCurrent()) return;
       let snapshot: Record<string, unknown> | null = null;
       let detailError = '';
       if (next.childTurnId && next.childSessionId && next.terminal) {
         try {
-          snapshot = await fetchTurnSnapshot(next.childTurnId, { sessionId: next.childSessionId, signal, connectionId: next.remote?.connectionId });
+          snapshot = await fetchTurnSnapshot(next.childTurnId, { sessionId: next.childSessionId, signal, connectionId: next.remote?.connectionId }, host?.runtime);
         } catch (caught) {
           detailError = caught instanceof Error ? caught.message : String(caught);
         }

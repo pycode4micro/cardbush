@@ -18,8 +18,9 @@ export type InspectorSubagentTab = {
   id: string; kind: 'subagent'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'subagent-task' }>; title: string;
 };
 export type InspectorAutomationTab = { id: string; kind: 'automation'; jobId: string; runId: string; title: string };
+export type InspectorConversationTab = { id: string; kind: 'conversation'; title: string };
 export type InspectorTab = InspectorResourceTab | InspectorReviewTab | InspectorShadowTab
-  | InspectorHistoryTab | InspectorSubagentTab | InspectorAutomationTab;
+  | InspectorHistoryTab | InspectorSubagentTab | InspectorAutomationTab | InspectorConversationTab;
 
 export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, language: AppLanguage): InspectorHistoryTab | InspectorSubagentTab {
   if (detail.kind === 'turn-history') {

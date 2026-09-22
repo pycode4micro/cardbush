@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardbushAppPlugin, PluginCommandSummary, SkillSummary } from '../../types';
 import { runtimeHistoryToolExecution } from '../../backend/api';
 import type { ConversationHost } from '../conversationHost';
-import { agentRuntimeClient, type AgentCall } from './AgentConversationUi';
+import { agentRuntimeClient, type AgentCall } from './agentConversationBackend';
 
 const chunkSize = 512 * 1024;
 const maxSize = 64 * 1024 * 1024;
@@ -11,7 +11,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
   const [catalog, setCatalog] = useState<Catalog>({ skills: [], pluginCommands: [] });
   const [plugins, setPlugins] = useState<CardbushAppPlugin[]>([]);
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState<{ name: string; url: string; text?: string; image: boolean }>();
+  const [preview, setPreview] = useState<{ path: string; name: string }>();
   const client = useMemo(() => agentRuntimeClient(call), [call]);
   useEffect(() => {
     if (!enabled) return;
@@ -21,7 +21,6 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
       .catch(error => { if (alive) setError(String(error.message ?? error)); });
     return () => { alive = false; };
   }, [call, enabled]);
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   const uploadFiles = useCallback(async (files: File[]) => {
     if (!enabled) throw new Error('请更新此 Agent 服务以支持附件。Update this Agent service to transfer files.');
     if (files.length > 32) throw new Error('一次最多上传 32 个文件 / Upload up to 32 files at a time');
@@ -42,6 +41,11 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
   }, [call, sessionId, enabled]);
   const readFile = useCallback(async (path: string) => {
       if (!enabled) throw new Error('Update this Agent service to preview files.');
+      if (path.startsWith('cardbush-extract://')) {
+        const id = path.slice('cardbush-extract://'.length).replace(/\.md$/, '');
+        const result = await call<{ name: string; content: string }>('conversation.extracts', { action: 'read', id });
+        return { name: result.name, blob: new Blob([result.content], { type: 'text/markdown' }) };
+      }
       const parts: Uint8Array<ArrayBuffer>[] = []; let offset = 0; let name = '';
       while (true) {
         const part = await call<{ content: string; name: string; size: number; offset: number; done: boolean }>('files.read', { sessionId, path, offset });
@@ -52,20 +56,13 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
         if (part.done) break;
       }
       const ext = name.split('.').at(-1)?.toLowerCase() ?? '';
-      const mime = ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav' } as Record<string, string>)[ext];
+      const mime = ({ svg: 'image/svg+xml', pdf: 'application/pdf', html: 'text/html', htm: 'text/html', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav' } as Record<string, string>)[ext];
       const blob = new Blob(parts, { type: mime || 'application/octet-stream' });
       return { name, blob };
   }, [call, sessionId, enabled]);
-  const openFile = useCallback((path: string) => {
-    void (async () => {
-      const { name, blob } = await readFile(path);
-      const ext = name.split('.').at(-1)?.toLowerCase() ?? '';
-      const mime = blob.type.startsWith('image/');
-      const text = !mime && /^(txt|md|json|csv|log|ts|tsx|js|jsx|py|yaml|yml|toml|css|html|xml|sh)$/.test(ext) && blob.size < 2 * 1024 * 1024 ? await blob.text() : undefined;
-      setPreview({ name, url: URL.createObjectURL(blob), image: Boolean(mime), text });
-    })().catch(error => setError(String(error.message ?? error)));
-  }, [readFile]);
+  const openFile = useCallback((path: string) => { setPreview({ path, name: path.replaceAll('\\', '/').split('/').at(-1) || path }); }, []);
   const host = useMemo<ConversationHost>(() => ({ id: `${connectionId}:${sessionId}`, plugins, pluginCommands: catalog.pluginCommands, uploadFiles, openFile,
+    openExtract: id => openFile(`cardbush-extract://${id}.md`),
     readFile, readDirectory: management ? input => call('files.list', { ...input, sessionId }) : undefined,
     toolDetails: async (sessionId, turnId) => (await client.listTurnToolExecutions({ sessionId, turnId })).map(runtimeHistoryToolExecution),
   }), [connectionId, sessionId, plugins, catalog.pluginCommands, uploadFiles, openFile, readFile, client, call, management]);

@@ -363,6 +363,26 @@ app.whenReady().then(async () => {
     await until('!!document.querySelector(".message-inline-media-block video")');
     assert.deepEqual(await read('Array.from(document.querySelectorAll(".message-inline-media-block audio,.message-inline-media-block img,.message-inline-media-block video")).map(node=>node.tagName)'),['AUDIO','IMG','VIDEO'],'consecutive authored media in a loop preserve their source order');
     console.log('Loop media UI passed: on-demand image reads, retained image entries, repeated observations, mixed media, stop/failure and transcript re-entry.');
+    await read('clearFixture()');
+    await until('!document.querySelector(".message-row")');
+    const localCalls = await read('localRuntimeCalls');
+    await read('mediaOnly=false;fixtureReports={};followup=null;followupHost=null;renderRemoteFixture()');
+    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth > 0 && fixtureReports.result');
+    assert.deepEqual(await read('remoteReads'), ['/srv/result.png'], 'only inline media is fetched; remote document attachments stay lazy');
+    assert.equal(await read('document.querySelector(".message-tool-artifact img").src.startsWith("blob:")'), true);
+    assert.equal(await read('[...document.querySelectorAll("a,img")].some(node=>(node.href||node.src).startsWith("file:"))'), false, 'remote output never uses local file URLs');
+    await read('[...document.querySelectorAll(".message-tool-artifact button")].find(button=>button.textContent.includes("report.pdf")).click()');
+    assert.deepEqual(await read('openedRemoteFiles'), ['/srv/report.pdf']);
+    assert.equal(await read('remoteCommands.some(command=>command.kind==="runtime.mcp_app"&&command.payload.action==="open")'), true);
+    await read('document.querySelector("iframe").contentWindow.postMessage({fixture:"message"},"*")');
+    await until('!!document.querySelector(".mcp-app-confirm")');
+    await read('[...document.querySelectorAll(".mcp-app-confirm button")].find(button=>button.textContent.includes("发送到会话")).click()');
+    await until('followup === "Continue fixture"');
+    assert.equal(await read('followupHost'), 'cloud:s', 'confirmed plugin messages retain the remote conversation identity');
+    assert.equal(await read('localRuntimeCalls'), localCalls, 'remote plugin describe/open/observe never uses the local Runtime');
+    await read('clearFixture()');
+    await until('remoteCommands.some(command=>command.payload.action==="close")');
+    console.log('Remote tool outputs passed: shared plugin panel, server media/attachments, scoped follow-up messages and no local Runtime access.');
     console.log('MCP Apps UI passed: final outputs, on-demand image previews, latest output/selection, file-summary ordering, loading/recovery, top-layer expansion/Esc, retained iframe state, intrinsic/legacy sizing, host context, theme/canvas, sandbox/CSP, overlapping requests, correlated results and permission races.');
     clearTimeout(deadline); win.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); win.destroy(); app.exit(1); }

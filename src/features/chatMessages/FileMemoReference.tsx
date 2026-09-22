@@ -9,12 +9,14 @@ import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { InlineAudio, InlineVideo } from './InlineMedia';
 import { mediaPresentationKey, PresentedMediaContext } from './mediaPresentation';
 import { FileMemoScopeContext } from './FileMemoScope';
+import { ConversationHostContext } from '../conversationHost';
 
 export function FileMemoReference({ reference, children, inline = false, language = 'zh', load = fetchFileMemo }: {
   reference: string; children?: ReactNode; inline?: boolean; language?: 'zh' | 'en';
   load?: typeof fetchFileMemo;
 }) {
   const presentedMedia = useContext(PresentedMediaContext);
+  const host = useContext(ConversationHostContext);
   const { sessionId, turnId } = useContext(FileMemoScopeContext);
   const fileName = typeof children === 'string' && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(children.trim()) ? children.trim() : undefined;
   const [attempt, setAttempt] = useState(0);
@@ -26,7 +28,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
     let revision = 0;
     const refresh = () => {
       const current = ++revision;
-      void load(reference, controller.signal, { sessionId, turnId, fileName }).then(result => {
+      void load(reference, controller.signal, { sessionId, turnId, fileName }, host?.runtime).then(result => {
         if (!controller.signal.aborted && current === revision) setState({ key, result });
       }, () => {
         if (!controller.signal.aborted && current === revision) setState({ key, failed: true });
@@ -34,7 +36,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
     };
     refresh(); window.addEventListener('focus', refresh);
     return () => { controller.abort(); window.removeEventListener('focus', refresh); };
-  }, [reference, load, sessionId, turnId, fileName, key]);
+  }, [reference, load, sessionId, turnId, fileName, key, host?.runtime]);
   const current = state?.key === key ? state : undefined;
   if (current?.failed || current?.result?.status === 'unresolved') {
     const reason = current.result?.status === 'unresolved' ? current.result.reason : undefined;
@@ -55,6 +57,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const { memo, status, currentVersion } = current.result;
   const label = children || memo.file.name;
   const path = memo.file.path;
+  if (host) return <button type="button" className="markdown-file-link" title={memo.note.purpose} onClick={() => host.openFile(path)}>{label}</button>;
   if (status === 'unavailable') return <span className="local-file-reference-unavailable">
     {label} · {language === 'zh' ? '文件不可访问' : 'File unavailable'}
     {' '}<button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button>

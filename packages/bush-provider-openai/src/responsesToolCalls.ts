@@ -7,6 +7,7 @@ type Call = {
   type: 'function_call' | 'tool_search_call';
   id?: string; itemId?: string; name?: string;
   arguments: string; argumentsDone: boolean;
+  incomplete: boolean;
   emittedIdentity: boolean; emittedChars: number;
 };
 
@@ -31,7 +32,7 @@ export class ResponseToolCalls {
     let call = this.#calls.get(index);
     if (call && call.type !== type) this.#changed();
     if (!call) {
-      call = { type, arguments: '', argumentsDone: false, emittedIdentity: false, emittedChars: 0 };
+      call = { type, arguments: '', argumentsDone: false, incomplete: false, emittedIdentity: false, emittedChars: 0 };
       this.#calls.set(index, call);
     }
     return call;
@@ -69,7 +70,8 @@ export class ResponseToolCalls {
       if (this.#calls.has(index)) this.#changed();
       return;
     }
-    if (item.type === 'tool_search_call' && (mode !== 'native' || item.execution !== 'client' || (completed && !isClientToolSearchCall(item)))) {
+    const incomplete = item.status === 'incomplete' || item.status === 'in_progress';
+    if (item.type === 'tool_search_call' && (mode !== 'native' || item.execution !== 'client' || (completed && !incomplete && !isClientToolSearchCall(item)))) {
       throw new ResponseToolCallError('provider_tool_search_invalid', 'The provider returned an invalid or unrequested client tool search call.');
     }
     const call = this.#call(index, item.type);
@@ -77,6 +79,10 @@ export class ResponseToolCalls {
     this.#identity(call, index, 'itemId', item.id);
     this.#identity(call, index, 'name', item.type === 'tool_search_call' ? 'mcp_search' : item.name);
     if (completed) {
+      // An item can be done because generation was interrupted. Wait for the
+      // response terminal so output limits reach the Runtime's continuation path.
+      call.incomplete = incomplete;
+      if (incomplete) return;
       if (!call.id || !call.name || (item.status !== undefined && item.status !== 'completed')) {
         throw new ResponseToolCallError('provider_tool_call_incomplete', 'The provider did not complete a tool call.');
       }
@@ -116,7 +122,7 @@ export class ResponseToolCalls {
 
   finish(): void {
     for (const call of this.#calls.values()) {
-      if (!call.id || !call.name || !call.argumentsDone) {
+      if (call.incomplete || !call.id || !call.name || !call.argumentsDone) {
         throw new ResponseToolCallError('provider_tool_call_incomplete', 'The provider ended the response with an unfinished tool call.');
       }
     }

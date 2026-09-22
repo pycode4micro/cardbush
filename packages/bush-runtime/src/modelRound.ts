@@ -43,6 +43,12 @@ export interface FailedModelRound {
 
 export type ModelRoundResult = CompletedModelRound | FailedModelRound;
 
+/** These failures happen before the Runtime dispatches any call in the batch. */
+export function isToolCallValidationFailure(error: { code: string }): boolean {
+  return ['incomplete_tool_call', 'provider_tool_call_incomplete',
+    'provider_tool_call_changed', 'provider_tool_search_invalid'].includes(error.code);
+}
+
 export interface ModelRoundOptions extends ModelStreamOptions {
   onEvent?: (event: ModelEvent) => void | Promise<void>;
 }

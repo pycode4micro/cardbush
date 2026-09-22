@@ -272,6 +272,7 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   // Execution retry state survives semantic compaction without being injected
   // into the conversation or inferred from discarded continuation messages.
   outputLimitContinuations: z.number().int().nonnegative().max(2).optional(),
+  toolCallRepairAttempts: z.number().int().nonnegative().max(1).optional(),
   supersession: sessionSupersessionSchema.optional(),
 });
 

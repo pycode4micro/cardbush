@@ -1,7 +1,9 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useContext, useEffect, useState } from 'react';
+import { ConversationHostContext } from '../conversationHost';
+import { useConversationFileSource } from '../conversationFileSource';
 import { CircleAlert, PanelsTopLeft } from 'lucide-react';
 import type { AppLanguage, ChatToolArtifact, ChatToolExecution } from '../../types';
-import { fileUrl, isAbsoluteLocalPath } from '../../shared/localPaths';
+import { isAbsoluteLocalPath } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { ImagePreviewDialog, type ImagePreviewSource } from '../chatMessages/ImagePreviewDialog';
 import { LocalFileReferenceLink } from '../chatMessages/LocalFileReferenceLink';
@@ -13,12 +15,12 @@ import './message-tool-outputs.css';
 type Interface = { sessionId: string; turnId: string; toolCallId: string; source: string; resourceUri: string; title?: string; serverTitle?: string; resultError?: { text: string; truncated: boolean } };
 const interfaceKey = (view: Interface) => `${view.turnId}:${view.toolCallId}`;
 const interfaceSourceKey = (view: Interface) => JSON.stringify([view.turnId, view.source, view.resourceUri]);
-const sourceUrl = (path: string) => /^(?:https?:|data:|blob:)/i.test(path) ? path : fileUrl(path);
 
 /** Only explicit artifacts and host-bound UI declarations are promoted out of tool logs. */
 export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, language }: {
   sessionId: string; turnId: string; executions: ChatToolExecution[]; artifacts: ChatToolArtifact[]; language: AppLanguage;
 }) {
+  const host = useContext(ConversationHostContext);
   const [interfaces, setInterfaces] = useState<Interface[]>([]), [error, setError] = useState(''), [retry, setRetry] = useState(0);
   const [selection, setSelection] = useState('');
   const zh = language === 'zh';
@@ -32,7 +34,7 @@ export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, l
     for (const id of ids) if (id.turnId) groups.set(id.turnId, [...(groups.get(id.turnId) ?? []), id.toolCallId]);
     setError('');
     void Promise.all([...groups].map(async ([turnId, toolCallIds]) => {
-      const result = await mcpAppCommand({ action: 'describe', sessionId, turnId, toolCallIds: [...new Set(toolCallIds)] }, controller.signal);
+      const result = await mcpAppCommand({ action: 'describe', sessionId, turnId, toolCallIds: [...new Set(toolCallIds)] }, controller.signal, host?.runtime);
       return result.interfaces as Interface[];
     })).then(values => {
       if (controller.signal.aborted) return;
@@ -41,7 +43,7 @@ export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, l
     })
       .catch(cause => { if (!controller.signal.aborted) setError(String(cause instanceof Error ? cause.message : cause)); });
     return () => controller.abort();
-  }, [sessionId, identities, retry]);
+  }, [sessionId, identities, retry, host?.runtime]);
   // Failed attempts stay in the audit disclosure; they must not replace a
   // usable preview or keep a large error card mounted after a later success.
   const outputs = interfaces.filter(view => !view.resultError);
@@ -82,20 +84,25 @@ export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, l
 }
 
 export const MessageToolArtifact = memo(function MessageToolArtifact({ artifact, language }: { artifact: ChatToolArtifact; language: AppLanguage }) {
-  const [src, setSrc] = useState(() => sourceUrl(artifact.path)), [failed, setFailed] = useState(false);
+  const host = useContext(ConversationHostContext);
+  const file = useConversationFileSource(artifact.path, artifact.display !== 'attachment' && ['image', 'video', 'audio'].includes(artifact.type));
+  const [src, setSrc] = useState(file.source), [failed, setFailed] = useState(false);
+  useEffect(() => { setSrc(file.source); setFailed(Boolean(file.error)); }, [file.source, file.error]);
   const [preview, setPreview] = useState<ImagePreviewSource | null>(null);
   const local = isAbsoluteLocalPath(artifact.path) || /^file:/i.test(artifact.path);
   const loadFallback = async () => {
-    if (local && artifact.type === 'image' && !src.startsWith('data:') && window.cardbushDesktop?.readImageDataUrl) {
+    if (!host && local && artifact.type === 'image' && !src.startsWith('data:') && window.cardbushDesktop?.readImageDataUrl) {
       try { const data = await window.cardbushDesktop.readImageDataUrl(artifact.path); if (data.startsWith('data:image/')) { setSrc(data); return; } } catch { /* Show the failed preview with its original file link. */ }
     }
     setFailed(true);
   };
-  const link = local ? <LocalFileReferenceLink path={artifact.path} knownFileName={artifact.name}>{artifact.name}</LocalFileReferenceLink>
+  const link = host && local ? <button type="button" className="markdown-file-link" onClick={() => host.openFile(artifact.path)}>{artifact.name}</button>
+    : local ? <LocalFileReferenceLink path={artifact.path} knownFileName={artifact.name}>{artifact.name}</LocalFileReferenceLink>
     : <a href={artifact.path} target="_blank" rel="noreferrer">{artifact.name}</a>;
   const hasMediaPreview = !failed && artifact.display !== 'attachment' && ['image', 'video', 'audio'].includes(artifact.type);
-  return <figure className={`message-tool-artifact${hasMediaPreview ? ' is-media' : ''}`} onContextMenu={event => openFileContextMenu(event, artifact.path, { language, image: artifact.type === 'image' })}>
-    {hasMediaPreview && (artifact.type === 'image'
+  return <figure className={`message-tool-artifact${hasMediaPreview ? ' is-media' : ''}`} onContextMenu={host ? undefined : event => openFileContextMenu(event, artifact.path, { language, image: artifact.type === 'image' })}>
+    {hasMediaPreview && !src && <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>}
+    {hasMediaPreview && src && (artifact.type === 'image'
       ? <button type="button" className="message-tool-artifact-preview" onClick={event => {
         const thumbnail = event.currentTarget.querySelector('img');
         setPreview({ src, name: artifact.name, path: artifact.path,

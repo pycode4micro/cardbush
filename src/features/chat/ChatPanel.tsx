@@ -1,8 +1,10 @@
 import { ArrowDown, Sparkles } from 'lucide-react';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { ExtractionSelector } from './ConversationExtraction';
+import { ConversationHostContext } from '../conversationHost';
 import {
   type CSSProperties,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
   type UIEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -10,6 +12,7 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -175,7 +178,7 @@ export function ChatPanel({
   changeReports,
   skills,
   disabledSkillNames,
-  contextSearchAvailable,
+  turnHistoryAvailable,
   subagentObservabilityAvailable,
   shadowAvailable,
   shadowAccentColor,
@@ -235,6 +238,17 @@ export function ChatPanel({
   onClearNotice,
   draft,
   onDraftChange,
+  headerActions,
+  composerAccessory,
+  transcriptFooter,
+  interactionContent,
+  readOnlyActions = false,
+  guidanceAvailable = !readOnlyActions,
+  submissionPending = false,
+  inputReadOnly = false,
+  cancelEnabled,
+  welcomeEnabled = true,
+  workSummaryAvailable = true,
 }: {
   browserTabs?: import('../../shared/promptReferences').BrowserPromptReference[];
   language: AppLanguage;
@@ -261,7 +275,7 @@ export function ChatPanel({
   changeReports: ConversationChangeReport[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
-  contextSearchAvailable: boolean;
+  turnHistoryAvailable: boolean;
   subagentObservabilityAvailable: boolean;
   shadowAvailable: boolean;
   shadowAccentColor: string;
@@ -302,7 +316,7 @@ export function ChatPanel({
   onOpenConversation: (conversationId: string) => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onRefreshActiveSession: RefreshActiveSession;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string) => Promise<void | boolean>;
   onRetryMessage: (message: ChatMessage) => Promise<void>;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
@@ -310,7 +324,7 @@ export function ChatPanel({
     message: ChatMessage,
     guidance: string,
     mode: 'append_context' | 'interrupt_and_continue',
-  ) => Promise<void>;
+  ) => Promise<void | boolean>;
   onRetryGuidance: (message: ChatMessage) => Promise<void>;
   onGuideQueuedMessage: (
     queuedId: string,
@@ -322,7 +336,7 @@ export function ChatPanel({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenChangeReview: (filePath?: string) => void;
+  onOpenChangeReview: (filePath?: string, turnId?: string) => void;
   onReplyInteraction: (reply: InteractionReplyAnswer[]) => Promise<void>;
   onCancelInteraction: () => Promise<void>;
   onCancelGoal: () => Promise<void>;
@@ -331,9 +345,23 @@ export function ChatPanel({
   onClearNotice: () => void;
   draft: string;
   onDraftChange: (value: string) => void;
+  headerActions?: ReactNode;
+  composerAccessory?: ReactNode;
+  transcriptFooter?: ReactNode;
+  interactionContent?: ReactNode;
+  readOnlyActions?: boolean;
+  guidanceAvailable?: boolean;
+  submissionPending?: boolean;
+  inputReadOnly?: boolean;
+  cancelEnabled?: boolean;
+  welcomeEnabled?: boolean;
+  workSummaryAvailable?: boolean;
 }) {
+  const host = useContext(ConversationHostContext);
+  const runtimeSessionId = host?.sessionId ?? activeConversationId;
   const pendingInteraction = suppliedPendingInteraction?.sessionId === activeConversationId
     ? suppliedPendingInteraction : null;
+  const hasInteraction = Boolean(pendingInteraction || interactionContent);
   const chatPanelRenderStartedAt = performance.now();
   useLayoutEffect(() => {
     recordUiPerformanceMetric('chat_panel_commit_ms', {
@@ -343,7 +371,7 @@ export function ChatPanel({
   });
   const reversibleTurnIds = useMemo(() => new Set(recentReviewTurns(messages).map(turn => turn.id)), [messages]);
   const visibleMessages = useBatchedTranscript(messages, activeConversationId, activeTurnId, sending,
-    stopping || Boolean(pendingInteraction) || Boolean(error) || goalWaiting, transcriptDelivery);
+    stopping || hasInteraction || Boolean(error) || goalWaiting, transcriptDelivery);
   const renderMessages = useMemo(() => {
     const normalized = normalizeChatMessagesForDisplay(visibleMessages);
     const activeTranscript = sending
@@ -439,7 +467,7 @@ export function ChatPanel({
   // Catalog/runtime startup is background work. Only an uncached, explicitly
   // selected conversation needs a history placeholder; keep mounted content on refresh.
   const loading = backgroundLoading && historyLoading && renderMessages.length === 0;
-  const showWelcome = !loading && renderMessages.length === 0;
+  const showWelcome = welcomeEnabled && !loading && renderMessages.length === 0;
   const listScrollerRef = useRef<HTMLElement | null>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
@@ -1714,7 +1742,7 @@ export function ChatPanel({
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       chatBody?.style.removeProperty('--message-list-viewport-height');
     };
-  }, [captureScrollGeometry, loading, pendingInteraction, showWelcome]);
+  }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome]);
 
   useEffect(() => {
     if (loading || showWelcome) return undefined;
@@ -2334,7 +2362,7 @@ export function ChatPanel({
   const handleComposerSend = useCallback(
     async (text: string, options?: { immediate?: boolean }) => {
       if (
-        sending &&
+        guidanceAvailable && sending &&
         (options?.immediate || guidanceDeliveryMode === 'immediate') &&
         activeTurnId
       ) {
@@ -2345,15 +2373,14 @@ export function ChatPanel({
             content: '',
             createdAt: new Date().toISOString(),
           }),
-          conversationId: activeConversationId,
+          conversationId: runtimeSessionId,
           turnId: activeTurnId,
         };
-        await onGuideMessage(
+        return await onGuideMessage(
           guidanceAnchor,
           text,
           'append_context',
         );
-        return;
       }
       if (!sending) {
         finishConversationScrollRestoration();
@@ -2369,17 +2396,19 @@ export function ChatPanel({
           setScrollBottomVisible(false);
         }
       }
-      await onSend(text);
+      return await onSend(text);
     },
     [
       activeAssistantForRender,
       activeConversationId,
+      runtimeSessionId,
       activeTurnId,
       guidanceDeliveryMode,
       finishConversationScrollRestoration,
       releaseAssistantStageReservation,
       onGuideMessage,
       onSend,
+      guidanceAvailable,
       sending,
       setScrollBottomVisible,
     ],
@@ -2485,7 +2514,7 @@ export function ChatPanel({
   }
 
   return (
-    <ComposerReferenceContext.Provider value={{ sessionId: activeConversationId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
+    <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
     <div
       className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
@@ -2495,7 +2524,8 @@ export function ChatPanel({
         conversationContentAvailable={renderMessages.length > 0}
         workSummaryVisible={showWorkSummary}
         inspectorOpen={inspectorOpen}
-        onToggleWorkSummary={renderMessages.length > 0
+        workspaceControl={headerActions}
+        onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0
           ? (anchor) => {
               if (showWorkSummary) {
                 setWorkSummaryVisible(false);
@@ -2554,9 +2584,8 @@ export function ChatPanel({
           <QuickContextRail
             language={language}
             messages={renderMessages}
-            draft={draft}
             sessionId={activeConversationId}
-            serverSearchAvailable={contextSearchAvailable}
+            turnHistoryAvailable={turnHistoryAvailable}
           />
         )}
         <div className="chat-content-frame">
@@ -2650,9 +2679,11 @@ export function ChatPanel({
                     data-message-role={message.role}
                   >
                     {(message.role === 'user' || (message.role === 'assistant' && lastAssistantByTurn.get(message.turnId ?? '') === message.id)) &&
-                      <ExtractionSelector message={message} sessionId={activeConversationId} />}
+                      <ExtractionSelector message={message} sessionId={runtimeSessionId} />}
                     <MessageBubble
                       message={message}
+                      readOnlyActions={readOnlyActions}
+                      guidanceAvailable={guidanceAvailable}
                       changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
                       language={language}
                       sending={sending}
@@ -2668,7 +2699,7 @@ export function ChatPanel({
                       onRetryMessage={onRetryMessage}
                       onRetryGuidance={onRetryGuidance}
                       onRevertChangeReport={onRevertChangeReport}
-                      onOpenChangeReview={openChangeReview}
+                      onOpenChangeReview={filePath => onOpenChangeReview(filePath, message.turnId)}
                       onOpenScene={openScene}
 
                     />
@@ -2680,6 +2711,7 @@ export function ChatPanel({
                     update={connectionRecovery}
                   />
                 )}
+                {transcriptFooter}
               </div>
             </MessageFileReferenceScope>
             <div className="assistant-response-spacer" aria-hidden="true" />
@@ -2693,7 +2725,7 @@ export function ChatPanel({
             initialAutoPlay={activeSceneInitialAutoPlay}
             llmRunning={sending}
             activeTurnId={activeTurnId}
-            onSendFeedbackToLlm={onSend}
+            onSendFeedbackToLlm={async text => { await onSend(text); }}
             onClose={closeScene}
           />
         )}
@@ -2708,21 +2740,21 @@ export function ChatPanel({
             <span>{language === 'zh' ? '继续场景' : 'Scene'}</span>
           </button>
         )}
-        {!showWelcome && pendingInteraction && (
+        {!showWelcome && (pendingInteraction || interactionContent) && (
           <div
-            className={`composer-dock interaction-only ${pendingInteraction.type === 'solution_selection' ? 'solution-only' : 'permission-only'}`}
+            className={`composer-dock interaction-only ${pendingInteraction?.type === 'solution_selection' ? 'solution-only' : 'permission-only'}`}
             ref={composerDockRef}
           >
-            <InteractionCard
+            {interactionContent ?? (pendingInteraction && <InteractionCard
               key={pendingInteraction.id}
               language={language}
               interaction={pendingInteraction}
               onReply={onReplyInteraction}
               onCancel={onCancelInteraction}
-            />
+            />)}
           </div>
         )}
-        {!showWelcome && !loading && !pendingInteraction && (
+        {!showWelcome && !loading && !pendingInteraction && !interactionContent && (
           <div
             className={`composer-dock${
               sending || activeGoal || queuedMessageCount > 0
@@ -2763,6 +2795,7 @@ export function ChatPanel({
                 onReorderQueuedMessage={onReorderQueuedMessage}
               />
             )}
+            {composerAccessory}
             <Composer
               key={activeConversationId || 'active-session'}
               fileDropTarget={chatBodyRef}
@@ -2771,9 +2804,11 @@ export function ChatPanel({
               draft={draft}
               onDraftChange={onDraftChange}
               sending={sending}
+              submissionPending={submissionPending}
+              inputReadOnly={inputReadOnly}
               stopping={stopping}
               guidanceDeliveryMode={guidanceDeliveryMode}
-              cancelEnabled={Boolean(activeTurnId)}
+              cancelEnabled={cancelEnabled ?? Boolean(activeTurnId)}
               queuedMessageCount={queuedMessageCount}
               onShowQueue={() => runtimeRailRef.current?.showQueue()}
               queuedMessagePreview=""

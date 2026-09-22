@@ -25,12 +25,15 @@ async function directory(t) {
   t.after(async () => { assert.ok(resolve(root).startsWith(tempRoot + '\\') || resolve(root).startsWith(tempRoot + '/')); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 }); });
   return root;
 }
-async function modelFixture(t, delay = 80, toolPath) {
+async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
   const calls = [];
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 })); return; }
     calls.push(body); const n = calls.length;
+    if (compatibility && n === 1) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Unsupported parameter: store', type: 'invalid_request_error' } })); return;
+    }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const emit = value => res.write(`data: ${JSON.stringify(value)}\n\n`);
     const item = toolPath && n === 1
@@ -51,8 +54,8 @@ async function modelFixture(t, delay = 80, toolPath) {
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   return { calls, url: `http://127.0.0.1:${server.address().port}/v1` };
 }
-async function openService(t, name = 'fixture', delay = 80, tool) {
-  const root = await directory(t); const model = await modelFixture(t, delay, tool);
+async function openService(t, name = 'fixture', delay = 80, tool, compatibility = false) {
+  const root = await directory(t); const model = await modelFixture(t, delay, tool, compatibility);
   const service = await AgentService.open({ dataRoot: root, name, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
   // Cleanup hooks execute in registration order; close before removing the root.
   t.after(() => service.close());
@@ -60,6 +63,71 @@ async function openService(t, name = 'fixture', delay = 80, tool) {
   return { root, model, service };
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+
+for (const compatibility of [false, true]) test(`remote guidance appends within the active turn, keeps cache prefixes and deduplicates retries (${compatibility ? 'compatibility' : 'native'})`, async t => {
+  const f = await openService(t, 'remote-guidance', 1200, undefined, compatibility);
+  const probeRequests = compatibility ? 1 : 0;
+  const token = 'fixture-guidance-token-for-isolated-tests';
+  const http = await serveAgentHttp(f.service, { host: '127.0.0.1', port: 0, token });
+  const client = new AgentHttpClient(`http://127.0.0.1:${http.port}`, token);
+  try {
+    await client.call('sessions.create', { sessionId: 'guidance' });
+    const job = await client.call('chat.send', input('guidance', 'first', 'Initial request'));
+    await until(() => f.model.calls.length, count => count === 1 + probeRequests);
+    const command = { kind: 'runtime.enqueue_guidance', payload: { protocol: 'bush.runtime_guidance.v1', sessionId: 'guidance', turnId: job.turnId,
+      messageId: 'same-guidance', content: 'Adjust the result.', createdAt: new Date().toISOString() } };
+    assert.equal((await client.call('runtime.command', command)).accepted, true);
+    await until(() => f.model.calls.length, count => count === 2 + probeRequests);
+    assert.equal((await client.call('runtime.command', command)).accepted, true, 'receipt retry after queue drain acknowledges the original guidance');
+    await until(() => client.call('chat.jobs'), jobs => jobs[0].status === 'completed');
+    assert.equal((await client.call('runtime.command', command)).accepted, true, 'late retry after completion is also idempotent');
+    const snapshot = await client.call('sessions.get', { sessionId: 'guidance' });
+    const guidance = snapshot.turns[0].messages.filter(message => message.message.name === 'turn_guidance');
+    assert.equal(snapshot.turns.length, 1); assert.equal(guidance.length, 1); assert.equal(f.model.calls.length, 2 + probeRequests);
+    assert.equal(guidance[0].messageId, command.payload.messageId);
+    const [before, after] = f.model.calls.slice(probeRequests);
+    assert.deepEqual(after.tools, before.tools, 'guidance does not alter tool declarations');
+    assert.deepEqual(after.input.slice(0, before.input.length), before.input, 'guidance appends after the complete previous request prefix');
+    const replay = await client.call('chat.events', { sessionId: 'guidance', turnId: job.turnId, waitMs: 1 });
+    assert.equal(replay.events.filter(event => event.kind === 'guidance_applied').length, 1);
+    const observations = replay.events.filter(event => ['cache_chain_observed', 'provider_input_observed'].includes(event.kind));
+    assert.ok(observations.length >= 4);
+    const appliedSequence = replay.events.find(event => event.kind === 'guidance_applied').sequence;
+    const afterGuidance = observations.filter(event => event.sequence > appliedSequence);
+    assert.ok(afterGuidance.length >= 2);
+    assert.ok(afterGuidance.every(event => !event.payload.frozenPrefixBreak),
+      'guidance must preserve the established native/compatibility prefix after initial provider capability negotiation');
+    if (compatibility) assert.ok(snapshot.turns[0].messages.some(message => message.message.providerReplay?.data.compatibilityMode === true), 'fixture actually exercised compatibility mode');
+    const restored = await client.call('runtime.command', { kind: 'runtime.get_user_message', payload: { sessionId: 'guidance', turnId: job.turnId, messageId: guidance[0].messageId } });
+    assert.equal(restored.message.content, command.payload.content);
+  } finally { client.close(); await http.close(); await f.service.close(); }
+});
+
+test('cloud reasoning and output settings reach the provider and model limits survive service restart', async t => {
+  const f = await openService(t, 'model-settings'); let service = f.service;
+  try {
+    const original = await service.call('product.command', { kind: 'models.get' });
+    const config = { ...original, models: original.models.map(model => ({ ...model, apiKey: '', maxContextTokens: 64000, maxCompletionTokens: 16384 })) };
+    await assert.rejects(service.call('product.command', { kind: 'models.update', config: {
+      ...config, models: config.models.map(model => ({ ...model, maxCompletionTokens: 64000 })),
+    } }), /less than/);
+    const saved = await service.call('product.command', { kind: 'models.update', config });
+    assert.equal(saved.models[0].hasApiKey, true, 'blank key retains the server credential');
+    assert.equal(saved.models[0].maxCompletionTokens, 16384);
+    await service.call('sessions.create', { sessionId: 'settings' });
+    await service.call('chat.send', { ...input('settings', 'no-reasoning'), reasoningEffort: 'none', planEnabled: false });
+    await until(() => service.call('chat.jobs'), jobs => jobs.find(job => job.id === 'no-reasoning')?.status === 'completed');
+    assert.deepEqual(f.model.calls[0].reasoning, { effort: 'none' });
+    assert.equal(f.model.calls[0].max_output_tokens, 16384);
+    await service.close(); service = await AgentService.open({ dataRoot: f.root });
+    const restored = await service.call('product.command', { kind: 'models.get' });
+    assert.equal(restored.models[0].maxContextTokens, 64000); assert.equal(restored.models[0].maxCompletionTokens, 16384);
+    await service.call('chat.send', { ...input('settings', 'high-reasoning'), reasoningEffort: 'high', planEnabled: false });
+    await until(() => service.call('chat.jobs'), jobs => jobs.find(job => job.id === 'high-reasoning')?.status === 'completed');
+    assert.deepEqual(f.model.calls[1].reasoning, { effort: 'high' });
+    assert.equal(f.model.calls[1].max_output_tokens, 16384);
+  } finally { await service.close(); }
+});
 
 test('conversation presentation survives restart and stays independent of active Runtime metadata', async t => {
   const f = await openService(t, 'presentation', 500); let service = f.service;
@@ -223,7 +291,7 @@ test('a missing local listener explains the tunnel dependency and can be retried
     const [connection] = await manager.save({ name: 'Recovery', transport: 'http', url: `http://127.0.0.1:${port}`, token: 'private-fixture-token' });
     await assert.rejects(manager.connect(connection.id), error => {
       assert.match(error.message, /ECONNREFUSED/);
-      assert.match(error.message, /本机隧道/);
+      assert.match(error.message, /连接设置.*SSH 隧道/);
       assert.match(error.message, new RegExp(`127\\.0\\.0\\.1:${port}`));
       assert.doesNotMatch(error.message, /private-fixture-token|fetch failed/);
       return true;
@@ -417,6 +485,12 @@ test('tools execute on the Agent host and permission waits survive event reader 
     assert.match(JSON.stringify(model.calls[1]), /SERVER_LOCAL_CONTENT/);
     const records = await service.call('runtime.command', { kind: 'runtime.list_turn_tool_executions', payload: { sessionId: 'tools', turnId: job.turnId } });
     assert.ok(records.some(record => record.toolCall.name === 'read_file' && record.outcome === 'returned'));
+    const full = await service.call('sessions.get', { sessionId: 'tools' });
+    const projected = await service.call('sessions.get', { sessionId: 'tools', messageProjection: 'conversation' });
+    assert.ok(full.turns.some(turn => turn.messages.some(message => message.message.role === 'tool')));
+    assert.equal(projected.turns.some(turn => turn.messages.some(message => message.message.role === 'tool')), false,
+      'HTTP must honor the same conversation projection as IPC');
+    assert.deepEqual(await service.call('sessions.get', { sessionId: 'tools' }), full, 'presentation reads leave the canonical history unchanged');
   } finally { await service.close(); }
 });
 
@@ -449,7 +523,9 @@ test('saved connection pins Agent identity and rejects a different service at th
     const [connection] = await manager.save({ name: 'pinned', transport: 'http', url: `http://127.0.0.1:${port}`, token });
     await manager.connect(connection.id); await listener.close();
     listener = await serveAgentHttp(b.service, { port, token });
-    await assert.rejects(manager.call(connection.id, 'sessions.create', { sessionId: 'must-not-create' }), /identity changed/);
+    // The old keep-alive socket may report its close before the replacement
+    // service can reject the pinned identity. Neither path may replay the write.
+    await assert.rejects(manager.call(connection.id, 'sessions.create', { sessionId: 'must-not-create' }), /identity changed|ECONNRESET|UND_ERR_SOCKET/);
     assert.equal((await b.service.call('sessions.list')).length, 0);
     await manager.disconnect(connection.id);
     await assert.rejects(manager.connect(connection.id), /identity changed/);
@@ -621,4 +697,112 @@ test('HTTP stream parser handles split UTF-8 and rejects truncated streams', asy
     truncate = true;
     await assert.rejects(async () => { for await (const _ of client.events({ sessionId: 'session', turnId: 'turn' }, new AbortController().signal)) {} }, /disconnected/);
   } finally { client.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+
+test('remote queue reorders both directions, removes and atomically converts one item to guidance', async t => {
+  const f = await openService(t, 'queue-controls', 1300);
+  try {
+    await f.service.call('sessions.create', { sessionId: 'queue-controls' });
+    const active = await f.service.call('chat.send', input('queue-controls', 'active', 'Initial request'));
+    await until(() => f.model.calls.length, count => count === 1);
+    for (const name of ['guide', 'remove', 'keep']) await f.service.call('chat.send', input('queue-controls', name, name));
+    const queued = async () => (await f.service.call('chat.jobs')).filter(job => job.status === 'queued').map(job => job.id);
+    await f.service.call('chat.queue', { action: 'reorder', id: 'guide', targetId: 'keep' });
+    assert.deepEqual(await queued(), ['remove', 'keep', 'guide']);
+    await f.service.call('chat.queue', { action: 'reorder', id: 'guide', targetId: 'remove' });
+    assert.deepEqual(await queued(), ['guide', 'remove', 'keep']);
+    await f.service.call('chat.queue', { action: 'remove', id: 'remove' });
+    assert.deepEqual(await queued(), ['guide', 'keep']);
+    await assert.rejects(f.service.call('chat.queue', { action: 'remove', id: active.id }), /already started/);
+    const guide = { action: 'guide', id: 'guide', turnId: active.turnId };
+    await f.service.call('chat.queue', guide); await f.service.call('chat.queue', guide);
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.find(job => job.id === 'keep')?.status === 'completed');
+    const snapshot = await f.service.call('sessions.get', { sessionId: 'queue-controls' });
+    assert.equal(snapshot.turns.length, 2, 'converted guidance cannot execute as a separate queued turn');
+    assert.equal(snapshot.turns[0].messages.filter(message => message.message.name === 'turn_guidance').length, 1);
+    assert.equal(f.model.calls.length, 3);
+    assert.deepEqual(f.model.calls[1].input.slice(0, f.model.calls[0].input.length), f.model.calls[0].input, 'queue guidance preserves the previous provider prefix');
+  } finally { await f.service.close(); }
+});
+
+test('remote edited messages use Runtime supersession and durable submission identities', async t => {
+  const f = await openService(t, 'edit');
+  try {
+    await f.service.call('sessions.create', { sessionId: 'edit' });
+    await f.service.call('chat.send', input('edit', 'original', 'Original question'));
+    await until(() => f.service.call('chat.jobs'), jobs => jobs[0].status === 'completed');
+    const original = await f.service.call('sessions.get', { sessionId: 'edit' });
+    const messageIds = original.turns[0].messages.map(message => message.messageId);
+    const edit = { ...input('edit', 'replacement', 'Edited question'), turnId: 'replacement-turn',
+      supersession: { expectedRevision: original.revision, messageIds, reason: 'user_edit_regenerate' } };
+    const submitted = await f.service.call('chat.send', edit);
+    assert.equal(submitted.turnId, 'replacement-turn');
+    assert.equal((await f.service.call('chat.send', edit)).id, submitted.id);
+    await until(() => f.service.call('chat.jobs'), jobs => jobs[1].status === 'completed');
+    const after = await f.service.call('sessions.get', { sessionId: 'edit' });
+    assert.ok(messageIds.every(id => after.supersededMessageIds.includes(id)));
+    assert.equal(after.turns.length, 2); assert.equal(f.model.calls.length, 2);
+    assert.match(JSON.stringify(f.model.calls[1].input), /Edited question/);
+    assert.doesNotMatch(JSON.stringify(f.model.calls[1].input), /Original question/);
+    assert.equal(after.turns[0].messages[0].message.content, original.turns[0].messages[0].message.content, 'original history remains auditable');
+  } finally { await f.service.close(); }
+});
+
+test('remote extraction uses the shared store, resolves on the server and exports into its workspace', async t => {
+  const f = await openService(t, 'extract');
+  try {
+    const session = await f.service.call('sessions.create', { sessionId: 'extract' });
+    await f.service.call('chat.send', input('extract', 'source', 'Reusable context'));
+    await until(() => f.service.call('chat.jobs'), jobs => jobs[0].status === 'completed');
+    const selection = { sessionId: 'extract', keys: [], title: 'Saved context', description: 'For followup', contextWindowTokens: 40000 };
+    const preview = await f.service.call('conversation.extracts', { action: 'preview', selection });
+    selection.keys = preview.source.defaultKeys;
+    assert.ok(selection.keys.length > 0);
+    const item = await f.service.call('conversation.extracts', { action: 'save', selection, kind: 'permanent' });
+    const resolved = await f.service.call('conversation.extracts', { action: 'resolve', id: item.id });
+    assert.ok(resolved.path.startsWith(f.root));
+    const content = await f.service.call('conversation.extracts', { action: 'read', id: item.id });
+    assert.match(content.content, /Reusable context/); assert.match(content.content, /answer-1/);
+    const exported = await f.service.call('conversation.extracts', { action: 'export', selection });
+    assert.ok(exported.path.startsWith(session.metadata.runtimeWorkspace.workspaceDir));
+    assert.equal(await readFile(exported.path, 'utf8'), content.content);
+    await assert.rejects(f.service.call('conversation.extracts', { action: 'read', id: '../private' }));
+    await f.service.call('conversation.extracts', { action: 'remove', id: item.id });
+    assert.equal((await f.service.call('conversation.extracts', { action: 'list' })).permanent.length, 0);
+  } finally { await f.service.close(); }
+});
+
+test('explicit remote goals use the existing Runtime goal tool and stop continuing on completion', async t => {
+  const f = await openService(t, 'goal', 80, { name: 'update_goal', arguments: { status: 'complete', statusReason: 'Fixture completed' } });
+  try {
+    await f.service.call('sessions.create', { sessionId: 'goal' });
+    await f.service.call('chat.send', { ...input('goal', 'goal-request', 'Complete the task'), goalObjective: 'Complete the task' });
+    await until(() => f.service.call('chat.jobs'), jobs => jobs[0].status === 'completed');
+    const goal = await f.service.call('runtime.command', { kind: 'runtime.get_goal', payload: { sessionId: 'goal' } });
+    assert.equal(goal.status, 'complete'); assert.equal(goal.objective, 'Complete the task');
+    await pause(100);
+    assert.equal((await f.service.call('chat.jobs')).length, 1, 'a completed goal has no continuation job');
+    assert.equal(f.model.calls.length, 2);
+  } finally { await f.service.close(); }
+});
+
+test('remote goal continuations yield to queued user work and stop with cancellation', async t => {
+  const f = await openService(t, 'goal-queue', 400);
+  try {
+    await f.service.call('sessions.create', { sessionId: 'goal-queue' });
+    await f.service.call('chat.send', { ...input('goal-queue', 'goal-start', 'Initial task'), goalObjective: 'Keep working' });
+    await until(() => f.model.calls.length, count => count === 1);
+    await f.service.call('chat.send', input('goal-queue', 'user-followup', 'Please handle my queued correction first'));
+    const jobs = await until(() => f.service.call('chat.jobs'), jobs => jobs.some(job => job.goalContinuation && job.status === 'running'));
+    assert.deepEqual(jobs.slice(0, 2).map(job => [job.id, job.status]), [['goal-start', 'completed'], ['user-followup', 'completed']]);
+    assert.equal(jobs.filter(job => job.goalContinuation).length, 1);
+    const active = jobs.find(job => job.goalContinuation);
+    const goal = await f.service.call('runtime.command', { kind: 'runtime.get_goal', payload: { sessionId: 'goal-queue' } });
+    await f.service.call('runtime.command', { kind: 'runtime.update_goal', payload: { sessionId: 'goal-queue', goalId: goal.goalId, expectedRevision: goal.revision, consumedTokens: goal.consumedTokens, status: 'cancelled', statusReason: 'User cancelled' } });
+    await f.service.call('chat.stop', { id: active.id });
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.every(job => !['queued', 'running'].includes(job.status)));
+    await pause(120);
+    assert.equal((await f.service.call('chat.jobs')).length, 3, 'cancelled goals cannot schedule another continuation');
+  } finally { await f.service.close(); }
 });

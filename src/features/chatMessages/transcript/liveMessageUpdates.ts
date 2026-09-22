@@ -158,6 +158,9 @@ export function applyAssistantSegmentBoundary(
   const messages = [...(current[sessionId] ?? [])];
   if (update.guidanceMessageId) {
     const guidanceMessageId = update.guidanceMessageId.trim();
+    if (update.guidanceMessage && !messages.some(message => message.id === guidanceMessageId || message.messageId === guidanceMessageId || message.clientMessageId === guidanceMessageId)) {
+      messages.push(update.guidanceMessage);
+    }
     for (let index = 0; index < messages.length; index += 1) {
       const message = messages[index];
       if (
@@ -834,6 +837,9 @@ function appendToolToAssistant(message: ChatMessage, execution: ChatToolExecutio
   const index = existing.findIndex(item => item.id === execution.id);
   const nextExecution = {
     ...execution,
+    // State/enrichment may finish out of order. Keep the call's original slot.
+    sequence: index >= 0 ? existing[index].sequence ?? execution.sequence : execution.sequence,
+    createdAt: index >= 0 ? existing[index].createdAt || execution.createdAt : execution.createdAt,
     contentOffset: index >= 0
       ? existing[index].contentOffset
       : execution.contentOffsetExplicit ? execution.contentOffset : message.content.length,

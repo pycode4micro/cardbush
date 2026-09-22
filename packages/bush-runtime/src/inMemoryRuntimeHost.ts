@@ -98,7 +98,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, realpath, stat, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { executeModelRound } from "./modelRound.js";
+import { executeModelRound, isToolCallValidationFailure } from "./modelRound.js";
 import { abortError, settleAtAbort } from "./abortSettlement.js";
 import {
   DEFAULT_SUBAGENT_PERMISSION_POLICY,
@@ -1092,6 +1092,13 @@ export class InMemoryRuntimeHost {
           try { guidance.metadata = { ...guidance.metadata, automationReminder: await this.#automation.reminder() }; }
           catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
         }
+        // A transport retry may arrive after the queue was drained, or after the
+        // Turn completed. Acknowledge the original append instead of inserting it twice.
+        if (this.#eventLog.replay(guidance.sessionId, guidance.turnId).some(event =>
+          event.kind === 'guidance_applied' && event.payload.messageId === guidance.messageId)) {
+          return { protocol: guidance.protocol, sessionId: guidance.sessionId, turnId: guidance.turnId,
+            messageId: guidance.messageId, accepted: true, queueDepth: this.#guidanceQueues.get(key)?.length ?? 0 };
+        }
         if (!this.#activeTurns.has(key)) {
           throw new Error(`Turn ${guidance.turnId} is not accepting guidance.`);
         }
@@ -1495,6 +1502,13 @@ export class InMemoryRuntimeHost {
     let emptyStopRetries = 0;
     let fileReferenceRetries = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_file_reference_${request.turnId}_`)).length ?? 0;
     let outputLimitContinuations = input.sessionCommit?.outputLimitContinuations ?? 0;
+    let toolCallRepairAttempts = input.sessionCommit?.toolCallRepairAttempts ?? 0;
+    if (input.nextRound > 1 && input.sessionCommit?.toolCallRepairAttempts === undefined) {
+      for (const message of [...input.messages].reverse()) {
+        if (message.role === 'tool' || message.role === 'user') break;
+        if (message.role === 'developer' && message.name === 'tool_call_repair') { toolCallRepairAttempts = 1; break; }
+      }
+    }
     let pluginStopContinuations = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_plugin_stop_${request.turnId}_`)).length ?? 0;
     for (const message of input.nextRound > 1 && input.sessionCommit?.outputLimitContinuations === undefined ? [...input.messages].reverse() : []) {
       if (message.role === "tool" || message.role === "user") break;
@@ -1542,6 +1556,7 @@ export class InMemoryRuntimeHost {
             generatedMessages,
             usage,
             outputLimitContinuations,
+            toolCallRepairAttempts,
             ...(activeContextCheckpoint ? { activeContextCheckpoint } : {}),
           }
         : undefined;
@@ -2046,7 +2061,7 @@ export class InMemoryRuntimeHost {
             >
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
-        let retryAfterContextRecovery = false;
+        let retryAfterModelRecovery = false;
         for (let attempt = 1; this.#maxAttempts === null || attempt <= this.#maxAttempts; attempt += 1) {
           if (input.signal?.aborted) return await stop();
           if (compactionTransaction && !compactionTransaction.beginAttempt()) {
@@ -2226,6 +2241,31 @@ export class InMemoryRuntimeHost {
             completedProjector = projector;
             break;
           }
+          if (!compactionTransaction && isToolCallValidationFailure(result.error) && toolCallRepairAttempts < 1) {
+            toolCallRepairAttempts += 1;
+            // Append accepted prose only. A rejected batch has no executions or
+            // receipts, and must never become a partial tool exchange in history.
+            if (result.text || result.reasoning) {
+              const partial: ModelMessage = { role: 'assistant', content: result.text, toolCalls: [],
+                ...(result.reasoning ? { reasoningContent: result.reasoning } : {}) };
+              messages = [...messages, partial];
+              generatedMessages.push({ messageId: projector.messageId, createdAt: this.#sessionNow(), message: partial });
+            }
+            const instruction: ModelMessage = { role: 'developer', name: 'tool_call_repair',
+              content: `The preceding response contained an invalid or unfinished tool call (${result.error.code}). No tool from that response was executed. Continue the original task from the existing results. Re-emit any needed call with the correct exposed tool name and complete valid JSON arguments; do not continue the partial arguments. Split large scripts or file writes into smaller complete calls if needed. Preserve user authorization, dependencies, and completed actions; never repeat completed side effects. This correction does not change permissions or configured limits.` };
+            messages = [...messages, instruction];
+            generatedMessages.push({ messageId: `msg_tool_call_repair_${request.turnId}_${round}`,
+              createdAt: this.#sessionNow(), message: instruction });
+            this.#eventLog.append(identity, { kind: 'provider_retry', payload: {
+              attempt: 2, maxAttempts: 2, nextRetryMs: 0, code: 'tool_call_validation_repair',
+              causeCode: result.error.code, message: 'Tool call validation failed; asking the model for one complete corrected call.' } });
+            // Keep the prior successful provider chain and its immutable prefix;
+            // the failed response must not become the next continuation anchor.
+            this.#recovery.save({ request, messages, nextRound: round + 1,
+              cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
+            retryAfterModelRecovery = true;
+            break;
+          }
           if (input.sessionCommit && Number(request.metadata.contextWindowTokens) > 0 &&
               isContextLengthFailure(result.error) && contextOverflowRecoveries < 2) {
             // Do not repeat a rejected request. Maintenance uses its own output
@@ -2247,13 +2287,13 @@ export class InMemoryRuntimeHost {
                 { jobId: compactionJob?.id, providerCode: result.error.code });
               this.#recovery.save({ request, messages, nextRound: round + 1,
                 cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
-              retryAfterContextRecovery = true;
+              retryAfterModelRecovery = true;
               break;
             }
           }
           // Known context refusals belong exclusively to the bounded recovery
           // path above, even if an adapter marks them as transport-retryable.
-          if (!isContextLengthFailure(result.error) && result.error.retryable &&
+          if (!isContextLengthFailure(result.error) && !isToolCallValidationFailure(result.error) && result.error.retryable &&
               (this.#maxAttempts === null || attempt < this.#maxAttempts)) {
             const supersededEventIds = this.#eventLog
               .replay(request.sessionId, request.turnId, {
@@ -2307,13 +2347,14 @@ export class InMemoryRuntimeHost {
               retryable: result.error.retryable,
               attempts: attempt,
               round,
+              ...(isToolCallValidationFailure(result.error) ? { repairAttempts: toolCallRepairAttempts } : {}),
               status: result.error.status,
               providerRequestId: result.error.providerRequestId,
               diagnostics: result.error.diagnostics,
             },
           });
         }
-        if (retryAfterContextRecovery) continue;
+        if (retryAfterModelRecovery) continue;
         if (!completedRound || !completedProjector) {
           throw new Error("Runtime retry loop exited without a model result.");
         }
@@ -2732,6 +2773,7 @@ export class InMemoryRuntimeHost {
             argumentsText: call.argumentsText,
           })),
         };
+        toolCallRepairAttempts = 0;
         const toolRound = await toolLoop.execute(completedRound.toolCalls, {
           round,
           assistantMessageId: completedProjector.messageId,

@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, Loader2, Maximize2, Minimize2, PanelsTopLeft, RotateCw, X } from 'lucide-react';
-import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntimeSession';
+import { conversationRuntime, type ConversationRuntime } from '../../backend/conversationRuntime';
+import { ConversationHostContext } from '../conversationHost';
 import type { AppLanguage } from '../../types';
 import { mcpAppDocument, mcpAppTheme, type McpAppView } from './mcpAppBridge';
 import './mcp-app.css';
 
-export async function mcpAppCommand(input: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
+export async function mcpAppCommand(input: Record<string, unknown>, signal?: AbortSignal, runtimeOverride?: ConversationRuntime): Promise<any> {
   if (input.action === 'open') {
     await window.cardbushDesktop?.preparePluginUiNetwork?.();
     signal?.throwIfAborted();
   }
-  const runtime = createDesktopRuntimeSession();
+  const runtime = conversationRuntime(runtimeOverride);
   try { return await runtime.client.command({ kind: 'runtime.mcp_app', payload: input }, value => value, signal); }
   finally { runtime.dispose(); }
 }
-const command = mcpAppCommand;
 type PendingAction = { text: string; label: string; run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (reason: Error) => void };
 const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 function interfaceErrorCode(cause: unknown) {
@@ -23,6 +23,8 @@ function interfaceErrorCode(cause: unknown) {
 }
 const staleInterface = (cause: unknown) => ['mcp_app_expired', 'mcp_app_connection_changed'].includes(interfaceErrorCode(cause));
 export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle, language, autoOpen = false }: { sessionId: string; turnId: string; toolCallId: string; title?: string; serverTitle?: string; language: AppLanguage; autoOpen?: boolean }) {
+  const host = useContext(ConversationHostContext);
+  const command = useCallback((input: Record<string, unknown>, signal?: AbortSignal) => mcpAppCommand(input, signal, host?.runtime), [host?.runtime]);
   const [view, setView] = useState<McpAppView | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(autoOpen);
   const [errorCode, setErrorCode] = useState('');
   const answeredPermissions = useRef(new Set<string>());
@@ -93,7 +95,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       else setError(currentLanguage.current === 'zh' ? '此插件界面目前不可用。' : 'This plugin interface is currently unavailable.');
     } catch (cause) { if (!controller.signal.aborted) { setError(errorMessage(cause)); setErrorCode(interfaceErrorCode(cause)); } }
     finally { if (opening.current === controller) opening.current = null; if (!controller.signal.aborted) setLoading(false); }
-  }, [sessionId, turnId, toolCallId]);
+  }, [sessionId, turnId, toolCallId, command]);
   const handleError = useCallback((cause: unknown, token?: string) => {
     if (token && activeToken.current !== token) return;
     if (staleInterface(cause) && recoveries.current === 0) { recoveries.current++; void open(true); }
@@ -115,7 +117,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
   useEffect(() => { setSlow(false); if (!waiting) return; const timer = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(timer); }, [waiting]);
   useEffect(() => { if (autoOpen) void open(); }, [autoOpen, open]);
   useEffect(() => () => { activeToken.current = null; opening.current?.abort(); pendingRef.current?.reject(new Error('Interface closed.')); }, []);
-  useEffect(() => { if (!view) return; return () => { void command({ action: 'close', token: view.token }).catch(() => {}); }; }, [view]);
+  useEffect(() => { if (!view) return; return () => { void command({ action: 'close', token: view.token }).catch(() => {}); }; }, [view, command]);
   useEffect(() => {
     if (!view) return;
     const controller = new AbortController(); let initialized = false, initializing = false, polling = false, activeCalls = 0, failureReported = false;
@@ -177,7 +179,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
           const text = content.filter((item: any) => item?.type === 'text' && typeof item.text === 'string').map((item: any) => item.text).join('\n');
           if (!text.trim() || text.length > 32_000 || params.role && params.role !== 'user') throw new Error('The interface message must be user text up to 32,000 characters.');
           respond(await requestUser(text, zh ? '发送到会话' : 'Send to conversation', async () => {
-            await new Promise<void>((resolve, reject) => window.dispatchEvent(new CustomEvent('cardbush:mcp-app-message', { detail: { sessionId, text, resolve, reject } })));
+            await new Promise<void>((resolve, reject) => window.dispatchEvent(new CustomEvent('cardbush:mcp-app-message', { detail: { sessionId, hostId: host?.id, text, resolve, reject } })));
             return {};
           })); return;
         }
@@ -202,7 +204,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       }).catch(() => {}).finally(() => { polling = false; });
     }, 300);
     return () => { controller.abort(); clearInterval(timer); window.removeEventListener('message', listener); };
-  }, [view, sessionId, handleError, setDisplayMode, scheduleViewport]);
+  }, [view, sessionId, host?.id, command, handleError, setDisplayMode, scheduleViewport]);
   if (!sessionId || !turnId) return null;
   const displayTitle = title || view?.title || serverTitle || view?.serverTitle || (zh ? '插件界面' : 'Plugin interface');
   const prefersBorder = (view?.meta.ui?.prefersBorder ?? view?.meta['openai/widgetPrefersBorder']) !== false;
