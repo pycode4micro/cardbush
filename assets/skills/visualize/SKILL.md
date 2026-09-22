@@ -1,6 +1,6 @@
 ---
 name: visualize
-description: Create charts, trend plots, BI views, and interactive explanations directly in the CardBush conversation. Use proactively when viewing change over time, comparing business metrics, or exploring data is clearer visually. Also use when the user asks for inline visualization. Use ordinary Markdown for a requested table and standard plotting tools for publication figures; standalone websites remain project work.
+description: 在 CardBush 对话中创建图表、趋势图、BI 视图和交互解释（charts, trend plots, BI views, interactive explanations）。适用于消耗走势、趋势分析、经营报表中的图表、指标对比、同比/环比、数据探索和 HTML 交互图表，包括查询数据后转入图表制作的阶段。时间变化、业务指标或数据关系用图表达更清楚，或用户要求内嵌可视化时使用。用户只要普通表格时使用 Markdown；出版级静态图使用标准绘图工具；独立网站开发按项目任务处理。
 ---
 
 # 视觉

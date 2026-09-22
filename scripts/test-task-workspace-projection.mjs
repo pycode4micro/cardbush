@@ -51,4 +51,10 @@ assert.equal(JSON.stringify(native), before, 'revert projection must not rewrite
 review.checkpoints[0].status = 'failed';
 assert.equal(workspaceCheckpointExecutions(review).length, 0, 'incomplete checkpoints cannot claim reversible changes');
 assert.equal(coverWorkspaceToolExecution(native, review), native);
+const repeatedCallReports = changeReportsFromMessages([
+  { id: 'first', role: 'assistant', content: 'first', turnId: 'one', toolExecutions: [native] },
+  { id: 'second', role: 'assistant', content: 'second', turnId: 'two', toolExecutions: [{ ...native, turnId: 'two' }] },
+  { id: 'duplicate', role: 'assistant', content: '', turnId: 'two', toolExecutions: [{ ...native, turnId: 'two' }] },
+]);
+assert.deepEqual(Array.from(repeatedCallReports, report => report.turnId), ['one', 'two'], 'tool call IDs are scoped to a turn; same-turn duplicates stay collapsed');
 console.log('Task workspace projection passed: source facts, shell coverage, Turn association, hydration and revert state.');

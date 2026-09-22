@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { canonicalStoragePath } from "@cardbush/platform";
+import { parseSshWorkspace } from '@cardbush/bush-protocol';
 import { chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceCheckpoint, WorkspaceDescriptor, WorkspaceReview } from "@cardbush/bush-protocol";
@@ -32,6 +33,7 @@ function inside(root: string, path: string) {
   return delta === "" || (delta !== ".." && !delta.startsWith(`..${sep}`) && !isAbsolute(delta));
 }
 function sameLocation(a: string, b: string) {
+  if (parseSshWorkspace(a) || parseSshWorkspace(b)) return a === b;
   return process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
 }
 function equal(a?: Entry, b?: Entry) { return a?.hash === b?.hash && a?.kind === b?.kind && a?.mode === b?.mode; }
@@ -60,15 +62,55 @@ export class TaskWorkspaceManager {
   }
 
   async create(sessionId: string, source: string, mode: "auto" | "direct" | "worktree"): Promise<WorkspaceDescriptor> {
+    return this.#exclusive(sessionId, () => this.#create(sessionId, source, mode));
+  }
+
+  /** A workspace switch changes the binding, never the user's working files. */
+  async rebind(sessionId: string, source: string | null): Promise<WorkspaceDescriptor | undefined> {
     return this.#exclusive(sessionId, async () => {
-      const prior = await this.#load(sessionId);
+      const previous = await this.#load(sessionId);
+      if (source && previous?.status === "ready" && (parseSshWorkspace(source) ? source === previous.sourceDir : !parseSshWorkspace(previous.sourceDir) && sameLocation(await realpath(source), previous.sourceDir))) return this.#descriptor(previous);
+      if (previous?.mode === "worktree" && previous.status === "ready") {
+        throw problem("workspace_copy_active", "请先处理并丢弃独立任务副本，再切换工作区。 / Resolve and discard the task copy before switching workspaces.");
+      }
+      if (previous) {
+        await this.#recover(previous);
+        if (previous.status === "ready" && previous.checkpoints.some(checkpoint => checkpoint.status === "pending" || checkpoint.status === "failed")) {
+          throw problem("workspace_checkpoint_pending", "请先补建工作区检查点，再切换工作区。 / Recover the workspace checkpoint before switching.");
+        }
+      }
+      const oldStore = this.#stores.get(sessionId);
+      this.#stores.delete(sessionId);
+      try {
+        if (source) return await this.#create(sessionId, source, "direct", (previous?.revision ?? 0) + 1);
+        // This file is CardBush's binding journal, not the project or its files.
+        await rm(join(this.#directory(sessionId), "state.json"), { force: true });
+        return undefined;
+      } catch (error) {
+        if (oldStore) this.#stores.set(sessionId, oldStore); else this.#stores.delete(sessionId);
+        throw error;
+      }
+    });
+  }
+
+  async #create(sessionId: string, source: string, mode: "auto" | "direct" | "worktree", revision?: number): Promise<WorkspaceDescriptor> {
+      if (parseSshWorkspace(source)) {
+        if (mode === 'worktree') throw Error('SSH projects currently use their remote directory directly.');
+        const priorRemote = revision === undefined ? await this.#load(sessionId) : undefined;
+        if (priorRemote && priorRemote.sourceDir !== source) throw Error('Workspace identity changed. Use workspace switching.');
+        if (priorRemote) return this.#descriptor(priorRemote);
+        const remote: State = { protocol: 'bush.task_workspace.v2', sessionId, mode: 'direct', sourceDir: source, workspaceDir: source, revision: revision ?? 1, status: 'ready', versioning: 'none', baselineId: '', latestId: '', appliedId: '', checkpoints: [] };
+        await this.#save(remote); return this.#descriptor(remote);
+      }
+      const prior = revision === undefined ? await this.#load(sessionId) : undefined;
       if (prior) {
         if (await realpath(resolve(source)) !== prior.sourceDir) throw problem("workspace_identity_conflict", "This task already belongs to a different project.");
         await this.#recover(prior);
         return this.#descriptor(prior);
       }
       const sourceDir = await realpath(resolve(source));
-      const direct = (): WorkspaceDescriptor => ({ mode: "direct", sessionId, sourceDir, workspaceDir: sourceDir, revision: 1, status: "ready", versioning: "none" });
+      if (!(await lstat(sourceDir)).isDirectory()) throw problem("workspace_directory_required", "Workspace must be an existing directory.");
+      const direct = (): WorkspaceDescriptor => ({ mode: "direct", sessionId, sourceDir, workspaceDir: sourceDir, revision: revision ?? 1, status: "ready", versioning: "none" });
       const local = async (git: boolean, versioningError?: string): Promise<WorkspaceDescriptor> => {
         const state: State = { ...direct(), protocol: "bush.task_workspace.v2", versioning: git ? "git" : "none",
           baselineId: "", latestId: "", appliedId: "", checkpoints: [], versioningError };
@@ -154,7 +196,6 @@ export class TaskWorkspaceManager {
         }
         throw error;
       }
-    });
   }
 
   async beginTurn(sessionId: string, turnId: string): Promise<boolean> {
@@ -649,7 +690,7 @@ export class TaskWorkspaceManager {
     const path = join(this.#directory(sessionId), "state.json");
     let state: State;
     try { state = JSON.parse(await readFile(path, "utf8")); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-    if (!["bush.task_workspace.v1", "bush.task_workspace.v2"].includes(state.protocol) || state.sessionId !== sessionId || !isAbsolute(state.sourceDir) ||
+    if (!["bush.task_workspace.v1", "bush.task_workspace.v2"].includes(state.protocol) || state.sessionId !== sessionId || (!isAbsolute(state.sourceDir) && !parseSshWorkspace(state.sourceDir)) ||
       (state.mode === "direct" && !sameLocation(state.workspaceDir, state.sourceDir)) ||
       (state.mode === "worktree" && !sameLocation(state.workspaceDir, join(this.#directory(sessionId), "checkout")))) {
       throw problem("workspace_journal_corrupt", "Workspace identity does not match its persisted owner.");

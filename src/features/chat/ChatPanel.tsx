@@ -16,7 +16,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { recordAssistantLogicFeedback, type ExperimentalGoal } from '../../backend/api';
+import { type ExperimentalGoal } from '../../backend/api';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import {
   normalizeChatMessagesForDisplay,
@@ -249,7 +249,7 @@ export function ChatPanel({
   projectPathAliases: Array<{ from: string; to: string }>;
   selectedProjectDir: string;
   availableProjects: ProjectItem[];
-  onWelcomeProjectChange: (projectDir: string | null) => Promise<void>;
+  onWelcomeProjectChange: (projectDir: string | null, reference?: string) => Promise<void>;
   messages: ChatMessage[];
   /** Opt-in display scheduling for the isolated streaming lab. */
   transcriptDelivery?: 'batched' | 'frame';
@@ -2485,7 +2485,7 @@ export function ChatPanel({
   }
 
   return (
-    <ComposerReferenceContext.Provider value={{ sessionId: activeConversationId, browserTabs, messages }}>
+    <ComposerReferenceContext.Provider value={{ sessionId: activeConversationId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
     <div
       className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
@@ -2670,7 +2670,7 @@ export function ChatPanel({
                       onRevertChangeReport={onRevertChangeReport}
                       onOpenChangeReview={openChangeReview}
                       onOpenScene={openScene}
-                      onAssistantFeedback={recordAssistantLogicFeedback}
+
                     />
                   </div>
                 ))}

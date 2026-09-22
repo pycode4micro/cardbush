@@ -33,8 +33,7 @@ assert.doesNotMatch(
   productAgent,
   /Computer Use is a last-resort|prefer any purpose-built|chrome_devtools Tools as the primary route/,
 );
-assert.match(extendedBuiltins, /name: "consult_logic"/);
-assert.match(extendedBuiltins, /name: "learn_logic"/);
+assert.doesNotMatch(extendedBuiltins, /consult_logic|learn_logic|logicMemory/);
 assert.doesNotMatch(extendedBuiltins, /name: "ked_/);
 
 console.log('Runtime built-in/MCP tool boundary contract passed');

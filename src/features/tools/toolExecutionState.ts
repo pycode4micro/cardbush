@@ -80,8 +80,6 @@ export function displayToolName(value: string) {
   if (lowered === 'solution_selection') return 'Solution Selection';
   if (lowered === 'runtime_context_compaction') return 'Context compaction';
   if (lowered === 'workspace_checkpoint') return 'Workspace changes';
-  if (lowered === 'consult_logic') return 'LEM Consult';
-  if (lowered === 'learn_logic') return 'LEM Learn';
   for (const separator of [':', '.', '/']) {
     if (text.includes(separator)) {
       text = text.split(separator).pop() ?? text;

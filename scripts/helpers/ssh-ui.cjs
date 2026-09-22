@@ -1,0 +1,134 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+module.exports = async ({run,until,pause,window,root}) => {
+  await window.webContents.insertCSS(fs.readFileSync(path.join(root,'src/features/ssh/ssh.css'),'utf8')+'\n.app{width:100%!important}.ssh-settings{padding:24px;max-width:800px}');
+  await run(`
+    window.saved=[{id:'test-server',name:'开发服务器',host:'dev.example.test',port:22,username:'developer',authentication:'agent',defaultDirectory:'/home/developer/projects',hasPassword:false,hasPassphrase:false,status:'disconnected'}];
+    window.selected=[];window.directoryCalls=[];window.offline=false;
+    cardbushDesktop.sshConnections={list:async()=>saved,save:async input=>{saved=[...saved.filter(item=>item.id!==input.id),{...input,id:input.id||'new-server'}];return saved;},remove:async id=>{saved=saved.filter(item=>item.id!==id);return saved;},
+      test:async id=>saved.find(item=>item.id===id).fingerprint?{ok:true,directory:'/home/developer/projects'}:{ok:false,error:'首次连接，请确认 SSH 主机指纹。',needsTrust:true,fingerprint:'SHA256:'+'A'.repeat(43)},
+      directory:async uri=>{directoryCalls.push(uri);if(offline)throw Error('连接失败，请检查主机');return {uri,path:decodeURIComponent(new URL(uri).pathname),entries:[{kind:'folder',name:'service-api',path:'ssh://test-server/home/developer/projects/service-api'}]};},pickKey:async()=>undefined};
+    cardbushDesktop.pickProjectDirectory=async()=> 'D:/local-project';
+    window.clickText=(text,selector='button')=>{const node=[...document.querySelectorAll(selector)].find(item=>item.textContent.trim()===text);if(!node)throw Error('Missing button '+text);node.click();};
+    window.fill=(selector,value)=>{const input=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));};
+    window.renderSettings=()=>renderView(h(views.SshConnectionsPanel,{language:'zh',projects:[]}));renderSettings();
+  `);
+  await until("document.body.textContent.includes('开发服务器')",'saved connection list');
+  await run("clickText('测试')");await until("document.body.textContent.includes('信任此主机指纹并连接')",'explicit host trust');
+  await run("clickText('信任此主机指纹并连接')");await until("document.body.textContent.includes('连接成功')",'trusted connection');
+  await run("clickText('新增连接')");await until("!!document.querySelector('.ssh-form')",'connection form');
+  await run("fill('.ssh-form label:nth-of-type(1) input','第二台服务器');fill('input[placeholder=\"192.168.1.10\"]','192.168.1.23');fill('.ssh-form input[autocomplete=off]','tester');clickText('保存连接')");
+  await until('saved.length===2','save another connection');
+  assert.equal(await run("saved[1].authentication"),'agent');
+  for(const theme of ['theme-dark','theme-bright']) {
+    await run(`viewTheme=${JSON.stringify(theme)};renderSettings()`);await pause(100);
+    fs.mkdirSync(path.join(root,'tmp'),{recursive:true});fs.writeFileSync(path.join(root,`tmp/ssh-settings-${theme}.png`),(await window.capturePage()).toPNG());
+  }
+  await run(`updateChat({language:'zh',loading:false,historyLoading:false,selectedProjectDir:'',activeProjectDir:'',messages:[],onWelcomeProjectChange:async (uri,reference)=>{selected.push(uri);updateChat({selectedProjectDir:uri||'',activeProjectDir:uri||'',...(reference?{draft:reference}: {})});},onDraftChange:draft=>updateChat({draft})})`);
+  await until("!!document.querySelector('.workspace-location-control > button')",'welcome local/SSH switch');
+  await run("updateChat({availableProjects:[{id:'project',title:'CardBush',rootPath:'D:/projects/cardbush'},{id:'long',title:'服务端 API',rootPath:'D:/projects/team/backend/service-api/production'},{id:'archived',title:'Archived hidden',rootPath:'D:/archived',archived:true},{id:'remote',title:'远程服务',rootPath:'ssh://test-server/home/developer/projects/service-api'}]})");
+  for (const theme of ['dark', 'bright']) {
+    await run(`viewTheme='theme-${theme}';updateChat({});undefined;`);await pause(60);
+    await run("document.querySelector('.workspace-location-control > button').click()");
+    await until("!!document.querySelector('.workspace-picker-anchored')",'anchored project menu');
+    assert.equal(await run("document.querySelector('.workspace-picker').textContent.includes('Archived hidden')"),false);
+    assert.equal(await run("document.querySelector('.workspace-location-control > button').getAttribute('aria-expanded')"),'true');
+    await pause(80);
+    const rect=await run(`(()=>{const n=document.querySelector('.workspace-picker'),r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight,overflow:n.scrollWidth>n.clientWidth}})()`);
+    assert.ok(rect.x>=8&&rect.y>=8&&rect.right<=rect.viewportWidth-8&&rect.bottom<=rect.viewportHeight-8,JSON.stringify(rect));
+    assert.equal(rect.overflow,false);
+    fs.writeFileSync(path.join(root,'tmp','project-picker-'+theme+'.png'),(await window.webContents.capturePage({x:Math.floor(rect.x)-8,y:Math.floor(rect.y)-8,width:Math.ceil(rect.width)+16,height:Math.ceil(rect.height)+16})).toPNG());
+    await run("document.querySelector('.workspace-picker').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));undefined;");
+    await until("!document.querySelector('.workspace-picker')",'Escape dismisses project menu');
+    assert.equal(await run("document.querySelector('.workspace-location-control > button').getAttribute('aria-expanded')"),'false');
+  }
+  await run("document.querySelector('.workspace-location-control > button').click()");await until("!!document.querySelector('.ssh-dialog')",'location picker');
+  const surface=await run("getComputedStyle(document.querySelector('.ssh-dialog')).backgroundColor");assert.equal(surface,'rgb(255, 255, 255)','portal inherits bright theme');
+  await run("clickText('SSH')");await until("!!document.querySelector('.ssh-dialog select option[value=\"test-server\"]')",'remote connections');
+  await run("clickText('浏览')");await until("document.body.textContent.includes('service-api')",'StrictMode remote directory response');
+  await run("clickText('service-api')");await until("document.querySelector('input[aria-label=\"远程目录\"]').value.endsWith('/service-api')",'open child directory');
+  window.setContentSize(480,640);await pause(100);fs.writeFileSync(path.join(root,'tmp/ssh-picker-narrow.png'),(await window.capturePage()).toPNG());
+  assert.equal(await run("document.querySelector('.ssh-dialog').scrollWidth <= document.querySelector('.ssh-dialog').clientWidth+1"),true,'narrow picker fits');
+  await run("offline=true;clickText('连接并使用此目录')");await until("!!document.querySelector('.ssh-error')",'SSH failure stays visible');assert.deepEqual(await run('selected'),[]);
+  await run("offline=false;clickText('连接并使用此目录')");await until('selected.length===1','remote selection');assert.equal(await run('selected[0]'),'ssh://test-server/home/developer/projects/service-api');
+  await run("updateChat({messages:[{id:'message',role:'user',content:'在远程检查项目'}]})");await until("!!document.querySelector('.composer-dock')",'active chat composer');
+  assert.equal(await run("document.body.textContent.includes('独立工作区')"),false,'removed workspace badge');
+  assert.equal(await run("!!document.querySelector('.composer-dock .workspace-location-control')"),false,'active conversation has no permanent workspace row');
+  await run("updateChat({sending:true,activeTurnId:'ssh-layout-turn'})");
+  await until("!!document.querySelector('.composer-runtime-screen')",'running remote conversation');
+  await pause(100);
+  const composerGap=await run("document.querySelector('.composer-surface').getBoundingClientRect().top-document.querySelector('.composer-runtime-screen').getBoundingClientRect().bottom");
+  assert.ok(Math.abs(composerGap)<=1,'processing rail joins the composer: '+composerGap);
+  fs.writeFileSync(path.join(root,'tmp/ssh-active-composer.png'),(await window.capturePage()).toPNG());
+  await run("updateChat({sending:false,activeTurnId:''})");
+  window.setContentSize(1050,800);
+  await run("updateChat({draft:'@'})");await until("!!document.querySelector('textarea[data-composer-input]')",'mention textarea');
+  await run("const input=document.querySelector('textarea[data-composer-input]');input.focus();input.setSelectionRange(1,1);input.dispatchEvent(new Event('select',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keyup',{key:'@',bubbles:true}));");
+  await until("document.body.textContent.includes('连接 SSH 项目')",'@ SSH entry');
+  await run("const choice=[...document.querySelectorAll('.composer-command-row')].find(item=>item.textContent.includes('开发服务器'));if(!choice)throw Error('SSH mention entry missing');choice.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))");
+  await until("!!document.querySelector('.ssh-dialog')",'@ opens remote picker');await until("document.querySelector('.workspace-picker')?.textContent.includes('连接并使用此目录')",'remote connection ready');await run("clickText('连接并使用此目录')");
+  await until("chatProps.draft.includes('cardbush-reference://ssh')",'@ switches actual workspace and inserts reference');
+  assert.equal(await run('selected.length'),2);
+  await run("updateChat({messages:[],draft:''})");await until("!!document.querySelector('.welcome-input-stack .workspace-location-control > button')",'welcome keeps workspace selection');
+  await run("document.querySelector('.workspace-location-control > button').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('本地')");await until("document.body.textContent.includes('选择本地文件夹')",'local tab');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
+  window.setContentSize(480, 640);
+  for (const theme of ['dark', 'bright']) {
+    await run(`saved=[];viewTheme='theme-${theme}';renderView(h(views.WorkspaceLocationPicker,{key:'compact-'+viewTheme,language:'zh',remote:true,onSelect:()=>{}}));undefined;`);
+    await until("!!document.querySelector('.workspace-picker')",'empty SSH picker');
+    await run("clickText('管理 SSH 连接')");
+    await until("!!document.querySelector('.ssh-compact-add')",'compact add action');
+    assert.equal(await run("document.querySelector('.ssh-settings-compact h3')===null"),true,'embedded manager avoids duplicate settings header');
+    assert.equal(await run("document.querySelector('.ssh-compact-add span').getBoundingClientRect().height <= 22"),true,'add connection stays on one line');
+    await pause(80);
+    const capture = async name => {
+      const rect=await run(`(()=>{const n=document.querySelector('.workspace-picker'),r=n.getBoundingClientRect();return {x:Math.floor(r.x),y:Math.floor(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height),overflow:n.scrollWidth>n.clientWidth}})()`);
+      assert.equal(rect.overflow,false,'compact connection form fits the picker');
+      fs.writeFileSync(path.join(root,'tmp',name+'-'+theme+'.png'),(await window.webContents.capturePage({x:rect.x,y:rect.y,width:rect.width,height:rect.height})).toPNG());
+    };
+    await capture('ssh-add-empty');
+    await run("clickText('新增连接')");
+    await until("!!document.querySelector('.ssh-form')",'inline new connection form');
+    assert.equal(await run("document.activeElement===document.querySelector('.ssh-form input')"),true,'new connection focuses name');
+    await run("var auth=document.querySelector('.ssh-form select');auth.value='key';auth.dispatchEvent(new Event('change',{bubbles:true}));undefined;");
+    await until(`!!document.querySelector('button[aria-label="选择私钥文件"]')`,'key authentication fields');
+    await pause(80);await capture('ssh-add-key-form');
+    await run("var auth=document.querySelector('.ssh-form select');auth.value='agent';auth.dispatchEvent(new Event('change',{bubbles:true}));undefined;");
+    await pause(50);await capture('ssh-add-form');
+    await run(`fill('.ssh-form label:nth-of-type(1) input','测试服务器');fill('input[placeholder="192.168.1.10"]','192.168.1.42');fill('.ssh-form input[autocomplete=off]','developer');clickText('保存连接')`);
+    await until("saved.length===1&&!document.querySelector('.ssh-form')",'save from compact form');
+    await until("document.querySelector('.workspace-picker-fields select')?.value==='new-server'",'new connection becomes available');
+    await run("clickText('编辑')");await until("!!document.querySelector('.ssh-form')",'compact edit');
+    assert.equal(await run("document.querySelectorAll('.ssh-settings-compact .ssh-connection').length"),0,'editing has its own uncluttered space');
+    await run(`document.querySelector('button[aria-label="返回连接列表"]').click()`);
+    await until("!document.querySelector('.ssh-form')&&!!document.querySelector('.ssh-connection')",'return to saved connections');
+    await run("window.connectedPicker=document.querySelector('.workspace-picker');clickText('测试')");
+    await until("document.body.textContent.includes('信任此主机指纹并连接')",'first connection needs trust');
+    assert.equal(await run("!!document.querySelector('.ssh-settings-compact')"),true,'untrusted connection stays in manager');
+    await run("clickText('信任此主机指纹并连接')");
+    await until("!document.querySelector('.ssh-settings-compact')&&!!document.querySelector('.ssh-directory-list button:last-child')&&document.querySelector('.ssh-directory-list').textContent.includes('service-api')",'trust resumes directory loading without reopening');
+    assert.equal(await run("connectedPicker===document.querySelector('.workspace-picker')"),true,'same picker stays mounted');
+    assert.equal(await run("document.querySelector('.workspace-picker-fields select')?.value"),'new-server');
+    assert.equal(await run("directoryCalls.at(-1)"),'ssh://new-server/home/developer/projects','loads the successfully tested host');
+    await run("clickText('管理 SSH 连接');undefined;");
+    await until("!!document.querySelector('.ssh-settings-compact')",'reopen connection manager');
+    await run("clickText('测试')");
+    await until("!document.querySelector('.ssh-settings-compact')&&document.querySelector('.ssh-directory-list')?.textContent.includes('service-api')",'known host also resumes browsing');
+
+  }
+  await run("saved=[...saved,{...saved[0],id:'other-server',name:'另一台服务器',fingerprint:undefined}];window.dispatchEvent(new Event('cardbush-ssh-changed'));undefined;");
+  await until(`!!document.querySelector('.workspace-picker-fields select option[value="other-server"]')`,'another host appears');
+  await run("var hostSelect=document.querySelector('.workspace-picker-fields select');hostSelect.value='other-server';hostSelect.dispatchEvent(new Event('change',{bubbles:true}));undefined;");
+  await run("clickText('管理 SSH 连接')");
+  await until("document.querySelectorAll('.ssh-connection').length===2",'multiple managed hosts');
+  await run("var tested=[...document.querySelector('.ssh-connection').querySelectorAll('button')].find(button=>button.textContent.trim()==='测试');tested.click();undefined;");
+  await until("!document.querySelector('.ssh-settings-compact')&&document.querySelector('.workspace-picker-fields select')?.value==='new-server'",'switch to successfully tested host');
+  await until("directoryCalls.at(-1)==='ssh://new-server/home/developer/projects'",'directory request uses tested host instead of old selection');
+  await run("window.originalConnectionList=cardbushDesktop.sshConnections.list;window.connectionListReplies=[];cardbushDesktop.sshConnections.list=()=>new Promise(resolve=>connectionListReplies.push(resolve));window.dispatchEvent(new Event('cardbush-ssh-changed'));window.dispatchEvent(new Event('cardbush-ssh-changed'));undefined;");
+  await until('connectionListReplies.length===2','overlapping connection refreshes');
+  await run("connectionListReplies[1](saved);undefined;");await pause(30);
+  await run("connectionListReplies[0]([]);undefined;");await pause(30);
+  assert.equal(await run("document.querySelector('.workspace-picker-fields select')?.value"),'new-server','older refresh cannot erase the active connection');
+  await run("cardbushDesktop.sshConnections.list=originalConnectionList;undefined;");
+  console.log('SSH UI passed: saved connections, trust, both themes, narrow picker, remote browsing, failed connection, welcome selection, attached active composer rail, @ reference and local switching.');
+};

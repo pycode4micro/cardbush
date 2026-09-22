@@ -24,6 +24,8 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   initial-value: 0px;
 }
 
+.compact-sidebar-backdrop { display: none; }
+
 .app {
   --window-frame-height: max(36px, env(titlebar-area-height, 36px));
   /* Use the full window as the sizing container so fixed overlays retain
@@ -41,9 +43,12 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   --scrollbar-thumb: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--surface) 86%, var(--text) 14%);
   --scrollbar-track: transparent;
-  --menu-surface: color-mix(in srgb, var(--surface-strong) 97%, transparent);
-  --menu-border: color-mix(in srgb, var(--border) 78%, transparent);
-  --menu-shadow: 0 12px 30px color-mix(in srgb, var(--shadow) 78%, transparent);
+  --menu-surface: var(--surface-raised);
+  --menu-border: color-mix(in srgb, var(--text) 12%, var(--menu-surface));
+  --menu-secondary: color-mix(in srgb, var(--text) 92%, var(--menu-surface));
+  --menu-hover: color-mix(in srgb, var(--text) 9%, var(--menu-surface));
+  --menu-separator: color-mix(in srgb, var(--text) 27%, var(--menu-surface));
+  --menu-shadow: 0 8px 28px var(--shadow), 0 2px 8px var(--shadow);
   --menu-radius: 10px;
 }
 
@@ -56,6 +61,8 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 }
 
 .theme-dark.app {
+  --menu-surface: #202020;
+  --menu-border: #343434;
   --scrollbar-thumb: #2b2b2b;
   --scrollbar-thumb-hover: #353535;
 }
@@ -324,37 +331,35 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   outline: none;
   position: fixed;
   z-index: 1100;
-  min-width: 260px;
+  min-width: 280px;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - var(--window-frame-height) - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 5px;
+  gap: 0;
+  padding: 8px 0;
   color: var(--text);
   background: var(--menu-surface);
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-radius);
   box-shadow: var(--menu-shadow);
-  backdrop-filter: blur(20px) saturate(1.08);
-  -webkit-backdrop-filter: blur(20px) saturate(1.08);
 }
 
 .window-frame-menu-popover button {
   flex: 0 0 auto;
   width: 100%;
-  min-height: 31px;
+  min-height: 34px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 9px 0 5px;
-  color: var(--text-mid);
+  gap: 14px;
+  padding: 6px 18px 6px 20px;
+  color: var(--text);
   background: transparent;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 500;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 400;
   white-space: nowrap;
   text-align: left;
 }
@@ -367,7 +372,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 .window-frame[data-menu-input="keyboard"] .window-frame-menu-popover button:focus,
 .window-frame-menu-popover button[aria-expanded="true"] {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  background: var(--menu-hover);
 }
 
 .window-frame-menu-popover button:disabled {
@@ -382,27 +387,28 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 
 .window-menu-check {
   display: inline-flex;
-  flex: 0 0 13px;
+  flex: 0 0 16px;
 }
 
 .window-frame-menu-popover kbd {
-  margin-left: 26px;
+  margin-left: 20px;
   font: inherit;
-  font-size: 11px;
-  color: var(--text-soft);
+  font-size: 13px;
+  color: var(--menu-secondary);
   white-space: nowrap;
 }
 
-.window-menu-separator {
+.window-menu-separator,
+.sidebar-menu-separator {
   flex: 0 0 auto;
   height: 1px;
-  margin: 5px 4px;
-  background: var(--border);
+  margin: 10px 0;
+  background: var(--menu-separator);
 }
 
 .window-frame-menu-popover button > svg {
   flex: 0 0 auto;
-  color: var(--text-soft);
+  color: var(--menu-secondary);
 }
 
 .window-button {
@@ -979,6 +985,16 @@ body.sidebar-resizing .right-inspector {
   margin-bottom: 2px;
 }
 
+.sidebar-agent-list { margin-bottom: 14px; }
+.agent-sidebar-row.active { background: color-mix(in srgb, gray 16%, transparent); }
+.agent-sidebar-group:has(.conversation-row.active) .agent-sidebar-row.active { background: transparent; }
+.agent-tree-chevron { flex: 0 0 14px; color: var(--sidebar-text-soft, var(--text-soft)); transition: transform 120ms ease; }
+.agent-tree-chevron.expanded { transform: rotate(90deg); }
+.agent-sidebar-notice { padding: 8px 12px 8px var(--sidebar-tree-child); font-size: 11px; color: var(--text-soft); overflow-wrap: anywhere; }
+.agent-sidebar-notice button { display: block; margin-top: 5px; color: var(--text-mid); background: transparent; }
+.agent-sidebar-empty { width: 100%; color: var(--text-soft); font: inherit; text-align: left; }
+.conversation-row.remote-conversation { --conversation-title-hover-actions: 0px; }
+
 .project-row {
   position: relative;
   height: 34px;
@@ -1440,21 +1456,19 @@ body.sidebar-resizing .right-inspector {
 .sidebar-menu,
 .sidebar-context-menu {
   box-sizing: border-box;
-  width: 260px;
+  width: 280px;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
   display: grid;
-  gap: 1px;
-  padding: 5px;
+  gap: 0;
+  padding: 8px 0;
   color: var(--text);
   background: var(--menu-surface);
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-radius);
   box-shadow: var(--menu-shadow);
-  backdrop-filter: blur(20px) saturate(1.08);
-  -webkit-backdrop-filter: blur(20px) saturate(1.08);
 }
 
 .sidebar-menu {
@@ -1465,6 +1479,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .sidebar-context-menu {
+  outline: none;
   position: fixed;
   z-index: 1400;
 }
@@ -1472,40 +1487,46 @@ body.sidebar-resizing .right-inspector {
 .sidebar-menu-button {
   box-sizing: border-box;
   width: 100%;
-  min-height: 31px;
+  min-height: 34px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 9px 5px 5px;
-  color: var(--text-mid);
+  gap: 14px;
+  padding: 6px 18px 6px 20px;
+  color: var(--text);
   background: transparent;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.25;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
   text-align: left;
 }
 
 .sidebar-menu-button:hover:not(:disabled),
-.sidebar-menu-button:focus-visible {
+.sidebar-menu-button:focus-visible,
+.sidebar-menu-button[aria-expanded="true"] {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  background: var(--menu-hover);
 }
 
 .sidebar-menu-button svg {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  color: var(--text-soft);
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: inherit;
 }
 
 .sidebar-menu-button kbd {
   margin-left: auto;
-  padding-left: 18px;
-  color: var(--text-soft);
+  padding-left: 8px;
+  color: var(--menu-secondary);
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   white-space: nowrap;
+}
+
+.sidebar-menu-button .sidebar-menu-chevron {
+  margin-left: auto;
+  color: var(--menu-secondary);
 }
 
 .sidebar-menu-button:disabled {
@@ -1521,7 +1542,13 @@ body.sidebar-resizing .right-inspector {
 }
 
 .sidebar-menu-button.danger {
+  color: var(--text);
+}
+
+.sidebar-menu-button.danger:hover:not(:disabled),
+.sidebar-menu-button.danger:focus-visible {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--menu-surface));
 }
 
 .sidebar-menu-button.danger svg {
@@ -1530,27 +1557,29 @@ body.sidebar-resizing .right-inspector {
 
 .app.has-custom-background .sidebar-menu,
 .app.has-custom-background .sidebar-context-menu {
-  color: rgba(248, 245, 238, 0.96);
-  background: rgba(30, 30, 29, 0.96);
-  border-color: rgba(255, 255, 255, 0.12);
+  --menu-secondary: #e0dedb;
+  --menu-hover: #333333;
+  --menu-separator: #585858;
+  color: #f8f5ee;
+  background: #202020;
+  border-color: #343434;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 18px 42px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(14px) saturate(1.08);
-  -webkit-backdrop-filter: blur(14px) saturate(1.08);
 }
 
 .app.has-custom-background .sidebar-menu-button {
-  color: rgba(244, 241, 234, 0.78);
+  color: #f8f5ee;
 }
 
-.app.has-custom-background .sidebar-menu-button:hover {
-  color: rgba(255, 252, 246, 0.98);
-  background: rgba(255, 255, 255, 0.08);
+.app.has-custom-background .sidebar-menu-button:hover:not(:disabled),
+.app.has-custom-background .sidebar-menu-button:focus-visible {
+  color: #fffdf8;
+  background: var(--menu-hover);
 }
 
 .app.has-custom-background .sidebar-menu-button.danger {
-  color: #ff625a;
+  color: #f8f5ee;
 }
 
 .app.has-custom-background .sidebar-menu-button.danger:hover {
@@ -11254,6 +11283,34 @@ body.queue-reordering * {
   -webkit-backdrop-filter: blur(20px) saturate(1.08);
 }
 
+.topbar .workspace-toolbar-switcher {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: min(240px, 40%);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  z-index: 40;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-toolbar-switcher .welcome-project-menu {
+  top: calc(100% + 7px);
+  bottom: auto;
+  right: 0;
+  left: auto;
+}
+
+.workspace-drop-target { border-radius: 9px; }
+.workspace-drop-active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  outline: 1px solid var(--text-mid);
+  outline-offset: -1px;
+}
+
 .composer-popover.more header {
   min-height: 31px;
   padding: 5px 9px 5px 11px;
@@ -20352,4 +20409,73 @@ body.change-review-resizing .change-review-file-nav-viewport { transition: none;
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
+}
+
+/* Small desktop windows keep one usable content pane; sidebars become drawers. */
+@media (max-width: 760px) {
+  .desktop-shell, .settings-shell {
+    --layout-sidebar-space: 0px;
+    --conversation-pane-min-width: 0px;
+  }
+
+  .desktop-shell > .sidebar, .settings-shell > .sidebar {
+    --side-panel-width: min(var(--sidebar-width, 272px), calc(100cqw - 48px));
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 42;
+    height: 100%;
+    box-shadow: 10px 0 28px var(--shadow);
+  }
+
+  .compact-sidebar-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    border: 0;
+    border-radius: 0;
+    background: color-mix(in srgb, black 32%, transparent);
+    cursor: default;
+  }
+
+  .desktop-shell > .sidebar-resizer, .settings-shell > .sidebar-resizer,
+  .right-inspector-resizer { display: none; }
+
+  .right-inspector {
+    --side-panel-width: calc(100cqw - 2px);
+    max-width: 100%;
+  }
+
+  .main-stage { --chat-inline-gutter: 12px; border-radius: 0; }
+  .settings-content { min-width: 0; padding: 20px 16px 28px; border-radius: 0; }
+  .settings-page-header { margin-bottom: 20px; }
+  .feature-content { padding: 16px 12px; }
+  .topbar { gap: 6px; padding: 8px 10px; }
+  .topbar h1 { font-size: 16px; }
+  .welcome-composer { padding-top: 12px; padding-bottom: 10px; }
+  .composer-dock { padding-top: 32px; padding-bottom: 10px; }
+
+  .window-frame { gap: 4px; padding-left: 6px; }
+  .window-frame[data-native-controls="true"] { padding-left: calc(6px + env(titlebar-area-x, 0px)); }
+  .window-spacer { min-width: 12px; }
+  .window-frame-menu-group { gap: 0; }
+  .frame-chip.window-frame-menu-trigger { padding-inline: 6px; }
+  .window-sidebar-toggle { width: 28px; }
+  .window-sidebar-track { transform: translateX(-100%); }
+}
+
+@media (max-width: 560px) {
+  .composer-footer { gap: 4px; }
+  .composer-tools, .composer-actions { gap: 3px; }
+  .composer-actions .model-select { max-width: 116px; padding-inline: 5px; }
+  .permission-center-button { max-width: 90px; padding-inline: 4px; }
+  .reference-plan-toggle { max-width: 84px; padding-inline: 4px; }
+}
+
+@media (max-height: 540px) {
+  .welcome-star-wordmark { height: 66px; }
+  .welcome-hero { padding-bottom: 10px; }
+  .welcome-composer { padding-top: 8px; padding-bottom: 8px; }
+  .composer-dock { padding-top: 24px; padding-bottom: 8px; }
+  .composer-surface > textarea, .composer-surface > .composer-prompt-editor { max-height: 24vh; }
 }

@@ -1,5 +1,5 @@
 import { defaultHostTerminalRuntime } from './hostPlatform';
-import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
+import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, SWITCH_RUNTIME_WORKSPACE_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
 import { configuredMcpServerId } from './mcpConfigurationFact';
 import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
 import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
@@ -1399,7 +1399,7 @@ function lexicalScore(content: string, terms: string[]) {
   );
 }
 
-function runtimeHistoryToolExecution(
+export function runtimeHistoryToolExecution(
   record: RuntimeToolExecutionRecord | RuntimeToolExecutionSummary,
 ): ChatToolExecution {
   const hasNativeResult = 'result' in record && record.result !== undefined;
@@ -1606,6 +1606,19 @@ export async function forkConversation(sourceSessionId: string): Promise<Convers
   } finally { runtime.dispose(); }
 }
 
+export async function switchConversationWorkspace(sessionId: string, projectDir: string | null, projectId: string | null): Promise<ConversationSummary> {
+  const runtime = createDesktopRuntimeSession();
+  try {
+    const current = await runtime.client.getSession(sessionId);
+    if (!current) throw new Error(localizedClientMessage('会话不存在', 'Conversation does not exist'));
+    const taskDir = projectDir ? undefined : await window.cardbushDesktop?.ensureTaskWorkspace?.(sessionId);
+    const snapshot = await runtime.client.command({ kind: SWITCH_RUNTIME_WORKSPACE_COMMAND, payload: {
+      sessionId, expectedRevision: current.revision, projectDir, projectId, taskDir,
+    } }, value => sessionSnapshotSchema.parse(value));
+    return runtimeConversation(snapshot);
+  } finally { runtime.dispose(); }
+}
+
 export async function updateConversation({
   sessionId,
   title,
@@ -1678,29 +1691,6 @@ export async function deleteConversationApi(sessionId: string) {
   const runtime = createDesktopRuntimeSession();
   try {
     return (await runtime.client.deleteSession(normalized)).deleted;
-  } finally {
-    runtime.dispose();
-  }
-}
-
-export async function recordAssistantLogicFeedback(
-  message: ChatMessage,
-  rating: 'up' | 'down' | null,
-) {
-  const sessionId = message.conversationId?.trim() ?? '';
-  const turnId = message.turnId?.trim() ?? '';
-  const messageId = message.id.trim();
-  if (!sessionId || !turnId || !messageId || message.role !== 'assistant') {
-    return null;
-  }
-  const runtime = createDesktopRuntimeSession();
-  try {
-    return await runtime.client.recordLogicFeedback({
-      sessionId,
-      turnId,
-      messageId,
-      rating,
-    });
   } finally {
     runtime.dispose();
   }
@@ -2319,11 +2309,18 @@ export async function fetchSubagentTask(
 
 export async function fetchTurnSnapshot(
   turnId: string,
-  options: { sessionId: string; signal?: AbortSignal },
+  options: { sessionId: string; signal?: AbortSignal; connectionId?: string },
 ): Promise<Record<string, unknown> | null> {
   const normalizedTurnId = turnId.trim();
   if (!normalizedTurnId) {
     throw new Error(localizedClientMessage('Turn ID 为空', 'Turn ID is empty'));
+  }
+  if (options.connectionId) {
+    options.signal?.throwIfAborted();
+    const session = await window.cardbushDesktop?.agents?.call(options.connectionId, 'sessions.get', { sessionId: options.sessionId }) as import('@cardbush/bush-protocol').SessionSnapshot | undefined;
+    options.signal?.throwIfAborted();
+    const turn = session?.turns.find(item => item.turnId === normalizedTurnId);
+    return turn ? { ...turn, sessionId: options.sessionId, source: 'remote_agent' } : null;
   }
   const runtime = createDesktopRuntimeSession();
   try {
@@ -2892,6 +2889,7 @@ function optionalNumber(value: unknown) {
 
 function runtimeSubagentTask(task: RuntimeSubagentTask): SubagentTaskSnapshot {
   return {
+    remote: task.remote,
     protocol: task.protocol,
     taskId: task.taskId,
     parentSessionId: task.parentSessionId,

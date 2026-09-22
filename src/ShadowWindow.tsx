@@ -21,7 +21,6 @@ import {
   closeShadowConversation,
   createShadowConversation,
   fetchSessionMessages,
-  recordAssistantLogicFeedback,
   streamShadowConversationMessage,
   updateShadowConversationMode,
   type ShadowConversationRecord,
@@ -488,7 +487,7 @@ export function ShadowWindow({
                     onRetryGuidance={ignoreAsync}
                     onRevertChangeReport={ignoreAsync}
                     onOpenScene={() => undefined}
-                    onAssistantFeedback={recordAssistantLogicFeedback}
+
                   />
                 </div>
               ))}

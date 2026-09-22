@@ -1,5 +1,6 @@
 import { Clipboard, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
+import type { ReactNode } from 'react';
 import { conversationDisplayTitle } from '../shared/conversationTitle';
 
 export function TopBar({
@@ -10,6 +11,7 @@ export function TopBar({
   inspectorOpen,
   onToggleWorkSummary,
   onToggleInspector,
+  workspaceControl,
 }: {
   title: string;
   language: AppLanguage;
@@ -17,12 +19,14 @@ export function TopBar({
   workSummaryVisible?: boolean;
   inspectorOpen: boolean;
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
-  onToggleInspector: () => void;
+  onToggleInspector?: () => void;
+  workspaceControl?: ReactNode;
 }) {
   const displayTitle = conversationDisplayTitle(title);
   return (
     <div className="topbar">
       <h1 title={displayTitle}>{displayTitle}</h1>
+      {workspaceControl}
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
           className={`topbar-inspector-action icon-only ${workSummaryVisible ? 'active' : ''}`}
@@ -36,7 +40,7 @@ export function TopBar({
           <Clipboard size={15} />
         </button>
       )}
-      {!inspectorOpen && <button
+      {!inspectorOpen && onToggleInspector && <button
         className="topbar-inspector-action icon-only"
         type="button"
         data-inspector-toggle

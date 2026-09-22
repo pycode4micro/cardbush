@@ -1,0 +1,14 @@
+# User-facing Windows installers require a configured publisher signing identity.
+# Source development and Store upload staging continue using their existing build paths.
+extends: electron-builder.yml
+asarUnpack:
+  - node_modules/@img/**/*
+  - node_modules/sharp/**/*
+  - '**/*.exe'
+  - '**/*.dll'
+  - '**/*.node'
+win:
+  forceCodeSigning: true
+  signExts: [.exe, .dll, .node]
+afterSign: scripts/windows-release-signature-check.cjs
+artifactBuildCompleted: scripts/windows-release-signature-check.cjs

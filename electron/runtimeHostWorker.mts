@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { parentPort as nodeParentPort } from 'node:worker_threads';
 import {
   BUSH_RUNTIME_ERROR_PROTOCOL,
   BUSH_RUNTIME_IPC_PROTOCOL,
@@ -73,9 +74,14 @@ import { configureProcessResourceClient, type ProcessResourceGrant } from '@card
 import { UsageLedger } from './usageLedger.js';
 import { usageRecordingProvider } from './usageRecordingProvider.mjs';
 
-const parentPort = process.parentPort;
+// Both hosts run the exact same Runtime. Only the private message envelope differs.
+const parentPort = process.parentPort ?? (nodeParentPort ? {
+  postMessage: (message: unknown) => nodeParentPort!.postMessage(message),
+  on: (_event: 'message', listener: (event: { data: unknown }) => void) =>
+    nodeParentPort!.on('message', data => listener({ data })),
+} : undefined);
 if (!parentPort) {
-  throw new Error('The Runtime Host must run as an Electron Utility Process.');
+  throw new Error('The Runtime Host requires a desktop or service message port.');
 }
 
 const operations = new Map<string, AbortController>();
@@ -779,6 +785,7 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },
   loadSearchResultLimit,
   ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,
@@ -803,6 +810,10 @@ host = new InMemoryRuntimeHost({
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
   subagentPermissionPolicy,
+  remoteAgents: process.env.CARDBUSH_SERVICE_ID ? undefined : {
+    list: signal => mcpHost.request('agents.list', {}, signal),
+    run: (input, signal) => mcpHost.request('agents.delegate', input, signal, true),
+  },
   subagentModels: {
     list: signal => mcpHost.request<import('@cardbush/bush-runtime').SubagentModelOption[]>('subagent.models', {}, signal),
     resolve: async (modelId, signal) => {
@@ -830,10 +841,10 @@ host = new InMemoryRuntimeHost({
   additionalFeatures: [
     "product_mcp_snapshot",
     "mcp_protocol_2",
-    "bundled_cardbush_apps_mcp",
+    ...(process.env.CARDBUSH_APPS_MCP_ENTRY ? ["bundled_cardbush_apps_mcp"] : []),
     "native_image_inputs",
   ],
-  hostId: `electron-utility-${process.pid}`,
+  hostId: process.env.CARDBUSH_SERVICE_ID || `electron-utility-${process.pid}`,
   runtimeVersion: '0.1.0',
   // Keep transient provider failures alive by default; an explicit positive cap is optional.
   maxAttempts: process.env.CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS?.trim()

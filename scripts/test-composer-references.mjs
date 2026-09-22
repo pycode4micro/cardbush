@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import ts from 'typescript';
+import * as protocol from '@cardbush/bush-protocol';
 import { createProductAgentTurnRequest } from '../packages/bush-product-agent/dist/index.js';
 
 const cache = new Map();
@@ -14,7 +15,7 @@ function load(file) {
   cache.set(file, exports);
   const require = createRequire(file);
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('exports', 'require', code)(exports, name => name.startsWith('.') ? load(resolve(dirname(file), name + '.ts')) : require(name));
+  new Function('exports', 'require', code)(exports, name => name === '@cardbush/bush-protocol' ? protocol : name.startsWith('.') ? load(resolve(dirname(file), name + '.ts')) : require(name));
   return exports;
 }
 const refs = load('src/shared/promptReferences.ts');
@@ -23,6 +24,16 @@ const { resolvePromptReferenceContext } = load('src/backend/promptReferenceConte
 const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessageProjection.ts');
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
+test('SSH references follow the selected execution environment and never carry credentials', async () => {
+  const target={kind:'ssh',connectionId:'server-id',path:'/home/user/项目',title:'开发服务器'};
+  const chip=refs.promptReferenceMarkdown(target);assert.deepEqual(refs.promptReferenceParts(chip)[0].reference,target);
+  const snapshot={metadata:{runtimeWorkspace:{workspaceDir:protocol.sshWorkspace(target.connectionId,target.path)}}};
+  assert.match((await resolvePromptReferenceContext(chip,'current',snapshot)).content,/Selected remote project/);
+  await assert.rejects(resolvePromptReferenceContext(chip,'current'),/不一致/);
+  assert.equal(refs.withWorkspaceReference('hello\n'), 'hello\n');
+  assert.equal(refs.withWorkspaceReference('hello '+chip),'hello ');
+  assert.equal(refs.promptReferenceParts(refs.withWorkspaceReference('hello '+chip,chip)).filter(part=>part.reference?.kind==='ssh').length,1);
+});
 test('conversation extracts resolve as readable Markdown paths, deduplicate, and respect the receiving model budget', async () => {
   const oldWindow = globalThis.window;
   const reference = { kind: 'conversation-extract', id: '00000000-0000-4000-8000-000000000001', title: '提取 [中文]' };

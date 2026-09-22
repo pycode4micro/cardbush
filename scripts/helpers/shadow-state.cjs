@@ -7,7 +7,6 @@ module.exports = async ({ run, until }) => {
       createShadowConversation: async input => ({ id: input.clientConversationId, mode: input.mode, sourceTurnId: 'source-turn', workspaceDir: 'D:/fixture' }),
       closeShadowConversation: async () => {},
       fetchSessionMessages: async () => ({ messages: [] }),
-      recordAssistantLogicFeedback: async () => {},
       updateShadowConversationMode: (id, mode) => new Promise(resolve => { window.finishShadowMode = () => resolve({ id, mode, workspaceDir: 'D:/fixture' }); }),
       streamShadowConversationMessage: request => new Promise(resolve => {
         window.appendShadowReply = request.onDelta;

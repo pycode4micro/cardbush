@@ -2,7 +2,8 @@
 export type BrowserPromptReference = { kind: 'browser'; tabId: string; url: string; title: string };
 export type TurnPromptReference = { kind: 'user-turn'; sessionId: string; turnId: string; messageId: string; title: string };
 export type ConversationExtractReference = { kind: 'conversation-extract'; id: string; title: string };
-export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference;
+export type SshPromptReference = { kind: 'ssh'; connectionId: string; path: string; title: string };
+export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference | SshPromptReference;
 export type PromptReferencePart = { text: string; start: number; reference?: PromptReference };
 
 export function promptReferenceHref(reference: PromptReference): string {
@@ -23,6 +24,7 @@ export function parsePromptReference(href: string): PromptReference | null {
     const title = value('title');
     const valid = (text: string) => Boolean(text.trim()) && !/[\x00-\x1f\x7f]/.test(text);
     if (!valid(title)) return null;
+    if (url.hostname === 'ssh' && /^[a-z0-9-]+$/.test(value('connectionId')) && value('path').startsWith('/') && valid(value('path'))) return { kind: 'ssh', connectionId: value('connectionId'), path: value('path'), title };
     if (url.hostname === 'conversation-extract' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value('id'))) {
       return { kind: 'conversation-extract', id: value('id'), title };
     }
@@ -61,6 +63,12 @@ export function promptReferenceParts(value: string): PromptReferencePart[] {
   }
   if (cursor < value.length || !parts.length) parts.push({ text: value.slice(cursor), start: cursor });
   return parts;
+}
+
+/** An execution-location change replaces stale SSH chips while retaining the user's draft. */
+export function withWorkspaceReference(draft: string, reference?: string): string {
+  const content = promptReferenceParts(draft).filter(part => part.reference?.kind !== 'ssh').map(part => part.text).join('');
+  return reference ? `${content}${content && !/\s$/.test(content) ? ' ' : ''}${reference} ` : content;
 }
 
 /** UI projection of authored text; the canonical model message retains the resolved facts. */

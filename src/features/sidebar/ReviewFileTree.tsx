@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ConversationHostContext } from '../conversationHost';
 import type { WorkspaceDirectoryEntry } from '../../../electron/workspaceFiles';
 import type { AppLanguage } from '../../types';
 import { basename } from '../../shared/localPaths';
@@ -16,6 +17,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
   onSelect: (path: string) => void;
 }) {
   const zh = language === 'zh';
+  const host = useContext(ConversationHostContext);
   const [directories, setDirectories] = useState<Map<string, Directory>>(() => new Map());
   const directoriesRef = useRef(directories);
   directoriesRef.current = directories;
@@ -36,9 +38,9 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
     loading.current.add(request);
     setDirectories(previous => new Map(previous).set(key, { entries: previous.get(key)?.entries ?? [], loading: true }));
     try {
-      const reader = window.cardbushDesktop?.readWorkspaceDirectory;
+      const reader = host ? host.readDirectory : window.cardbushDesktop?.readWorkspaceDirectory;
       if (!reader) throw new Error(zh ? '文件目录服务不可用' : 'Directory service unavailable');
-      const page = await reader({ rootPath, directoryPath: path, offset });
+      const page = host ? await host.readDirectory!({ directoryPath: path, offset }) : await window.cardbushDesktop!.readWorkspaceDirectory!({ rootPath, directoryPath: path, offset });
       if (version !== generation.current) return;
       setDirectories(previous => new Map(previous).set(key, {
         entries: offset ? [...(previous.get(key)?.entries ?? []), ...page.entries] : page.entries,
@@ -49,7 +51,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
         entries: previous.get(key)?.entries ?? [], error: String((error as Error).message),
       }));
     } finally { if (version === generation.current) loading.current.delete(request); }
-  }, [rootPath, zh]);
+  }, [rootPath, zh, host]);
   const refresh = useCallback(() => {
     generation.current++;
     loading.current.clear();
@@ -154,7 +156,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
   const focusedIndex = rows.findIndex(row => reviewPathKey(row.path) === focusedPath);
   return <>
     <div className="change-review-tree-root">
-      <span title={rootPath} onContextMenu={event => rootPath && openFileContextMenu(event, rootPath, { language })}>
+      <span title={rootPath} onContextMenu={host ? undefined : event => rootPath && openFileContextMenu(event, rootPath, { language })}>
         <FolderOpen size={14} /><strong>{basename(rootPath) || (zh ? '会话文件' : 'Task files')}</strong><span>/</span>
       </span>
       <button type="button" aria-label={zh ? '刷新文件目录' : 'Refresh directory'} title={zh ? '刷新文件目录' : 'Refresh directory'} onClick={refresh}><RefreshCw size={13} /></button>
@@ -188,7 +190,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
             className={`change-review-file-item${active ? ' active' : ''}${focusedPath === key ? ' keyboard-focused' : ''}`}
             title={directories.get(key)?.error || row.path} data-path={row.path}
             style={{ position: 'absolute', top: (start + offset) * rowHeight, height: rowHeight, paddingLeft: 6 + row.depth * 14 }}
-            onContextMenu={event => !row.action && openFileContextMenu(event, row.path, { language })}
+            onContextMenu={host ? undefined : event => !row.action && openFileContextMenu(event, row.path, { language })}
             onClick={() => { activate(row); viewport.current?.focus({ preventScroll: true }); }}>
             {row.action === 'loading' ? <LoaderCircle size={13} /> : row.kind === 'folder' ? (expanded.has(key) ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span />}
             {row.kind === 'folder' ? <Folder size={14} /> : <FileTypeIcon path={row.path} />}

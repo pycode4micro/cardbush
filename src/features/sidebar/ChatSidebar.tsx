@@ -1,8 +1,10 @@
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import type { AgentConnectionsController } from '../agents/useAgentConnections';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
-import { useContext } from 'react';
+import { Fragment, useContext } from 'react';
+import { ConversationHostContext } from '../conversationHost';
 import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
@@ -10,6 +12,7 @@ import {
   CircleAlert,
   CircleCheck,
   ChevronDown,
+  ChevronRight,
   Clipboard,
   Code2,
   Edit3,
@@ -161,6 +164,7 @@ type SidebarContextMenuItem = {
   shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
+  separatorBefore?: boolean;
   children?: SidebarContextMenuItem[];
   onClick?: () => void;
 };
@@ -170,6 +174,8 @@ type SidebarContextMenuState = {
   x: number;
   y: number;
   items: SidebarContextMenuItem[];
+  anchor?: HTMLButtonElement;
+  focusFirst?: boolean;
 };
 
 type ConversationMenuOptions = {
@@ -184,10 +190,11 @@ type ConversationMenuOptions = {
   onDelete: () => void;
 };
 
-function sidebarContextMenuPosition(clientX: number, clientY: number, itemCount: number) {
+function sidebarContextMenuPosition(clientX: number, clientY: number, items: SidebarContextMenuItem[]) {
   const padding = 8;
-  const menuWidth = Math.min(260, window.innerWidth - padding * 2);
-  const menuHeight = Math.min(window.innerHeight - padding * 2, Math.max(1, itemCount) * 32 + 11);
+  const menuWidth = Math.min(280, window.innerWidth - padding * 2);
+  const separators = items.filter((item, index) => index > 0 && item.separatorBefore).length;
+  const menuHeight = Math.min(window.innerHeight - padding * 2, Math.max(1, items.length) * 34 + separators * 21 + 18);
   const pointerOffset = 2;
   const targetX = clientX + pointerOffset;
   const targetY = clientY + pointerOffset;
@@ -213,13 +220,22 @@ export const ChatSidebar = memo(function ChatSidebar({
   onProjectAction,
   onDeleteConversation,
   onRenameConversation,
+  onConversationWorkspaceChange,
   onOpenConversationChanges,
   onOpenSettings,
   onOpenArchives,
   onOpenPlugins,
   onOpenSearch,
   softVisible = true,
+  agents = [],
+  activeAgentId,
+  onAgentSelect,
+  agentSessions,
 }: {
+  agents?: Array<{ id: string; name: string }>;
+  activeAgentId?: string;
+  onAgentSelect?: (id: string, sessionId?: string, view?: 'chat' | 'settings') => void;
+  agentSessions?: AgentConnectionsController;
   language: AppLanguage;
   section: AppSection;
   activeConversationId: string;
@@ -235,6 +251,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onProjectAction: (action: ProjectAction, project: ProjectItem) => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
+  onConversationWorkspaceChange?: (conversationId: string, project: ProjectItem | null) => Promise<void>;
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
   onOpenArchives?: () => void;
@@ -259,8 +276,13 @@ export const ChatSidebar = memo(function ChatSidebar({
   const extraction = useContext(ConversationExtractionContext);
   const extractionShortcuts = useKeyboardShortcuts();
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(['pinned', 'projects', 'recent']),
+    () => new Set(['agents', 'pinned', 'projects', 'recent']),
   );
+  const [expandedAgentIds, setExpandedAgentIds] = useState<Set<string>>(() => new Set());
+  const [archivedAgentIds, setArchivedAgentIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (activeAgentId) setExpandedAgentIds(current => new Set([...current, activeAgentId]));
+  }, [activeAgentId]);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -271,6 +293,53 @@ export const ChatSidebar = memo(function ChatSidebar({
     readConversationReadState,
   );
   const sidebarRef = useRef<HTMLElement | null>(null);
+  const [draggedConversationId, setDraggedConversationId] = useState('');
+  const [workspaceDropTarget, setWorkspaceDropTarget] = useState<string | null>(null);
+  const [movingConversations, setMovingConversations] = useState<Set<string>>(() => new Set());
+  const workspaceMovesRef = useRef(new Set<string>());
+
+  async function moveConversation(conversationId: string, project: ProjectItem | null) {
+    if (!onConversationWorkspaceChange || workspaceMovesRef.current.has(conversationId) || runningConversationIds?.has(conversationId) || project?.missing || project?.archived) return;
+    const conversation = conversationItems.find(item => item.id === conversationId);
+    if (!conversation) return;
+    if (project ? conversationMatchesScope(conversation, { mode: 'project', projectId: project.id, projectDir: project.rootPath }) : !conversationProjectDir(conversation)) return;
+    workspaceMovesRef.current.add(conversationId);
+    setMovingConversations(new Set(workspaceMovesRef.current));
+    try {
+      await onConversationWorkspaceChange(conversationId, project);
+      if (project) setExpandedProjectIds(current => new Set([...current, project.id]));
+      setExpandedSections(current => new Set([...current, project ? (project.pinned ? 'pinned' : 'projects') : 'recent']));
+    } catch (error) {
+      void showUiError(language === 'zh' ? '切换工作区失败' : 'Workspace switch failed', String(error));
+    } finally {
+      workspaceMovesRef.current.delete(conversationId);
+      setMovingConversations(new Set(workspaceMovesRef.current));
+    }
+  }
+
+  function workspaceDropHandlers(project: ProjectItem | null) {
+    const key = project?.id ?? 'recent';
+    const accepts = (event: React.DragEvent) => Boolean(onConversationWorkspaceChange && draggedConversationId &&
+      event.dataTransfer.types.includes(CONVERSATION_DRAG_TYPE) && !runningConversationIds?.has(draggedConversationId) &&
+      !movingConversations.has(draggedConversationId) && !project?.missing && !project?.archived);
+    return {
+      onDragOver: (event: React.DragEvent) => {
+        if (!accepts(event)) return;
+        event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move';
+        setWorkspaceDropTarget(key);
+      },
+      onDragLeave: (event: React.DragEvent) => {
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setWorkspaceDropTarget(null);
+      },
+      onDrop: (event: React.DragEvent) => {
+        if (!accepts(event)) return;
+        event.preventDefault(); event.stopPropagation();
+        const id = event.dataTransfer.getData(CONVERSATION_DRAG_TYPE);
+        setWorkspaceDropTarget(null); setDraggedConversationId('');
+        if (id === draggedConversationId) void moveConversation(id, project);
+      },
+    };
+  }
   const visibleProjects = useMemo(
     () => projectItems.filter((project) => !project.archived),
     [projectItems],
@@ -459,7 +528,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   ) {
     event.preventDefault();
     event.stopPropagation();
-    const position = sidebarContextMenuPosition(event.clientX, event.clientY, items.length);
+    const position = sidebarContextMenuPosition(event.clientX, event.clientY, items);
     setContextMenu({ id, items, ...position });
   }
 
@@ -524,7 +593,9 @@ export const ChatSidebar = memo(function ChatSidebar({
       {
         key: 'open',
         icon: <FolderOpen size={15} />,
-        label: language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer',
+        label: project.rootPath.startsWith('ssh://')
+          ? language === 'zh' ? '选择远程目录…' : 'Choose remote directory…'
+          : language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer',
         disabled: project.missing,
         onClick: () => onProjectAction('open', project),
       },
@@ -537,6 +608,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       },
       {
         key: 'new-chat',
+        separatorBefore: true,
         icon: <Edit3 size={15} />,
         label: language === 'zh' ? '新建项目会话' : 'New project chat',
         disabled: project.missing,
@@ -550,6 +622,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       },
       {
         key: 'archive',
+        separatorBefore: true,
         icon: <Archive size={15} />,
         label: language === 'zh' ? '归档项目' : 'Archive project',
         onClick: () => onProjectAction('archive', project),
@@ -600,8 +673,22 @@ export const ChatSidebar = memo(function ChatSidebar({
         onClick: options.onOpenChanges,
       });
     }
+    if (onConversationWorkspaceChange) items.push({
+      key: 'workspace', icon: <FolderOpen size={15} />, label: language === 'zh' ? '切换工作区' : 'Switch workspace',
+      disabled: Boolean(runningConversationIds?.has(conversation.id) || movingConversations.has(conversation.id)),
+      children: [
+        ...visibleProjects.filter(project => !project.missing).map(project => ({
+          key: `workspace:${project.id}`, icon: <Folder size={15} />, label: project.title,
+          disabled: conversationMatchesScope(conversation, { mode: 'project' as const, projectId: project.id, projectDir: project.rootPath }),
+          onClick: () => { void moveConversation(conversation.id, project); },
+        })),
+        { key: 'workspace:none', icon: <MessageSquare size={15} />, label: language === 'zh' ? '独立工作区（不关联项目）' : 'Task workspace (no project)',
+          disabled: !conversationProjectDir(conversation), onClick: () => { void moveConversation(conversation.id, null); } },
+      ],
+    });
     items.push(
       {
+        separatorBefore: true,
         key: 'extract', icon: <ExtractionMenuIcon />, label: language === 'zh' ? '提取对话' : 'Extract conversation', shortcut: extractionShortcuts.label('extractConversation'),
         disabled: !extraction, onClick: () => extraction?.open(conversation.id),
       },
@@ -611,6 +698,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       },
       {
         key: 'rename',
+        separatorBefore: true,
         icon: <Edit3 size={15} />,
         label: language === 'zh' ? '重命名对话' : 'Rename chat',
         onClick: options.onRename,
@@ -623,6 +711,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       },
       {
         key: 'archive',
+        separatorBefore: true,
         icon: <Archive size={15} />,
         label: language === 'zh' ? '归档对话' : 'Archive chat',
         onClick: options.onArchive,
@@ -640,6 +729,9 @@ export const ChatSidebar = memo(function ChatSidebar({
 
   function renderProjectBlock(project: ProjectItem) {
     return (
+      <div key={project.id} data-workspace-drop={project.id}
+        className={`workspace-drop-target${workspaceDropTarget === project.id ? ' workspace-drop-active' : ''}`}
+        {...workspaceDropHandlers(project)}>
       <ProjectBlock
         key={project.id}
         project={project}
@@ -679,6 +771,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         changeReportsByConversation={changeReportsByConversation}
         onOpenConversationChanges={onOpenConversationChanges}
       />
+      </div>
     );
   }
 
@@ -722,6 +815,10 @@ export const ChatSidebar = memo(function ChatSidebar({
       className={`sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       ref={sidebarRef}
       aria-hidden={!softVisible}
+      inert={softVisible ? undefined : true}
+      onDragStart={event => setDraggedConversationId(event.dataTransfer.getData(CONVERSATION_DRAG_TYPE))}
+      onDragEnd={() => { setDraggedConversationId(''); setWorkspaceDropTarget(null); }}
+      aria-busy={movingConversations.size > 0}
     >
       <div className="sidebar-panel-content">
       <nav className="sidebar-nav">
@@ -751,6 +848,74 @@ export const ChatSidebar = memo(function ChatSidebar({
 
       <div className="sidebar-scroll">
         <div className="sidebar-sections">
+              <SectionHeader title="Agents" action={<Plus size={14}/>} actionLabel={language === 'zh' ? '管理 Agents' : 'Manage Agents'} expanded={expandedSections.has('agents')} onToggle={() => toggleSection('agents')} onAction={() => onAgentSelect ? onAgentSelect('') : onSectionChange('agents')} />
+              {expandedSections.has('agents') && <div className="sidebar-agent-list">
+                {agents.map(agent => {
+                  const expanded = expandedAgentIds.has(agent.id);
+                  const list = agentSessions?.sessionsByAgent[agent.id];
+                  const active = section === 'agents' && activeAgentId === agent.id;
+                  const create = () => { onAgentSelect?.(agent.id, ''); void agentSessions?.createSession(agent.id, language === 'zh' ? '新对话' : 'New conversation'); };
+                  const manage = () => onAgentSelect?.(agent.id, undefined, 'settings');
+                  const toggle = () => {
+                    setExpandedAgentIds(current => { const next = new Set(current); if (expanded) next.delete(agent.id); else next.add(agent.id); return next; });
+                    if (!expanded) { onAgentSelect?.(agent.id); void agentSessions?.refreshSessions(agent.id).catch(() => undefined); }
+                  };
+                  return <div key={agent.id} className="project-block agent-sidebar-group" data-agent-id={agent.id}>
+                    <div className={`project-row agent-sidebar-row${active ? ' active' : ''}`} role="button" tabIndex={0} aria-expanded={expanded} onClick={toggle}
+                      onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); toggle(); } }}
+                      onContextMenu={event => openContextMenu(event, `agent:${agent.id}`, [
+                        { key: 'new', icon: <Plus size={15}/>, label: language === 'zh' ? '新建会话' : 'New chat', disabled: list?.creating, onClick: create },
+                        { key: 'manage', icon: <Settings size={15}/>, label: language === 'zh' ? '管理此 Agent' : 'Manage Agent', onClick: manage },
+                      ])}>
+                      <ChevronRight size={14} className={`agent-tree-chevron${expanded ? ' expanded' : ''}`} aria-hidden="true"/>
+                      <div className="project-title"><span>{agent.name}</span></div>
+                      <button className="row-new-chat" type="button" disabled={list?.creating} aria-label={language === 'zh' ? `在 ${agent.name} 新建会话` : `New chat in ${agent.name}`} onClick={event => { event.stopPropagation(); create(); }}><Plus size={14}/></button>
+                      <button className="row-archive" type="button" aria-label={language === 'zh' ? `管理 ${agent.name}` : `Manage ${agent.name}`} onClick={event => { event.stopPropagation(); manage(); }}><Settings size={14}/></button>
+                    </div>
+                    {expanded && <>
+                      {list?.sessions.filter(session => archivedAgentIds.has(agent.id) || !session.metadata?.archived)
+                        .sort((a, b) => Number(Boolean(b.metadata?.pinned)) - Number(Boolean(a.metadata?.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
+                        .map(session => {
+                        const pinned = session.metadata?.pinned === true;
+                        const archived = session.metadata?.archived === true;
+                        const unread = session.metadata?.forcedUnread === true || (typeof session.metadata?.readAt === 'string' && String(session.updatedAt) > session.metadata.readAt);
+                        const update = (patch: Record<string, unknown>) => { if (list.management) void agentSessions?.updateSession(agent.id, session.sessionId, patch); };
+                        const open = () => { onAgentSelect?.(agent.id, session.sessionId); update({ readAt: new Date().toISOString(), forcedUnread: false }); };
+                        return <ConversationRow key={session.sessionId}
+                        conversation={{ id: session.sessionId, title: String(session.metadata?.title || (language === 'zh' ? '新对话' : 'Conversation')), preview: '', updatedAt: session.updatedAt ?? '' }}
+                        active={active && agentSessions?.views[agent.id] !== 'settings' && agentSessions?.selectedSessions[agent.id] === session.sessionId}
+                        nested remote unread={unread} pinned={pinned} language={language}
+                        onTogglePin={() => update({ pinned: !pinned })} onToggleRead={() => update({ forcedUnread: !unread, ...(!unread ? {} : { readAt: new Date().toISOString() }) })} onArchive={() => update({ archived: !archived })}
+                        onRename={title => agentSessions!.renameSession(agent.id, session.sessionId, title)}
+                        onDelete={() => void agentSessions?.deleteSession(agent.id, session.sessionId)}
+                        onClick={open}
+                        onContextMenu={(event, options) => openContextMenu(event, `agent:${agent.id}:${session.sessionId}`, [
+                          { key: 'open', icon: <MessageSquare size={15}/>, label: language === 'zh' ? '打开对话' : 'Open chat', onClick: open },
+                          ...(list.management ? [
+                            { key: 'pin', icon: <Pin size={15}/>, label: pinned ? (language === 'zh' ? '取消置顶' : 'Unpin chat') : (language === 'zh' ? '置顶对话' : 'Pin chat'), onClick: options.onTogglePin },
+                            { key: 'read', icon: unread ? <MailOpen size={15}/> : <Mail size={15}/>, label: unread ? (language === 'zh' ? '标记为已读' : 'Mark as read') : (language === 'zh' ? '标记为未读' : 'Mark as unread'), onClick: options.onToggleRead },
+                            { key: 'workspace', icon: <FolderOpen size={15}/>, label: language === 'zh' ? '切换工作区' : 'Switch workspace', children: [
+                              ...(list.projects ?? []).map(project => ({ key: project.id, label: project.name, icon: <Folder size={15}/>, disabled: session.metadata?.projectId === project.id, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, project.id) })),
+                              { key: 'none', icon: <MessageSquare size={15}/>, label: language === 'zh' ? '独立工作区（不关联项目）' : 'Task workspace (no project)', disabled: !session.metadata?.projectId, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, null) },
+                            ] },
+                            { key: 'fork', icon: <ExtractionMenuIcon fork/>, label: language === 'zh' ? 'Fork 会话' : 'Fork conversation', onClick: () => void agentSessions?.forkSession(agent.id, session.sessionId) },
+                          ] : []),
+                          { key: 'rename', icon: <Edit3 size={15}/>, label: language === 'zh' ? '重命名对话' : 'Rename chat', onClick: options.onRename },
+                          { key: 'copy', icon: <Clipboard size={15}/>, label: language === 'zh' ? '复制会话 ID' : 'Copy chat ID', onClick: () => void copyText(session.sessionId) },
+                          { key: 'copy-chat', icon: <Clipboard size={15}/>, label: language === 'zh' ? '复制对话' : 'Copy conversation', onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
+                          ...(list.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: archived ? (language === 'zh' ? '恢复对话' : 'Restore chat') : (language === 'zh' ? '归档对话' : 'Archive chat'), separatorBefore: true, onClick: options.onArchive }] : []),
+                          { key: 'delete', icon: <Trash2 size={15}/>, label: language === 'zh' ? '删除对话' : 'Delete chat', separatorBefore: true, danger: true, onClick: options.onDelete },
+                        ])}
+                      />; })}
+                      {list?.sessions.some(session => session.metadata?.archived) && <button className="conversation-row nested" onClick={() => setArchivedAgentIds(current => { const next = new Set(current); if (next.has(agent.id)) next.delete(agent.id); else next.add(agent.id); return next; })}><Archive size={14}/>{archivedAgentIds.has(agent.id) ? (language === 'zh' ? '收起已归档对话' : 'Hide archived chats') : (language === 'zh' ? '查看已归档对话' : 'Show archived chats')}</button>}
+                      {list?.loading && !list.sessions.length && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在加载会话…' : 'Loading chats…'}</div>}
+                      {!list?.loading && !list?.error && !list?.sessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{language === 'zh' ? '新建会话' : 'New chat'}</button>}
+                      {list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
+                    </>}
+                  </div>;
+                })}
+                {agents.length === 0 && <button className="conversation-row agent-sidebar-empty" onClick={() => onSectionChange('agents')}><Plus size={15}/><span>{language === 'zh' ? '连接 Agent' : 'Connect an Agent'}</span></button>}
+              </div>}
               <SectionHeader
                 title={language === 'zh' ? '置顶' : 'Pinned'}
                 action={<Pin size={14} />}
@@ -805,6 +970,8 @@ export const ChatSidebar = memo(function ChatSidebar({
                 }
               />
               {expandedSections.has('projects') && regularProjects.map(renderProjectBlock)}
+              <div data-workspace-drop="recent" className={`workspace-drop-target${workspaceDropTarget === 'recent' ? ' workspace-drop-active' : ''}`}
+                {...workspaceDropHandlers(null)}>
               <SectionHeader
                 title={language === 'zh' ? '最近' : 'Recent'}
                 action={<MessageSquare size={14} />}
@@ -823,6 +990,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                   </div>
                 )
               )}
+              </div>
         </div>
       </div>
 
@@ -857,6 +1025,8 @@ export const ChatSidebar = memo(function ChatSidebar({
           <SidebarContextMenu
             menu={contextMenu}
             onSelect={runContextMenuItem}
+            onClose={closeMenus}
+            onDismiss={closeMenus}
           />,
           sidebarRef.current?.closest('.app') ?? document.body,
         )
@@ -1122,6 +1292,7 @@ function ConversationRow({
   attention,
   unread,
   nested,
+  remote = false,
   pinned,
   language,
   onTogglePin,
@@ -1140,6 +1311,7 @@ function ConversationRow({
   attention?: SessionAttentionState;
   unread: boolean;
   nested?: boolean;
+  remote?: boolean;
   pinned: boolean;
   language: AppLanguage;
   onTogglePin: () => void;
@@ -1213,9 +1385,9 @@ function ConversationRow({
   };
   return (
     <div
-      className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}`}
-      draggable={!editingTitle}
-      onDragStart={event => { event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
+      className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}`}
+      draggable={!remote && !editingTitle}
+      onDragStart={event => { event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -1226,7 +1398,7 @@ function ConversationRow({
       onContextMenu={(event) => onContextMenu?.(event, menuOptions)}
       onKeyDown={(event) => {
         if (keyboardShortcuts.matches('extractConversation', event) && !event.nativeEvent.isComposing) {
-          event.preventDefault(); event.stopPropagation(); extraction?.open(conversation.id); return;
+          event.preventDefault(); event.stopPropagation(); if (!remote) extraction?.open(conversation.id); return;
         }
         if (keyboardShortcuts.matches('renameConversation', event) && !event.nativeEvent.isComposing) {
           event.preventDefault();
@@ -1331,7 +1503,7 @@ function ConversationRow({
             : <CircleAlert size={15} />}
         </span>
       )}
-      {!editingTitle && <button
+      {!remote && !editingTitle && <button
         className={`conversation-pin${pinned ? ' is-pinned' : ''}`}
         type="button"
         aria-label={pinned
@@ -1351,7 +1523,7 @@ function ConversationRow({
       >
         <Pin size={14} />
       </button>}
-      {!editingTitle && <button
+      {!remote && !editingTitle && <button
         className="conversation-archive"
         type="button"
         aria-label={language === 'zh' ? '归档对话' : 'Archive chat'}
@@ -1468,36 +1640,97 @@ function ScrollingConversationTitle({ title }: { title: string }) {
 function SidebarContextMenu({
   menu,
   onSelect,
+  onClose,
+  onDismiss,
 }: {
   menu: SidebarContextMenuState;
   onSelect: (item: SidebarContextMenuItem) => void;
+  onClose: () => void;
+  onDismiss: () => void;
 }) {
-  return (
+  const ref = useRef<HTMLDivElement>(null);
+  const [submenu, setSubmenu] = useState<SidebarContextMenuState | null>(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    setSubmenu(null);
+    const anchor = menu.anchor?.getBoundingClientRect();
+    let left = anchor ? anchor.right : menu.x;
+    if (anchor && left + node.offsetWidth > window.innerWidth - 8) left = anchor.left - node.offsetWidth;
+    node.style.left = Math.max(8, Math.min(left, window.innerWidth - node.offsetWidth - 8)) + 'px';
+    node.style.top = Math.max(8, Math.min(anchor ? anchor.top - 8 : menu.y, window.innerHeight - node.offsetHeight - 8)) + 'px';
+    if (menu.focusFirst) node.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    else if (!menu.anchor) node.focus({ preventScroll: true });
+  }, [menu]);
+  useEffect(() => {
+    window.addEventListener('resize', onDismiss);
+    return () => window.removeEventListener('resize', onDismiss);
+  }, [onDismiss]);
+
+  function expand(item: SidebarContextMenuItem, anchor: HTMLButtonElement, focusFirst = false) {
+    if (item.disabled || !item.children?.length) { setSubmenu(null); return; }
+    setSubmenu({ id: item.key, x: 0, y: 0, items: item.children, anchor, focusFirst });
+  }
+
+  return <>
     <div
+      ref={ref}
       className="sidebar-context-menu"
       role="menu"
+      tabIndex={-1}
+      aria-label={menu.anchor?.textContent ?? undefined}
       style={{ left: menu.x, top: menu.y }}
       onContextMenu={(event) => event.preventDefault()}
+      onScroll={() => setSubmenu(null)}
+      onKeyDown={event => {
+        const buttons = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+        const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault(); event.stopPropagation(); setSubmenu(null);
+          const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+            : current < 0 ? (event.key === 'ArrowDown' ? 0 : buttons.length - 1)
+            : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[index]?.focus();
+        } else if (event.key === 'ArrowRight') {
+          event.preventDefault(); event.stopPropagation();
+          const item = menu.items.find(item => item.key === buttons[current]?.dataset.sidebarMenuItem);
+          if (item && buttons[current]) expand(item, buttons[current], true);
+        } else if (event.key === 'ArrowLeft' || event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation(); onClose();
+        } else if (event.key === 'Tab') {
+          event.preventDefault(); onDismiss();
+        }
+      }}
     >
-      {menu.items.map((item) => (
-        <button
-          key={item.key}
-          className={`sidebar-menu-button ${item.danger ? 'danger' : ''}`}
-          type="button"
-          role="menuitem"
-          disabled={item.disabled}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelect(item);
-          }}
-        >
-          {item.icon}
-          <span>{item.label}</span>
-          {item.shortcut && <kbd>{item.shortcut}</kbd>}
-        </button>
+      {menu.items.map((item, index) => (
+        <Fragment key={item.key}>
+          {index > 0 && item.separatorBefore && <div className="sidebar-menu-separator" role="separator" />}
+          <button
+            className={'sidebar-menu-button ' + (item.danger ? 'danger' : '')}
+            data-sidebar-menu-item={item.key}
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            aria-haspopup={item.children?.length ? 'menu' : undefined}
+            aria-expanded={item.children?.length ? submenu?.id === item.key : undefined}
+            onPointerEnter={event => expand(item, event.currentTarget)}
+            onClick={event => {
+              event.stopPropagation();
+              if (item.children?.length) expand(item, event.currentTarget, event.detail === 0);
+              else onSelect(item);
+            }}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+            {item.shortcut && <kbd>{item.shortcut}</kbd>}
+            {Boolean(item.children?.length) && <ChevronRight className="sidebar-menu-chevron" size={16} aria-hidden="true" />}
+          </button>
+        </Fragment>
       ))}
     </div>
-  );
+    {submenu && <SidebarContextMenu menu={submenu} onSelect={onSelect} onDismiss={onDismiss}
+      onClose={() => { setSubmenu(null); submenu.anchor?.focus({ preventScroll: true }); }} />}
+  </>;
 }
 
 export function ConversationChangeDialog({
@@ -1506,6 +1739,7 @@ export function ConversationChangeDialog({
   reports,
   turns,
   initialFilePath = '',
+  initialTurnId = '',
   selectionRequestId,
   notice,
   revertingChangeId,
@@ -1524,6 +1758,7 @@ export function ConversationChangeDialog({
   reports: ConversationChangeReport[];
   turns?: ReviewTurn[];
   initialFilePath?: string;
+  initialTurnId?: string;
   selectionRequestId?: string;
   notice: string;
   revertingChangeId: string;
@@ -1537,9 +1772,10 @@ export function ConversationChangeDialog({
   onReviewCommentsChange?: ReviewCommentsChange;
   onComposeReviewComments?: (comments: ReviewComment[]) => void;
 }) {
+  const host = useContext(ConversationHostContext);
   const recentTurns = useMemo(() => turns?.slice(0, WORKSPACE_REVIEW_TURN_LIMIT) ?? [...new Map([...reports].reverse().map(report => [report.turnId || report.id,
     { id: report.turnId || report.id, prompt: report.userPrompt, createdAt: report.createdAt }])).values()].slice(0, WORKSPACE_REVIEW_TURN_LIMIT), [turns, reports]);
-  const [chosenTurn, setChosenTurn] = useState('');
+  const [chosenTurn, setChosenTurn] = useState(initialTurnId);
   const selectedTurnId = recentTurns.some(turn => turn.id === chosenTurn) ? chosenTurn : recentTurns[0]?.id ?? '';
   const selectedTurn = recentTurns.find(turn => turn.id === selectedTurnId);
   const selectedTurnIsLatest = selectedTurnId === recentTurns[0]?.id;
@@ -1658,10 +1894,10 @@ export function ConversationChangeDialog({
       }
       return next;
     });
-    void fetchRuntimeTurnToolExecutionDetails({
+    void (host ? host.toolDetails(conversation.id, selectedDetailTurnId) : fetchRuntimeTurnToolExecutionDetails({
       sessionId: conversation.id,
       turnId: selectedDetailTurnId,
-    })
+    }))
       .then((details) => {
         if (!detailViewMountedRef.current) return;
         const hydratedByKey = turnReports.filter(candidate => retainedReportKeysRef.current.has(reviewDetailKey(conversation.id, candidate.id))).map((candidate) => ({
@@ -1695,6 +1931,7 @@ export function ConversationChangeDialog({
         detailRequestsInFlightRef.current.delete(selectedDetailRequestKey);
       });
   }, [
+    host,
     conversation.id,
     detailRetryRevision,
     retainedReports,
@@ -1742,7 +1979,7 @@ export function ConversationChangeDialog({
         )}
         <div className="change-review-summary change-review-file-heading">
           <div className="change-review-file-heading-copy">
-            <strong title={selectedPath} onContextMenu={event => selectedPath && openFileContextMenu(event, selectedPath, { language })}>
+            <strong title={selectedPath} onContextMenu={host ? undefined : event => selectedPath && openFileContextMenu(event, selectedPath, { language })}>
               {selectedPath ? <><FileTypeIcon path={selectedPath} /><span>{basename(selectedPath)}</span></> : (language === 'zh' ? '文件' : 'Files')}
             </strong>
           </div>

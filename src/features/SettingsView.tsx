@@ -1,5 +1,6 @@
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
+import { SshConnectionsPanel } from './ssh/SshConnectionsPanel';
 import { ChromeConnectionSettings } from './browser/ChromeConnectionSettings';
 import { ComputerUseSettings, ComputerUseSettingsPanel } from './computerUse/ComputerUseSettings';
 import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
@@ -78,6 +79,7 @@ import {
 import packageMetadata from '../../package.json';
 import { McpLogoIcon } from '../components/McpLogoIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
+import { CompactSidebarBackdrop } from '../components/CompactSidebarBackdrop';
 import { basename } from '../shared/localPaths';
 import {
   IMPORTED_THEME_STYLE_PROTOCOL,
@@ -127,7 +129,7 @@ const defaultFontSettings = {
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
   profile: SlidersHorizontal, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
   models: Cpu, mcp: McpLogoIcon, browser: Monitor, 'computer-use': Keyboard,
-  runtime: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
+  runtime: Terminal, ssh: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
 export function SettingsView({
   active,
@@ -156,6 +158,7 @@ export function SettingsView({
   onSettingsChange,
   onUseModel,
   sidebarCollapsed,
+  compactLayout = false,
   sidebarPresence,
   sidebarWidth,
   onSidebarCollapse,
@@ -196,6 +199,7 @@ export function SettingsView({
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
   onUseModel: (model: string) => void;
   sidebarCollapsed: boolean;
+  compactLayout?: boolean;
   sidebarPresence: SoftPanelPresence;
   sidebarWidth: number;
   onSidebarCollapse: () => void;
@@ -552,6 +556,7 @@ export function SettingsView({
   const content = (() => {
     if (section === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
     if (section === 'browser') return <BrowserSettingsPanel language={language} />;
+    if (section === 'ssh') return <SshConnectionsPanel language={language} projects={projects} />;
     if (section === 'computer-use') return <ComputerUseSettingsPanel language={language} />;
     if (section === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
       reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
@@ -878,6 +883,7 @@ export function SettingsView({
       aria-hidden={!active}
       inert={active ? undefined : true}
     >
+      <CompactSidebarBackdrop visible={compactLayout && !sidebarCollapsed} language={language} onClose={onSidebarCollapse} />
       {sidebarPresence.mounted && <>
       <aside className={`sidebar settings-sidebar soft-panel-motion ${sidebarPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
         aria-hidden={!sidebarPresence.visible} inert={sidebarPresence.visible ? undefined : true}>
@@ -907,7 +913,7 @@ export function SettingsView({
                     type="button"
                     aria-current={section === id ? 'page' : undefined}
                     data-settings-section={id}
-                    onClick={() => { setSection(id); setSettingsQuery(''); }}
+                    onClick={() => { setSection(id); setSettingsQuery(''); if (compactLayout) onSidebarCollapse(); }}
                   >
                     <Icon size={18} />
                     <span>{settingsLabels[id][language]}</span>
@@ -923,7 +929,7 @@ export function SettingsView({
       <SidebarResizer language={language} width={sidebarWidth} onWidthChange={onSidebarWidthChange}
         onCollapse={onSidebarCollapse} softVisible={active && sidebarPresence.visible} />
       </>}
-      <section className="settings-content" ref={settingsContentRef}
+      <section className="settings-content" ref={settingsContentRef} inert={compactLayout && !sidebarCollapsed ? true : undefined}
         onScroll={event => { sectionScrollPositions.current[section] = event.currentTarget.scrollTop; }}>
         <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
           {section !== 'mcp' && <header className="settings-page-header">

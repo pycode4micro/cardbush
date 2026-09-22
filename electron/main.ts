@@ -1,6 +1,7 @@
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
+import type { SshConnectionInput } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { VisualThemeContextStore } from './visualThemeContext';
@@ -568,8 +569,8 @@ function createWindow(options: { reveal?: boolean } = {}) {
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
-    minWidth: 960,
-    minHeight: 620,
+    minWidth: 480,
+    minHeight: 480,
     ...mainWindowFrameOptions(process.platform),
     title: 'cardbush',
     icon: windowIcon,
@@ -2066,6 +2067,7 @@ ipcMain.handle('usage:statistics', event => {
 });
 ipcMain.handle('instructions:read-applicable', (event, projectDir?: string, workspaceDir?: string) => {
   assertRuntimeRendererSender(event.sender.id);
+  if (projectDir?.startsWith('ssh://') || workspaceDir?.startsWith('ssh://')) return readAgentInstructionDocuments(getGlobalInstructionsStore());
   return readAgentInstructionDocuments(getGlobalInstructionsStore(), projectDir, workspaceDir);
 });
 ipcMain.handle('instructions:save-global', (event, content: string, revision: string) => {
@@ -2342,7 +2344,92 @@ ipcMain.handle('workspace:ensure-task-directory', async (event, sessionId: strin
 ipcMain.handle('files:read-workspace-directory', async (event, input: Parameters<typeof readWorkspaceDirectory>[0]) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) throw new Error('Unknown workspace window.');
+  if (input.rootPath.startsWith('ssh://')) {
+    const manager = await sshConnections();
+    const permitted = await manager.authorize(input.rootPath, input.directoryPath || input.rootPath);
+    if (!permitted.inside) throw Error('Directory is outside the remote workspace.');
+    const result = await manager.directory(permitted.path);
+    const offset = Math.max(0, Math.floor(input.offset || 0));
+    return { entries: result.entries.slice(offset, offset + 200), ...(offset + 200 < result.entries.length ? { nextOffset: offset + 200 } : {}) };
+  }
   return readWorkspaceDirectory(input);
+});
+
+let sshConnectionsPromise: Promise<import('./sshConnections.mjs', { with: { 'resolution-mode': 'import' } }).SshConnectionManager> | undefined;
+let agentConnectionsPromise: Promise<import('./agentConnections.mjs', { with: { 'resolution-mode': 'import' } }).AgentConnectionManager> | undefined;
+function agentConnections() {
+  return agentConnectionsPromise ??= import('./agentConnections.mjs').then(({ AgentConnectionManager }) => new AgentConnectionManager(path.join(app.getPath('userData'), 'agents', 'connections.json'), {
+    encrypt: value => {
+      if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw new Error('Secure credential storage is unavailable.');
+      return safeStorage.encryptString(value).toString('base64');
+    },
+    decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  }));
+}
+ipcMain.handle('agents:command', async (event, action: string, input: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  const manager = await agentConnections();
+  switch (action) {
+    case 'list': return manager.list();
+    case 'save': return manager.save(input as Parameters<typeof manager.save>[0]);
+    case 'remove': return manager.remove(String(input));
+    case 'connect': return manager.connect(String(input));
+    case 'disconnect': return manager.disconnect(String(input));
+    case 'call': {
+      const request = input as { id: string; operation: Parameters<typeof manager.call>[1]; input?: Record<string, unknown> };
+      return manager.call(request.id, request.operation, request.input);
+    }
+    default: throw new Error('Unknown Agent connection operation.');
+  }
+});
+const agentEventReaders = new Map<string, AbortController>();
+ipcMain.on('agents:events:start', (event, input: { subscriptionId: string; id: string; request: import('./agentTypes.js').AgentEventRequest }) => {
+  assertMainWindowSender(event.sender.id);
+  if (!input || typeof input.subscriptionId !== 'string' || input.subscriptionId.length > 100) return;
+  const key = `${event.sender.id}:${input.subscriptionId}`;
+  agentEventReaders.get(key)?.abort();
+  const send = (frame: import('./agentTypes.js').AgentEventFrame) => { if (!event.sender.isDestroyed()) event.sender.send('agents:events:frame', input.subscriptionId, frame); };
+  if (agentEventReaders.size >= 32) { send({ type: 'error', error: 'Too many Agent event readers.' }); return; }
+  const abort = new AbortController(); agentEventReaders.set(key, abort);
+  const closed = () => abort.abort(); event.sender.once('destroyed', closed);
+  void (async () => {
+    try {
+      const manager = await agentConnections();
+      abort.signal.throwIfAborted();
+      for await (const frame of manager.events(input.id, input.request, abort.signal)) {
+        if (abort.signal.aborted) break;
+        send(frame);
+      }
+    } catch (error) {
+      if (!abort.signal.aborted) send({ type: 'error', error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      abort.abort(); event.sender.removeListener('destroyed', closed);
+      if (agentEventReaders.get(key) === abort) agentEventReaders.delete(key);
+    }
+  })();
+});
+ipcMain.on('agents:events:stop', (event, subscriptionId: string) => {
+  assertMainWindowSender(event.sender.id);
+  agentEventReaders.get(`${event.sender.id}:${subscriptionId}`)?.abort();
+});
+function sshConnections() {
+  return sshConnectionsPromise ??= import('./sshConnections.mjs').then(({ SshConnectionManager }) => new SshConnectionManager(path.join(app.getPath('userData'), 'ssh', 'connections.json'), {
+    encrypt: value => { if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw Error('系统安全凭据存储不可用，请使用 SSH Agent 或无口令密钥。'); return safeStorage.encryptString(value).toString('base64'); },
+    decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  }));
+}
+ipcMain.handle('ssh:connections', async (event, action: string, input: any) => {
+  assertMainWindowSender(event.sender.id); const manager = await sshConnections();
+  switch (action) {
+    case 'list': return manager.list();
+    case 'save': return manager.save(input as SshConnectionInput);
+    case 'remove': return manager.remove(String(input));
+    case 'test': return manager.test(String(input));
+    case 'directory': return manager.directory(String(input));
+    case 'disconnect': return manager.disconnect(String(input));
+    case 'pick-key': return (await dialog.showOpenDialog(mainWindow!, { title: 'SSH 私钥', properties: ['openFile'] })).filePaths[0] ?? null;
+    default: throw Error('Unknown SSH management action.');
+  }
 });
 
 ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string) => {
@@ -2722,18 +2809,22 @@ registerRuntimePluginUiIpc(ipcMain, {
   assertSender: assertMainWindowSender,
 });
 
-ipcMain.handle('project:list-root', (_, rootPath: string) => {
+ipcMain.handle('project:list-root', async (_, rootPath: string) => {
+  if (rootPath.startsWith('ssh://')) return (await (await sshConnections()).directory(rootPath)).entries;
   return listProjectRoot(rootPath);
 });
 
-ipcMain.handle('project:validate-roots', (_, rootPaths: string[]) => {
-  return inspectProjectRoots(Array.isArray(rootPaths) ? rootPaths : []);
+ipcMain.handle('project:validate-roots', async (_, rootPaths: string[]) => {
+  const roots = Array.isArray(rootPaths) ? rootPaths : [];
+  const connections = await (await sshConnections()).list();
+  return [...inspectProjectRoots(roots.filter(root => !root.startsWith('ssh://'))), ...roots.filter(root => root.startsWith('ssh://')).map(rootPath => ({ rootPath, resolvedPath: rootPath, exists: connections.some(item => item.id === new URL(rootPath).hostname) }))];
 });
 
 ipcMain.handle(
   'project:rename-directory',
   (event, input: { rootPath?: string; name?: string }) => {
     assertMainWindowSender(event.sender.id);
+    if (input.rootPath?.startsWith('ssh://')) throw Error('远程项目可修改显示名称；目录重命名请在远程终端执行。');
     return renameProjectDirectory(
       String(input?.rootPath ?? ''),
       String(input?.name ?? ''),
@@ -2741,7 +2832,8 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('project:search-files', (_, rootPath: string, query: string) => {
+ipcMain.handle('project:search-files', async (_, rootPath: string, query: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).searchFiles(rootPath, query);
   return searchProjectFiles(rootPath, query);
 });
 
@@ -2757,6 +2849,7 @@ ipcMain.handle(
       throw new Error('Workflow YAML is empty or too large.');
     }
     const requestedProjectDir = String(input?.projectDir ?? '').trim();
+    if (requestedProjectDir.startsWith('ssh://')) throw Error('远程工作流文件请使用远程文件工具保存。');
     const projectDir = requestedProjectDir ? path.resolve(requestedProjectDir) : '';
     if (projectDir && (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory())) {
       throw new Error('Project directory does not exist.');
@@ -2774,27 +2867,33 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('project:git-info', (_, rootPath: string) => {
+ipcMain.handle('project:git-info', async (_, rootPath: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'info');
   return readGitInfo(rootPath);
 });
 
-ipcMain.handle('project:git-branches', (_, rootPath: string) => {
+ipcMain.handle('project:git-branches', async (_, rootPath: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'branches');
   return readGitBranches(rootPath);
 });
 
-ipcMain.handle('project:git-checkout', (_, rootPath: string, branch: string) => {
+ipcMain.handle('project:git-checkout', async (_, rootPath: string, branch: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'checkout', branch);
   return checkoutGitBranch(rootPath, branch);
 });
 
-ipcMain.handle('project:git-create-branch', (_, rootPath: string, branch: string) => {
+ipcMain.handle('project:git-create-branch', async (_, rootPath: string, branch: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'create-branch', branch);
   return createGitBranch(rootPath, branch);
 });
 
-ipcMain.handle('project:git-commit', (_, rootPath: string, message: string) => {
+ipcMain.handle('project:git-commit', async (_, rootPath: string, message: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'commit', message);
   return commitGitChanges(rootPath, message);
 });
 
-ipcMain.handle('project:git-push', (_, rootPath: string) => {
+ipcMain.handle('project:git-push', async (_, rootPath: string) => {
+  if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'push');
   return pushGitBranch(rootPath);
 });
 
@@ -3066,6 +3165,7 @@ ipcMain.handle('cardling:action', (event, action: CardlingDesktopAction) => {
 });
 
 ipcMain.handle('shell:open-path', (event, targetPath: string) => {
+  if (targetPath.startsWith('ssh://')) return '远程路径请在项目的 SSH 目录浏览器中查看。';
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) {
     return 'Open path is only available from the main CardBush window.';
@@ -3739,12 +3839,26 @@ async function initializeRuntimeHostWithinDeadline() {
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal) => {
+        if (operation === 'ssh.workspace') {
+          const input = payload as { action: string; uri: string; path?: string; write?: boolean; owner: string; name: string; input: Record<string, unknown> };
+          const manager = await sshConnections();
+          if (input.action === 'directory') return manager.directory(input.uri);
+          if (input.action === 'terminals') return manager.listTerminals(input.owner);
+          if (input.action === 'authorize') return manager.authorize(input.uri, String(input.path ?? '.'), input.write);
+          if (input.action === 'execute') return manager.execute(input.uri, input.owner, input.name, input.input, signal);
+          throw Error('Unknown SSH workspace operation.');
+        }
         if (operation === 'network.configuration') return (await pluginNetworking()).configuration();
         if (operation === 'network.route') return (await pluginNetworking()).endpoint(payload);
         if (operation === 'automation.changed') { for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'automation:changed'); return; }
         if (operation === 'automation.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');
           return productHostController.resolveAutomationModel(String((payload as { modelId?: unknown })?.modelId ?? ''));
+        }
+        if (operation === 'agents.list') return (await (await agentConnections()).list()).filter(item => item.hasToken && !item.migrationIssue).map(({ id, name, agentId }) => ({ id, name, agentId }));
+        if (operation === 'agents.delegate') {
+          const { runRemoteSubagent } = await import('./remoteSubagent.mjs');
+          return runRemoteSubagent(await agentConnections(), payload as import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).RemoteSubagentRequest, signal);
         }
         if (operation === 'subagent.models' || operation === 'subagent.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');
@@ -4238,6 +4352,8 @@ app.on('before-quit', (event) => {
       productMcpManagement = null;
       await modelPreviewService?.dispose();
       await processesClosed;
+      await (await sshConnectionsPromise)?.close();
+      await (await agentConnectionsPromise)?.close();
       modelPreviewService = undefined;
       hostShutdownComplete = true;
       app.quit();
@@ -4340,6 +4456,7 @@ function modelIdsFromUnknown(value: unknown): string[] {
 }
 
 function normalizeShellPath(value: string) {
+  if (value.trim().startsWith('ssh://')) return '';
   return localPath(value);
 }
 
@@ -5272,6 +5389,7 @@ function requireGitRoot(rootPath: string) {
 }
 
 function requireProjectDirectory(rootPath: string) {
+  if (rootPath.startsWith('ssh://')) throw Error('此操作需要使用远程终端完成。');
   const root = path.resolve(rootPath);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
     throw new Error(`Project directory does not exist: ${root}`);

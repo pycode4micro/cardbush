@@ -38,13 +38,14 @@ export interface ToolAdmissionContext<TInput = unknown> {
   turn?: {
     request: ModelRequest;
     contextMessages: ModelMessage[];
+    signal?: AbortSignal;
   };
 }
 
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
-  invokeTool: (name: string, input: unknown) => Promise<unknown>;
+  invokeTool: (name: string, input: unknown, options?: { signal?: AbortSignal; record?: boolean; onHooks?: (messages: string[], stop?: string) => void }) => Promise<unknown>;
   recordWorkspaceChange: (change: WorkspaceChange) => void;
 }
 
@@ -57,6 +58,7 @@ export interface ToolRegistration<TInput = unknown> {
   mcpHook?: {
     server: string;
     tool: string;
+    readOnly?: boolean;
     modelVisible?: boolean;
     appCallable?: boolean;
     call: (input: Record<string, unknown>, options: { signal?: AbortSignal; timeoutMs: number; request: ModelRequest }) => Promise<unknown>;

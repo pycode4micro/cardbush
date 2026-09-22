@@ -186,7 +186,7 @@ assert.match(
 );
 assert.match(
   source,
-  /disabled=\{\(!runtimeReady\s*&&\s*!runtimeStartupFailed\)\s*\|\|\s*\(sending\s*&&\s*!hasContent\s*&&\s*\(!cancelReady\s*\|\|\s*stopping\)\)\}/,
+  /disabled=\{submissionPending\s*\|\|\s*attachmentUploads > 0\s*\|\|\s*\(!runtimeReady\s*&&\s*!runtimeStartupFailed\)\s*\|\|\s*\(sending\s*&&\s*!hasContent\s*&&\s*\(!cancelReady\s*\|\|\s*stopping\)\)\}/,
   'The pre-start and accepted-stop send controls must remain disabled waiting states',
 );
 assert.match(source, /setTimeout\(\(\) => setCancelReady\(true\), 600\)/);

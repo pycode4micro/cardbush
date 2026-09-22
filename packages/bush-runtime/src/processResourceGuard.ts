@@ -6,6 +6,7 @@ import { freemem, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProcessResourceObserver, type ResourceSample } from './processResourceObserver.js';
+import { windowsProcessFailure } from './windowsProcessFailure.js';
 
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
@@ -176,6 +177,7 @@ export interface ProcessResourceReport {
   taskMemoryBytes: number;
   totalMemoryBytes: number;
   nativeErrorCode?: number;
+  blockedExecutable?: string;
 }
 
 export interface GuardedProcess {
@@ -298,7 +300,9 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       try {
         const report = JSON.parse(await readFile(reportPath, "utf8")) as ProcessResourceReport;
         if (report.phase !== "finished") throw new Error("Resource host did not finish.");
-        return report;
+        const policyFailure = report.code === 'resource_spawn_failed'
+          ? windowsProcessFailure(report.nativeErrorCode, input.executable) : undefined;
+        return policyFailure ? { ...report, ...policyFailure } : report;
       } catch {
         return {
           phase: "finished" as const,

@@ -31,7 +31,8 @@ test('registers only the published Skill discovery tool', async () => {
     assert.equal('query' in searchResult, false);
     assert.equal(searchResult.matches[0].name, 'xlsx');
     assert.equal(searchResult.matches[0].mainResource, join(packageDir, 'SKILL.md'));
-    assert.deepEqual(Object.keys(searchResult.matches[0]).sort(), ['description', 'mainResource', 'name']);
+    assert.deepEqual(Object.keys(searchResult.matches[0]).sort(), ['description', 'environment', 'mainResource', 'name']);
+    assert.equal(searchResult.matches[0].environment, 'local');
     assert.equal(search.definition.inputSchema.properties.action, undefined, 'skills use the existing file reader, not a load action');
 
     const directRegistry = new ToolRegistry();
@@ -132,7 +133,7 @@ test('skill search bounds long descriptions and returns the original file path w
     const search = registry.resolve('search_skills');
     const result = await search.execute(context(search.decodeInput({ query: 'browser' }), 'search'));
     assert.deepEqual(result.matches[0], { name: 'long-description', description: ('Browser workflow '.repeat(2000)).slice(0, 512),
-      descriptionTruncated: true, mainResource: join(root, 'long-description', 'SKILL.md') });
+      descriptionTruncated: true, mainResource: join(root, 'long-description', 'SKILL.md'), environment: 'local' });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

@@ -20,6 +20,7 @@ import {
 } from 'react';
 
 import { fetchSubagentTask, fetchTurnSnapshot } from '../../backend/api';
+import { openAgentConversation } from '../agents/agentNavigation';
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss';
 import type {
   AppLanguage,
@@ -245,7 +246,7 @@ function SubagentTaskInspector({
       let detailError = '';
       if (next.childTurnId && next.childSessionId && next.terminal) {
         try {
-          snapshot = await fetchTurnSnapshot(next.childTurnId, { sessionId: next.childSessionId, signal });
+          snapshot = await fetchTurnSnapshot(next.childTurnId, { sessionId: next.childSessionId, signal, connectionId: next.remote?.connectionId });
         } catch (caught) {
           detailError = caught instanceof Error ? caught.message : String(caught);
         }
@@ -337,6 +338,9 @@ function SubagentTaskInspector({
       </header>
 
       {refreshError && <div className="subagent-inspector-error">{refreshError}</div>}
+      {task.remote && task.childSessionId && <button type="button" onClick={() => openAgentConversation({ connectionId: task.remote!.connectionId, sessionId: task.childSessionId! })}>
+        {language === 'zh' ? '打开服务器会话 · 查看进度与授权' : 'Open server conversation · Progress and permissions'}
+      </button>}
 
       <div className="subagent-inspector-facts">
         <Fact label={language === 'zh' ? '任务 ID' : 'Task ID'} value={task.taskId || (language === 'zh' ? '等待分配' : 'Awaiting assignment')} />
@@ -344,6 +348,7 @@ function SubagentTaskInspector({
         <Fact label={language === 'zh' ? '父级回合' : 'Parent turn'} value={task.parentTurnId || '-'} />
         <Fact label={language === 'zh' ? '子级回合' : 'Child turn'} value={task.childTurnId || '-'} />
         <Fact label={language === 'zh' ? '子会话' : 'Child session'} value={task.childSessionId || '-'} />
+        {task.remote && <Fact label={language === 'zh' ? '服务器 Agent' : 'Server Agent'} value={task.remote.agentId || task.remote.connectionId} />}
         {task.origin === 'team' && <Fact label="Team" value={task.teamId || '-'} />}
         {task.origin === 'team' && <Fact label={language === 'zh' ? '成员' : 'Member'} value={task.teamMemberId || '-'} />}
         {task.origin === 'team' && <Fact label="Profile" value={task.agentProfileId || '-'} />}
@@ -361,7 +366,7 @@ function SubagentTaskInspector({
       {task.responsePrompt && (
         <InspectorSection title={language === 'zh' ? '子级结果' : 'Child result'}>
           <FileMemoScope sessionId={task.childSessionId} turnId={task.childTurnId}>
-            <MarkdownContent content={task.responsePrompt} language={language} />
+            <MarkdownContent content={task.responsePrompt} language={language} referenceMode={task.remote ? 'remote' : 'local'} />
           </FileMemoScope>
         </InspectorSection>
       )}

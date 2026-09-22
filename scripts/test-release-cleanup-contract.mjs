@@ -103,9 +103,9 @@ assert(
   'markdown copy action must support both UI languages',
 );
 assert(
-  messageBubble.includes('onAssistantFeedback?.(message, nextRating)') &&
-    messageBubble.includes('反馈给 LEM'),
-  'assistant thumbs must remain connected to LEM feedback',
+  messageBubble.includes('recordAssistantFeedback(message, nextRating)') &&
+    !messageBubble.includes('反馈给 LEM'),
+  'assistant thumbs stay local and independent of optional memory plugins',
 );
 assert(
   chat.includes('language?: AppLanguage') && chat.includes('const localize = useCallback'),

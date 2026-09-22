@@ -18,6 +18,7 @@ import type {
   ToolRegistry,
 } from "./toolRegistry.js";
 import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
+import { routeWorkspaceTool } from './workspaceToolRouting.js';
 import { spawnResourceManagedProcess, type ProcessResourceGovernor, type GuardedProcess } from "./processResourceGuard.js";
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTextFields } from "./toolResultText.js";
@@ -150,14 +151,21 @@ export class WorkspaceObservationStore {
   }
 }
 
+export interface RemoteWorkspaceBridge {
+  request(action: 'authorize' | 'execute' | 'directory' | 'terminals', payload: Record<string, unknown>, signal?: AbortSignal): Promise<any>;
+}
+
 export function registerWorkspaceTools(
   registry: ToolRegistry,
   observations: WorkspaceObservationStore = new WorkspaceObservationStore(),
   options: { createChangeId?: () => string; terminals?: TerminalSessionManager;
-    ownsFileVersion?: (sessionId: string, path: string) => Promise<boolean> } = {},
+    ownsFileVersion?: (sessionId: string, path: string) => Promise<boolean>; remote?: RemoteWorkspaceBridge } = {},
 ): WorkspaceObservationStore {
   const createChangeId = options.createChangeId ?? (() => `change_${randomUUID()}`);
   const terminals = options.terminals ?? new TerminalSessionManager();
+  function registerIfMissing<T>(targetRegistry: ToolRegistry, registration: ToolRegistration<T>) {
+    if (!targetRegistry.resolve(registration.definition.name)) targetRegistry.register(routeWorkspaceTool(registration, terminals, options.remote));
+  }
 
   registerIfMissing(registry, {
     definition: {
@@ -342,7 +350,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "terminal_exec",
-      description: terminalToolDescription(),
+      description: terminalToolDescription() + (options.remote ? ' For SSH execution use shell="posix"; environment="local" uses this host and its native shell.' : ''),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
         cwd: {
@@ -358,14 +366,14 @@ export function registerWorkspaceTools(
         },
         shell: {
           type: "string",
-          enum: availableTerminalShells(),
+          enum: options.remote ? ['cmd', 'powershell', 'posix'] : availableTerminalShells(),
           default: defaultTerminalShell(),
           description: "Explicit command interpreter. Runtime never rewrites commands between shell syntaxes.",
         },
       }, ["command", "cwd", "yield_time_ms", "shell"]),
     },
     manifest: manifest("terminal.execute", "process_execution", true),
-    decodeInput: decodeTerminal,
+    decodeInput: input => decodeTerminal(input, Boolean(options.remote)),
     renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
@@ -496,10 +504,6 @@ export function registerWorkspaceTools(
   });
 
   return observations;
-}
-
-function registerIfMissing<T>(registry: ToolRegistry, registration: ToolRegistration<T>): void {
-  if (!registry.resolve(registration.definition.name)) registry.register(registration);
 }
 
 function manifest(operation: string, effectKind: string, mutating: boolean) {
@@ -831,7 +835,7 @@ function decodeSearch(input: unknown): SearchInput {
   };
 }
 
-function decodeTerminal(input: unknown): TerminalInput {
+function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput {
   const object = objectInput(input);
   const yieldTime = object.yield_time_ms;
   if (!Number.isInteger(yieldTime) || Number(yieldTime) < 1) {
@@ -841,7 +845,7 @@ function decodeTerminal(input: unknown): TerminalInput {
     throw new Error(`yield_time_ms must not exceed ${MAX_TERMINAL_YIELD_MS}.`);
   }
   const shell = object.shell === undefined ? defaultTerminalShell() : String(object.shell);
-  if (!availableTerminalShells().includes(shell as TerminalShell)) {
+  if (!(remoteAvailable ? ['cmd', 'powershell', 'posix'] : availableTerminalShells()).includes(shell as TerminalShell)) {
     throw new Error(
       `shell must be one of: ${availableTerminalShells().join(", ")}.`,
     );

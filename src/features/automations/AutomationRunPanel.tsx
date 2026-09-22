@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, Mail, RefreshCw, Square, ExternalLink, MessageSquare } from 'lucide-react';
 import { isAutomationResult, type AutomationConversation } from '@cardbush/bush-protocol';
-import { fetchSessionMessages, fetchPendingInteraction, streamChat, streamTurnEvents, stopTurn, replyInteraction, cancelInteraction, recordAssistantLogicFeedback, type ChatStreamEventHandlers } from '../../backend/api';
+import { fetchSessionMessages, fetchPendingInteraction, streamChat, streamTurnEvents, stopTurn, replyInteraction, cancelInteraction, type ChatStreamEventHandlers } from '../../backend/api';
 import type { ChatMessage, PendingInteraction, PermissionMode, ReasoningLevel } from '../../types';
 import { MessageBubble, MessageFileReferenceScope, projectRenderableChatMessages } from '../chatMessages';
 import { normalizeChatMessagesForDisplay } from '../chatMessages/transcript/messageProjection';
@@ -187,7 +187,7 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
     <div className="automation-run-transcript message-list" ref={scroll} onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 70; }}>
       <MessageFileReferenceScope workspaceRoot={detail?.workspaceDir || detail?.projectDir}><div className="message-list-content">
         {rendered.map(message => <div className="message-list-item" key={message.id}><MessageBubble message={message} language={language} sending={sending} activeTurnId={turnId} activeAssistantMessageId="" selectedModel={detail?.modelName ?? detail?.model}
-          readOnlyActions onRegenerate={ignoreAsync} onEditUserMessage={ignoreAsync} onRetryMessage={ignoreAsync} onRetryGuidance={ignoreAsync} onRevertChangeReport={ignoreAsync} onOpenScene={ignore} onAssistantFeedback={recordAssistantLogicFeedback}/></div>)}
+          readOnlyActions onRegenerate={ignoreAsync} onEditUserMessage={ignoreAsync} onRetryMessage={ignoreAsync} onRetryGuidance={ignoreAsync} onRevertChangeReport={ignoreAsync} onOpenScene={ignore}/></div>)}
         {!rendered.length && <p className="automation-hint">{detail?.run.status === 'queued' ? (zh ? '等待执行，开始后会显示对话。' : 'Waiting to execute. The conversation will appear here.') : (zh ? '本次执行还没有对话内容。' : 'This execution has no conversation content yet.')}</p>}
         {detail?.run.error && <p className="automation-error">{detail.run.error}</p>}
         {error && <p className="automation-error" role="alert">{error}</p>}

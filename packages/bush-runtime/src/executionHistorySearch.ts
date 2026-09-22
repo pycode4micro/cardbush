@@ -1,4 +1,4 @@
-import { LogicRetriever, type TermStats } from './logicRetrieval.js';
+import { Bm25Retriever, type TermStats } from './bm25Retrieval.js';
 import type { ExecutionHistoryEntry } from './executionHistory.js';
 
 export const normalizeHistoryText = (text: string) => text.normalize('NFKC').toLowerCase().replace(/\\/g, '/');
@@ -48,12 +48,11 @@ export function searchExecutionSummaries(entries: ExecutionHistoryEntry[], input
   // Only lexical structure matters here: paths, filenames, compound Tool names
   // and dated IDs are more specific than isolated words. No task-specific lists.
   const identifiers = new Set(keywords.filter(word => /[\p{L}\p{N}][._/-][\p{L}\p{N}]/u.test(normalizeHistoryText(word))));
-  const documents = entries.map(entry => ({ entry, scenario: entry.summary,
-    conditions: [entry.tool, entry.recordedAt, localDate(entry.recordedAt), entry.outcome] }));
-  const scores = new Map(new LogicRetriever(tokenizeHistory).search(documents, [...keywords, input.description])
+  const documents = entries.map(entry => ({ entry, texts: [entry.summary, entry.tool, entry.recordedAt, localDate(entry.recordedAt), entry.outcome] }));
+  const scores = new Map(new Bm25Retriever(tokenizeHistory).search(documents, [...keywords, input.description])
     .map(match => [(match.record.entry as ExecutionHistoryEntry).id, match.score]));
-  const candidates = documents.map(({ entry, conditions }) => {
-    const text = normalizeHistoryText(`${entry.summary}\n${conditions.join(' ')}`);
+  const candidates = documents.map(({ entry, texts }) => {
+    const text = normalizeHistoryText(texts.join(' '));
     const matched = keywords.filter((_, index) => tests[index](text));
     return { entry, matched, tier: matched.some(word => identifiers.has(word)) ? 2 : matched.length ? 1 : 0,
       score: scores.get(entry.id) ?? 0 };

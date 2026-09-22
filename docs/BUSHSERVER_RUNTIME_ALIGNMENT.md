@@ -87,13 +87,14 @@ update_task_plan
 update_goal
 schedule_task
 search_skills
-consult_logic
-learn_logic
 read_archived_tool_result
 subagent
 team_delegate
 request_permission
 ```
+
+Reasoning lessons (`consult_logic` / `learn_logic`) are available only through the optional
+`logic-memory` plugin in `pycode4micro/cardbush-plugins`; they are not bundled or installed by default.
 
 Built-ins are code-owned and cannot be installed, removed, enabled, disabled or
 reset from Settings. Runtime asset reset covers bundled Prompts and Skills only;

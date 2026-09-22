@@ -1,6 +1,5 @@
 import {
   BookOpenCheck,
-  Brain,
   CalendarClock,
   FilePenLine,
   FilePlus2,
@@ -35,8 +34,6 @@ const toolLogos: Record<string, ToolLogoDefinition> = {
   search_file_content: { icon: Search, tone: 'search' },
   terminal_exec: { icon: SquareTerminal, tone: 'terminal' },
   search_skills: { icon: BookOpenCheck, tone: 'skills' },
-  consult_logic: { icon: Brain, tone: 'reasoning' },
-  learn_logic: { icon: Lightbulb, tone: 'reasoning' },
   read_archived_tool_result: { icon: FileText, tone: 'knowledge' },
   inject_image_input: { icon: Image, tone: 'vision' },
   schedule_task: { icon: CalendarClock, tone: 'schedule' },

@@ -153,12 +153,12 @@ export function changeReportsFromMessages(messages: ChatMessage[], retainedTurnI
     }
     if (retainedTurnIds && !retainedTurnIds.has(message.turnId?.trim() ?? '')) return;
     const executions = (message.toolExecutions ?? []).filter((execution, index) => {
-      const identity = execution.id.trim() || [
+      const identity = JSON.stringify([execution.turnId || message.turnId || '', execution.id.trim() || [
         message.turnId ?? '',
         execution.name,
         execution.createdAt,
         execution.sequence ?? index,
-      ].join(':');
+      ].join(':')]);
       if (seenExecutionIds.has(identity)) return false;
       seenExecutionIds.add(identity);
       return true;

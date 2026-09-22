@@ -88,6 +88,21 @@ type ShadowWindowPayload = {
 };
 
 const desktopApi = {
+  agents: {
+    list: () => ipcRenderer.invoke('agents:command', 'list'),
+    save: (input: unknown) => ipcRenderer.invoke('agents:command', 'save', input),
+    remove: (id: string) => ipcRenderer.invoke('agents:command', 'remove', id),
+    connect: (id: string) => ipcRenderer.invoke('agents:command', 'connect', id),
+    disconnect: (id: string) => ipcRenderer.invoke('agents:command', 'disconnect', id),
+    call: (id: string, operation: string, input?: Record<string, unknown>) => ipcRenderer.invoke('agents:command', 'call', { id, operation, input }),
+    watchEvents: (id: string, request: import('./agentTypes.js').AgentEventRequest, callback: (frame: import('./agentTypes.js').AgentEventFrame) => void) => {
+      const subscriptionId = crypto.randomUUID();
+      const listener = (_event: Electron.IpcRendererEvent, receivedId: string, frame: import('./agentTypes.js').AgentEventFrame) => { if (receivedId === subscriptionId) callback(frame); };
+      ipcRenderer.on('agents:events:frame', listener);
+      ipcRenderer.send('agents:events:start', { subscriptionId, id, request });
+      return () => { ipcRenderer.removeListener('agents:events:frame', listener); ipcRenderer.send('agents:events:stop', subscriptionId); };
+    },
+  },
   platform: process.platform,
   hostCapabilities: () => ipcRenderer.invoke('app:host-capabilities'),
   mcpRequests: () => ipcRenderer.invoke('mcp:requests'),
@@ -306,6 +321,15 @@ const desktopApi = {
   installMarketPlugin: (token: string) => ipcRenderer.invoke('plugins:market-install', token),
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
+  sshConnections: {
+    list: () => ipcRenderer.invoke('ssh:connections', 'list'),
+    save: (input: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SshConnectionInput) => ipcRenderer.invoke('ssh:connections', 'save', input),
+    remove: (id: string) => ipcRenderer.invoke('ssh:connections', 'remove', id),
+    test: (id: string) => ipcRenderer.invoke('ssh:connections', 'test', id),
+    directory: (uri: string) => ipcRenderer.invoke('ssh:connections', 'directory', uri),
+    disconnect: (id: string) => ipcRenderer.invoke('ssh:connections', 'disconnect', id),
+    pickKey: () => ipcRenderer.invoke('ssh:connections', 'pick-key'),
+  },
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,
   pickAppearanceStyle: () =>
     ipcRenderer.invoke('dialog:pick-appearance-style') as Promise<string | null>,

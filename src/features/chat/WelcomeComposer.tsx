@@ -1,5 +1,5 @@
-import { Check, Folder, LoaderCircle, Monitor, Search, X } from 'lucide-react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { WorkspaceLocationButton } from '../ssh/WorkspaceLocationPicker';
+import { type RefObject, useRef } from 'react';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import { Composer } from '../composer';
 import { basename, samePath } from '../../shared/localPaths';
@@ -190,136 +190,9 @@ export function WelcomeComposer({
   );
 }
 
-function WelcomeProjectSwitcher({
-  language,
-  projects,
-  selectedProjectDir,
-  disabled,
-  onSelect,
-}: {
-  language: AppLanguage;
-  projects: ProjectItem[];
-  selectedProjectDir: string;
-  disabled: boolean;
+export function WelcomeProjectSwitcher({ language, projects, selectedProjectDir, disabled, onSelect }: {
+  language: AppLanguage; projects: ProjectItem[]; selectedProjectDir: string; disabled: boolean;
   onSelect: (projectDir: string | null) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const selectedProject = projects.find((project) =>
-    samePath(project.rootPath, selectedProjectDir),
-  );
-  const hasProject = Boolean(selectedProjectDir.trim());
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredProjects = projects.filter((project) =>
-    !normalizedQuery || `${project.title} ${project.rootPath}`.toLowerCase().includes(normalizedQuery),
-  );
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const closeFromPointer = (event: globalThis.PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setOpen(false);
-      }
-    };
-    const closeFromKeyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', closeFromPointer);
-    document.addEventListener('keydown', closeFromKeyboard);
-    return () => {
-      document.removeEventListener('pointerdown', closeFromPointer);
-      document.removeEventListener('keydown', closeFromKeyboard);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
-
-  async function selectProject(projectDir: string | null) {
-    if (disabled || busy) return;
-    setBusy(true);
-    try {
-      await onSelect(projectDir);
-      setOpen(false);
-      setQuery('');
-    } catch {
-      // The shared conversation error banner reports project update failures.
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="welcome-project-switcher" ref={rootRef}>
-      {open && (
-        <div className="welcome-project-menu" role="menu">
-          <label className="welcome-project-search">
-            <Search size={13} aria-hidden="true" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={language === 'zh' ? '搜索项目' : 'Search projects'}
-            />
-          </label>
-          <div className="welcome-project-options">
-            {filteredProjects.map((project) => {
-              const selected = samePath(project.rootPath, selectedProjectDir);
-              return (
-                <button
-                  key={project.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={selected}
-                  disabled={busy || disabled}
-                  onClick={() => void selectProject(project.rootPath)}
-                >
-                  <Folder size={14} />
-                  <span>{project.title}</span>
-                  {selected && <Check size={14} />}
-                </button>
-              );
-            })}
-            {filteredProjects.length === 0 && (
-              <div className="welcome-project-empty">
-                {language === 'zh' ? '没有匹配的项目' : 'No matching projects'}
-              </div>
-            )}
-          </div>
-          <div className="welcome-project-menu-footer">
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={!hasProject}
-              disabled={busy || disabled}
-              onClick={() => void selectProject(null)}
-            >
-              <X size={14} />
-              <span>{language === 'zh' ? '不关联项目' : 'No project'}</span>
-              {!hasProject && <Check size={14} />}
-            </button>
-          </div>
-        </div>
-      )}
-      <button
-        className="welcome-project-trigger"
-        type="button"
-        aria-expanded={open}
-        disabled={disabled || busy}
-        onClick={() => setOpen((current) => !current)}
-      >
-        {busy ? <LoaderCircle className="spinning" size={14} /> : <Folder size={14} />}
-        <span>{selectedProject?.title || (hasProject ? basename(selectedProjectDir) : language === 'zh' ? '关联项目' : 'Link a project')}</span>
-      </button>
-      {hasProject && (
-        <span className="welcome-project-context-meta" aria-label={language === 'zh' ? '本地项目' : 'Local project'}>
-          <Monitor size={13} aria-hidden="true" />
-          <span>{language === 'zh' ? '本地' : 'Local'}</span>
-        </span>
-      )}
-    </div>
-  );
+  return <WorkspaceLocationButton language={language} projects={projects} root={selectedProjectDir} disabled={disabled} onSelect={onSelect} />;
 }

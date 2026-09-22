@@ -1,0 +1,4 @@
+interface:
+  display_name: "CardBush 服务部署"
+  short_description: "通过 SSH 部署独立 Agent，配置安全接入、后台运行和更新恢复"
+  default_prompt: "使用 $cardbush-agent-deploy 将 CardBush Agent 服务部署到我指定的主机，并验证安全连接。"

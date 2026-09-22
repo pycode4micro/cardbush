@@ -26,11 +26,14 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   skills?: SkillSummary[];
   language: AppLanguage;
   autoFocus?: boolean;
+  readOnly?: boolean;
+  richReferences?: boolean;
+  ariaLabel?: string;
   placeholder: string;
   onChange(value: string, caret: number): void;
   onSelectionChange(caret: number): void;
   onKeyDown(event: KeyboardEvent<HTMLElement>): void;
-}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
+}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const editor = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
@@ -41,7 +44,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const parts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
     : pluginPromptParts(skillPart.text, plugins).flatMap<ComposerPromptPart>(part => part.reference ? [{ ...part, start: skillPart.start + part.start }]
       : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
-  const rich = parts.some(isReference);
+  const rich = richReferences && parts.some(isReference);
   useImperativeHandle(ref, () => ({
     focus: () => focusEditor(rich ? editor.current : textarea.current),
     setSelectionRange: (start, end) => {
@@ -139,8 +142,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     }
   };
   return rich ? <div ref={editor} className="composer-prompt-editor" data-composer-input
-    role="textbox" aria-label={language === 'zh' ? '消息' : 'Message'} aria-multiline="true"
-    contentEditable suppressContentEditableWarning data-placeholder={placeholder}
+    role="textbox" aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')} aria-multiline="true" aria-readonly={readOnly}
+    contentEditable={!readOnly} suppressContentEditableWarning data-placeholder={placeholder}
     onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; composing.current = false; }}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
     onInput={event => {
@@ -177,8 +180,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       if (event.dataTransfer.files.length || event.dataTransfer.types.includes('application/x-cardbush-quickload') || event.dataTransfer.types.includes(CONVERSATION_DRAG_TYPE)) return;
       event.preventDefault(); document.execCommand('insertText', false, event.dataTransfer.getData('text/plain'));
     }}
-  /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2}
-    aria-label={language === 'zh' ? '消息' : 'Message'}
+  /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
+    aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')}
     onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; }}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
     onChange={event => { lastCaret.current = event.currentTarget.selectionStart; onChange(event.target.value, lastCaret.current); }}

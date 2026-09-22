@@ -62,6 +62,7 @@ export function splitExplicitAttachmentMentions(content: string) {
 }
 
 export function basename(value: string) {
+  if (value.startsWith('ssh://')) { try { value = decodeURIComponent(new URL(value).pathname); } catch { /* Retain invalid input for display. */ } }
   const normalized = value.replaceAll('\\', '/').replace(/\/+$/, '');
   return normalized.split('/').pop() || value;
 }
@@ -78,6 +79,7 @@ export function resourceBasename(value: string) {
 }
 
 export function samePath(left: string, right: string) {
+  if (left.startsWith('ssh://') || right.startsWith('ssh://')) return left === right;
   return (
     left.replaceAll('\\', '/').toLowerCase() ===
     right.replaceAll('\\', '/').toLowerCase()

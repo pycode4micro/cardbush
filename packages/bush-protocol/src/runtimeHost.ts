@@ -16,6 +16,7 @@ export const ANSWER_RUNTIME_PERMISSION_COMMAND =
 export const SHUTDOWN_RUNTIME_COMMAND = "runtime.shutdown" as const;
 export const LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND =
   "runtime.list_turn_context_compactions" as const;
+export const LIST_RUNTIME_TURN_EVENTS_COMMAND = "runtime.list_turn_events" as const;
 export const BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL =
   "bush.runtime_permission_answer.v1" as const;
 

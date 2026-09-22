@@ -15,8 +15,9 @@ function run(args) {
 const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', name, 'test'))
   .filter(file => file.endsWith('.test.mjs')).map(file => `packages/${name}/test/${file}`));
 run(['--test', '--test-concurrency=3', ...tests]);
-run(['--test', 'scripts/test-windows-app-identity.mjs']);
+run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
 run(['--test', 'scripts/test-file-preview-registry.mjs']);
+run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
 for (const script of ['test-background-startup.mjs', 'test-startup-runtime-contract.mjs',
@@ -26,9 +27,10 @@ for (const script of ['test-background-startup.mjs', 'test-startup-runtime-contr
   'test-history-tool-contract.mjs', 'test-turn-guidance-contract.mjs',
   'test-message-media-contract.mjs', 'test-product-skills-contract.mjs']) run(['scripts/' + script]);
 if (!process.argv.includes('--no-ui')) {
+  run(['scripts/run-agents-ui-test.mjs']);
   for (const script of ['run-app-views-test.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
-  for (const view of ['html-references', 'loop-previews', 'startup-presentation', 'composer-resize']) run(['scripts/run-app-views-test.mjs', view]);
+  for (const view of ['html-references', 'loop-previews', 'startup-presentation', 'composer-resize', 'sidebar-menu']) run(['scripts/run-app-views-test.mjs', view]);
   run(['scripts/test-plugin-uninstall-worker.cjs']);
   run(['scripts/test-window-menu.mjs']);
 }

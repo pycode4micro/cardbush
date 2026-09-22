@@ -344,17 +344,23 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     workspaceRoot: string;
     pathAliases: ProjectPathAlias[];
     language: AppLanguage;
+    referenceMode: 'local' | 'remote';
   };
   const MarkdownRenderContext = createContext<MarkdownRenderSettings>({
-    workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh',
+    workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh', referenceMode: 'local',
   });
   // Focus refreshes can replace alias arrays and media maps without changing
   // the message. Component types must stay stable so resolved files, media and
   // code controls retain their state; current settings arrive through context.
   const components: Components = {
     a: ({ href, children, ...props }) => {
-      const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
+      const host = useContext(ConversationHostContext);
+      const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
+      const remotePath = referenceMode === 'remote' ? markdownLocalFileReference(href, '')?.path ?? href : '';
+      if (referenceMode === 'remote') return href && /^https?:\/\//i.test(href)
+        ? <a href={href} target="_blank" rel="noreferrer">{children}</a> : host && remotePath && (!/^[a-z][a-z0-9+.-]*:/i.test(remotePath) || /^[a-z]:[/\\]/i.test(remotePath))
+          ? <button className="markdown-file-link" onClick={() => host.openFile(remotePath)}>{children}</button> : <span>{children}</span>;
       const contextReference = href && parsePromptReference(href);
       if (contextReference) return <PromptReferenceLink reference={contextReference} />;
       if (href && parseFileMemoReference(href)) return richFileReferences
@@ -401,11 +407,15 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       );
     },
     img: ({ src, alt, ...props }) => {
+      const host = useContext(ConversationHostContext);
       const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
-      const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
+      const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
+      const remotePath = referenceMode === 'remote' ? markdownLocalFileReference(src, '')?.path ?? src : '';
+      if (referenceMode === 'remote') return host && remotePath && (!/^[a-z][a-z0-9+.-]*:/i.test(remotePath) || /^[a-z]:[/\\]/i.test(remotePath))
+        ? <button className="markdown-file-link" onClick={() => host.openFile(remotePath)}>{alt || src}</button> : <span>{alt}</span>;
       if (src && parseFileMemoReference(src)) return richFileReferences
         ? <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>
         : <span>{alt}</span>;
@@ -445,10 +455,10 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       );
     },
     code: ({ children, className, ...props }) => {
-      const { workspaceRoot, pathAliases } = useContext(MarkdownRenderContext);
+      const { workspaceRoot, pathAliases, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
       const text = reactNodeText(children).trim();
-      const reference = richFileReferences && !className
+      const reference = referenceMode === 'local' && richFileReferences && !className
         ? localFileReference(text, workspaceRoot)
         : null;
       if (reference) {
@@ -495,20 +505,22 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     workspaceRoot,
     pathAliases,
     language,
+    referenceMode,
   }: MarkdownRenderSettings & { content: string }) {
     const richFileReferences = useContext(RichFileReferencesContext);
-    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language }), [workspaceRoot, pathAliases, language]);
+    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode }), [workspaceRoot, pathAliases, language, referenceMode]);
     const remarkPlugins = useMemo(() => {
       const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkAutolinkBoundaries];
-      if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
+      if (referenceMode === 'local' && richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       return plugins;
-    }, [workspaceRoot, richFileReferences]);
+    }, [workspaceRoot, richFileReferences, referenceMode]);
     const urlTransform = useCallback((url: string) => {
+      if (referenceMode === 'remote') return /^https?:\/\//i.test(url) ? defaultUrlTransform(url) : markdownLocalFileReference(url, '') || (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('//')) ? url : '';
       if (parsePromptReference(url)) return url;
       if (parseFileMemoReference(url)) return url;
       const reference = markdownLocalFileReference(url, workspaceRoot);
       return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
-    }, [workspaceRoot]);
+    }, [workspaceRoot, referenceMode]);
     return (
       <MarkdownRenderContext.Provider value={settings}>
         <ReactMarkdown
@@ -642,7 +654,6 @@ function MessageBubbleView({
   onRevertChangeReport,
   onOpenChangeReview,
   onOpenScene,
-  onAssistantFeedback,
 }: {
   message: ChatMessage;
   changeSummaryMessages?: ChatMessage[];
@@ -664,11 +675,9 @@ function MessageBubbleView({
   ) => Promise<void>;
   onOpenChangeReview?: (filePath?: string) => void;
   onOpenScene: (scene: CardlingScene) => void;
-  onAssistantFeedback?: (
-    message: ChatMessage,
-    rating: AssistantFeedbackRating | null,
-  ) => void | Promise<unknown>;
 }) {
+  const host = useContext(ConversationHostContext);
+  const feedbackId = host ? `${host.id}:${message.id}` : message.id;
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const keyboardShortcuts = useKeyboardShortcuts();
   const [presentToolOutputs] = useState(createToolOutputProjector);
@@ -745,7 +754,7 @@ function MessageBubbleView({
   const [editText, setEditText] = useState(text);
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [assistantFeedback, setAssistantFeedback] =
-    useState<AssistantFeedbackRating | null>(() => readAssistantFeedback(message.id));
+    useState<AssistantFeedbackRating | null>(() => readAssistantFeedback(feedbackId));
   const [feedbackPulse, setFeedbackPulse] =
     useState<AssistantFeedbackRating | null>(null);
   const feedbackPulseFrameRef = useRef<number | null>(null);
@@ -768,10 +777,10 @@ function MessageBubbleView({
   useEffect(() => {
     setEditing(false);
     setSubmittingEdit(false);
-    setAssistantFeedback(readAssistantFeedback(message.id));
+    setAssistantFeedback(readAssistantFeedback(feedbackId));
     setFeedbackPulse(null);
     setEditText(splitMessageMedia(message.content).text);
-  }, [message.id]);
+  }, [message.id, feedbackId]);
 
   useEffect(() => {
     if (!editing) {
@@ -825,8 +834,7 @@ function MessageBubbleView({
     const nextRating = assistantFeedback === rating ? null : rating;
     playAssistantFeedbackPulse(rating);
     setAssistantFeedback(nextRating);
-    recordAssistantFeedback(message, nextRating);
-    void Promise.resolve(onAssistantFeedback?.(message, nextRating)).catch(() => undefined);
+    recordAssistantFeedback(host ? { ...message, id: feedbackId, conversationId: host.id } : message, nextRating);
   }
 
   function playAssistantFeedbackPulse(rating: AssistantFeedbackRating) {
@@ -1301,7 +1309,7 @@ function MessageBubbleView({
               type="button"
               disabled={isActiveAssistantTurn}
               aria-pressed={assistantFeedback === 'up'}
-              title={language === 'zh' ? '有帮助，反馈给 LEM' : 'Helpful, send feedback to LEM'}
+              title={language === 'zh' ? '有帮助' : 'Helpful'}
               onClick={() => toggleAssistantFeedback('up')}
             >
               <ThumbsUp size={14} />
@@ -1313,7 +1321,7 @@ function MessageBubbleView({
               type="button"
               disabled={isActiveAssistantTurn}
               aria-pressed={assistantFeedback === 'down'}
-              title={language === 'zh' ? '不理想，反馈给 LEM' : 'Needs improvement, send feedback to LEM'}
+              title={language === 'zh' ? '不理想' : 'Needs improvement'}
               onClick={() => toggleAssistantFeedback('down')}
             >
               <ThumbsDown size={14} />
@@ -1384,6 +1392,7 @@ function AssistantChangedFilesSummary({
   onOpenReview?: (filePath?: string) => void;
   onRevert?: () => Promise<void>;
 }) {
+  const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const [expanded, setExpanded] = useState(false);
@@ -1459,7 +1468,7 @@ function AssistantChangedFilesSummary({
                 ? `在右侧打开：${file.path}`
                 : `Open in inspector: ${file.path}`
             }
-            onContextMenu={event => openFileContextMenu(event, remapProjectPath(
+            onContextMenu={host ? undefined : event => openFileContextMenu(event, remapProjectPath(
               resolveChangedFilePath(file.path, workspaceRoot), pathAliases,
             ), { language })}
             onClick={() => {
@@ -1471,7 +1480,7 @@ function AssistantChangedFilesSummary({
                 resolveChangedFilePath(file.path, workspaceRoot),
                 pathAliases,
               );
-              openInspector(target, basename(file.path));
+              if (host) host.openFile(target); else openInspector(target, basename(file.path));
             }}
           >
             <span className="assistant-changed-file-name">
@@ -2704,9 +2713,11 @@ function MessageMediaStrip({
   audioPaths: string[];
   language: AppLanguage;
 }) {
+  const host = useContext(ConversationHostContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const presentedMedia = useContext(PresentedMediaContext);
   if (videoPaths.length === 0 && audioPaths.length === 0) return null;
+  if (host) return <div className="message-file-strip">{[...videoPaths, ...audioPaths].map(path => <button key={path} className="message-file-attachment" onClick={() => host.openFile(path)}>{basename(path)}</button>)}</div>;
   return (
     <div className="message-media-strip">
       {videoPaths.map((storedPathValue) => {
@@ -2824,6 +2835,7 @@ function MessageFileAttachmentStrip({
   attachments: ChatAttachment[];
   language: AppLanguage;
 }) {
+  const host = useContext(ConversationHostContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const resolvedAttachments = attachments.map((attachment) => ({
     ...attachment,
@@ -2845,7 +2857,7 @@ function MessageFileAttachmentStrip({
       .filter((attachment) => attachment.path && !Number.isFinite(attachment.size))
       .map((attachment) => attachment.path as string)
       .filter((pathValue) => metadata[pathValue] == null);
-    if (missingPaths.length === 0 || !window.cardbushDesktop?.inspectAttachments) {
+    if (host || missingPaths.length === 0 || !window.cardbushDesktop?.inspectAttachments) {
       return;
     }
     let cancelled = false;
@@ -2862,7 +2874,7 @@ function MessageFileAttachmentStrip({
     return () => {
       cancelled = true;
     };
-  }, [attachmentKey]);
+  }, [attachmentKey, host]);
 
   if (resolvedAttachments.length === 0) return null;
   return (
@@ -2880,8 +2892,8 @@ function MessageFileAttachmentStrip({
             key={attachment.id || pathValue}
             title={pathValue}
             disabled={!pathValue}
-            onContextMenu={event => openFileContextMenu(event, pathValue, { language })}
-            onClick={() => kind === 'folder'
+            onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { language })}
+            onClick={() => host ? host.openFile(pathValue) : kind === 'folder'
               ? void window.cardbushDesktop?.openPath?.(pathValue)
               : openInspector(pathValue, name)}
           >
@@ -2908,10 +2920,12 @@ function MessageImageStrip({
   paths: string[];
   language: AppLanguage;
 }) {
+  const host = useContext(ConversationHostContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const presentedMedia = useContext(PresentedMediaContext);
   const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
   const [preview, setPreview] = useState<ImagePreview | null>(null);
+  if (host) return <div className="message-file-strip">{paths.map(path => <button key={path} className="message-file-attachment" onClick={() => host.openFile(path)}>{basename(path)}</button>)}</div>;
   if (resolvedPaths.length === 0) {
     return null;
   }
@@ -3052,10 +3066,13 @@ function MessageImagePreviewButton({
 export const MarkdownContent = memo(function MarkdownContent({
   content,
   language,
+  referenceMode,
 }: {
   content: string;
   language: AppLanguage;
+  referenceMode?: 'local' | 'remote';
 }) {
+  const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   return (
@@ -3066,6 +3083,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           workspaceRoot={workspaceRoot}
           pathAliases={pathAliases}
           language={language}
+          referenceMode={referenceMode ?? (host ? 'remote' : 'local')}
         />
       </Suspense>
     </div>
@@ -3092,8 +3110,7 @@ function sameMessageBubbleProps(
     previous.onRetryGuidance !== next.onRetryGuidance ||
     previous.onRevertChangeReport !== next.onRevertChangeReport ||
     previous.onOpenChangeReview !== next.onOpenChangeReview ||
-    previous.onOpenScene !== next.onOpenScene ||
-    previous.onAssistantFeedback !== next.onAssistantFeedback
+    previous.onOpenScene !== next.onOpenScene
   ) {
     return false;
   }
@@ -3122,5 +3139,4 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubbleVie
     </WorkspaceRevertAvailability.Provider>
   </FileMemoScope>;
 }, sameMessageBubbleProps);
-
-
+import { ConversationHostContext } from '../conversationHost';

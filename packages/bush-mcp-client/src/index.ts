@@ -576,6 +576,7 @@ export class McpClientManager {
       mcpHook: {
         server: connection.config.id,
         tool: tool.remote.name,
+        readOnly: tool.remote.annotations?.readOnlyHint === true,
         modelVisible: !ui?.visibility || ui.visibility.includes('model'),
         appCallable: ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true,
         call: async (input, options) => {

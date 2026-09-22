@@ -28,6 +28,7 @@ import {
   runtimeUserMessageIdentitySchema,
   LIST_RUNTIME_SESSIONS_COMMAND,
   LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
+  LIST_RUNTIME_TURN_EVENTS_COMMAND,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
@@ -63,6 +64,7 @@ import {
   toolExecutionIdentitySchema,
   turnToolExecutionsRequestSchema,
   runtimeEventKindSchema,
+  runtimeEventCursorSchema,
   runtimeTurnIdentitySchema,
   runtimeToolCancellationIdentitySchema,
   setRuntimePlanRequestSchema,
@@ -73,11 +75,9 @@ import {
   supersedeRuntimeSessionMessagesRequestSchema,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
   RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
-  RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY,
   revertRuntimeWorkspaceChangesSchema,
   restoreRuntimeWorkspaceChangesSchema,
-  runtimeLogicFeedbackRequestSchema,
   type ModelRequest,
   type ModelMessage,
   type ModelProviderState,
@@ -92,11 +92,10 @@ import {
   type SessionSnapshot,
   type SessionUsage,
   type TurnContextCheckpoint,
-  type ToolExecutionRecord,
   type WorkspaceChange,
 } from "@cardbush/bush-protocol";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { executeModelRound } from "./modelRound.js";
@@ -141,7 +140,6 @@ import { registerInteractionTools } from "./interactionTools.js";
 import { RuntimeSolutionBroker } from './runtimeSolutionBroker.js';
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import type { AutomationScheduler } from './automationScheduler.js';
-import { LogicMemoryStore } from "./logicMemory.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import { randomUUID } from 'node:crypto';
 import { PluginHookRunner, type PluginHookObservation } from './pluginHookRunner.js';
@@ -163,8 +161,13 @@ import {
   type JoinedSubagentResult,
 } from "./subagentTool.js";
 import { SubagentTaskStore } from "./subagentTaskStore.js";
+import { SubagentResumeStore } from './subagentResumeStore.js';
+import { BackgroundToolCalls } from './backgroundToolCalls.js';
+import { asyncResultMessage } from './subagentTool.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
+import { parseSshWorkspace } from '@cardbush/bush-protocol';
+import type { RemoteWorkspaceBridge } from './workspaceTools.js';
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -189,7 +192,7 @@ import { registerExecutionHistoryTool } from './executionHistory.js';
 import { ToolExecutionStore } from "./toolExecutionStore.js";
 import { TaskWorkspaceManager } from "./taskWorkspace.js";
 import {
-  GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND,
+  GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND, SWITCH_RUNTIME_WORKSPACE_COMMAND, workspaceSwitchSchema,
   RUNTIME_WORKSPACE_METADATA_KEY, WORKSPACE_REVIEW_TURN_LIMIT, workspaceUpdateSchema, workspaceReadSchema,
   type WorkspaceDescriptor,
 } from "@cardbush/bush-protocol";
@@ -208,6 +211,7 @@ export interface RuntimeRetryContext {
 }
 
 export interface InMemoryRuntimeHostOptions {
+  remoteWorkspace?: RemoteWorkspaceBridge;
   /** Previous built-in capture location, supplied only by the product host. Never a user output path. */
   legacyCaptureCacheRoot?: string;
   openAgentMcpScope?: OpenAgentMcpScope;
@@ -239,6 +243,7 @@ export interface InMemoryRuntimeHostOptions {
   durableSubagentTasks?: boolean;
   subagentPermissionPolicy?: SubagentPermissionPolicy;
   subagentModels?: import('./cleanAgentSettings.js').SubagentModelCatalog;
+  remoteAgents?: import('./subagentTool.js').RemoteSubagentBridge;
   loadPluginExtensions?: PluginExtensionLoader;
   pluginNetwork?: (pluginId: string) => Promise<{ fetch: typeof fetch; env: Record<string, string> }>;
   automation?: AutomationScheduler;
@@ -261,46 +266,6 @@ export interface RuntimeHostStreamRequest {
 export interface RuntimeHostCommand {
   kind: string;
   payload: unknown;
-}
-
-function logicIdsFromExecutions(records: ToolExecutionRecord[]): string[] {
-  const ids = new Set<string>();
-  for (const record of records) {
-    if (record.outcome !== "returned") continue;
-    const output = recordOutput(record.result);
-    if (record.toolCall.name === "consult_logic" && Array.isArray(output.matched_logic)) {
-      for (const candidate of output.matched_logic) {
-        if (!candidate || typeof candidate !== "object") continue;
-        const logicId = String((candidate as Record<string, unknown>).logic_id ?? "").trim();
-        if (logicId) ids.add(logicId);
-      }
-    }
-    if (
-      record.toolCall.name === "learn_logic" &&
-      String(output.status ?? "") === "learned"
-    ) {
-      const logicId = String(output.logic_id ?? "").trim();
-      if (logicId) ids.add(logicId);
-    }
-  }
-  return [...ids];
-}
-
-function recordOutput(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
 }
 
 interface PendingAgentGuidance {
@@ -346,11 +311,16 @@ export class InMemoryRuntimeHost {
   readonly #toolExecutions: ToolExecutionStore;
   readonly #taskWorkspaces?: TaskWorkspaceManager;
   readonly #workspaceTerminals = new TerminalSessionManager();
+  readonly #remoteWorkspace?: RemoteWorkspaceBridge;
   #workspaceActions = 0;
+  #switchingWorkspaceSession?: string;
   #turnAdmissions = 0;
+  readonly #sessionAdmissions = new Map<string, number>();
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
+  readonly #subagentResume: SubagentResumeStore;
+  readonly #backgroundTools: BackgroundToolCalls;
   readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
   readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean }>();
   readonly #activeExtensionCommands = new Map<string, number>();
@@ -360,7 +330,6 @@ export class InMemoryRuntimeHost {
   readonly #activeTurnControllers = new Map<string, AbortController>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
   readonly #solutions: RuntimeSolutionBroker;
-  readonly #logicMemory: LogicMemoryStore;
   readonly #modelImages: ModelImageStore;
   readonly #captureCacheRoot: string;
   readonly #legacyCaptureCacheRoot?: string;
@@ -382,6 +351,7 @@ export class InMemoryRuntimeHost {
   readonly #workspaceRedo: WorkspaceRedoStore;
 
   constructor(options: InMemoryRuntimeHostOptions) {
+    this.#remoteWorkspace = options.remoteWorkspace;
     this.#workspaceRedo = new WorkspaceRedoStore(options.dataRoot ? join(options.dataRoot, 'workspace-redo') : undefined);
     this.#provider = options.provider;
     this.#requestBackgroundPermission = options.requestBackgroundPermission;
@@ -508,12 +478,10 @@ export class InMemoryRuntimeHost {
     this.#taskWorkspaces = options.dataRoot ? new TaskWorkspaceManager(join(runtimeDataRoot, "workspaces")) : undefined;
     this.#pluginAgentEnvironment = new PluginAgentEnvironment(join(runtimeDataRoot, 'plugin-agent-memory'), this.#toolRegistry, this.#taskWorkspaces, options.openAgentMcpScope,
       sessionId => this.#sessions.snapshot(sessionId) ? this.#sessions.assemble({ sessionId }).messages : []);
-    this.#logicMemory = new LogicMemoryStore(join(runtimeDataRoot, "lem", "logic.json"));
     this.#modelImages = new ModelImageStore(runtimeDataRoot);
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
       readToolResultText: (locator, signal) => this.#readArchivedToolResultText(locator, signal),
-      logicMemory: this.#logicMemory,
       modelImages: this.#modelImages,
       automation: options.automation,
     });
@@ -543,10 +511,14 @@ export class InMemoryRuntimeHost {
           : undefined,
       });
     if (options.registerDefaultWorkspaceTools !== false) {
-      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals,
+      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace,
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
+    this.#subagentResume = new SubagentResumeStore(options.dataRoot ? join(runtimeDataRoot, 'subagent-context') : undefined);
+    this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
+      this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
+    this.#backgroundTools.register();
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
       DEFAULT_SUBAGENT_PERMISSION_POLICY;
@@ -562,14 +534,26 @@ export class InMemoryRuntimeHost {
       },
       {
         asyncDispatch: true,
+        remoteAgents: options.remoteAgents,
+        saveChildRequest: request => this.#subagentResume.save(request),
+        loadChildRequest: session => this.#sessions.hasSession(session) ? this.#subagentResume.load(session) : Promise.resolve(undefined),
         runBackground: (session, turn, taskId, run) => this.#pluginBackground.start(session, turn, taskId, run),
         onAsyncResult: ({ parentSessionId, parentTurnId, taskId, result }) => {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
           this.#trackAgentGuidance(key, taskId, result);
         },
-        awaitAsyncResults: ({ parentSessionId, parentTurnId, taskIds }) => {
+        awaitAsyncResults: ({ parentSessionId, parentTurnId, taskIds, mode }) => {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
-          return this.#joinPendingAgentGuidance(key, taskIds);
+          const pending = (this.#pendingAgentGuidance.get(key) ?? []).filter(entry => !entry.taskId.startsWith('tool_task_'));
+          const completed: JoinedSubagentResult[] = [];
+          const selected = taskIds.length ? taskIds.filter(taskId => {
+            if (pending.some(entry => entry.taskId === taskId)) return true;
+            const task = this.#subagentTasks.get(parentSessionId, taskId);
+            if (!task || task.status === 'running') throw new Error('The selected task is not a completed or outstanding subagent of this parent turn.');
+            completed.push({ taskId, message: asyncResultMessage(task) }); return false;
+          }) : pending.map(entry => entry.taskId);
+          if (completed.length && mode !== 'all') return Promise.resolve(completed);
+          return selected.length ? this.#joinPendingAgentGuidance(key, selected, mode).then(results => [...completed, ...results]) : Promise.resolve(completed);
         },
         permissionPolicy: subagentPermissionPolicy,
         models: options.subagentModels,
@@ -632,6 +616,7 @@ export class InMemoryRuntimeHost {
         MCP_APPS_COMMAND,
         GET_RUNTIME_WORKSPACE_COMMAND,
         UPDATE_RUNTIME_WORKSPACE_COMMAND,
+        SWITCH_RUNTIME_WORKSPACE_COMMAND,
         GET_RUNTIME_CAPABILITIES_COMMAND,
         RUN_MODEL_TURN_COMMAND,
         ANSWER_RUNTIME_PERMISSION_COMMAND,
@@ -661,9 +646,9 @@ export class InMemoryRuntimeHost {
         RESOLVE_FILE_MEMO_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
+        LIST_RUNTIME_TURN_EVENTS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
-        RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
         REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
         RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
         GET_RUNTIME_SUBAGENT_TASK_COMMAND,
@@ -886,13 +871,22 @@ export class InMemoryRuntimeHost {
         if (existing) return existing;
         if (!input.workspace) return this.#sessions.create(input.sessionId, input.metadata);
         if (!this.#taskWorkspaces) throw new Error("Independent workspaces require persistent Runtime storage.");
+        if (parseSshWorkspace(input.workspace.sourceDir)) {
+          if (!this.#remoteWorkspace) throw Error('SSH execution is not available.');
+          const remote = await this.#remoteWorkspace.request('directory', { uri: input.workspace.sourceDir }, signal);
+          input.workspace.sourceDir = remote.uri;
+        }
         const workspace = await this.#taskWorkspaces.create(input.sessionId, input.workspace.sourceDir, input.workspace.mode);
         return this.#sessions.create(input.sessionId, this.#workspaceMetadata(input.metadata, workspace));
       }
       case GET_RUNTIME_WORKSPACE_COMMAND: {
         const { sessionId, view } = workspaceReadSchema.parse(command.payload);
         const review = await this.#taskWorkspaces?.review(sessionId, view);
-        return review ? { ...review, runningTerminals: this.#workspaceTerminals.hasRunningWithin(review.workspace.workspaceDir) } : null;
+        if (!review) return null;
+        const runningTerminals = parseSshWorkspace(review.workspace.workspaceDir)
+          ? Boolean((await this.#remoteWorkspace?.request('execute', { uri: review.workspace.workspaceDir, owner:sessionId, name:'workspace_busy', input:{} }, signal))?.running)
+          : this.#workspaceTerminals.hasRunningWithin(review.workspace.workspaceDir);
+        return { ...review, runningTerminals };
       }
       case UPDATE_RUNTIME_WORKSPACE_COMMAND: {
         const input = workspaceUpdateSchema.parse(command.payload);
@@ -901,7 +895,10 @@ export class InMemoryRuntimeHost {
           if (input.action === "stop_terminals" || input.action === "checkpoint") {
             const current = await this.#taskWorkspaces.descriptor(input.sessionId);
             if (!current || current.revision !== input.expectedRevision) throw new Error("Workspace changed. Refresh before applying this action.");
-            if (input.action === "stop_terminals") await this.#workspaceTerminals.stopWithin(current.workspaceDir);
+            if (input.action === "stop_terminals") {
+              if (parseSshWorkspace(current.workspaceDir)) await this.#remoteWorkspace?.request('execute', { uri:current.workspaceDir, owner:input.sessionId, name:'workspace_stop', input:{} }, signal);
+              else await this.#workspaceTerminals.stopWithin(current.workspaceDir);
+            }
           }
           await this.#assertWorkspaceTerminalsStopped(input.sessionId);
           if (input.action === "checkpoint") await this.#taskWorkspaces.recoverCheckpoint(input.sessionId);
@@ -940,9 +937,45 @@ export class InMemoryRuntimeHost {
       case LIST_RUNTIME_SESSIONS_COMMAND:
         runtimeSessionListRequestSchema.parse(command.payload);
         return this.#sessions.list();
+      case SWITCH_RUNTIME_WORKSPACE_COMMAND: {
+        const input = workspaceSwitchSchema.parse(command.payload);
+        return this.#withWorkspaceSwitch(input.sessionId, async () => {
+          const current = this.#sessions.snapshot(input.sessionId);
+          if (!current || current.revision !== input.expectedRevision) throw new Error("会话已变化，请刷新后重试。 / Session changed; refresh and retry.");
+          if (!this.#taskWorkspaces) throw new Error("Workspace switching requires persistent Runtime storage.");
+          const target = input.projectDir ?? input.taskDir;
+          if (!target) throw Error('A workspace directory is required.');
+          let targetDir: string;
+          if (parseSshWorkspace(target)) {
+            if (!this.#remoteWorkspace) throw Error('SSH execution is not available.');
+            targetDir = (await this.#remoteWorkspace.request('directory', { uri: target }, signal)).uri;
+          } else {
+            if (!isAbsolute(target) || !(await stat(target)).isDirectory()) throw new Error("目标工作区目录不存在。 / The target workspace directory does not exist.");
+            targetDir = await realpath(target);
+          }
+          await this.#assertWorkspaceTerminalsStopped(input.sessionId);
+          const oldRoot = current.metadata?.workspace_dir;
+          if (typeof oldRoot === 'string' && this.#workspaceTerminals.hasRunningWithin(oldRoot)) throw new Error("请先停止当前工作区的终端，再切换工作区。 / Stop the workspace terminals before switching.");
+          const workspace = await this.#taskWorkspaces.rebind(input.sessionId, input.projectDir ? targetDir : null);
+          const projectDir = workspace?.sourceDir ?? null;
+          const taskDir = projectDir ? null : targetDir;
+          // Preserve history/metadata edits which may have arrived while preparing the binding.
+          const latest = this.#sessions.snapshot(input.sessionId)!;
+          return this.#sessions.updateMetadata({ sessionId: input.sessionId, expectedRevision: latest.revision, metadata: {
+            ...latest.metadata, runtimeWorkspace: workspace ?? null,
+            project_id: projectDir ? input.projectId : null, projectId: projectDir ? input.projectId : null,
+            projectDir, project_dir: projectDir, userProjectDir: projectDir, user_project_dir: projectDir,
+            workspace_mode: projectDir ? 'project' : 'task', workspaceDir: targetDir, workspace_dir: targetDir,
+            task_dir: taskDir, taskDir, session_workspace_dir: taskDir, sessionWorkspaceDir: taskDir,
+            project_path_aliases: current.metadata?.projectDir === projectDir ? current.metadata?.project_path_aliases ?? [] : [],
+          } });
+        });
+      }
       case UPDATE_RUNTIME_SESSION_METADATA_COMMAND: {
         const input = updateRuntimeSessionMetadataRequestSchema.parse(command.payload);
+        if (this.#switchingWorkspaceSession === input.sessionId) throw new Error("A workspace switch is in progress. Retry the metadata update after it settles.");
         const workspace = await this.#taskWorkspaces?.descriptor(input.sessionId);
+        if (this.#switchingWorkspaceSession === input.sessionId) throw new Error("A workspace switch is in progress. Retry the metadata update after it settles.");
         // The workspace owner determines execution paths; renderer metadata
         // updates cannot rebind an existing managed task.
         return this.#sessions.updateMetadata(workspace
@@ -994,6 +1027,11 @@ export class InMemoryRuntimeHost {
           ? this.#toolExecutions.listTurnSummaries(input.sessionId, input.turnId)
           : this.#toolExecutions.listTurn(input.sessionId, input.turnId);
       }
+      case LIST_RUNTIME_TURN_EVENTS_COMMAND: {
+        const identity = runtimeTurnIdentitySchema.parse(command.payload);
+        const cursor = runtimeEventCursorSchema.parse(command.payload);
+        return this.#eventLog.replay(identity.sessionId, identity.turnId, cursor);
+      }
       case LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND: {
         const input = runtimeTurnIdentitySchema.parse(command.payload);
         return effectiveContextCompactionEvents(
@@ -1004,10 +1042,6 @@ export class InMemoryRuntimeHost {
         return this.#toolRegistry.definitions();
       case GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND:
         return this.#toolRegistry.catalog();
-      case RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND:
-        return this.#recordLogicFeedback(
-          runtimeLogicFeedbackRequestSchema.parse(command.payload),
-        );
       case REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND:
         return this.#revertWorkspaceChanges(
           revertRuntimeWorkspaceChangesSchema.parse(command.payload),
@@ -1154,14 +1188,14 @@ export class InMemoryRuntimeHost {
     input: ModelRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
-    return this.#withTurnAdmission(() => this.#runModelTurn(input, options));
+    return this.#withTurnAdmission(input.sessionId, () => this.#runModelTurn(input, options));
   }
 
   async runSessionTurn(
     input: RuntimeSessionTurnRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
-    return this.#withTurnAdmission(() => this.#runSessionTurn(input, options));
+    return this.#withTurnAdmission(input.sessionId, () => this.#runSessionTurn(input, options));
   }
 
   async #runSessionTurn(
@@ -1188,6 +1222,14 @@ export class InMemoryRuntimeHost {
       } catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
     }
     const workspace = await this.#taskWorkspaces?.descriptor(candidate.sessionId);
+    const sessionMetadata = this.#sessions.snapshot(candidate.sessionId)?.metadata;
+    const taskRoot = sessionMetadata?.workspace_mode === 'task' && !sessionMetadata.projectDir && !sessionMetadata.user_project_dir &&
+      typeof sessionMetadata.task_dir === 'string' ? sessionMetadata.task_dir : undefined;
+    if (!workspace && taskRoot) {
+      candidate.metadata = { ...candidate.metadata, projectDir: undefined, workspaceDir: taskRoot, taskRoots: [taskRoot],
+        mcpContext: { ...(candidate.metadata.mcpContext as Record<string, unknown> ?? {}), filesystemRoots: [taskRoot] } };
+      candidate.prefixMessages.push({ role: 'developer', name: 'workspace_binding', content: `Task workspace: ${taskRoot}\nThis conversation is not associated with a project.` });
+    }
     if (workspace?.status === "discarded") throw new Error("This task workspace was discarded. Create a new task to continue.");
     if (workspace) {
       candidate.metadata = {
@@ -1199,6 +1241,9 @@ export class InMemoryRuntimeHost {
         `Task workspace: ${workspace.workspaceDir}\nSource project: ${workspace.sourceDir}\nExecution mode: ${workspace.mode}.` +
         (workspace.mode === "worktree" ? "\nThe task copy starts from the source's working files, including uncommitted and non-ignored untracked files. Ignored files and dependencies are not copied. Changes remain in this copy until explicitly applied to the source project." : ""),
       });
+      const remote = parseSshWorkspace(workspace.workspaceDir);
+      if (remote) candidate.prefixMessages.push({ role: 'developer', name: 'ssh_workspace_binding', content:
+        `The user selected an SSH workspace as the default environment. Saved connection ID: ${remote.connectionId}. Remote project directory: ${remote.path}. SSH is an additional environment, not a replacement for the local Runtime host. Built-in file and terminal tools default to this remote directory; use environment="local" with absolute local paths for local skills, source files and local commands. To explicitly address another saved SSH environment use environment="ssh://connection-id/absolute/directory". Use POSIX paths and shell="posix" remotely; use the local host's native shell for local commands. Each result identifies its executionEnvironment. Terminal handles stay on the host that created them; omit environment for terminal_poll/write/stop, and terminal_list lists this session's terminals across hosts. Connection failures never fall back to local execution. Remote tools do not provide local checkpoint/revert. Other tools and plugins retain their declared execution environments; do not assume they moved remotely. Read the relevant project's AGENTS.md before editing on either host.` });
     }
     if (!candidate.metadata.pluginHookEvaluation &&
       (!Array.isArray(candidate.metadata.childToolAllowlist) || candidate.metadata.childToolAllowlist.includes(CHECKPOINT_CONTEXT_TOOL)) &&
@@ -1329,7 +1374,7 @@ export class InMemoryRuntimeHost {
     turnId: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
-    return this.#withTurnAdmission(() => this.#resumeModelTurn(sessionId, turnId, options));
+    return this.#withTurnAdmission(sessionId, () => this.#resumeModelTurn(sessionId, turnId, options));
   }
 
   async #resumeModelTurn(
@@ -1764,6 +1809,8 @@ export class InMemoryRuntimeHost {
       }
       while (true) {
         round += 1;
+        const backgroundStop = this.#backgroundTools.stopReason(request.sessionId, request.turnId);
+        if (backgroundStop) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: backgroundStop } });
         if (!compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           const context = await this.#mcpApps.context(request.sessionId);
           const lastContext = [...messages].reverse().find(message => message.role === 'user' && message.name === 'mcp_app_context');
@@ -2758,6 +2805,7 @@ export class InMemoryRuntimeHost {
         details: { message: error.message },
       });
     } finally {
+      this.#backgroundTools.endTurn(request.sessionId, request.turnId);
       clearMcpDiscovery(this.#toolRegistry, request);
       this.#guidanceQueues.delete(turnKey);
       this.#pendingAgentGuidance.delete(turnKey);
@@ -2976,6 +3024,7 @@ export class InMemoryRuntimeHost {
   async #joinPendingAgentGuidance(
     turnKey: string,
     taskIds: string[] = [],
+    mode: 'any' | 'all' = 'any',
   ): Promise<SettledAgentGuidance[]> {
     const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
     const joining = taskIds.length > 0
@@ -2986,13 +3035,15 @@ export class InMemoryRuntimeHost {
         })
       : [...pending];
     if (joining.length === 0) return [];
-    const messages = await Promise.all(joining.map((entry) => entry.promise));
-    const joiningSet = new Set(joining);
+    if (mode === 'all') await Promise.all(joining.map(entry => entry.promise));
+    else await Promise.race(joining.map(entry => entry.promise));
+    const ready = joining.filter(entry => entry.settled && entry.message);
+    const joiningSet = new Set(ready);
     const remaining = (this.#pendingAgentGuidance.get(turnKey) ?? [])
       .filter((entry) => !joiningSet.has(entry));
     if (remaining.length > 0) this.#pendingAgentGuidance.set(turnKey, remaining);
     else this.#pendingAgentGuidance.delete(turnKey);
-    return joining.map((entry, index) => ({ taskId: entry.taskId, message: messages[index]! }));
+    return ready.map(entry => ({ taskId: entry.taskId, message: entry.message! }));
   }
 
   #appendAgentGuidance(
@@ -3155,40 +3206,6 @@ export class InMemoryRuntimeHost {
     return text;
   }
 
-  async #recordLogicFeedback(input: {
-    sessionId: string;
-    turnId: string;
-    messageId: string;
-    rating: "up" | "down" | null;
-  }) {
-    const snapshot = this.#sessions.snapshot(input.sessionId);
-    const turn = snapshot?.turns.find((candidate) => candidate.turnId === input.turnId);
-    if (!turn) throw new Error(`Turn ${input.turnId} does not exist in ${input.sessionId}.`);
-    const message = turn.messages.find((candidate) => candidate.messageId === input.messageId);
-    if (!message || message.message.role !== "assistant") {
-      throw new Error(`Message ${input.messageId} is not an assistant message in ${input.turnId}.`);
-    }
-    const associatedLogicIds = logicIdsFromExecutions(
-      this.#toolExecutions.listTurn(input.sessionId, input.turnId),
-    );
-    const feedback = await this.#logicMemory.recordFeedbackForLogicIds(
-      associatedLogicIds,
-      input.rating,
-      {
-        sourceId: `assistant:${input.sessionId}:${input.turnId}:${input.messageId}`,
-        source: "user_thumb",
-        // A Turn's retrieved/learned records are not proof of adoption or utility.
-        scope: "turn",
-      },
-    );
-    return {
-      ...input,
-      associatedLogicIds,
-      updatedLogicIds: feedback.updatedLogicIds,
-      missingLogicIds: feedback.missingLogicIds,
-    };
-  }
-
   #workspaceMetadata(metadata: Record<string, unknown>, workspace: WorkspaceDescriptor) {
     return { ...metadata, [RUNTIME_WORKSPACE_METADATA_KEY]: workspace,
       projectDir: workspace.sourceDir, project_dir: workspace.sourceDir,
@@ -3196,14 +3213,39 @@ export class InMemoryRuntimeHost {
       workspaceDir: workspace.workspaceDir, workspace_dir: workspace.workspaceDir };
   }
 
-  async #withTurnAdmission<T>(operation: () => Promise<T>): Promise<T> {
+  async #withTurnAdmission<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     if (this.#backgroundCacheController) {
       this.#backgroundCacheController.abort();
       await this.#cacheMaintenance;
     }
     if (this.#workspaceActions) throw new Error("A workspace action is in progress. Retry the Turn after it settles.");
     this.#turnAdmissions++;
-    try { return await operation(); } finally { this.#turnAdmissions--; }
+    this.#sessionAdmissions.set(sessionId, (this.#sessionAdmissions.get(sessionId) ?? 0) + 1);
+    try { return await operation(); } finally {
+      this.#turnAdmissions--;
+      const remaining = (this.#sessionAdmissions.get(sessionId) ?? 1) - 1;
+      if (remaining) this.#sessionAdmissions.set(sessionId, remaining); else this.#sessionAdmissions.delete(sessionId);
+    }
+  }
+
+  async #withWorkspaceSwitch<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const related = new Set([sessionId]);
+    // Child tasks may still be writing into their parent's workspace.
+    let changed = true;
+    const sessions = this.#sessions.list();
+    while (changed) {
+      changed = false;
+      for (const session of sessions) if (!related.has(session.sessionId) && related.has(String(session.metadata?.parentSessionId))) {
+        related.add(session.sessionId); changed = true;
+      }
+    }
+    if (this.#cacheMaintenance || this.#workspaceActions || [...related].some(id => this.#sessionAdmissions.has(id)) ||
+      [...this.#activeTurns].some(key => related.has(JSON.parse(key)[0]))) {
+      throw new Error("请等待此会话及其子任务结束，再切换工作区。 / Wait for this conversation and its child tasks before switching workspaces.");
+    }
+    this.#switchingWorkspaceSession = sessionId;
+    this.#workspaceActions++;
+    try { return await operation(); } finally { this.#workspaceActions--; this.#switchingWorkspaceSession = undefined; }
   }
 
   async #withCacheMaintenance<T>(operation: () => Promise<T>): Promise<T> {
@@ -3229,6 +3271,8 @@ export class InMemoryRuntimeHost {
   }
 
   async #deleteSession(sessionId: string) {
+    await this.#subagentResume.remove(sessionId);
+    for (const task of this.#subagentTasks.list(sessionId)) await this.#subagentResume.remove(task.childSessionId);
     await this.#pluginHooks.closeSession(sessionId);
     this.#pluginBackground.stop(sessionId);
     await this.#pluginHookScopes.remove(sessionId);
@@ -3339,6 +3383,10 @@ export class InMemoryRuntimeHost {
 
   async #assertWorkspaceTerminalsStopped(sessionId: string) {
     const workspace = await this.#taskWorkspaces?.descriptor(sessionId);
+    if (workspace && parseSshWorkspace(workspace.workspaceDir) && this.#remoteWorkspace) {
+      const status = await this.#remoteWorkspace.request('execute', { uri: workspace.workspaceDir, owner: sessionId, name: 'workspace_busy', input: {} });
+      if (status.running) throw Error('请先停止当前远程工作区的终端，再切换工作区。');
+    }
     if (workspace && this.#workspaceTerminals.hasRunningWithin(workspace.workspaceDir)) {
       throw new Error("A terminal in this workspace is still running. Stop or wait for it before changing the workspace.");
     }

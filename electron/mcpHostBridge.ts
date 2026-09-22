@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 const protocol = 'cardbush.mcp_host.v1';
-export type McpHostOperation = 'credentials.read' | 'credentials.write' | 'open-url' | 'elicitation' | 'authentication' | 'openai.access-token' | 'automation.prepare-model' | 'subagent.models' | 'subagent.prepare-model' | 'automation.changed' | 'network.configuration' | 'network.route' | 'resources.acquire' | 'resources.release';
+export type McpHostOperation = 'agents.list' | 'agents.delegate' | 'ssh.workspace' | 'credentials.read' | 'credentials.write' | 'open-url' | 'elicitation' | 'authentication' | 'openai.access-token' | 'automation.prepare-model' | 'subagent.models' | 'subagent.prepare-model' | 'automation.changed' | 'network.configuration' | 'network.route' | 'resources.acquire' | 'resources.release';
 type Request = { protocol: typeof protocol; type: 'request'; id: string; operation: McpHostOperation; payload: unknown };
 type Response = { protocol: typeof protocol; type: 'response'; id: string; result?: unknown; error?: string; errorCode?: string };
 type Cancel = { protocol: typeof protocol; type: 'cancel'; id: string };
@@ -15,10 +15,10 @@ export function isMcpHostMessage(value: unknown): value is McpHostMessage {
 export class McpHostBridge {
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   constructor(private readonly send: (message: McpHostMessage) => void) {}
-  request<T>(operation: McpHostOperation, payload: unknown, signal?: AbortSignal): Promise<T> {
+  request<T>(operation: McpHostOperation, payload: unknown, signal?: AbortSignal, settleCancellation = false): Promise<T> {
     signal?.throwIfAborted();
     const id = randomUUID();
-    const abort = () => { this.pending.get(id)?.reject(new Error('MCP host request cancelled.')); this.pending.delete(id); this.send({ protocol, type: 'cancel', id }); };
+    const abort = () => { if (!settleCancellation) { this.pending.get(id)?.reject(new Error('MCP host request cancelled.')); this.pending.delete(id); } this.send({ protocol, type: 'cancel', id }); };
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: value => resolve(value as T), reject });
       signal?.addEventListener('abort', abort, { once: true });

@@ -10,7 +10,6 @@ export * from "./coordinationTools.js";
 export * from "./fileCoordinationPersistence.js";
 export * from "./inMemoryRuntimeHost.js";
 export * from "./interactionTools.js";
-export * from "./logicMemory.js";
 export * from "./fileRuntimeEventPersistence.js";
 export * from "./fileRuntimeCheckpointStore.js";
 export * from "./fileSessionEventPersistence.js";

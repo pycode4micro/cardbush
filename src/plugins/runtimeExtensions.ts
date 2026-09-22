@@ -73,17 +73,18 @@ export function refreshRuntimeRendererPlugins(): Promise<void> {
   }).finally(() => { pending = undefined; });
   return pending;
 }
-export function useRuntimeRendererPlugins() {
+export function useRuntimeRendererPlugins(enabled = true) {
   useEffect(() => {
+    if (!enabled) return;
     if (!stopWatching) stopWatching = window.cardbushDesktop?.onCapabilityCatalogChanged?.(() => { void refreshRuntimeRendererPlugins(); });
     void refreshRuntimeRendererPlugins();
-  }, []);
+  }, [enabled]);
   useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => revision, () => revision);
-  return [...entries.values()];
+  return enabled ? [...entries.values()] : [];
 }
 const empty: RuntimeRendererSnapshot = { title: '', choices: [], selectedId: '' };
-export function useRuntimeDelegationWorkspace() {
-  const plugins = useRuntimeRendererPlugins();
+export function useRuntimeDelegationWorkspace(enabled = true) {
+  const plugins = useRuntimeRendererPlugins(enabled);
   const plugin = plugins.find(entry => entry.snapshot?.role === 'delegation');
   return { extensionId: plugin?.id, pluginName: plugin?.name || '', ...(plugin?.snapshot ?? empty),
     ...(plugin?.error ? { error: plugin.error, choices: [], selectedId: '' } : {}) };

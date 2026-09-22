@@ -17,7 +17,12 @@ try {
   assert.ok(management.description);
   assert.ok((await fs.readFile(path.join(management.packageDir, 'references/plugin-contract.md'), 'utf8')).length > 0);
   const bundledNames = (await listProductSkills([path.resolve('assets/skills')])).map(skill => skill.name);
-  assert.deepEqual(bundledNames.filter(name => name.startsWith('cardbush-')), ['cardbush-docs']);
+  assert.deepEqual(bundledNames.filter(name => name.startsWith('cardbush-')), ['cardbush-agent-deploy', 'cardbush-docs']);
+  const deployment = await readProductSkill([path.resolve('assets/skills')], 'cardbush-agent-deploy');
+  assert.equal(deployment.invocationMode, 'both');
+  for (const resource of ['references/deployment.md', 'references/network-security.md', 'agents/openai.yaml']) {
+    assert.ok((await fs.stat(path.join(deployment.packageDir, resource))).isFile());
+  }
   for (const resource of ['references/mcp-management.md', 'references/plugin-management.md', 'references/style-management.md', 'references/theme-contract.md', 'references/calendar-protocol.md', 'references/automations.md', 'scripts/convert-date.mjs']) {
     assert.ok((await fs.stat(path.join(management.packageDir, resource))).isFile());
   }

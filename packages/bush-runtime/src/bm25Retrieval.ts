@@ -1,4 +1,4 @@
-type LogicRecord = Record<string, unknown>;
+export type SearchDocument = { texts: unknown[]; [key: string]: unknown };
 export type TermStats = { frequencies: Map<string, number>; length: number };
 
 // Standard BM25 parameters, independent of tasks, Tools, domains and memory rewards.
@@ -25,14 +25,14 @@ function tokenize(text: string): TermStats {
 }
 
 /** Caches tokenization, not search results. Retains only texts used by the latest search. */
-export class LogicRetriever {
+export class Bm25Retriever {
   #terms = new Map<string, TermStats>();
 
   constructor(private readonly tokenizeText: (text: string) => TermStats = tokenize) {}
 
   clear(): void { this.#terms.clear(); }
 
-  search(records: LogicRecord[], query: unknown[]) {
+  search(records: SearchDocument[], query: unknown[]) {
     const nextTerms = new Map<string, TermStats>();
     const stats = (text: string) => {
       const result = nextTerms.get(text) ?? this.#terms.get(text) ?? this.tokenizeText(text);
@@ -48,9 +48,7 @@ export class LogicRetriever {
     const documents = requestedTerms.size ? records.map(record => {
       const frequencies = new Map<string, number>();
       let length = 0;
-      for (const text of textValues([record.scenario, record.conditions, record.cognitive_patterns,
-        record.bias, record.correction ?? record.correction_logic ?? record.lesson,
-        record.reflection_question ?? record.reflection_prompt, record.tags])) {
+      for (const text of textValues(record.texts)) {
         const words = stats(text);
         length += words.length;
         for (const [term, count] of words.frequencies) frequencies.set(term, (frequencies.get(term) ?? 0) + count);
@@ -79,9 +77,4 @@ export class LogicRetriever {
       return { record, score, matchedTerms };
     }).filter(({ score }) => score > 0).sort((left, right) => right.score - left.score);
   }
-}
-
-/** Lexical retrieval only: no semantic classes, hand-written keyword lists or quality labels. */
-export function retrieveLogic(records: LogicRecord[], query: unknown[]) {
-  return new LogicRetriever().search(records, query);
 }

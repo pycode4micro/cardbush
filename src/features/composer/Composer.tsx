@@ -1,4 +1,8 @@
 import { usePluginCatalog } from '../plugins/pluginCatalog';
+import { ConversationHostContext } from '../conversationHost';
+import { useSshConnections } from '../ssh/SshConnectionsPanel';
+import { pickWorkspace } from '../ssh/WorkspaceLocationPicker';
+import { parseSshWorkspace } from '@cardbush/bush-protocol';
 import { pluginReference } from '../plugins/pluginPrompts';
 import { PluginGlyph } from '../plugins/PluginGlyph';
 import { ComposerReferenceContext, referenceableUserMessages } from './ComposerReferenceContext';
@@ -103,13 +107,14 @@ type ComposerFileAttachment = {
   size?: number;
 };
 
-function useRuntimeStartupStatus(): RuntimeStartupStatus {
+function useRuntimeStartupStatus(enabled = true): RuntimeStartupStatus {
   const [status, setStatus] = useState<RuntimeStartupStatus>(() =>
     window.cardbushDesktop?.runtimeStartupStatus
       ? { phase: 'initializing', attempt: 0, startedAt: new Date().toISOString() }
       : { phase: 'ready', attempt: 0, startedAt: new Date().toISOString() },
   );
   useEffect(() => {
+    if (!enabled) return;
     const desktop = window.cardbushDesktop;
     if (!desktop?.runtimeStartupStatus || !desktop.onRuntimeStartupStatus) return undefined;
     let disposed = false;
@@ -127,8 +132,8 @@ function useRuntimeStartupStatus(): RuntimeStartupStatus {
       disposed = true;
       unsubscribe();
     };
-  }, []);
-  return status;
+  }, [enabled]);
+  return enabled ? status : { phase: 'ready', attempt: 0, startedAt: '' };
 }
 
 type ComposerQueuedMessage = {
@@ -162,7 +167,7 @@ type ComposerCommandState = {
 };
 
 type ComposerCommandItem = {
-  category?: 'actions' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns' | 'extracts';
+  category?: 'ssh' | 'actions' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns' | 'extracts';
   id: string;
   title: string;
   subtitle: string;
@@ -347,6 +352,8 @@ export function Composer({
   shadowAgentName,
   onToggleShadow,
   contextWindow,
+  submissionPending = false,
+  inputReadOnly = false,
 }: {
   compact?: boolean;
   fileDropTarget?: React.RefObject<HTMLElement | null>;
@@ -376,7 +383,7 @@ export function Composer({
   onPermissionModeChange: (value: PermissionMode) => void;
   onSubagentPermissionRoutingChange: (value: SubagentPermissionRouting) => void;
   onReasoningLevelChange: (value: ReasoningLevel) => void;
-  onSend: (text: string, options?: { immediate?: boolean }) => Promise<void>;
+  onSend: (text: string, options?: { immediate?: boolean }) => Promise<void | boolean>;
   onCancel: () => Promise<void>;
   cancelEnabled?: boolean;
   skills?: SkillSummary[];
@@ -394,8 +401,11 @@ export function Composer({
   shadowAgentName?: string;
   onToggleShadow?: () => void;
   contextWindow?: ContextWindowUsage;
+  submissionPending?: boolean;
+  inputReadOnly?: boolean;
 }) {
-  const runtimeStartup = useRuntimeStartupStatus();
+  const host = useContext(ConversationHostContext);
+  const runtimeStartup = useRuntimeStartupStatus(!host);
   const keyboardShortcuts = useKeyboardShortcuts();
   const immediatePendingRef = useRef(false);
   const immediateHandlerRef = useRef<(fromQueue?: boolean) => Promise<void>>(async () => {});
@@ -409,6 +419,7 @@ export function Composer({
   const plugins = usePluginCatalog();
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
   const referenceContext = useContext(ComposerReferenceContext);
+  const sshConnections = useSshConnections(!host);
   const extraction = useContext(ConversationExtractionContext);
   const draftForExtraction = useRef({ draft, onDraftChange });
   draftForExtraction.current = { draft, onDraftChange };
@@ -418,6 +429,7 @@ export function Composer({
     textareaRef.current?.focus();
   };
   useEffect(() => {
+    if (host) { setPluginCommands(host.pluginCommands); return; }
     const desktop = window.cardbushDesktop;
     if (!desktop?.pluginCommands) return;
     let active = true, generation = 0;
@@ -430,9 +442,10 @@ export function Composer({
     const unsubscribe = desktop.onCapabilityCatalogChanged?.(refresh);
     window.addEventListener('focus', refresh);
     return () => { active = false; unsubscribe?.(); window.removeEventListener('focus', refresh); };
-  }, []);
+  }, [host]);
   const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<ComposerFileAttachment[]>([]);
+  const [attachmentUploads, setAttachmentUploads] = useState(0);
   const dropTargetRef = fileDropTarget ?? composerStackRef;
   const fileDragActive = useFileDropZone(dropTargetRef, transfer => {
     void handleDrop(transfer).catch(error => showUiError(
@@ -445,7 +458,7 @@ export function Composer({
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
-  const teamWorkspace = useRuntimeDelegationWorkspace();
+  const teamWorkspace = useRuntimeDelegationWorkspace(!host);
   const delegationCommand = teamWorkspace.command ? `/${teamWorkspace.command}` : '';
   const selectedTeam = teamAvailable ? teamWorkspace.choices.find((team) => team.id === teamWorkspace.selectedId) : undefined;
 
@@ -525,6 +538,7 @@ export function Composer({
   ]);
 
   async function submit(immediate = false) {
+    if (submissionPending || attachmentUploads > 0) return;
     if (!runtimeReady) {
       if (runtimeStartupFailed) {
         await window.cardbushDesktop?.retryRuntimeStartup?.();
@@ -551,6 +565,11 @@ export function Composer({
     const attachmentPaths = [...imageAttachments, ...fileAttachments]
       .map((item) => `@${item.path}`);
     const value = [...attachmentPaths, draft.trimEnd()].filter(Boolean).join('\n');
+    if (host) {
+      if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
+      setImageAttachments([]); setFileAttachments([]);
+      return;
+    }
     onDraftChange('');
     setImageAttachments([]);
     setFileAttachments([]);
@@ -587,6 +606,7 @@ export function Composer({
   }
 
   async function addAttachmentPaths(paths: string[]) {
+    if (host) { onDraftChange([...paths.map(path => `@${path}`), draft].join('\n')); return; }
     const uniquePaths = [...new Set(paths.map((value) => value.trim()).filter(Boolean))]
       .slice(0, 32);
     if (uniquePaths.length === 0) {
@@ -681,6 +701,7 @@ export function Composer({
   }, [commandState]);
 
   async function handleDrop(transfer: DataTransfer) {
+    if (host) { await addTransferredFiles([...transfer.files]); return; }
     const sessionId = transfer.getData(CONVERSATION_DRAG_TYPE);
     if (sessionId && extraction) { insertExtraction(await extraction.referenceSession(sessionId)); return; }
     const raw = transfer.getData('application/x-cardbush-quickload');
@@ -704,6 +725,11 @@ export function Composer({
   }
 
   async function pickAttachments() {
+    if (host) {
+      const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
+      input.onchange = () => { void addTransferredFiles([...input.files ?? []]).catch(error => showUiError(language === 'zh' ? '附件上传失败' : 'Upload failed', String(error))); };
+      input.click(); return;
+    }
     const paths = await window.cardbushDesktop?.pickAttachments?.();
     if (!paths || paths.length === 0) {
       return;
@@ -721,6 +747,14 @@ export function Composer({
   }
 
   async function addTransferredFiles(files: File[]) {
+    if (host) {
+      setAttachmentUploads(current => current + 1);
+      try {
+        const uploaded = await host.uploadFiles(files);
+        setFileAttachments(current => [...current, ...uploaded.map(file => ({ id: crypto.randomUUID(), path: file.path, name: file.name, kind: 'file' as const }))]);
+      } finally { setAttachmentUploads(current => current - 1); }
+      return;
+    }
     const pathBacked: string[] = [];
     const transientImages: File[] = [];
     for (const file of files.slice(0, 32)) {
@@ -941,6 +975,19 @@ export function Composer({
       return [];
     }
     const items: ComposerCommandItem[] = commandState.mode === 'mention' ? [
+      ...sshConnections.map(connection => ({
+        id: `ssh:${connection.id}`, category: 'ssh' as const, title: connection.name, subtitle: `${connection.username}@${connection.host}`,
+        icon: <Globe size={18} />, disabled: !referenceContext.onWorkspaceSelect,
+        searchText: `ssh remote 远程 服务器 ${connection.name} ${connection.host}`,
+        run: async () => {
+          const uri = await pickWorkspace({ language, connectionId: connection.id, projects: referenceContext.projects });
+          if (!uri) return;
+          try { const target = parseSshWorkspace(uri); await referenceContext.onWorkspaceSelect?.(uri, target ? promptReferenceMarkdown({ kind: 'ssh', ...target, title: (sshConnections.find(item => item.id === target.connectionId)?.name ?? 'SSH') + target.path }) : undefined); }
+          catch (error) { void showUiError(language === 'zh' ? 'SSH 连接失败' : 'SSH connection failed', (error as Error).message); }
+        },
+      })),
+      { id: 'ssh:manage', category: 'ssh', title: language === 'zh' ? '连接 SSH 项目…' : 'Connect to an SSH project…', subtitle: language === 'zh' ? '选择连接和远程目录' : 'Choose a connection and directory', icon: <Globe size={18}/>, disabled: !referenceContext.onWorkspaceSelect,
+        run: async () => { const uri = await pickWorkspace({ language, projects: referenceContext.projects, remote: true }); if (uri) try { await referenceContext.onWorkspaceSelect?.(uri); } catch (error) { void showUiError(language === 'zh' ? 'SSH 连接失败' : 'SSH connection failed', (error as Error).message); } } },
       { id: 'reference:files', category: 'files', title: language === 'zh' ? '文件和文件夹' : 'Files and folders',
         subtitle: language === 'zh' ? '从电脑中添加附件' : 'Attach from your computer', icon: <Paperclip size={18} />,
         run: pickAttachments, searchText: 'file folder attachment 文件 附件 文件夹' },
@@ -963,10 +1010,10 @@ export function Composer({
           searchText: `turn 用户 指令 ${turnLabel} ${message.content}` };
       }).reverse(),
     ] : commandState.mode === 'plugin' ? pluginCommandItems : slashCommands;
-    const order = ['actions', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
-    return rankComposerCommandItems(items, commandState.query).slice(0, 50)
+    const order = ['actions', 'ssh', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
+    return rankComposerCommandItems(host ? items.filter(item => item.category !== 'ssh') : items, commandState.query).slice(0, 50)
       .sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
-  }, [commandState, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language]);
+  }, [commandState, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language, sshConnections, host]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -1195,7 +1242,7 @@ export function Composer({
           event.preventDefault();
           textareaRef.current?.focus();
         }}
-        onPaste={(event) => void pasteAttachments(event)}
+        onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(language === 'zh' ? '无法添加附件' : 'Unable to add attachments', String(error)))}
       >
         {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
@@ -1251,7 +1298,7 @@ export function Composer({
                   title={file.kind === 'folder'
                     ? language === 'zh' ? `打开文件夹 ${file.name}` : `Open folder ${file.name}`
                     : language === 'zh' ? `只读预览 ${file.name}` : `Preview ${file.name} read-only`}
-                  onClick={() => file.kind === 'folder'
+                  onClick={() => host ? host.openFile(file.path) : file.kind === 'folder'
                     ? void window.cardbushDesktop?.openPath?.(file.path)
                     : openInspector(file.path, file.name)}
                 >
@@ -1302,6 +1349,8 @@ export function Composer({
           </div>
         )}
         <ComposerPromptInput
+          readOnly={inputReadOnly || submissionPending}
+          richReferences={!host}
           ref={textareaRef}
           plugins={plugins}
           skills={skills}
@@ -1478,7 +1527,7 @@ export function Composer({
             <button
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
-              disabled={(!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
+              disabled={submissionPending || attachmentUploads > 0 || (!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
               title={[sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (language === 'zh' ? ' 立即引导' : ' Send guidance now') : ''].filter(Boolean).join(' · ')}
               aria-label={sendButtonLabel}
               aria-keyshortcuts={hasContent ? keyboardShortcuts.aria('sendMessage') : undefined}
@@ -1527,8 +1576,8 @@ function ComposerCommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
   const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的浏览器或用户指令' : 'No matching browser tabs or user instructions') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   const categories = language === 'zh'
-    ? { actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
-    : { actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
+    ? { ssh: 'SSH 连接', actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
+    : { ssh: 'SSH connections', actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
   useLayoutEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     const list = listRef.current;

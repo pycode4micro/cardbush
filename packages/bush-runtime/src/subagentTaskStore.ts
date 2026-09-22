@@ -51,6 +51,8 @@ export class SubagentTaskStore {
     teamId?: string;
     teamMemberId?: string;
     agentProfileId?: string;
+    resumedFromTaskId?: string;
+    remote?: SubagentTask['remote'];
     phase?: "discussion" | "execution";
   }): SubagentTask {
     const existing = this.get(input.parentSessionId, input.taskId);
@@ -183,6 +185,7 @@ export function projectSubagentTasks(
         "teamId",
         "teamMemberId",
         "agentProfileId",
+        "resumedFromTaskId",
         "phase",
         "createdAt",
       ] as const) {

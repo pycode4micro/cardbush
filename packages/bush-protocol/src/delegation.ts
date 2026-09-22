@@ -29,6 +29,8 @@ export const subagentTaskSchema = z.object({
   teamId: z.string().min(1).optional(),
   teamMemberId: z.string().min(1).optional(),
   agentProfileId: z.string().min(1).optional(),
+  resumedFromTaskId: z.string().min(1).optional(),
+  remote: z.object({ connectionId: z.string().min(1), agentId: z.string().optional() }).optional(),
   phase: z.enum(["discussion", "execution"]).optional(),
   status: subagentTaskStatusSchema,
   finalResponse: z.string(),
@@ -41,6 +43,15 @@ export const subagentTaskSchema = z.object({
 });
 
 export type SubagentTask = z.infer<typeof subagentTaskSchema>;
+
+export interface RemoteSubagentRequest {
+  connectionId: string; agentId?: string; taskId: string;
+  parentSessionId: string; parentTurnId: string; sessionId: string; turnId: string;
+  prompt: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: 'zh' | 'en';
+}
+export interface RemoteSubagentResult {
+  status: 'completed' | 'failed' | 'stopped'; finalResponse: string; errorMessage: string; usage: SubagentTask['usage'];
+}
 
 export const subagentEventSchema = z.object({
   protocol: z.literal(BUSH_SUBAGENT_EVENT_PROTOCOL),

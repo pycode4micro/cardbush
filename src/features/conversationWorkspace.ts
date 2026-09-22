@@ -14,6 +14,7 @@ function metadataText(
 }
 
 function normalizedWorkspacePath(value: unknown) {
+  if (typeof value === 'string' && value.startsWith('ssh://')) return value.replace(/\/+$/, '');
   return String(value ?? '')
     .trim()
     .replace(/\\/g, '/')

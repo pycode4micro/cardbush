@@ -4,7 +4,6 @@ import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
-import { decodeLogicLearnInput, LogicMemoryStore } from "./logicMemory.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import { renderTextFields } from "./toolResultText.js";
 import type { AutomationScheduler } from './automationScheduler.js';
@@ -13,139 +12,17 @@ export interface ExtendedBuiltinOptions {
   dataRoot?: string;
   readToolResult?: (locator: string) => unknown;
   readToolResultText?: (locator: string, signal?: AbortSignal) => string | Promise<string>;
-  logicMemory?: LogicMemoryStore;
   modelImages?: ModelImageStore;
   automation?: AutomationScheduler;
 }
 
 export function registerExtendedBuiltins(registry: ToolRegistry, options: ExtendedBuiltinOptions = {}): void {
   const dataRoot = resolve(options.dataRoot || join(process.cwd(), ".cardbush-runtime"));
-  registerLogic(registry, options.logicMemory ?? new LogicMemoryStore(join(dataRoot, "lem", "logic.json")));
   const images = options.modelImages ?? new ModelImageStore(dataRoot);
   registerArchivedToolResult(registry, images, options.readToolResult, options.readToolResultText);
   registerImageInput(registry, images);
   registerSchedule(registry, options.automation);
   registerParallel(registry);
-}
-
-function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
-  registry.register<Record<string, unknown>>({
-    definition: {
-      name: "consult_logic",
-      description: "Retrieve lessons from accumulated past experience using the current task or conversation context supplied in the call. Results contain stored historical situations, applicable conditions, reasoning corrections and evidence. mode=search uses BM25 lexical matching against that supplied context; mode=list returns a paginated inventory of historical lessons. Matches and scores describe lexical overlap, not verified applicability or facts about the current task.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          mode: { type: "string", enum: ["search", "list"], default: "search" },
-          query: { type: "string", minLength: 1, pattern: "\\S", description: "The current context or decision for which to retrieve lessons from past experience, expressed with concrete search terms. Required in search mode." },
-          offset: { type: "integer", minimum: 0, description: "List mode only. Use the previous next_offset to continue." },
-          scenario_conditions: {
-            description: "Conditions of the current situation to match against historical experience.",
-            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          },
-          decision_context: { type: "string", description: "Relevant context from the current task or conversation, supplied by the caller as additional retrieval evidence." },
-          decision_phase: {
-            type: "string",
-            enum: ["before_action", "after_tool_result", "before_delegation", "before_final", "recovery", "postmortem"],
-          },
-          task_type: { type: "string" },
-          tool_focus: { type: "string" },
-          cognitive_patterns: {
-            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          },
-          max_results: { type: "integer", minimum: 1, maximum: 10, description: "Defaults to 3 search candidates or 10 inventory entries." },
-        },
-        oneOf: [
-          { properties: { mode: { const: "search" } }, required: ["query"] },
-          { properties: { mode: { const: "list" } }, required: ["mode"] },
-        ],
-      },
-    },
-    manifest: manifest("logic.consult", false, "session"),
-    parallelSafe: true,
-    visibleToChild: true,
-    decodeInput: (value) => {
-      const input = object(value);
-      const mode = input.mode ?? "search";
-      if (mode !== "search" && mode !== "list") throw new Error("mode must be search or list.");
-      if (mode === "search") requiredText(input.query, "query");
-      const conditions = [
-        ...stringList(input.scenario_conditions),
-        text(input.decision_phase),
-        text(input.task_type),
-        text(input.tool_focus),
-      ].filter(Boolean);
-      return { ...input, scenario_conditions: conditions };
-    },
-    execute: async (context) =>
-      success(context, await store.consult(context.input), [store.path], ["logic", "lem"]),
-  });
-  registry.register<Record<string, unknown>>({
-    definition: {
-      name: "learn_logic",
-      description: "Store a reasoning lesson with its applicable conditions, correction and evidence (action=learn), or record feedback for a specified logic_id (action=feedback). Repeating identical evidence does not increase the learning count. Reply thumbs are recorded separately by Runtime and do not rate individual lessons.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          action: { type: "string", enum: ["learn", "feedback"], description: "Defaults to learn, or feedback when logic_id is supplied." },
-          logic_id: { type: "string", minLength: 1, pattern: "\\S" },
-          scenario: { type: "string", minLength: 1, pattern: "\\S" },
-          bias: { type: "string", minLength: 1, pattern: "\\S" },
-          correction: { type: "string", minLength: 1, pattern: "\\S" },
-          reflection_question: { type: "string" },
-          cognitive_patterns: {
-            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          },
-          conditions: {
-            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          },
-          chain: {
-            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          },
-          evidence: { type: "string" },
-          outcome: { type: "string" },
-          evidence_state: { type: "string", enum: ["verified", "unverified"] },
-          tags: {
-            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          },
-          confidence: { type: "number", minimum: 0.1, maximum: 0.98, default: 0.76 },
-          feedback: {
-            type: "string",
-            enum: ["thumbs_up", "thumbs_down", "helpful", "unhelpful", "success", "failure", "positive", "negative", "up", "down"],
-          },
-          reward: { type: "number", minimum: -1, maximum: 1, not: { const: 0 } },
-          rating: { type: "number", minimum: -5, maximum: 5, not: { const: 0 } },
-          source: { type: "string" },
-          source_id: { type: "string" },
-          note: { type: "string" },
-        },
-        oneOf: [
-          {
-            properties: { action: { const: "learn" } }, required: ["scenario"],
-            anyOf: [{ required: ["bias"] }, { required: ["correction"] }],
-            not: { anyOf: ["logic_id", "feedback", "reward", "rating"].map((key) => ({ required: [key] })) },
-          },
-          {
-            properties: { action: { const: "feedback" } }, required: ["logic_id"],
-            anyOf: ["feedback", "reward", "rating"].map((key) => ({ required: [key] })),
-            not: { required: ["scenario"] },
-          },
-        ],
-      },
-    },
-    manifest: manifest("logic.learn", true, "session"),
-    parallelSafe: false,
-    visibleToChild: true,
-    decodeInput: decodeLogicLearnInput,
-    execute: async (context) =>
-      success(context, await store.learn({
-        ...context.input,
-        ...(context.input.action === "feedback" && !context.input.source_id
-          ? { source_id: `tool:${context.sessionId}:${context.turnId}` } : {}),
-      }), [store.path], ["logic", "lem"]),
-  });
 }
 
 function registerArchivedToolResult(

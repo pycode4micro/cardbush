@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react';
+import { useContext, useSyncExternalStore } from 'react';
+import { ConversationHostContext } from '../conversationHost';
 import { fetchCardbushAppsConfiguration } from '../../backend/api';
 import type { CardbushAppPlugin } from '../../types';
 
@@ -47,7 +48,10 @@ function subscribe(notify: () => void) {
 }
 
 const snapshot = () => plugins;
+const noSubscribe = () => () => {};
 
 export function usePluginCatalog(): CardbushAppPlugin[] {
-  return useSyncExternalStore(subscribe, snapshot, snapshot);
+  const host = useContext(ConversationHostContext);
+  const local = useSyncExternalStore(host ? noSubscribe : subscribe, snapshot, snapshot);
+  return host?.plugins ?? local;
 }

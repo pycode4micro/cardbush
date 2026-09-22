@@ -37,6 +37,7 @@ declare global {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
     __cardbushUiPerformance?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
+      agents?: import('../../electron/agentTypes').AgentDesktopApi;
       conversationExtracts?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
       platform: string;
       hostCapabilities: () => Promise<{ platform: string; arch: string; terminalRuntimes: import('../types').TerminalRuntime[]; defaultTerminalRuntime: import('../types').TerminalRuntime; computerUse: boolean; chromeNativeConnector: boolean; nativeProcessLimits: boolean }>;
@@ -205,6 +206,15 @@ declare global {
         icon?: string;
       } | null>;
       pickProjectDirectory: () => Promise<string | null>;
+      sshConnections: {
+        list(): Promise<import('@cardbush/bush-protocol').SshConnection[]>;
+        save(input: import('@cardbush/bush-protocol').SshConnectionInput): Promise<import('@cardbush/bush-protocol').SshConnection[]>;
+        remove(id: string): Promise<import('@cardbush/bush-protocol').SshConnection[]>;
+        test(id: string): Promise<import('@cardbush/bush-protocol').SshTestResult>;
+        directory(uri: string): Promise<{ path: string; uri: string; entries: Array<{ name: string; path: string; kind: 'file' | 'folder' }> }>;
+        disconnect(id: string): Promise<void>;
+        pickKey(): Promise<string | null>;
+      };
       pickFont: () => Promise<string | null>;
       pickAppearanceStyle: () => Promise<string | null>;
       listProjectEntries: (

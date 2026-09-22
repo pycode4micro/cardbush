@@ -5,6 +5,7 @@ import {
   parse,
   relative,
   resolve,
+  posix,
 } from "node:path";
 
 export type TerminalCommandShell = "cmd" | "powershell" | "posix";
@@ -117,6 +118,35 @@ export function protectedTerminalDeletion(
         target,
         message: protectedDeletionMessage(protection, target),
       };
+    }
+  }
+  return null;
+}
+
+/** Uses the remote host's POSIX paths, never the desktop host's home/path rules. */
+export function protectedPosixTerminalDeletion(input: { command: string; cwd: string; home: string; root: string }): ProtectedTerminalDeletion | null {
+  const resolveTarget = (value: string, cwd: string) => {
+    const expanded = value.replace(/^(?:~|\$HOME|\$\{HOME\})(?=$|\/)/, input.home);
+    return /[*?\[$]/.test(expanded) ? undefined : posix.resolve(cwd, expanded);
+  };
+  let cwd = input.cwd;
+  const stack: string[] = [];
+  for (const segment of commandSegments(input.command)) {
+    const values = segment.map(token => token.value), name = normalizedCommand(values[0] ?? '');
+    if (name === 'popd') { cwd = stack.pop() ?? cwd; continue; }
+    if (name === 'cd' || name === 'pushd') {
+      const next = resolveTarget(deletionTargets(values.slice(1), 'posix')[0] ?? input.home, cwd);
+      if (next) { if (name === 'pushd') stack.push(cwd); cwd = next; }
+      continue;
+    }
+    const invocation = deletionInvocation(segment, 'posix');
+    if (!invocation) continue;
+    for (const candidate of deletionTargets(invocation.args, invocation.shell)) {
+      const target = resolveTarget(candidate, cwd);
+      if (!target) continue;
+      const ancestor = (path: string) => path === target || path.startsWith(target === '/' ? '/' : target + '/');
+      const protection = target === '/' ? 'filesystem_root' : ancestor(input.home) ? 'user_home' : ancestor(input.root) ? 'project_root' : undefined;
+      if (protection) return { protection, target, message: protectedDeletionMessage(protection, target) };
     }
   }
   return null;

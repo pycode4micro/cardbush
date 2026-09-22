@@ -26,7 +26,7 @@ window.fixture={
 fetchSessionMessages:async sessionId=>{calls.push({fetch:sessionId});return{messages:structuredClone(historyMessages.filter(message=>!window.inFlight||message.turnId!=='follow-up')),conversation:{id:sessionId}}},fetchPendingInteraction:async()=>null,
 streamChat:async request=>{window.inFlight=true;window.lastRequest=request;calls.push({sent:request.sessionId,model:request.model,allowedTools:request.allowedTools});historyMessages.push({id:'follow-user',role:'user',turnId:'follow-up',conversationId:request.sessionId,content:request.userInput,createdAt:now});if(window.deferStart)await new Promise(resolve=>{window.begin=resolve});start(request);await new Promise((resolve,reject)=>{window.finish=()=>{window.inFlight=false;historyMessages.push({id:'follow-answer',role:'assistant',turnId:'follow-up',conversationId:request.sessionId,content:'追问答复已保存',status:'completed',createdAt:now});request.onDone?.({turnId:'follow-up',status:'completed'});for(const observer of observers)observer();resolve();};request.signal.addEventListener('abort',()=>{aborts++;reject(new Error('stopped'));},{once:true});});},
 streamTurnEvents:async request=>{calls.push({observed:request.turnId});start(request);await new Promise((resolve,reject)=>{const done=()=>{request.onMessages?.(structuredClone(historyMessages),true);request.onDone?.({turnId:'follow-up',status:'completed'});observers.delete(done);resolve();};observers.add(done);request.signal.addEventListener('abort',()=>{observers.delete(done);reject(new Error('observer detached'));},{once:true});});},
-stopTurn:async()=>{},replyInteraction:async()=>{},cancelInteraction:async()=>{},recordAssistantLogicFeedback:async()=>{}
+stopTurn:async()=>{},replyInteraction:async()=>{},cancelInteraction:async()=>{}
 };
 function Fixture(){const[open,setOpen]=useState(true);return <div className="app theme-cyberpunk" style={{height:'100vh',width:'100%',minWidth:0,display:'flex',flexDirection:'column'}}><button id="toggle" onClick={()=>setOpen(!open)}>{open?'关闭侧栏':'打开侧栏'}</button><div style={{flex:1,minHeight:0}}>{open&&<AutomationRunPanel jobId="plan" runId="run" language="zh" onOpenConversation={id=>opened.push(id)}/>}</div></div>};
 createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -40,7 +40,7 @@ try {
     },
     load(id) {
       if (id === '\0automation-conversation.tsx') return source;
-      if (id === '\0automation-api.ts') return ['fetchSessionMessages','fetchPendingInteraction','streamChat','streamTurnEvents','stopTurn','replyInteraction','cancelInteraction','recordAssistantLogicFeedback'].map(name=>
+      if (id === '\0automation-api.ts') return ['fetchSessionMessages','fetchPendingInteraction','streamChat','streamTurnEvents','stopTurn','replyInteraction','cancelInteraction'].map(name=>
         'export const '+name+'=(...args)=>window.fixture.'+name+'(...args);').join('\n');
     },
   }], build: { outDir: directory, emptyOutDir: true, minify: false, lib: { entry: resolve('__automation_conversation__.tsx'), formats: ['iife'], name: 'AutomationConversation' } } });

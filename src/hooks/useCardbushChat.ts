@@ -27,6 +27,7 @@ import {
   streamChat,
   streamTurnEvents,
   updateConversation,
+  switchConversationWorkspace,
   updateExperimentalGoal,
   type SceneStreamEvent,
   type TeamWorkflowStreamEvent,
@@ -309,6 +310,7 @@ export function useCardbushChat(
   preparedConversationsRef.current = preparedConversationsById;
   attentionByConversationRef.current = attentionByConversation;
   const sendingSessionsRef = useRef<Set<string>>(new Set());
+  const workspaceSwitchesRef = useRef(new Map<string, Promise<void>>());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
   const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
@@ -1952,6 +1954,13 @@ export function useCardbushChat(
   ) => {
     const sessionId = conversationId.trim();
     if (!sessionId) return;
+    if (workspaceSwitchesRef.current.has(sessionId)) return workspaceSwitchesRef.current.get(sessionId);
+    if (sendingSessionsRef.current.has(sessionId) || activeTurnIdsRef.current[sessionId] ||
+      conversationCreationPromisesRef.current.has(sessionId) || queuedMessagesRef.current.some(item => queuedMessageConversationId(item) === sessionId)) {
+      const caught = new Error('请等待此会话的任务及排队消息处理完，再切换工作区。 / Wait for this conversation to finish before switching workspaces.');
+      setError(caught.message);
+      throw caught;
+    }
     const normalizedProjectDir = projectDir?.trim() || undefined;
     const normalizedProjectId = projectId === undefined
       ? undefined
@@ -1967,6 +1976,10 @@ export function useCardbushChat(
           ...(draft.metadata ?? {}),
           workspace_mode: normalizedProjectDir ? 'project' : 'task',
           project_id: normalizedProjectId,
+          projectDir: normalizedProjectDir ?? null, project_dir: normalizedProjectDir ?? null,
+          user_project_dir: normalizedProjectDir ?? null, userProjectDir: normalizedProjectDir ?? null,
+          workspace_dir: normalizedProjectDir ?? null, workspaceDir: normalizedProjectDir ?? null,
+          task_dir: null, session_workspace_dir: null, runtimeWorkspace: null,
         },
       };
       const nextPrepared = { ...preparedConversationsRef.current, [sessionId]: updatedDraft };
@@ -1975,53 +1988,20 @@ export function useCardbushChat(
       setError(null);
       return;
     }
-    const previous = conversationsRef.current.find((item) => item.id === sessionId);
-    setConversations((current) =>
-      current.map((item) => {
-        if (item.id !== sessionId) return item;
-        return {
-          ...item,
-          projectId:
-            normalizedProjectId === undefined
-              ? item.projectId
-              : normalizedProjectId || undefined,
-          projectDir: normalizedProjectDir,
-          workspaceContext: undefined,
-        };
-      }),
-    );
-    try {
-      const synced = await updateConversation({
-        sessionId,
-        projectId: normalizedProjectDir
-          ? normalizedProjectId
-          : null,
-        projectDir: normalizedProjectDir ?? null,
-      });
-      setConversations((current) =>
-        current.map((item) =>
-          item.id === sessionId
-            ? {
-                ...item,
-                ...synced,
-                id: sessionId,
-                projectId:
-                  synced.projectId ?? normalizedProjectId ?? item.projectId,
-                projectDir: synced.projectDir ?? normalizedProjectDir,
-              }
-            : item,
-        ),
-      );
-    } catch (caught) {
-      if (previous) {
-        const snapshot = previous;
-        setConversations((current) =>
-          current.map((item) => item.id === sessionId ? snapshot : item),
-        );
-      }
-      setError(errorMessage(caught));
-      throw caught;
-    }
+    const switching = (async () => {
+      try {
+        const synced = await switchConversationWorkspace(sessionId, normalizedProjectDir ?? null, normalizedProjectId ?? null);
+        // Publish only the committed binding; errors cannot leave a misleading project label.
+        conversationsRef.current = conversationsRef.current.map(item => item.id === sessionId ? synced : item);
+        setConversations(current => current.map(item => item.id === sessionId ? synced : item));
+        setError(null);
+      } catch (caught) {
+        setError(errorMessage(caught));
+        throw caught;
+      } finally { workspaceSwitchesRef.current.delete(sessionId); }
+    })();
+    workspaceSwitchesRef.current.set(sessionId, switching);
+    return switching;
   }, []);
 
   const relocateProjectConversations = useCallback(async (
@@ -2215,7 +2195,7 @@ export function useCardbushChat(
         setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
         return;
       }
-      const candidate =
+      let candidate =
         queuedConversation ??
         activeConversation ??
         prepareConversation(
@@ -2223,6 +2203,11 @@ export function useCardbushChat(
           conversationTitleFromUserText(visibleUserInput),
         );
       const sessionId = candidate.id;
+      const switching = workspaceSwitchesRef.current.get(sessionId);
+      if (switching) {
+        try { await switching; } catch { return; }
+      }
+      candidate = conversationsRef.current.find(item => item.id === sessionId) ?? preparedConversationsRef.current[sessionId] ?? candidate;
       const turnTeamId = (queuedTeamId ?? requestContext.selectedTeamId)?.trim() || undefined;
       const turnTeamName = (queuedTeamName ?? requestContext.selectedTeamName)?.trim() || undefined;
       setConnectionRecoveryByConversation((current) => ({

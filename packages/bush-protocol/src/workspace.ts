@@ -3,6 +3,7 @@ import { workspaceChangeSchema } from "./tool.js";
 
 export const GET_RUNTIME_WORKSPACE_COMMAND = "runtime.get_workspace" as const;
 export const UPDATE_RUNTIME_WORKSPACE_COMMAND = "runtime.update_workspace" as const;
+export const SWITCH_RUNTIME_WORKSPACE_COMMAND = "runtime.switch_workspace" as const;
 export const RUNTIME_WORKSPACE_METADATA_KEY = "runtimeWorkspace" as const;
 /** Current and previous Turn are the supported workspace undo window. */
 export const WORKSPACE_REVIEW_TURN_LIMIT = 2;
@@ -50,6 +51,14 @@ export type WorkspaceReview = z.infer<typeof workspaceReviewSchema>;
 export const workspaceReadSchema = z.object({
   sessionId: z.string().min(1),
   view: z.enum(["live", "history"]).default("live"),
+});
+
+export const workspaceSwitchSchema = z.object({
+  sessionId: z.string().min(1),
+  expectedRevision: z.number().int().positive(),
+  projectDir: z.string().min(1).nullable(),
+  projectId: z.string().min(1).nullable(),
+  taskDir: z.string().min(1).optional(),
 });
 
 export const workspaceUpdateSchema = z.object({

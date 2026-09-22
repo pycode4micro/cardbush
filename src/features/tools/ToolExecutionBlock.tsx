@@ -25,6 +25,7 @@ import {
   type SubagentDispatchResult,
 } from '../../backend/api';
 import { WorkspaceRevertAvailability } from './workspaceRevertAvailability';
+import { ConversationHostContext } from '../conversationHost';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import {
   cardlingSceneFromToolExecution,
@@ -82,9 +83,10 @@ export function ToolExecutionBlock({
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const canRevertWorkspace = useContext(WorkspaceRevertAvailability);
+  const host = useContext(ConversationHostContext);
   const disclosureId = useMemo(
-    () => toolExecutionDisclosureId(message, executions),
-    [executions, message],
+    () => `${host ? host.id + ':' : ''}${toolExecutionDisclosureId(message, executions)}`,
+    [executions, message, host?.id],
   );
   const storedDisclosure = () =>
     readToolExecutionDisclosure(browserStorage(), disclosureId);
@@ -182,10 +184,10 @@ export function ToolExecutionBlock({
     detailRequestsInFlightRef.current.add(deferredDetailRequestKey);
     setDetailRequests((current) =>
       new Map(current).set(deferredDetailRequestKey, 'loading'));
-    void fetchRuntimeTurnToolExecutionDetails({
+    void (host ? host.toolDetails(deferredDetailSessionId, deferredDetailTurnId) : fetchRuntimeTurnToolExecutionDetails({
       sessionId: deferredDetailSessionId,
       turnId: deferredDetailTurnId,
-    })
+    }))
       .then((details) => {
         if (!detailViewMountedRef.current) return;
         const next = new Map<string, ChatToolExecution>();
@@ -210,6 +212,7 @@ export function ToolExecutionBlock({
         detailRequestsInFlightRef.current.delete(deferredDetailRequestKey);
       });
   }, [
+    host,
     deferredDetailRequestKey,
     deferredDetailSessionId,
     deferredDetailStatus,
@@ -836,6 +839,7 @@ function ToolExecutionDetail({
   onOpenScene: (scene: CardlingScene) => void;
   showImagePreviews: boolean;
 }) {
+  const host = useContext(ConversationHostContext);
   const [outputWrapped, setOutputWrapped] = useState(false);
   const scene = cardlingSceneFromToolExecution(execution, message);
   const summary = execution.summary.trim();
@@ -846,6 +850,9 @@ function ToolExecutionDetail({
   const output = execution.output;
   const childExecutions = subagentChildToolExecutions(execution);
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
+  const environment = asRecord(asRecord(execution.metadata.nativeResult).executionEnvironment);
+  const environmentLabel = environment.kind === 'local' ? (host ? language === 'zh' ? '执行位置：服务器 Agent' : 'Execution host: server Agent' : language === 'zh' ? '执行位置：本机' : 'Execution host: local')
+    : environment.kind === 'ssh' ? `SSH · ${String(environment.workspaceDir || environment.connectionId)}` : '';
   const hookDecision = toolHookDecisionFromExecution(execution);
   const planningAssessment = planningAssessmentFromExecution(execution);
   const auditSignals = subagentAuditSignalsFromExecution(execution);
@@ -858,11 +865,12 @@ function ToolExecutionDetail({
       {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
+      <WorkerProfileBadge info={environmentLabel} />
       <WorkerProfileBadge info={workerInfo} />
       {planningAssessment && (
         <PlanningAssessmentNotice language={language} />
       )}
-      {dispatchPlan && (
+      {!host && dispatchPlan && (
         <PlanDispatchAdvisorPanel
           plan={dispatchPlan}
           language={language}
@@ -874,7 +882,7 @@ function ToolExecutionDetail({
       {auditSignals && (
         <SubagentAuditSignalsPanel signals={auditSignals} language={language} />
       )}
-      {scene && (
+      {!host && scene && (
         <button
           className="tool-scene-open"
           type="button"

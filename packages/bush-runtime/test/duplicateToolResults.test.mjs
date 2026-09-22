@@ -6,36 +6,9 @@ import test from "node:test";
 import { png } from "./helpers/modelImages.mjs";
 
 import {
-  LogicMemoryStore,
   ToolRegistry,
   registerExtendedBuiltins,
 } from "../dist/index.js";
-
-test("consult_logic omits request fields already present in the Tool call", async (t) => {
-  const root = await temporaryRoot(t);
-  const memory = new LogicMemoryStore(join(root, "logic.json"));
-  await memory.learn({
-    scenario: "A code change is ready for completion",
-    bias: "Completion was claimed without verification",
-    correction: "Run proportionate verification before completion",
-    conditions: ["before_final"],
-  });
-  const registry = new ToolRegistry();
-  registerExtendedBuiltins(registry, { dataRoot: root, logicMemory: memory });
-  const tool = registry.resolve("consult_logic");
-  const input = tool.decodeInput({
-    query: "How should a code change be verified before completion?",
-    scenario_conditions: ["before_final"],
-    cognitive_patterns: ["premature_completion"],
-  });
-  const result = await tool.execute(context(input, "consult_logic"));
-
-  assert.equal("query" in result, false);
-  assert.equal("scenario_conditions" in result, false);
-  assert.equal("cognitive_patterns" in result, false);
-  assert.equal(result.matched_count, 1);
-  assert.equal(result.matched_logic.length, 1);
-});
 
 test("parallel_tools omits reasons already present in its Tool arguments", async (t) => {
   const root = await temporaryRoot(t);

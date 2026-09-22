@@ -1,4 +1,5 @@
 import type { SessionSnapshot, SessionMessage } from '@cardbush/bush-protocol';
+import { parseSshWorkspace } from '@cardbush/bush-protocol';
 import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 
@@ -13,6 +14,12 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
   const sources: Record<string, unknown>[] = [];
   let extractTokens = 0;
   for (const reference of references) {
+    if (reference.kind === 'ssh') {
+      const workspace = snapshot?.metadata?.runtimeWorkspace as { workspaceDir?: string } | undefined;
+      const selected = parseSshWorkspace(workspace?.workspaceDir ?? snapshot?.metadata?.workspaceDir ?? snapshot?.metadata?.projectDir);
+      if (selected?.connectionId !== reference.connectionId || selected.path !== reference.path) throw Error('SSH 引用与当前执行位置不一致，请从 @ 菜单重新选择远程项目。');
+      sources.push({ ...reference, note: 'Selected remote project. Credentials are managed by the desktop host.' }); continue;
+    }
     const key = reference.kind === 'conversation-extract' ? JSON.stringify([reference.kind, reference.id])
       : reference.kind === 'browser' ? JSON.stringify([reference.kind, reference.tabId, reference.url])
       : JSON.stringify([reference.kind, reference.sessionId, reference.turnId, reference.messageId]);

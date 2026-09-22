@@ -36,6 +36,7 @@ export interface ToolExecutionIdentity {
 
 export interface ToolExecutionObserver {
   running?: (toolCall: ToolCall, identity: ToolExecutionIdentity) => void;
+  completed?: (toolCall: ToolCall, identity: ToolExecutionIdentity, outcome: ToolExecutionOutcome) => void;
 }
 
 export type ToolExecutionOutcome = { hookMessages?: string[]; hookFeedback?: string; hookStopTurn?: string; rejectToolResult?: boolean } & (
@@ -292,19 +293,25 @@ export class ToolExecutionCoordinator {
           capabilityIds,
           signal,
           turn,
-          invokeTool: async (name, input) => {
+          invokeTool: async (name, input, nestedOptions) => {
             if (nestedHookStopTurn) throw Object.assign(new Error(nestedHookStopTurn), { code: 'plugin_hook_blocked' });
-            const nested = await this.execute({
+            const nestedCall: ToolCall = {
               protocol: BUSH_TOOL_CALL_PROTOCOL,
               id: `${toolCall.id}:child:${nestedOrdinal}`,
               name,
               argumentsText: JSON.stringify(input),
-            }, {
+            };
+            const nestedIdentity = {
               ...identity,
               ordinal: identity.ordinal * 1000 + (++nestedOrdinal),
-            }, signal, turn);
+            };
+            const nested = await this.execute(nestedCall, nestedIdentity,
+              nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal, turn);
+            if (nestedOptions?.record) this.#observer.completed?.(nestedCall, nestedIdentity, nested);
+            nestedOptions?.onHooks?.(nested.hookMessages ?? [], nested.hookStopTurn);
             nestedHookMessages.push(...(nested.hookMessages ?? []));
             nestedHookStopTurn ??= nested.hookStopTurn;
+            if (nestedOptions?.onHooks && nested.hookStopTurn) throw Object.assign(new Error(nested.hookStopTurn), { code: 'plugin_hook_stopped' });
             if (nested.kind === "returned") {
               if (nested.rejectToolResult) throw Object.assign(new Error(nested.hookFeedback), { code: 'plugin_hook_result_blocked' });
               if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);

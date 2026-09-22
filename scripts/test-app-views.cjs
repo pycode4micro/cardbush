@@ -60,7 +60,11 @@ async function buildViews() {
     'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh' ? ['src/features/ssh/SshConnectionsPanel.tsx', 'src/features/ssh/WorkspaceLocationPicker.tsx'] : []),
     'src/hooks/useSoftPanelPresence.ts',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'compact-window' ? [
+      'src/hooks/useCompactSidebar.ts', 'src/components/CompactSidebarBackdrop.tsx', 'src/features/SettingsView.tsx',
+    ] : []),
     'src/features/chatMessages/MessageBubble.tsx',
     'src/features/appearance/useVisualThemeContext.ts',
     'src/features/chatMessages/FileMemoReference.tsx',
@@ -96,7 +100,7 @@ async function buildViews() {
         return value.endsWith('__app_view_test__.ts') ? entryId : undefined;
       },
       load: value => value === '\0loop-preview-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.loopFixtureClient};}` : value === '\0shadow-view-api'
-        ? ['closeShadowConversation', 'createShadowConversation', 'fetchSessionMessages', 'recordAssistantLogicFeedback', 'streamShadowConversationMessage', 'updateShadowConversationMode']
+        ? ['closeShadowConversation', 'createShadowConversation', 'fetchSessionMessages', 'streamShadowConversationMessage', 'updateShadowConversationMode']
           .map(name => `export const ${name} = (...args) => window.shadowFixture.${name}(...args);`).join('\n')
         : value === entryId ? exports : undefined,
     }],
@@ -121,6 +125,9 @@ app.whenReady().then(async () => {
   process.env.NODE_ENV = 'development';
   const window = new BrowserWindow({
     show: false, width: 1200, height: 800,
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'compact-window' ? {
+      ...require('../dist-electron/windowAppearance.js').mainWindowFrameOptions(process.platform), minWidth: 480, minHeight: 480,
+    } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
       webviewTag: ['html-references', 'html-lifecycle', 'media-reveal', 'review-preview'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
@@ -211,7 +218,7 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (!['conversation-titles', 'conversation-search', 'review-preview'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
+      if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'startup-presentation') {
       await require('./helpers/startup-presentation.cjs')({ run, until, pause, window, root });
@@ -279,13 +286,19 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'sidebar-menu') {
+      await require('./helpers/sidebar-context-menu.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no sidebar menu renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'conversation-titles') {
       await require('./helpers/conversation-title-rendering.cjs')({ run, until, pause, window });
       assert.deepEqual(await run('failures'), [], 'no conversation title renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['ssh', 'compact-window', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -463,6 +476,16 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh') {
+      await require('./helpers/ssh-ui.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'compact-window') {
+      await require('./helpers/compact-window.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no compact window renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     await until("!!document.querySelector('.welcome-composer textarea')", 'welcome composer during background startup');
     assert.equal(await run("!!document.querySelector('.loading-view')"), false, 'initial catalog loading never replaces the page');
     await run(`window.startupComposer = document.querySelector('.welcome-composer textarea'); updateChat({ loading: false });`);
@@ -470,11 +493,11 @@ app.whenReady().then(async () => {
     await run('updateChat({ loading: true, historyLoading: true })');
     await until("document.querySelector('.loading-view')?.textContent.includes('Loading conversation')", 'history loading');
     await run('updateChat({ loading: false, historyLoading: false })');
-    await until("!!document.querySelector('.welcome-project-trigger')", 'welcome composer');
-    await run("document.querySelector('.welcome-project-trigger').click()");
-    await until("!!document.querySelector('.welcome-project-menu')", 'welcome project menu');
-    await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
-    await until("!document.querySelector('.welcome-project-menu')", 'Escape closes only the project menu');
+    await until("!!document.querySelector('.workspace-location-control > button')", 'welcome composer');
+    await run("document.querySelector('.workspace-location-control > button').click()");
+    await until("!!document.querySelector('.ssh-dialog')", 'welcome project menu');
+    await run("(document.querySelector('.ssh-dialog') || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await until("!document.querySelector('.ssh-dialog')", 'Escape closes only the project menu');
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-resize') {
       await require('./helpers/composer-resize.cjs')({ run, until, pause, window, root });
     }

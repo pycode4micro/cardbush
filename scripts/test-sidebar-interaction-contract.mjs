@@ -8,6 +8,7 @@ const sidebarSource = fs.readFileSync(
   'utf8',
 );
 const appSource = readAppViewSources();
+const workspaceLocationSource = fs.readFileSync('src/features/ssh/WorkspaceLocationPicker.tsx', 'utf8');
 const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
@@ -317,8 +318,10 @@ assert.match(
   'New chat must reserve a draft using only an explicitly selected project',
 );
 assert.match(appSource, /function WelcomeProjectSwitcher\(/);
-assert.match(appSource, /placeholder=\{language === 'zh' \? '搜索项目' : 'Search projects'\}/);
-assert.match(appSource, /不关联项目/);
+assert.match(appSource, /function WelcomeProjectSwitcher\([\s\S]*?<WorkspaceLocationButton/,
+  'The welcome project selector delegates to the shared local/SSH location picker');
+assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s\S]*?不关联项目/,
+  'The shared picker retains an explicit choice to start without a project');
 assert.match(
   appSource,
   /className="welcome-input-stack">\s*<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,

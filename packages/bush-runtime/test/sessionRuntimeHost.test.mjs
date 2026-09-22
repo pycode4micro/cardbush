@@ -1,6 +1,6 @@
 import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,11 +15,10 @@ import {
   GET_RUNTIME_USER_MESSAGE_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
-  RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
 } from "@cardbush/bush-protocol";
-import { InMemoryRuntimeHost, LogicMemoryStore, ToolRegistry, CoordinationStore } from "../dist/index.js";
+import { InMemoryRuntimeHost, ToolRegistry, CoordinationStore } from "../dist/index.js";
 
 
 function isCheckpoint(message) {
@@ -389,82 +388,6 @@ test("serializes Session Turn commits while allowing the next Turn after complet
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: "session_1" },
   })).turns.length, 2);
-});
-
-test("records assistant thumbs as Turn feedback without crediting retrieved LEM records", async (context) => {
-  const dataRoot = await mkdtemp(join(tmpdir(), "cardbush-runtime-lem-"));
-  context.after(() => rm(dataRoot, { recursive: true, force: true }));
-  const memory = new LogicMemoryStore(join(dataRoot, "lem", "logic.json"));
-  const learned = await memory.learn({
-    scenario: "before final verification",
-    bias: "claiming completion without tests",
-    correction: "run proportionate verification before final",
-    evidence_state: "verified",
-  });
-  let round = 0;
-  const host = new InMemoryRuntimeHost({
-    dataRoot,
-    provider: {
-      async *stream(request) {
-        round += 1;
-        yield event(request.requestId, 0, "response_started");
-        if (round === 1) {
-          yield event(request.requestId, 1, "tool_call_delta", {
-            index: 0,
-            toolCallId: "call_consult_logic",
-            nameDelta: "consult_logic",
-            argumentsDelta: JSON.stringify({ query: "final verification before completion" }),
-          });
-          yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
-          return;
-        }
-        yield event(request.requestId, 1, "text_delta", { delta: "verified answer" });
-        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
-      },
-    },
-    sessionNow: () => NOW,
-    eventLogOptions: deterministicEventLogOptions(),
-    projectorOptions: {
-      createMessageId: counter("assistant_lem"),
-      createSegmentId: counter("segment_lem"),
-    },
-  });
-  const lemRequest = sessionRequest("request_lem", "turn_lem", "user_lem", "finish safely");
-  const catalog = await host.sendCommand({ kind: "runtime.get_tool_catalog", payload: {} });
-  lemRequest.tools = catalog.filter((definition) => definition.name === "consult_logic");
-  await host.runSessionTurn(lemRequest);
-  const snapshot = await host.sendCommand({
-    kind: GET_RUNTIME_SESSION_COMMAND,
-    payload: { sessionId: "session_1" },
-  });
-  assert.ok(snapshot.turns[0].messages.some((message) =>
-    message.message.role === "tool"));
-  const conversationSnapshot = await host.sendCommand({
-    kind: GET_RUNTIME_SESSION_COMMAND,
-    payload: { sessionId: "session_1", messageProjection: "conversation" },
-  });
-  assert.equal(conversationSnapshot.turns[0].messages.some((message) =>
-    message.message.role === "tool"), false);
-  const finalMessage = snapshot.turns[0].messages.find((message) =>
-    message.message.role === "assistant" && message.message.content === "verified answer");
-  assert.ok(finalMessage);
-  const feedback = await host.sendCommand({
-    kind: RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
-    payload: {
-      sessionId: "session_1",
-      turnId: "turn_lem",
-      messageId: finalMessage.messageId,
-      rating: "up",
-    },
-  });
-  assert.deepEqual(feedback.associatedLogicIds, [learned.logic_id]);
-  assert.deepEqual(feedback.updatedLogicIds, [learned.logic_id]);
-  const stored = JSON.parse(await readFile(memory.path, "utf8"))[0];
-  assert.equal(stored.positive_feedback_count, 0);
-  assert.equal(stored.turn_positive_feedback_count, 1);
-  assert.equal(stored.reward_score, 0);
-  assert.equal(stored.confidence, learned.confidence);
-  assert.equal(stored.feedback_events[0].scope, "turn");
 });
 
 test('summary preparation and validation retries preserve the prefix until the checkpoint is applied', async () => {

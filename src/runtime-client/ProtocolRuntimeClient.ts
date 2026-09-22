@@ -96,17 +96,12 @@ import {
   type SubagentTask,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
   RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
-  RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   revertRuntimeWorkspaceChangesSchema,
   revertRuntimeWorkspaceChangesResultSchema,
   restoreRuntimeWorkspaceChangesSchema,
   restoreRuntimeWorkspaceChangesResultSchema,
   type RestoreRuntimeWorkspaceChangesResult,
-  runtimeLogicFeedbackRequestSchema,
-  runtimeLogicFeedbackResultSchema,
   type RevertRuntimeWorkspaceChangesResult,
-  type RuntimeLogicFeedbackRequest,
-  type RuntimeLogicFeedbackResult,
 } from '@cardbush/bush-protocol';
 import {
   RuntimeClient,
@@ -353,18 +348,6 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, payload: {} },
       (value) => toolCatalogEntrySchema.array().parse(value),
-      signal,
-    );
-  }
-
-  recordLogicFeedback(
-    input: RuntimeLogicFeedbackRequest,
-    signal?: AbortSignal,
-  ): Promise<RuntimeLogicFeedbackResult> {
-    const payload = runtimeLogicFeedbackRequestSchema.parse(input);
-    return this.command(
-      { kind: RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND, payload },
-      (value) => runtimeLogicFeedbackResultSchema.parse(value),
       signal,
     );
   }

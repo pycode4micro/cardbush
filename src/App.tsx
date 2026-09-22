@@ -1,3 +1,7 @@
+import { pickWorkspace } from './features/ssh/WorkspaceLocationPicker';
+import { useAgentConnections } from './features/agents/useAgentConnections';
+import './features/agents/agents.css';
+import { withWorkspaceReference } from './shared/promptReferences';
 import { recentReviewTurns } from './features/sidebar/reviewModel';
 import { newBrowserTab } from './features/browser/browserStartPage';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
@@ -54,6 +58,8 @@ import {
   normalizeChatMessagesForDisplay,
 } from './features/chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
+import { useCompactSidebar } from './hooks/useCompactSidebar';
+import { CompactSidebarBackdrop } from './components/CompactSidebarBackdrop';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
@@ -168,6 +174,7 @@ import {
 } from './features/inspector/InspectorWebview';
 
 import { DeferredModuleNotice, recoverableLazy } from './shared/recoverableLazy';
+const LazyAgentsView = recoverableLazy('agents', async () => ({ default: (await import('./features/agents/AgentsView')).AgentsView }), (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
 
 let settingsViewModulePromise: Promise<typeof import('./features/SettingsView')> | null = null;
 
@@ -344,7 +351,8 @@ function CardbushApp() {
     readInitialAppSettings(),
   );
   const [section, setSection] = useState<AppSection>('chat');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const agents = useAgentConnections();
+  const { compactLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
   );
@@ -1167,7 +1175,7 @@ function CardbushApp() {
       previousInnerWidth = nextInnerWidth;
 
       if (
-        !inspectorOpen ||
+        !inspectorOpen || compactLayout ||
         innerWidthDelta === 0 ||
         !leftEdgeStayedPut ||
         Math.sign(innerWidthDelta) !== Math.sign(rightEdgeDelta)
@@ -1200,7 +1208,7 @@ function CardbushApp() {
       if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
       document.body.classList.remove('window-right-edge-resizing');
     };
-  }, [inspectorOpen, setInspectorWidth]);
+  }, [inspectorOpen, setInspectorWidth, compactLayout]);
 
   useEffect(() => {
     const handleOpenInspector = (event: Event) => {
@@ -1277,7 +1285,10 @@ function CardbushApp() {
     window.localStorage.setItem('cardbush.sidebar_width', String(next));
   }, []);
 
-  const collapseSidebar = useCallback(() => setSidebarCollapsed(true), []);
+  const collapseSidebar = useCallback(() => setSidebarCollapsed(true), [setSidebarCollapsed]);
+  useEffect(() => {
+    if (compactLayout) collapseSidebar();
+  }, [compactLayout, collapseSidebar, chat.activeConversationId, section, settingsOpen, inspectorOpen]);
 
   const updateAppSettings = useCallback(
     (updater: (current: AppSettingsState) => AppSettingsState) => {
@@ -1460,7 +1471,7 @@ function CardbushApp() {
     (projectDir?: string | null) => {
       const resolvedProjectDir = projectDir?.trim() || undefined;
       const resolvedProjectId = resolvedProjectDir
-        ? projectItems.find((project) => samePath(project.rootPath, resolvedProjectDir))?.id
+        ? projectItems.find((project) => samePath(project.rootPath, resolvedProjectDir))?.id ?? stableProjectId(resolvedProjectDir)
         : undefined;
       const target = chat.prepareConversation(resolvedProjectDir, undefined, resolvedProjectId);
       if (!chat.activeConversationId) {
@@ -1532,15 +1543,26 @@ function CardbushApp() {
     }
   }, [openConversation, chat.openStoredConversation]);
 
-  const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
+  const changeWelcomeProject = useCallback(async (
+    projectDir: string | null,
+    reference?: string,
+    conversationId = chat.activeConversationId,
+  ) => {
     const normalized = projectDir?.trim() || null;
     const projectId =
-      normalized ? projectItems.find((project) => samePath(project.rootPath, normalized))?.id ?? null : null;
-    if (!chat.activeConversationId.trim()) {
-      createConversation(normalized);
-      return;
-    }
-    await chat.setConversationProject(chat.activeConversationId, normalized, projectId);
+      normalized ? projectItems.find((project) => samePath(project.rootPath, normalized))?.id ?? stableProjectId(normalized) : null;
+    let targetId = conversationId;
+    if (!targetId.trim()) targetId = createConversation(normalized).id;
+    else await chat.setConversationProject(targetId, normalized, projectId);
+    // Publish the sidebar target only after the workspace switch succeeds.
+    if (normalized && projectId) setProjectItems(current => {
+      const existing = current.find(project => samePath(project.rootPath, normalized));
+      return existing
+        ? current.map(project => project.id === existing.id ? { ...project, archived: false, missing: false } : project)
+        : [...current, { id: projectId, title: basename(normalized), rootPath: normalized }];
+    });
+    // Write to the chosen conversation, even if switching mounted a new composer.
+    setDraftsByConversation(current => ({ ...current, [targetId]: withWorkspaceReference(current[targetId] ?? '', reference) }));
   }, [chat.activeConversationId, chat.setConversationProject, createConversation, projectItems]);
 
   const pendingSessionAttentionRef = useRef('');
@@ -1582,7 +1604,7 @@ function CardbushApp() {
   }, [chat.conversations, openSessionAttention]);
 
   const addProject = useCallback(async () => {
-    const selected = await window.cardbushDesktop?.pickProjectDirectory?.();
+    const selected = await pickWorkspace({ language, projects: projectItems });
     if (!selected) {
       return;
     }
@@ -1639,7 +1661,7 @@ function CardbushApp() {
         ...current,
       ];
     });
-  }, [chat.conversations, runtimeStartup.phase]);
+  }, [chat.conversations, runtimeStartup.phase, language, projectItems]);
 
   const renameProject = useCallback(async (
     project: ProjectItem,
@@ -1724,6 +1746,17 @@ function CardbushApp() {
   const handleProjectAction = useCallback(
     async (action: ProjectAction, project: ProjectItem) => {
       if (action === 'open') {
+        if (project.rootPath.startsWith('ssh://')) {
+          const targetId = conversationMatchesScope(chat.activeConversation, {
+            mode: 'project', projectId: project.id, projectDir: project.rootPath,
+          }) ? chat.activeConversationId : '';
+          const selected = await pickWorkspace({ language, initialPath: project.rootPath, projects: projectItems });
+          if (selected) {
+            try { await changeWelcomeProject(selected, undefined, targetId); }
+            catch (error) { void showUiError(language === 'zh' ? '切换工作区失败' : 'Workspace switch failed', error instanceof Error ? error.message : String(error)); }
+          }
+          return;
+        }
         await window.cardbushDesktop?.openPath?.(project.rootPath);
         return;
       }
@@ -1795,7 +1828,7 @@ function CardbushApp() {
         }),
       );
     },
-    [chat.activeConversation, chat.clearConversationSelection, createConversation, language],
+    [chat.activeConversation, chat.activeConversationId, chat.clearConversationSelection, createConversation, changeWelcomeProject, language, projectItems],
   );
 
   const refreshProjectGitStatus = useCallback(async (rootPath: string) => {
@@ -2003,10 +2036,23 @@ function CardbushApp() {
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
     setSection(nextSection);
-  }, []);
+    if (nextSection === 'agents') closeInspector();
+  }, [closeInspector]);
+  const handleAgentSelect = useCallback((id: string, sessionId?: string, view?: 'chat' | 'settings') => {
+    agents.select(id, sessionId, view); setSection('agents'); closeInspector(); if (compactLayout && (sessionId !== undefined || view === 'settings' || !id)) collapseSidebar();
+  }, [agents.select, compactLayout, collapseSidebar, closeInspector]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const target = (event as CustomEvent<AgentConversationTarget>).detail;
+      if (target && agents.connections.some(connection => connection.id === target.connectionId) && target.sessionId) handleAgentSelect(target.connectionId, target.sessionId);
+    };
+    window.addEventListener(OPEN_AGENT_CONVERSATION, open);
+    return () => window.removeEventListener(OPEN_AGENT_CONVERSATION, open);
+  }, [agents.connections, handleAgentSelect]);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
     openConversation(conversationId);
-  }, [openConversation]);
+    if (compactLayout) collapseSidebar();
+  }, [openConversation, compactLayout, collapseSidebar]);
   const handleSidebarCreateConversation = useCallback(() => {
     createConversation();
   }, [createConversation]);
@@ -2021,7 +2067,8 @@ function CardbushApp() {
   }, [handleProjectAction]);
   const handleSidebarOpenConversationChanges = useCallback((conversationId: string) => {
     openChangeReviewInspector(conversationId);
-  }, [openChangeReviewInspector]);
+    if (compactLayout) collapseSidebar();
+  }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
   const handleSidebarOpenSettings = useCallback(() => {
     openSettings('profile');
   }, [openSettings]);
@@ -2158,6 +2205,7 @@ function CardbushApp() {
             onSettingsChange={updateAppSettings}
             onUseModel={chat.setSelectedModel}
             sidebarCollapsed={sidebarCollapsed}
+            compactLayout={compactLayout}
             sidebarPresence={sidebarPresence}
             sidebarWidth={sidebarWidth}
             onSidebarCollapse={collapseSidebar}
@@ -2178,6 +2226,7 @@ function CardbushApp() {
         aria-hidden={settingsVisible}
         inert={settingsVisible ? true : undefined}
       >
+          <CompactSidebarBackdrop visible={compactLayout && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
           {sidebarPresence.mounted && (
             <>
               {section === 'team' ? (
@@ -2189,10 +2238,15 @@ function CardbushApp() {
                 />
               ) : (
                 <ChatSidebar
+                  agents={agents.connections}
+                  activeAgentId={agents.selectedId}
+                  onAgentSelect={handleAgentSelect}
+                  agentSessions={agents}
                   language={language}
                   section={section}
-                  activeConversationId={chat.activeConversationId}
+                  activeConversationId={section === 'agents' ? '' : chat.activeConversationId}
                   runningConversationIds={chat.processingConversationIds}
+                  onConversationWorkspaceChange={(conversationId, project) => chat.setConversationProject(conversationId, project?.rootPath ?? null, project?.id ?? null)}
                   attentionByConversation={chat.attentionByConversation}
                   projects={projectItems}
                   conversations={chat.conversations}
@@ -2221,8 +2275,10 @@ function CardbushApp() {
               />
             </>
           )}
-          <section className="main-stage">
-            {section === 'chat' ? (
+          <section className="main-stage" inert={compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
+            {section === 'agents' ? (
+              <Suspense fallback={<FeaturePanelLoading language={language} />}><LazyAgentsView language={language} agents={agents} /></Suspense>
+            ) : section === 'chat' ? (
               <ChatPanel
                 browserTabs={composerBrowserTabs}
                 language={language}
@@ -2346,6 +2402,7 @@ function CardbushApp() {
               className={`right-inspector soft-panel-motion ${inspectorPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
               aria-label={language === 'zh' ? '右侧检查器' : 'Inspector'}
               aria-hidden={!inspectorPresence.visible}
+              inert={!inspectorPresence.visible || (compactLayout && !sidebarCollapsed) ? true : undefined}
               style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
             >
               <RightInspectorResizer
@@ -3084,7 +3141,7 @@ function persistProjectItems(value: ProjectItem[]) {
 }
 
 function stableProjectId(rootPath: string) {
-  return `project-${rootPath.replaceAll('\\', '/').toLowerCase()}`;
+  return `project-${rootPath.startsWith('ssh://') ? rootPath : rootPath.replaceAll('\\', '/').toLowerCase()}`;
 }
 
 function readDisabledSkillNames() {
@@ -3683,3 +3740,4 @@ function FeaturePanel({
   );
 }
 import { TaskWorkspaceBar } from './features/chat/TaskWorkspaceBar';
+import { OPEN_AGENT_CONVERSATION, type AgentConversationTarget } from './features/agents/agentNavigation';

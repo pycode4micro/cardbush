@@ -112,6 +112,7 @@ export class RuntimeToolLoop {
       registry: options.registry,
       permissions: options.externalPermissions ?? this.#permissions,
       observer: {
+        completed: (call, identity, outcome) => this.#appendToolOutcome(call, identity, outcome),
         running: (toolCall, executionIdentity) => {
           const active = this.#activeToolControllers.get(toolCall.id);
           if (active) active.executedCall = toolCall;
@@ -209,7 +210,7 @@ export class RuntimeToolLoop {
           executionIdentity,
           controller.signal,
           input.request && input.contextMessages
-            ? { request: input.request, contextMessages: input.contextMessages }
+            ? { request: input.request, contextMessages: input.contextMessages, signal: input.signal }
             : undefined,
         );
         hookStopTurn ??= outcome.hookStopTurn;
