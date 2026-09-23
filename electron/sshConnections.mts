@@ -102,13 +102,13 @@ export class SshConnectionManager {
     try { const item = (await this.#read()).find(value => value.id === id); if (!item) throw Error('SSH connection not found'); const directory = await this.directory(sshWorkspace(id, item.defaultDirectory)); return { ok: true, directory: directory.path }; }
     catch (error) { const detail = error as Error & { fingerprint?: string; needsTrust?: boolean }; return { ok: false, error: detail.message, fingerprint: detail.fingerprint, needsTrust: detail.needsTrust }; }
   }
-  async tunnel(id: string, localUrl: string, remoteHost: string, remotePort: number, signal: AbortSignal) {
+  async tunnel(id: string, remoteHost: string, remotePort: number, signal: AbortSignal) {
     signal.throwIfAborted();
     let abort!: () => void;
     const cancelled = new Promise<never>((_, reject) => { abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true }); });
     const client = await Promise.race([this.#connection(id), cancelled]).finally(() => signal.removeEventListener('abort', abort));
     signal.throwIfAborted();
-    return openSshTunnel(client, localUrl, remoteHost, remotePort, signal);
+    return openSshTunnel(client, remoteHost, remotePort, signal);
   }
   async #sftp<T>(id: string, action: (sftp: SFTPWrapper) => Promise<T>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted(); const client = await this.#connection(id); signal?.throwIfAborted();

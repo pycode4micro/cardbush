@@ -3,7 +3,9 @@ import { Check, LoaderCircle, RefreshCw } from 'lucide-react';
 import { readGlobalInstructions, saveGlobalInstructions, type GlobalInstructionsSnapshot } from '../../backend/globalInstructions';
 import type { AppLanguage } from '../../types';
 
-export function GlobalInstructionsPanel({ language }: { language: AppLanguage }) {
+export type InstructionsSource = { read: typeof readGlobalInstructions; save: typeof saveGlobalInstructions };
+const localSource: InstructionsSource = { read: readGlobalInstructions, save: saveGlobalInstructions };
+export function GlobalInstructionsPanel({ language, source = localSource }: { language: AppLanguage; source?: InstructionsSource }) {
   const zh = language === 'zh';
   const [snapshot, setSnapshot] = useState<GlobalInstructionsSnapshot | null>(null);
   const [draft, setDraft] = useState('');
@@ -13,29 +15,29 @@ export function GlobalInstructionsPanel({ language }: { language: AppLanguage })
 
   useEffect(() => {
     let active = true;
-    readGlobalInstructions().then(value => {
+    source.read().then(value => {
       if (active) { setSnapshot(value); setDraft(value.content); }
     }).catch(caught => {
       if (active) setError(caught instanceof Error ? caught.message : String(caught));
     }).finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
-  }, []);
+  }, [source]);
 
   const reload = useCallback(async () => {
     if (snapshot && draft !== snapshot.content && !window.confirm(zh ? '重新读取会覆盖尚未保存的编辑，继续吗？' : 'Reloading will replace your unsaved edits. Continue?')) return;
     setBusy(true); setError(''); setSaved(false);
     try {
-      const value = await readGlobalInstructions();
+      const value = await source.read();
       setSnapshot(value); setDraft(value.content);
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { setBusy(false); }
-  }, [draft, snapshot, zh]);
+  }, [draft, snapshot, zh, source]);
 
   const save = async () => {
     if (!snapshot || busy) return;
     setBusy(true); setError(''); setSaved(false);
     try {
-      const value = await saveGlobalInstructions(draft, snapshot.revision);
+      const value = await source.save(draft, snapshot.revision);
       setSnapshot(value); setDraft(value.content); setSaved(true);
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { setBusy(false); }

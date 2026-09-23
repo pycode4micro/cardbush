@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentConnection, AgentProject } from '../../../electron/agentTypes';
 import { copyText } from '../messageFeedback';
 import { projectRuntimeTurnMessages } from '../../backend/runtimeSessionMessageProjection';
+import { isVisibleConversationSession } from '../../backend/runtimeSessionVisibility';
 import { agentErrorText as message } from './agentErrorText';
 
 export type AgentSessionItem = { sessionId: string; metadata?: Record<string, unknown>; updatedAt?: string };
@@ -30,7 +31,7 @@ export function useAgentConnections() {
         const info = await api().connect(id);
         const sessions = await api().call(id, 'sessions.list') as AgentSessionItem[];
         const projects = info.capabilities.conversationManagement ? await api().call(id, 'projects.list') as { projects: AgentProject[] } : undefined;
-        updateList(id, { sessions: sessions.filter(item => item.metadata?.hidden !== true), loading: false, management: Boolean(info.capabilities.conversationManagement), projects: projects?.projects });
+        updateList(id, { sessions: sessions.filter(isVisibleConversationSession), loading: false, management: Boolean(info.capabilities.conversationManagement), projects: projects?.projects });
       } catch (error) { updateList(id, { loading: false, error: message(error) }); throw error; }
       finally { loads.current.delete(id); }
     })();

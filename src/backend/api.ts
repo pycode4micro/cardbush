@@ -65,6 +65,7 @@ import type {
 import { standardImageInputToolDefaultName } from './toolVisibility';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
+import { isVisibleConversationSession } from './runtimeSessionVisibility';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
@@ -1183,11 +1184,7 @@ export async function fetchConversations(
   try {
     const sessions = await runtime.client.listSessions();
     return sessions
-      .filter(
-        (session) =>
-          session.metadata?.agentRole !== 'child' &&
-          session.metadata?.hidden !== true,
-      )
+      .filter(isVisibleConversationSession)
       .map(runtimeConversation)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   } finally {
@@ -1668,7 +1665,7 @@ export class ProductHostCommandError extends Error {
   }
 }
 
-function cardbushAppsConfigurationFromPayload(
+export function cardbushAppsConfigurationFromPayload(
   payload: Record<string, unknown>,
 ): CardbushAppsConfiguration {
   const plugins = arrayFrom(payload.plugins).map((candidate): CardbushAppPlugin => {

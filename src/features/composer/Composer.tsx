@@ -1153,7 +1153,11 @@ export function Composer({
               onSelectSubagentPermissionRouting={onSubagentPermissionRoutingChange}
               onSelectReasoningLevel={onReasoningLevelChange}
               onSelectReferencePlanMode={onReferencePlanModeChange}
-              onConfigureModels={onConfigureModels}
+              onConfigureModels={() => {
+                setActiveMenu(null);
+                setPopoverAnchor(null);
+                onConfigureModels();
+              }}
               onPickAttachments={() => {
                 void pickAttachments();
                 setActiveMenu(null);

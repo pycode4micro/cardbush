@@ -10,8 +10,14 @@ type Saved = Omit<AgentConnection, 'hasToken' | 'connected' | 'info' | 'connecti
 type Live = { client: AgentHttpClient; info: AgentInfo };
 type Entry = { promise: Promise<Live>; abort: AbortController; client?: AgentHttpClient; tunnel?: SshTunnel };
 const tunnelSchema = z.object({ connectionId: z.string().min(1), remoteHost: z.enum(['127.0.0.1', 'localhost', '::1']), remotePort: z.number().int().min(1).max(65535) }).strict();
+function sshAgentUrl(tunnel: z.infer<typeof tunnelSchema>, previousUrl?: string) {
+  const url = new URL(`http://${tunnel.remoteHost === '::1' ? '[::1]' : tunnel.remoteHost}:${tunnel.remotePort}/`);
+  // Preserve an existing service path while discarding the obsolete local port.
+  if (previousUrl) url.pathname = new URL(agentBaseUrl(previousUrl)).pathname;
+  return url.href;
+}
 /** All Agent hosts use HTTP; desktop Runtime IPC and plugin MCP stay independent. */
-export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvents'> {
+export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvents' | 'filePreview' | 'releaseFilePreview'> {
   #clients = new Map<string, Entry>();
   #live = new Map<string, Live>();
   #desired = new Set<string>();
@@ -37,7 +43,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
         return { ...rest, transport: 'http', url: '', legacyLaunch: { command, args, cwd },
           migrationIssue: '此连接原先使用 stdio。请先将 Agent 启动为 HTTP 服务，再重新添加连接；原服务数据保留。' };
       }
-      return { ...item, transport: 'http', url: item.url ? agentBaseUrl(item.url) : '' };
+      return { ...item, transport: 'http', url: item.sshTunnel ? sshAgentUrl(tunnelSchema.parse(item.sshTunnel), item.url) : item.url ? agentBaseUrl(item.url) : '' };
     });
   }
   #change(change: (items: Saved[]) => Saved[]) {
@@ -58,23 +64,21 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   }
   async save(input: AgentConnectionInput) {
     const value = z.object({ id: z.string().optional(), name: z.string().trim().min(1).max(100), transport: z.literal('http'),
-      url: z.string().min(1), token: z.string().optional(), sshTunnel: tunnelSchema.nullable().optional(),
+      url: z.string().min(1).optional(), token: z.string().optional(), sshTunnel: tunnelSchema.nullable().optional(),
     }).strict().parse(input);
-    value.url = agentBaseUrl(value.url);
     if (value.sshTunnel) {
-      const url = new URL(value.url);
-      if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw Error('SSH 隧道需要本机回环 HTTP 地址。');
-      if (url.port === '0') throw Error('请选择 1–65535 范围内的本机转发端口。');
       if (!this.options.ssh || !(await this.options.ssh.list()).some(item => item.id === value.sshTunnel!.connectionId)) throw Error('请选择已保存的 SSH 连接。');
     }
     await this.#change(items => {
       const old = items.find(item => item.id === value.id);
       if (value.id && !old) throw new Error('Agent connection was removed.');
-      if (old && old.url !== value.url && !value.sshTunnel) throw new Error('Add a new connection when changing its endpoint.');
+      const sshTunnel = value.sshTunnel === undefined ? old?.sshTunnel : value.sshTunnel ?? undefined;
+      if (!sshTunnel && !value.url) throw Error('请填写 Agent 服务地址。');
+      const url = sshTunnel ? sshAgentUrl(tunnelSchema.parse(sshTunnel), old?.sshTunnel ? old.url : undefined) : agentBaseUrl(value.url!);
+      if (old && !old.sshTunnel && old.url !== url && !sshTunnel) throw new Error('Add a new connection when changing its endpoint.');
       const token = value.token === undefined || value.token === '' ? old?.token : this.cipher.encrypt(value.token);
       if (!token) throw new Error('Enter the Agent access token.');
-      const item: Saved = { ...value, id: old?.id ?? randomUUID(), agentId: old?.agentId, token,
-        sshTunnel: value.sshTunnel === undefined ? old?.sshTunnel : value.sshTunnel ?? undefined };
+      const item: Saved = { ...value, url, id: old?.id ?? randomUUID(), agentId: old?.agentId, token, sshTunnel };
       return [...items.filter(item => item.id !== old?.id), item];
     });
     if (value.id) await this.disconnect(value.id);
@@ -99,12 +103,11 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
         this.#managed.add(id);
         const tunnel = tunnelSchema.parse(saved.sshTunnel);
         if (!this.options.ssh) throw Error('SSH 隧道管理不可用。');
-        entry.tunnel = await this.options.ssh.tunnel(tunnel.connectionId, saved.url, tunnel.remoteHost, tunnel.remotePort, entry.abort.signal);
+        entry.tunnel = await this.options.ssh.tunnel(tunnel.connectionId, tunnel.remoteHost, tunnel.remotePort, entry.abort.signal);
         void entry.tunnel.closed.then(() => this.#failed(id, entry, Error('SSH 隧道已断开，正在重新连接。')));
         assertCurrent();
-        if (endpoint.hostname === 'localhost') endpoint.hostname = '127.0.0.1';
       }
-      const client = entry.client = new AgentHttpClient(endpoint.href, this.cipher.decrypt(saved.token), saved.agentId);
+      const client = entry.client = new AgentHttpClient(endpoint.href, this.cipher.decrypt(saved.token), saved.agentId, entry.tunnel?.connect);
       const info = await client.info();
       assertCurrent();
       await this.#change(items => items.map(item => item.id === id ? { ...item, agentId: info.id } : item));

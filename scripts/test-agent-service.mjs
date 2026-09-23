@@ -115,9 +115,11 @@ test('cloud reasoning and output settings reach the provider and model limits su
     assert.equal(saved.models[0].hasApiKey, true, 'blank key retains the server credential');
     assert.equal(saved.models[0].maxCompletionTokens, 16384);
     await service.call('sessions.create', { sessionId: 'settings' });
-    await service.call('chat.send', { ...input('settings', 'no-reasoning'), reasoningEffort: 'none', planEnabled: false });
+    await service.call('chat.send', { ...input('settings', 'no-reasoning'), reasoningEffort: 'none', planEnabled: false, conversationStyle: { mode: 'concise', customTone: '' } });
     await until(() => service.call('chat.jobs'), jobs => jobs.find(job => job.id === 'no-reasoning')?.status === 'completed');
     assert.deepEqual(f.model.calls[0].reasoning, { effort: 'none' });
+    assert.equal(service.info().capabilities.sharedSettings, true);
+    assert.match(JSON.stringify(f.model.calls[0].input), /Mode: concise/, 'shared response style reaches the model');
     assert.equal(f.model.calls[0].max_output_tokens, 16384);
     await service.close(); service = await AgentService.open({ dataRoot: f.root });
     const restored = await service.call('product.command', { kind: 'models.get' });
@@ -545,6 +547,10 @@ test('optional plugin installation, activation and removal reuse the Product Hos
     const capabilities = await service.call('runtime.command', { kind: 'runtime.get_capabilities' });
     assert.ok(capabilities.features.includes('headless_fixture'));
     assert.deepEqual(await service.call('runtime.command', { kind: 'plugin.headless-fixture.check' }), { host: 'service' });
+    const latestApps = await service.call('product.command', { kind: 'apps.get' });
+    const savedConnections = await service.call('plugins.connections.save', { pluginId: 'headless-fixture', expectedRevision: latestApps.revision, connections: {} });
+    assert.deepEqual(savedConnections.connections, {});
+    await assert.rejects(service.call('plugins.connections.save', { pluginId: 'headless-fixture', expectedRevision: latestApps.revision, connections: {} }), /revision|changed/i, 'remote edits retain the shared revision guard');
     await service.call('plugins.uninstall', { id: 'headless-fixture' });
     assert.equal((await service.call('product.command', { kind: 'apps.get' })).plugins.length, 0);
     await assert.rejects(service.call('runtime.command', { kind: 'plugin.headless-fixture.check' }));

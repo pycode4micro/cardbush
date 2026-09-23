@@ -2,17 +2,17 @@ import type * as React from 'react';
 import { Children, isValidElement } from 'react';
 import { SettingsDropdown } from './SettingsDropdown';
 
-export function SettingsSelect({ name, title, subtitle, value, onChange, children, icons }: {
+export function SettingsSelect({ name, title, subtitle, value, onChange, children, icons, disabled }: {
   name: string; title: string; subtitle?: string; value: string;
   onChange: (value: string) => void; children: React.ReactNode;
-  icons?: Record<string, React.ReactNode>;
+  icons?: Record<string, React.ReactNode>; disabled?: boolean;
 }) {
   const options = Children.toArray(children).filter(isValidElement<{value: string; children: React.ReactNode; disabled?: boolean}>).map(option => ({
     value: option.props.value, label: option.props.children, disabled: option.props.disabled, icon: icons?.[option.props.value],
   }));
   return <div className="settings-select-row">
     <span><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</span>
-    <SettingsDropdown name={name} label={title} value={value} onChange={onChange} options={options} />
+    <SettingsDropdown disabled={disabled} name={name} label={title} value={value} onChange={onChange} options={options} />
   </div>;
 }
 
@@ -128,6 +128,7 @@ export function SettingsInput({
       <span>{label}</span>
       <input
         type={type}
+        aria-label={label}
         value={value}
         disabled={disabled}
         placeholder={placeholder}

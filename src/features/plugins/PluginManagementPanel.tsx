@@ -1,3 +1,4 @@
+import { useSettingsHost } from '../settings/SettingsHostContext';
 import { ChromeConnectionSettings } from '../browser/ChromeConnectionSettings';
 import { ComputerUseSettings } from '../computerUse/ComputerUseSettings';
 import { RuntimePluginWorkspace } from '../../plugins/runtimeWorkspaces';
@@ -28,15 +29,7 @@ import {
 } from 'lucide-react';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  fetchCardbushAppsConfiguration,
-  fetchMcpConnectionOverview,
-  saveCardbushAppsConfiguration,
-  savePluginSearchResultLimit,
-  uninstallCardbushPlugin,
-  setMcpServerProxy,
-  resetMcpServerProxies,
-} from '../../backend/api';
+
 import type { McpConnectionOverview } from '../../backend/mcpConnectionOverview';
 import { pluginMcpConnections, type PluginMcpConnection } from './pluginConnections';
 import { fileUrl } from '../../shared/localPaths';
@@ -81,6 +74,9 @@ export function PluginManagementPanel({
   presentation?: 'catalog' | 'network';
   onOpenNetwork?: () => void;
 }) {
+  const host = useSettingsHost();
+  const [installPath, setInstallPath] = useState('');
+  const [installOpen, setInstallOpen] = useState(false);
   const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
   const { rootRef, entries, page, open: setPage, back, reset, dismissPlugin } = usePluginNavigation();
   const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp?.(serverId);
@@ -165,7 +161,7 @@ export function PluginManagementPanel({
     // The initial read owns the loading placeholder. Background reads retain
     // existing rows so focus, open menus and list positions do not flicker.
     try {
-      const result = await fetchMcpConnectionOverview();
+      const result = await host.fetchMcpConnectionOverview();
       if (current()) {
         setMcpOverview(current => JSON.stringify(current) === JSON.stringify(result) ? current : result);
         setMcpError('');
@@ -178,7 +174,7 @@ export function PluginManagementPanel({
     } finally {
       if (revision === mcpLoadRevision.current) setMcpLoading(false);
     }
-  }, []);
+  }, [host]);
 
   const load = useCallback(async () => {
     setBusy('load');
@@ -186,7 +182,7 @@ export function PluginManagementPanel({
     void loadConnections();
     try {
       const [apps, loadedSkills] = await Promise.all([
-        fetchCardbushAppsConfiguration(),
+        host.fetchCardbushAppsConfiguration(),
         onReloadSkills(),
       ]);
       receiveConfiguration(apps);
@@ -196,9 +192,9 @@ export function PluginManagementPanel({
     } finally {
       setBusy('');
     }
-  }, [onReloadSkills, loadConnections, receiveConfiguration]);
+  }, [host, onReloadSkills, loadConnections, receiveConfiguration]);
 
-  useEffect(() => window.cardbushDesktop?.onAccountsChanged?.(() => { void loadConnections(); }), [loadConnections]);
+  useEffect(() => !host.remote ? window.cardbushDesktop?.onAccountsChanged?.(() => { void loadConnections(); }) : undefined, [host, loadConnections]);
 
   useEffect(() => {
     void load();
@@ -208,10 +204,10 @@ export function PluginManagementPanel({
   useCapabilityCatalogRefresh(useCallback(async (isCurrent: () => boolean) => {
     await Promise.all([
       loadConnections(isCurrent),
-      fetchCardbushAppsConfiguration().then(apps => { if (isCurrent()) receiveConfiguration(apps); }),
+      host.fetchCardbushAppsConfiguration().then(apps => { if (isCurrent()) receiveConfiguration(apps); }),
       page.kind === 'skill' ? loadSkillDetail(page.skillName, isCurrent, true) : undefined,
     ]);
-  }, [page, loadSkillDetail, loadConnections, receiveConfiguration]));
+  }, [host, page, loadSkillDetail, loadConnections, receiveConfiguration]));
 
   const persist = useCallback(async (
     next: CardbushAppsConfiguration,
@@ -221,7 +217,7 @@ export function PluginManagementPanel({
     setBusy(key);
     setError('');
     try {
-      const saved = await saveCardbushAppsConfiguration(next);
+      const saved = await host.saveCardbushAppsConfiguration(next);
       dirtyPluginIds.current.clear();
       receiveConfiguration(saved);
       void loadConnections();
@@ -234,7 +230,7 @@ export function PluginManagementPanel({
     } finally {
       setBusy('');
     }
-  }, [onNotify, onReloadSkills, loadConnections, receiveConfiguration]);
+  }, [host, onNotify, onReloadSkills, loadConnections, receiveConfiguration]);
 
   const replacePlugin = useCallback((plugin: CardbushAppPlugin) => {
     dirtyPluginIds.current.add(plugin.id);
@@ -249,7 +245,7 @@ export function PluginManagementPanel({
     uninstalling.current = true;
     setBusy(`uninstall:${plugin.id}`); setError('');
     try {
-      const result = await uninstallCardbushPlugin(plugin.id);
+      const result = await host.uninstallCardbushPlugin(plugin.id);
       dirtyPluginIds.current.delete(plugin.id);
       receiveConfiguration(result.configuration);
       dismissPlugin(plugin.id);
@@ -259,7 +255,7 @@ export function PluginManagementPanel({
       await loadConnections();
     } catch (caught) {
       setError(language === 'zh' ? `卸载未完成：${errorMessage(caught)}` : `Uninstall incomplete: ${errorMessage(caught)}`);
-      await fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
+      await host.fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
     }
     finally { uninstalling.current = false; setBusy(''); }
   };
@@ -279,6 +275,7 @@ export function PluginManagementPanel({
 
   const installLocal = async (kind: 'directory' | 'zip') => {
     setAddOpen(false);
+    if (host.remote) { setInstallOpen(true); return; }
     if (busy || !window.cardbushDesktop) return;
     setBusy('install-local');
     setError('');
@@ -322,7 +319,7 @@ export function PluginManagementPanel({
   const saveStandaloneProxy = async (id: string, proxy?: ProxySettings) => {
     setBusy(`proxy:mcp:${id}`); setError('');
     try {
-      await setMcpServerProxy(id, proxy);
+      await host.setMcpServerProxy(id, proxy);
       setMcpOverview(current => current ? { ...current, servers: current.servers.map(server => server.id === id ? { ...server, proxy } : server) } : current);
       await loadConnections(); onNotify(language === 'zh' ? 'MCP 代理已保存' : 'MCP proxy saved'); return true;
     }
@@ -333,10 +330,10 @@ export function PluginManagementPanel({
     if (busy) return false;
     setBusy('proxy:global'); setError('');
     try {
-      const latest = await fetchCardbushAppsConfiguration();
+      const latest = await host.fetchCardbushAppsConfiguration();
       // Persist and request runtime application even on a retry whose values
       // already reached disk before the previous runtime refresh failed.
-      const saved = await saveCardbushAppsConfiguration({ ...latest, proxy, plugins: applyToAll
+      const saved = await host.saveCardbushAppsConfiguration({ ...latest, proxy, plugins: applyToAll
         ? latest.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })) : latest.plugins });
       receiveConfiguration(saved);
       if (applyToAll) {
@@ -344,7 +341,7 @@ export function PluginManagementPanel({
         setConfiguration(current => current && current.revision === saved.revision ? { ...current,
           plugins: current.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })),
         } : current);
-        await resetMcpServerProxies();
+        await host.resetMcpServerProxies();
         setMcpOverview(current => current ? { ...current, servers: current.servers.map(server => ({ ...server, proxy: undefined })) } : current);
         setProxyResetRevision(value => value + 1);
       }
@@ -356,7 +353,7 @@ export function PluginManagementPanel({
       setError(errorMessage(caught));
       // A runtime refresh can fail after a durable write. Read back the saved
       // facts so the page cannot revert to an older default on the next edit.
-      await fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
+      await host.fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
       return false;
     }
     finally { await loadConnections(); setBusy(''); }
@@ -365,7 +362,7 @@ export function PluginManagementPanel({
     if (busy) return;
     setBusy('search:default'); setError('');
     try {
-      receiveConfiguration(await savePluginSearchResultLimit(limit));
+      receiveConfiguration(await host.savePluginSearchResultLimit(limit));
       onNotify(language === 'zh' ? '搜索结果数量已保存' : 'Search result limit saved');
     } catch (caught) { throw new Error(errorMessage(caught)); }
     finally { setBusy(''); }
@@ -412,17 +409,17 @@ export function PluginManagementPanel({
     </>}
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
   </div>;
-  if (page.kind === 'accounts') return <AccountsPanel language={language} onBack={back}/>;
-  if (page.kind === 'marketplace') {
+  if (!host.remote && page.kind === 'accounts') return <AccountsPanel language={language} onBack={back}/>;
+  if (!host.remote && page.kind === 'marketplace') {
     return <><PluginMarketplacePanel language={language}
       onOpenNetwork={() => setMarketProxyOpen(true)}
       onBack={back}
       onOpenBundled={pluginId => setPage({ kind: 'plugin', pluginId })}
       onNotify={onNotify}
       onInstalled={async (id, enabled) => {
-        const latest = await fetchCardbushAppsConfiguration();
+        const latest = await host.fetchCardbushAppsConfiguration();
         if (!latest.plugins.some(plugin => plugin.id === id)) throw new Error(language === 'zh' ? '已安装文件，插件目录尚未刷新。' : 'Files installed; plugin catalog has not refreshed yet.');
-        const saved = await saveCardbushAppsConfiguration({ ...latest,
+        const saved = await host.saveCardbushAppsConfiguration({ ...latest,
           plugins: latest.plugins.map(plugin => plugin.id === id ? { ...plugin, installed: true, enabled } : plugin) });
         setConfiguration(saved);
         setLocalSkills(await onReloadSkills());
@@ -434,7 +431,7 @@ export function PluginManagementPanel({
         {error && <p className="plugin-market-error" role="alert">{error}</p>}
       </dialog>}</>;
   }
-  if (page.kind === 'workspace') {
+  if (!host.remote && page.kind === 'workspace') {
     const plugin = plugins.find(item => item.id === page.pluginId);
     return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugin'}</button>
       {plugin?.installed && plugin.enabled ? <RuntimePluginWorkspace id={page.extensionId} language={language}/> : <p>{language === 'zh' ? '请先启用插件。' : 'Enable this plugin first.'}</p>}
@@ -518,8 +515,8 @@ export function PluginManagementPanel({
           <button className={tab === 'skills' ? 'active' : ''} type="button" onClick={() => setTab('skills')}>
             {language === 'zh' ? '技能' : 'Skills'}
           </button>
-          <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>
-          <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{language === 'zh' ? '账号' : 'Accounts'}</button>
+          {!host.remote && <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>}
+          {!host.remote && <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{language === 'zh' ? '账号' : 'Accounts'}</button>}
         </div>
         {tab !== 'accounts' && <div className="plugin-hub-actions">
           <button type="button" title={language === 'zh' ? '插件设置' : 'Plugin settings'} onClick={() => setPage({ kind: 'network' })}>{language === 'zh' ? '设置' : 'Settings'}</button>
@@ -538,14 +535,14 @@ export function PluginManagementPanel({
             </button>
             {addOpen && (
               <div className="plugin-add-menu">
-                <button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
+                {!host.remote && <><button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
                   <Store size={15} /><span><strong>{language === 'zh' ? '从市场安装插件' : 'Install from marketplace'}</strong><small>{language === 'zh' ? '浏览 GitHub 和本地插件市场' : 'Browse GitHub and local plugin marketplaces'}</small></span>
                 </button>
                 <button type="button" onClick={() => void installLocal('zip')}>
                   <FileArchive size={15} />
                   <span><strong>{language === 'zh' ? '从 ZIP 安装插件' : 'Install from ZIP'}</strong><small>{language === 'zh' ? '直接导入插件压缩包' : 'Import a plugin archive'}</small></span>
                 </button>
-                <button type="button" onClick={() => void installLocal('directory')}>
+                </>}<button type="button" onClick={() => void installLocal('directory')}>
                   <FolderOpen size={15} />
                   <span><strong>{language === 'zh' ? '从文件夹安装插件' : 'Install from folder'}</strong><small>{language === 'zh' ? '选择解压后的插件目录' : 'Choose an unpacked plugin'}</small></span>
                 </button>
@@ -563,6 +560,13 @@ export function PluginManagementPanel({
         </div>}
       </div>
 
+      {installOpen && host.remote && <form className="settings-card settings-stack" onSubmit={event => {
+        event.preventDefault(); if (busy || !host.installDirectory) return;
+        setBusy('install'); setError('');
+        void host.installDirectory(installPath.trim()).then(async () => { setInstallOpen(false); setInstallPath(''); await load(); })
+          .catch(error => setError(errorMessage(error))).finally(() => setBusy(''));
+      }}><label className="settings-field">{language === 'zh' ? 'Agent 主机上的插件目录' : 'Plugin directory on the Agent host'}<input required value={installPath} onChange={event => setInstallPath(event.target.value)}/></label>
+        <div className="settings-actions"><button type="button" disabled={Boolean(busy)} onClick={() => setInstallOpen(false)}>{language === 'zh' ? '取消' : 'Cancel'}</button><button disabled={Boolean(busy) || !installPath.trim()}>{language === 'zh' ? '安装 / 更新' : 'Install / update'}</button></div></form>}
       {tab !== 'accounts' && error && <p className="plugin-hub-error" role="alert">{error}</p>}
       {tab === 'accounts' ? <AccountsPanel language={language}/> : tab === 'plugins' ? (
         <PluginCatalog
@@ -904,6 +908,7 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
+  const host = useSettingsHost();
   return (
     <div className="plugin-detail-page">
       <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{backLabel}</button>
@@ -924,7 +929,7 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
         onClick={() => onOpenPrompt?.(pluginPrompt(plugin, prompt))}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></button>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
-      {plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{language === 'zh' ? '打开插件配置' : 'Open plugin settings'}</button></section>)}
+      {!host.remote && plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{language === 'zh' ? '打开插件配置' : 'Open plugin settings'}</button></section>)}
       {plugin.removalPending && <p className="plugin-market-error">{language === 'zh' ? '卸载尚未完成，可点击卸载重试。' : 'Uninstall is incomplete. Click Uninstall to retry.'}</p>}
       {plugin.installed && !plugin.removalPending && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
       {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{language === 'zh' ? '网络代理' : 'Network proxy'} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language === 'zh')}</summary>
@@ -932,8 +937,8 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
       </details>}
       {plugin.installed && <PluginHookTrust plugin={plugin} language={language} busy={busy} onPersist={onPersist} />}
       <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
-      {plugin.id === 'computer-use' && plugin.installed && <ComputerUseSettings language={language} plugin={plugin} busy={busy} onReplace={onReplace} onPersist={onPersist} />}
-      {plugin.id === 'chrome' && plugin.installed && (
+      {!host.remote && plugin.id === 'computer-use' && plugin.installed && <ComputerUseSettings language={language} plugin={plugin} busy={busy} onReplace={onReplace} onPersist={onPersist} />}
+      {!host.remote && plugin.id === 'chrome' && plugin.installed && (
         <ChromeConnectionSettings
           language={language}
           plugin={plugin}

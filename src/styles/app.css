@@ -17007,6 +17007,22 @@ body.queue-reordering * {
   border-top: 1px solid color-mix(in srgb, var(--border) 44%, transparent);
 }
 
+.model-row .model-row-disclosure {
+  justify-content: flex-start;
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13.5px;
+}
+.model-row-disclosure strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-row-disclosure svg { flex-shrink: 0; color: var(--text-soft); }
+.model-row-disclosure[aria-expanded="true"] svg { transform: rotate(180deg); }
+
 .model-row > div {
   min-width: 0;
   display: grid;
@@ -20404,3 +20420,19 @@ body.change-review-resizing .change-review-file-nav-viewport { transition: none;
 .conversation-host-preview { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .conversation-host-preview > iframe { width: 100%; flex: 1; min-height: 320px; border: 0; background: white; }
 .conversation-host-preview > a { padding: 8px 14px; flex-shrink: 0; }
+.conversation-file-download { align-self: flex-start; flex-shrink: 0; padding: 8px 14px; border: 0; border-radius: 8px; background: transparent; color: var(--text-mid); font: inherit; cursor: pointer; }
+.conversation-file-download:hover { color: var(--text); background: var(--surface-hover); }
+
+.settings-target { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.settings-target > span, .settings-target > small { color: var(--muted); }
+.settings-target .settings-dropdown { min-width: 180px; max-width: 100%; }
+.settings-agent-info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 24px; }
+.settings-agent-info dd { margin: 0; overflow-wrap: anywhere; }
+
+.agent-model-settings .settings-card h3 { margin: 0; }
+.agent-model-fields { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 12px; }
+.agent-model-entry + .agent-model-entry { border-top: 1px solid color-mix(in srgb, var(--border) 44%, transparent); }
+.agent-model-editor { padding: 12px; background: color-mix(in srgb, var(--text) 3%, transparent); border-radius: 8px; }
+
+.settings-project-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #8883; padding: 14px 0; font-size: 13px; }.settings-project-row > div { flex: 1; min-width: 0; }.settings-project-row small { display: block; color: var(--text-soft, #999); margin-top: 5px; overflow-wrap: anywhere; }.settings-project-row + form { margin-top: 20px; }
+.model-advanced-disclosure { justify-self: start; }

@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createServer as httpServer } from 'node:http';
-import { createServer, connect } from 'node:net';
+import { createServer, connect, Server } from 'node:net';
+import { PassThrough } from 'node:stream';
 import { once, EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ssh2 from 'ssh2';
@@ -23,7 +24,7 @@ async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-tunnel-'));
   const key = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs1' });
   const fingerprint = 'SHA256:' + createHash('sha256').update(ssh2.utils.parseKey(key).getPublicSSH()).digest('base64').replace(/=+$/, '');
-  const clients = new Set(), peers = new Set(), forwards = [];
+  const clients = new Set(), peers = new Set(), forwards = [], events = new Set();
   let connections = 0, reads = 0, mutations = 0, remoteId = 'stable-agent', holdInfo = false, loseReply = false;
   const token = 'fixture-agent-token-that-must-not-leak';
   const http = httpServer(async (req, res) => {
@@ -32,15 +33,29 @@ async function fixture(t, options = {}) {
       res.writeHead(409, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Agent identity changed.' } })); return;
     }
     res.setHeader('content-type', 'application/json'); res.setHeader('x-cardbush-agent-id', remoteId);
+    if (req.url.includes('/events?')) {
+      const query = new URL(req.url, 'http://fixture').searchParams;
+      const sse = req.headers.accept === 'text/event-stream';
+      res.setHeader('content-type', sse ? 'text/event-stream' : 'application/x-ndjson');
+      const send = frame => res.write(sse ? `data: ${JSON.stringify(frame)}\n\n` : JSON.stringify(frame) + '\n');
+      send({ type: 'ready', agentId: remoteId });
+      const finish = () => {
+        send({ type: 'event', event: { sessionId: query.get('sessionId'), turnId: query.get('turnId'), sequence: Number(query.get('afterSequence') || 0) + 1, payload: { text: '通道回复' } } });
+        send({ type: 'end' }); res.end();
+      };
+      events.add(finish); res.once('close', () => events.delete(finish)); return;
+    }
     if (req.url.endsWith('/info')) {
       reads++;
       if (holdInfo) return;
       res.end(JSON.stringify({ protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: remoteId, name: 'Fixture', platform: 'test', capabilities: { durableQueue: true } })); return;
     }
+    req.setEncoding('utf8');
     let body = ''; for await (const chunk of req) body += chunk;
     const input = JSON.parse(body);
     if (input.operation === 'sessions.create') { mutations++; if (loseReply) { req.socket.destroy(); return; } }
-    res.end(JSON.stringify({ result: [] }));
+    if (input.operation === 'files.upload') res.setHeader('connection', 'close');
+    res.end(JSON.stringify({ result: input.operation === 'files.upload' ? input.input.content : [] }));
   });
   const remotePort = await listen(http);
   const server = new ssh2.Server({ hostKeys: [key] }, client => {
@@ -52,7 +67,8 @@ async function fixture(t, options = {}) {
       peer.once('error', () => { reject(); peer.destroy(); });
       peer.once('connect', () => {
         const stream = accept(); stream.on('error', () => peer.destroy()); stream.once('close', () => peer.destroy());
-        peer.on('error', () => stream.destroy()); peer.once('close', () => stream.destroy()); stream.pipe(peer).pipe(stream);
+        // pipe() drains pending writes before forwarding a clean EOF to SSH.
+        peer.on('error', () => stream.destroy()); stream.pipe(peer).pipe(stream);
       });
     }));
   });
@@ -63,7 +79,7 @@ async function fixture(t, options = {}) {
   const managers = [];
   const manager = () => { const value = new AgentConnectionManager(store, cipher, { ssh, reconnectDelayMs: 20, healthIntervalMs: options.healthIntervalMs ?? 60_000 }); managers.push(value); return value; };
   const first = manager();
-  const [agent] = await first.save({ name: 'Agent', transport: 'http', url: 'http://127.0.0.1:' + localPort, token,
+  const [agent] = await first.save({ name: 'Agent', transport: 'http', token,
     sshTunnel: { connectionId: connection.id, remoteHost: '127.0.0.1', remotePort } });
   t.after(async () => {
     await Promise.all(managers.map(item => item.close())); await ssh.close();
@@ -72,6 +88,7 @@ async function fixture(t, options = {}) {
     await rm(root, { recursive: true, force: true });
   });
   return { root, store, token, ssh, agent, first, manager, localPort, remotePort, forwards,
+    finishEvents: () => { for (const finish of events) finish(); },
     stats: () => ({ connections, reads, mutations }), drop: () => { for (const client of clients) client.end(); },
     hold: value => { holdInfo = value; }, loseReply: () => { loseReply = true; }, identity: value => { remoteId = value; },
     connected: async (value = first) => (await value.list())[0]?.connected };
@@ -89,22 +106,32 @@ test('managed tunnels coalesce concurrent connects, reconnect after SSH loss and
   f.drop();
   await until(async () => f.stats().connections >= 2 && await f.connected(), 'automatic reconnect');
   await f.first.close();
-  await assert.rejects(fetch(f.agent.url, { signal: AbortSignal.timeout(1000) }));
+  assert.equal((await f.ssh.list())[0].status, 'connected', 'closing an Agent keeps the shared SSH connection');
   const restarted = f.manager(); await restarted.restore();
   await until(() => f.connected(restarted), 'restore saved tunnel');
   assert.equal((await restarted.list())[0].agentId, 'stable-agent');
   assert.equal(f.stats().mutations, 0);
 });
 
-test('occupied local ports are rejected without sending credentials to another listener', async t => {
+test('legacy local forwarding addresses are migrated without listening or sending credentials to that port', async t => {
   const f = await fixture(t); let requests = 0;
+  const saved = JSON.parse(await readFile(f.store, 'utf8'));
+  saved[0].url = 'http://127.0.0.1:' + f.localPort + '/agent-a/';
+  saved[0].agentId = 'stable-agent';
+  await writeFile(f.store, JSON.stringify(saved));
   const occupied = httpServer((_req, res) => { requests++; res.end('{}'); }); await listen(occupied, f.localPort);
-  try { await assert.rejects(f.first.connect(f.agent.id), /端口.*已被占用/); assert.equal(requests, 0); }
-  finally { await new Promise(resolve => occupied.close(resolve)); }
-  await until(() => f.connected(), 'recover after conflicting listener exits');
+  const listenGuard = t.mock.method(Server.prototype, 'listen', () => assert.fail('Agent must not create a local listener'));
+  try {
+    assert.equal((await f.first.connect(f.agent.id)).id, 'stable-agent');
+    assert.deepEqual(await f.first.call(f.agent.id, 'sessions.list'), []);
+    assert.equal(requests, 0);
+    const [migrated] = JSON.parse(await readFile(f.store, 'utf8'));
+    assert.equal(migrated.url, `http://127.0.0.1:${f.remotePort}/agent-a/`);
+    assert.equal(migrated.token, saved[0].token);
+  } finally { listenGuard.mock.restore(); await new Promise(resolve => occupied.close(resolve)); }
 });
 
-test('closing while the HTTP handshake is pending releases its port and cancels reconnects', async t => {
+test('closing while the HTTP handshake is pending closes channels and cancels reconnects', async t => {
   const f = await fixture(t); f.hold(true);
   const pending = assert.rejects(f.first.connect(f.agent.id));
   await until(() => f.stats().reads === 1, 'handshake reached');
@@ -127,7 +154,7 @@ test('health checks detect a changed remote Agent identity and never adopt it', 
   assert.equal((await f.first.list())[0].agentId, 'stable-agent'); assert.equal(f.stats().mutations, 0);
 });
 
-test('disconnect and remove cancel reconnect attempts and release listening ports', async t => {
+test('disconnect and remove cancel reconnect attempts and close Agent channels', async t => {
   const f = await fixture(t); await f.first.connect(f.agent.id); f.drop();
   await f.first.disconnect(f.agent.id); const count = f.stats().connections; await pause(100);
   assert.equal(f.stats().connections, count); assert.equal((await f.first.list())[0].connectionState, 'disconnected');
@@ -149,7 +176,8 @@ test('an existing direct connection can enable a tunnel without losing token or 
   const before = (await f.first.list())[0];
   await f.first.save({ id: before.id, name: before.name, transport: 'http', url: before.url, sshTunnel: null });
   assert.equal((await f.first.list())[0].sshTunnel, undefined);
-  await f.first.save({ id: before.id, name: before.name, transport: 'http', url: before.url, sshTunnel: before.sshTunnel });
+  assert.equal((await f.first.connect(before.id)).id, before.agentId, 'plain HTTP still connects');
+  await f.first.save({ id: before.id, name: before.name, transport: 'http', sshTunnel: before.sshTunnel });
   await f.first.connect(before.id);
   const after = (await f.first.list())[0]; assert.equal(after.agentId, before.agentId); assert.equal(after.hasToken, true);
 });
@@ -171,9 +199,9 @@ test('shutdown cancels a pending SSH handshake without waiting for its timeout',
   assert.equal(f.stats().reads, 0);
 });
 
-test('Agents share SSH authentication but own independent local listeners', async t => {
-  const f = await fixture(t), port = await freePort();
-  const second = (await f.first.save({ name: 'Second', transport: 'http', url: 'http://127.0.0.1:' + port, token: f.token, sshTunnel: f.agent.sshTunnel })).at(-1);
+test('Agents share SSH authentication but own independent channel pools without local ports', async t => {
+  const f = await fixture(t);
+  const second = (await f.first.save({ name: 'Second', transport: 'http', token: f.token, sshTunnel: f.agent.sshTunnel })).at(-1);
   await Promise.all([f.first.connect(f.agent.id), f.first.connect(second.id)]);
   assert.equal(f.stats().connections, 1);
   await f.first.disconnect(f.agent.id);
@@ -181,22 +209,67 @@ test('Agents share SSH authentication but own independent local listeners', asyn
   assert.deepEqual(await f.first.call(second.id, 'sessions.list'), []);
 });
 
-test('managed tunnels can change their local port while retaining the bound Agent identity', async t => {
+test('SSH connection edits retain identity and validate the remote target', async t => {
   const f = await fixture(t); await f.first.connect(f.agent.id);
-  const port = await freePort();
-  await f.first.save({ id: f.agent.id, name: f.agent.name, transport: 'http', url: 'http://127.0.0.1:' + port, sshTunnel: f.agent.sshTunnel });
+  await f.first.save({ id: f.agent.id, name: 'Renamed', transport: 'http', sshTunnel: f.agent.sshTunnel });
   assert.equal((await f.first.connect(f.agent.id)).id, 'stable-agent');
-  const listener = createServer(); await listen(listener, f.localPort); await new Promise(resolve => listener.close(resolve));
-  await assert.rejects(f.first.save({ name: 'bad', transport: 'http', url: 'https://remote.invalid', token: f.token, sshTunnel: f.agent.sshTunnel }), /本机回环/);
+  await assert.rejects(f.first.save({ name: 'bad', transport: 'http', token: f.token, sshTunnel: { ...f.agent.sshTunnel, remoteHost: 'remote.invalid' } }));
+  await assert.rejects(f.first.save({ name: 'bad', transport: 'http', token: f.token, sshTunnel: { ...f.agent.sshTunnel, remotePort: 0 } }));
+  await assert.rejects(f.first.save({ name: 'bad', transport: 'http', token: f.token }), /服务地址/);
 });
 
-test('a socket arriving as SSH closes cannot throw out of the main process listener', async t => {
+test('opening a channel as SSH closes reports an error instead of throwing from the connector', async t => {
   const client = Object.assign(new EventEmitter(), { forwardOut() { throw Error('Not connected'); } });
-  const port = await freePort();
-  const tunnel = await openSshTunnel(client, 'http://127.0.0.1:' + port, '127.0.0.1', 4780, new AbortController().signal);
+  const tunnel = await openSshTunnel(client, '127.0.0.1', 4780, new AbortController().signal);
   t.after(() => tunnel.close());
-  const socket = connect(port, '127.0.0.1'); socket.on('error', () => {});
-  await new Promise(resolve => socket.once('close', resolve)); await tunnel.closed;
-  const server = createServer(); await listen(server, port); await new Promise(resolve => server.close(resolve));
-  await assert.rejects(openSshTunnel(client, 'http://127.0.0.1:0', '127.0.0.1', 4780, new AbortController().signal), /端口/);
+  await assert.rejects(new Promise((resolve, reject) => tunnel.connect({ protocol: 'http:', hostname: '127.0.0.1', port: '4780' }, (error, stream) => error ? reject(error) : resolve(stream))), /Not connected/);
+  await tunnel.closed;
+  await assert.rejects(openSshTunnel(client, '127.0.0.1', 0, new AbortController().signal), /端口/);
+});
+
+test('aborting a pending channel calls back once and destroys a late channel without closing shared SSH', async t => {
+  let accept, ended = false, callbacks = 0;
+  const client = Object.assign(new EventEmitter(), { forwardOut(_src, _port, _host, _remotePort, done) { accept = done; }, end() { ended = true; } });
+  const abort = new AbortController();
+  const tunnel = await openSshTunnel(client, '127.0.0.1', 4780, abort.signal);
+  t.after(() => tunnel.close());
+  tunnel.connect({ protocol: 'http:', hostname: '127.0.0.1', port: '4780' }, error => { callbacks++; assert.match(error.message, /已关闭/); });
+  abort.abort(); await tunnel.closed;
+  const late = new PassThrough(); accept(null, late);
+  assert.equal(callbacks, 1); assert.equal(late.destroyed, true); assert.equal(ended, false);
+  assert.equal(client.listenerCount('close'), 0); assert.equal(client.listenerCount('error'), 0);
+});
+
+test('SSH connector refuses requests for another destination without opening a channel', async t => {
+  const client = Object.assign(new EventEmitter(), { forwardOut() { assert.fail('unexpected destination'); } });
+  const tunnel = await openSshTunnel(client, '127.0.0.1', 4780, new AbortController().signal);
+  t.after(() => tunnel.close());
+  for (const options of [{ protocol: 'https:', hostname: '127.0.0.1', port: '4780' }, { protocol: 'http:', hostname: 'remote.invalid', port: '4780' }, { protocol: 'http:', hostname: '127.0.0.1', port: '80' }]) {
+    await assert.rejects(new Promise((resolve, reject) => tunnel.connect(options, (error, stream) => error ? reject(error) : resolve(stream))), /目标/);
+  }
+});
+
+for (const format of ['sse', 'ndjson']) test(`${format} over SSH supports simultaneous commands, channel cancellation and replay after reconnect`, async t => {
+  const f = await fixture(t); await f.first.connect(f.agent.id);
+  const events = f.first.events(f.agent.id, { sessionId: 'session', turnId: 'turn' }, new AbortController().signal, format);
+  t.after(() => events.return());
+  assert.equal((await events.next()).value.type, 'ready');
+  const content = '大文件通道测试'.repeat(100_000);
+  const echoed = await f.first.call(f.agent.id, 'files.upload', { content });
+  assert.equal(createHash('sha256').update(echoed).digest('hex'), createHash('sha256').update(content).digest('hex'));
+  assert.ok(f.forwards.length >= 2, 'commands have a channel independent of the event stream');
+  const dropped = assert.rejects(events.next()); f.drop(); await dropped;
+  await until(() => f.connected(), 'reconnect before event replay');
+  const resumed = f.first.events(f.agent.id, { sessionId: 'session', turnId: 'turn', afterSequence: 4 }, new AbortController().signal, format);
+  t.after(() => resumed.return());
+  assert.equal((await resumed.next()).value.type, 'ready'); f.finishEvents();
+  const frame = (await resumed.next()).value;
+  assert.equal(frame.event.sequence, 5); assert.equal(frame.event.payload.text, '通道回复');
+  assert.equal((await resumed.next()).value.type, 'end'); assert.equal((await resumed.next()).done, true);
+  const abort = new AbortController();
+  const cancelled = f.first.events(f.agent.id, { sessionId: 'session', turnId: 'other' }, abort.signal, format);
+  t.after(() => cancelled.return());
+  assert.equal((await cancelled.next()).value.type, 'ready');
+  const pending = assert.rejects(cancelled.next()); abort.abort(); await pending;
+  assert.deepEqual(await f.first.call(f.agent.id, 'sessions.list'), [], 'cancelling a stream leaves command channels usable');
 });

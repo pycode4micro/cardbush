@@ -61,10 +61,16 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
       return { name, blob };
   }, [call, sessionId, enabled]);
   const openFile = useCallback((path: string) => { setPreview({ path, name: path.replaceAll('\\', '/').split('/').at(-1) || path }); }, []);
+  const previewFile = useCallback(async (path: string) => {
+    const api = window.cardbushDesktop?.agents;
+    if (!enabled || !api?.filePreview) throw new Error('请重启更新后的 CardBush，并连接支持文件读取的 Agent。');
+    const preview = await api.filePreview(connectionId, sessionId, path);
+    return { source: preview.url, dispose: () => { void api.releaseFilePreview(preview.id).catch(() => {}); } };
+  }, [connectionId, sessionId, enabled]);
   const host = useMemo<ConversationHost>(() => ({ id: `${connectionId}:${sessionId}`, plugins, pluginCommands: catalog.pluginCommands, uploadFiles, openFile,
     openExtract: id => openFile(`cardbush-extract://${id}.md`),
-    readFile, readDirectory: management ? input => call('files.list', { ...input, sessionId }) : undefined,
+    readFile, previewFile, readDirectory: management ? input => call('files.list', { ...input, sessionId }) : undefined,
     toolDetails: async (sessionId, turnId) => (await client.listTurnToolExecutions({ sessionId, turnId })).map(runtimeHistoryToolExecution),
-  }), [connectionId, sessionId, plugins, catalog.pluginCommands, uploadFiles, openFile, readFile, client, call, management]);
+  }), [connectionId, sessionId, plugins, catalog.pluginCommands, uploadFiles, openFile, readFile, previewFile, client, call, management]);
   return { host, skills: catalog.skills, error, preview, closePreview: () => setPreview(undefined) };
 }

@@ -97,6 +97,7 @@ import { PromptReferenceFallback, PromptReferenceLink } from '../composer/Prompt
 import { parsePromptReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { FileMemoReference } from './FileMemoReference';
+import { ConversationFileReference } from './ConversationFileReference';
 import { FileMemoScope } from './FileMemoScope';
 import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
 import { activeToolStatusLabel } from '../tools/toolExecutionState';
@@ -335,6 +336,14 @@ const RichFileReferencesContext = createContext(true);
 const noPresentedMedia: ReadonlyMap<string, ChatToolArtifact> = new Map();
 const noFilePathAliases: ProjectPathAlias[] = [];
 
+function remoteMarkdownPath(value: string | undefined, workspaceRoot: string) {
+  if (!value || value.startsWith('//') || value.startsWith('#')) return '';
+  const path = markdownLocalFileReference(value, workspaceRoot)?.path;
+  if (path) return path;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return '';
+  try { return decodeURIComponent(value); } catch { return ''; }
+}
+
 const LazyMarkdownContent = recoverableLazy('markdown', async () => {
   const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }] = await Promise.all([
     import('react-markdown'),
@@ -358,15 +367,15 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const host = useContext(ConversationHostContext);
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
-      const remotePath = referenceMode === 'remote' ? markdownLocalFileReference(href, '')?.path ?? href : '';
-      if (referenceMode === 'remote') return href && /^https?:\/\//i.test(href)
-        ? <a href={href} target="_blank" rel="noreferrer">{children}</a> : host && remotePath && (!/^[a-z][a-z0-9+.-]*:/i.test(remotePath) || /^[a-z]:[/\\]/i.test(remotePath))
-          ? <button className="markdown-file-link" onClick={() => host.openFile(remotePath)}>{children}</button> : <span>{children}</span>;
       const contextReference = href && parsePromptReference(href);
       if (contextReference) return <PromptReferenceLink reference={contextReference} />;
       if (href && parseFileMemoReference(href)) return richFileReferences
         ? <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>
         : <span>{children || href}</span>;
+      if (referenceMode === 'remote' && href && !/^(https?:\/\/|#)/i.test(href)) {
+        const path = remoteMarkdownPath(href, workspaceRoot);
+        return host && path ? <ConversationFileReference path={path} language={language}>{children}</ConversationFileReference> : <span>{children}</span>;
+      }
       const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
       if (localPath) {
         if (!richFileReferences) return <span title={localPath}>{children}</span>;
@@ -414,12 +423,14 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
-      const remotePath = referenceMode === 'remote' ? markdownLocalFileReference(src, '')?.path ?? src : '';
-      if (referenceMode === 'remote') return host && remotePath && (!/^[a-z][a-z0-9+.-]*:/i.test(remotePath) || /^[a-z]:[/\\]/i.test(remotePath))
-        ? <button className="markdown-file-link" onClick={() => host.openFile(remotePath)}>{alt || src}</button> : <span>{alt}</span>;
       if (src && parseFileMemoReference(src)) return richFileReferences
         ? <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>
         : <span>{alt}</span>;
+      if (referenceMode === 'remote' && !/^https?:\/\//i.test(src || '')) {
+        const path = remoteMarkdownPath(src, workspaceRoot);
+        return host && path && richFileReferences ? <ConversationFileReference path={path} inline language={language}>{alt}</ConversationFileReference> : <span>{alt}</span>;
+      }
+      if (referenceMode === 'remote' && !richFileReferences) return <span>{alt}</span>;
       const reference = markdownLocalFileReference(src, workspaceRoot);
       const resolvedPath = reference
         ? remapProjectPath(reference.path, pathAliases)
@@ -456,13 +467,14 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       );
     },
     code: ({ children, className, ...props }) => {
-      const { workspaceRoot, pathAliases, referenceMode } = useContext(MarkdownRenderContext);
+      const { workspaceRoot, pathAliases, referenceMode, language } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
       const text = reactNodeText(children).trim();
-      const reference = referenceMode === 'local' && richFileReferences && !className
+      const reference = richFileReferences && !className
         ? localFileReference(text, workspaceRoot)
         : null;
       if (reference) {
+        if (referenceMode === 'remote') return <ConversationFileReference path={reference.path} language={language}>{reference.label}</ConversationFileReference>;
         return (
           <LocalFileReferenceLink
             path={remapProjectPath(reference.path, pathAliases)}
@@ -512,13 +524,13 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode }), [workspaceRoot, pathAliases, language, referenceMode]);
     const remarkPlugins = useMemo(() => {
       const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkAutolinkBoundaries];
-      if (referenceMode === 'local' && richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
+      if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       return plugins;
     }, [workspaceRoot, richFileReferences, referenceMode]);
     const urlTransform = useCallback((url: string) => {
-      if (referenceMode === 'remote') return /^https?:\/\//i.test(url) ? defaultUrlTransform(url) : markdownLocalFileReference(url, '') || (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('//')) ? url : '';
       if (parsePromptReference(url)) return url;
       if (parseFileMemoReference(url)) return url;
+      if (referenceMode === 'remote') return /^(https?:\/\/|#)/i.test(url) ? defaultUrlTransform(url) : remoteMarkdownPath(url, workspaceRoot) ? url : '';
       const reference = markdownLocalFileReference(url, workspaceRoot);
       return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
     }, [workspaceRoot, referenceMode]);

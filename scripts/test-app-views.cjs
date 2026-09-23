@@ -1,6 +1,11 @@
 // Actual extracted views in isolated Chromium: no product profile, real files,
 // network requests, model calls or Runtime subscriptions.
 const { app, BrowserWindow, protocol } = require('electron');
+if (process.env.CARDBUSH_APP_VIEWS_CASE === 'agent-file-preview') {
+  protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-agent', privileges: {
+    standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true,
+  } }]);
+}
 if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-preview') {
   protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: {
     standard: true, secure: true, supportFetchAPI: true, stream: true,
@@ -68,6 +73,10 @@ async function buildViews() {
     'src/features/chatMessages/MessageBubble.tsx',
     'src/features/appearance/useVisualThemeContext.ts',
     'src/features/chatMessages/FileMemoReference.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'agent-file-preview' ? [
+      'src/features/conversationHost.ts', 'src/features/inspector/ConversationHostPreview.tsx',
+      'src/features/agents/useAgentConversationHost.tsx', 'src/features/agents/agentConversationBackend.ts',
+    ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal' ? [
       'src/features/chatMessages/InlineMedia.tsx', 'src/features/chat/chatScrollMotion.ts',
     ] : []),
@@ -130,7 +139,7 @@ app.whenReady().then(async () => {
     } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['html-references', 'html-lifecycle', 'media-reveal', 'review-preview'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'media-reveal', 'review-preview'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -249,6 +258,10 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no review preview renderer errors');
       assert.deepEqual(errors, []);
       return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'agent-file-preview') {
+      await require('./helpers/agent-file-preview.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(errors, []); console.log('Remote Agent previews passed.'); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-references') {
       await require('./helpers/html-references.cjs')({ run, until, pause, window, root });

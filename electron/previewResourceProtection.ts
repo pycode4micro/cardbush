@@ -19,7 +19,7 @@ function metricMemoryBytes(metric: ProcessMetric): number { return (metric.memor
 export function isLocalPreviewUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'file:' || parsed.protocol === 'cardbush-file:';
+    return parsed.protocol === 'file:' || parsed.protocol === 'cardbush-file:' || parsed.protocol === 'cardbush-agent:';
   } catch { return false; }
 }
 

@@ -1,18 +1,19 @@
 import type { AppLanguage, AppSettingsState } from '../../types';
 import { ConversationStyleSettings } from './ConversationStyleSettings';
-import { GlobalInstructionsPanel } from './GlobalInstructionsPanel';
+import { GlobalInstructionsPanel, type InstructionsSource } from './GlobalInstructionsPanel';
 import { SettingsCard, SettingsSelect, SettingsSwitch } from './SettingsControls';
 
-export function SettingsPersonalizationPanel({ language, settings, reasoningStreamAvailable, onSettingsChange }: {
+export function SettingsPersonalizationPanel({ language, settings, reasoningStreamAvailable, onSettingsChange, instructionsSource, responseStyleAvailable = true }: {
+  instructionsSource?: InstructionsSource; responseStyleAvailable?: boolean;
   language: AppLanguage; settings: AppSettingsState; reasoningStreamAvailable: boolean;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
 }) {
   const zh = language === 'zh';
   return <div className="settings-stack personalization-settings-stack">
-    <SettingsCard title={zh ? '回复偏好' : 'Response preferences'}>
+    {responseStyleAvailable && <SettingsCard title={zh ? '回复偏好' : 'Response preferences'}>
       <ConversationStyleSettings language={language} value={settings.conversationStyle}
         onChange={conversationStyle => onSettingsChange(current => ({ ...current, conversationStyle }))} />
-    </SettingsCard>
+    </SettingsCard>}
     <SettingsCard title={zh ? '对话交互' : 'Conversation interaction'}>
       <SettingsSelect name="guidance-delivery-mode" title={zh ? '任务运行时的新消息' : 'Messages sent during a task'}
         subtitle={settings.guidance.deliveryMode === 'immediate'
@@ -30,6 +31,6 @@ export function SettingsPersonalizationPanel({ language, settings, reasoningStre
           ...current, thinking: { ...current.thinking, visible },
         }))} />}
     </SettingsCard>
-    <GlobalInstructionsPanel language={language} />
+    <GlobalInstructionsPanel language={language} source={instructionsSource} />
   </div>;
 }

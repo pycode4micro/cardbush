@@ -123,11 +123,13 @@ try {
     name:'plugin-connections-fixture',enforce:'pre',
     resolveId(id,importer){
       if(id.endsWith('__plugin_connections_fixture__.tsx'))return '\0plugin-fixture.tsx';
-      if(id==='../../backend/api'&&/(?:Plugin(?:ManagementPanel|McpSettings)\.tsx|CoreCapabilitySettings\.tsx|pluginCatalog\.ts)$/.test(importer??''))return '\0plugin-fixture-api';
+      if(id==='../../backend/api'&&/(?:Plugin(?:ManagementPanel|McpSettings)\.tsx|CoreCapabilitySettings\.tsx|pluginCatalog\.ts|SettingsHostContext\.ts)$/.test(importer??''))return '\0plugin-fixture-api';
     },
     load(id){
       if(id==='\0plugin-fixture.tsx')return source;
       if(id==='\0plugin-fixture-api')return `
+        export const fetchMcpServers=async()=>{throw Error('Unexpected standalone MCP read')};
+        export const saveMcpServerConfig=fetchMcpServers,setMcpServerEnabled=fetchMcpServers,deleteMcpServerConfig=fetchMcpServers;
         export async function fetchCardbushAppsConfiguration(){window.fixtureCatalogReads++;if(window.fixtureAppsFailure)throw Error('catalog offline');const value=structuredClone(window.fixtureApps);if(window.deferNextAppsRead){window.deferNextAppsRead=false;await new Promise(resolve=>window.releaseAppsRead=resolve);}return value;}
         export async function saveCardbushAppsConfiguration(value){if(window.marketSaveFails)throw Error('fixture activation failed');if(value.revision!==window.fixtureApps.revision)throw Error('revision conflict');window.fixtureApps={...value,revision:value.revision+1};if(window.proxySyncFails)throw Error('fixture runtime refresh failed');return window.fixtureApps;}
         export async function savePluginSearchResultLimit(limit){window.searchSaveCalls=(window.searchSaveCalls??0)+1;if(window.searchSaveFails)throw Error('fixture search setting failed');if(window.deferSearchSave)await new Promise(resolve=>window.finishSearchSave=resolve);window.fixtureApps={...window.fixtureApps,revision:window.fixtureApps.revision+1,searchResultLimit:limit};return structuredClone(window.fixtureApps);}
@@ -143,6 +145,7 @@ try {
   const css=outputs.filter(item=>item.type==='asset'&&item.fileName.endsWith('.css'));
   await writeFile(join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8">${css.map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
   const require=createRequire(import.meta.url),env={...process.env};
+  if (process.argv.includes('--settings-only')) env.CARDBUSH_PLUGIN_SETTINGS_ONLY = '1';
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
   const worker = coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
   const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});

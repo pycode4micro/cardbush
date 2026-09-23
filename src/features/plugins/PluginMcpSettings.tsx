@@ -1,7 +1,7 @@
+import { useSettingsHost } from '../settings/SettingsHostContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { openAiAppAuthorizationUrl, usesOpenAiHostedConnection, type OpenAiAccountStatus } from '@cardbush/bush-protocol';
 import { OpenAiAccountPanel } from './OpenAiAccountPanel';
-import { fetchCardbushAppsConfiguration, fetchMcpConnectionOverview } from '../../backend/api';
 import { mcpConnectionState, type McpConnectionOverview } from '../../backend/mcpConnectionOverview';
 import type { CardbushAppPlugin } from '../../types';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
@@ -11,6 +11,7 @@ import './mcp-integration.css';
 
 type Json = Record<string, unknown>;
 export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts, onOpenPrompt }: { plugin: CardbushAppPlugin; language: 'zh' | 'en'; onSaved: () => void; onManageAccounts?: () => void; onOpenPrompt?: (prompt: string) => void }) {
+  const host = useSettingsHost();
   const zh = language === 'zh';
   const [draft, setDraft] = useState<Json>(() => record(plugin.config.mcp_servers));
   const [overview, setOverview] = useState<McpConnectionOverview | null>(null);
@@ -30,7 +31,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   const baseline = useRef(remote);
   const refresh = useCallback(async () => {
     const revision = ++readRevision.current;
-    const value = await fetchMcpConnectionOverview();
+    const value = await host.fetchMcpConnectionOverview();
     if (revision === readRevision.current) {
       setOverview(value);
       if (authorizationRef.current && mcpConnectionState(authorizationRef.current, true, value.snapshot, value.revision) === 'connected') {
@@ -38,7 +39,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       }
     }
     return value;
-  }, []);
+  }, [host]);
   const setAuthorization = (id: string) => { authorizationRef.current = id; setAuthorizationTarget(id); };
   useEffect(() => {
     baseline.current = remote; setDraft(JSON.parse(remote)); setSecrets({}); setError(''); setSavedMessage('');
@@ -93,12 +94,13 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
     }
   };
   const save = async () => {
+    if (!host.supportsPluginConnections) return;
     setBusy('save'); setError(''); setSavedMessage('');
     try {
-      const latest = await fetchCardbushAppsConfiguration();
+      const latest = await host.fetchCardbushAppsConfiguration();
       const current = latest.plugins.find(item => item.id === plugin.id);
       if (!current || JSON.stringify(record(current.config.mcp_servers)) !== baseline.current) throw new Error(zh ? '连接配置已在其他位置修改，请重新读取配置。' : 'Connection settings changed elsewhere. Reload the configuration.');
-      const saved = await window.cardbushDesktop!.savePluginConnections({ pluginId: plugin.id, expectedRevision: latest.revision, connections: draft, secrets });
+      const saved = await host.savePluginConnections({ pluginId: plugin.id, expectedRevision: latest.revision, connections: draft, secrets });
       baseline.current = JSON.stringify(saved.connections); setDraft(saved.connections); setSecrets({});
       onSaved();
       if (saved.applicationError || saved.runtimeError) setError(saved.applicationError || saved.runtimeError || '');
@@ -112,7 +114,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
     const revision = ++actionRevision.current;
     setBusy(`${id}:${action}`); setError(''); setSavedMessage('');
     let succeeded = false;
-    try { await window.cardbushDesktop!.mcpConnectionAction(id, action); succeeded = true; }
+    try { await host.mcpConnectionAction(id, action); succeeded = true; }
     catch (caught) { if (revision === actionRevision.current) setError(String(caught)); }
     finally {
       if (revision !== actionRevision.current) return;
@@ -136,7 +138,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   };
   const setConnectionEnabled = async (componentId: string, enabled: boolean) => {
     const id = `plugin_${plugin.id.replaceAll('.', '_')}_${componentId}`;
-    if (changingConnection.current || busy === 'save' || (busy && !busy.startsWith(`${id}:`))) return;
+    if (!host.supportsPluginConnections || changingConnection.current || busy === 'save' || (busy && !busy.startsWith(`${id}:`))) return;
     changingConnection.current = true;
     const revision = ++actionRevision.current;
     actionInFlight.current = true;
@@ -145,11 +147,11 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
     setBusy(`${id}:${enabled ? 'enable' : 'cancel'}`); setError(''); setSavedMessage('');
     try {
       let cancellationError = '';
-      if (!enabled) {
-        try { await window.cardbushDesktop!.mcpConnectionAction(id, 'cancel_login'); }
+      if (!enabled && !host.remote) {
+        try { await host.mcpConnectionAction(id, 'cancel_login'); }
         catch (caught) { cancellationError = String(caught); }
       }
-      const latest = await fetchCardbushAppsConfiguration();
+      const latest = await host.fetchCardbushAppsConfiguration();
       if (revision !== actionRevision.current) return;
       const current = latest.plugins.find(item => item.id === plugin.id);
       if (!current) throw new Error(zh ? '插件已移除，请刷新插件列表。' : 'This plugin was removed. Refresh the plugin list.');
@@ -159,7 +161,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const settings = record(connections[componentId]);
       const required = (settings.required ?? current.components.find(component => component.id === componentId)?.mcp?.required) === true;
       const patch = { enabled, ...(!enabled && required ? { required: false } : {}) };
-      const saved = await window.cardbushDesktop!.savePluginConnections({ pluginId: plugin.id, expectedRevision: latest.revision,
+      const saved = await host.savePluginConnections({ pluginId: plugin.id, expectedRevision: latest.revision,
         connections: { ...connections, [componentId]: { ...record(connections[componentId]), ...patch } } });
       if (revision !== actionRevision.current) return;
       const prior = record(JSON.parse(baseline.current));
@@ -200,7 +202,8 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   const stored = record(JSON.parse(baseline.current));
   return <section className="plugin-detail-section plugin-mcp-settings"><div className="plugin-mcp-heading"><h3>{zh ? '应用连接' : 'App connections'}</h3>
     <button type="button" className="mcp-quiet-action" disabled={Boolean(busy)} onClick={() => void refresh().catch(caught => setError(String(caught)))}>{zh ? '刷新连接状态' : 'Refresh status'}</button></div>
-    {services.some(component => component.mcp?.registeredAppId) && <OpenAiAccountPanel language={language} onChanged={() => void refresh().catch(() => {})} onStatusChange={setOpenAiStatus} onManageAccounts={onManageAccounts} navigationDisabled={dirty || Boolean(busy)} />}
+    {!host.remote && services.some(component => component.mcp?.registeredAppId) && <OpenAiAccountPanel language={language} onChanged={() => void refresh().catch(() => {})} onStatusChange={setOpenAiStatus} onManageAccounts={onManageAccounts} navigationDisabled={dirty || Boolean(busy)} />}
+    {!host.supportsPluginConnections && <p role="status">{zh ? '更新 Agent 服务后可编辑插件连接配置。当前可查看状态和重新连接。' : 'Update the Agent service to edit plugin connections. Status and reconnect remain available.'}</p>}
     {services.map(component => {
       const settings = record(draft[component.id]), connection = record(settings.connection), oauth = record(settings.oauth);
       const id = `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`;
@@ -217,7 +220,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const connectionState = mcpConnectionState(id, enabled, overview?.snapshot ?? null, overview?.revision);
       const pending = connectionState === 'pending';
       const resourceWaiting = connectionState === 'waiting_for_resources';
-      const needsAccount = hosted && openAiStatus?.state !== 'signed_in';
+      const needsAccount = !host.remote && hosted && openAiStatus?.state !== 'signed_in';
       const modified = JSON.stringify(settings) !== JSON.stringify(record(stored[component.id])) || Object.hasOwn(secrets, component.id);
       const ready = !modified && !needsAccount && !missingBinding && connectionState === 'connected';
       const waitingForAuthorization = hosted && authorizationTarget === id;
@@ -238,14 +241,14 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const openHostedAuthorization = !waitingForAuthorization && connectionState !== 'unavailable' && Boolean(authorizationUrl);
       return <div className="plugin-mcp-service" key={component.id}><header><div className="plugin-mcp-identity"><strong>{component.name}</strong><span className="plugin-mcp-status" data-ready={ready}>{status}</span></div>
         {plugin.enabled && !ready && <div className="plugin-mcp-primary-actions">
-          {!enabled ? <button type="button" disabled={Boolean(busy)} onClick={() => void setConnectionEnabled(component.id, true)}>{zh ? '重新启用' : 'Enable again'}</button>
+          {!enabled ? <button type="button" disabled={!host.supportsPluginConnections || Boolean(busy)} onClick={() => void setConnectionEnabled(component.id, true)}>{zh ? '重新启用' : 'Enable again'}</button>
             : <>{!needsAccount && !signingIn && <button type="button" className="mcp-primary-action" disabled={Boolean(busy) || dirty || pending || resourceWaiting || connectionState === 'restarting'} onClick={() => {
-              if (hosted && openHostedAuthorization) void authorizeApp(id, authorizationUrl!);
+              if (!host.remote && hosted && openHostedAuthorization) void authorizeApp(id, authorizationUrl!);
               else if (needsSetup) toggleAdvanced(id, true);
-              else void action(id, !hosted && network && connectionState === 'auth_required' ? 'login' : 'reconnect');
+              else void action(id, !host.remote && !hosted && network && connectionState === 'auth_required' ? 'login' : 'reconnect');
             }}>{hosted ? (waitingForAuthorization ? (zh ? '检查连接' : 'Check connection') : connectionState === 'unavailable' ? (zh ? '重试连接' : 'Retry') : (zh ? '连接' : 'Connect'))
-              : needsSetup ? (zh ? '配置连接' : 'Set up') : connectionState === 'auth_required' ? (zh ? '登录' : 'Sign in') : (zh ? '连接' : 'Connect')}</button>}
-              <button type="button" disabled={cancelling || busy === 'save' || Boolean(busy && !busy.startsWith(`${id}:`))}
+              : needsSetup ? (zh ? '配置连接' : 'Set up') : !host.remote && connectionState === 'auth_required' ? (zh ? '登录' : 'Sign in') : (zh ? '连接' : 'Connect')}</button>}
+              <button type="button" disabled={!host.supportsPluginConnections || cancelling || busy === 'save' || Boolean(busy && !busy.startsWith(`${id}:`))}
                 onClick={() => void setConnectionEnabled(component.id, false)}>{cancelling ? (zh ? '正在取消…' : 'Cancelling…') : (zh ? '取消连接' : 'Cancel connection')}</button></>}
         </div>}</header>
         {onOpenPrompt && enabled && ['unavailable', 'configuration_required', 'auth_required'].includes(connectionState) && <button
@@ -267,16 +270,17 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
         <label><input type="checkbox" checked={settings.enabled !== false} onChange={event => change(component.id, { enabled: event.target.checked })} />{zh ? '启用' : 'Enabled'}</label>
         <label><input type="checkbox" checked={required} onChange={event => change(component.id, { required: event.target.checked })} />{zh ? '必需连接' : 'Required connection'}</label></div>
         {required && (needsConnection || missingBinding || settings.enabled === false) && <p role="alert">{zh ? '此插件需要这条连接。请先配置并启用服务，或明确取消“必需连接”。' : 'This plugin requires this connection. Configure and enable it, or explicitly make it optional.'}</p>}
-        {component.mcp?.registeredAppId && <p><small>{hosted ? (zh ? '连接方式：OpenAI 账户。在下方授权页面使用同一个 OpenAI 账户，登录服务商并授予此应用所需权限。' : 'Connection source: OpenAI account. Use the same OpenAI account on the authorization page below, then sign in to the provider and grant this app access.') : bound
+        {component.mcp?.registeredAppId && <p><small>{host.remote && hosted ? (zh ? '连接方式：Agent 服务端的 OpenAI 账户。授权由服务端管理。' : 'Connection source: the Agent server’s OpenAI account. Authorization is managed on the server.') : hosted ? (zh ? '连接方式：OpenAI 账户。在下方授权页面使用同一个 OpenAI 账户，登录服务商并授予此应用所需权限。' : 'Connection source: OpenAI account. Use the same OpenAI account on the authorization page below, then sign in to the provider and grant this app access.') : bound
           ? (zh ? '连接方式：绑定已有 MCP 服务，使用该服务的认证配置。' : 'Connection source: existing MCP server, using its authentication settings.')
-          : (zh ? '连接方式：服务商直连，使用独立的认证配置。要使用上方已登录的 OpenAI 账户，请将下面的连接方式改为“OpenAI 账户”并保存。' : 'Connection source: direct, with separate authentication. To use the OpenAI account above, select OpenAI account below and save.')}<br />{component.mcp.registeredAppId}</small></p>}
+          : host.remote ? (zh ? '连接方式：服务商直连，使用此 Agent 的独立认证配置。' : 'Connection source: direct, using this Agent’s authentication settings.') : (zh ? '连接方式：服务商直连，使用独立的认证配置。要使用上方已登录的 OpenAI 账户，请将下面的连接方式改为“OpenAI 账户”并保存。' : 'Connection source: direct, with separate authentication. To use the OpenAI account above, select OpenAI account below and save.')}<br />{component.mcp.registeredAppId}</small></p>}
         <div className="mcp-fields">
           {registered && <label>{zh ? '连接方式' : 'Connection source'}<select value={hosted ? '__openai__' : String(settings.server ?? '')} onChange={event => {
             const isOpenAi = event.target.value === '__openai__';
             change(component.id, { provider: isOpenAi ? 'openai' : 'direct', server: isOpenAi ? undefined : event.target.value || undefined });
             if (isOpenAi) setSecrets(current => { const next = { ...current }; delete next[component.id]; return next; });
           }}>
-            {component.mcp?.registeredAppId && <option value="__openai__">{zh ? 'OpenAI 账户（实验性）' : 'OpenAI account (experimental)'}</option>}
+            {!host.remote && component.mcp?.registeredAppId && <option value="__openai__">{zh ? 'OpenAI 账户（实验性）' : 'OpenAI account (experimental)'}</option>}
+            {host.remote && hosted && <option value="__openai__" disabled>{zh ? 'OpenAI 账户（服务端管理）' : 'OpenAI account (server-managed)'}</option>}
             <option value="">{component.kind === 'mcp' ? (zh ? '使用插件内置连接' : 'Use bundled connection') : (zh ? '使用下面的服务地址' : 'Use endpoint below')}</option>
             {bound && !binding && <option value={String(settings.server)}>{String(settings.server)}{zh ? '（不可用）' : ' (unavailable)'}</option>}
             {overview?.servers.map(server => <option key={server.id} value={server.id}>{server.name}{server.enabled ? '' : (zh ? '（已停用）' : ' (disabled)')}</option>)}</select></label>}
@@ -287,7 +291,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
           <label>{zh ? '只启用这些工具（逗号分隔，留空为全部）' : 'Enabled tools (comma separated; blank for all)'}<input value={Array.isArray(settings.enabled_tools) ? settings.enabled_tools.join(', ') : ''}
             onChange={event => change(component.id, { enabled_tools: event.target.value.trim() ? event.target.value.split(',').map(item => item.trim()).filter(Boolean) : undefined })} /></label>
         </div>
-        {network && !hosted && <details><summary>{zh ? 'OAuth 高级配置' : 'OAuth options'}</summary><div className="mcp-fields">
+        {!host.remote && network && !hosted && <details><summary>{zh ? 'OAuth 高级配置' : 'OAuth options'}</summary><div className="mcp-fields">
           {[['clientId', 'client_id', zh ? '客户端 ID（可选）' : 'Client ID (optional)'], ['scopes', 'scopes', zh ? '请求权限（空格分隔）' : 'Scopes (space separated)'],
             ['callbackUrl', 'callback_url', zh ? '本机回调地址（可选）' : 'Loopback callback (optional)'], ['callbackPort', 'callback_port', zh ? '本机回调端口（可选）' : 'Loopback port (optional)'], ['resourceUrl', 'oauth_resource', zh ? 'OAuth 资源地址（可选）' : 'OAuth resource URL (optional)'], ['clientMetadataUrl', 'client_metadata_url', zh ? 'CIMD 文档地址（可选）' : 'CIMD document URL (optional)'],
             ['clientSecretEnv', 'client_secret_env', zh ? '客户端密钥环境变量名（高级）' : 'Client secret environment variable (advanced)']].map(([key, alias, label]) => {
@@ -314,17 +318,17 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
           </select></label>;
         })}</details>}
         {(actual?.lastError || overview?.snapshot?.applicationError) && <details className="plugin-mcp-error"><summary>{zh ? '连接详情' : 'Connection details'}</summary><p>{actual?.lastError || overview?.snapshot?.applicationError}</p></details>}
-        <div className="plugin-mcp-actions">{hosted && authorizationUrl && <button type="button" disabled={Boolean(busy) || dirty || needsAccount} onClick={() => void authorizeApp(id, authorizationUrl)}>{zh ? '在 OpenAI 授权此应用' : 'Authorize this app through OpenAI'}</button>}
-          {network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'login')}>{signingIn ? (zh ? '等待浏览器登录…' : 'Waiting for sign-in…') : (zh ? '登录 / 重新授权' : 'Sign in / authorize')}</button>}
-          {signingIn ? <button type="button" onClick={() => void window.cardbushDesktop!.mcpConnectionAction(id, 'cancel_login').catch(caught => setError(String(caught)))}>{zh ? '取消登录' : 'Cancel sign-in'}</button>
+        <div className="plugin-mcp-actions">{!host.remote && hosted && authorizationUrl && <button type="button" disabled={Boolean(busy) || dirty || needsAccount} onClick={() => void authorizeApp(id, authorizationUrl)}>{zh ? '在 OpenAI 授权此应用' : 'Authorize this app through OpenAI'}</button>}
+          {!host.remote && network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'login')}>{signingIn ? (zh ? '等待浏览器登录…' : 'Waiting for sign-in…') : (zh ? '登录 / 重新授权' : 'Sign in / authorize')}</button>}
+          {signingIn ? <button type="button" onClick={() => void host.mcpConnectionAction(id, 'cancel_login').catch(caught => setError(String(caught)))}>{zh ? '取消登录' : 'Cancel sign-in'}</button>
             : <button type="button" disabled={Boolean(busy) || dirty || unavailable || pending || resourceWaiting || connectionState === 'restarting'} onClick={() => void action(id, 'reconnect')}>{hosted ? (zh ? '检查授权与连接' : 'Check authorization and connection') : (zh ? '重新连接' : 'Reconnect')}</button>}
-          {network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'logout')}>{zh ? '退出登录' : 'Sign out'}</button>}</div></details>
+          {!host.remote && network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'logout')}>{zh ? '退出登录' : 'Sign out'}</button>}</div></details>
       </div>;
     })}
     {dirty && <p role="status">{zh ? '连接配置有未保存的修改，请保存后再登录或连接。' : 'Save your connection changes before signing in or reconnecting.'}</p>}
     {error && <div role="alert" className="plugin-mcp-error"><p>{zh ? '操作未完成，请查看详情后重试。' : 'The action could not be completed. Check the details and try again.'}</p><details><summary>{zh ? '错误详情' : 'Error details'}</summary><p>{error}</p></details></div>}
     {savedMessage && <p role="status" className="plugin-mcp-hint">{savedMessage}</p>}
-    {dirty && <div className="plugin-mcp-actions plugin-mcp-save"><button type="button" className="mcp-primary-action" disabled={Boolean(busy)} onClick={() => void save()}>{zh ? '保存连接配置' : 'Save connection settings'}</button>
+    {dirty && <div className="plugin-mcp-actions plugin-mcp-save"><button type="button" className="mcp-primary-action" disabled={!host.supportsPluginConnections || Boolean(busy)} onClick={() => void save()}>{zh ? '保存连接配置' : 'Save connection settings'}</button>
       <button type="button" disabled={Boolean(busy)} onClick={() => { baseline.current = remote; setDraft(JSON.parse(remote)); setSecrets({}); setError(''); }}>{zh ? '重置修改' : 'Reset changes'}</button></div>}
   </section>;
 }

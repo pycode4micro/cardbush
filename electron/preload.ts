@@ -89,6 +89,8 @@ type ShadowWindowPayload = {
 
 const desktopApi = {
   agents: {
+    filePreview: (id: string, sessionId: string, path: string) => ipcRenderer.invoke('agents:command', 'file-preview', { id, sessionId, path }),
+    releaseFilePreview: (id: string) => ipcRenderer.invoke('agents:command', 'release-file-preview', id),
     list: () => ipcRenderer.invoke('agents:command', 'list'),
     save: (input: unknown) => ipcRenderer.invoke('agents:command', 'save', input),
     remove: (id: string) => ipcRenderer.invoke('agents:command', 'remove', id),

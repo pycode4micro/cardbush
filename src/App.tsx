@@ -362,6 +362,7 @@ function CardbushApp() {
   const [conversationPromptFocus, setConversationPromptFocus] = useState(0);
   const [settingsMounted, setSettingsMounted] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [settingsAgentId, setSettingsAgentId] = useState('');
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>('profile');
   const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
@@ -2001,7 +2002,9 @@ function CardbushApp() {
   const openSettings = useCallback((
     targetSection: SettingsSection = 'profile',
     pluginTab: 'plugins' | 'skills' = 'plugins',
+    agentId = '',
   ) => {
+    setSettingsAgentId(agentId);
     setSettingsInitialSection(targetSection);
     setSettingsPluginTab(pluginTab);
     setSettingsMounted(true);
@@ -2048,8 +2051,9 @@ function CardbushApp() {
     if (nextSection === 'agents') closeInspector();
   }, [closeInspector]);
   const handleAgentSelect = useCallback((id: string, sessionId?: string, view?: 'chat' | 'settings') => {
-    agents.select(id, sessionId, view); setSection('agents'); closeInspector(); if (compactLayout && (sessionId !== undefined || view === 'settings' || !id)) collapseSidebar();
-  }, [agents.select, compactLayout, collapseSidebar, closeInspector]);
+    if (view === 'settings') { openSettings('models', 'plugins', id); return; }
+    agents.select(id, sessionId, view); setSection('agents'); closeInspector(); if (compactLayout && (sessionId !== undefined || !id)) collapseSidebar();
+  }, [agents.select, compactLayout, collapseSidebar, closeInspector, openSettings]);
   useEffect(() => {
     const open = (event: Event) => {
       const target = (event as CustomEvent<AgentConversationTarget>).detail;
@@ -2079,8 +2083,8 @@ function CardbushApp() {
     if (compactLayout) collapseSidebar();
   }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
   const handleSidebarOpenSettings = useCallback(() => {
-    openSettings('profile');
-  }, [openSettings]);
+    openSettings('profile', 'plugins', section === 'agents' ? agents.selectedId : '');
+  }, [openSettings, section, agents.selectedId]);
   const handleSidebarOpenPlugins = useCallback(() => setSection('plugins'), []);
   const handleSearchOpenConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
@@ -2183,6 +2187,7 @@ function CardbushApp() {
       {settingsMounted && (
         <Suspense fallback={null}>
           <LazySettingsView
+            agentConnections={agents.connections} agentId={settingsAgentId} onAgentChange={setSettingsAgentId}
             onOpenPluginPrompt={openPluginPrompt}
             active={settingsVisible}
             onReady={markSettingsReady}
@@ -2287,7 +2292,7 @@ function CardbushApp() {
           )}
           <section className="main-stage" inert={compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
             {section === 'agents' ? (
-              <Suspense fallback={<FeaturePanelLoading language={language} />}><LazyAgentsView language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>
+              <Suspense fallback={<FeaturePanelLoading language={language} />}><LazyAgentsView visualInputEnabled={visualInputEnabledSetting} onOpenSettings={(id, section) => openSettings(section, 'plugins', id)} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>
             ) : section === 'chat' ? (
               <ChatPanel
                 browserTabs={composerBrowserTabs}

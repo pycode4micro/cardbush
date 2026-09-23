@@ -19,6 +19,7 @@ const id = z.string().min(1).max(160);
 const sendSchema = z.object({
   userMessageMetadata: z.record(z.string(), z.unknown()).optional(),
   visionEnabled: z.boolean().optional(),
+  conversationStyle: z.object({ mode: z.enum(['natural', 'professional', 'concise', 'custom']), customTone: z.string().max(100_000) }).strict().optional(),
   turnId: id.optional(), supersession: sessionSupersessionSchema.extend({ expectedRevision: z.number().int().nonnegative() }).optional(), files: z.array(z.string()).optional(), images: z.array(z.string()).optional(), goalObjective: z.string().trim().min(1).optional(),
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
   permissionMode: z.enum(['task_free', 'user_free', 'all_free']).default('task_free'),
@@ -120,7 +121,7 @@ export class AgentService {
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
-    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true } }; }
+    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -383,6 +384,7 @@ export class AgentService {
       case 'product.command': if (String(data.kind).startsWith('maintenance.')) this.#idle(); return this.#product(data);
       case 'plugins.install': return installProductPlugin(z.string().min(1).parse(data.path), join(this.root, 'plugins'), (pluginId, replace) => this.product.replacePlugin(pluginId, replace)).then(async result => { await this.product.refreshMcp(); return result; });
       case 'plugins.uninstall': return this.product.uninstallPlugin(id.parse(data.id));
+      case 'plugins.connections.save': return this.product.savePluginConnections(data);
       case 'plugins.connections': return this.product.listPluginConnections(typeof data.pluginId === 'string' ? data.pluginId : undefined);
       case 'plugins.configure': return this.product.configurePluginConnection(data);
       case 'mcp.list': return this.product.listMcpServers();
@@ -435,7 +437,7 @@ export class AgentService {
       const request = createProductAgentTurnRequest({
         requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, messageId: `message-${job.id}`, createdAt: job.createdAt,
         userText: job.input.text, userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
-        files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
+        conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
         maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens,
         tools: catalog.filter(tool => tool.name !== 'update_goal' || activeGoal?.status === 'active'), projectDir, workspaceDir,
         instructionDocuments: await readAgentInstructionDocuments(this.instructions, projectDir ?? workspaceDir, workspaceDir),

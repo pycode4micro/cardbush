@@ -10,6 +10,7 @@ import { InlineAudio, InlineVideo } from './InlineMedia';
 import { mediaPresentationKey, PresentedMediaContext } from './mediaPresentation';
 import { FileMemoScopeContext } from './FileMemoScope';
 import { ConversationHostContext } from '../conversationHost';
+import { ConversationFileReference } from './ConversationFileReference';
 
 export function FileMemoReference({ reference, children, inline = false, language = 'zh', load = fetchFileMemo }: {
   reference: string; children?: ReactNode; inline?: boolean; language?: 'zh' | 'en';
@@ -20,7 +21,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const { sessionId, turnId } = useContext(FileMemoScopeContext);
   const fileName = typeof children === 'string' && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(children.trim()) ? children.trim() : undefined;
   const [attempt, setAttempt] = useState(0);
-  const key = JSON.stringify([reference, sessionId, turnId, fileName, attempt]);
+  const key = JSON.stringify([host?.id, reference, sessionId, turnId, fileName, attempt]);
   const [state, setState] = useState<{ key: string; result?: FileMemoResolution; failed?: boolean }>();
   const [failedMedia, setFailedMedia] = useState<string>();
   useEffect(() => {
@@ -57,7 +58,6 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const { memo, status, currentVersion } = current.result;
   const label = children || memo.file.name;
   const path = memo.file.path;
-  if (host) return <button type="button" className="markdown-file-link" title={memo.note.purpose} onClick={() => host.openFile(path)}>{label}</button>;
   if (status === 'unavailable') return <span className="local-file-reference-unavailable">
     {label} · {language === 'zh' ? '文件不可访问' : 'File unavailable'}
     {' '}<button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button>
@@ -68,6 +68,10 @@ export function FileMemoReference({ reference, children, inline = false, languag
   // Only a new disk version reloads the guest; focus refreshes retain its state.
   const htmlVersion = currentVersion ? [currentVersion.size, currentVersion.mtimeMs] : [status, memo.file.size, memo.file.mtimeMs];
   const media = inline && (status === 'available' || html) && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
+  if (host) return <span title={memo.note.purpose}>
+    <ConversationFileReference path={path} inline={media} language={language} fileVersion={JSON.stringify(htmlVersion)}>{label}</ConversationFileReference>
+    {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
+  </span>;
   const source = fileUrl(path);
   return <span className="file-memo-reference" title={`${language === 'zh' ? '模型备注' : 'Model note'}: ${memo.note.purpose}`}>
     {media && html ? <InlineHtmlPreview key={path} path={path} fileVersion={JSON.stringify(htmlVersion)} title={typeof label === 'string' ? label : memo.file.name} language={language} />

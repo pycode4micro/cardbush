@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Agent as HttpAgent } from 'undici';
+import { Agent as HttpAgent, type buildConnector } from 'undici';
 import { agentApiPath, type AgentEventFrame, type AgentEventRequest, type AgentInfo, type AgentOperation } from './agentTypes.js';
 
 export class AgentNetworkError extends Error {}
@@ -8,7 +8,7 @@ export class AgentHttpError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-function connectionError(error: unknown, url: URL): Error {
+function connectionError(error: unknown, url: URL, viaSsh: boolean): Error {
   const codes = new Set<string>();
   const seen = new Set<object>();
   function visit(value: unknown) {
@@ -22,11 +22,11 @@ function connectionError(error: unknown, url: URL): Error {
   }
   visit(error);
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  let reason = '网络请求失败，请检查服务地址、网络和代理设置。';
+  let reason = viaSsh ? 'SSH 通道请求失败，请检查 SSH 连接和服务器上的 Agent 服务。' : '网络请求失败，请检查服务地址、网络和代理设置。';
   let code: string | undefined;
   const match = (...values: string[]) => values.find(value => codes.has(value));
   if ((code = match('ECONNREFUSED'))) {
-    reason = local
+    reason = viaSsh ? '服务器上的 Agent 拒绝连接，请检查服务是否运行及端口是否正确。' : local
       ? '连接被拒绝，请确认服务正在运行；远程 Agent 可在连接设置中启用 SSH 隧道自动连接。'
       : '连接被拒绝，请检查服务是否正在监听，以及反向代理和端口配置。';
   } else if ((code = match('ENOTFOUND', 'EAI_AGAIN'))) {
@@ -39,7 +39,7 @@ function connectionError(error: unknown, url: URL): Error {
     reason = '连接中断，请检查服务、反向代理或 SSH 隧道是否仍在运行。';
   }
   // Only expose the origin and known error codes, never request headers, payloads or raw causes.
-  return new AgentNetworkError(`无法连接 Agent（${url.origin}）：${reason}${code ? ` [${code}]` : ''}`, { cause: error });
+  return new AgentNetworkError(`${viaSsh ? '无法通过 SSH 连接 Agent（服务器 ' + url.host : '无法连接 Agent（' + url.origin}）：${reason}${code ? ` [${code}]` : ''}`, { cause: error });
 }
 
 /** Address of the service, optionally behind a reverse proxy path prefix. */
@@ -54,10 +54,11 @@ export class AgentHttpClient {
   readonly #closed = new AbortController();
   readonly #direct?: HttpAgent;
   #agentId?: string;
-  constructor(readonly url: string, private readonly token: string, agentId?: string) {
+  constructor(readonly url: string, private readonly token: string, agentId?: string, private readonly connector?: buildConnector.connector) {
     this.#agentId = agentId;
-    // A local service or SSH listener must not send its token through an environment proxy.
-    if (['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) this.#direct = new HttpAgent();
+    // Local services and SSH channels must not send their token through an environment proxy.
+    if (connector) this.#direct = new HttpAgent({ connect: connector });
+    else if (['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) this.#direct = new HttpAgent();
   }
   close() { this.#closed.abort(); void this.#direct?.destroy().catch(() => undefined); }
   async #fetch(path: string, init: RequestInit, signal?: AbortSignal) {
@@ -70,7 +71,7 @@ export class AgentHttpClient {
     try { response = await fetch(url, { ...init, headers, redirect: 'error', signal: requestSignal, ...(this.#direct ? { dispatcher: this.#direct } : {}) }); }
     catch (error) {
       if (requestSignal.aborted && requestSignal.reason?.name !== 'TimeoutError') throw error;
-      throw connectionError(error, url);
+      throw connectionError(error, url, Boolean(this.connector));
     }
     if (!response.ok) {
       const data = await response.json().catch(() => null) as { error?: { message?: string } } | null;

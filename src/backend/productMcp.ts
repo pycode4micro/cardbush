@@ -118,7 +118,7 @@ function storedServer(server: McpServerConfig) {
   };
 }
 
-function serverFromStored(value: unknown): McpServerConfig | null {
+export function serverFromStored(value: unknown): McpServerConfig | null {
   if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   const id = String(record.id ?? '').trim();

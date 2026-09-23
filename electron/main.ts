@@ -157,6 +157,7 @@ const projectFileSearchMaxResults = 60;
 const localImagePreviewMaxBytes = 32 * 1024 * 1024;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
 protocol.registerSchemesAsPrivileged([
+  { scheme: 'cardbush-agent', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
   {
     scheme: localFileProtocol,
     privileges: {
@@ -2357,6 +2358,12 @@ ipcMain.handle('files:read-workspace-directory', async (event, input: Parameters
 
 let sshConnectionsPromise: Promise<import('./sshConnections.mjs', { with: { 'resolution-mode': 'import' } }).SshConnectionManager> | undefined;
 let agentConnectionsPromise: Promise<import('./agentConnections.mjs', { with: { 'resolution-mode': 'import' } }).AgentConnectionManager> | undefined;
+let agentFilePreviewsPromise: Promise<import('./agentFilePreview.mjs', { with: { 'resolution-mode': 'import' } }).AgentFilePreviews> | undefined;
+function agentFilePreviews() {
+  return agentFilePreviewsPromise ??= import('./agentFilePreview.mjs').then(({ AgentFilePreviews }) => new AgentFilePreviews(
+    async (id, input) => (await agentConnections()).call(id, 'files.read', input), contentTypeForPath));
+}
+const agentPreviewOwners = new Set<number>();
 function agentConnections() {
   return agentConnectionsPromise ??= import('./agentConnections.mjs').then(async ({ AgentConnectionManager }) => {
     const manager = new AgentConnectionManager(path.join(app.getPath('userData'), 'agents', 'connections.json'), {
@@ -2374,6 +2381,19 @@ ipcMain.handle('agents:command', async (event, action: string, input: unknown) =
   assertMainWindowSender(event.sender.id);
   const manager = await agentConnections();
   switch (action) {
+    case 'file-preview': {
+      const request = input as { id: string; sessionId: string; path: string };
+      const owner = event.sender.id;
+      if (!agentPreviewOwners.has(owner)) {
+        agentPreviewOwners.add(owner);
+        const release = () => { void agentFilePreviews().then(previews => previews.releaseOwner(owner)); };
+        event.sender.on('render-process-gone', release);
+        event.sender.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) release(); });
+        event.sender.once('destroyed', () => { agentPreviewOwners.delete(owner); release(); });
+      }
+      return (await agentFilePreviews()).create(owner, request.id, request.sessionId, request.path);
+    }
+    case 'release-file-preview': return (await agentFilePreviews()).release(event.sender.id, String(input));
     case 'list': return manager.list();
     case 'save': return manager.save(input as Parameters<typeof manager.save>[0]);
     case 'remove': return manager.remove(String(input));
@@ -4150,6 +4170,7 @@ async function activeProductSkillRoots(): Promise<ProductSkillRoot[]> {
 }
 
 function registerLocalFileProtocol() {
+  if (!protocol.isProtocolHandled('cardbush-agent')) protocol.handle('cardbush-agent', async request => (await agentFilePreviews()).respond(request));
   if (protocol.isProtocolHandled(localFileProtocol)) {
     return;
   }
@@ -4539,6 +4560,8 @@ function contentTypeForPath(filePath: string) {
     return audioMimeType;
   }
   const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.pdf') return 'application/pdf';
+  if (['.txt', '.csv', '.tsv', '.md'].includes(extension)) return 'text/plain; charset=utf-8';
   if (extension === '.html' || extension === '.htm') {
     return 'text/html; charset=utf-8';
   }

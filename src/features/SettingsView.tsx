@@ -1,3 +1,7 @@
+import type { AgentConnection } from '../../electron/agentTypes';
+import { AgentSettingsContent } from './settings/AgentSettingsContent';
+import { useSettingsHost } from './settings/SettingsHostContext';
+import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
 import { SshConnectionsPanel } from './ssh/SshConnectionsPanel';
@@ -8,12 +12,11 @@ import { ArchivedItemsPanel } from './settings/ArchivedItemsPanel';
 import { SettingsDropdown } from './settings/SettingsDropdown';
 import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
 import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
-import { SettingsCard, SettingsDivider, SettingsRadio, SettingsSwitch, SettingsInput, InfoRow } from './settings/SettingsControls';
+import { SettingsCard, SettingsDivider, SettingsRadio, SettingsInput, InfoRow } from './settings/SettingsControls';
 import { settingsLabels, settingsDescriptions, settingsNavigationGroups, settingsSectionMatchesQuery, visibleSettingsSection, type VisibleSettingsSection } from './settings/settingsNavigation';
 import type { WindowMaterialPreference } from './appearance/windowAppearance';
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
 import type { SoftPanelPresence } from '../hooks/useSoftPanelPresence';
-import { DEFAULT_MAX_CONTEXT_TOKENS as defaultMaxContextTokens } from '@cardbush/bush-product-agent';
 import {
   AlertCircle,
   Archive,
@@ -21,11 +24,8 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
-  ChevronUp,
   Clipboard,
   Cpu,
-  Eye,
-  EyeOff,
   Keyboard,
   LoaderCircle,
   Monitor,
@@ -44,11 +44,9 @@ import {
 } from 'lucide-react';
 import type * as React from 'react';
 import {
-  type FormEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -58,9 +56,7 @@ import {
   clearConversationHistory,
   clearLogsCache,
   clearApplicationCache,
-  deleteMcpServerConfig,
   fetchCardbushAppsConfiguration,
-  fetchMcpServers,
   fetchBackendCapabilities,
   fetchBackendReadiness,
   fetchModelConfigs,
@@ -70,8 +66,6 @@ import {
   isProductHostCommandError,
   resetRuntimeAssets,
   saveCardbushAppsConfiguration,
-  saveMcpServerConfig,
-  setMcpServerEnabled,
   validateMcpServerConfig,
   type MaintenanceClearResult,
   type McpServerConfigInput,
@@ -112,15 +106,6 @@ import type {
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
 const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
-const customProviderValue = '__custom_provider__';
-const suggestedProviders = [
-  'openai',
-  'anthropic',
-  'gemini',
-  'deepseek',
-  'moonshot',
-  'qwen',
-];
 const defaultFontSettings = {
   family: '',
   displayName: '',
@@ -129,9 +114,10 @@ const defaultFontSettings = {
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
   profile: SlidersHorizontal, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
   models: Cpu, mcp: McpLogoIcon, browser: Monitor, 'computer-use': Keyboard,
-  runtime: Terminal, ssh: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
+  projects: PackageOpen, runtime: Terminal, ssh: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
 export function SettingsView({
+  agentConnections = [], agentId = '', onAgentChange,
   active,
   onReady,
   themePreference,
@@ -142,7 +128,6 @@ export function SettingsView({
   systemLanguage,
   settings,
   selectedModel,
-  availableModels,
   backendCapabilities,
   runtimeBusy,
   conversations,
@@ -173,6 +158,7 @@ export function SettingsView({
   visualInputEnabled,
   onVisualInputEnabledChange,
 }: {
+  agentConnections?: AgentConnection[]; agentId?: string; onAgentChange?: (id: string) => void;
   active: boolean;
   onReady: () => void;
   themePreference: ThemePreference;
@@ -220,29 +206,17 @@ export function SettingsView({
   const [settingsQuery, setSettingsQuery] = useState('');
   const [networkTab, setNetworkTab] = useState<'models' | 'plugins'>('models');
   const settingsContentRef = useRef<HTMLElement>(null);
-  const sectionScrollPositions = useRef<Partial<Record<VisibleSettingsSection, number>>>({});
-  const filteredNavigation = settingsNavigationGroups.map(group => ({
+  const sectionScrollPositions = useRef<Record<string, number>>({});
+  const agent = agentConnections.find(item => item.id === agentId);
+  const remoteSections: VisibleSettingsSection[] = ['models', 'mcp', 'projects', 'profile', 'appearance', 'shortcuts', 'cache', 'diagnostics'];
+  const effectiveSection = agent && !remoteSections.includes(section) ? 'models' : !agent && section === 'projects' ? 'models' : section;
+  const scrollKey = `${agent?.id ?? 'local'}:${effectiveSection}`;
+  const navigation = agent ? settingsNavigationGroups.map(group => ({ ...group, sections: [...group.sections.filter(id => remoteSections.includes(id)), ...(group.label.en === 'Capabilities' ? ['projects' as const] : [])] })) : settingsNavigationGroups;
+  const filteredNavigation = navigation.map(group => ({
     ...group, sections: group.sections.filter(id => settingsSectionMatchesQuery(id, settingsQuery)),
   })).filter(group => group.sections.length > 0);
-  const [providerSelection, setProviderSelection] = useState(
-    settings.managedModelConfigs[0]?.provider || suggestedProviders[0],
-  );
-  const [customProvider, setCustomProvider] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [modelName, setModelName] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [maxContextTokens, setMaxContextTokens] = useState(
-    String(defaultMaxContextTokens),
-  );
-  const [maxCompletionTokens, setMaxCompletionTokens] = useState('');
-  const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
   const [pluginMcpTarget, setPluginMcpTarget] = useState<{ serverId?: string } | null>(null);
-  const providerOptions = useMemo(
-    () => collectProviderOptions(settings.managedModelConfigs),
-    [settings.managedModelConfigs],
-  );
-
   useLayoutEffect(() => {
     onReady();
   }, [onReady]);
@@ -254,14 +228,8 @@ export function SettingsView({
   }, [initialSection]);
 
   useLayoutEffect(() => {
-    if (settingsContentRef.current) settingsContentRef.current.scrollTop = sectionScrollPositions.current[section] ?? 0;
-  }, [section]);
-
-  useEffect(() => {
-    if (!providerOptions.includes(providerSelection)) {
-      setProviderSelection(providerOptions[0] ?? suggestedProviders[0]);
-    }
-  }, [providerOptions, providerSelection]);
+    if (settingsContentRef.current) settingsContentRef.current.scrollTop = sectionScrollPositions.current[scrollKey] ?? 0;
+  }, [scrollKey]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -283,213 +251,6 @@ export function SettingsView({
       }));
     },
     [updateSettings],
-  );
-
-  const addModelConfig = useCallback(
-    (event?: FormEvent) => {
-      event?.preventDefault();
-      const provider = normalizeProvider(
-        providerSelection === customProviderValue ? customProvider : providerSelection,
-      );
-      const nextModel = modelName.trim();
-      if (!provider) {
-        notify(language === 'zh' ? '请输入模型商名称' : 'Enter a provider name');
-        return;
-      }
-      if (!nextModel) {
-        notify(language === 'zh' ? '请输入模型名称' : 'Enter a model name');
-        return;
-      }
-      const nextMaxContextTokens = normalizeMaxContextTokens(maxContextTokens);
-      const nextMaxCompletionTokens = normalizeMaxCompletionTokens(maxCompletionTokens);
-      if (
-        nextMaxContextTokens &&
-        nextMaxCompletionTokens &&
-        nextMaxCompletionTokens >= nextMaxContextTokens
-      ) {
-        notify(
-          language === 'zh'
-            ? '最大输出 token 必须小于最大上下文 token'
-            : 'Max output tokens must be less than max context tokens',
-        );
-        return;
-      }
-      updateSettings((current) => ({
-        ...current,
-        managedModelConfigs: [
-          ...current.managedModelConfigs,
-          {
-            id: newModelConfigId(),
-            provider,
-            apiKey,
-            modelName: nextModel,
-            baseUrl,
-            ...(
-              nextMaxContextTokens
-                ? { maxContextTokens: nextMaxContextTokens }
-                : {}
-            ),
-            ...(
-              nextMaxCompletionTokens
-                ? {
-                    maxCompletionTokens: nextMaxCompletionTokens,
-                  }
-                : {}
-            ),
-          },
-        ],
-      }));
-      setProviderSelection(provider);
-      setModelName('');
-      setMaxContextTokens(String(defaultMaxContextTokens));
-      setMaxCompletionTokens('');
-      notify(language === 'zh' ? '模型配置已添加' : 'Model configuration added');
-    },
-    [
-      apiKey,
-      baseUrl,
-      customProvider,
-      language,
-      maxContextTokens,
-      maxCompletionTokens,
-      modelName,
-      notify,
-      providerSelection,
-      updateSettings,
-    ],
-  );
-
-  const removeModelConfig = useCallback(
-    (id: string) => {
-      updateSettings((current) => ({
-        ...current,
-        managedModelConfigs: current.managedModelConfigs.filter(
-          (item) => item.id !== id,
-        ),
-      }));
-    },
-    [updateSettings],
-  );
-
-  const updateModelContextTokens = useCallback(
-    (id: string, value: string) => {
-      const trimmed = value.trim();
-      const normalized = normalizeMaxContextTokens(trimmed);
-      if (trimmed && !normalized) {
-        notify(
-          language === 'zh'
-            ? '最大上下文 token 必须是大于 0 的数字'
-            : 'Max context tokens must be a number greater than 0',
-        );
-        return;
-      }
-      const existing = settings.managedModelConfigs.find((item) => item.id === id);
-      if (
-        normalized &&
-        existing?.maxCompletionTokens &&
-        existing.maxCompletionTokens >= normalized
-      ) {
-        notify(
-          language === 'zh'
-            ? '最大上下文 token 必须大于当前最大输出 token'
-            : 'Max context tokens must be greater than the current max output tokens',
-        );
-        return;
-      }
-      updateSettings((current) => ({
-        ...current,
-        managedModelConfigs: current.managedModelConfigs.map((item) => {
-          if (item.id !== id) {
-            return item;
-          }
-          if (!trimmed) {
-            const { maxContextTokens: _removed, ...withoutContextTokens } = item;
-            return withoutContextTokens;
-          }
-          return { ...item, maxContextTokens: normalized };
-        }),
-      }));
-      notify(
-        language === 'zh'
-          ? '最大上下文 token 已更新'
-          : 'Max context tokens updated',
-      );
-    },
-    [language, notify, settings.managedModelConfigs, updateSettings],
-  );
-
-  const updateModelCompletionTokens = useCallback(
-    (id: string, value: string) => {
-      const trimmed = value.trim();
-      const normalized = normalizeMaxCompletionTokens(trimmed);
-      if (trimmed && !normalized) {
-        notify(
-          language === 'zh'
-            ? '最大输出 token 必须是大于 0 的数字'
-            : 'Max output tokens must be a number greater than 0',
-        );
-        return;
-      }
-      const existing = settings.managedModelConfigs.find((item) => item.id === id);
-      if (
-        normalized &&
-        existing?.maxContextTokens &&
-        normalized >= existing.maxContextTokens
-      ) {
-        notify(
-          language === 'zh'
-            ? '最大输出 token 必须小于当前最大上下文 token'
-            : 'Max output tokens must be less than the current max context tokens',
-        );
-        return;
-      }
-      updateSettings((current) => ({
-        ...current,
-        managedModelConfigs: current.managedModelConfigs.map((item) => {
-          if (item.id !== id) {
-            return item;
-          }
-          if (!trimmed) {
-            const { maxCompletionTokens: _removed, ...withoutCompletionTokens } = item;
-            return withoutCompletionTokens;
-          }
-          return { ...item, maxCompletionTokens: normalized };
-        }),
-      }));
-      notify(
-        language === 'zh'
-          ? '最大输出 token 已更新'
-          : 'Max output tokens updated',
-      );
-    },
-    [language, notify, settings.managedModelConfigs, updateSettings],
-  );
-
-  const resetModels = useCallback(() => {
-    updateSettings((current) => ({ ...current, managedModelConfigs: [] }));
-    onUseModel('');
-    notify(language === 'zh' ? '已清空模型配置' : 'Model configurations cleared');
-  }, [language, notify, onUseModel, updateSettings]);
-
-  const useModel = useCallback(
-    (modelConfigId: string) => {
-      const config = availableModels.find((item) => item.id === modelConfigId);
-      if (!config) {
-        notify(
-          language === 'zh'
-            ? '切换失败：当前模型配置不存在'
-            : 'Switch failed: the model configuration no longer exists',
-        );
-        return;
-      }
-      onUseModel(config.id);
-      notify(
-        language === 'zh'
-          ? `已切换当前模型：${config.provider} / ${config.modelName}`
-          : `Current model switched: ${config.provider} / ${config.modelName}`,
-      );
-    },
-    [availableModels, language, notify, onUseModel],
   );
 
   const importFont = useCallback(async () => {
@@ -554,19 +315,20 @@ export function SettingsView({
   }, [updateSettings]);
 
   const content = (() => {
-    if (section === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
-    if (section === 'browser') return <BrowserSettingsPanel language={language} />;
-    if (section === 'ssh') return <SshConnectionsPanel language={language} projects={projects} />;
-    if (section === 'computer-use') return <ComputerUseSettingsPanel language={language} />;
-    if (section === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
+    if (agent && !['appearance', 'shortcuts'].includes(effectiveSection)) return active ? <AgentSettingsContent key={agent.id} connection={agent} section={effectiveSection} language={language} settings={settings} onSettingsChange={onSettingsChange} visualInputEnabled={visualInputEnabled} onNotify={notify} initialPluginTab={initialPluginTab}/> : null;
+    if (effectiveSection === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
+    if (effectiveSection === 'browser') return <BrowserSettingsPanel language={language} />;
+    if (effectiveSection === 'ssh') return <SshConnectionsPanel language={language} projects={projects} />;
+    if (effectiveSection === 'computer-use') return <ComputerUseSettingsPanel language={language} />;
+    if (effectiveSection === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
       reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
-    if (section === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
-    if (section === 'appearance') return <SettingsAppearancePanel
+    if (effectiveSection === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
+    if (effectiveSection === 'appearance') return <SettingsAppearancePanel
       themePreference={themePreference} windowMaterial={windowMaterial} onWindowMaterialChange={onWindowMaterialChange}
       language={language} languageMode={languageMode} systemLanguage={systemLanguage} settings={settings}
       onThemePreferenceChange={onThemePreferenceChange} onLanguageModeChange={onLanguageModeChange}
       onImportFont={importFont} onResetFont={resetFont} onImportThemeStyle={importThemeStyle} onResetImportedThemeStyle={resetImportedThemeStyle} />;
-    if (section === 'runtime') {
+    if (effectiveSection === 'runtime') {
       return (
         <div className="settings-stack">
           <SettingsCard
@@ -667,7 +429,7 @@ export function SettingsView({
         </div>
       );
     }
-    if (section === 'proxy') {
+    if (effectiveSection === 'proxy') {
       return (
         <div className="settings-stack network-settings-stack">
         <div className="settings-page-tabs" role="tablist" aria-label={language === 'zh' ? '网络代理类别' : 'Proxy category'}>
@@ -771,42 +533,18 @@ export function SettingsView({
         </div>
       );
     }
-    if (section === 'models') {
-      return (
-        <ModelsSettingsPanel
-          language={language}
-          settings={settings}
-          selectedModel={selectedModel}
-          providerOptions={providerOptions}
-          providerSelection={providerSelection}
-          customProvider={customProvider}
-          apiKey={apiKey}
-          modelName={modelName}
-          baseUrl={baseUrl}
-          maxContextTokens={maxContextTokens}
-          maxCompletionTokens={maxCompletionTokens}
-          showApiKey={showApiKey}
-          onProviderSelectionChange={setProviderSelection}
-          onCustomProviderChange={setCustomProvider}
-          onApiKeyChange={setApiKey}
-          onModelNameChange={setModelName}
-          onBaseUrlChange={setBaseUrl}
-          onMaxContextTokensChange={setMaxContextTokens}
-          onMaxCompletionTokensChange={setMaxCompletionTokens}
-          onShowApiKeyChange={setShowApiKey}
-          visualInputAvailable={visualInputAvailable}
-          visualInputEnabled={visualInputEnabled}
-          onVisualInputEnabledChange={onVisualInputEnabledChange}
-          onAddModelConfig={addModelConfig}
-          onResetModels={resetModels}
-          onRemoveModelConfig={removeModelConfig}
-          onUpdateModelContextTokens={updateModelContextTokens}
-          onUpdateModelCompletionTokens={updateModelCompletionTokens}
-          onUseModel={useModel}
-        />
-      );
-    }
-    if (section === 'mcp') {
+    if (effectiveSection === 'models') return <ModelsSettingsPanel language={language}
+      models={{ defaultModelId: selectedModel, models: settings.managedModelConfigs }}
+      onSave={async config => {
+        const merged = config.models.map(model => ({ ...model,
+          apiKey: model.apiKey || settings.managedModelConfigs.find(item => item.id === model.id)?.apiKey || '',
+        }));
+        onSettingsChange(current => ({ ...current, managedModelConfigs: merged }));
+        if (selectedModel !== config.defaultModelId) onUseModel(config.defaultModelId);
+        return { ...config, models: merged };
+      }} onRefresh={async () => {}} onSelect={onUseModel} discoverModels={requestProviderModels}
+      visualInputAvailable={visualInputAvailable} visualInputEnabled={visualInputEnabled} onVisualInputEnabledChange={onVisualInputEnabledChange}/>;
+    if (effectiveSection === 'mcp') {
       return pluginMcpTarget ? (
         <div className="plugin-mcp-settings">
           <button className="plugin-back" type="button" onClick={() => setPluginMcpTarget(null)}>
@@ -839,7 +577,7 @@ export function SettingsView({
         />
       );
     }
-    if (section === 'cache') {
+    if (effectiveSection === 'cache') {
       return (
         <div className="settings-stack">
         <ArchivedItemsPanel language={language} conversations={conversations} projects={projects}
@@ -855,7 +593,7 @@ export function SettingsView({
         </div>
       );
     }
-    if (section === 'diagnostics') {
+    if (effectiveSection === 'diagnostics') {
       return (
         <div className="settings-stack">
         <DiagnosticsPanel
@@ -909,9 +647,9 @@ export function SettingsView({
                 return (
                   <button
                     key={id}
-                    className={`settings-nav ${section === id ? 'active' : ''}`}
+                    className={`settings-nav ${effectiveSection === id ? 'active' : ''}`}
                     type="button"
-                    aria-current={section === id ? 'page' : undefined}
+                    aria-current={effectiveSection === id ? 'page' : undefined}
                     data-settings-section={id}
                     onClick={() => { setSection(id); setSettingsQuery(''); if (compactLayout) onSidebarCollapse(); }}
                   >
@@ -932,13 +670,19 @@ export function SettingsView({
       <section className="settings-content" ref={settingsContentRef} inert={compactLayout && !sidebarCollapsed ? true : undefined}
         onScroll={event => { sectionScrollPositions.current[section] = event.currentTarget.scrollTop; }}>
         <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
-          {section !== 'mcp' && <header className="settings-page-header">
+          {onAgentChange && <div className="settings-target"><span>{language === 'zh' ? '设置环境' : 'Settings for'}</span>
+            <SettingsDropdown label={language === 'zh' ? '设置环境' : 'Settings for'} value={agent?.id ?? ''}
+              options={[{ value: '', label: language === 'zh' ? '本机' : 'This device' }, ...agentConnections.map(item => ({ value: item.id, label: item.name }))]}
+              onChange={id => { onAgentChange(id); setSettingsQuery(''); setPluginMcpTarget(null); }}/>
+            {['appearance', 'shortcuts'].includes(effectiveSection) && <small>{language === 'zh' ? '所有环境共用' : 'Shared across environments'}</small>}
+          </div>}
+          {effectiveSection !== 'mcp' && <header className="settings-page-header">
             <div>
-              <h2>{settingsLabels[section][language]}</h2>
-              <p>{settingsDescriptions[section][language]}</p>
+              <h2>{settingsLabels[effectiveSection][language]}</h2>
+              <p>{settingsDescriptions[effectiveSection][language]}</p>
             </div>
           </header>}
-          {content}
+          <div key={agent?.id ?? 'local'}>{content}</div>
         </div>
       </section>
     </main>
@@ -947,383 +691,8 @@ export function SettingsView({
   );
 }
 
-function ModelsSettingsPanel({
-  language,
-  settings,
-  selectedModel,
-  providerOptions,
-  providerSelection,
-  customProvider,
-  apiKey,
-  modelName,
-  baseUrl,
-  maxContextTokens,
-  maxCompletionTokens,
-  showApiKey,
-  onProviderSelectionChange,
-  onCustomProviderChange,
-  onApiKeyChange,
-  onModelNameChange,
-  onBaseUrlChange,
-  onMaxContextTokensChange,
-  onMaxCompletionTokensChange,
-  onShowApiKeyChange,
-  visualInputAvailable,
-  visualInputEnabled,
-  onVisualInputEnabledChange,
-  onAddModelConfig,
-  onResetModels,
-  onRemoveModelConfig,
-  onUpdateModelContextTokens,
-  onUpdateModelCompletionTokens,
-  onUseModel,
-}: {
-  language: AppLanguage;
-  settings: AppSettingsState;
-  selectedModel: string;
-  providerOptions: string[];
-  providerSelection: string;
-  customProvider: string;
-  apiKey: string;
-  modelName: string;
-  baseUrl: string;
-  maxContextTokens: string;
-  maxCompletionTokens: string;
-  showApiKey: boolean;
-  onProviderSelectionChange: (value: string) => void;
-  onCustomProviderChange: (value: string) => void;
-  onApiKeyChange: (value: string) => void;
-  onModelNameChange: (value: string) => void;
-  onBaseUrlChange: (value: string) => void;
-  onMaxContextTokensChange: (value: string) => void;
-  onMaxCompletionTokensChange: (value: string) => void;
-  onShowApiKeyChange: (value: boolean) => void;
-  visualInputAvailable: boolean;
-  visualInputEnabled: boolean;
-  onVisualInputEnabledChange: (enabled: boolean) => void;
-  onAddModelConfig: (event?: FormEvent) => void;
-  onResetModels: () => void;
-  onRemoveModelConfig: (id: string) => void;
-  onUpdateModelContextTokens: (id: string, value: string) => void;
-  onUpdateModelCompletionTokens: (id: string, value: string) => void;
-  onUseModel: (model: string) => void;
-}) {
-  const grouped = groupModelConfigs(settings.managedModelConfigs);
-  const providers = Object.keys(grouped).sort();
-  const [modelDiscovery, setModelDiscovery] = useState<{
-    status: 'idle' | 'loading' | 'ready' | 'error';
-    endpoint: string;
-    models: string[];
-    message: string;
-  }>({
-    status: 'idle',
-    endpoint: '',
-    models: [],
-    message: '',
-  });
-  const [addModelExpanded, setAddModelExpanded] = useState(false);
-
-  const confirmResetModels = useCallback(() => {
-    const count = settings.managedModelConfigs.length;
-    if (count === 0) return;
-    const confirmed = window.confirm(
-      language === 'zh'
-        ? `确定清空全部 ${count} 个模型配置吗？保存的 API Key、服务地址和 token 上限都会被移除，此操作无法撤销。`
-        : `Clear all ${count} model configurations? Saved API keys, endpoints, and token limits will be removed. This cannot be undone.`,
-    );
-    if (confirmed) onResetModels();
-  }, [language, onResetModels, settings.managedModelConfigs.length]);
-
-  useEffect(() => {
-    setModelDiscovery((current) =>
-      current.status === 'idle'
-        ? current
-        : { status: 'idle', endpoint: '', models: [], message: '' },
-    );
-  }, [apiKey, baseUrl]);
-
-  const fetchProviderModels = useCallback(async () => {
-    const trimmedBaseUrl = baseUrl.trim();
-    const trimmedApiKey = apiKey.trim();
-    if (!trimmedBaseUrl) {
-      setModelDiscovery({
-        status: 'error',
-        endpoint: '',
-        models: [],
-        message: language === 'zh' ? '请先填写 base_url' : 'Enter base_url first',
-      });
-      return;
-    }
-    if (!trimmedApiKey) {
-      setModelDiscovery({
-        status: 'error',
-        endpoint: '',
-        models: [],
-        message: language === 'zh' ? '请先填写 api_key' : 'Enter api_key first',
-      });
-      return;
-    }
-    let endpoint = '';
-    try {
-      endpoint = modelListEndpoint(trimmedBaseUrl);
-    } catch (caught) {
-      setModelDiscovery({
-        status: 'error',
-        endpoint: '',
-        models: [],
-        message: errorMessage(caught),
-      });
-      return;
-    }
-    setModelDiscovery({
-      status: 'loading',
-      endpoint,
-      models: [],
-      message: language === 'zh' ? '正在请求 /models...' : 'Requesting /models...',
-    });
-    try {
-      const result = await requestProviderModels(trimmedBaseUrl, trimmedApiKey);
-      setModelDiscovery({
-        status: 'ready',
-        endpoint: result.endpoint,
-        models: result.models,
-        message:
-          result.models.length > 0
-            ? language === 'zh'
-              ? `已获取 ${result.models.length} 个模型`
-              : `Loaded ${result.models.length} models`
-            : language === 'zh'
-              ? '请求成功，但响应里没有可用模型 id'
-              : 'Request succeeded, but no model ids were found',
-      });
-      if (!modelName.trim() && result.models[0]) {
-        onModelNameChange(result.models[0]);
-      }
-    } catch (caught) {
-      setModelDiscovery({
-        status: 'error',
-        endpoint,
-        models: [],
-        message: errorMessage(caught),
-      });
-    }
-  }, [apiKey, baseUrl, language, modelName, onModelNameChange]);
-
-  return (
-    <div className="settings-stack model-settings-stack">
-      <SettingsCard title={language === 'zh' ? '模型输入' : 'Model input'}>
-        <SettingsSwitch
-          title={language === 'zh' ? '视觉功能' : 'Vision input'}
-          subtitle={visualInputAvailable
-            ? (language === 'zh' ? '允许模型直接接收图片。请使用支持视觉输入的模型；关闭后仍可通过文件工具处理图片。' : 'Allow native image input with a vision-capable model. File tools remain available when disabled.')
-            : (language === 'zh' ? '当前运行环境未提供视觉输入。' : 'Vision input is unavailable in the current runtime.')}
-          checked={visualInputEnabled}
-          disabled={!visualInputAvailable}
-          onChange={onVisualInputEnabledChange}
-        />
-      </SettingsCard>
-      <SettingsCard
-        title={language === 'zh' ? '添加模型' : 'Add model'}
-        subtitle={
-          language === 'zh'
-            ? '连接模型服务，选择模型并保存。'
-            : 'Connect a provider, choose a model, and save it.'
-        }
-        bodyHidden={!addModelExpanded}
-        headerAction={(
-          <button
-            className="secondary-button model-form-disclosure"
-            type="button"
-            aria-expanded={addModelExpanded}
-            onClick={() => setAddModelExpanded((current) => !current)}
-          >
-            {addModelExpanded ? <ChevronUp size={14} /> : <Plus size={14} />}
-            {addModelExpanded
-              ? language === 'zh' ? '收起' : 'Collapse'
-              : language === 'zh' ? '添加模型' : 'Add model'}
-          </button>
-        )}
-      >
-        <form className="model-form" onSubmit={onAddModelConfig}>
-          <div className="model-form-grid">
-            <label>
-              <span>{language === 'zh' ? '模型商' : 'Provider'}</span>
-              <SettingsDropdown label={language === 'zh' ? '模型商' : 'Provider'} value={providerSelection}
-                onChange={onProviderSelectionChange} options={providerOptions.map(provider => ({ value: provider,
-                  label: provider === customProviderValue ? language === 'zh' ? '模型商名称...' : 'Provider name...' : provider }))} />
-            </label>
-            <SettingsInput
-              label="base_url"
-              value={baseUrl}
-              placeholder="https://api.openai.com/v1"
-              onChange={onBaseUrlChange}
-            />
-          </div>
-          {providerSelection === customProviderValue && (
-            <SettingsInput
-              label={language === 'zh' ? '模型商名称' : 'Provider name'}
-              value={customProvider}
-              placeholder="myprovider"
-              onChange={onCustomProviderChange}
-            />
-          )}
-          <div className="model-credentials-row">
-            <label>
-              <span>api_key</span>
-              <div className="password-field">
-                <input
-                  value={apiKey}
-                  type={showApiKey ? 'text' : 'password'}
-                  placeholder={`${language === 'zh' ? '模型商' : 'Provider'} API Key`}
-                  onChange={(event) => onApiKeyChange(event.currentTarget.value)}
-                />
-                <button
-                  type="button"
-                  title={showApiKey ? (language === 'zh' ? '隐藏' : 'Hide') : (language === 'zh' ? '显示' : 'Show')}
-                  onClick={() => onShowApiKeyChange(!showApiKey)}
-                >
-                  {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-              </div>
-            </label>
-            <button
-              className="secondary-button model-fetch-button"
-              type="button"
-              disabled={modelDiscovery.status === 'loading'}
-              onClick={() => void fetchProviderModels()}
-            >
-              {modelDiscovery.status === 'loading' ? (
-                <LoaderCircle size={14} />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {language === 'zh' ? '获取模型列表' : 'Fetch models'}
-            </button>
-          </div>
-          {modelDiscovery.status !== 'idle' && (
-            <div className={`model-discovery-panel ${modelDiscovery.status}`}>
-              <div className="model-discovery-head">
-                <strong>{modelDiscovery.message}</strong>
-                {modelDiscovery.endpoint && <code>{modelDiscovery.endpoint}</code>}
-              </div>
-              {modelDiscovery.models.length > 0 && (
-                <div className="model-discovery-list">
-                  {modelDiscovery.models.slice(0, 24).map((model) => (
-                    <button
-                      key={model}
-                      className={modelName.trim() === model ? 'active' : ''}
-                      type="button"
-                      onClick={() => onModelNameChange(model)}
-                    >
-                      {model}
-                    </button>
-                  ))}
-                  {modelDiscovery.models.length > 24 && (
-                    <span>
-                      +{modelDiscovery.models.length - 24}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="model-form-grid model-form-grid-final">
-            <SettingsInput
-              label={language === 'zh' ? '模型名称' : 'Model name'}
-              value={modelName}
-              placeholder="gpt-4.1-mini"
-              onChange={onModelNameChange}
-            />
-            <SettingsInput
-              label={language === 'zh' ? '最大上下文 token' : 'Max context tokens'}
-              value={maxContextTokens}
-              placeholder={String(defaultMaxContextTokens)}
-              onChange={onMaxContextTokensChange}
-            />
-            <SettingsInput
-              label={
-                language === 'zh'
-                  ? '最大输出 token（可选）'
-                  : 'Max output tokens (optional)'
-              }
-              value={maxCompletionTokens}
-              placeholder={language === 'zh' ? '供应商默认' : 'Provider default'}
-              onChange={onMaxCompletionTokensChange}
-            />
-          </div>
-          <div className="settings-actions">
-            <button className="primary-button" type="submit">
-              <Plus size={14} />
-              {language === 'zh' ? '添加模型' : 'Add model'}
-            </button>
-          </div>
-        </form>
-      </SettingsCard>
-      {providers.length === 0 ? (
-        <SettingsCard
-          title={language === 'zh' ? '模型列表' : 'Model list'}
-          subtitle={
-            language === 'zh'
-              ? '未配置模型时，输入框会显示“待配置”，点击会回到此页。'
-              : 'When no model is configured, the composer shows Configure and opens this page.'
-          }
-        >
-          <p className="settings-muted">
-            {language === 'zh' ? '暂无数据' : 'No data'}
-          </p>
-        </SettingsCard>
-      ) : (
-        <SettingsCard
-          title={language === 'zh' ? '已配置模型' : 'Configured models'}
-          subtitle={
-            language === 'zh'
-              ? `${settings.managedModelConfigs.length} 个模型`
-              : `${settings.managedModelConfigs.length} models`
-          }
-          headerAction={(
-            <button
-              className="secondary-button danger model-clear-all-button"
-              type="button"
-              onClick={confirmResetModels}
-            >
-              <RotateCcw size={14} />
-              {language === 'zh' ? '清空全部' : 'Clear all'}
-            </button>
-          )}
-        >
-          <div className="model-provider-list">
-            {providers.map((provider) => (
-              <section className="model-provider-group" key={provider}>
-                <header>
-                  <strong>{provider}</strong>
-                  <span>{grouped[provider].length}</span>
-                </header>
-                {grouped[provider].map((config) => (
-                  <ModelConfigRow
-                    key={config.id}
-                    config={config}
-                    language={language}
-                    selected={selectedModel === config.id}
-                    onUse={() => onUseModel(config.id)}
-                    onDelete={() => onRemoveModelConfig(config.id)}
-                    onSaveContextTokens={(value) =>
-                      onUpdateModelContextTokens(config.id, value)
-                    }
-                    onSaveCompletionTokens={(value) =>
-                      onUpdateModelCompletionTokens(config.id, value)
-                    }
-                  />
-                ))}
-              </section>
-            ))}
-          </div>
-        </SettingsCard>
-      )}
-    </div>
-  );
-}
-
-function CacheMaintenancePanel({
+export function CacheMaintenancePanel({
+  scopeName, clear,
   language,
   capabilities,
   onNotify,
@@ -1331,6 +700,7 @@ function CacheMaintenancePanel({
   runtimeBusy,
   onRuntimeAssetsReloaded,
 }: {
+  scopeName?: string; clear?: (target: 'conversation' | 'logs' | 'cache') => Promise<MaintenanceClearResult>;
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
@@ -1360,7 +730,7 @@ function CacheMaintenancePanel({
         return;
       }
       const confirmed = window.confirm(
-        target === 'conversation'
+        scopeName ? (language === 'zh' ? `确定清理 ${scopeName} 的${target === 'conversation' ? '全部对话历史' : target === 'cache' ? '应用缓存' : '运行日志'}吗？` : `Clear ${target} data on ${scopeName}?`) : target === 'conversation'
           ? language === 'zh'
             ? '确定清空本地对话历史吗？这会删除会话、消息、摘要和不再使用的附件，并暂停绑定的自动化。项目文件、任务工作目录和累计用量统计会保留。'
             : 'Clear local conversation history and unreferenced attachments? Bound automations will be paused. Project files, task workspaces and cumulative usage statistics are kept.'
@@ -1379,7 +749,7 @@ function CacheMaintenancePanel({
       setError('');
       try {
         const cleared =
-          target === 'conversation'
+          clear ? await clear(target) : target === 'conversation'
             ? await clearConversationHistory()
             : target === 'cache' ? await clearApplicationCache() : await clearLogsCache();
         setResult(cleared);
@@ -1412,7 +782,7 @@ function CacheMaintenancePanel({
         setBusyTarget('');
       }
     },
-    [busyTarget, capabilities, language, onConversationHistoryCleared, onNotify, runtimeBusy],
+    [clear, scopeName, busyTarget, capabilities, language, onConversationHistoryCleared, onNotify, runtimeBusy],
   );
   const conversationClearSupported = capabilities.maintenanceConversationHistoryClear;
   const logsClearSupported = capabilities.maintenanceLogsCacheClear;
@@ -1420,11 +790,11 @@ function CacheMaintenancePanel({
   return (
     <div className="settings-stack">
       <SettingsCard
-        title={language === 'zh' ? '本地数据' : 'Local data'}
+        title={scopeName || (language === 'zh' ? '本地数据' : 'Local data')}
         subtitle={
           language === 'zh'
-            ? '管理本地历史、日志与缓存，保留项目文件、任务工作目录和累计用量。'
-            : 'Manage local history, logs and caches. Keep project files, task workspaces and cumulative usage.'
+            ? '管理当前环境的历史、日志与缓存，保留项目文件、任务工作目录和累计用量。'
+            : 'Manage history, logs and caches in this environment. Keep project files, task workspaces and cumulative usage.'
         }
       >
         <div className="maintenance-action-list">
@@ -1530,7 +900,7 @@ function CacheMaintenancePanel({
           </div>
         )}
       </SettingsCard>
-      <details className="settings-disclosure" open={Boolean(readPendingRuntimeAssetReset()) || undefined}>
+      {!scopeName && <details className="settings-disclosure" open={Boolean(readPendingRuntimeAssetReset()) || undefined}>
       <summary>{language === 'zh' ? '恢复内置配置' : 'Restore bundled configuration'}</summary>
       <div className="settings-disclosure-body"><RuntimeAssetResetCard
         language={language}
@@ -1539,7 +909,7 @@ function CacheMaintenancePanel({
         onNotify={onNotify}
         onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
       /></div>
-      </details>
+      </details>}
     </div>
   );
 }
@@ -2170,6 +1540,7 @@ export function McpServersPanel({
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
 }) {
+  const host = useSettingsHost();
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [selectedId, setSelectedId] = useState(initialServerId ?? '');
   const [draft, setDraft] = useState<McpServerDraft>(emptyMcpDraft);
@@ -2184,13 +1555,13 @@ export function McpServersPanel({
   const selectServerId = useCallback((serverId: string) => {
     selectedIdRef.current = serverId;
     setSelectedId(serverId);
-  }, []);
+  }, [host]);
 
   const loadServers = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const result = await fetchMcpServers();
+      const result = await host.fetchMcpServers();
       setServers(result.servers);
       const currentId = selectedIdRef.current;
       const selected = result.servers.find((server) => server.id === currentId && !mcpServerIsFromPlugin(server));
@@ -2213,14 +1584,14 @@ export function McpServersPanel({
     } finally {
       setLoading(false);
     }
-  }, [language, selectServerId]);
+  }, [host, language, selectServerId]);
 
   useEffect(() => {
     void loadServers();
   }, [loadServers]);
 
   const refreshServerStatus = useCallback(async (isCurrent: () => boolean) => {
-    const result = await fetchMcpServers();
+    const result = await host.fetchMcpServers();
     if (isCurrent()) setServers(result.servers);
   }, []);
   useCapabilityCatalogRefresh(refreshServerStatus);
@@ -2283,7 +1654,7 @@ export function McpServersPanel({
     setBusyKey('save');
     setError('');
     try {
-      const saved = await saveMcpServerConfig(makeInput());
+      const saved = await host.saveMcpServerConfig(makeInput());
       selectServerId(saved.id);
       setDraft(mcpDraftFromServer(saved));
       setValidation(null);
@@ -2294,7 +1665,7 @@ export function McpServersPanel({
     } finally {
       setBusyKey('');
     }
-  }, [language, loadServers, makeInput, onNotify, selectServerId]);
+  }, [host, language, loadServers, makeInput, onNotify, selectServerId]);
 
   const toggleServer = useCallback(
     async (server: McpServerConfig) => {
@@ -2302,7 +1673,7 @@ export function McpServersPanel({
       setBusyKey(`toggle:${server.id}`);
       setError('');
       try {
-        await setMcpServerEnabled(server.id, nextEnabled);
+        await host.setMcpServerEnabled(server.id, nextEnabled);
         await loadServers();
         onNotify(
           nextEnabled
@@ -2319,7 +1690,7 @@ export function McpServersPanel({
         setBusyKey('');
       }
     },
-    [language, loadServers, onNotify],
+    [host, language, loadServers, onNotify],
   );
 
   const removeServer = useCallback(
@@ -2335,7 +1706,7 @@ export function McpServersPanel({
       setBusyKey(`delete:${server.id}`);
       setError('');
       try {
-        await deleteMcpServerConfig(server.id);
+        await host.deleteMcpServerConfig(server.id);
         if (selectedId === server.id) {
           startNew();
         }
@@ -2347,7 +1718,7 @@ export function McpServersPanel({
         setBusyKey('');
       }
     },
-    [language, loadServers, onNotify, selectedId, startNew],
+    [host, language, loadServers, onNotify, selectedId, startNew],
   );
 
   const selectedServer = servers.find((server) => server.id === selectedId);
@@ -2415,16 +1786,19 @@ export function McpServersPanel({
                 <McpLogoIcon className="mcp-logo-icon" size={18} />
                 <strong>{server.name || server.id}</strong>
                 {server.status === 'waiting_for_resources' && <span role="status">{language === 'zh' ? '等待可用资源，稍后自动连接' : 'Waiting for resources; connects automatically'}</span>}
-                {server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
+                {!host.remote && server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
                   setBusyKey(server.id); setError('');
-                  void window.cardbushDesktop!.mcpConnectionAction(server.id, 'login').then(() => fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language))).finally(() => setBusyKey(''));
+                  void window.cardbushDesktop!.mcpConnectionAction(server.id, 'login').then(() => host.fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language))).finally(() => setBusyKey(''));
                 }}>{server.status === 'auth_required' ? (language === 'zh' ? '需要登录' : 'Sign-in required') : (language === 'zh' ? '登录' : 'Sign in')}</button>}
                 {server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey) && busyKey !== server.id} onClick={() => {
                   const action = busyKey === server.id ? 'cancel_login' : 'logout';
-                  void window.cardbushDesktop!.mcpConnectionAction(server.id, action).then(() => fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language)));
+                  void window.cardbushDesktop!.mcpConnectionAction(server.id, action).then(() => host.fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language)));
                 }}>{busyKey === server.id ? (language === 'zh' ? '取消登录' : 'Cancel sign-in') : (language === 'zh' ? '退出登录' : 'Sign out')}</button>}
 
 
+                {host.remote && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
+                  setBusyKey(server.id); void host.mcpConnectionAction(server.id, 'reconnect').then(loadServers).catch(error => setError(mcpErrorText(error, language))).finally(() => setBusyKey(''));
+                }}>{language === 'zh' ? '重新连接' : 'Reconnect'}</button>}
                 <button
                   className="mcp-icon-button"
                   type="button"
@@ -2448,7 +1822,7 @@ export function McpServersPanel({
         </div>
       </section>
 
-      <CardbushAppsPanel language={language} onNotify={onNotify} />
+      {!host.remote && <CardbushAppsPanel language={language} onNotify={onNotify} />}
 
       {editorOpen && (
         <section className="mcp-editor-panel">
@@ -2954,153 +2328,6 @@ function mcpErrorText(caught: unknown, language: AppLanguage) {
   return message;
 }
 
-function ModelConfigRow({
-  config,
-  language,
-  selected,
-  onUse,
-  onDelete,
-  onSaveContextTokens,
-  onSaveCompletionTokens,
-}: {
-  config: ManagedModelConfig;
-  language: AppLanguage;
-  selected: boolean;
-  onUse: () => void;
-  onDelete: () => void;
-  onSaveContextTokens: (value: string) => void;
-  onSaveCompletionTokens: (value: string) => void;
-}) {
-  const [contextDraft, setContextDraft] = useState(
-    contextTokenDraftValue(config.maxContextTokens),
-  );
-  const savedContextDraft = contextTokenDraftValue(config.maxContextTokens);
-  const trimmedContextDraft = contextDraft.trim();
-  const hasInvalidContext =
-    trimmedContextDraft.length > 0 && !normalizeMaxContextTokens(trimmedContextDraft);
-  const contextDraftChanged = contextDraft !== savedContextDraft;
-  const [completionDraft, setCompletionDraft] = useState(
-    completionTokenDraftValue(config.maxCompletionTokens),
-  );
-  const savedCompletionDraft = completionTokenDraftValue(
-    config.maxCompletionTokens,
-  );
-  const trimmedCompletionDraft = completionDraft.trim();
-  const hasInvalidCompletion =
-    trimmedCompletionDraft.length > 0 &&
-    !normalizeMaxCompletionTokens(trimmedCompletionDraft);
-  const completionDraftChanged = completionDraft !== savedCompletionDraft;
-
-  useEffect(() => {
-    setContextDraft(savedContextDraft);
-  }, [savedContextDraft]);
-
-  useEffect(() => {
-    setCompletionDraft(savedCompletionDraft);
-  }, [savedCompletionDraft]);
-
-  return (
-    <div className="model-row">
-      <div className="model-row-summary">
-        <strong title={config.modelName}>{config.modelName}</strong>
-        <span>
-          {config.baseUrl || (language === 'zh' ? '默认服务地址' : 'Default endpoint')}
-          {' · '}
-          {config.apiKey || config.hasApiKey
-            ? language === 'zh' ? '凭证已保存' : 'Credential saved'
-            : language === 'zh' ? '未设置凭证' : 'No credential'}
-        </span>
-      </div>
-      <label className="model-context-editor">
-        <span>{language === 'zh' ? '上下文' : 'Context'}</span>
-        <div className="model-context-controls">
-          <input
-            aria-label={
-              language === 'zh'
-                ? `${config.modelName} 最大上下文 token`
-                : `${config.modelName} max context tokens`
-            }
-            inputMode="numeric"
-            min={1}
-            placeholder={language === 'zh' ? '默认' : 'default'}
-            type="number"
-            value={contextDraft}
-            onChange={(event) => setContextDraft(event.currentTarget.value)}
-          />
-          <button
-            className="icon-button model-context-save"
-            type="button"
-            aria-label={language === 'zh' ? '保存上下文' : 'Save context'}
-            title={language === 'zh' ? '保存上下文' : 'Save context'}
-            disabled={!contextDraftChanged || hasInvalidContext}
-            onClick={() => onSaveContextTokens(contextDraft)}
-          >
-            <Check size={14} />
-          </button>
-        </div>
-        {hasInvalidContext && (
-          <small>
-            {language === 'zh' ? '请输入正整数' : 'Use a positive integer'}
-          </small>
-        )}
-      </label>
-      <label className="model-context-editor">
-        <span>{language === 'zh' ? '输出' : 'Output'}</span>
-        <div className="model-context-controls">
-          <input
-            aria-label={
-              language === 'zh'
-                ? `${config.modelName} 最大输出 token`
-                : `${config.modelName} max output tokens`
-            }
-            inputMode="numeric"
-            min={1}
-            placeholder={language === 'zh' ? '供应商默认' : 'provider default'}
-            type="number"
-            value={completionDraft}
-            onChange={(event) => setCompletionDraft(event.currentTarget.value)}
-          />
-          <button
-            className="icon-button model-context-save"
-            type="button"
-            aria-label={language === 'zh' ? '保存输出上限' : 'Save output limit'}
-            title={language === 'zh' ? '保存输出上限' : 'Save output limit'}
-            disabled={!completionDraftChanged || hasInvalidCompletion}
-            onClick={() => onSaveCompletionTokens(completionDraft)}
-          >
-            <Check size={14} />
-          </button>
-        </div>
-        {hasInvalidCompletion && (
-          <small>
-            {language === 'zh' ? '请输入正整数' : 'Use a positive integer'}
-          </small>
-        )}
-      </label>
-      {selected && (
-        <span className="current-badge">
-          <CheckCircle2 size={13} />
-          {language === 'zh' ? '当前' : 'Current'}
-        </span>
-      )}
-      {!selected && (
-        <button className="secondary-button model-use-button" type="button" onClick={onUse}>
-          {language === 'zh' ? '设为当前' : 'Use'}
-        </button>
-      )}
-      <button
-        className="icon-button model-delete-button"
-        type="button"
-        aria-label={language === 'zh' ? `删除 ${config.modelName}` : `Delete ${config.modelName}`}
-        title={language === 'zh' ? '删除模型' : 'Delete model'}
-        onClick={onDelete}
-      >
-        <Trash2 size={14} />
-      </button>
-    </div>
-  );
-}
-
 function DiagnosticRow({ probe }: { probe: DiagnosticProbe }) {
   return (
     <div className={`diagnostic-row ${probe.ok ? 'ok' : 'fail'}`}>
@@ -3135,31 +2362,6 @@ type EffectiveModelInfo = {
   apiKeyLabel: string;
   baseUrl: string;
 };
-
-function collectProviderOptions(configs: ManagedModelConfig[]) {
-  const seen = new Set<string>();
-  const result = [...suggestedProviders];
-  for (const item of configs) {
-    const provider = normalizeProvider(item.provider);
-    if (provider && !suggestedProviders.includes(provider)) {
-      result.push(provider);
-    }
-  }
-  const unique = result.filter((item) => {
-    const key = item.toLowerCase();
-    return seen.has(key) ? false : seen.add(key);
-  });
-  unique.push(customProviderValue);
-  return unique;
-}
-
-function groupModelConfigs(configs: ManagedModelConfig[]) {
-  return configs.reduce<Record<string, ManagedModelConfig[]>>((groups, item) => {
-    const provider = item.provider.trim() || 'custom';
-    groups[provider] = [...(groups[provider] ?? []), item];
-    return groups;
-  }, {});
-}
 
 type ProviderModelListResult = {
   endpoint: string;
@@ -3344,32 +2546,6 @@ function assertProductHost() {
 
 function diagnosticSummary(probe: DiagnosticProbe) {
   return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
-}
-
-function normalizeProvider(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, '-');
-}
-
-function normalizeMaxContextTokens(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
-function normalizeMaxCompletionTokens(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
-function contextTokenDraftValue(value: number | undefined) {
-  return String(value && value > 0 ? Math.floor(value) : defaultMaxContextTokens);
-}
-
-function completionTokenDraftValue(value: number | undefined) {
-  return String(value && value > 0 ? Math.floor(value) : '');
-}
-
-function newModelConfigId() {
-  return `model-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function stableModelConfigId(

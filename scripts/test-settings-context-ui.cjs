@@ -16,6 +16,7 @@ app.whenReady().then(async () => {
     load: id => id === '\0settings-context-fixture' ? [
       'src/features/SettingsView.tsx', 'src/features/composer/Composer.tsx', 'src/features/chat/GitBranchMenu.tsx', 'src/features/chat/TaskWorkspaceBar.tsx',
       'src/features/settings/conversationStyle.ts',
+      'src/features/shortcuts/keyboardShortcuts.ts',
       'src/components/WindowSidebarToggle.tsx', 'src/components/SidebarResizer.tsx',
       'src/hooks/useSoftPanelPresence.ts', 'src/features/sidebar/ChatSidebar.tsx',
       'src/features/sidebar/conversationArchives.ts',
@@ -137,6 +138,18 @@ app.whenReady().then(async () => {
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'agents') {
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      await require('./helpers/settings-agents.cjs')({ run, until, click, choose, edit, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      win.destroy(); app.exit(0); return;
+    }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'models') {
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      await require('./helpers/settings-models.cjs')({ run, until, click, edit, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      win.destroy(); app.exit(0); return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'archives') {
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
       await require('./helpers/settings-archives.cjs')({ run, until, window: win, root, click, edit });
@@ -189,9 +202,11 @@ app.whenReady().then(async () => {
     await until("settingsProps.settings.conversationStyle.customTone === ''");
     assert.equal(await run('file.content'), '全局偏好：先确认事实。', 'style preferences must not rewrite AGENTS.md');
 
-    assert.equal(await run("document.querySelectorAll('.settings-nav').length"), 10, 'each supported setting page has one navigation entry');
+    const expectedSettingsSections = ['browser', 'computer-use', 'mcp', 'models', 'profile', 'shortcuts', 'usage', 'appearance', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics'];
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'each supported local setting page has one navigation entry');
     await click('快捷键');
-    await until("document.querySelectorAll('[data-shortcut-row]').length === 11");
+    await until("document.querySelectorAll('[data-shortcut-row]').length === views.shortcutDefinitions.length");
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('[data-shortcut-row]'), item => item.dataset.shortcutRow).sort()"), await run("views.shortcutDefinitions.map(item => item.id).sort()"), 'all registered shortcuts are configurable without duplicate rows');
     assert.equal(await run("document.querySelector('.settings-nav[aria-current=page]').textContent.trim()"), '快捷键');
     await pause(100);
     fs.writeFileSync(path.join(root, 'tmp/settings-keyboard-full.png'), (await win.webContents.capturePage()).toPNG());
@@ -199,8 +214,8 @@ app.whenReady().then(async () => {
     assert.equal(await run('usageReads'), 0, 'unrelated pages must not fetch the full usage history');
     assert.equal(await run("document.querySelector('[name=theme-mode]')"), null, 'appearance is separate from conversation preferences');
     await edit('.settings-search input', '浏览器');
-    await until("document.querySelectorAll('.settings-nav').length === 1");
-    assert.equal(await run("document.querySelector('.settings-nav').dataset.settingsSection"), 'mcp');
+    await until("document.querySelectorAll('.settings-nav').length === 2");
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), ['browser', 'mcp'], 'browser search includes its dedicated settings and plugins');
     await click('插件');
     await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection === 'mcp'");
     assert.equal(await run("document.querySelector('.settings-search input').value"), '');
@@ -255,7 +270,8 @@ app.whenReady().then(async () => {
     await edit('.settings-search input', '不存在的设置');
     await until("!!document.querySelector('.settings-search-empty')");
     await run("document.querySelector('.settings-search input').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }))");
-    await until("document.querySelectorAll('.settings-nav').length === 10");
+    await until(`document.querySelectorAll('.settings-nav').length === ${expectedSettingsSections.length}`);
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'clearing search restores all local pages');
 
     // Failed reads must keep the last recorded totals, then recover on retry.
     await run("window.readUsageNormally = cardbushDesktop.usageStatistics; cardbushDesktop.usageStatistics = async () => { throw Error('fixture unavailable'); }; dispatchEvent(new Event('focus'));");
@@ -264,26 +280,7 @@ app.whenReady().then(async () => {
     await run("cardbushDesktop.usageStatistics = readUsageNormally; void 0"); await click('重试');
     await until("!document.querySelector('.usage-load-error')");
 
-    await click('模型管理');
-    await until("document.querySelectorAll('.model-row').length === 2");
-    assert.equal(await run("document.querySelector('.settings-switch input').checked"), false);
-    await run("document.querySelector('.settings-switch input').click()");
-    await until('settingsProps.visualInputEnabled === true');
-    await edit('.model-row input', '500000');
-    await run("document.querySelector('.model-context-save').click()");
-    await until('settingsProps.settings.managedModelConfigs[0].maxContextTokens === 500000');
-    for (const width of [1200, 1000, 760]) {
-      win.setContentSize(width, 850); await pause(150);
-      const bounds = await run(`Array.from(document.querySelectorAll('.model-row'), row => ({
-        width: row.clientWidth, scroll: row.scrollWidth,
-        inputs: Array.from(row.querySelectorAll('input'), input => { const r = input.getBoundingClientRect(), rowRect = row.getBoundingClientRect(); return { width: r.width, left: r.left - rowRect.left, right: rowRect.right - r.right }; })
-      }))`);
-      for (const row of bounds) {
-        assert.ok(row.scroll <= row.width + 1, 'model row must fit width ' + width);
-        for (const input of row.inputs) assert.ok(input.width >= 72 && input.left >= 0 && input.right >= 0, 'token controls remain readable and inside the row');
-      }
-      if (width === 1200) fs.writeFileSync(path.join(root, 'tmp/settings-model-limits.png'), (await win.webContents.capturePage()).toPNG());
-    }
+    await require('./helpers/settings-models.cjs')({ run, until, click, edit, window: win, root });
     win.setContentSize(1100, 800);
     await require('./helpers/settings-maintenance.cjs')({ run, until, window: win, root, click });
     await run('renderComposer()');

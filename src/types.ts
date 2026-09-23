@@ -8,6 +8,7 @@ import type { ConversationStyleSettings } from '@cardbush/bush-product-agent';
 
 export type AppSection = 'chat' | 'plugins' | 'skills' | 'subagents' | 'team' | 'automations' | 'agents';
 export type SettingsSection =
+  | 'projects'
   | 'instructions'
   | 'profile'
   | 'appearance'

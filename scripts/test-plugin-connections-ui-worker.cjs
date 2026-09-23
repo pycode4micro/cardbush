@@ -545,6 +545,7 @@ app.whenReady().then(async()=>{
   await click('取消');await until('!document.querySelector("dialog")');
   assert.equal(await read('mcpAnswers.at(-1).answer.action'),'cancel');
   console.log('MCP interface passed: scoped settings, save failure, manual login failure state, cancellation, typed forms, URL/sign-in consent and task ownership.');
+  if (process.env.CARDBUSH_PLUGIN_SETTINGS_ONLY === '1') { win.destroy(); app.exit(0); return; }
   await click('返回插件');
   await new Promise(r=>setTimeout(r,150));
   writeFileSync(resolve('tmp/plugin-connections.png'),(await win.webContents.capturePage()).toPNG());
@@ -788,7 +789,8 @@ app.whenReady().then(async()=>{
   win.setContentSize(1000,820);await until('Math.abs(window.innerWidth-1000)<=2');
   await draft('/Chrome');await until('document.querySelectorAll(".composer-command-category").length===3');
   await draft('@');await until('document.body.innerText.includes("当前对话 · 用户指令")');
-  assert.equal(await read('document.querySelectorAll(".composer-command-row").length'),3);
+  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row"),item=>item.dataset.commandId)'),['ssh:manage','reference:files','browser:cardbush-tab','turn:source-user']);
+  assert.equal(await read('document.querySelector(\'[data-command-id="ssh:manage"]\').disabled'),true,'SSH cannot switch workspaces without a workspace handler');
   assert.doesNotMatch(await read('document.querySelector(".composer-command-list").textContent'),/助手消息不应列出|其他对话不应列出/);
   await capture('composer-mention-menu.png');
   await draft('@科技');await until('document.querySelectorAll(".composer-command-row").length===1');
@@ -818,8 +820,8 @@ app.whenReady().then(async()=>{
   await until('attachmentPickerCalls===1');
   assert.equal(await read('fixtureDraft'),'','cancelled native picker leaves no @file placeholder');
   await draft('@');await read('setFixtureSources({sessionId:"empty-current",browserTabs:[],messages:[]})');
-  await until('document.querySelectorAll(".composer-command-row").length===1');
-  assert.equal(await read('document.querySelector(".composer-command-row strong").textContent'),'文件和文件夹','empty or changed sessions cannot retain prior turn suggestions');
+  await until('document.querySelectorAll(".composer-command-row").length===2');
+  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row"),item=>item.dataset.commandId)'),['ssh:manage','reference:files'],'empty or changed sessions keep environment/file actions without prior turn suggestions');
   await draft('user@example.test');assert.equal(await read('!!document.querySelector(".composer-command-palette")'),false);
   await read('window.persistedContextPrompt=savedTurnReference+"\\n"+savedBrowserReference;window.referenceOpens=[];window.addEventListener("cardbush:open-inspector",event=>referenceOpens.push(event.detail));window.addEventListener("cardbush:open-work-summary-inspector",event=>referenceOpens.push(event.detail));showTranscript([persistedContextPrompt])');
   await until('document.querySelectorAll(".context-reference-token").length===2');

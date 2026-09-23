@@ -4,6 +4,7 @@ export type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'sub
 type LocalizedText = { zh: string; en: string };
 
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
+  projects: { zh: '项目', en: 'Projects' },
   ssh: { zh: 'SSH 连接', en: 'SSH connections' },
   profile: { zh: '个性化', en: 'Personalization' },
   appearance: { zh: '外观与语言', en: 'Appearance & language' },
@@ -20,6 +21,7 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
 };
 
 export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText> = {
+  projects: { zh: '管理当前 Agent 的项目目录和默认项目。', en: 'Manage this Agent’s project directories and default project.' },
   ssh: { zh: '管理远程主机，通过项目或 @ 引用接入。', en: 'Manage remote hosts for projects and @ references.' },
   profile: { zh: '调整对话语气、交互方式和长期偏好。', en: 'Set the conversation tone, interaction preferences, and shared instructions.' },
   appearance: { zh: '选择主题、界面语言和字体。', en: 'Choose your theme, interface language, and font.' },
@@ -42,6 +44,7 @@ export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: V
 ];
 
 const keywords: Record<VisibleSettingsSection, string> = {
+  projects: '项目 工作区 目录 project workspace directory',
   ssh: 'SSH 远程 连接 主机 服务器 私钥 项目 remote connection server key project',
   profile: '对话 风格 自然 专业 简短 自定义 语气 全局约束 AGENTS.md 提示词 引导 排队 队列 思考 instructions tone style guidance queue thinking',
   appearance: '主题 深色 浅色 赛博朋克 窗口 玻璃 导入 字体 中文 English theme font language glass',

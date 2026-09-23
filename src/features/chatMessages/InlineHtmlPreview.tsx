@@ -1,4 +1,4 @@
-import { createElement, memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createElement, memo, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Maximize2, MoreHorizontal, Play, RotateCw, X } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { basename } from '../../shared/localPaths';
@@ -9,6 +9,8 @@ import { connectInlineHtmlPresentation, foldedHtmlHeight, type InlineHtmlLayout 
 import { useInlineHtmlFileVersion } from './inlineHtmlFileVersions';
 import { captureInlineHtmlReadingPosition } from './inlineHtmlReadingPosition';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
+import { ConversationHostContext } from '../conversationHost';
+import { useConversationFileSource } from '../conversationFileSource';
 
 /** Uses the same file adapter as the inspector; only an authored embed mounts it. */
 export function isHtmlPreviewPath(path: string) {
@@ -21,6 +23,7 @@ const previewHeightLimit = () => Math.min(520, Math.max(220, Math.round(window.i
 export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, language, fileVersion }: {
   path: string; title?: string; language: AppLanguage; fileVersion?: string;
 }) {
+  const host = useContext(ConversationHostContext);
   const container = useRef<HTMLSpanElement>(null);
   const frame = useRef<HTMLElement>(null);
   const expansionButton = useRef<HTMLButtonElement>(null);
@@ -46,14 +49,33 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const reloadTicket = useRef(0);
   const restoreFrame = useRef(0);
   const readingPosition = useRef<{ anchor: ReturnType<typeof captureInlineHtmlReadingPosition>; scrollY: number } | undefined>(undefined);
-  const currentVersion = useInlineHtmlFileVersion(path, visible, fileVersion);
-  const source = resolveFilePreview(path)?.source(path);
+  const currentVersion = useInlineHtmlFileVersion(path, visible && !host, fileVersion);
+  const remoteFile = useConversationFileSource(path, visible && Boolean(host), { preview: true, revision });
+  const source = host ? remoteFile.source : resolveFilePreview(path)?.source(path);
   const label = title || basename(path);
+  const openFull = () => host ? host.openFile(path) : openInspector(path, label);
+  const fileLink = host ? <button type="button" className="markdown-file-link" onClick={openFull}>{label}</button>
+    : <LocalFileReferenceLink path={path} knownFileName={basename(path)}>{label}</LocalFileReferenceLink>;
   const zh = language === 'zh';
   const canExpand = visualization && height > previewLimit;
   const folded = canExpand && !expanded;
   const guestHeight = Math.min(expandedHeightLimit, height);
   const viewportHeight = folded ? foldedHtmlHeight(layout, previewLimit) : guestHeight;
+
+  useEffect(() => { if (remoteFile.error) setState('failed'); }, [remoteFile.error]);
+
+  useEffect(() => window.cardbushDesktop?.onInspectorOpenLink?.(detail => {
+    const guest = frame.current as (HTMLElement & { getWebContentsId(): number }) | null;
+    if (!guest || !visible) return;
+    try {
+      if (guest.getWebContentsId() !== detail.guestWebContentsId) return;
+      const target = new URL(detail.target);
+      if (host && source && target.protocol === 'cardbush-agent:' && target.host === new URL(source).host) {
+        const targetPath = decodeURIComponent(target.pathname);
+        host.openFile(path.startsWith('/') ? targetPath : targetPath.slice(1));
+      } else if (/^https?:$/.test(target.protocol) || !host) openInspector(detail.target, detail.target);
+    } catch { /* The guest may have been suspended while the link was opening. */ }
+  }), [host, source, visible, path]);
 
   const restoreReadingPosition = useCallback(() => {
     if (!readingPosition.current) return;
@@ -219,7 +241,11 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       setVisualization(false);
       setState('failed');
     };
+    const navigated = (event: Event) => {
+      if (((event as Event & { httpResponseCode?: number }).httpResponseCode ?? 0) >= 400) fail();
+    };
     webview.addEventListener('dom-ready', ready);
+    webview.addEventListener('did-navigate', navigated);
     webview.addEventListener('did-fail-load', fail);
     webview.addEventListener('render-process-gone', fail);
     return () => {
@@ -227,6 +253,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       window.clearTimeout(deadline);
       disconnectPresentation?.();
       webview.removeEventListener('dom-ready', ready);
+      webview.removeEventListener('did-navigate', navigated);
       webview.removeEventListener('did-fail-load', fail);
       webview.removeEventListener('render-process-gone', fail);
     };
@@ -260,10 +287,10 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
 
   if (closed) return <span ref={container} className="inline-html-preview is-closed" aria-label={label}>
     <span className="inline-html-toolbar">
-      <LocalFileReferenceLink path={path} knownFileName={basename(path)}>{label}</LocalFileReferenceLink>
+      {fileLink}
       <span className="inline-html-actions">
         <button className="inline-html-reopen" type="button" onClick={openPreview} aria-label={zh ? '打开 HTML 预览' : 'Open HTML preview'} title={zh ? '打开预览' : 'Open preview'}><Play size={13} /><span>{zh ? '预览' : 'Preview'}</span></button>
-        <button type="button" onClick={() => openInspector(path, label)} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
+        <button type="button" onClick={openFull} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
       </span>
     </span>
   </span>;
@@ -280,16 +307,16 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'} title={zh ? '关闭预览' : 'Close preview'}><X size={14} /></button>
     </span>}
     <span className="inline-html-toolbar" hidden={visualization && !menuOpen && state !== 'failed'}>
-      <LocalFileReferenceLink path={path} knownFileName={basename(path)}>{label}</LocalFileReferenceLink>
+      {fileLink}
       <span className="inline-html-actions">
         <button type="button" onClick={reload} aria-label={zh ? '重新加载 HTML' : 'Reload HTML'} title={zh ? '重新加载' : 'Reload'}><RotateCw size={14} /></button>
-        <button type="button" onClick={() => { setMenuOpen(false); openInspector(path, label); }} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
+        <button type="button" onClick={() => { setMenuOpen(false); openFull(); }} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
         {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'} title={zh ? '关闭预览' : 'Close preview'}><X size={14} /></button>}
       </span>
     </span>
     <span id={viewportId} className={`inline-html-viewport is-${visible ? state : 'suspended'}`} style={visualization ? { height: viewportHeight } : undefined} aria-busy={visible && state === 'loading'}>
       {visible && source && state !== 'failed' && createElement('webview', {
-        key: `${path}:${revision}`,
+        key: `${source}:${revision}`,
         ref: frame,
         src: source,
         title: label,
@@ -315,7 +342,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         {expanded ? (zh ? '收起图表' : 'Collapse chart') : (zh ? '展开图表' : 'Expand chart')}
       </button>}
-      {expanded && height > expandedHeightLimit && <button className="inline-html-open-full" type="button" onClick={() => openInspector(path, label)}>
+      {expanded && height > expandedHeightLimit && <button className="inline-html-open-full" type="button" onClick={openFull}>
         <Maximize2 size={13} />{zh ? '在侧栏查看' : 'Open in side panel'}</button>}
       <span className="inline-html-rule" aria-hidden="true" />
     </span>}

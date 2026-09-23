@@ -5,7 +5,7 @@
 :where(.agents-view, .agents-modal) button:focus-visible { outline: 2px solid #729fe3; outline-offset: 2px; }
 .agents-overview { padding: clamp(24px, 5vw, 64px); overflow: auto; }
 .agents-overview h2 { font-size: 25px; font-weight: 600; letter-spacing: -.5px; }
-.agents-overview p, .agent-settings-content > p { color: var(--text-soft, #aaa); line-height: 1.7; font-size: 14px; }
+.agents-overview p { color: var(--text-soft, #aaa); line-height: 1.7; font-size: 14px; }
 .agents-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-top: 28px; }
 .agents-cards .agents-card { flex-direction: column; align-items: flex-start; gap: 16px; min-height: 150px; text-align: left; padding: 24px; border-radius: 15px; }
 .agents-card strong { font-size: 16px; }.agents-card span { font-size: 12px; color: var(--text-soft, #aaa); overflow-wrap: anywhere; }
@@ -24,8 +24,10 @@
 .agent-job { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-soft, #aaa); margin: 10px 0 20px; }.agent-job button { padding: 3px 8px; font-size: 11px; }
 .agent-tool { margin: 8px 0; font-size: 12px; color: var(--text-soft, #aaa); }.agent-tool summary { cursor: pointer; }.agent-tool pre { max-height: 250px; overflow: auto; white-space: pre-wrap; }
 .agent-interaction { border: 1px solid #819bcc66; border-radius: 12px; padding: 18px; margin: 16px 0; background: #608bcd12; font-size: 13px; }.agent-interaction button { margin: 6px 6px 0 0; }.agent-interaction li { overflow-wrap: anywhere; }
-.agent-settings { display: flex; flex: 1; min-height: 0; overflow: auto; }.agent-settings > nav { display: flex; flex-direction: column; gap: 8px; padding: 20px 12px; width: 120px; flex-shrink: 0; }.agent-settings > nav button { border: 0; background: transparent; justify-content: flex-start; }.agent-settings > nav button.active { background: #8882; }.agent-settings-content { padding: 18px 28px 50px; width: min(650px, 100%); min-width: 0; box-sizing: border-box; }.agent-settings-content h2 { font-size: 22px; }.agent-settings-content h3 { font-size: 16px; margin-top: 24px; }.agent-settings-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #8883; padding: 14px 0; font-size: 13px; }.agent-settings-row > div { flex: 1; min-width: 0; }.agent-settings-row small { display: block; color: var(--text-soft, #999); margin-top: 5px; overflow-wrap: anywhere; }.agent-settings-row + form { margin-top: 20px; }.agent-remove { margin-top: 40px; padding-top: 20px; border-top: 1px solid #8883; }.agent-remove p { font-size: 12px; line-height: 1.7; }.agent-remove p button { margin: 10px; }
-.agent-mcp-settings { margin-top: 28px; padding-top: 12px; border-top: 1px solid #8883; }.agent-mcp-settings details { margin-top: 18px; font-size: 13px; }.agent-mcp-settings summary { cursor: pointer; padding: 10px 0; }.agent-mcp-settings p { font-size: 12px; line-height: 1.6; }
+.agents-form footer { flex-wrap: wrap; }
+.agents-form .agent-remove-action { margin-right: auto; padding-inline: 0; background: transparent; border-color: transparent; color: var(--text-soft); }
+.agents-form .agent-remove-action:hover, .agent-connection-removal .danger { color: var(--danger); }
+.agent-connection-removal { padding-top: 16px; border-top: 1px solid var(--border); display: grid; gap: 12px; }
 
 .agent-header-actions { display: flex; align-items: center; gap: 4px; }
 .agent-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -36,9 +38,6 @@
 .agent-subagents { margin: 16px 0; font-size: 13px; color: var(--text-soft); }
 .agent-subagents summary { cursor: pointer; }
 @media (max-width: 620px) {
-  .agent-settings { flex-direction: column; }
-  .agent-settings > nav { flex-direction: row; width: auto; padding: 12px; }
-  .agent-settings-content { width: 100%; padding: 16px; }
   .agents-modal { padding: 18px; }
   .agents-overview { padding: 24px; }
 }

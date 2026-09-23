@@ -16,6 +16,7 @@ export interface ConversationHost {
   openFile(path: string): void;
   openExtract?(id: string): void;
   readFile?(path: string): Promise<{ name: string; blob: Blob }>;
+  previewFile?(path: string): Promise<{ source: string; dispose(): void }>;
   readDirectory?(input: { directoryPath?: string; offset?: number }): Promise<WorkspaceDirectoryPage>;
   toolDetails(sessionId: string, turnId: string): Promise<ChatToolExecution[]>;
 }

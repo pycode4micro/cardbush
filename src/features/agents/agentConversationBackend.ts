@@ -1,3 +1,4 @@
+import { readConversationStyle } from '../settings/conversationStyle';
 import type { RuntimeEvent, SessionSnapshot, ConversationExtractDesktopApi } from '@cardbush/bush-protocol';
 import type { AgentDesktopApi, AgentJob, AgentSendInput, AgentOperation } from '../../../electron/agentTypes';
 import * as shared from '../../backend/api';
@@ -81,7 +82,7 @@ export function agentRuntimeClient(call: AgentCall, watch?: Watch) {
 }
 
 export function createAgentConversationBackend(call: AgentCall, connectionId: string, watch: Watch,
-  hostOptions: { enhanced?: boolean; visualInputAvailable?: boolean; onSubmitted?: () => void } = {}) {
+  hostOptions: { sharedSettings?: boolean; enhanced?: boolean; visualInputAvailable?: boolean; onSubmitted?: () => void } = {}) {
   const guidanceKey = `cardbush-agent-guidance:${connectionId}`;
   const guidance = new Map<string, { command: Record<string, unknown>; message: ChatMessage }>();
   try { for (const entry of JSON.parse(sessionStorage.getItem(guidanceKey) ?? '[]')) guidance.set(entry.message.id, entry); } catch { /* Ignore invalid stored drafts. */ }
@@ -136,6 +137,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
       subagentPermissionRouting: request.subagentPermissionRouting }),
     ...(request.files?.length ? { files: request.files } : {}), ...(request.images?.length ? { images: request.images.map(image => image.path) } : {}),
     ...(hostOptions.visualInputAvailable && request.standardImageInputEnabled ? { visionEnabled: true } : {}),
+    ...(hostOptions.sharedSettings ? { conversationStyle: readConversationStyle() } : {}),
     goalObjective: parseGoalCommand(request.userInput)?.objective, ...options,
   });
   const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession'] }) => {
