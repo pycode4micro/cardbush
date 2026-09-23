@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistration } from './toolRegistry.js';
 import type { RemoteWorkspaceBridge, TerminalSessionManager } from './workspaceTools.js';
 import { protectedPosixTerminalDeletion } from './terminalCommandSafety.js';
+import { sandboxError } from './executionSandbox.js';
 
 type Context<T> = ToolAdmissionContext<T> | ToolHandlerContext<T>;
 type RoutedInput = Record<string, unknown> & { environment?: string };
@@ -53,8 +54,13 @@ function tagged(result: unknown, uri?: string): unknown {
 }
 
 /** Route each call explicitly; process handles retain their original host. */
-export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, terminals: TerminalSessionManager, remote?: RemoteWorkspaceBridge): ToolRegistration<T> {
+export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, terminals: TerminalSessionManager, remote?: RemoteWorkspaceBridge, requireCommandSandbox = false): ToolRegistration<T> {
   const name = registration.definition.name;
+  function enforceRemoteSandbox() {
+    if (requireCommandSandbox && (name === 'terminal_exec' || name === 'terminal_write')) {
+      throw sandboxError('sandbox_remote_unavailable', 'This host requires command isolation, but the SSH workspace has no verified sandbox backend. Connect to a CardBush Agent with its own sandbox policy. No remote command was sent.');
+    }
+  }
   async function remoteTerminals(owner: string, signal?: AbortSignal): Promise<Array<Record<string, any>>> {
     return remote ? (await remote.request('terminals', { owner }, signal)).sessions : [];
   }
@@ -105,6 +111,7 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
         return decision.kind === 'ask' ? { ...decision, request: { ...decision.request, reason: `Local host: ${decision.request.reason}` } } : decision;
       }
       if (!remote) throw Error('SSH execution is unavailable in this host. No local operation was performed.');
+      enforceRemoteSandbox();
       const input = context.input as RoutedInput;
       if (name === 'terminal_poll') return { kind: 'allow' as const };
       if (name === 'terminal_write' || name === 'terminal_stop') return { kind: 'ask' as const, request: {
@@ -153,6 +160,7 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       const uri = await route(context);
       if (!uri) return tagged(await registration.execute(localContext(context)), undefined);
       if (!remote) throw Error('SSH execution is unavailable in this host. No local operation was performed.');
+      enforceRemoteSandbox();
       return tagged(await remote.request('execute', { uri, owner: context.sessionId, name, input: context.input }, context.signal), uri);
     },
   };

@@ -211,6 +211,7 @@ export interface RuntimeRetryContext {
 }
 
 export interface InMemoryRuntimeHostOptions {
+  commandSandbox?: import('./commandSandboxPolicy.js').CommandSandboxConfiguration;
   remoteWorkspace?: RemoteWorkspaceBridge;
   /** Previous built-in capture location, supplied only by the product host. Never a user output path. */
   legacyCaptureCacheRoot?: string;
@@ -511,7 +512,7 @@ export class InMemoryRuntimeHost {
           : undefined,
       });
     if (options.registerDefaultWorkspaceTools !== false) {
-      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace,
+      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace, commandSandbox: options.commandSandbox,
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();

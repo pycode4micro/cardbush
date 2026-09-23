@@ -9,7 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-internal static class CardBushProcessHost
+internal static partial class CardBushProcessHost
 {
     private const uint JOB_KILL_ON_CLOSE = 0x2000;
     private const uint JOB_MEMORY_LIMIT = 0x200;
@@ -29,7 +29,13 @@ internal static class CardBushProcessHost
 
     private static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--capabilities")
+        {
+            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1}");
+            return 0;
+        }
         if (args.Length == 2 && args[0] == "--observe") return Observe(args[1]);
+        if (args.Length == 2 && args[0] == "--sandbox-cleanup") return CleanupSandbox(args[1]);
         string reportPath = args.Length > 9 ? args[9] : null;
         IntPtr globalJob = IntPtr.Zero, completionPort = IntPtr.Zero, parent = IntPtr.Zero;
         EventWaitHandle pressureStop = null;
@@ -38,6 +44,8 @@ internal static class CardBushProcessHost
         uint exitCode = FAILURE_EXIT;
         bool resumed = false;
         bool startingCommand = false;
+        SandboxSession sandbox = null;
+        bool sandboxCleaned = false;
         var inheritedHandles = new List<IntPtr>();
         try
         {
@@ -46,6 +54,12 @@ internal static class CardBushProcessHost
             int commandStart = args[10] == "--lease" ? 12 : 10;
             string leaseId = commandStart == 12 ? args[11] : null;
             if (leaseId != null && !ValidLease(leaseId)) throw new ArgumentException("Invalid resource lease.");
+            if (args.Length > commandStart && args[commandStart] == "--sandbox")
+            {
+                if (args.Length <= commandStart + 2) throw new ArgumentException("Missing sandbox policy or command.");
+                sandbox = new SandboxSession(args[commandStart + 1]);
+                commandStart += 2;
+            }
             pressureState = MemoryMappedFile.CreateOrOpen(groupName + "-pressure-state", 16);
             if (leaseId != null) pressureStop = new EventWaitHandle(false, EventResetMode.ManualReset, groupName + "-" + leaseId + "-pressure");
             uint parentPid = UInt32.Parse(args[1]);
@@ -105,8 +119,11 @@ internal static class CardBushProcessHost
             // No user code executes until BOTH jobs are assigned. Never fall back
             // to running unprotected when a Windows API or budget setup fails.
             startingCommand = true;
-            Check(CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true,
-                0x4 | 0x08000000, IntPtr.Zero, Environment.CurrentDirectory, ref startup, out process), "Create suspended command");
+            if (sandbox == null)
+                Check(CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true,
+                    0x4 | 0x08000000, IntPtr.Zero, Environment.CurrentDirectory, ref startup, out process), "Create suspended command");
+            else
+                sandbox.CreateSuspended(commandLine, ref startup, out process);
             startingCommand = false;
             Check(AssignProcessToJobObject(globalJob, process.hProcess), "Assign shared budget");
             Check(AssignProcessToJobObject(taskJob, process.hProcess), "Assign task budget");
@@ -200,6 +217,11 @@ internal static class CardBushProcessHost
             if (pressureState != null) pressureState.Dispose();
             if (globalJob != IntPtr.Zero) CloseHandle(globalJob);
             if (completionPort != IntPtr.Zero) CloseHandle(completionPort);
+            if (sandbox != null)
+            {
+                try { sandbox.Dispose(); sandboxCleaned = true; }
+                catch (Exception error) { Fail("sandbox_cleanup_failed", "Sandbox cleanup failed: " + error.Message); }
+            }
             if (reportPath != null)
             {
                 try
@@ -207,7 +229,7 @@ internal static class CardBushProcessHost
                     string report = "{\"phase\":\"finished\",\"code\":" + JsonString(failureCode)
                         + ",\"message\":" + JsonString(failureMessage) + ",\"peakMemoryBytes\":" + peakMemory
                         + ",\"taskMemoryBytes\":" + taskMemory + ",\"totalMemoryBytes\":" + totalMemory
-                        + ",\"nativeErrorCode\":" + nativeErrorCode + "}";
+                        + ",\"nativeErrorCode\":" + nativeErrorCode + ",\"sandboxCleaned\":" + (sandboxCleaned ? "true" : "false") + "}";
                     File.WriteAllText(reportPath, report, new UTF8Encoding(false));
                 }
                 catch { exitCode = FAILURE_EXIT; }

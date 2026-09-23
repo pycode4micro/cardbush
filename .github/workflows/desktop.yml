@@ -32,11 +32,13 @@ jobs:
           cache: npm
       - name: Linux desktop libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0 libnss3 libasound2 libgbm1 libfuse2 fonts-noto-cjk xvfb
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0 libnss3 libasound2 libgbm1 libfuse2 fonts-noto-cjk xvfb bubblewrap
       - run: npm ci
       - run: npm run runtime-tools:install
       - run: npm run build
       - run: npx tsc --noEmit -p tsconfig.json
+      - name: Native command sandbox boundaries
+        run: node --test packages/bush-runtime/test/commandSandboxPolicy.test.mjs packages/bush-runtime/test/executionSandbox.test.mjs
       - name: Windows regression and adversarial tests
         if: runner.os == 'Windows'
         run: npm run test:release

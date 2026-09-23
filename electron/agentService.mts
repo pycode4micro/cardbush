@@ -52,9 +52,14 @@ export class AgentService {
     const bundled = options.bundledRoot ?? join(root, 'bundled');
     this.bundledRoot = bundled;
     this.instructions = new GlobalInstructionsStore(join(root, 'AGENTS.md'));
-    const env = { ...process.env, ...options.env };
+    const sourceEnv = { ...process.env, ...options.env };
+    const env = { ...sourceEnv };
     // Never inherit the desktop's private endpoints, credentials or data directories.
     for (const key of Object.keys(env)) if (key.startsWith('CARDBUSH_')) delete env[key];
+    // These are deployment policies, not desktop credentials or transport state.
+    for (const key of ['CARDBUSH_EXECUTION_SANDBOX', 'CARDBUSH_SANDBOX_NETWORK', 'CARDBUSH_SANDBOX_READ_ROOTS', 'CARDBUSH_SANDBOX_WRITE_ROOTS']) {
+      if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key];
+    }
     Object.assign(env, options.env, {
       CARDBUSH_SERVICE_ID: state.id, CARDBUSH_RUNTIME_STATE_ROOT: runtimeRoot,
       CARDBUSH_SUBAGENT_CONFIG_PATH: join(root, 'config', 'subagents.json'),

@@ -64,6 +64,28 @@ async function openService(t, name = 'fixture', delay = 80, tool, compatibility 
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
 
+test('cloud Runtime retains the deployment sandbox policy even for a full-control turn', async t => {
+  const root = await directory(t);
+  const marker = join(root, 'must-not-exist.txt');
+  const model = await modelFixture(t, 20, { name: 'terminal_exec', arguments: {
+    command: 'echo unexpected>must-not-exist.txt', cwd: root, yield_time_ms: 1, shell: process.platform === 'win32' ? 'cmd' : 'posix',
+  } });
+  const previous = process.env.CARDBUSH_EXECUTION_SANDBOX;
+  process.env.CARDBUSH_EXECUTION_SANDBOX = 'required';
+  let service;
+  try { service = await AgentService.open({ dataRoot: root, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } }); }
+  finally { if (previous === undefined) delete process.env.CARDBUSH_EXECUTION_SANDBOX; else process.env.CARDBUSH_EXECUTION_SANDBOX = previous; }
+  try {
+    await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture-secret', baseURL: model.url }] } });
+    await service.call('sessions.create', { sessionId: 'sandbox' });
+    await service.call('chat.send', { ...input('sandbox', 'sandbox-turn'), permissionMode: 'all_free' });
+    await until(() => service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
+    assert.ok(model.calls.length >= 2, 'model receives the tool result');
+    assert.match(JSON.stringify(model.calls[1].input), /sandbox_policy_invalid|sandbox_unavailable/);
+    await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  } finally { await service.close(); }
+});
+
 for (const compatibility of [false, true]) test(`remote guidance appends within the active turn, keeps cache prefixes and deduplicates retries (${compatibility ? 'compatibility' : 'native'})`, async t => {
   const f = await openService(t, 'remote-guidance', 1200, undefined, compatibility);
   const probeRequests = compatibility ? 1 : 0;

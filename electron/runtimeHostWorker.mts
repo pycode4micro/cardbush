@@ -32,6 +32,7 @@ import {
   FileToolExecutionPersistence,
   InMemoryRuntimeEventLog,
   InMemoryRuntimeHost,
+  commandSandboxConfiguration,
   CoordinationStore,
   SessionStore,
   registerSkillTools,
@@ -785,6 +786,7 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  commandSandbox: commandSandboxConfiguration(process.env),
   remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },
   loadSearchResultLimit,
   ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),

@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProcessResourceObserver, type ResourceSample } from './processResourceObserver.js';
 import { windowsProcessFailure } from './windowsProcessFailure.js';
+import { prepareExecutionSandbox, type ExecutionSandboxPolicy, type ExecutionSandboxStatus, type PreparedExecutionSandbox } from './executionSandbox.js';
 
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
@@ -178,12 +179,14 @@ export interface ProcessResourceReport {
   totalMemoryBytes: number;
   nativeErrorCode?: number;
   blockedExecutable?: string;
+  sandboxCleaned?: boolean;
 }
 
 export interface GuardedProcess {
   resourceId: string;
   child: ChildProcessWithoutNullStreams;
   protected: boolean;
+  sandbox?: ExecutionSandboxStatus;
   stop: () => void;
   complete: () => Promise<ProcessResourceReport | undefined>;
 }
@@ -202,6 +205,8 @@ export interface ManagedProcessOptions {
   resourceLease?: ProcessResourceLease;
   /** Host-owned preview/helper ceiling. It can only narrow the granted limit. */
   memoryCeilingBytes?: number;
+  /** Host-owned access isolation; independent of resource protection. */
+  sandbox?: ExecutionSandboxPolicy;
 }
 
 /** A lifetime owned by a host, window or operation, never by an unrelated turn. */
@@ -259,25 +264,31 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
   const lease = input.resourceLease ?? (input.governor
     ? input.governor.acquire(input.lifetime) : await reserveProcessResources(input.lifetime, input.signal));
   let reportDirectory: string | undefined;
+  let sandbox: PreparedExecutionSandbox | undefined;
+  let nativeStarted = false;
   try {
     input.signal?.throwIfAborted();
     if (input.memoryCeilingBytes !== undefined) {
       if (!Number.isSafeInteger(input.memoryCeilingBytes) || input.memoryCeilingBytes <= 0) throw new Error('Invalid process memory ceiling.');
       lease.taskMemoryBytes = Math.min(lease.taskMemoryBytes, input.memoryCeilingBytes);
     }
+    const hostPath = process.platform === 'win32' ? input.hostPath ?? resolveProcessResourceHost() : undefined;
+    if (input.sandbox) {
+      sandbox = await prepareExecutionSandbox({ ...input, policy: input.sandbox, windowsHostPath: hostPath });
+      input = { ...input, executable: sandbox.executable, args: sandbox.args, cwd: sandbox.cwd, env: sandbox.env };
+    }
     if (process.platform !== "win32") {
       const child = spawn(input.executable, input.args, { cwd: input.cwd, env: input.env, detached: true, stdio: "pipe" });
       const lifecycle = manageLifecycle(child, false, input.signal);
-      const completion = lifecycle.exited.then(() => { lease.release(); return undefined; });
-      return { child, resourceId: lease.id, protected: false, stop: lifecycle.stop, complete: () => completion };
+      const completion = lifecycle.exited.then(async () => { lease.release(); return cleanupSandbox(sandbox, lease); });
+      return { child, resourceId: lease.id, protected: false, sandbox: sandbox?.status, stop: lifecycle.stop, complete: () => completion };
     }
-    const hostPath = input.hostPath ?? resolveProcessResourceHost();
     reportDirectory = await mkdtemp(join(tmpdir(), "cardbush-process-"));
     // Cancellation can arrive while the receipt directory is being created.
     input.signal?.throwIfAborted();
     const reportPath = join(reportDirectory, "result.json");
     const limits = lease.limits;
-    const child = spawn(hostPath, [
+    const child = spawn(hostPath!, [
       lease.groupName,
       String(process.pid),
       String(lease.taskMemoryBytes),
@@ -289,9 +300,11 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       String(limits.diskReserveBytes),
       reportPath,
       '--lease', lease.id,
+      ...(sandbox?.windowsPolicyPath ? ['--sandbox', sandbox.windowsPolicyPath] : []),
       input.executable,
       ...input.args,
     ], { cwd: input.cwd, env: input.env, windowsHide: true, stdio: "pipe" });
+    nativeStarted = Boolean(child.pid);
     const lifecycle = manageLifecycle(child, true, input.signal);
     let completion: Promise<ProcessResourceReport | undefined> | undefined;
     const complete = () => completion ??= (async () => {
@@ -300,10 +313,14 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       try {
         const report = JSON.parse(await readFile(reportPath, "utf8")) as ProcessResourceReport;
         if (report.phase !== "finished") throw new Error("Resource host did not finish.");
+        const cleanupFailure = await cleanupSandbox(sandbox, lease, report.sandboxCleaned === true);
         const policyFailure = report.code === 'resource_spawn_failed'
           ? windowsProcessFailure(report.nativeErrorCode, input.executable) : undefined;
-        return policyFailure ? { ...report, ...policyFailure } : report;
+        const result = policyFailure ? { ...report, ...policyFailure } : report;
+        return cleanupFailure ? { ...cleanupFailure, message: [result.message, cleanupFailure.message].filter(Boolean).join(' ') } : result;
       } catch {
+        const cleanupFailure = await cleanupSandbox(sandbox, lease, !child.pid);
+        if (cleanupFailure) return cleanupFailure;
         return {
           phase: "finished" as const,
           code: "resource_host_interrupted",
@@ -319,11 +336,20 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       }
     })();
     void complete();
-    return { child, resourceId: lease.id, protected: true, stop: lifecycle.stop, complete };
+    return { child, resourceId: lease.id, protected: true, sandbox: sandbox?.status, stop: lifecycle.stop, complete };
   } catch (error) {
     lease.release();
+    await sandbox?.dispose(!nativeStarted);
     if (reportDirectory) await removeReceiptDirectory(reportDirectory);
     throw error;
+  }
+}
+
+async function cleanupSandbox(sandbox: PreparedExecutionSandbox | undefined, lease: ProcessResourceLease, nativeCleanupConfirmed = false): Promise<ProcessResourceReport | undefined> {
+  try { await sandbox?.dispose(nativeCleanupConfirmed); return undefined; }
+  catch (error) {
+    return { phase: 'finished', code: 'sandbox_cleanup_failed', message: error instanceof Error ? error.message : String(error),
+      peakMemoryBytes: 0, taskMemoryBytes: lease.taskMemoryBytes, totalMemoryBytes: lease.totalMemoryBytes };
   }
 }
 

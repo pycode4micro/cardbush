@@ -34,6 +34,8 @@ node dist-electron/agentServiceCli.mjs \
 
 ## 在 CardBush 中接入
 
+服务端可通过 `--sandbox required --sandbox-network disabled` 显式启用命令隔离。它独立于连接方式和会话的审批模式；默认保持兼容行为。支持平台、目录授权、前置条件和当前限制见 [命令执行沙盒](EXECUTION_SANDBOX.md)。
+
 1. 打开 **Agents → 添加 Agent**。
 2. 新连接默认使用 **SSH 直连**：选择已保存的 SSH 连接，填写服务器 Agent 端口和访问令牌。也可以切换为 **HTTP / HTTPS**，填写远程 `https://agent.example.com` 或本机 `http://127.0.0.1:4780`。使用代理路径前缀时也可以填写 `https://example.com/agent-a/`，代理需将此前缀去掉后转发到服务。编辑已有连接会保留原连接方式。
 3. 在**管理此 Agent**中配置模型和 API 密钥，绑定该 Agent 所在主机上的项目目录，并选择默认项目。
