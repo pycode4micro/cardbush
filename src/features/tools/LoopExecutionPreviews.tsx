@@ -28,17 +28,17 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
     .map(execution => execution.id).join('\0');
   const sessionId = message.conversationId ?? '';
   const turnId = executions[0]?.turnId ?? message.turnId ?? '';
+  const host = useContext(ConversationHostContext);
   useEffect(() => {
     setDetails([]); setFailed(false);
     if (!deferred || !sessionId || !turnId) return;
     let disposed = false;
-    void fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId }).then(value => {
+    void (host ? host.toolDetails(sessionId, turnId) : fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId })).then(value => {
       if (!disposed) setDetails(value);
     }).catch(() => { if (!disposed) setFailed(true); });
     return () => { disposed = true; };
-  }, [sessionId, turnId, deferred, retry]);
+  }, [host?.toolDetails, sessionId, turnId, deferred, retry]);
   const agents = executions.filter(execution => agentTools.has(execution.name));
-  const host = useContext(ConversationHostContext);
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const tasks = useLoopSubagentTasks(sessionId, agents.length > 0, active);
   const zh = language === 'zh';

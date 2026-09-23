@@ -65,6 +65,7 @@ import {
   splitExplicitAttachmentMentions,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
+import { normalizePermissionMode } from '../shared/permissionModes';
 import { conversationTitleFromUserText } from '../shared/conversationTitle';
 import { SessionReadFence, canApplySessionSnapshot } from '../shared/sessionReadFence';
 import {
@@ -4195,14 +4196,6 @@ function readInitialReasoningLevel(
 
 function normalizeReferencePlanMode(value: string): ReferencePlanMode {
   return value.trim() === 'off' ? 'off' : 'auto';
-}
-
-function normalizePermissionMode(value: string): PermissionMode {
-  const normalized = value.trim();
-  if (normalized === 'user_free' || normalized === 'all_free') {
-    return normalized;
-  }
-  return 'task_free';
 }
 
 function normalizeSubagentPermissionRouting(value: string): SubagentPermissionRouting {

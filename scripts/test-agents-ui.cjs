@@ -107,8 +107,13 @@ app.whenReady().then(async () => {
         if(frame.type==='event'&&frame.event.kind==='solution_selection_answered')fixtureSelections=[];
         listener(frame);
       });undefined;`);
+    if (!process.argv.includes('--images')) await run("localStorage.setItem('a:cardbush.permission_mode','user_free');localStorage.setItem('b:cardbush.permission_mode','all_free');undefined;");
     await run(js + '\n;undefined;');
     await until("document.querySelectorAll('.agents-card').length===3",'Agent overview renders');
+    if (process.argv.includes('--images')) {
+      await require('./helpers/agent-chat-regressions.cjs')({ run, until, pause, win, root });
+      assert.deepEqual(errors, []); return;
+    }
     await run("cardbushDesktop.sshConnections={list:async()=>[{id:'ssh-fixture',name:'Server',username:'test',host:'fixture.invalid',port:22}]};document.querySelector('.agents-add').click();undefined;");
     await until("document.querySelectorAll('[role=dialog] select').length===2",'new Agent defaults to SSH');
     assert.equal(await run("document.querySelector('[role=dialog] select').value"),'ssh');
@@ -150,6 +155,19 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelectorAll('[data-agent-id=a] .remote-conversation').length"),0,'saved child sessions never become sidebar conversations');
     await run("document.querySelector('.agent-sidebar-row.active .row-new-chat').click()");
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'create session on A');
+    assert.equal(await run("document.querySelector('.agent-chat .permission-center-button').textContent.trim()"),'申请批准','legacy home access migrates to approval mode');
+    await run("document.querySelector('.agent-chat .permission-center-button').click()");
+    await until("document.querySelectorAll('.permission-mode-row').length===2",'only two permission modes are offered');
+    assert.deepEqual(await run("[...document.querySelectorAll('.permission-mode-row strong')].map(item=>item.textContent)"),['申请批准','完全访问']);
+    await run("document.querySelector('.permission-mode-row.mode-all_free').click()");
+    await until("localStorage.getItem('a:cardbush.permission_mode')==='all_free'",'full access persists on the selected Agent');
+    await run("document.querySelector('.agent-chat .permission-center-button').click()");
+    await until("!!document.querySelector('.permission-mode-row.mode-all_free.active')",'full access remains selected when reopening');
+    await until("document.querySelector('.agent-chat .permission-center-button').textContent.trim()==='完全访问'",'composer reflects the selected mode');
+    await pause(200);
+    await new Promise(resolve => { win.webContents.once('paint', resolve); win.webContents.invalidate(); });
+    fs.writeFileSync(path.join(root,'tmp/agents-permission-modes.png'),(await win.webContents.capturePage()).toPNG());
+    await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await until("document.querySelectorAll('[data-agent-id=a] .remote-conversation').length===1",'refresh lists only the new user conversation');
     assert.equal(await run("document.querySelector('[data-agent-id=a]').textContent.includes('Internal child')"),false);
     assert.equal(await run("cardbushDesktop.agents.call('a','sessions.get',{sessionId:'child-a'}).then(session=>session.metadata.agentRole)"),'child','child records remain available to task details');
@@ -189,6 +207,7 @@ app.whenReady().then(async () => {
     await until("document.querySelector('.agent-sidebar-row.active .project-title')?.textContent==='Research Agent' && !!document.querySelector('.agent-sidebar-row.active .row-new-chat')",'switch to B');
     await run("document.querySelector('.agent-sidebar-row.active .row-new-chat').click()");
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'B session');
+    assert.equal(await run("document.querySelector('.agent-chat .permission-center-button').textContent.trim()"),'完全访问','existing full access survives on another Agent');
     assert.equal(await run("document.querySelector('.agent-chat .composer-stack textarea').value"),'','same session ID cannot share drafts across Agents');
     assert.equal(await run("localStorage.getItem('b:cardbush.reasoning_level')||'medium'"),'medium','Agents keep independent reasoning preferences');
     assert.equal(await run("JSON.parse(localStorage.getItem('cardbush-agent-preferences:b'))?.visionEnabled"),undefined,'B keeps inheriting the global default instead of A’s override');
@@ -205,6 +224,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("calls.filter(c=>c.id==='a'&&c.operation==='sessions.rename').length"),1,'uncertain retry does not rename the session again');
     assert.equal(await run("calls.filter(c=>c.operation==='chat.send').at(-1).input.requestId"),failedId,'uncertain retry keeps durable request identity across view unmount');
     assert.equal(await run("calls.filter(c=>c.operation==='chat.send').at(-1).input.reasoningEffort"),'max','queued retry retains the original reasoning choice');
+    assert.equal(await run("calls.filter(c=>c.operation==='chat.send').at(-1).input.permissionMode"),'all_free','the shared picker controls the actual server request');
     assert.equal(await run("calls.filter(c=>c.operation==='chat.send').at(-1).input.visionEnabled"),true,'the vision switch controls actual submissions and survives remount');
     assert.equal(await run("calls.filter(c=>c.operation==='chat.send').at(-1).id"),'a');
     assert.equal(await run("calls.filter(c=>c.operation==='disconnect').length"),0,'navigation cannot stop a service');

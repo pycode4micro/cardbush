@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore, type SetStateAction } from 'react';
 import type { PermissionMode, ReasoningLevel, ReferencePlanMode, SubagentPermissionRouting } from '../../types';
+import { normalizePermissionMode } from '../../shared/permissionModes';
 type Preferences = { modelId: string; reasoning: ReasoningLevel; plan: ReferencePlanMode;
   permissionMode: PermissionMode; routing: SubagentPermissionRouting; disabledSkills: string[]; visionEnabled?: boolean };
 const changed = 'cardbush:agent-preferences-changed';
@@ -15,7 +16,7 @@ function parse(raw: string, defaultModelId: string): Preferences {
     modelId: typeof value.modelId === 'string' ? value.modelId : defaultModelId,
     reasoning: member(value.reasoning, ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
     plan: member(value.plan, ['off', 'auto'], 'off'),
-    permissionMode: member(value.permissionMode, ['user_free', 'task_free', 'all_free'], 'task_free'),
+    permissionMode: normalizePermissionMode(value.permissionMode),
     routing: member(value.routing, ['user', 'parent'], 'user'),
     disabledSkills: Array.isArray(value.disabledSkills) ? value.disabledSkills.filter(name => typeof name === 'string') : [],
     ...(typeof value.visionEnabled === 'boolean' ? { visionEnabled: value.visionEnabled } : {}),

@@ -130,3 +130,36 @@ test('Linux bubblewrap enforces filesystem, descendant and network boundaries', 
   assert.equal(connections, 0); assert.equal(facts.hostSecret, 'absent'); assert.equal(facts.nodeOptions, 'absent');
   assert.equal(await readFile(join(work, 'inside.txt'), 'utf8'), 'allowed');
 });
+
+test('explicit network access works and is removed again on the next isolated process', {
+  skip: !process.env.CARDBUSH_SANDBOX_LIVE_NETWORK, timeout: 30_000,
+}, async t => {
+  const [host, port] = process.env.CARDBUSH_SANDBOX_LIVE_NETWORK.split(':');
+  const control = createConnection({ host, port: Number(port) });
+  control.setTimeout(5000, () => control.destroy(Error('Host network control timed out')));
+  await once(control, 'connect'); control.destroy();
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-network-test-'));
+  t.after(async () => { assert.equal(dirname(root).toLowerCase(), resolve(tmpdir()).toLowerCase()); await rm(root, { recursive: true, force: true }); });
+  const source = `const s=require('net').connect({host:process.argv[1],port:Number(process.argv[2])});s.once('connect',()=>{s.destroy();console.log('connected')});s.once('error',()=>{console.log('denied');process.exitCode=3});s.setTimeout(2000,()=>s.destroy(Error('timeout')))`;
+  for (const network of ['disabled', 'enabled', 'disabled']) {
+    const result = await runResourceManagedCommand({ executable: process.execPath, args: ['-e', source, host, port], cwd: root,
+      timeoutMs: 8000, sandbox: { writableRoots: [root], readableRoots: [dirname(process.execPath)], network } });
+    assert.equal(result.exitCode, network === 'enabled' ? 0 : 3, JSON.stringify(result));
+    assert.match(result.stdout, network === 'enabled' ? /connected/ : /denied/);
+  }
+});
+
+test('stopping a Linux sandbox also ends detached descendants', { skip: process.platform !== 'linux', timeout: 15_000 }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-stop-test-'));
+  t.after(async () => { assert.equal(dirname(root), resolve(tmpdir())); await rm(root, { recursive: true, force: true }); });
+  const marker = join(root, 'orphan.txt');
+  const child = `setTimeout(()=>require('fs').writeFileSync(process.argv[1],'escaped'),1500);setInterval(()=>{},1000)`;
+  const source = `require('child_process').spawn(process.execPath,['-e',process.argv[1],process.argv[2]],{detached:true,stdio:'ignore'});console.log('ready');setInterval(()=>{},1000)`;
+  const task = await spawnResourceManagedProcess({ executable: process.execPath, args: ['-e', source, child, marker], cwd: root,
+    sandbox: { writableRoots: [root], readableRoots: [dirname(process.execPath)], network: 'disabled' } });
+  t.after(async () => { task.stop(); await task.complete(); });
+  const [ready] = await once(task.child.stdout, 'data', { signal: AbortSignal.timeout(5000) });
+  assert.match(String(ready), /ready/); task.stop(); await task.complete();
+  await new Promise(resolve => setTimeout(resolve, 1800));
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
+});

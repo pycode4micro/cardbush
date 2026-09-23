@@ -57,7 +57,7 @@ export class AgentService {
     // Never inherit the desktop's private endpoints, credentials or data directories.
     for (const key of Object.keys(env)) if (key.startsWith('CARDBUSH_')) delete env[key];
     // These are deployment policies, not desktop credentials or transport state.
-    for (const key of ['CARDBUSH_EXECUTION_SANDBOX', 'CARDBUSH_SANDBOX_NETWORK', 'CARDBUSH_SANDBOX_READ_ROOTS', 'CARDBUSH_SANDBOX_WRITE_ROOTS']) {
+    for (const key of ['CARDBUSH_EXECUTION_SANDBOX', 'CARDBUSH_SANDBOX_NETWORK', 'CARDBUSH_SANDBOX_READ_ROOTS', 'CARDBUSH_SANDBOX_WRITE_ROOTS', 'CARDBUSH_BWRAP_PATH']) {
       if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key];
     }
     Object.assign(env, options.env, {

@@ -46,6 +46,7 @@ import { contextWindowMetrics } from './contextWindowUsage';
 import { runtimeThinkingEvent } from './runtimeThinking';
 import { streamChunk, assistantStreamChunk, toolLifecycle, terminalSnapshot, guidanceAppliedUpdate } from './runtimeTranscriptEvents';
 import { contextCompactionPresentationExecution } from './contextCompactionPresentation';
+import { selectRuntimeToolDefinitions } from './runtimeToolCatalog';
 
 export async function streamRuntimeChat(
   request: ChatStreamRequest,
@@ -106,21 +107,15 @@ export async function streamRuntimeChat(
       runtime.client.getSession(request.sessionId, controller.signal),
     ]);
     await prepareRuntimePluginTurn(request, catalog.map(entry => entry.definition));
-    const disabled = new Set(request.disabledTools ?? []);
     const permissionMode = request.permissionMode ?? 'task_free';
     const interactiveRequests = request.interactiveRequestsEnabled === true;
     const vision = request.standardImageInputEnabled === true;
     const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');
-    const tools = catalog.filter((entry) =>
-      (!request.allowedTools || request.allowedTools.includes(entry.definition.name)) &&
-      (!disabled.has(entry.definition.name) || entry.definition.name === 'checkpoint_context') &&
-      (entry.definition.name !== 'request_permission' || (interactiveRequests && permissionMode !== 'all_free')) &&
-      (entry.definition.name !== 'solution_selection' || interactiveRequests) &&
-      (entry.definition.name !== 'inject_image_input' || vision) &&
-      (entry.definition.name !== 'update_goal' || goalAvailable) &&
-      (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
-      (request.teamModeEnabled === true || entry.manifest.operation !== 'agent.team_delegate'),
-    ).map((entry) => entry.definition);
+    const tools = selectRuntimeToolDefinitions(catalog, {
+      allowedTools: request.allowedTools, disabledTools: request.disabledTools,
+      interactiveRequests, vision, goalAvailable,
+      referencePlanMode: request.referencePlanMode, teamModeEnabled: request.teamModeEnabled,
+    });
     const maxContextTokens = positiveInteger(
       request.modelConfig?.maxContextTokens ?? resolvedModel.maxContextTokens,
     ) ?? DEFAULT_MAX_CONTEXT_TOKENS;

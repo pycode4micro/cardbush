@@ -1,4 +1,4 @@
-import { authorizePath, pathAdmission, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity } from './workspaceAccessPolicy.js';
+import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { TerminalSessionManager, type TerminalShell } from './terminalSessionManager.js';
 // Preserve existing Runtime consumers while the implementations remain independent.
 export { authorizePath } from './workspaceAccessPolicy.js';
@@ -22,7 +22,9 @@ import type {
 } from "./toolRegistry.js";
 import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
 import { routeWorkspaceTool } from './workspaceToolRouting.js';
-import { commandSandboxPolicy, snapshotCommandSandbox, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
+import { snapshotCommandSandbox, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
+import { terminalInputPermission } from './commandPermission.js';
+import { authorizedCommandSandbox, commandSandboxPlan, decodeAdditionalCommandPermissions, type AdditionalCommandPermissions } from './commandSandboxAdmission.js';
 import { spawnResourceManagedProcess } from "./processResourceGuard.js";
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTextFields } from "./toolResultText.js";
@@ -46,6 +48,8 @@ interface TerminalInput {
   cwd: string;
   yieldTimeMs: number;
   shell: TerminalShell;
+  additionalPermissions?: AdditionalCommandPermissions;
+  justification?: string;
 }
 
 interface TerminalSessionInput { sessionId: string }
@@ -374,6 +378,16 @@ export function registerWorkspaceTools(
           default: defaultTerminalShell(),
           description: "Explicit command interpreter. Runtime never rewrites commands between shell syntaxes.",
         },
+        additional_permissions: {
+          type: 'object', additionalProperties: false,
+          description: 'Request extra sandbox access for this command and its descendants only. Requires approval; does not disable isolation. Check partial results before retrying a denied operation; never repeat completed side effects. Direct SSH does not support sandbox extensions.',
+          properties: {
+            read_roots: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Existing absolute directories to read.' },
+            write_roots: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Existing absolute directories to read and write.' },
+            network: { type: 'boolean', description: 'Request network access; currently all destinations, not a domain allowlist.' },
+          },
+        },
+        justification: { type: 'string', description: 'Why the additional access is needed.' },
       }, ["command", "cwd", "yield_time_ms", "shell"]),
     },
     manifest: manifest("terminal.execute", "process_execution", true),
@@ -402,10 +416,11 @@ export function registerWorkspaceTools(
           },
         };
       }
-      return pathAdmission(context, cwd, "execute");
+      return (await commandSandboxPlan(commandSandbox, context, cwd)).admission;
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
+      const plan = await commandSandboxPlan(commandSandbox, context, cwd);
       return terminals.start({
         ownerSessionId: context.sessionId,
         command: context.input.command,
@@ -413,7 +428,7 @@ export function registerWorkspaceTools(
         yieldTimeMs: context.input.yieldTimeMs,
         signal: context.signal,
         shell: context.input.shell,
-        sandbox: commandSandboxPolicy(commandSandbox, context),
+        sandbox: authorizedCommandSandbox(plan, context.capabilityIds),
       });
     },
   });
@@ -459,6 +474,11 @@ export function registerWorkspaceTools(
     manifest: manifest("terminal.write", "process_execution", true),
     decodeInput: decodeTerminalWrite,
     renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
+    authorize: (context: ToolAdmissionContext<TerminalWriteInput>) => {
+      const terminal = terminals.describe(context.sessionId, context.input.sessionId);
+      return terminal.sandbox ? { kind: 'allow' as const }
+        : terminalInputPermission({ ...context.input, environment: 'local' });
+    },
     execute: (context: ToolHandlerContext<TerminalWriteInput>) =>
       terminals.write(context.sessionId, context.input, context.signal),
   });
@@ -731,6 +751,8 @@ function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput 
     cwd: typeof object.cwd === "string" ? object.cwd.trim() : "",
     yieldTimeMs: Number(yieldTime),
     shell: shell as TerminalShell,
+    additionalPermissions: decodeAdditionalCommandPermissions(object.additional_permissions),
+    justification: typeof object.justification === 'string' ? object.justification.trim().slice(0, 2000) : undefined,
   };
 }
 

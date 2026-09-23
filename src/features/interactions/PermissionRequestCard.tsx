@@ -40,7 +40,7 @@ export function PermissionRequestCard({
   const options = normalizedPermissionOptions(question?.options ?? [], language);
   const sourceTitle = interaction.title?.trim() ?? '';
   const title = !sourceTitle || sourceTitle === 'Permission'
-    ? language === 'zh' ? '需要访问权限' : 'Permission required'
+    ? language === 'zh' ? '需要批准' : 'Approval required'
     : sourceTitle === 'Subagent permission'
       ? language === 'zh' ? '子 Agent 需要权限' : sourceTitle
       : sourceTitle;
@@ -133,8 +133,8 @@ export function PermissionRequestCard({
 
         <p className="permission-scope-note">
           {language === 'zh'
-            ? '一次授权仅供下一次匹配访问；会话授权仅在当前任务会话内有效。'
-            : 'Allow once is consumed by the next matching access. Session access lasts only for this task.'}
+            ? '一次批准仅用于本次请求；会话批准仅对当前任务中匹配的操作有效。'
+            : 'Allow once applies to this request. Session approval covers matching operations in this task only.'}
         </p>
       </div>
     </section>
@@ -156,8 +156,8 @@ function permissionDetails(interaction: PendingInteraction, language: AppLanguag
   const actions = permission?.actions ?? [];
   const accessKind = normalizeAccessKind(actions[0] ?? '');
   return {
-    target: targets.map((target) => target.label || target.value).join(' · '),
-    resourceKind: primaryTarget?.kind ?? '',
+    target: targets.map((target) => target.label || target.value).join('\n'),
+    resourceKind: targets.some(target => target.kind === 'process') ? 'process' : primaryTarget?.kind ?? '',
     accessKind,
     reason: permission?.reason || interaction.reason || '',
     operation: accessKind ? '' : actions.join(', '),
@@ -209,12 +209,12 @@ function permissionOptionLabel(optionId: string, language: AppLanguage) {
 function permissionOptionDescription(optionId: string, language: AppLanguage) {
   if (language === 'zh') {
     if (optionId === 'allow_session') return '当前任务会话内有效';
-    if (optionId === 'deny') return '由模型自行选择其他方案';
-    return '下一次匹配访问后失效';
+    if (optionId === 'deny') return '拒绝该操作，继续寻找更安全的方案';
+    return '仅批准本次请求';
   }
   if (optionId === 'allow_session') return 'Valid only in this task session';
-  if (optionId === 'deny') return 'Let the model choose another approach';
-  return 'Expires after the next matching access';
+  if (optionId === 'deny') return 'Reject this action and seek a safer alternative';
+  return 'Approve this request only';
 }
 
 function permissionAccessLabel(accessKind: string, language: AppLanguage) {

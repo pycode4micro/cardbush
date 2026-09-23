@@ -34,7 +34,7 @@ node dist-electron/agentServiceCli.mjs \
 
 ## 在 CardBush 中接入
 
-服务端可通过 `--sandbox required --sandbox-network disabled` 显式启用命令隔离。它独立于连接方式和会话的审批模式；默认保持兼容行为。支持平台、目录授权、前置条件和当前限制见 [命令执行沙盒](EXECUTION_SANDBOX.md)。
+服务端可通过 `--sandbox auto --sandbox-network disabled` 启用随审批模式选择的命令隔离：申请批准时隔离，完全访问时使用普通进程。部署管理员也可用 `--sandbox required` 设定所有模式都不能扩大的硬上限。Linux 后端从可信宿主 PATH 发现，支持 `CARDBUSH_BWRAP_PATH` 显式配置，按实际内核／账号能力探测，不依赖发行版名称。默认仍为 `off`；支持平台、目录授权、前置条件和当前限制见 [命令执行沙盒](EXECUTION_SANDBOX.md)。
 
 1. 打开 **Agents → 添加 Agent**。
 2. 新连接默认使用 **SSH 直连**：选择已保存的 SSH 连接，填写服务器 Agent 端口和访问令牌。也可以切换为 **HTTP / HTTPS**，填写远程 `https://agent.example.com` 或本机 `http://127.0.0.1:4780`。使用代理路径前缀时也可以填写 `https://example.com/agent-a/`，代理需将此前缀去掉后转发到服务。编辑已有连接会保留原连接方式。

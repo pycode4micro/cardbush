@@ -209,6 +209,7 @@ export class TerminalSessionManager {
       command: terminal.command,
       pid: terminal.pid,
       state: terminal.state,
+      sandbox: terminal.guarded.sandbox ?? null,
     };
   }
 

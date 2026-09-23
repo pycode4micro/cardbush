@@ -81,7 +81,7 @@ test('cloud Runtime retains the deployment sandbox policy even for a full-contro
     await service.call('chat.send', { ...input('sandbox', 'sandbox-turn'), permissionMode: 'all_free' });
     await until(() => service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
     assert.ok(model.calls.length >= 2, 'model receives the tool result');
-    assert.match(JSON.stringify(model.calls[1].input), /sandbox_policy_invalid|sandbox_unavailable/);
+    assert.match(JSON.stringify(model.calls[1].input), /sandbox_policy_invalid|sandbox_unavailable|sandbox_host_limit/);
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
   } finally { await service.close(); }
 });

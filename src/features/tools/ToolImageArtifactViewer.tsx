@@ -1,10 +1,12 @@
 import { Eye, FileImage, LoaderCircle } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage, ChatToolArtifact } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
+import { ConversationHostContext } from '../conversationHost';
+import { useConversationFileSource } from '../conversationFileSource';
 
 type ToolImagePreview = {
   name: string;
@@ -22,6 +24,7 @@ export function ToolImageArtifactViewer({
   variant?: 'card' | 'thumbnail';
 }) {
   const images = (artifacts ?? []).filter((artifact) => artifact.type === 'image');
+  const host = useContext(ConversationHostContext);
   const [loadingPath, setLoadingPath] = useState('');
   const [preview, setPreview] = useState<ToolImagePreview | null>(null);
   const [failedPaths, setFailedPaths] = useState<Set<string>>(() => new Set());
@@ -30,6 +33,11 @@ export function ToolImageArtifactViewer({
     const pathValue = artifact.path.trim();
     if (!pathValue) return;
     const name = artifact.name || basename(pathValue);
+    if (host) {
+      // The shared dialog reads the selected host and owns the remote blob lifetime.
+      setPreview({ name, path: pathValue, src: '' });
+      return;
+    }
     setLoadingPath(pathValue);
     try {
       let src = mediaSource(pathValue);
@@ -53,7 +61,7 @@ export function ToolImageArtifactViewer({
     } finally {
       setLoadingPath('');
     }
-  }, []);
+  }, [host]);
 
   if (images.length === 0) return null;
 
@@ -75,7 +83,7 @@ export function ToolImageArtifactViewer({
               aria-busy={loading || undefined}
               disabled={!pathValue || loading}
               onClick={() => void openImage(artifact)}
-              onContextMenu={event => openFileContextMenu(event, pathValue, { language })}
+              onContextMenu={event => openFileContextMenu(event, host ? '' : pathValue, { language, image: true })}
             >
               {variant === 'thumbnail' ? <>
                 <ToolImageThumbnail key={pathValue} path={pathValue} name={name} language={language} />
@@ -116,22 +124,25 @@ function mediaSource(pathValue: string) {
 }
 
 function ToolImageThumbnail({ path, name, language }: { path: string; name: string; language: AppLanguage }) {
+  const host = useContext(ConversationHostContext);
+  const { source, error } = useConversationFileSource(path);
   const [failed, setFailed] = useState(false);
   const [fallback, setFallback] = useState('');
   const [fallbackFailed, setFallbackFailed] = useState(false);
   useEffect(() => {
     const read = window.cardbushDesktop?.readImageDataUrl;
-    if (!failed || /^(?:https?:|data:|blob:)/i.test(path) || !read) return;
+    if (host || !failed || /^(?:https?:|data:|blob:)/i.test(path) || !read) return;
     let disposed = false;
     // Use the file protocol first; only request a data URL if it cannot load.
     void read(path).then(source => {
       if (!disposed && source.startsWith('data:image/')) setFallback(source);
     }).catch(() => {});
     return () => { disposed = true; };
-  }, [failed, path]);
-  if (fallbackFailed || (failed && !fallback)) return <span className="tool-image-thumbnail-fallback" aria-hidden="true">
+  }, [host, failed, path]);
+  if (host && !source && !error) return <span className="tool-image-thumbnail-fallback" aria-hidden="true"><LoaderCircle size={20} className="spin" /></span>;
+  if (error || fallbackFailed || (failed && !fallback)) return <span className="tool-image-thumbnail-fallback" aria-hidden="true">
     <FileImage size={20} /><span>{name}</span><small>{language === 'zh' ? '点击查看' : 'View image'}</small>
   </span>;
-  return <img src={fallback || mediaSource(path)} alt="" loading="lazy" decoding="async" draggable={false}
+  return <img src={fallback || source} alt="" loading="lazy" decoding="async" draggable={false}
     onError={() => fallback ? setFallbackFailed(true) : setFailed(true)} />;
 }

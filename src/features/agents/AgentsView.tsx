@@ -164,7 +164,33 @@ function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvai
   const workspaceRoot = chat.activeConversation ? conversationWorkspaceRoot(chat.activeConversation) : undefined;
   const reports = useMemo(() => changeReportsFromMessages(chat.activeMessages), [chat.activeMessages]);
   const [error, setError] = useState('');
-  submittedRef.current = () => { void onChanged().catch(error => setError(`${zh ? '消息已接收，会话列表刷新失败：' : 'Message accepted; conversation refresh failed: '}${errorText(error)}`)); };
+  const [submissionPending, setSubmissionPending] = useState(false);
+  const acceptSubmissionRef = useRef<(() => void) | null>(null);
+  submittedRef.current = () => {
+    acceptSubmissionRef.current?.();
+    void onChanged().catch(error => setError(`${zh ? '消息已接收，会话列表刷新失败：' : 'Message accepted; conversation refresh failed: '}${errorText(error)}`));
+  };
+  const sendComposerMessage = (text: string): Promise<boolean> => {
+    if (acceptSubmissionRef.current) return Promise.resolve(false);
+    setSubmissionPending(true);
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (accepted: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (acceptSubmissionRef.current === accept) acceptSubmissionRef.current = null;
+        setSubmissionPending(false);
+        resolve(accepted);
+      };
+      const accept = () => finish(true);
+      acceptSubmissionRef.current = accept;
+      // The composer waits for durable admission, not for the whole streamed Turn.
+      // A later completion must not clear attachments prepared for the next message.
+      void chat.sendMessage(text).then(() => finish(false), error => {
+        setError(errorText(error)); finish(false);
+      });
+    });
+  };
   const [reverting, setReverting] = useState('');
   const busy = chat.sending || chat.stopping;
   const revert = async (report: ConversationChangeReport) => {
@@ -212,7 +238,7 @@ function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvai
         referencePlanAvailable={enhanced} referencePlanMode={chat.referencePlanMode} onReferencePlanModeChange={chat.setReferencePlanMode}
         reasoningLevelAvailable={enhanced} reasoningLevel={chat.reasoningLevel} reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']} onReasoningLevelChange={chat.setReasoningLevel}
         skills={skills} disabledSkillNames={disabledSkills} onToggleSkill={(name, enabled) => setPreferences(current => ({ ...current, disabledSkills: enabled ? current.disabledSkills.filter(item => item !== name) : [...new Set([...current.disabledSkills, name])] }))}
-        onSend={async text => { setDraft(''); await chat.sendMessage(text); if (connection.unconfirmedText(sessionId)) setDraft(current => current || text); await onChanged().catch(error => setError(errorText(error))); }} onCancel={() => chat.cancelSending()}
+        onSend={sendComposerMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={onCreate} onOpenConversation={onOpenSession}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
         onGuideMessage={async (message, text, mode) => { await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); setDraft(''); }} onRetryGuidance={chat.retryTurnGuidance}

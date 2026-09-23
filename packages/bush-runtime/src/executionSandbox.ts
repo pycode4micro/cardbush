@@ -4,9 +4,59 @@ import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { createPlatformContext, findExecutable } from '@cardbush/platform';
 
 const execFileAsync = promisify(execFile);
 const windowsCapabilities = new Map<string, Promise<void>>();
+const linuxCapabilities = new Map<string, Promise<void>>();
+
+/** Resolve only host configuration/PATH, never a command's environment or cwd. */
+export async function resolveLinuxSandboxExecutable(configured?: string, hostPath = process.env.PATH ?? ''): Promise<string> {
+  const candidate = configured ?? findExecutable('bwrap', createPlatformContext({
+    platform: 'linux', env: { PATH: hostPath.split(':').filter(path => isAbsolute(path)).join(':') },
+  }));
+  if (!candidate || !isAbsolute(candidate)) throw sandboxError('sandbox_unavailable', 'No bubblewrap executable was found in the host PATH. Install it using the host distribution or set CARDBUSH_BWRAP_PATH. No command was started.');
+  let executable: string;
+  try { executable = await realpath(candidate); }
+  catch { throw sandboxError('sandbox_unavailable', 'The configured bubblewrap executable is missing. No command was started.'); }
+  // Discovery must not select a backend that a workspace command can replace.
+  for (let current = executable; ; current = dirname(current)) {
+    const metadata = await stat(current);
+    if (metadata.uid !== 0 || (metadata.mode & 0o022) !== 0 || (current === executable && !metadata.isFile())) {
+      throw sandboxError('sandbox_unavailable', 'Bubblewrap and its resolved parent directories must be root-owned and not writable by group or others. Use an administrator-managed installation.');
+    }
+    if (dirname(current) === current) break;
+  }
+  return executable;
+}
+
+async function requireLinuxSandbox(executable: string, network: ExecutionSandboxPolicy['network'], env: NodeJS.ProcessEnv): Promise<void> {
+  const metadata = await stat(executable);
+  const key = JSON.stringify([executable, metadata.ino, metadata.mtimeMs, network]);
+  let pending = linuxCapabilities.get(key);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        // Fixed, inert host code: test the current service account's namespaces
+        // before launching any user command. No distro/version assumptions.
+        await execFileAsync(executable, [...linuxNamespaceArgs(network), '--ro-bind', '/', '/',
+          '--proc', '/proc', '--dev', '/dev', '--', process.execPath, '-e', 'process.exit(0)'],
+        { env, timeout: 10_000, maxBuffer: 4096 });
+      } catch (error) {
+        const detail = String((error as { stderr?: unknown }).stderr ?? (error as Error).message).trim().slice(0, 1200);
+        throw sandboxError('sandbox_unavailable', `This account cannot create the requested Linux sandbox. Check kernel user namespaces, container policy and any active LSM (AppArmor/SELinux). No user command was started. Backend: ${detail}`);
+      }
+    })();
+    linuxCapabilities.set(key, pending);
+    void pending.catch(() => linuxCapabilities.delete(key));
+  }
+  await pending;
+}
+
+function linuxNamespaceArgs(network: ExecutionSandboxPolicy['network']): string[] {
+  return ['--die-with-parent', '--new-session', '--unshare-user', '--unshare-pid', '--unshare-uts', '--unshare-ipc',
+    '--cap-drop', 'ALL', ...(network === 'disabled' ? ['--unshare-net'] : [])];
+}
 
 async function requireWindowsSandbox(host: string): Promise<void> {
   let pending = windowsCapabilities.get(host);
@@ -31,6 +81,9 @@ export interface ExecutionSandboxPolicy {
   writableRoots: readonly string[];
   readableRoots?: readonly string[];
   network: 'disabled' | 'enabled';
+  linuxExecutable?: string;
+  /** Granted scopes were already canonicalized; never silently retarget them. */
+  requireCanonicalRoots?: boolean;
 }
 
 export interface ExecutionSandboxStatus {
@@ -61,7 +114,7 @@ export function sandboxEnvironment(source: NodeJS.ProcessEnv, privateRoot: strin
   });
 }
 
-async function roots(values: readonly string[]): Promise<string[]> {
+export async function canonicalSandboxRoots(values: readonly string[]): Promise<string[]> {
   if (!Array.isArray(values) || values.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');
   return [...new Set(await Promise.all(values.map(async value => {
     if (typeof value !== 'string' || !value.trim() || !isAbsolute(value) || value.includes('\0')) {
@@ -88,7 +141,18 @@ export async function prepareExecutionSandbox(input: {
   // Snapshot every field before asynchronous setup; callers cannot broaden a live policy.
   const writableInput = [...input.policy.writableRoots];
   const readableInput = [...(input.policy.readableRoots ?? [])];
-  const [writableRoots, readableRoots, cwd] = await Promise.all([roots(writableInput), roots(readableInput), realpath(input.cwd)]);
+  const linuxExecutable = input.policy.linuxExecutable;
+  const requireCanonicalRoots = input.policy.requireCanonicalRoots === true;
+  const [writableRoots, readableRoots, cwd] = await Promise.all([canonicalSandboxRoots(writableInput), canonicalSandboxRoots(readableInput), realpath(input.cwd)]);
+  if (requireCanonicalRoots) {
+    const identity = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+    for (const [requested, actual] of [[writableInput, writableRoots], [readableInput, readableRoots]]) {
+      const expected = new Set(requested.map(identity));
+      if (actual.some(path => !expected.has(identity(path))) || actual.length !== expected.size) {
+        throw sandboxError('sandbox_approval_changed', 'An approved directory changed before sandbox setup. No command was started.');
+      }
+    }
+  }
   if (writableRoots.length + readableRoots.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');
   if (!(await stat(cwd)).isDirectory()) throw sandboxError('sandbox_policy_invalid', 'The command working directory does not exist.');
   if (process.platform === 'win32' && !input.windowsHostPath) throw sandboxError('sandbox_unavailable', 'The Windows sandbox host is unavailable.');
@@ -98,7 +162,7 @@ export async function prepareExecutionSandbox(input: {
   const windowsPolicyPath = process.platform === 'win32' ? join(directory, 'policy.json') : undefined;
   let prepared = false;
   try {
-    if (writableRoots.some(root => within(root, directory))) {
+    if ([...writableRoots, ...readableRoots].some(root => within(root, directory))) {
       throw sandboxError('sandbox_policy_invalid', 'The writable scope would expose the sandbox supervisor state. Select a narrower project directory.');
     }
     if (![...readableRoots, ...writableRoots].some(root => within(root, cwd))) {
@@ -114,12 +178,9 @@ export async function prepareExecutionSandbox(input: {
         readableRoots, writableRoots, network,
       }), { mode: 0o600, flag: 'wx' });
     } else {
-      executable = '/usr/bin/bwrap';
-      try { await stat(executable); }
-      catch { throw sandboxError('sandbox_unavailable', 'Install bubblewrap on the execution host. No command was started without a sandbox.'); }
-      args = ['--die-with-parent', '--new-session', '--unshare-user', '--unshare-pid', '--unshare-uts', '--unshare-ipc',
-        '--cap-drop', 'ALL', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp'];
-      if (network === 'disabled') args.push('--unshare-net');
+      executable = await resolveLinuxSandboxExecutable(linuxExecutable);
+      await requireLinuxSandbox(executable, network, env);
+      args = [...linuxNamespaceArgs(network), '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp'];
       // Read-only base tooling. No bind of / or the real user home, host state,
       // IPC sockets, or /run. Explicit roots are mounted at their original paths.
       for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ld.so.cache', '/etc/ld.so.conf',

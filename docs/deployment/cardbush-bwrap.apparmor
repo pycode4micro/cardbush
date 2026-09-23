@@ -1,0 +1,9 @@
+# Ubuntu 24.04: allow the distribution's bubblewrap binary to create its
+# namespaces. Keep kernel.apparmor_restrict_unprivileged_userns enabled.
+# Install as /etc/apparmor.d/cardbush-bwrap and load with apparmor_parser -r.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile cardbush-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}

@@ -92,5 +92,6 @@ Codex 使用 App Server 向客户端提供会话、审批和事件接口。CardB
 - 已核对官方机制、当前代码入口和主要信任边界。
 - 已明确采用平台原生访问隔离，磁盘分区和虚拟磁盘不在方案内。
 - 已拆出工作区授权和终端会话模块，接入宿主控制的命令沙盒策略，保留原有调用接口。
-- Windows AppContainer 原生命令隔离已完成首批实测；Linux bubblewrap 适配与实机测试已加入，尚待 Linux 主机验证。
+- Windows AppContainer 和 Linux bubblewrap 已在实际主机验收；Linux 使用现有 Agent 服务账号及 NoNewPrivileges，后端发现和能力探测不依赖发行版名称。
+- 新增宿主 `auto` 策略，审批后的目录／网络扩权绑定具体命令及其进程树，下一条命令恢复基础隔离范围；`required` 保留管理员硬限制。
 - 默认仍为关闭；完整边界、崩溃恢复、其他执行入口及默认启用验收尚未全部完成。详见 [当前实现](EXECUTION_SANDBOX.md)。

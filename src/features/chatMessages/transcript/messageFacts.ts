@@ -154,7 +154,7 @@ function isPersistedChatMessageId(value: string) {
     /^msg:\S+$/.test(normalized) ||
     /^msg-[\w-]+$/.test(normalized) ||
     /^msg_[\w-]+$/.test(normalized) ||
-    /^message_[\w-]+$/.test(normalized) ||
+    /^message[-_][\w-]+$/.test(normalized) ||
     /^\d+$/.test(normalized)
   );
 }

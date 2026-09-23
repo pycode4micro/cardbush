@@ -11268,12 +11268,7 @@ body.queue-reordering * {
   background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
-.permission-mode-row:nth-child(2).active {
-  color: color-mix(in srgb, #6fbaff 88%, var(--text));
-  background: color-mix(in srgb, #6fbaff 13%, transparent);
-}
-
-.permission-mode-row:nth-child(3).active {
+.permission-mode-row.mode-all_free.active {
   color: color-mix(in srgb, #ff9b45 90%, var(--text));
   background: color-mix(in srgb, #ff9b45 14%, transparent);
 }
@@ -18771,6 +18766,7 @@ body.queue-reordering * {
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
   user-select: text;
 }
 

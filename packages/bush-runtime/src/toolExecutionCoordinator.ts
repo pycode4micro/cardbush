@@ -247,7 +247,7 @@ export class ToolExecutionCoordinator {
           if (answer.decision === "deny") {
             return failedResult(
               "permission_rejected",
-              "The requested permission was rejected.",
+              "The user rejected this action. Do not retry it through another tool, indirect execution, or a broader permission request. Continue with a materially safer alternative, or report what remains blocked.",
               actionManifest,
               {},
               "permission",

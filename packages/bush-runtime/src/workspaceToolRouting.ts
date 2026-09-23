@@ -4,6 +4,7 @@ import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistration } from 
 import type { RemoteWorkspaceBridge, TerminalSessionManager } from './workspaceTools.js';
 import { protectedPosixTerminalDeletion } from './terminalCommandSafety.js';
 import { sandboxError } from './executionSandbox.js';
+import { commandPermission, terminalInputPermission } from './commandPermission.js';
 
 type Context<T> = ToolAdmissionContext<T> | ToolHandlerContext<T>;
 type RoutedInput = Record<string, unknown> & { environment?: string };
@@ -114,8 +115,10 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       enforceRemoteSandbox();
       const input = context.input as RoutedInput;
       if (name === 'terminal_poll') return { kind: 'allow' as const };
-      if (name === 'terminal_write' || name === 'terminal_stop') return { kind: 'ask' as const, request: {
-        reason: `SSH ${name}: ${uri}`, actions: [name === 'terminal_stop' ? 'stop' : 'write'],
+      if (name === 'terminal_write') return terminalInputPermission({ sessionId: String(input.sessionId),
+        chars: String(input.chars ?? ''), environment: uri });
+      if (name === 'terminal_stop') return { kind: 'ask' as const, request: {
+        reason: `SSH ${name}: ${uri}`, actions: ['stop'],
         targets: [{ kind: 'process' as const, value: String(input.sessionId), label: uri }],
         capabilityIds: [`ssh.${name}:${uri}:${input.sessionId}`],
       } };
@@ -133,11 +136,16 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       const resolved = await remote.request('authorize', { uri: trusted ?? uri, path, write: name === 'write_file' }, context.signal);
       const access = name === 'read_file' || name === 'search_file_content' ? 'read' : name === 'terminal_exec' ? 'execute' : 'write';
       if (name === 'terminal_exec') {
+        const extra = input.additionalPermissions as { readRoots: string[]; writeRoots: string[]; network: boolean } | undefined;
+        if (extra && (extra.readRoots.length || extra.writeRoots.length || extra.network)) throw sandboxError('sandbox_remote_unavailable', 'Direct SSH cannot enforce sandbox extensions. Connect to a CardBush Agent with its own execution policy. No remote command was sent.');
         if (input.shell !== 'posix') throw Error('SSH remote terminals require shell="posix".');
         for (const root of [parseSshWorkspace(resolved.root)!.path, target.path]) {
           const denied = protectedPosixTerminalDeletion({ command: String(input.command), cwd: parseSshWorkspace(resolved.path)!.path, root, home: resolved.home ?? '/' });
           if (denied) return { kind: 'deny' as const, code: 'protected_path_delete_denied', message: denied.message, details: { protection: denied.protection, target: denied.target } };
         }
+        return commandPermission({ command: String(input.command), cwd: resolved.path, shell: String(input.shell),
+          scope: { mode: context.turn?.request.permissionMode === 'user_free' ? 'user_free' : 'task_free',
+            roots: trusted ? [resolved.root] : [] } });
       }
       if (access === 'read' && trusted && resolved.inside) return { kind: 'allow' as const };
       return { kind: 'ask' as const, request: {

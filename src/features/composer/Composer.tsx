@@ -11,6 +11,7 @@ import { promptReferenceMarkdown } from '../../shared/promptReferences';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
+import { normalizePermissionMode, permissionModeOptions } from '../../shared/permissionModes';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
   ArrowRight,
@@ -31,7 +32,6 @@ import {
   FileText,
   FolderOpen,
   Globe,
-  KeyRound,
   ListChecks,
   ListOrdered,
   LoaderCircle,
@@ -567,7 +567,10 @@ export function Composer({
     const value = [...attachmentPaths, draft.trimEnd()].filter(Boolean).join('\n');
     if (host) {
       if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
-      setImageAttachments([]); setFileAttachments([]);
+      if (draftForExtraction.current.draft === draft) onDraftChange('');
+      const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
+      setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
+      setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       return;
     }
     onDraftChange('');
@@ -751,7 +754,16 @@ export function Composer({
       setAttachmentUploads(current => current + 1);
       try {
         const uploaded = await host.uploadFiles(files);
-        setFileAttachments(current => [...current, ...uploaded.map(file => ({ id: crypto.randomUUID(), path: file.path, name: file.name, kind: 'file' as const }))]);
+        const images: ComposerImageAttachment[] = [];
+        const attachments: ComposerFileAttachment[] = [];
+        for (const [index, file] of uploaded.entries()) {
+          const attachment = { id: crypto.randomUUID(), path: file.path, name: file.name };
+          if (isImagePath(file.path) && files[index]) {
+            images.push({ ...attachment, previewUrl: await readFileAsDataUrl(files[index]) });
+          } else attachments.push({ ...attachment, kind: 'file' });
+        }
+        setImageAttachments(current => [...current, ...images]);
+        setFileAttachments(current => [...current, ...attachments]);
       } finally { setAttachmentUploads(current => current - 1); }
       return;
     }
@@ -1856,7 +1868,7 @@ function ComposerPopover({
           {permissionModeOptions(language).map((option) => (
             <button
               className={`popover-row permission-mode-row mode-${option.id} ${
-                option.id === permissionMode ? 'active' : ''
+                option.id === normalizePermissionMode(permissionMode) ? 'active' : ''
               }`}
               type="button"
               key={option.id}
@@ -1867,7 +1879,7 @@ function ComposerPopover({
                 <strong>{option.label}</strong>
                 <small>{option.description}</small>
               </span>
-              {option.id === permissionMode && <Check size={14} />}
+              {option.id === normalizePermissionMode(permissionMode) && <Check size={14} />}
             </button>
           ))}
           <section className="subagent-permission-routing">
@@ -1879,8 +1891,8 @@ function ComposerPopover({
                     ? '父子 Agent 共同使用当前选择的权限。'
                     : 'Parent and child Agents use the permission selected above.'
                   : language === 'zh'
-                    ? '子 Agent 默认 task_free，额外请求转交父 Turn 审批。'
-                    : 'Subagents default to task_free; extra requests go through the parent Turn.'}
+                    ? '子 Agent 继承权限限制，额外请求转交父任务审批。'
+                    : 'Subagents inherit permission limits; extra requests go through the parent task.'}
               </small>
             </div>
             <div
@@ -2298,44 +2310,7 @@ function permissionIcon(mode: PermissionMode, size = 15) {
   if (mode === 'all_free') {
     return <Unlock size={size} />;
   }
-  if (mode === 'user_free') {
-    return <KeyRound size={size} />;
-  }
   return <Lock size={size} />;
-}
-
-function permissionModeOptions(language: AppLanguage) {
-  const options: Array<{
-    id: PermissionMode;
-    label: string;
-    description: string;
-  }> = [
-    {
-      id: 'task_free',
-      label: language === 'zh' ? '项目自由' : 'Project free',
-      description:
-        language === 'zh'
-          ? '仅在当前项目和任务工作区内自由读写、执行。'
-          : 'Free read, write, and execute inside the current project and task workspace.',
-    },
-    {
-      id: 'user_free',
-      label: language === 'zh' ? '家目录自由' : 'Home free',
-      description:
-        language === 'zh'
-          ? '允许在用户目录内操作，仍避开系统级位置。'
-          : 'Allow operations inside the user home while avoiding system locations.',
-    },
-    {
-      id: 'all_free',
-      label: language === 'zh' ? '完全控制' : 'Full control',
-      description:
-        language === 'zh'
-          ? '除不可覆盖的危险目录保护外，其他工具权限默认通过。'
-          : 'Allow tool permissions by default except for non-overridable protected-directory safeguards.',
-    },
-  ];
-  return options;
 }
 
 function permissionModeLabel(mode: PermissionMode, language: AppLanguage) {

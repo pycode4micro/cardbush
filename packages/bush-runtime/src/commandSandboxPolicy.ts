@@ -1,21 +1,24 @@
 import { isAbsolute } from 'node:path';
-import type { ToolHandlerContext } from './toolRegistry.js';
+import type { ToolAdmissionContext } from './toolRegistry.js';
 import { workspaceRoot } from './workspaceAccessPolicy.js';
 import { sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
 
 /** Supplied by the host at startup, never by a turn or a model tool call. */
 export interface CommandSandboxConfiguration {
-  mode: 'off' | 'required';
+  mode: 'off' | 'auto' | 'required';
   network: 'disabled' | 'enabled';
   readableRoots: readonly string[];
   writableRoots: readonly string[];
+  linuxExecutable?: string;
 }
 
 export function commandSandboxConfiguration(env: NodeJS.ProcessEnv): CommandSandboxConfiguration {
   const mode = env.CARDBUSH_EXECUTION_SANDBOX?.trim() || 'off';
   const network = env.CARDBUSH_SANDBOX_NETWORK?.trim() || 'disabled';
-  if (mode !== 'off' && mode !== 'required') throw sandboxError('sandbox_policy_invalid', 'CARDBUSH_EXECUTION_SANDBOX must be off or required.');
+  if (mode !== 'off' && mode !== 'auto' && mode !== 'required') throw sandboxError('sandbox_policy_invalid', 'CARDBUSH_EXECUTION_SANDBOX must be off, auto or required.');
   if (network !== 'disabled' && network !== 'enabled') throw sandboxError('sandbox_policy_invalid', 'CARDBUSH_SANDBOX_NETWORK must be disabled or enabled.');
+  const linuxExecutable = env.CARDBUSH_BWRAP_PATH?.trim();
+  if (linuxExecutable && (!isAbsolute(linuxExecutable) || linuxExecutable.includes('\0'))) throw sandboxError('sandbox_policy_invalid', 'CARDBUSH_BWRAP_PATH must be an absolute executable path.');
   function directories(key: string): readonly string[] {
     let value: unknown;
     try { value = JSON.parse(env[key] || '[]'); } catch { throw sandboxError('sandbox_policy_invalid', `${key} must be a JSON array of absolute directories.`); }
@@ -24,7 +27,7 @@ export function commandSandboxConfiguration(env: NodeJS.ProcessEnv): CommandSand
     }
     return Object.freeze([...new Set(value as string[])]);
   }
-  return Object.freeze({ mode, network, readableRoots: directories('CARDBUSH_SANDBOX_READ_ROOTS'), writableRoots: directories('CARDBUSH_SANDBOX_WRITE_ROOTS') });
+  return Object.freeze({ mode, network, readableRoots: directories('CARDBUSH_SANDBOX_READ_ROOTS'), writableRoots: directories('CARDBUSH_SANDBOX_WRITE_ROOTS'), ...(linuxExecutable ? { linuxExecutable } : {}) });
 }
 
 export function snapshotCommandSandbox(configuration?: CommandSandboxConfiguration): CommandSandboxConfiguration {
@@ -33,11 +36,12 @@ export function snapshotCommandSandbox(configuration?: CommandSandboxConfigurati
     CARDBUSH_SANDBOX_NETWORK: configuration.network,
     CARDBUSH_SANDBOX_READ_ROOTS: JSON.stringify(configuration.readableRoots),
     CARDBUSH_SANDBOX_WRITE_ROOTS: JSON.stringify(configuration.writableRoots),
+    CARDBUSH_BWRAP_PATH: configuration.linuxExecutable,
   } : {});
 }
 
-export function commandSandboxPolicy(configuration: CommandSandboxConfiguration, context: ToolHandlerContext<unknown>): ExecutionSandboxPolicy | undefined {
-  if (configuration.mode === 'off') return;
+export function commandSandboxPolicy(configuration: CommandSandboxConfiguration, context: ToolAdmissionContext<unknown>): ExecutionSandboxPolicy | undefined {
+  if (configuration.mode === 'off' || (configuration.mode === 'auto' && context.turn?.request.permissionMode === 'all_free')) return;
   const workspace = workspaceRoot(context);
   // Approving a cwd, choosing all_free, or supplying taskRoots does not expand
   // the host sandbox. Additional directories need host configuration.
@@ -45,5 +49,6 @@ export function commandSandboxPolicy(configuration: CommandSandboxConfiguration,
     network: configuration.network,
     writableRoots: [...new Set([...(workspace ? [workspace] : []), ...configuration.writableRoots])],
     readableRoots: [...configuration.readableRoots],
+    ...(configuration.linuxExecutable ? { linuxExecutable: configuration.linuxExecutable } : {}),
   };
 }

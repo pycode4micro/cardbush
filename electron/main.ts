@@ -3798,6 +3798,10 @@ async function initializeRuntimeHostWithinDeadline() {
       startupTimeoutMs: 12_000,
       env: {
         ...process.env,
+        // Host startup option only. A deployment environment policy takes
+        // precedence; session settings and renderer payloads cannot change it.
+        CARDBUSH_EXECUTION_SANDBOX: process.env.CARDBUSH_EXECUTION_SANDBOX
+          || app.commandLine.getSwitchValue('execution-sandbox') || 'off',
         CARDBUSH_MCP_MANAGEMENT_URL: productMcpManagement!.url,
         CARDBUSH_MCP_DESKTOP_BRIDGE: '1',
         CARDBUSH_PROCESS_HOST_DIRECTORY: cardbushRuntimeIsPackaged

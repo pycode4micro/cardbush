@@ -11,14 +11,14 @@ const { values } = parseArgs({ options: {
   sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' },
 } });
 if (values.help) {
-  process.stdout.write('命令沙盒（可选）：--sandbox required --sandbox-network disabled\n默认 off；启用后后端不可用时拒绝执行，不降级。详见 docs/EXECUTION_SANDBOX.md。\n\n');
+  process.stdout.write('命令沙盒（可选）：--sandbox auto --sandbox-network disabled\nauto：申请批准时隔离，完全访问时不隔离；required：始终强制隔离且不允许会话扩权。默认 off；启用后后端不可用时拒绝执行，不降级。详见 docs/EXECUTION_SANDBOX.md。\n\n');
   process.stdout.write('CardBush Agent 服务（Node.js 22.12+）\n\nnode dist-electron/agentServiceCli.mjs --data-dir /srv/cardbush/agent-a --name Agent-A [--host 127.0.0.1] [--port 4780]\n\n每个 Agent 使用独立数据目录。本机与远程均通过 HTTP 接入。\nAPI：/api/agent/v1/info、/api/agent/v1/call、/api/agent/v1/events（SSE 或 NDJSON 流）。\n令牌保存在 DATA_DIR/access-token，也可通过 CARDBUSH_AGENT_TOKEN 指定。\n远程连接通过 HTTPS 反向代理或 SSH 隧道访问。不再提供 stdio 或 MCP Agent 入口。\n');
 } else {
   if (!values['data-dir']) throw new Error('--data-dir is required; never use the desktop profile directory.');
   if (values.transport !== 'http') throw new Error('Agent 服务仅支持 HTTP。请使用 --host 和 --port 启动，再通过 HTTP 地址连接。');
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port.');
-  if (values.sandbox && !['off', 'required'].includes(values.sandbox)) throw new Error('--sandbox 只支持 off 或 required。');
+  if (values.sandbox && !['off', 'auto', 'required'].includes(values.sandbox)) throw new Error('--sandbox 只支持 off、auto 或 required。');
   if (values['sandbox-network'] && !['disabled', 'enabled'].includes(values['sandbox-network'])) throw new Error('--sandbox-network 只支持 disabled 或 enabled。');
   const service = await AgentService.open({ dataRoot: resolve(values['data-dir']), name: values.name, env: {
     ...(values.sandbox ? { CARDBUSH_EXECUTION_SANDBOX: values.sandbox } : {}),

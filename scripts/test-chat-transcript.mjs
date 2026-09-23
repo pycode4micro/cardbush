@@ -170,6 +170,12 @@ for (const metadata of [undefined, { transcript_kind: 'assistant_segment' }]) {
   assert.equal(input[1].renderKey, undefined);
 }
 assert.equal(api.persistedChatMessageId({ id: 'optimistic', metadata: { message_id: 'message_durable' } }), 'message_durable');
+for (const id of ['message_1234', 'message-1234-abcd']) {
+  const user = { id: 'user-optimistic', messageId: id, role: 'user', content: '图片问题', turnId: 'remote-turn' };
+  assert.equal(api.persistedChatMessageId(user), id);
+  assert.equal(api.findPersistedEditableUserMessage(user, [user]).id, id, 'both local and remote durable IDs support editing');
+}
+assert.equal(api.persistedChatMessageId({ id: 'user-optimistic' }), '', 'temporary rows remain non-editable until acknowledged');
 
 // Runtime content-block ordinals restart at 1 in every model/tool round.
 // Different durable message IDs must never append to the same optimistic row.

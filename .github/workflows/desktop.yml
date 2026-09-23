@@ -38,7 +38,7 @@ jobs:
       - run: npm run build
       - run: npx tsc --noEmit -p tsconfig.json
       - name: Native command sandbox boundaries
-        run: node --test packages/bush-runtime/test/commandSandboxPolicy.test.mjs packages/bush-runtime/test/executionSandbox.test.mjs
+        run: node --test packages/bush-runtime/test/commandSandboxPolicy.test.mjs packages/bush-runtime/test/commandPermission.test.mjs packages/bush-runtime/test/commandSandboxLive.test.mjs packages/bush-runtime/test/executionSandbox.test.mjs
       - name: Windows regression and adversarial tests
         if: runner.os == 'Windows'
         run: npm run test:release

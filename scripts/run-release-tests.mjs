@@ -17,6 +17,7 @@ const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', n
 run(['--test', '--test-concurrency=3', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
 run(['--test', 'scripts/test-file-preview-registry.mjs']);
+run(['--test', 'scripts/test-permission-modes.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
