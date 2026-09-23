@@ -1,6 +1,8 @@
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
+import type { SandboxSetupHost } from './sandboxTypes';
+import type { RuntimeHostIpcRegistration } from './runtimeHostController.mjs' with { 'resolution-mode': 'import' };
 import type { SshConnectionInput } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
@@ -174,7 +176,8 @@ let mainWindow: BrowserWindow | null = null;
 type RuntimeHostController = {
   start: () => Promise<unknown>;
   stop: () => void;
-  command: (message: unknown) => Promise<unknown>;
+  dispose: () => void;
+  command: (message: unknown) => Promise<RuntimeIpcOutboundMessage>;
   startStream: (message: unknown) => Promise<void>;
   stopStream: (message: unknown) => Promise<void>;
   cancelOperation: (message: unknown) => Promise<void>;
@@ -182,7 +185,8 @@ type RuntimeHostController = {
 };
 
 let runtimeHostController: RuntimeHostController | null = null;
-let unregisterRuntimeHostIpc: (() => void) | null = null;
+let sandboxSetup: SandboxSetupHost | undefined;
+let runtimeHostIpc: RuntimeHostIpcRegistration | null = null;
 let unregisterDesktopControlMonitor: (() => void) | null = null;
 type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: string };
 let chromeConnectorBroker: ChromeConnectorBroker | null = null;
@@ -278,6 +282,8 @@ let runtimeStartupStatus: RuntimeStartupStatus = {
   startedAt: new Date(desktopStartupStartedAt).toISOString(),
 };
 let runtimeServicesInitialization: Promise<void> | null = null;
+let runtimeServicesAbort: AbortController | null = null;
+let runtimeServicesStopping = false;
 let packagedSmokeRendererReadyResolve: (() => void) | null = null;
 const packagedSmokeRendererReady = new Promise<void>((resolve) => {
   packagedSmokeRendererReadyResolve = resolve;
@@ -2093,9 +2099,7 @@ ipcMain.handle('app:show-error', (event, error: { title?: unknown; message?: unk
 
 ipcMain.handle('app:retry-runtime', async (event) => {
   assertMainWindowSender(event.sender.id);
-  if (runtimeStartupStatus.phase !== 'initializing') {
-    await startRuntimeServices(true);
-  }
+  await (runtimeServicesInitialization ?? startRuntimeServices(true));
   return { ...runtimeStartupStatus };
 });
 
@@ -2238,6 +2242,7 @@ ipcMain.handle('cardbush-product-host:command', async (event, command: unknown) 
 });
 
 async function ensureRuntimeServicesReady(): Promise<NonNullable<typeof productHostController>> {
+  if (runtimeServicesStopping) throw new Error('CardBush Runtime is shutting down.');
   if (runtimeStartupStatus.phase !== 'ready' || !productHostController) {
     await (runtimeServicesInitialization ?? startRuntimeServices());
   }
@@ -2251,6 +2256,12 @@ async function ensureRuntimeServicesReady(): Promise<NonNullable<typeof productH
     throw error;
   }
   return productHostController;
+}
+
+async function ensureRuntimeHostReady(): Promise<RuntimeHostController> {
+  await ensureRuntimeServicesReady();
+  if (!runtimeHostController) throw new Error('CardBush Runtime is unavailable.');
+  return runtimeHostController;
 }
 
 ipcMain.handle(
@@ -2624,30 +2635,30 @@ function mcpDesktop() {
 ipcMain.handle('mcp:requests', event => { assertMainWindowSender(event.sender.id); return mcpDesktop().requests(); });
 ipcMain.handle('mcp:answer', (event, id: string, answer: unknown) => { assertMainWindowSender(event.sender.id); return mcpDesktop().answer(String(id), answer); });
 ipcMain.handle('mcp:open-request-url', (event, id: string) => { assertMainWindowSender(event.sender.id); return mcpDesktop().openRequestUrl(String(id)); });
-ipcMain.handle('plugins:troubleshooting-context', (event, pluginId: string, componentId: string) => {
+ipcMain.handle('plugins:troubleshooting-context', async (event, pluginId: string, componentId: string) => {
   assertMainWindowSender(event.sender.id);
-  if (!productHostController) throw new Error('Runtime is not ready.');
-  return productHostController.pluginTroubleshootingContext(String(pluginId), String(componentId));
+  const controller = await ensureRuntimeServicesReady();
+  return controller.pluginTroubleshootingContext(String(pluginId), String(componentId));
 });
 ipcMain.handle('plugins:save-connections', async (event, input: unknown) => {
   assertMainWindowSender(event.sender.id);
-  if (!productHostController) throw new Error('Runtime is not ready.');
+  const controller = await ensureRuntimeServicesReady();
   // Private renderer IPC: credential values never enter a Runtime command or tool journal.
-  return productHostController.savePluginConnections(input);
+  return controller.savePluginConnections(input);
 });
 ipcMain.handle('mcp:connection-action', async (event, serverId: string, action: string) => {
   assertMainWindowSender(event.sender.id);
   if (!['login', 'logout', 'cancel_login', 'reconnect'].includes(action)) throw new Error('Invalid MCP connection action.');
-  if (!runtimeHostController) throw new Error('Runtime is not ready.');
-  const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+  const controller = await ensureRuntimeHostReady();
+  const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
     command: { kind: `runtime.mcp_${action}`, payload: { serverId: String(serverId) } } }) as { ok?: boolean; result?: unknown; error?: { message: string } };
   if (!response.ok) throw new Error(response.error?.message ?? 'MCP connection action failed.');
   return response.result;
 });
 ipcMain.handle('automation:command', async (event, input: unknown) => {
   assertMainWindowSender(event.sender.id);
-  if (!runtimeHostController) throw new Error('Runtime is not ready.');
-  const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+  const controller = await ensureRuntimeHostReady();
+  const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
     command: { kind: 'runtime.automation', payload: input } }) as { ok?: boolean; result?: unknown; error?: { message: string } };
   if (!response.ok) throw new Error(response.error?.message ?? 'Automation action failed.');
   return response.result;
@@ -2657,8 +2668,8 @@ let conversationExtractStore: Promise<import('./conversationExtracts.mjs', { wit
 function conversationExtracts() {
   return conversationExtractStore ??= import('./conversationExtracts.mjs').then(({ ConversationExtractStore }) => {
     const store = new ConversationExtractStore(path.join(app.getPath('userData'), 'conversation-extracts'), async (sessionId, keys) => {
-      if (!runtimeHostController) throw new Error('Runtime is not ready.');
-      const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+      const controller = await ensureRuntimeHostReady();
+      const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
         command: { kind: 'runtime.extract_session', payload: { sessionId, keys } } }) as { ok?: boolean;
           result?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).ConversationExtractSource; error?: { message: string } };
       if (!response.ok || !response.result) throw new Error(response.error?.message ?? '无法读取会话。');
@@ -3479,6 +3490,12 @@ app.whenReady().then(async () => {
     });
   }
   registerLocalFileProtocol();
+  // Register the transport before any renderer exists. It survives failed boots
+  // and explicit retries; requests share the services' readiness promise.
+  const runtimeIpcModule = await import(pathToFileURL(path.join(__dirname, 'runtimeHostController.mjs')).href);
+  runtimeHostIpc = runtimeIpcModule.registerRuntimeHostIpc(ipcMain, ensureRuntimeHostReady,
+    (sender: Electron.WebContents) =>
+      (mainWindow != null && sender.id === mainWindow.webContents.id) || shadowWindows.has(sender.id));
   try {
     await startChromeConnectorBroker();
   } catch (error) {
@@ -3717,16 +3734,7 @@ function disposeDesktopControlMonitor(): void {
 
 async function startRuntimeServices(force = false): Promise<void> {
   if (runtimeServicesInitialization) return runtimeServicesInitialization;
-  if (force) {
-    disposeDesktopControlMonitor();
-    unregisterRuntimeHostIpc?.();
-    unregisterRuntimeHostIpc = null;
-    runtimeHostController?.stop();
-    runtimeHostController = null;
-    productHostController = null;
-    await productMcpManagement?.close();
-    productMcpManagement = null;
-  }
+  if (runtimeServicesStopping || (!force && runtimeStartupStatus.attempt > 0 && runtimeStartupStatus.phase !== 'initializing')) return;
   const attempt = runtimeStartupStatus.attempt + 1;
   const startedAtMs = Date.now();
   publishRuntimeStartupStatus({
@@ -3734,7 +3742,13 @@ async function startRuntimeServices(force = false): Promise<void> {
     attempt,
     startedAt: new Date(startedAtMs).toISOString(),
   });
-  runtimeServicesInitialization = initializeRuntimeHost()
+  // Assign a single flight before asynchronous cleanup or initialization starts.
+  // Background reads must not turn a failed boot into an automatic retry loop.
+  runtimeServicesInitialization = Promise.resolve().then(async () => {
+    if (force) await disposeRuntimeServices();
+    if (runtimeServicesStopping) throw new Error('CardBush Runtime is shutting down.');
+    await initializeRuntimeHost();
+  })
     .then(() => {
       publishRuntimeStartupStatus({
         phase: 'ready',
@@ -3762,36 +3776,62 @@ async function startRuntimeServices(force = false): Promise<void> {
   return runtimeServicesInitialization;
 }
 
+async function disposeRuntimeServices(error?: Error) {
+  disposeDesktopControlMonitor();
+  disposeCapabilityCatalogWatcher?.();
+  disposeCapabilityCatalogWatcher = undefined;
+  runtimeHostIpc?.reset(error);
+  runtimeHostController?.dispose();
+  runtimeHostController = null;
+  productHostController = null;
+  const management = productMcpManagement;
+  productMcpManagement = null;
+  await management?.close();
+}
+
 async function initializeRuntimeHost() {
+  const abort = new AbortController();
+  runtimeServicesAbort = abort;
   try {
     await withRuntimeStartupTimeout(
-      initializeRuntimeHostWithinDeadline(),
+      initializeRuntimeHostWithinDeadline(abort.signal),
       runtimeServicesStartupTimeoutMs,
+      abort,
     );
   } catch (error) {
-    disposeDesktopControlMonitor();
-    unregisterRuntimeHostIpc?.();
-    unregisterRuntimeHostIpc = null;
-    runtimeHostController?.stop();
-    runtimeHostController = null;
-    productHostController = null;
-    await productMcpManagement?.close();
-    productMcpManagement = null;
+    abort.abort(error);
+    await disposeRuntimeServices(error instanceof Error ? error : new Error(String(error)))
+      .catch(cleanupError => console.warn('[bush-runtime] startup cleanup failed', cleanupError));
     throw error;
+  } finally {
+    if (runtimeServicesAbort === abort) runtimeServicesAbort = null;
   }
 }
 
-async function initializeRuntimeHostWithinDeadline() {
+async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
+  const sandboxSettingsPath = path.join(app.getPath('userData'), 'product-host', 'config', 'sandbox.json');
+  const sandboxHostEnv = { ...process.env, CARDBUSH_EXECUTION_SANDBOX: process.env.CARDBUSH_EXECUTION_SANDBOX || app.commandLine.getSwitchValue('execution-sandbox') || undefined };
+  const sandboxModule = await import(pathToFileURL(path.join(__dirname, 'sandboxSetup.mjs')).href);
+  signal.throwIfAborted();
+  sandboxSetup = new sandboxModule.SandboxSetup({ path: sandboxSettingsPath, env: sandboxHostEnv, interactive: true,
+    windowsHostDirectory: cardbushRuntimeIsPackaged ? path.join(process.resourcesPath, 'process-guard') : path.join(app.getAppPath(), 'dist-native', 'process-guard') }) as SandboxSetupHost;
+  // Detection never installs anything or prompts. An existing saved opt-out is preserved.
+  await sandboxSetup.get().catch(error => console.warn('[sandbox-check]', error));
+  signal.throwIfAborted();
   const bundledRipgrep = resolveBundledRipgrepPath();
   const managementModule = await import(pathToFileURL(path.join(__dirname, 'productMcpManagement.mjs')).href);
-  productMcpManagement = await managementModule.startProductMcpManagement(() => {
+  signal.throwIfAborted();
+  const management = await managementModule.startProductMcpManagement(() => {
     if (!productHostController) throw new Error('CardBush Product Host is not ready.');
     return productHostController;
   });
+  if (signal.aborted) { await management.close(); signal.throwIfAborted(); }
+  productMcpManagement = management;
   const controllerModuleUrl = pathToFileURL(
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
     const controllerModule = await import(controllerModuleUrl);
+    signal.throwIfAborted();
     let runtimeWorkerReadySeen = false;
     const controller = new controllerModule.RuntimeUtilityProcessController({
       modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
@@ -3800,8 +3840,8 @@ async function initializeRuntimeHostWithinDeadline() {
         ...process.env,
         // Host startup option only. A deployment environment policy takes
         // precedence; session settings and renderer payloads cannot change it.
-        CARDBUSH_EXECUTION_SANDBOX: process.env.CARDBUSH_EXECUTION_SANDBOX
-          || app.commandLine.getSwitchValue('execution-sandbox') || 'off',
+        CARDBUSH_EXECUTION_SANDBOX: sandboxHostEnv.CARDBUSH_EXECUTION_SANDBOX,
+        CARDBUSH_SANDBOX_SETTINGS_PATH: sandboxSettingsPath,
         CARDBUSH_MCP_MANAGEMENT_URL: productMcpManagement!.url,
         CARDBUSH_MCP_DESKTOP_BRIDGE: '1',
         CARDBUSH_PROCESS_HOST_DIRECTORY: cardbushRuntimeIsPackaged
@@ -3900,30 +3940,26 @@ async function initializeRuntimeHostWithinDeadline() {
     }) as RuntimeHostController;
     runtimeHostController = controller;
     registerDesktopControlMonitor(controller);
-    unregisterRuntimeHostIpc = controllerModule.registerRuntimeHostIpc(
-      ipcMain,
-      controller,
-      (sender: Electron.WebContents) =>
-        (mainWindow != null && sender.id === mainWindow.webContents.id) ||
-        shadowWindows.has(sender.id),
-    );
   await Promise.all([
     controller.start(),
-    initializeProductHost(controller),
+    initializeProductHost(controller, signal),
   ]);
+  signal.throwIfAborted();
   await productHostController?.execute({
     protocol: 'cardbush.product_host_ipc.v1',
     kind: 'apps.get',
   });
+  signal.throwIfAborted();
 }
 
-function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, abort: AbortController): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       const error = new Error(
         `Runtime services did not become ready within ${timeoutMs}ms`,
       ) as Error & { code?: string };
       error.code = 'runtime_services_startup_timeout';
+      abort.abort(error);
       reject(error);
     }, timeoutMs);
     operation.then(
@@ -3940,23 +3976,29 @@ function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number):
 }
 
 function startRuntimeAutomations(controller: RuntimeHostController) {
-  if (!productHostController) return;
-  void productHostController.refreshMcp().catch((error: unknown) => console.warn('[automation-startup]', error))
-    .then(() => controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.automation_start', payload: {} } }))
+  const host = productHostController;
+  if (!host || runtimeServicesStopping) return;
+  void host.refreshMcp().catch((error: unknown) => console.warn('[automation-startup]', error))
+    .then(() => {
+      if (runtimeServicesStopping || productHostController !== host || runtimeHostController !== controller) return;
+      return controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.automation_start', payload: {} } });
+    })
     .catch((error: unknown) => console.warn('[automation-startup]', error));
 }
 
-async function initializeProductHost(controller: RuntimeHostController) {
+async function initializeProductHost(controller: RuntimeHostController, signal: AbortSignal) {
   const moduleUrl = pathToFileURL(
     path.join(__dirname, 'productHostController.mjs'),
   ).href;
   const productModule = await import(moduleUrl);
+  signal.throwIfAborted();
   const runtimeStateRoot = path.join(app.getPath('userData'), 'runtime-state');
   const bundledSkillRoot = bundledProductSkillRoot();
   const userSkillRoot = path.join(app.getPath('userData'), 'skills');
   const bundledPluginRoot = path.join(app.getAppPath(), 'assets', 'plugins');
   const userPluginRoot = path.join(app.getPath('userData'), 'plugins');
   productHostController = new productModule.ElectronProductHostController({
+    sandbox: sandboxSetup,
     dataRoot: path.join(app.getPath('userData'), 'product-host'),
     runtimeStateRoot,
     logRoots: [appLogsDir(), path.join(app.getPath('userData'), 'logs')],
@@ -4391,14 +4433,16 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  runtimeServicesStopping = true;
+  runtimeServicesAbort?.abort(new Error('CardBush Runtime is shutting down.'));
   unregisterChromeConnectorStatus?.();
   unregisterChromeConnectorStatus = null;
   chromeConnectorBroker?.stop();
   chromeConnectorBroker = null;
   disposeDesktopControlMonitor();
-  unregisterRuntimeHostIpc?.();
-  unregisterRuntimeHostIpc = null;
-  runtimeHostController?.stop();
+  runtimeHostIpc?.dispose();
+  runtimeHostIpc = null;
+  runtimeHostController?.dispose();
   runtimeHostController = null;
   productHostController = null;
   if (quitFallbackTimer != null) {

@@ -116,7 +116,8 @@ test('unfinished calls fail a completed response while output limits retain Runt
   ]) await t.test(name, async () => assert.equal((await round(frames)).status, 'failed'));
   const completeSearch = await round([terminal([search()], 'incomplete')]);
   assert.equal(completeSearch.status, 'completed');
-  assert.equal(completeSearch.toolCalls.length, 0);
+  assert.equal(completeSearch.toolCalls.length, 1);
+  assert.equal(completeSearch.toolCalls[0].name, 'mcp_search');
   assert.equal(completeSearch.finishReason, 'length');
 });
 
@@ -173,7 +174,7 @@ test('text, reasoning and functions cannot reuse each other\'s identities or out
   ]) assert.equal((await round([...frames, terminal([])])).status, 'failed');
 });
 
-async function localEndpoint(t, framesFor) {
+async function localEndpoint(t, framesFor, options = {}) {
   const requests = [], failures = [];
   const server = createServer(async (req, res) => {
     try {
@@ -193,7 +194,7 @@ async function localEndpoint(t, framesFor) {
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { server.closeAllConnections(); await new Promise(done => server.close(done)); assert.deepEqual(failures, []); });
-  return { requests, provider: new OpenAIResponsesProvider({ apiKey: 'fixture-only', baseURL: `http://127.0.0.1:${server.address().port}/v1`, timeoutMs: 1000 }) };
+  return { requests, provider: new OpenAIResponsesProvider({ apiKey: 'fixture-only', baseURL: `http://127.0.0.1:${server.address().port}/v1`, timeoutMs: 1000, ...options }) };
 }
 
 test('real SDK and Runtime execute a recovered call once and execute nothing after conflicting or interrupted streams', async t => {
@@ -202,7 +203,7 @@ test('real SDK and Runtime execute a recovered call once and execute nothing aft
     ['duplicate lifecycle', [itemEvent(fn(), 'added'), itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn()), itemEvent(fn()), terminal([fn()])], 1],
     ['contradictory arguments', [itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn({ arguments: '{"path":"other.txt"}' })), terminal([fn()])], 0, true],
     ['stream ends before terminal', [itemEvent(fn(), 'added'), argsEvent(fn()), itemEvent(fn())], 0],
-    ['output limit continuation', [itemEvent(fn(), 'added'), argsEvent(fn(), 'delta'), itemEvent(fn({ status: 'incomplete' })), terminal([fn({ status: 'incomplete' })], 'incomplete')], 0, true],
+    ['output limit without completed calls', [itemEvent(fn(), 'added'), argsEvent(fn(), 'delta'), itemEvent(fn({ status: 'incomplete' })), terminal([fn({ status: 'incomplete' })], 'incomplete')], 0],
   ]) await t.test(name, async t => {
     const root = await mkdtemp(join(tmpdir(), 'cardbush-adversarial-'));
     t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-adversarial-')); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
@@ -220,8 +221,65 @@ test('real SDK and Runtime execute a recovered call once and execute nothing aft
     assert.equal(result.payload.status, completed ? 'completed' : 'failed');
     assert.equal(endpoint.requests.length, completed ? 2 : 1);
     if (expected) assert.equal(endpoint.requests[1].input.filter(i => i.type === 'function_call_output' && i.call_id === 'call_read').length, 1);
-    if (name === 'output limit continuation') assert.equal(endpoint.requests[1].input.some(i => i.call_id === 'call_read'), false);
+    if (name === 'output limit without completed calls') assert.equal(result.payload.reason, 'model_output_limit_exceeded');
   });
+});
+
+test('truncation accepts only protocol-confirmed calls before the first unfinished item', async t => {
+  const first = fn(), cut = fn({ id: 'cut-item', call_id: 'cut-call', arguments: '{"path":', status: 'incomplete' });
+  for (const [name, frames, accepted] of [
+    ['snapshot confirms first item', [terminal([first, cut], 'incomplete')], ['call_read']],
+    ['missing tail identity', [terminal([first, { ...cut, call_id: undefined, name: undefined }], 'incomplete')], ['call_read']],
+    ['duplicate completion', [itemEvent(first), itemEvent(first), terminal([first, cut], 'incomplete')], ['call_read']],
+    ['arguments done alone', [itemEvent({ ...first, status: 'in_progress' }, 'added'), argsEvent(first), terminal([], 'incomplete')], []],
+    ['missing status in snapshot', [terminal([{ ...first, status: undefined }], 'incomplete')], []],
+    ['later item completes first', [itemEvent(cut, 'added', 0), itemEvent(first, 'done', 1), terminal([cut, first], 'incomplete')], []],
+    ['terminal retracts completion', [itemEvent(first), terminal([{ ...first, status: 'incomplete' }], 'incomplete')], []],
+  ]) await t.test(name, async () => {
+    const result = await round(frames);
+    assert.equal(result.status, 'completed');
+    assert.equal(result.finishReason, 'length');
+    assert.deepEqual(result.toolCalls.map(call => call.id), accepted);
+    assert.equal(result.providerResponseId, undefined);
+    assert.deepEqual(result.providerReplay?.data.items, []);
+  });
+});
+
+for (const compatible of [false, true]) test(`real SDK truncation preserves executions and the cache prefix in ${compatible ? 'compatible' : 'native'} mode`, async t => {
+  const writes = [];
+  const tools = new ToolRegistry();
+  tools.register({ definition: { name: 'write_once', description: 'Write fixture', inputSchema: { type: 'object' } },
+    manifest: { effect_kind: 'mutation', operation: 'fixture.write', risk: 'low', owner: 'test', dispatch_scope: 'turn', mutating: true },
+    decodeInput: input => input, execute: ({ toolCall }) => { writes.push(toolCall.id); return { written: toolCall.id }; } });
+  const first = fn({ id: 'saved-item', call_id: 'saved-call', name: 'write_once', arguments: '{}' });
+  const cut = fn({ id: 'cut-item', call_id: 'cut-call', name: 'write_once', arguments: '{"large":', status: 'incomplete' });
+  const endpoint = await localEndpoint(t, (_body, ordinal) => ordinal === 1 ? [
+    { type: 'response.created', response: { id: 'unfinished-response', created_at: 1, store: true, status: 'in_progress', output: [] } },
+    itemEvent(first), itemEvent(first), itemEvent(cut, 'added', 1), terminal([first, cut], 'incomplete'),
+  ] : [terminal([message('Finished')])], { capabilityStore: {
+    read: ({ capability }) => ({ status: compatible && capability === 'responses_compatibility' ? 'supported' : 'unknown' }), observe() {},
+  } });
+  const host = new InMemoryRuntimeHost({ provider: endpoint.provider, toolRegistry: tools, registerDefaultWorkspaceTools: false });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
+    model: 'fixture', maxOutputTokens: 8192, permissionMode: 'all_free', tools: tools.definitions(),
+    prefixMessages: [{ role: 'system', content: 'Stable rules' }], inputMessages: [{ messageId: 'u', message: { role: 'user', content: 'Write the parts' } }] });
+  assert.equal(result.payload.status, 'completed');
+  assert.deepEqual(writes, ['saved-call']);
+  assert.equal(endpoint.requests.length, 2);
+  const [before, after] = endpoint.requests;
+  assert.deepEqual(after.input.slice(0, before.input.length), before.input);
+  assert.deepEqual(after.tools, before.tools);
+  assert.equal(after.max_output_tokens, 8192);
+  assert.equal(after.previous_response_id, undefined);
+  assert.equal(after.input.filter(item => item.type === 'function_call_output' && item.call_id === 'saved-call').length, 1);
+  assert.equal(after.input.at(-1).role, 'developer');
+  assert.doesNotMatch(JSON.stringify(after.input), /cut-call|cut-item|unfinished-response/);
+  assert.equal(before.tools.some(tool => tool.type === 'tool_search'), !compatible);
+  const observations = host.events('s', 't').filter(event => event.kind === 'provider_input_observed');
+  assert.equal(observations.length, 2);
+  assert.ok(observations.every(event => !event.payload.frozenPrefixBreak));
+  assert.deepEqual(observations[1].payload.changedParameters, []);
 });
 
 test('portable requests resolve long wire aliases back to canonical tools through the real SDK', async t => {

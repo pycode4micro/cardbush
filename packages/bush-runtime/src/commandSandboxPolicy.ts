@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type { ToolAdmissionContext } from './toolRegistry.js';
 import { workspaceRoot } from './workspaceAccessPolicy.js';
 import { sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
@@ -38,6 +39,17 @@ export function snapshotCommandSandbox(configuration?: CommandSandboxConfigurati
     CARDBUSH_SANDBOX_WRITE_ROOTS: JSON.stringify(configuration.writableRoots),
     CARDBUSH_BWRAP_PATH: configuration.linuxExecutable,
   } : {});
+}
+
+/** Settings belong to the host, not model metadata. Invalid saved policy fails closed. */
+export async function loadCommandSandboxConfiguration(env: NodeJS.ProcessEnv, settingsPath?: string): Promise<CommandSandboxConfiguration> {
+  const base = commandSandboxConfiguration(env);
+  if (!settingsPath || base.mode === 'required' || env.CARDBUSH_EXECUTION_SANDBOX?.trim() === 'off') return base;
+  let saved: { version?: unknown; enabled?: unknown };
+  try { saved = JSON.parse(await readFile(settingsPath, 'utf8')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return base; throw sandboxError('sandbox_policy_invalid', 'Cannot read the saved sandbox setting. Check Runtime settings.'); }
+  if (saved?.version !== 1 || typeof saved.enabled !== 'boolean') throw sandboxError('sandbox_policy_invalid', 'Invalid saved sandbox setting. Check Runtime settings.');
+  return snapshotCommandSandbox({ ...base, mode: saved.enabled ? 'auto' : 'off' });
 }
 
 export function commandSandboxPolicy(configuration: CommandSandboxConfiguration, context: ToolAdmissionContext<unknown>): ExecutionSandboxPolicy | undefined {

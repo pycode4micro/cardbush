@@ -18,6 +18,7 @@ import {
   ProductModelConfigStore,
   ProductMcpConfigStore,
   ProductSubagentConfigStore,
+  type ProductSandboxHost,
   type RuntimeAssetCategory,
 } from '@cardbush/product-host';
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
@@ -49,6 +50,7 @@ import {
 } from '@cardbush/bush-protocol';
 
 export interface ElectronProductHostControllerOptions {
+  sandbox?: ProductSandboxHost;
   dataRoot: string;
   runtimeStateRoot: string;
   bundledSkillRoot: string;
@@ -147,7 +149,7 @@ export class ElectronProductHostController {
       },
     }, {
       get: async () => this.#subagents.read(),
-    });
+    }, options.sandbox);
   }
 
   async execute(command: unknown): Promise<unknown> {

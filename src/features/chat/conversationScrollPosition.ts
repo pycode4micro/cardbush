@@ -9,6 +9,14 @@ export type ConversationScrollPosition = {
   anchor: { messageId: string; offset: number } | null;
 };
 
+// Survives switching between local and remote views without retaining their DOM.
+export const conversationScrollPositions = new Map<string, ConversationScrollPosition>();
+export function saveConversationScrollPosition(key: string, value: ConversationScrollPosition) {
+  conversationScrollPositions.delete(key);
+  conversationScrollPositions.set(key, value);
+  if (conversationScrollPositions.size > 128) conversationScrollPositions.delete(conversationScrollPositions.keys().next().value!);
+}
+
 // Capture while the old list is still attached. A message anchor survives
 // changes above the viewport; the pixel position is a fallback if it was removed.
 export function captureConversationScrollPosition(

@@ -3,6 +3,9 @@ export const PRODUCT_HOST_IPC_PROTOCOL = "cardbush.product_host_ipc.v1" as const
 export type RuntimeAssetCategory = "prompts" | "skills";
 
 export type ProductHostCommand =
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: 'sandbox.get' }
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: 'sandbox.install'; confirm: true }
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: 'sandbox.update'; enabled: boolean }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "models.get" }
   | {
       protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
@@ -51,6 +54,12 @@ export interface ProductSubagentHost {
   get(): Promise<unknown>;
 }
 
+export interface ProductSandboxHost {
+  get(): Promise<unknown>;
+  install(): Promise<unknown>;
+  update(enabled: boolean): Promise<unknown>;
+}
+
 export interface ProductMaintenanceHost {
   clearConversations(): Promise<Record<string, unknown>>;
   clearLogsCache(): Promise<Record<string, unknown>>;
@@ -81,6 +90,7 @@ export class ProductHost {
     readonly apps?: ProductAppsHost,
     readonly mcp?: ProductMcpHost,
     readonly subagents?: ProductSubagentHost,
+    readonly sandbox?: ProductSandboxHost,
   ) {}
 
   async execute(input: unknown): Promise<ProductHostResult | ProductHostFailure> {
@@ -102,6 +112,9 @@ export class ProductHost {
 
   async #execute(command: ProductHostCommand): Promise<unknown> {
     switch (command.kind) {
+      case 'sandbox.get': case 'sandbox.install': case 'sandbox.update':
+        if (!this.sandbox) throw new ProductHostProtocolError('sandbox_settings_unavailable', 'Update CardBush on this host to manage its sandbox.');
+        return command.kind === 'sandbox.get' ? this.sandbox.get() : command.kind === 'sandbox.install' ? this.sandbox.install() : this.sandbox.update(command.enabled);
       case "models.get":
         if (!this.model) {
           throw new ProductHostProtocolError(
@@ -205,6 +218,15 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
   }
   const kind = requiredString(value.kind, "kind");
   switch (kind) {
+    case 'sandbox.get': case 'sandbox.install': case 'sandbox.update': {
+      const fields = kind === 'sandbox.get' ? ['protocol', 'kind'] : ['protocol', 'kind', kind === 'sandbox.install' ? 'confirm' : 'enabled'];
+      if (Object.keys(value).some(key => !fields.includes(key)) || (kind === 'sandbox.install' && value.confirm !== true) || (kind === 'sandbox.update' && typeof value.enabled !== 'boolean')) {
+        throw new ProductHostProtocolError('invalid_product_host_command', 'Invalid sandbox setting command.');
+      }
+      if (kind === 'sandbox.install') return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind, confirm: true };
+      if (kind === 'sandbox.update') return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind, enabled: value.enabled as boolean };
+      return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind };
+    }
     case "models.get":
     case "apps.get":
     case "mcp.get":

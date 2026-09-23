@@ -4,6 +4,9 @@ type Desktop = NonNullable<Window['cardbushDesktop']>;
 export const localSettingsHost = {
   remote: false,
   supportsPluginConnections: true,
+  fetchSandboxSetup: api.fetchSandboxSetup,
+  installSandbox: api.installSandbox,
+  updateSandbox: api.updateSandbox,
   fetchCardbushAppsConfiguration: api.fetchCardbushAppsConfiguration,
   saveCardbushAppsConfiguration: api.saveCardbushAppsConfiguration,
   fetchMcpConnectionOverview: api.fetchMcpConnectionOverview,

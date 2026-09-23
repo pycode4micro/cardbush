@@ -634,7 +634,9 @@ export function assignTurnToLocalMessages(
         ? markLocalMessageTurnStarted(
             applyAssistantStreamRoute(
               { ...message, turnId: message.role === 'user' && message.messageId && !userMessageId ? message.turnId : turnId, conversationId: sessionId,
-                ...(message.role === 'user' && userMessageId ? { messageId: userMessageId } : {}),
+                // Initial user input precedes the Turn's streamed events, even
+                // when the remote clock differs from this machine's clock.
+                ...(message.role === 'user' && userMessageId ? { messageId: userMessageId, sequence: message.sequence ?? 0 } : {}),
                 ...(message.role === 'user' && userMessageMetadata ? { metadata: { ...message.metadata, ...userMessageMetadata } } : {}) },
               message.role === 'assistant' ? route : undefined,
             ),

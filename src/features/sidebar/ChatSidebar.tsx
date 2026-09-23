@@ -279,7 +279,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     () => new Set(['agents', 'pinned', 'projects', 'recent']),
   );
   const [expandedAgentIds, setExpandedAgentIds] = useState<Set<string>>(() => new Set());
-  const [archivedAgentIds, setArchivedAgentIds] = useState<Set<string>>(() => new Set());
   useEffect(() => {
     if (activeAgentId) setExpandedAgentIds(current => new Set([...current, activeAgentId]));
   }, [activeAgentId]);
@@ -870,6 +869,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                 {agents.map(agent => {
                   const expanded = expandedAgentIds.has(agent.id);
                   const list = agentSessions?.sessionsByAgent[agent.id];
+                  const visibleSessions = list?.sessions.filter(session => !session.metadata?.archived) ?? [];
                   const active = section === 'agents' && activeAgentId === agent.id;
                   const create = () => { onAgentSelect?.(agent.id, ''); void agentSessions?.createSession(agent.id, language === 'zh' ? '新对话' : 'New conversation'); };
                   const manage = () => onAgentSelect?.(agent.id, undefined, 'settings');
@@ -890,25 +890,24 @@ export const ChatSidebar = memo(function ChatSidebar({
                       <button className="row-archive" type="button" aria-label={language === 'zh' ? `管理 ${agent.name}` : `Manage ${agent.name}`} onClick={event => { event.stopPropagation(); manage(); }}><Settings size={14}/></button>
                     </div>
                     {expanded && <>
-                      {list?.sessions.filter(session => archivedAgentIds.has(agent.id) || !session.metadata?.archived)
+                      {visibleSessions
                         .sort((a, b) => Number(Boolean(b.metadata?.pinned)) - Number(Boolean(a.metadata?.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
                         .map(session => {
                         const pinned = session.metadata?.pinned === true;
-                        const archived = session.metadata?.archived === true;
                         const unread = session.metadata?.forcedUnread === true || (typeof session.metadata?.readAt === 'string' && String(session.updatedAt) > session.metadata.readAt);
-                        const update = (patch: Record<string, unknown>) => { if (list.management) void agentSessions?.updateSession(agent.id, session.sessionId, patch); };
+                        const update = (patch: Record<string, unknown>) => { if (list?.management) void agentSessions?.updateSession(agent.id, session.sessionId, patch); };
                         const open = () => { onAgentSelect?.(agent.id, session.sessionId); update({ readAt: new Date().toISOString(), forcedUnread: false }); };
                         return <ConversationRow key={session.sessionId}
                         conversation={{ id: session.sessionId, title: String(session.metadata?.title || (language === 'zh' ? '新对话' : 'Conversation')), preview: '', updatedAt: session.updatedAt ?? '' }}
                         active={active && agentSessions?.views[agent.id] !== 'settings' && agentSessions?.selectedSessions[agent.id] === session.sessionId}
                         nested remote unread={unread} pinned={pinned} language={language}
-                        onTogglePin={() => update({ pinned: !pinned })} onToggleRead={() => update({ forcedUnread: !unread, ...(!unread ? {} : { readAt: new Date().toISOString() }) })} onArchive={() => update({ archived: !archived })}
+                        onTogglePin={() => update({ pinned: !pinned })} onToggleRead={() => update({ forcedUnread: !unread, ...(!unread ? {} : { readAt: new Date().toISOString() }) })} onArchive={() => update({ archived: true })}
                         onRename={title => agentSessions!.renameSession(agent.id, session.sessionId, title)}
                         onDelete={() => void agentSessions?.deleteSession(agent.id, session.sessionId)}
                         onClick={open}
                         onContextMenu={(event, options) => openContextMenu(event, `agent:${agent.id}:${session.sessionId}`, [
                           { key: 'open', icon: <MessageSquare size={15}/>, label: language === 'zh' ? '打开对话' : 'Open chat', onClick: open },
-                          ...(list.management ? [
+                          ...(list?.management ? [
                             { key: 'pin', icon: <Pin size={15}/>, label: pinned ? (language === 'zh' ? '取消置顶' : 'Unpin chat') : (language === 'zh' ? '置顶对话' : 'Pin chat'), onClick: options.onTogglePin },
                             { key: 'read', icon: unread ? <MailOpen size={15}/> : <Mail size={15}/>, label: unread ? (language === 'zh' ? '标记为已读' : 'Mark as read') : (language === 'zh' ? '标记为未读' : 'Mark as unread'), onClick: options.onToggleRead },
                             { key: 'workspace', icon: <FolderOpen size={15}/>, label: language === 'zh' ? '切换工作区' : 'Switch workspace', children: [
@@ -920,13 +919,12 @@ export const ChatSidebar = memo(function ChatSidebar({
                           { key: 'rename', icon: <Edit3 size={15}/>, label: language === 'zh' ? '重命名对话' : 'Rename chat', onClick: options.onRename },
                           { key: 'copy', icon: <Clipboard size={15}/>, label: language === 'zh' ? '复制会话 ID' : 'Copy chat ID', onClick: () => void copyText(session.sessionId) },
                           { key: 'copy-chat', icon: <Clipboard size={15}/>, label: language === 'zh' ? '复制对话' : 'Copy conversation', onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
-                          ...(list.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: archived ? (language === 'zh' ? '恢复对话' : 'Restore chat') : (language === 'zh' ? '归档对话' : 'Archive chat'), separatorBefore: true, onClick: options.onArchive }] : []),
+                          ...(list?.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: language === 'zh' ? '归档对话' : 'Archive chat', separatorBefore: true, onClick: options.onArchive }] : []),
                           { key: 'delete', icon: <Trash2 size={15}/>, label: language === 'zh' ? '删除对话' : 'Delete chat', separatorBefore: true, danger: true, onClick: options.onDelete },
                         ])}
                       />; })}
-                      {list?.sessions.some(session => session.metadata?.archived) && <button className="conversation-row nested" onClick={() => setArchivedAgentIds(current => { const next = new Set(current); if (next.has(agent.id)) next.delete(agent.id); else next.add(agent.id); return next; })}><Archive size={14}/>{archivedAgentIds.has(agent.id) ? (language === 'zh' ? '收起已归档对话' : 'Hide archived chats') : (language === 'zh' ? '查看已归档对话' : 'Show archived chats')}</button>}
-                      {list?.loading && !list.sessions.length && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在加载会话…' : 'Loading chats…'}</div>}
-                      {!list?.loading && !list?.error && !list?.sessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{language === 'zh' ? '新建会话' : 'New chat'}</button>}
+                      {list?.loading && !visibleSessions.length && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在加载会话…' : 'Loading chats…'}</div>}
+                      {!list?.loading && !list?.error && !visibleSessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{language === 'zh' ? '新建会话' : 'New chat'}</button>}
                       {list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
                     </>}
                   </div>;

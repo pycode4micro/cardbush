@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { ToolExecutionStore } from '../packages/bush-runtime/dist/index.js';
-import { decodeRuntimeEvent } from '../packages/bush-protocol/dist/index.js';
+import { decodeRuntimeEvent, decodeSessionSnapshot } from '../packages/bush-protocol/dist/index.js';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 // Exercise the shipped local consumer and remote transport, never a second
@@ -15,7 +15,7 @@ let fixture;
 const commands = [];
 const read = command => {
   commands.push(command);
-  if (command.kind === 'runtime.get_session') return null;
+  if (command.kind === 'runtime.get_session') return fixture.snapshot ?? null;
   if (command.kind === 'runtime.get_tool_execution') return fixture.records?.find(r => r.toolCall.id === command.payload.toolCallId) ?? null;
   if (command.kind === 'runtime.get_user_message') return fixture.guidance?.find(m => m.messageId === command.payload.messageId) ?? null;
   throw Error(`Unexpected command: ${command.kind}`);
@@ -33,9 +33,11 @@ const bridge = {
 };
 const api = await loadChatTranscript({ source: [
   ['src/backend/runtimeChat.ts', 'streamRuntimeTurnEvents'],
+  ['src/backend/runtimeSessionMessageProjection.ts', 'projectRuntimeTurnMessages'],
   ['src/features/agents/agentConversationBackend.ts', 'createAgentConversationBackend, agentRuntimeClient'],
   ['src/features/chatMessages/transcript/liveMessageUpdates.ts', 'appendAssistantDelta, appendToolExecution, applyTaskPlanUpdate, applyAssistantSegmentBoundary, applyAssistantRevision, applyTurnTerminalSnapshot'],
   ['src/features/chatMessages/transcript/assistantStreamBuffer.ts', 'createSegmentedAssistantStreamBuffers'],
+  ['src/features/chatMessages/transcript/messageProjection.ts', 'mergeFinalStreamMessages, mergeLoadedMessagesPreservingLocalState, normalizeChatMessagesForDisplay'],
 ].map(([file, names]) => `export { ${names} } from ${JSON.stringify(path.resolve(file))};`).join('\n'),
   globals: { console, AbortController, DOMException, TextEncoder, TextDecoder, structuredClone, setTimeout, clearTimeout, sessionStorage: storage(),
     process: { env: { NODE_ENV: 'test' } }, window: { setTimeout, clearTimeout, cardbushDesktop: { runtime: bridge } } },
@@ -44,13 +46,14 @@ const event = (sequence, kind, payload) => decodeRuntimeEvent({ protocol: 'bush.
   eventId: `e${sequence}`, sequence, createdAt: new Date(Date.parse(now) + sequence * 1000).toISOString(), kind, payload });
 const text = (n, messageId, content, segmentId = messageId, ordinal = 1) => event(n, 'assistant_segment_completed', { messageId, segmentId, ordinal, content });
 const tool = (n, assistantMessageId, toolCallId, kind = 'tool_returned', toolName = 'terminal_exec') => event(n, kind, { assistantMessageId, toolCallId, ordinal: 0, toolName });
-const remoteCall = async (op, input) => op === 'sessions.get' ? null : op === 'chat.jobs' ? [] : op === 'runtime.command' ? read(input) : assert.fail(`Unexpected service operation ${op}`);
+const remoteCall = async (op, input) => op === 'sessions.get' ? fixture.snapshot ?? null : op === 'chat.jobs' ? [] : op === 'runtime.command' ? read(input) : assert.fail(`Unexpected service operation ${op}`);
 const watch = (_request, listener) => { for (const event of fixture.events) listener({ type: 'event', event }); listener({ type: 'end' }); return () => {}; };
 async function project(events, mode = 'remote', extra = {}) {
   fixture = { events, ...extra };
   const fallback = 'active';
   let state = { s: [{ id: fallback, conversationId: sessionId, turnId, role: 'assistant', content: '', createdAt: now }] };
   const observations = { plans: [], thinking: [], recovery: [], usage: [], permissions: [], terminals: [] };
+  let finalSnapshotPromise;
   const buffers = api.createSegmentedAssistantStreamBuffers((delta, route, release) => {
     state = api.appendAssistantDelta(state, sessionId, fallback, delta, route, release);
   }, { shouldAnimate: () => false });
@@ -64,11 +67,18 @@ async function project(events, mode = 'remote', extra = {}) {
     onThinking: update => observations.thinking.push(update), onConnectionState: update => observations.recovery.push(update),
     onContextWindowUsage: update => observations.usage.push(update), onInteractiveRequest: update => observations.permissions.push(update),
     onDone: update => { observations.terminals.push(update); state = api.applyTurnTerminalSnapshot(state, sessionId, fallback, update); },
+    onMessages: (messages, finalSnapshot) => {
+      assert.equal(finalSnapshot, true);
+      finalSnapshotPromise = buffers.releaseTerminal().then(() => {
+        state = api.mergeFinalStreamMessages(state, sessionId, messages, { turnId, temporaryMessageIds: [fallback], toolSourceMessageId: fallback });
+      });
+    },
   };
   if (mode === 'local') await api.streamRuntimeTurnEvents(handlers);
   else await api.createAgentConversationBackend(remoteCall, 'remote', watch).backend.streamTurnEvents(handlers);
+  await finalSnapshotPromise;
   await buffers.flushAllStreaming(); buffers.dispose();
-  return { rows: plain(flatten(state.s)), observations: plain(observations) };
+  return { rows: plain(flatten(state.s)), messages: plain(state.s), observations: plain(observations) };
 }
 const assistants = result => result.rows.filter(row => row.role === 'assistant');
 
@@ -157,6 +167,70 @@ test('same permission identity on two hosts answers only the selected Runtime', 
   assert.equal(answered.length, 1); assert.equal(answered[0][0], 'a');
   assert.equal(a.runtime.interactions.pendingRuntimeInteraction(sessionId), null);
   assert.equal(b.runtime.interactions.pendingRuntimeInteraction(sessionId).id, 'same');
+});
+
+const outputLimitSnapshot = () => decodeSessionSnapshot({
+  protocol: 'bush.session_snapshot.v1', sessionId, revision: 1, createdAt: now, updatedAt: now, supersededMessageIds: [],
+  turns: [{ turnId, turnSequence: 1, createdAt: now, completedAt: '2026-09-22T09:00:08.000Z',
+    status: 'failed', reason: 'model_output_limit_exceeded', messages: [
+      { role: 'user', content: 'Create the presentation' },
+      { role: 'assistant', content: 'Dependencies installed' },
+      { role: 'developer', name: 'output_limit_continuation', content: 'Continue without repeating completed work' },
+      { role: 'assistant', content: 'Continue writing the slides' },
+      { role: 'developer', name: 'output_limit_continuation', content: 'Continue without repeating completed work' },
+      { role: 'assistant', content: '', toolCalls: [] },
+    ].map((message, messageIndex) => ({ messageId: ['u1', 'm1', 'd1', 'm2', 'd2', 'm3'][messageIndex],
+      turnId, turnSequence: 1, messageIndex, createdAt: now, message })) }],
+});
+
+test('local and remote final history sync retain output-limit details, including an empty last response', async () => {
+  const details = { round: 10, continuationAttempts: 2, maxOutputTokens: 8192, outputTokens: 8192, hadHiddenReasoning: true };
+  const events = [text(1, 'm1', 'Dependencies installed'), tool(2, 'm1', 'a'),
+    text(3, 'm2', 'Continue writing the slides'), event(8, 'turn_terminal', { status: 'failed', reason: 'model_output_limit_exceeded', details })];
+  const snapshot = outputLimitSnapshot();
+  const before = JSON.stringify({ events, snapshot });
+  const local = await project(events, 'local', { snapshot });
+  const remote = await project(events, 'remote', { snapshot });
+  assert.deepEqual(remote, local);
+  const final = assistants(remote).at(-1);
+  assert.equal(final.status, 'failed');
+  assert.equal(final.metadata.stop_reason, 'model_output_limit_exceeded');
+  assert.deepEqual(final.metadata.stop_details, details);
+  assert.equal(final.metadata.terminal_event_sequence, 8);
+  assert.equal(final.metadata.cardbush_terminal_snapshot, true);
+  assert.equal(remote.rows.some(row => row.role === 'system'), false);
+  const displayed = flatten(api.normalizeChatMessagesForDisplay(remote.messages));
+  assert.equal(displayed.flatMap(row => row.toolExecutions ?? []).filter(item => item.id === 'a').length, 1);
+  const reloaded = api.mergeLoadedMessagesPreservingLocalState(remote.messages, api.projectRuntimeTurnMessages(snapshot.turns[0], sessionId));
+  assert.deepEqual(plain(api.normalizeChatMessagesForDisplay(reloaded).at(-1).metadata.stop_details), details);
+  assert.equal(JSON.stringify({ events, snapshot }), before, 'display recovery never changes the model journal or its cache prefix');
+});
+
+test('cold history reads restore failure reasons and preserve the distinct stopped/completed states', () => {
+  for (const [status, reason] of [['failed', 'model_output_limit_exceeded'], ['failed', 'provider_tool_call_incomplete'], ['stopped', 'user_cancelled'], ['completed', 'completed']]) {
+    const turn = { ...outputLimitSnapshot().turns[0], status, reason };
+    const before = JSON.stringify(turn);
+    const messages = api.normalizeChatMessagesForDisplay(api.projectRuntimeTurnMessages(turn, sessionId));
+    const final = messages.at(-1);
+    assert.equal(final.role, 'assistant');
+    assert.equal(final.status, status);
+    assert.equal(final.metadata.stop_reason, reason);
+    assert.equal(final.metadata.stopped, status === 'stopped');
+    assert.equal(JSON.stringify(turn), before);
+  }
+});
+
+test('final history sync does not transfer a failed active turn into older completed turns', () => {
+  const turn = outputLimitSnapshot().turns[0];
+  const current = api.applyTurnTerminalSnapshot({ s: [{ id: 'active', role: 'assistant', turnId, content: '', createdAt: now }] }, sessionId, 'active',
+    { turnId, status: 'failed', stopped: false, stopReason: turn.reason, stopDetails: { continuationAttempts: 2 }, completedAt: now });
+  const older = { id: 'older-assistant', messageId: 'older-assistant', turnId: 'older', role: 'assistant', status: 'completed', content: 'Already done', createdAt: now };
+  const merged = api.mergeFinalStreamMessages(current, sessionId, [older, ...api.projectRuntimeTurnMessages(turn, sessionId)],
+    { turnId, temporaryMessageIds: ['active'] });
+  const previous = merged.s.find(row => row.id === older.id);
+  assert.equal(previous.status, 'completed');
+  assert.equal(previous.metadata?.stop_reason, undefined);
+  assert.equal(previous.metadata?.stop_details, undefined);
 });
 
 test('unconfirmed guidance survives remount with its exact append identity and body', async () => {

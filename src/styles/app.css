@@ -17369,6 +17369,12 @@ body.queue-reordering * {
   color: var(--danger);
 }
 
+.settings-sandbox-status { padding: 4px 0 12px; color: var(--text); }
+.settings-sandbox-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0; }
+.settings-sandbox-details { margin-top: 12px; overflow-wrap: anywhere; }
+.settings-sandbox-details summary { cursor: pointer; }
+.settings-sandbox-details code { display: block; white-space: pre-wrap; margin: 12px 0; }
+
 .settings-json-editor {
   width: 100%;
   min-height: 220px;

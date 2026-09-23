@@ -166,11 +166,21 @@ export function registerWorkspaceTools(
   observations: WorkspaceObservationStore = new WorkspaceObservationStore(),
   options: { createChangeId?: () => string; terminals?: TerminalSessionManager;
     ownsFileVersion?: (sessionId: string, path: string) => Promise<boolean>; remote?: RemoteWorkspaceBridge;
-    commandSandbox?: CommandSandboxConfiguration } = {},
+    commandSandbox?: CommandSandboxConfiguration; loadCommandSandbox?: () => Promise<CommandSandboxConfiguration> } = {},
 ): WorkspaceObservationStore {
   const createChangeId = options.createChangeId ?? (() => `change_${randomUUID()}`);
   const terminals = options.terminals ?? new TerminalSessionManager();
   const commandSandbox = snapshotCommandSandbox(options.commandSandbox);
+  // One immutable policy per decoded invocation, including time spent awaiting approval.
+  const sandboxInvocations = new WeakMap<TerminalInput, Promise<CommandSandboxConfiguration>>();
+  const sandboxFor = (input: TerminalInput) => {
+    let policy = sandboxInvocations.get(input);
+    if (!policy) {
+      policy = options.loadCommandSandbox ? options.loadCommandSandbox().then(snapshotCommandSandbox) : Promise.resolve(commandSandbox);
+      sandboxInvocations.set(input, policy);
+    }
+    return policy;
+  };
   function registerIfMissing<T>(targetRegistry: ToolRegistry, registration: ToolRegistration<T>) {
     if (!targetRegistry.resolve(registration.definition.name)) targetRegistry.register(routeWorkspaceTool(registration, terminals, options.remote, commandSandbox.mode === 'required'));
   }
@@ -416,11 +426,11 @@ export function registerWorkspaceTools(
           },
         };
       }
-      return (await commandSandboxPlan(commandSandbox, context, cwd)).admission;
+      return (await commandSandboxPlan(await sandboxFor(context.input), context, cwd)).admission;
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
-      const plan = await commandSandboxPlan(commandSandbox, context, cwd);
+      const plan = await commandSandboxPlan(await sandboxFor(context.input), context, cwd);
       return terminals.start({
         ownerSessionId: context.sessionId,
         command: context.input.command,

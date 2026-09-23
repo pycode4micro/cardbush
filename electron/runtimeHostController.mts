@@ -43,6 +43,22 @@ interface PendingOperation {
 interface RuntimeStreamSubscription {
   owner: WebContents;
   frame: WebFrameMain;
+  controller?: RuntimeHostIpcController;
+}
+
+interface RuntimeIpcOperation {
+  owner: WebContents;
+  frame: WebFrameMain;
+  controller?: RuntimeHostIpcController;
+  cancelled?: Error;
+}
+
+export type RuntimeHostIpcController = Pick<RuntimeUtilityProcessController,
+  'command' | 'startStream' | 'stopStream' | 'cancelOperation' | 'onStreamFrame'>;
+
+export interface RuntimeHostIpcRegistration {
+  reset(error?: Error): void;
+  dispose(): void;
 }
 
 export class RuntimeUtilityProcessController {
@@ -51,16 +67,25 @@ export class RuntimeUtilityProcessController {
   readonly #frameListeners = new Set<(message: RuntimeIpcOutboundMessage) => void>();
   #child?: UtilityProcess;
   #ready?: Promise<RuntimeIpcOutboundMessage>;
+  #disposed = false;
 
   constructor(options: RuntimeHostControllerOptions) {
     this.#options = options;
   }
 
   start(): Promise<RuntimeIpcOutboundMessage> {
+    if (this.#disposed) return Promise.reject(new RuntimeHostControllerError(runtimeError(
+      'transport', 'runtime_host_stopped', 'Runtime Utility Process controller was disposed.',
+    )));
     if (this.#ready) return this.#ready;
     const ready = new Promise<RuntimeIpcOutboundMessage>((resolve, reject) => {
+      // Node permits unset ProcessEnv entries; Electron rejects them at fork.
+      // Omit only undefined values so explicit policies and empty strings survive.
+      const env = Object.fromEntries(
+        Object.entries(this.#options.env ?? process.env).filter(([, value]) => value !== undefined),
+      );
       const child = utilityProcess.fork(this.#options.modulePath, [], {
-        env: { ...(this.#options.env ?? process.env), CARDBUSH_RESOURCE_COORDINATION: 'desktop' },
+        env: { ...env, CARDBUSH_RESOURCE_COORDINATION: 'desktop' },
         serviceName: 'CardBush Runtime Host',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -264,8 +289,11 @@ export class RuntimeUtilityProcessController {
     if (message.type !== 'cancel_operation') {
       throw new Error('Runtime cancellation channel received an invalid message.');
     }
-    await this.start();
-    this.#post(message);
+    // Cancellation, like stream cleanup, must never launch a replacement worker.
+    const child = this.#child;
+    if (!child) return;
+    await this.#ready?.catch(() => undefined);
+    if (this.#child === child) child.postMessage(message);
   }
 
   onStreamFrame(listener: (message: RuntimeIpcOutboundMessage) => void): () => void {
@@ -281,6 +309,11 @@ export class RuntimeUtilityProcessController {
       'transport', 'runtime_host_stopped', 'Runtime Utility Process was stopped.',
     )));
     child?.kill();
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.stop();
   }
 
   #post(message: RuntimeIpcInboundMessage) {
@@ -307,31 +340,49 @@ export class RuntimeHostControllerError extends Error {
 
 export function registerRuntimeHostIpc(
   ipc: IpcMain,
-  controller: RuntimeUtilityProcessController,
+  source: RuntimeHostIpcController | (() => Promise<RuntimeHostIpcController>),
   isAllowedSender: (sender: WebContents) => boolean,
-): () => void {
+): RuntimeHostIpcRegistration {
+  const getController = typeof source === 'function' ? source : async () => source;
   const subscriptions = new Map<string, RuntimeStreamSubscription>();
   const startingSubscriptions = new Set<string>();
   const ownerCleanup = new Map<WebContents, () => void>();
+  const frameListeners = new Map<RuntimeHostIpcController, () => void>();
+  const operations = new Map<string, RuntimeIpcOperation>();
   let disposed = false;
+  const releaseOwnerListeners = (owner: WebContents) => {
+    if (![...subscriptions.values()].some(item => item.owner === owner)
+      && ![...operations.values()].some(item => item.owner === owner)) {
+      ownerCleanup.get(owner)?.();
+      ownerCleanup.delete(owner);
+    }
+  };
   const releaseSubscription = (id: string, stopWorker = true) => {
     const subscription = subscriptions.get(id);
     if (!subscription) return;
     subscriptions.delete(id);
-    if (stopWorker) {
-      void controller.stopStream({
+    if (stopWorker && subscription.controller) {
+      void subscription.controller.stopStream({
         protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'stop_stream', subscriptionId: id,
       }).catch(() => undefined);
     }
-    if (![...subscriptions.values()].some(item => item.owner === subscription.owner)) {
-      ownerCleanup.get(subscription.owner)?.();
-      ownerCleanup.delete(subscription.owner);
+    if (subscription.controller && ![...subscriptions.values()].some(item => item.controller === subscription.controller)) {
+      frameListeners.get(subscription.controller)?.();
+      frameListeners.delete(subscription.controller);
     }
+    releaseOwnerListeners(subscription.owner);
   };
   const watchOwner = (owner: WebContents) => {
     if (ownerCleanup.has(owner)) return;
     let navigating = new Map<string, RuntimeStreamSubscription>();
+    let navigatingOperations = new Map<string, RuntimeIpcOperation>();
+    const cancelPending = (operation: { cancelled?: Error }) => {
+      operation.cancelled = new Error('The requesting renderer document is no longer available.');
+    };
     const releaseOwner = () => {
+      for (const operation of operations.values()) {
+        if (operation.owner === owner) cancelPending(operation);
+      }
       for (const [id, subscription] of subscriptions) {
         if (subscription.owner === owner) releaseSubscription(id);
       }
@@ -341,12 +392,17 @@ export function registerRuntimeHostIpc(
       // Capture old IDs but do not cancel on a merely attempted navigation: a
       // beforeunload handler or navigation guard may keep this document alive.
       navigating = new Map([...subscriptions].filter(([, s]) => s.owner === owner));
+      navigatingOperations = new Map([...operations].filter(([, item]) => item.owner === owner));
     };
     const navigationCommitted = () => {
       for (const [id, subscription] of navigating) {
         if (subscriptions.get(id) === subscription) releaseSubscription(id);
       }
       navigating.clear();
+      for (const [id, operation] of navigatingOperations) {
+        if (operations.get(id) === operation) cancelPending(operation);
+      }
+      navigatingOperations.clear();
     };
     owner.on('destroyed', releaseOwner);
     owner.on('render-process-gone', releaseOwner);
@@ -364,9 +420,46 @@ export function registerRuntimeHostIpc(
       throw new Error('Renderer is not allowed to access the Runtime Host.');
     }
   };
-  ipc.handle(RUNTIME_IPC_COMMAND_CHANNEL, (event, input) => {
+  const ensureFrame = (frame: WebFrameMain | null) => {
+    if (!frame || frame.isDestroyed() || frame.detached) {
+      throw new Error('Renderer frame is unavailable for Runtime request.');
+    }
+  };
+  ipc.handle(RUNTIME_IPC_COMMAND_CHANNEL, async (event, input) => {
     ensureAllowed(event.sender);
-    return controller.command(input);
+    const operationId = extractString(input, 'operationId') ?? 'invalid_operation';
+    let message;
+    try { message = decodeRuntimeIpcInboundMessage(input); }
+    catch (error) { return commandFailure(operationId, inboundProtocolError(input, error, operationId)); }
+    if (message.type !== 'command') {
+      return commandFailure(operationId, runtimeError('protocol', 'invalid_runtime_command',
+        'Runtime command channel received a non-command message.', operationId));
+    }
+    if (operations.has(operationId)) {
+      return commandFailure(operationId, runtimeError('protocol', 'duplicate_operation_id',
+        `Operation ${operationId} already exists.`, operationId));
+    }
+    const frame = event.senderFrame;
+    ensureFrame(frame);
+    const operation: RuntimeIpcOperation = {
+      owner: event.sender, frame: frame!,
+    };
+    operations.set(operationId, operation);
+    watchOwner(event.sender);
+    try {
+      const controller = await getController();
+      ensureAllowed(event.sender);
+      ensureFrame(frame);
+      if (operation.cancelled) throw operation.cancelled;
+      operation.controller = controller;
+      return await controller.command(message);
+    } catch (error) {
+      return commandFailure(operationId, error instanceof RuntimeHostControllerError ? error.fact
+        : runtimeError('transport', (error as { code?: string })?.code ?? 'runtime_host_unavailable', errorMessage(error), operationId));
+    } finally {
+      operations.delete(operationId);
+      releaseOwnerListeners(event.sender);
+    }
   });
   ipc.handle(RUNTIME_IPC_START_STREAM_CHANNEL, async (event, input) => {
     ensureAllowed(event.sender);
@@ -381,7 +474,7 @@ export function registerRuntimeHostIpc(
     if (subscriptions.has(message.subscriptionId) || startingSubscriptions.has(message.subscriptionId)) {
       throw new Error('Runtime subscription identity is already in use.');
     }
-    const subscription = {
+    const subscription: RuntimeStreamSubscription = {
       owner: event.sender,
       frame,
     };
@@ -389,6 +482,14 @@ export function registerRuntimeHostIpc(
     watchOwner(event.sender);
     startingSubscriptions.add(message.subscriptionId);
     try {
+      const controller = await getController();
+      if (subscriptions.get(message.subscriptionId) !== subscription) return;
+      ensureAllowed(event.sender);
+      ensureFrame(frame);
+      subscription.controller = controller;
+      if (!frameListeners.has(controller)) {
+        frameListeners.set(controller, controller.onStreamFrame(message => deliverFrame(controller, message)));
+      }
       await controller.startStream(message);
       // The frame can disappear while Runtime startup is awaiting readiness.
       if (subscriptions.get(message.subscriptionId) !== subscription) {
@@ -397,7 +498,7 @@ export function registerRuntimeHostIpc(
         }).catch(() => undefined);
       }
     } catch (error) {
-      releaseSubscription(message.subscriptionId);
+      if (subscriptions.get(message.subscriptionId) === subscription) releaseSubscription(message.subscriptionId);
       throw error;
     } finally {
       startingSubscriptions.delete(message.subscriptionId);
@@ -417,11 +518,21 @@ export function registerRuntimeHostIpc(
   });
   ipc.handle(RUNTIME_IPC_CANCEL_OPERATION_CHANNEL, (event, input) => {
     ensureAllowed(event.sender);
-    return controller.cancelOperation(input);
+    const message = decodeRuntimeIpcInboundMessage(input);
+    if (message.type !== 'cancel_operation') throw new Error('Invalid Runtime cancellation request.');
+    const operation = operations.get(message.operationId);
+    if (!operation) return;
+    if (operation.owner !== event.sender || operation.frame !== event.senderFrame) {
+      throw new Error('Runtime operation belongs to a different renderer.');
+    }
+    operation.cancelled = new RuntimeHostControllerError(runtimeError('transport', 'runtime_operation_cancelled',
+      'Runtime operation was cancelled before completion.', message.operationId));
+    return operation.controller?.cancelOperation(message);
   });
-  const removeFrameListener = controller.onStreamFrame((message) => {
+  function deliverFrame(controller: RuntimeHostIpcController, message: RuntimeIpcOutboundMessage) {
     if (message.type !== 'stream_frame') return;
     const subscription = subscriptions.get(message.subscriptionId);
+    if (subscription?.controller !== controller) return;
     if (
       !subscription
       || subscription.owner.isDestroyed()
@@ -443,15 +554,29 @@ export function registerRuntimeHostIpc(
     if (message.frame.kind === 'end' || message.frame.kind === 'error') {
       releaseSubscription(message.subscriptionId, false);
     }
-  });
-  return () => {
-    disposed = true;
-    removeFrameListener();
-    ipc.removeHandler(RUNTIME_IPC_COMMAND_CHANNEL);
-    ipc.removeHandler(RUNTIME_IPC_START_STREAM_CHANNEL);
-    ipc.removeHandler(RUNTIME_IPC_STOP_STREAM_CHANNEL);
-    ipc.removeHandler(RUNTIME_IPC_CANCEL_OPERATION_CHANNEL);
-    for (const id of subscriptions.keys()) releaseSubscription(id);
+  }
+  const reset = (error = new Error('Runtime services are restarting.')) => {
+    for (const operation of operations.values()) operation.cancelled = error;
+    for (const [id, subscription] of subscriptions) {
+      try {
+        subscription.frame.send(RUNTIME_IPC_STREAM_FRAME_CHANNEL, {
+          protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'stream_frame', subscriptionId: id,
+          frame: { kind: 'error', error: runtimeError('transport', 'runtime_host_unavailable', error.message) },
+        });
+      } catch { /* The owning document may already have closed. */ }
+      releaseSubscription(id);
+    }
+  };
+  return {
+    reset,
+    dispose() {
+      disposed = true;
+      reset(new Error('Runtime IPC was closed.'));
+      ipc.removeHandler(RUNTIME_IPC_COMMAND_CHANNEL);
+      ipc.removeHandler(RUNTIME_IPC_START_STREAM_CHANNEL);
+      ipc.removeHandler(RUNTIME_IPC_STOP_STREAM_CHANNEL);
+      ipc.removeHandler(RUNTIME_IPC_CANCEL_OPERATION_CHANNEL);
+    },
   };
 }
 

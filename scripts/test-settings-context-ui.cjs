@@ -78,6 +78,13 @@ app.whenReady().then(async () => {
       window.file = { path: 'C:/Users/fixture/AppData/Roaming/cardbush/AGENTS.md', content: '请使用中文，并核对交付结果。', revision: 'one' };
       window.failSave = false; window.checkouts = [];
       window.cardbushDesktop = {
+        productHostCommand: async command => {
+          if (!command.kind.startsWith('sandbox.')) throw Error('Unexpected fixture command: ' + command.kind);
+          sandboxCalls.push(command.kind);
+          if (command.kind === 'sandbox.install') { if (sandboxFail) throw Error('fixture install denied'); sandboxStatus = { ...sandboxStatus, state:'ready', installed:true, enabled:true, canInstall:false }; }
+          if (command.kind === 'sandbox.update') sandboxStatus = { ...sandboxStatus, enabled:command.enabled };
+          return { protocol:'cardbush.product_host_ipc.v1', ok:true, value:structuredClone(sandboxStatus) };
+        },
         usageStatistics: async () => { usageReads++; return structuredClone(usageFixture); },
         readGlobalInstructions: async () => ({ ...file }),
         saveGlobalInstructions: async (content, revision) => {
@@ -88,6 +95,8 @@ app.whenReady().then(async () => {
         gitInfo: async () => ({ branch: 'main' }), gitBranches: async () => ['main', 'preview'],
         gitCheckout: async (root, branch) => { checkouts.push({ root, branch }); return { branch }; },
       };
+      window.sandboxCalls = []; window.sandboxFail = false;
+      window.sandboxStatus = { platform:'linux', state:'missing', installed:false, enabled:false, managed:false, canInstall:true, installer:'fixture' };
       const noop = () => {};
       window.fixtureModel = { id: 'fixture', provider: 'deepseek', modelName: 'deepseek-v4.1-flash-expires-on-0910', baseUrl: 'https://api.deepseek.com', apiKey: '', hasApiKey: true, maxContextTokens: 400000, maxCompletionTokens: 128000 };
       window.settingsProps = { active: true, onReady: noop, language: 'zh', languageMode: 'zh', systemLanguage: 'zh', themePreference: 'cyberpunk',
@@ -138,6 +147,64 @@ app.whenReady().then(async () => {
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'sandbox') {
+      await click('运行环境');
+      await until("document.querySelector('.settings-sandbox-status')?.textContent === '未安装'");
+      assert.deepEqual(await run('sandboxCalls'), ['sandbox.get'], 'opening settings must never install');
+      await run('sandboxStatus.canInstall = false'); await click('重新检测');
+      await until("document.querySelector('.settings-content')?.textContent.includes('未检测到支持的安装方式')");
+      assert.equal(await run("Array.from(document.querySelectorAll('button')).find(b => b.textContent === '安装沙盒')?.disabled"), true, 'unsupported installation keeps a visible disabled button');
+      await click('安装沙盒');
+      assert.equal(await run("sandboxCalls.includes('sandbox.install')"), false);
+      await run('sandboxStatus.canInstall = true'); await click('重新检测');
+      await until("Array.from(document.querySelectorAll('button')).find(b => b.textContent === '安装沙盒')?.disabled === false");
+      await run('sandboxFail = true'); await click('安装沙盒');
+      await until("document.querySelector('[role=alert]')?.textContent.includes('fixture install denied')");
+      assert.equal(await run('sandboxStatus.enabled'), false);
+      await run('sandboxFail = false'); await click('安装沙盒');
+      await until("document.querySelector('.settings-sandbox-status')?.textContent.includes('已启用')");
+      assert.equal(await run("document.querySelector('.settings-switch input').checked"), true);
+      await run("document.querySelector('.settings-switch input').click()");
+      await until("document.querySelector('.settings-sandbox-status')?.textContent.includes('已关闭')");
+      await click('重新检测');
+      await until("!Array.from(document.querySelectorAll('button')).find(b => b.textContent === '重新检测')?.disabled");
+      assert.equal(await run('sandboxStatus.enabled'), false);
+      // A slow local check must not overwrite the next Agent's settings when it resolves.
+      await run(`
+        window.originalSandboxCommand = cardbushDesktop.productHostCommand;
+        cardbushDesktop.productHostCommand = command => command.kind === 'sandbox.get'
+          ? new Promise(resolve => { window.releaseSandboxCheck = () => resolve({protocol:'cardbush.product_host_ipc.v1',ok:true,
+              value:{platform:'linux',state:'missing',installed:false,enabled:false,managed:false,canInstall:true}}); })
+          : originalSandboxCommand(command);
+        undefined;
+      `);
+      await click('重新检测');
+      await until("typeof releaseSandboxCheck === 'function'");
+      // Same page, different host: requests must target the Agent only.
+      await run(`
+        window.remoteSandboxCalls = [];
+        cardbushDesktop.agents = { connect:async () => ({platform:'linux', capabilities:{sandboxSettings:true,sharedSettings:true}}),
+          call:async (id, operation, input) => { remoteSandboxCalls.push([id,operation,input]); return {platform:'linux',state:'ready',installed:true,enabled:true,managed:true,canInstall:false}; } };
+        settingsProps.agentId = 'remote-sandbox'; settingsProps.agentConnections = [{id:'remote-sandbox',name:'测试 Agent'}]; settingsProps.initialSection = 'runtime'; renderSettings();
+      `);
+      await until("document.querySelector('.settings-switch input')?.disabled && document.querySelector('.settings-sandbox-status')?.textContent.includes('已启用')");
+      assert.deepEqual(await run('remoteSandboxCalls'), [['remote-sandbox','product.command',{kind:'sandbox.get'}]]);
+      await run('releaseSandboxCheck(); new Promise(resolve => setTimeout(resolve, 0))');
+      assert.equal(await run("document.querySelector('.settings-switch input')?.disabled"), true, 'late local status must not overwrite the remote policy');
+      assert.equal(await run("document.querySelector('.settings-sandbox-status')?.textContent"), '已安装 · 已启用');
+      assert.equal(await run("Array.from(document.querySelectorAll('button')).some(b => b.textContent === '安装沙盒')"), false);
+      await run('void (cardbushDesktop.productHostCommand = originalSandboxCommand)');
+      fs.writeFileSync(path.join(root, 'tmp/settings-sandbox.png'), (await win.webContents.capturePage()).toPNG());
+      await run(`
+        cardbushDesktop.agents.connect = async () => ({platform:'linux',capabilities:{sharedSettings:true}});
+        settingsProps.agentId = 'legacy-sandbox'; settingsProps.agentConnections = [{id:'legacy-sandbox',name:'旧 Agent'}]; renderSettings();
+      `);
+      await until("document.querySelector('.settings-content')?.textContent.includes('请更新此 Agent 服务')");
+      assert.equal(await run('remoteSandboxCalls.length'), 1, 'old servers must not fall back to local sandbox setup');
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log('Sandbox settings UI passed: detection-only opening, explicit install, failure retention, automatic enable, opt-out, shared remote page and managed policy.');
+      return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'agents') {
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
       await require('./helpers/settings-agents.cjs')({ run, until, click, choose, edit, window: win, root });

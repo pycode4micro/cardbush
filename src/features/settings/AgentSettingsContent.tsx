@@ -11,6 +11,8 @@ import { SettingsPersonalizationPanel } from './SettingsPersonalizationPanel';
 import { SettingsCard, SettingsInput, SettingsSelect } from './SettingsControls';
 import { SettingsHostContext } from './SettingsHostContext';
 import { createAgentSettingsHost } from './agentSettingsHost';
+import { SandboxSettingsPanel } from './SandboxSettingsPanel';
+import { AgentArchivesPanel } from './AgentArchivesPanel';
 import type { InstructionsSource } from './GlobalInstructionsPanel';
 import type { VisibleSettingsSection } from './settingsNavigation';
 
@@ -47,6 +49,8 @@ export function AgentSettingsContent({ connection, section, language, settings, 
   if (error) return <div role="alert" className="settings-inline-error">{error}<button className="secondary-button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试连接' : 'Retry connection'}</button></div>;
   if (!info) return <p role="status">{zh ? '正在连接 Agent…' : 'Connecting to Agent…'}</p>;
   return <SettingsHostContext.Provider value={host}>
+    {section === 'runtime' && (info.capabilities.sandboxSettings ? <SandboxSettingsPanel language={language}/>
+      : <SettingsCard title={zh ? '命令沙盒' : 'Command sandbox'}><p>{zh ? '请更新此 Agent 服务，以在设置中管理沙盒。' : 'Update this Agent service to manage its sandbox in Settings.'}</p></SettingsCard>)}
     {section === 'models' && <AgentModels call={call} language={language} name={connection.name}
       visualInputAvailable={info.capabilities.sharedConversation === true} visualInputEnabled={preferences.visionEnabled ?? visualInputEnabled}
       visionControl={<SettingsSelect name="agent-vision-mode" title={zh ? '视觉功能' : 'Vision input'}
@@ -65,8 +69,11 @@ export function AgentSettingsContent({ connection, section, language, settings, 
       onReloadSkills={reloadSkills} onLoadSkillDetail={loadSkill} onNotify={onNotify}
       renderMcp={serverId => <McpServersPanel language={language} initialServerId={serverId} capabilities={capabilities} onNotify={onNotify}/>}/>}
     {section === 'projects' && <AgentProjects call={call} language={language}/>}
-    {section === 'cache' && <CacheMaintenancePanel language={language} capabilities={capabilities} runtimeBusy={false} onNotify={onNotify}
-      scopeName={connection.name} clear={target => call('product.command', { kind: target === 'conversation' ? 'maintenance.clear_conversations' : target === 'logs' ? 'maintenance.clear_logs_cache' : 'maintenance.clear_cache' })}/>}
+    {section === 'cache' && <div className="settings-stack">
+      {info.capabilities.conversationManagement && <AgentArchivesPanel call={call} connectionId={connection.id} language={language} onNotify={onNotify}/>}
+      <CacheMaintenancePanel language={language} capabilities={capabilities} runtimeBusy={false} onNotify={onNotify}
+        scopeName={connection.name} clear={target => call('product.command', { kind: target === 'conversation' ? 'maintenance.clear_conversations' : target === 'logs' ? 'maintenance.clear_logs_cache' : 'maintenance.clear_cache' })}/>
+    </div>}
     {section === 'diagnostics' && <SettingsCard title={connection.name}><dl className="settings-agent-info"><dt>{zh ? '运行平台' : 'Platform'}</dt><dd>{info.platform}</dd><dt>{zh ? '连接方式' : 'Connection'}</dt><dd>{connection.sshTunnel ? 'SSH' : 'HTTP / HTTPS'}</dd><dt>{zh ? '设置兼容性' : 'Settings support'}</dt><dd>{info.capabilities.sharedSettings ? zh ? '已支持共享偏好与插件设置' : 'Shared preferences and plugin settings supported' : zh ? '可管理基本设置，更新服务可获得完整支持' : 'Basic settings available; update the service for full support'}</dd></dl></SettingsCard>}
   </SettingsHostContext.Provider>;
 }

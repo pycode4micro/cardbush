@@ -82,7 +82,7 @@ export function agentRuntimeClient(call: AgentCall, watch?: Watch) {
 }
 
 export function createAgentConversationBackend(call: AgentCall, connectionId: string, watch: Watch,
-  hostOptions: { sharedSettings?: boolean; enhanced?: boolean; visualInputAvailable?: boolean; onSubmitted?: () => void } = {}) {
+  hostOptions: { sharedSettings?: boolean; enhanced?: boolean; visualInputAvailable?: boolean; onSubmitted?: (sessionId: string) => void } = {}) {
   const guidanceKey = `cardbush-agent-guidance:${connectionId}`;
   const guidance = new Map<string, { command: Record<string, unknown>; message: ChatMessage }>();
   try { for (const entry of JSON.parse(sessionStorage.getItem(guidanceKey) ?? '[]')) guidance.set(entry.message.id, entry); } catch { /* Ignore invalid stored drafts. */ }
@@ -153,7 +153,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     uncertain.set(request.sessionId, input); persist();
     const job = await call<Job>('chat.send', input);
     uncertain.delete(request.sessionId); persist();
-    hostOptions.onSubmitted?.();
+    hostOptions.onSubmitted?.(input.sessionId);
     return job;
   };
   const stream: typeof shared.streamChat = async request => {
@@ -195,6 +195,10 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   };
   const backend: ConversationBackend = {
     scope: connectionId,
+    isSubmissionRetry: (sessionId, text) => {
+      const prior = uncertain.get(sessionId);
+      return Boolean(prior && (prior.userMessageMetadata?.composerReferenceContent ?? prior.text) === text);
+    },
     fetchConversations: () => shared.fetchConversations(runtime),
     fetchSessionMessages: load,
     fetchMessages: async (id, options) => (await load(id, options)).messages,

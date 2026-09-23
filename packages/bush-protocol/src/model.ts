@@ -213,6 +213,9 @@ export const modelEventSchema = z.discriminatedUnion("kind", [
   eventBaseSchema.extend({
     kind: z.literal("response_completed"),
     finishReason: z.string().optional(),
+    // On output truncation, only these protocol-confirmed calls are eligible
+    // for execution. Absent evidence means no truncated batch may be run.
+    completedToolCallIndices: z.array(z.number().int().nonnegative()).optional(),
     providerReplay: modelReplayDataSchema.optional(),
   }),
   eventBaseSchema.extend({

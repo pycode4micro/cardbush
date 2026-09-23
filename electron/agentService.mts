@@ -6,6 +6,7 @@ import { runtimeSessionReadRequestSchema } from '@cardbush/bush-protocol';
 import { createProductAgentTurnRequest, GOAL_CONTINUATION_PROMPT } from '@cardbush/bush-product-agent';
 import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, sessionSupersessionSchema, reasoningEffortSchema, decodeSessionSnapshot, type SessionSnapshot, type RuntimeEvent, type RuntimeProviderBindingRef, type ConversationExtractSource, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AgentRuntimeHost } from './agentRuntimeHost.mjs';
+import { SandboxSetup } from './sandboxSetup.mjs';
 import { ElectronProductHostController } from './productHostController.mjs';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions.js';
 import { installProductPlugin } from './productPlugins.js';
@@ -46,7 +47,7 @@ export class AgentService {
   #stateListeners = new Set<() => void>();
   #releaseLock: () => Promise<void>;
 
-  private constructor(root: string, state: AgentState, release: () => Promise<void>, options: { env?: NodeJS.ProcessEnv; bundledRoot?: string }) {
+  private constructor(root: string, state: AgentState, release: () => Promise<void>, options: { env?: NodeJS.ProcessEnv; bundledRoot?: string }, sandbox: SandboxSetup) {
     this.root = root; this.#state = state; this.#releaseLock = release;
     const runtimeRoot = join(root, 'runtime-state');
     const bundled = options.bundledRoot ?? join(root, 'bundled');
@@ -62,6 +63,7 @@ export class AgentService {
     }
     Object.assign(env, options.env, {
       CARDBUSH_SERVICE_ID: state.id, CARDBUSH_RUNTIME_STATE_ROOT: runtimeRoot,
+      CARDBUSH_SANDBOX_SETTINGS_PATH: join(root, 'config', 'sandbox.json'),
       CARDBUSH_SUBAGENT_CONFIG_PATH: join(root, 'config', 'subagents.json'),
       CARDBUSH_APPS_CONFIG_PATH: join(root, 'config', 'apps.json'),
       CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify([join(bundled, 'skills'), join(root, 'skills')]),
@@ -78,6 +80,7 @@ export class AgentService {
       throw new Error(`This headless Agent does not provide ${operation}.`);
     });
     this.product = new ElectronProductHostController({
+      sandbox,
       dataRoot: root, runtimeStateRoot: runtimeRoot, runtimeBridge: this.runtime,
       bundledSkillRoot: join(bundled, 'skills'), userSkillRoot: join(root, 'skills'),
       bundledPluginRoot: join(bundled, 'plugins'), userPluginRoot: join(root, 'plugins'),
@@ -110,7 +113,9 @@ export class AgentService {
     try {
       const state: AgentState = existing ? JSON.parse(existing) : { version: 1, id: `agent-${randomUUID()}`, name: options.name?.trim() || 'CardBush Agent', revision: 0, projects: [], defaultProjectId: null, jobs: [] };
       if (state.version !== 1 || !state.id || !Array.isArray(state.jobs) || !Array.isArray(state.projects)) throw new Error('Unsupported or corrupt Agent data.');
-      service = new AgentService(root, state, release, options);
+      const sandbox = new SandboxSetup({ path: join(root, 'config', 'sandbox.json'), env: options.env });
+      await sandbox.get().catch(error => console.warn('[sandbox-check]', error));
+      service = new AgentService(root, state, release, options, sandbox);
       await service.runtime.ready;
       await service.#write(next => {
         if (options.name?.trim()) next.name = options.name.trim();
@@ -126,7 +131,7 @@ export class AgentService {
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
-    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true } }; }
+    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sandboxSettings: true } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();

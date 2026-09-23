@@ -92,7 +92,8 @@ export class AgentHttpClient {
     this.#agentId = info.id; return info;
   }
   async call(operation: AgentOperation, input: Record<string, unknown>) {
-    const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, AbortSignal.timeout(60_000));
+    const timeout = operation === 'product.command' && input.kind === 'sandbox.install' ? 300_000 : 60_000;
+    const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, AbortSignal.timeout(timeout));
     const data = await response.json() as { result: unknown }; return data.result;
   }
   async *events(input: AgentEventRequest, signal: AbortSignal, format: 'sse' | 'ndjson' = 'sse'): AsyncIterable<AgentEventFrame> {

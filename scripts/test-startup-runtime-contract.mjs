@@ -15,6 +15,7 @@ const packageJson = JSON.parse(read('package.json'));
 
 const startupBlock = main.slice(main.indexOf('app.whenReady().then'), main.indexOf('function publishRuntimeStartupStatus'));
 assert.ok(startupBlock.indexOf('createWindow();') < startupBlock.indexOf('void startRuntimeServices();'), 'window must be created before Runtime startup');
+assert.ok(startupBlock.indexOf('registerRuntimeHostIpc(') < startupBlock.indexOf('createWindow();'), 'Runtime IPC must exist before the renderer can send requests');
 assert.ok(startupBlock.indexOf('createWindow();') < startupBlock.indexOf('void ensureLegacyProductSkillsMigrated();'), 'window must be created before legacy Skill migration');
 assert.match(main, /phase: 'initializing' \| 'ready' \| 'error'/);
 assert.match(main, /ipcMain\.handle\('app:retry-runtime'/);

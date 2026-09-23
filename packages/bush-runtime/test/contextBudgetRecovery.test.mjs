@@ -261,9 +261,9 @@ test('partition units keep parallel tool calls, reasoning and all receipts toget
   assert.equal(isContextLengthFailure({ code: 'context_length_exceeded', status: 403 }), false);
 });
 
-test('normal output continuations stay bounded when maintenance occurs between each attempt', async t => {
+test('zero-progress output truncation stops before another maintenance or model request', async t => {
   const fixture = harness(t, function *(input, ordinal) {
-    assert.ok(ordinal <= 5, 'maintenance cannot reset the normal output continuation budget');
+    assert.equal(ordinal, 1, 'no-progress truncation cannot trigger another maintenance round');
     if (isMaintenance(input)) yield *checkpoint(input, `checkpoint_${ordinal}`);
     else {
       yield event(input, 0, 'reasoning_delta', { delta: 'Partial work to preserve.' });
@@ -273,8 +273,8 @@ test('normal output continuations stay bounded when maintenance occurs between e
     message.name === 'output_limit_continuation') ? 260000 : 500, source: 'provider' }) });
   const result = await fixture.host.runSessionTurn(request());
   assert.equal(result.payload.reason, 'model_output_limit_exceeded');
-  assert.equal(fixture.observed.length, 5);
-  assert.equal(result.payload.details.continuationAttempts, 2);
+  assert.equal(fixture.observed.length, 1);
+  assert.equal(result.payload.details.continuationAttempts, 0);
 });
 
 test('output truncation followed by compaction never repeats a completed tool side effect', async t => {
@@ -285,17 +285,14 @@ test('output truncation followed by compaction never repeats a completed tool si
   const fixture = harness(t, function *(input, ordinal) {
     if (ordinal === 1) {
       yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: 'written', nameDelta: 'write_once', argumentsDelta: '{}' });
-      yield event(input, 1, 'response_completed', { finishReason: 'tool_calls' });
-    } else if (ordinal === 2) {
-      yield event(input, 0, 'text_delta', { delta: 'Verify the saved result.' });
-      yield event(input, 1, 'response_completed', { finishReason: 'length' });
+      yield event(input, 1, 'response_completed', { finishReason: 'length', completedToolCallIndices: [0] });
     } else if (isMaintenance(input)) yield *checkpoint(input, 'post_write_checkpoint');
     else yield *finished(input);
   }, { history: [], toolRegistry: registry, count: async input => ({ inputTokens: input.messages.some(message =>
     message.name === 'output_limit_continuation') ? 260000 : 500, source: 'provider' }) });
   assert.equal((await fixture.host.runSessionTurn(request({ permissionMode: 'all_free', tools: registry.definitions() }))).payload.status, 'completed');
   assert.equal(writes, 1);
-  assert.equal(fixture.observed.length, 4);
+  assert.equal(fixture.observed.length, 3);
   assert.match(JSON.stringify(fixture.observed.at(-1).messages), /FACT_C/);
   assert.equal(fixture.host.events('budget', 'current').filter(event => event.kind === 'tool_running').length, 1);
 });

@@ -312,10 +312,14 @@ function assistantFailurePresentation(
   }
   if (reason === 'reasoning-budget-exhausted-before-action' || reason === 'model_output_limit_exceeded') {
     const attempts = Number(stopDetails.continuationAttempts) || 0;
+    const maxOutput = Number(stopDetails.maxOutputTokens);
+    const limit = Number.isFinite(maxOutput) && maxOutput > 0
+      ? (language === 'zh' ? `当前最大输出为 ${maxOutput.toLocaleString()} token。` : `The current output limit is ${maxOutput.toLocaleString()} tokens. `)
+      : '';
     return { reason, title: language === 'zh' ? '模型输出达到单次上限' : 'Model output reached its per-response limit',
       detail: language === 'zh'
-        ? `${attempts ? `已自动续接 ${attempts} 次，仍未完成。` : '模型在达到输出上限前未能完成有效回复。'}已有正文和工具操作进度已保留，可继续任务。`
-        : `${attempts ? `Automatic continuation was attempted ${attempts} times without completion. ` : 'The model could not complete a response within the output limit. '}Existing text and tool progress are preserved; the task can be continued.` };
+        ? `${limit}${attempts ? `已自动续接 ${attempts} 次，仍未完成。` : '本次回复未能在输出上限内完成。'}已有正文和工具操作进度已保留，请提高最大输出后继续任务。`
+        : `${limit}${attempts ? `Automatic continuation was attempted ${attempts} times without completion. ` : 'This response could not finish within the output limit. '}Existing text and tool progress are preserved. Increase the maximum output before continuing.` };
   }
   return {
     reason,

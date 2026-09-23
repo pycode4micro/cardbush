@@ -27,6 +27,7 @@ import { useAgentConversationHost } from './useAgentConversationHost';
 import { SettingsDropdown } from '../settings/SettingsDropdown';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from '../sidebar/reviewCommentModel';
 import { agentErrorText as errorText } from './agentErrorText';
+import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 
 type Call = <T = unknown>(operation: AgentOperation, input?: Record<string, unknown>) => Promise<T>;
 type Models = { defaultModelId: string; models: ManagedModelConfig[] };
@@ -38,43 +39,46 @@ type AgentChatAppearance = { visualInputEnabled?: boolean; onOpenSettings?: (id:
 const noAction = async () => {};
 const emptyStates = new Map<string, boolean>();
 
-export function AgentsView({ language, agents, ...appearance }: {
-  language: AppLanguage; agents: AgentConnectionsController;
+export function AgentsView({ language, agents, active = true, ...appearance }: {
+  language: AppLanguage; agents: AgentConnectionsController; active?: boolean;
 } & AgentChatAppearance) {
   const { connections, selectedId, select: onSelect, refresh: onRefresh } = agents;
   const zh = language === 'zh';
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AgentConnection>();
-  const [info, setInfo] = useState<AgentInfo | null>(null);
-  const [connectedId, setConnectedId] = useState('');
+  // Keep controllers, cursors and transcripts per host. Only the selected chat
+  // mounts its DOM; navigation must not tear down a running stream.
+  const [connectedHosts, setConnectedHosts] = useState<Record<string, AgentInfo>>({});
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [reconnect, setReconnect] = useState(0);
   const selected = connections.find(item => item.id === selectedId);
+  const info = connectedHosts[selectedId];
   useEffect(() => {
-    let alive = true; setInfo(null); setConnectedId(''); setError('');
-    if (!selectedId) { setConnecting(false); return; }
+    let alive = true; setError('');
+    if (!active || !selectedId) { setConnecting(false); return; }
     setConnecting(true);
-    void api().connect(selectedId).then(info => { if (alive) { setInfo(info); setConnectedId(selectedId); void onRefresh(); } }, error => { if (alive) setError(errorText(error)); })
+    void api().connect(selectedId).then(info => { if (alive) { setConnectedHosts(current => ({ ...current, [selectedId]: info })); void onRefresh(); } }, error => { if (alive) setError(errorText(error)); })
       .finally(() => { if (alive) setConnecting(false); });
     return () => { alive = false; }; // Leaving this view does not disconnect or stop remote work.
-  }, [selectedId, reconnect, onRefresh]);
+  }, [active, selectedId, reconnect, onRefresh]);
   useEffect(() => {
-    if (selected?.connected && selected.info) { setInfo(selected.info); setConnectedId(selected.id); setError(''); setConnecting(false); }
+    if (selected?.connected && selected.info) { setConnectedHosts(current => current[selected.id] === selected.info ? current : { ...current, [selected.id]: selected.info! }); setError(''); setConnecting(false); }
     else if (selected?.connectionError && selected.connectionState === 'disconnected') setError(selected.connectionError);
   }, [selected]);
-  return <div className="agents-view">
-    {(!selected || !info || connectedId !== selectedId) && <TopBar title={selected?.name || 'Agents'} language={language} inspectorOpen={false}
+  return <div className="agents-view" hidden={!active} style={!active ? { display: 'none' } : undefined}>
+    {(!selected || !info) && <TopBar title={selected?.name || 'Agents'} language={language} inspectorOpen={false}
       workspaceControl={<button className="agents-add" onClick={() => setAdding(true)}><Plus size={16}/>{zh ? '添加 Agent' : 'Add Agent'}</button>}/>}
     {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。项目、模型、插件和历史记录由各个 Agent 分别管理。' : 'Chat directly after connecting. Each Agent owns its projects, models, plugins and history.'}</p>
       <div className="agents-cards">{connections.map(item => <button key={item.id} className="agents-card" onClick={() => onSelect(item.id)}><Server size={24}/><strong>{item.name}</strong><span>{item.migrationIssue || (item.sshTunnel ? `${zh ? 'SSH 直连 · 服务器端口' : 'SSH direct · Server port'} ${item.sshTunnel.remotePort}` : item.url)}</span></button>)}
       <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{zh ? '添加连接' : 'Add connection'}</strong><span>SSH / HTTP / HTTPS</span></button></div></div>}
-    {connecting && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
+    {connecting && !info && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
     {!error && selected?.connectionState === 'reconnecting' && <div className="agents-error" role="status">{zh ? '正在自动重连：' : 'Reconnecting: '}{selected.connectionError}<button onClick={() => setEditing(selected)}>{zh ? '连接设置' : 'Connection settings'}</button></div>}
     {error && <div className="agents-error" role="alert">{selected?.connectionState === 'reconnecting' ? (zh ? '正在自动重连：' : 'Reconnecting: ') + (selected.connectionError || error) : error}{selected && <button onClick={() => setEditing(selected)}>{zh ? '连接设置' : 'Connection settings'}</button>}<button onClick={() => setReconnect(value => value + 1)}>{zh ? '重试' : 'Retry'}</button></div>}
-    {selected && info && connectedId === selectedId && <AgentWorkspace {...appearance} key={selected.id} connection={selected} info={info} language={language} agents={agents}
-      onReconnect={() => { void api().disconnect(selectedId).then(() => setReconnect(value => value + 1)).catch(error => setError(errorText(error))); }}
-      onEdit={() => setEditing(selected)}/>}
+    {connections.filter(item => connectedHosts[item.id]).map(connection => <AgentWorkspace {...appearance} key={connection.id}
+      active={active && connection.id === selectedId} connection={connection} info={connectedHosts[connection.id]} language={language} agents={agents}
+      onReconnect={() => { void api().disconnect(connection.id).then(() => setReconnect(value => value + 1)).catch(error => setError(errorText(error))); }}
+      onEdit={() => setEditing(connection)}/>)}
     {(adding || editing) && <AgentConnectionForm language={language} initial={editing} onClose={() => { setAdding(false); setEditing(undefined); }} onRemove={editing ? async () => {
       await api().remove(editing.id); if (selectedId === editing.id) onSelect(''); setEditing(undefined); await onRefresh();
     } : undefined} onSave={async input => {
@@ -83,7 +87,7 @@ export function AgentsView({ language, agents, ...appearance }: {
   </div>;
 }
 
-function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdit, ...appearance }: { connection: AgentConnection; info: AgentInfo; language: AppLanguage; agents: AgentConnectionsController; onReconnect: () => void; onEdit: () => void } & AgentChatAppearance) {
+function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdit, active, ...appearance }: { active: boolean; connection: AgentConnection; info: AgentInfo; language: AppLanguage; agents: AgentConnectionsController; onReconnect: () => void; onEdit: () => void } & AgentChatAppearance) {
   const zh = language === 'zh';
   const call = useCallback<Call>(async (operation, input) => await api().call(connection.id, operation, input) as never, [connection.id]);
   const { refreshSessions } = agents;
@@ -97,9 +101,13 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   const [error, setError] = useState('');
   const creating = agents.sessionsByAgent[connection.id]?.creating;
   const refresh = useCallback(async () => {
-    const [models, projects] = await Promise.all([call<Models>('product.command', { kind: 'models.get' }), call<Projects>('projects.list'), refreshSessions(connection.id)]);
-    setModels(models); setProjects(projects); setError('');
+    await Promise.all([
+      call<Models>('product.command', { kind: 'models.get' }).then(setModels),
+      call<Projects>('projects.list').then(setProjects), refreshSessions(connection.id),
+    ]);
+    setError('');
   }, [call, connection.id, refreshSessions]);
+  const refreshConversationList = useCallback(() => refreshSessions(connection.id), [connection.id, refreshSessions]);
   useEffect(() => { let alive = true; void refresh().catch(error => { if (alive) setError(errorText(error)); }); return () => { alive = false; }; }, [refresh]);
   useEffect(() => {
     const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === connection.id) void refresh().catch(error => setError(errorText(error))); };
@@ -115,42 +123,50 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
       <button className="topbar-inspector-action icon-only" title={zh ? '新建会话' : 'New chat'} aria-label={zh ? '新建会话' : 'New chat'} disabled={creating} onClick={() => void create()}><Plus size={16}/></button>
       <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '管理此 Agent' : 'Manage Agent'} aria-label={zh ? '管理此 Agent' : 'Manage Agent'} onClick={manage}><Settings size={15}/></button>
     </div>;
-  return <div className="agent-workspace">
-    {(!sessionId) && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
-    {error && <div className="agents-error" role="alert">{error}</div>}
-    {sessionId ? <AgentChat {...appearance} title={title} headerActions={headerActions} onCreate={() => void create()} key={`${connection.id}:${sessionId}`} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} chatPreferences={chatPreferences} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refresh} onConfigure={() => appearance.onOpenSettings?.(connection.id, 'models')} onOpenSession={id => agents.select(connection.id, id)}/>
-      : <div className="agents-empty"><h2>{zh ? '有什么可以帮你？' : 'How can I help?'}</h2><p>{zh ? `与 ${connection.name} 开始新对话，或从左侧选择会话。` : `Start a chat with ${connection.name}, or select one in the sidebar.`}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{zh ? '开始对话' : 'Start chat'}</button></div>}
+  return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
+    {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
+    {active && error && <div className="agents-error" role="alert">{error}</div>}
+    <AgentChat {...appearance} active={active && Boolean(sessionId)} title={title} headerActions={headerActions} onCreate={() => void create()} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} chatPreferences={chatPreferences} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.(connection.id, 'models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>
+    {active && !sessionId && <div className="agents-empty"><h2>{zh ? '有什么可以帮你？' : 'How can I help?'}</h2><p>{zh ? `与 ${connection.name} 开始新对话，或从左侧选择会话。` : `Start a chat with ${connection.name}, or select one in the sidebar.`}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{zh ? '开始对话' : 'Start chat'}</button></div>}
   </div>;
 }
 
-function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvailable, chatPreferences, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false }: { call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; chatPreferences: ReturnType<typeof useAgentChatPreferences>; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
+function AgentChat({ active, call, sharedSettings, enhanced, management, visualInputAvailable, chatPreferences, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, onForkSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false }: { active: boolean; call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; chatPreferences: ReturnType<typeof useAgentChatPreferences>; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; onForkSession: (id: string) => Promise<void>; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
   const zh = language === 'zh'; const storageKey = `cardbush-agent-draft:${connectionId}:${sessionId}`;
-  const submittedRef = useRef<() => void>(() => {});
+  const viewKey = (field: string) => conversationViewKey(connectionId, sessionId, field);
+  const submittedRef = useRef<(sessionId: string) => void>(() => {});
   const connection = useMemo(() => createAgentConversationBackend(call, connectionId,
-    (request, listener) => api().watchEvents(connectionId, request, listener), { enhanced, sharedSettings, visualInputAvailable, onSubmitted: () => submittedRef.current() }), [call, connectionId, enhanced, visualInputAvailable, sharedSettings]);
+    (request, listener) => api().watchEvents(connectionId, request, listener), { enhanced, sharedSettings, visualInputAvailable, onSubmitted: id => submittedRef.current(id) }), [call, connectionId, enhanced, visualInputAvailable, sharedSettings]);
   const [preferences, setPreferences] = chatPreferences;
   const disabledSkills = useMemo(() => new Set(preferences.disabledSkills), [preferences.disabledSkills]);
   const availableModels = useMemo(() => [...models.models].sort((a, b) => Number(b.id === models.defaultModelId) - Number(a.id === models.defaultModelId)), [models]);
-  const chat = useCardbushChat(availableModels, models.models, { runtimeReady: models.models.length > 0,
+  const chat = useCardbushChat(availableModels, models.models, { runtimeReady: true,
+    activeConversationId: sessionId, viewActive: active,
     language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputAvailable && (preferences.visionEnabled ?? visualInputEnabled), disabledSkillNames: disabledSkills,
     interactiveRequestsAvailable: enhanced, contextWindowUsageAvailable: true, workspaceChangesAvailable: true,
   }, connection.backend);
-  const { host: baseHost, skills, error: hostError, preview } = useAgentConversationHost(call, connectionId, sessionId, enhanced, management);
+  const { host: baseHost, skills, error: hostError, preview, closePreview } = useAgentConversationHost(call, connectionId, sessionId, enhanced, management);
   const inspector = useContext(ConversationInspectorContext);
   const inspectorRef = useRef(inspector); inspectorRef.current = inspector;
-  const [summary, setSummary] = useState<WorkSummaryInspectorDetail>();
+  const [summary, setSummary] = useConversationViewState<WorkSummaryInspectorDetail | undefined>(viewKey('summary'), () => undefined);
   const summaryId = `agent-summary:${baseHost.id}`;
   const previewId = `agent-file:${baseHost.id}`;
   const openWorkSummary = useCallback((detail: WorkSummaryInspectorDetail) => {
     setSummary({ ...detail, sessionId: detail.sessionId || sessionId });
     inspectorRef.current?.open(summaryId, detail.title || (language === 'zh' ? '执行详情' : 'Execution details'));
-  }, [sessionId, summaryId, language]);
+  }, [sessionId, summaryId, language, setSummary]);
   const host = useMemo(() => ({ ...baseHost, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sessionId, connection, openWorkSummary]);
-  useEffect(() => { if (preview) inspectorRef.current?.open(previewId, preview.name); }, [preview, previewId]);
-  useEffect(() => () => { inspectorRef.current?.close(summaryId); inspectorRef.current?.close(previewId); }, [summaryId, previewId]);
-  const [draft, setDraft] = useState(() => sessionStorage.getItem(storageKey) ?? '');
-  useEffect(() => { sessionStorage.setItem(storageKey, draft); }, [draft, storageKey]);
-  useEffect(() => { void chat.openStoredConversation(sessionId); }, [sessionId, chat.openStoredConversation]);
+  useEffect(() => { if (active && preview) inspectorRef.current?.open(previewId, preview.name); }, [active, preview, previewId]);
+  useEffect(() => () => {
+    if (!active) return;
+    inspectorRef.current?.close(summaryId); inspectorRef.current?.close(previewId); closePreview();
+  }, [active, summaryId, previewId, closePreview]);
+  const [draft, updateDraft] = useConversationViewState(viewKey('draft'), () => sessionStorage.getItem(storageKey) ?? '', Boolean);
+  const setDraft = useCallback((value: string | ((current: string) => string)) => updateDraft(current => {
+    const next = typeof value === 'function' ? value(current) : value;
+    sessionStorage.setItem(storageKey, next);
+    return next;
+  }), [storageKey, updateDraft]);
   useEffect(() => {
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent<{ connectionId: string; sessionId: string }>).detail;
@@ -163,27 +179,29 @@ function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvai
   const maxContextTokens = selectedModel?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
   const workspaceRoot = chat.activeConversation ? conversationWorkspaceRoot(chat.activeConversation) : undefined;
   const reports = useMemo(() => changeReportsFromMessages(chat.activeMessages), [chat.activeMessages]);
-  const [error, setError] = useState('');
-  const [submissionPending, setSubmissionPending] = useState(false);
-  const acceptSubmissionRef = useRef<(() => void) | null>(null);
-  submittedRef.current = () => {
-    acceptSubmissionRef.current?.();
-    void onChanged().catch(error => setError(`${zh ? '消息已接收，会话列表刷新失败：' : 'Message accepted; conversation refresh failed: '}${errorText(error)}`));
+  const [error, setError] = useConversationViewState(viewKey('error'), () => '');
+  const [submissionPending, setSubmissionPending] = useConversationViewState(viewKey('submission'), () => false, Boolean);
+  const acceptSubmissionRef = useRef(new Map<string, { accept: () => void; refreshFailed: (error: unknown) => void }>());
+  submittedRef.current = id => {
+    const submission = acceptSubmissionRef.current.get(id);
+    submission?.accept();
+    void onChanged().catch(error => submission?.refreshFailed(error));
   };
   const sendComposerMessage = (text: string): Promise<boolean> => {
-    if (acceptSubmissionRef.current) return Promise.resolve(false);
+    if (acceptSubmissionRef.current.has(sessionId)) return Promise.resolve(false);
     setSubmissionPending(true);
     return new Promise(resolve => {
       let settled = false;
       const finish = (accepted: boolean) => {
         if (settled) return;
         settled = true;
-        if (acceptSubmissionRef.current === accept) acceptSubmissionRef.current = null;
+        if (acceptSubmissionRef.current.get(sessionId)?.accept === accept) acceptSubmissionRef.current.delete(sessionId);
         setSubmissionPending(false);
         resolve(accepted);
       };
       const accept = () => finish(true);
-      acceptSubmissionRef.current = accept;
+      acceptSubmissionRef.current.set(sessionId, { accept, refreshFailed: error =>
+        setError(`${zh ? '消息已接收，会话列表刷新失败：' : 'Message accepted; conversation refresh failed: '}${errorText(error)}`) });
       // The composer waits for durable admission, not for the whole streamed Turn.
       // A later completion must not clear attachments prepared for the next message.
       void chat.sendMessage(text).then(() => finish(false), error => {
@@ -191,7 +209,7 @@ function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvai
       });
     });
   };
-  const [reverting, setReverting] = useState('');
+  const [reverting, setReverting] = useConversationViewState(viewKey('reverting'), () => '', Boolean);
   const busy = chat.sending || chat.stopping;
   const revert = async (report: ConversationChangeReport) => {
     if (!report.turnId || busy || reverting) return;
@@ -204,9 +222,9 @@ function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvai
     finally { setReverting(''); }
   };
   const reviewId = `agent-review:${host.id}`;
-  useEffect(() => () => inspectorRef.current?.close(reviewId), [reviewId]);
-  const [review, setReview] = useState<{ path: string; turnId?: string; requestId: string }>();
-  const [comments, setComments] = useState<ReviewCommentState>(emptyReviewComments);
+  useEffect(() => () => inspectorRef.current?.close(reviewId), [active, reviewId]);
+  const [review, setReview] = useConversationViewState<{ path: string; turnId?: string; requestId: string } | undefined>(viewKey('review'), () => undefined);
+  const [comments, setComments] = useConversationViewState<ReviewCommentState>(viewKey('comments'), () => emptyReviewComments, value => Boolean(value.comments.length || value.draft));
   const openReview = (path = '', turnId?: string) => {
     setReview({ path, turnId, requestId: crypto.randomUUID() });
     inspector?.open(reviewId, zh ? '审查' : 'Review');
@@ -217,15 +235,16 @@ function AgentChat({ call, sharedSettings, enhanced, management, visualInputAvai
       { value: '', label: zh ? '独立目录' : 'Private workspace', disabled: !management },
       ...projects.projects.map(project => ({ value: project.id, label: project.name, icon: <Folder size={14}/> })),
     ]}/></div>;
+  if (!active) return null;
   return <ConversationHostContext.Provider value={host}><ConversationExtractionProvider api={connection.extracts} activeSessionId={sessionId} contextWindowTokens={maxContextTokens}
-    language={language} onOpen={onOpenSession} onFork={async sessionId => { const next = await call<{ sessionId: string }>('sessions.fork', { sessionId }); await onChanged(); onOpenSession(next.sessionId); }}>
+    language={language} onOpen={onOpenSession} onFork={onForkSession}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || Boolean(reverting) }}>
     <section className="agent-chat">
       <ChatPanel language={language} theme={theme} title={title} headerActions={headerActions}
         sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} inspectorOpen={inspector?.visible ?? false} onToggleInspector={() => openReview()}
         activeConversationId={host.id} activeProjectDir={workspaceRoot} projectPathAliases={[]} selectedProjectDir="" availableProjects={[]} onWelcomeProjectChange={noAction}
         messages={chat.activeMessages} changeReports={reports} activeTurnId={chat.activeTurnId}
-        loading={chat.loading || !chat.activeConversationId} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
+        loading={(chat.loading && !chat.activeMessages.length) || !chat.activeConversationId} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
         welcomeEnabled={false} turnHistoryAvailable subagentObservabilityAvailable thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
         activeGoal={chat.activeGoal} goalAvailable={chat.goalAvailable} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting} shadowAvailable={false} shadowAccentColor="" shadowThemeVariables={{}}
         queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}

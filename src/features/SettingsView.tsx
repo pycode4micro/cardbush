@@ -1,6 +1,7 @@
 import type { AgentConnection } from '../../electron/agentTypes';
 import { AgentSettingsContent } from './settings/AgentSettingsContent';
 import { useSettingsHost } from './settings/SettingsHostContext';
+import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
 import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
@@ -208,7 +209,7 @@ export function SettingsView({
   const settingsContentRef = useRef<HTMLElement>(null);
   const sectionScrollPositions = useRef<Record<string, number>>({});
   const agent = agentConnections.find(item => item.id === agentId);
-  const remoteSections: VisibleSettingsSection[] = ['models', 'mcp', 'projects', 'profile', 'appearance', 'shortcuts', 'cache', 'diagnostics'];
+  const remoteSections: VisibleSettingsSection[] = ['models', 'mcp', 'projects', 'profile', 'appearance', 'shortcuts', 'runtime', 'cache', 'diagnostics'];
   const effectiveSection = agent && !remoteSections.includes(section) ? 'models' : !agent && section === 'projects' ? 'models' : section;
   const scrollKey = `${agent?.id ?? 'local'}:${effectiveSection}`;
   const navigation = agent ? settingsNavigationGroups.map(group => ({ ...group, sections: [...group.sections.filter(id => remoteSections.includes(id)), ...(group.label.en === 'Capabilities' ? ['projects' as const] : [])] })) : settingsNavigationGroups;
@@ -331,6 +332,7 @@ export function SettingsView({
     if (effectiveSection === 'runtime') {
       return (
         <div className="settings-stack">
+          <SandboxSettingsPanel language={language}/>
           <SettingsCard
             title={language === 'zh' ? '默认终端' : 'Default terminal'}
             subtitle={

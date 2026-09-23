@@ -51,6 +51,8 @@ import { submittedUserReadingOffset, updateResponseSpacer } from './responseSpac
 import {
   captureConversationScrollPosition,
   restoreConversationScrollPosition,
+  conversationScrollPositions,
+  saveConversationScrollPosition,
   type ConversationScrollPosition,
 } from './conversationScrollPosition';
 import { ConversationWorkSummary } from './ConversationWorkSummary';
@@ -496,7 +498,7 @@ export function ChatPanel({
     source: string;
     scrollTop: number;
   } | null>(null);
-  const conversationScrollPositionsRef = useRef(new Map<string, ConversationScrollPosition>());
+  const scrollPositionKey = JSON.stringify([host?.id ?? 'local', activeConversationId]);
   const scrollActivationRef = useRef<{
     scroller: HTMLElement;
     position: ConversationScrollPosition | undefined;
@@ -2180,7 +2182,7 @@ export function ChatPanel({
               attachedScroller,
               autoFollowStreamRef.current && !userDetachedFromBottomRef.current,
             );
-        conversationScrollPositionsRef.current.set(activeConversationId, position);
+        saveConversationScrollPosition(scrollPositionKey, position);
         scrollDebug('session-scroll-save', { conversationId: activeConversationId, position });
       }
       cancelScheduledStreamFollow();
@@ -2192,7 +2194,7 @@ export function ChatPanel({
       listScrollerRef.current = scroller;
       scrollActivationRef.current = null;
       if (!scroller) return;
-      const position = conversationScrollPositionsRef.current.get(activeConversationId);
+      const position = conversationScrollPositions.get(scrollPositionKey);
       const freshSubmission = messageSnapshotRef.current.conversationId === activeConversationId
         && pendingSubmittedUserFocusRef.current;
       scrollActivationRef.current = { scroller, position, restoring: !freshSubmission };
@@ -2221,7 +2223,7 @@ export function ChatPanel({
       }
       setScrollBottomVisible(false);
     };
-  }, [activeConversationId, cancelScheduledStreamFollow, setScrollBottomVisible]);
+  }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible]);
 
   const diagnosticStateRef = useRef<() => Record<string, unknown>>(() => ({}));
   diagnosticStateRef.current = () => ({

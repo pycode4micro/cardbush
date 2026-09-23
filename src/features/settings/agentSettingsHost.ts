@@ -48,6 +48,9 @@ export function createAgentSettingsHost(call: AgentCall, supportsSharedSettings:
   return {
     remote: true,
     supportsPluginConnections: supportsSharedSettings,
+    fetchSandboxSetup: () => call('product.command', { kind: 'sandbox.get' }),
+    installSandbox: () => call('product.command', { kind: 'sandbox.install', confirm: true }),
+    updateSandbox: enabled => call('product.command', { kind: 'sandbox.update', enabled }),
     fetchCardbushAppsConfiguration: readApps, saveCardbushAppsConfiguration: writeApps,
     fetchMcpConnectionOverview: async () => { const state = await readMcp(); return { ...state.configuration, snapshot: state.runtime }; },
     savePluginSearchResultLimit: async searchResultLimit => writeApps({ ...await readApps(), searchResultLimit }),

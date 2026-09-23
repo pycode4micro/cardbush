@@ -13,13 +13,14 @@ const root = realpathSync(process.cwd());
 const shell = process.platform === 'win32' ? 'powershell' : 'posix';
 const exec = (command = 'echo first', overrides = {}) => ({ command, cwd: root, shell, yield_time_ms: 1, ...overrides });
 
-function fixture({ required = false, sandboxMode, decision = 'allow_session', remote, onApproval } = {}) {
+function fixture({ required = false, sandboxMode, decision = 'allow_session', remote, onApproval, loadCommandSandbox } = {}) {
   const prompts = [], starts = [], writes = [], sessions = new Map();
   const registry = new ToolRegistry();
   registerInteractionTools(registry);
   registerWorkspaceTools(registry, undefined, {
     ...(required || sandboxMode ? { commandSandbox: { mode: sandboxMode ?? 'required', network: 'disabled', readableRoots: [], writableRoots: [] } } : {}),
     remote,
+    loadCommandSandbox,
     terminals: {
       list: owner => [...sessions.values()].filter(item => item.owner === owner),
       describe: (owner, id) => {
@@ -107,6 +108,23 @@ test('auto mode isolates routine commands; approved extensions bind command, sco
   await f.run('terminal_exec', exec('echo full', { cwd: paths.work }), { workspace: paths.work, mode: 'all_free' });
   assert.equal(f.starts.at(-1).sandbox, undefined, 'auto full access preserves unsandboxed execution');
   assert.equal(f.prompts.length, 3);
+});
+
+test('settings changes apply to the next invocation without changing a pending approval or the tool catalog', async t => {
+  const paths = await directories(t);
+  let mode = 'auto', loads = 0;
+  const f = fixture({ loadCommandSandbox: async () => { loads++; return { mode, network: 'disabled', readableRoots: [], writableRoots: [] }; },
+    onApproval: () => { mode = 'off'; } });
+  const definitions = f.registry.definitions();
+  const result = await f.run('terminal_exec', exec('echo approved', { cwd: paths.work, additional_permissions: { write_roots: [paths.write] } }), { workspace: paths.work });
+  assert.equal(result.kind, 'returned');
+  assert.ok(f.starts[0].sandbox, 'disabling in Settings cannot turn an approved sandbox command into an unsandboxed command');
+  assert.equal(loads, 1, 'admission and execution share one immutable settings snapshot');
+  await f.run('terminal_exec', exec('echo next', { cwd: paths.work }), { workspace: paths.work });
+  assert.equal(f.starts[1].sandbox, undefined);
+  assert.equal(f.prompts.length, 2, 'unsandboxed approval mode still needs its own exact approval');
+  assert.equal(loads, 2);
+  assert.deepEqual(f.registry.definitions(), definitions, 'settings do not mutate the provider tool schema');
 });
 
 test('additional access rejection or a changed canonical directory cannot start a command', async t => {

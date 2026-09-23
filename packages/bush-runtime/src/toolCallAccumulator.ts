@@ -30,9 +30,14 @@ export class ToolCallAccumulator {
     this.#calls.set(event.index, current);
   }
 
-  completed(): ToolCall[] {
-    return [...this.#calls.entries()]
-      .sort(([left], [right]) => left - right)
+  completed(confirmedIndices?: readonly number[]): ToolCall[] {
+    const ordered = [...this.#calls.entries()].sort(([left], [right]) => left - right);
+    const confirmed = confirmedIndices === undefined ? undefined : new Set(confirmedIndices);
+    if (confirmed && [...confirmed].some(index => !this.#calls.has(index))) {
+      throw new Error('completion refers to an unknown tool call');
+    }
+    const end = confirmed ? ordered.findIndex(([index]) => !confirmed.has(index)) : -1;
+    return (end < 0 ? ordered : ordered.slice(0, end))
       .map(([index, call]) => {
         if (!call.id || !call.name) {
           throw new Error(`incomplete tool call at index ${index}`);

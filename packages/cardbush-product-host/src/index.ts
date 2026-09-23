@@ -46,6 +46,7 @@ export type {
   ProductAppsHost,
   ProductMcpHost,
   ProductSubagentHost,
+  ProductSandboxHost,
   ProductModelHost,
   ProductHostResult,
   RuntimeAssetCategory,

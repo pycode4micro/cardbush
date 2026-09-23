@@ -64,6 +64,33 @@ async function openService(t, name = 'fixture', delay = 80, tool, compatibility 
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
 
+test('sandbox settings on the Agent enable installed isolation and persist an explicit opt-out across restart', async t => {
+  const root = await directory(t);
+  const model = await modelFixture(t, 20, { name: 'terminal_exec', arguments: {
+    command: 'echo sandbox-settings-ok', cwd: '', shell: process.platform === 'win32' ? 'cmd' : 'posix', yield_time_ms: 30000,
+  } });
+  const options = { dataRoot: root, env: { CARDBUSH_EXECUTION_SANDBOX: 'auto', CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } };
+  let service = await AgentService.open(options);
+  try {
+    assert.equal(service.info().capabilities.sandboxSettings, true);
+    const status = await service.call('product.command', { kind: 'sandbox.get' });
+    assert.equal(status.state, 'ready', JSON.stringify(status)); assert.equal(status.enabled, true);
+    await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture-secret', baseURL: model.url }] } });
+    await service.call('sessions.create', { sessionId: 'sandbox-settings' });
+    const job = await service.call('chat.send', input('sandbox-settings', 'sandbox-settings-first'));
+    await until(() => service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
+    const records = await service.call('runtime.command', { kind: 'runtime.list_turn_tool_executions', payload: { sessionId: 'sandbox-settings', turnId: job.turnId } });
+    assert.equal(records[0].result.exitCode, 0);
+    assert.ok(records[0].result.sandbox, 'actual worker reads host-owned sandbox settings');
+    const events = await service.call('chat.events', { sessionId: 'sandbox-settings', turnId: job.turnId, waitMs: 1, limit: 200 });
+    assert.ok(!events.events.some(event => event.kind === 'permission_requested'));
+    assert.ok(events.events.filter(event => event.kind === 'provider_input_observed').every(event => !event.payload.frozenPrefixBreak));
+    await service.call('product.command', { kind: 'sandbox.update', enabled: false });
+    await service.close(); service = await AgentService.open(options);
+    assert.equal((await service.call('product.command', { kind: 'sandbox.get' })).enabled, false);
+  } finally { await service.close(); }
+});
+
 test('cloud Runtime retains the deployment sandbox policy even for a full-control turn', async t => {
   const root = await directory(t);
   const marker = join(root, 'must-not-exist.txt');

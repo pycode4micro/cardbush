@@ -3,6 +3,7 @@ import type { CardbushAppPlugin, PluginCommandSummary, SkillSummary } from '../.
 import { runtimeHistoryToolExecution } from '../../backend/api';
 import type { ConversationHost } from '../conversationHost';
 import { agentRuntimeClient, type AgentCall } from './agentConversationBackend';
+import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 
 const chunkSize = 512 * 1024;
 const maxSize = 64 * 1024 * 1024;
@@ -11,7 +12,8 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
   const [catalog, setCatalog] = useState<Catalog>({ skills: [], pluginCommands: [] });
   const [plugins, setPlugins] = useState<CardbushAppPlugin[]>([]);
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState<{ path: string; name: string }>();
+  const [preview, setPreview] = useConversationViewState<{ path: string; name: string } | undefined>(
+    conversationViewKey(connectionId, sessionId, 'preview'), () => undefined);
   const client = useMemo(() => agentRuntimeClient(call), [call]);
   useEffect(() => {
     if (!enabled) return;
@@ -60,7 +62,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
       const blob = new Blob(parts, { type: mime || 'application/octet-stream' });
       return { name, blob };
   }, [call, sessionId, enabled]);
-  const openFile = useCallback((path: string) => { setPreview({ path, name: path.replaceAll('\\', '/').split('/').at(-1) || path }); }, []);
+  const openFile = useCallback((path: string) => { setPreview({ path, name: path.replaceAll('\\', '/').split('/').at(-1) || path }); }, [setPreview]);
   const previewFile = useCallback(async (path: string) => {
     const api = window.cardbushDesktop?.agents;
     if (!enabled || !api?.filePreview) throw new Error('请重启更新后的 CardBush，并连接支持文件读取的 Agent。');
@@ -72,5 +74,6 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     readFile, previewFile, readDirectory: management ? input => call('files.list', { ...input, sessionId }) : undefined,
     toolDetails: async (sessionId, turnId) => (await client.listTurnToolExecutions({ sessionId, turnId })).map(runtimeHistoryToolExecution),
   }), [connectionId, sessionId, plugins, catalog.pluginCommands, uploadFiles, openFile, readFile, previewFile, client, call, management]);
-  return { host, skills: catalog.skills, error, preview, closePreview: () => setPreview(undefined) };
+  const closePreview = useCallback(() => setPreview(undefined), [setPreview]);
+  return { host, skills: catalog.skills, error, preview, closePreview };
 }

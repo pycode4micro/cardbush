@@ -212,6 +212,7 @@ export interface RuntimeRetryContext {
 
 export interface InMemoryRuntimeHostOptions {
   commandSandbox?: import('./commandSandboxPolicy.js').CommandSandboxConfiguration;
+  loadCommandSandbox?: () => Promise<import('./commandSandboxPolicy.js').CommandSandboxConfiguration>;
   remoteWorkspace?: RemoteWorkspaceBridge;
   /** Previous built-in capture location, supplied only by the product host. Never a user output path. */
   legacyCaptureCacheRoot?: string;
@@ -512,7 +513,7 @@ export class InMemoryRuntimeHost {
           : undefined,
       });
     if (options.registerDefaultWorkspaceTools !== false) {
-      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace, commandSandbox: options.commandSandbox,
+      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace, commandSandbox: options.commandSandbox, loadCommandSandbox: options.loadCommandSandbox,
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
@@ -1502,7 +1503,6 @@ export class InMemoryRuntimeHost {
     let round = input.nextRound - 1;
     let emptyStopRetries = 0;
     let fileReferenceRetries = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_file_reference_${request.turnId}_`)).length ?? 0;
-    let outputLimitContinuations = input.sessionCommit?.outputLimitContinuations ?? 0;
     let toolCallRepairAttempts = input.sessionCommit?.toolCallRepairAttempts ?? 0;
     if (input.nextRound > 1 && input.sessionCommit?.toolCallRepairAttempts === undefined) {
       for (const message of [...input.messages].reverse()) {
@@ -1511,12 +1511,6 @@ export class InMemoryRuntimeHost {
       }
     }
     let pluginStopContinuations = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_plugin_stop_${request.turnId}_`)).length ?? 0;
-    for (const message of input.nextRound > 1 && input.sessionCommit?.outputLimitContinuations === undefined ? [...input.messages].reverse() : []) {
-      if (message.role === "tool" || message.role === "user") break;
-      if (message.role === "developer" && message.name === "output_limit_continuation") {
-        outputLimitContinuations += 1;
-      }
-    }
     let contextCompactionFailures = 0;
     let compactionTransaction: ContextCompactionTransaction | undefined;
     const priorOverflowRetries = this.#eventLog.replay(request.sessionId, request.turnId)
@@ -1556,7 +1550,8 @@ export class InMemoryRuntimeHost {
             ...input.sessionCommit,
             generatedMessages,
             usage,
-            outputLimitContinuations,
+            // Legacy checkpoints carried a blind continuation retry budget.
+            outputLimitContinuations: 0,
             toolCallRepairAttempts,
             ...(activeContextCheckpoint ? { activeContextCheckpoint } : {}),
           }
@@ -2236,8 +2231,7 @@ export class InMemoryRuntimeHost {
             );
             return await stop(projector.finalMessageId);
           }
-          if (result.status === "completed" ||
-              (result.finishReason === "length" && result.error.code === "incomplete_tool_call")) {
+          if (result.status === "completed") {
             completedRound = { ...result, status: "completed" };
             completedProjector = projector;
             break;
@@ -2368,9 +2362,11 @@ export class InMemoryRuntimeHost {
                 round, jobId: compactionJob?.id, maxOutputTokens: dispatchOutputTokens,
                 outputTokens: completedRound.usage.outputTokens } });
           }
-          // Nothing from a truncated tool-call batch has been dispatched yet.
-          // Retain prose/reasoning but never place partial calls in model history.
-          if (completedRound.text || completedRound.reasoning) {
+          // Only protocol-confirmed complete calls survive modelRound. If none
+          // survived, another identical request has no execution progress to use.
+          if (completedRound.toolCalls.length === 0) {
+            // Even a call-only truncation needs a durable failed assistant row
+            // so a cold history load can display the terminal reason.
             const partial: ModelMessage = {
               role: "assistant", content: completedRound.text, toolCalls: [],
               ...(completedRound.reasoning ? { reasoningContent: completedRound.reasoning } : {}),
@@ -2378,43 +2374,19 @@ export class InMemoryRuntimeHost {
             generatedMessages.push({ messageId: completedProjector.messageId,
               createdAt: this.#sessionNow(), message: partial });
             messages = [...messages, partial];
-          }
-          if (outputLimitContinuations >= 2) {
             return await finalize({ status: "failed", reason: "model_output_limit_exceeded",
-              finalMessageId: completedProjector.finalMessageId,
-              details: { round, continuationAttempts: outputLimitContinuations,
+              finalMessageId: completedProjector.messageId,
+              details: { round, continuationAttempts: 0, completedToolCalls: 0,
                 maxOutputTokens: request.maxOutputTokens,
                 outputTokens: completedRound.usage.outputTokens,
                 hadHiddenReasoning: Boolean(completedRound.reasoning.trim()) } });
           }
-          outputLimitContinuations += 1;
-          const instruction: ModelMessage = {
-            role: "developer", name: "output_limit_continuation",
-            content: "The preceding model response reached its output token limit before completion. Continue the original task from the current state. All tool results from earlier rounds remain authoritative; do not repeat completed side effects. No tool call from the truncated response was executed: re-emit any needed call with complete arguments. Keep reasoning concise and take the next concrete action. If the work is complete, provide one complete concise final answer. This continuation does not change the user's scope, permissions, cancellation, or configured token limits.",
-          };
-          messages = [...messages, instruction];
-          generatedMessages.push({
-            messageId: `msg_output_limit_${request.turnId}_${round}`,
-            createdAt: this.#sessionNow(), message: instruction,
-          });
-          // Start a fresh transport chain containing the saved facts, rather
-          // than binding an unfinished provider response with partial calls.
-          providerState = freshResponseChain();
-          this.#eventLog.append(identity, { kind: "provider_retry", payload: {
-            attempt: outputLimitContinuations + 1, maxAttempts: 3, nextRetryMs: 0,
-            code: "model_output_limit_continuation",
-            message: "Model output reached its token limit; continuing the current task from saved progress.",
-          } });
-          this.#recovery.save({ request, messages, nextRound: round + 1,
-            cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
-          continue;
         }
         const checkpointCalls = completedRound.toolCalls.filter((call) =>
           call.name === CHECKPOINT_CONTEXT_TOOL &&
           request.tools.some(tool => tool.name === CHECKPOINT_CONTEXT_TOOL) &&
           !childAgentToolDenial(request, this.#toolRegistry.resolve(CHECKPOINT_CONTEXT_TOOL)!),
         );
-        if (!contextCompactionRequired && checkpointCalls.length === 0) outputLimitContinuations = 0;
         if (contextCompactionRequired && checkpointCalls.length === 0) {
           if (!retryMaintenance('checkpoint_not_produced',
             'Context compaction is mandatory before normal work can continue. Call checkpoint_context now and do not answer or call another Tool.')) {
@@ -2813,6 +2785,23 @@ export class InMemoryRuntimeHost {
           });
         });
         if (toolRound.hookStopTurn) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: toolRound.hookStopTurn } });
+        if (completedRound.finishReason === 'length' && !input.signal?.aborted) {
+          // Real tool receipts precede this notification. Never rewrite the
+          // accepted prefix or replay the incomplete provider response.
+          const instruction: ModelMessage = {
+            role: 'developer', name: 'output_limit_continuation',
+            content: 'The preceding response reached its output limit. Only complete tool calls were submitted; the rest were not executed. Continue the remaining task from the tool results above without repeating completed side effects.',
+          };
+          messages = [...messages, instruction];
+          generatedMessages.push({ messageId: `msg_output_limit_${request.turnId}_${round}`,
+            createdAt: this.#sessionNow(), message: instruction });
+          providerState = freshResponseChain();
+          this.#eventLog.append(identity, { kind: 'provider_retry', payload: {
+            attempt: 1, maxAttempts: null, nextRetryMs: 0,
+            code: 'model_output_limit_continuation',
+            message: 'Model output reached its limit; continuing from the completed tool results.',
+          } });
+        }
         const readyAgentResults = this.#takeSettledAgentGuidance(turnKey);
         if (readyAgentResults.length > 0) {
           messages = this.#appendAgentGuidance(

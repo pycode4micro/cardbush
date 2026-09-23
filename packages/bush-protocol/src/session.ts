@@ -269,9 +269,10 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   generatedMessages: z.array(runtimeSessionCheckpointMessageSchema).default([]),
   usage: sessionUsageSchema.default({}),
   activeContextCheckpoint: turnContextCheckpointSchema.optional(),
-  // Execution retry state survives semantic compaction without being injected
-  // into the conversation or inferred from discarded continuation messages.
+  // Retained for reading old checkpoints; new zero-progress truncations stop
+  // immediately, and productive truncated batches use ordinary tool receipts.
   outputLimitContinuations: z.number().int().nonnegative().max(2).optional(),
+  // Execution retry state survives semantic compaction.
   toolCallRepairAttempts: z.number().int().nonnegative().max(1).optional(),
   supersession: sessionSupersessionSchema.optional(),
 });

@@ -19,6 +19,7 @@ export function useAgentConnections() {
   const loads = useRef(new Map<string, Promise<void>>());
   const creates = useRef(new Set<string>());
   const selectionRevision = useRef(new Map<string, number>());
+  const navigationRevision = useRef(0);
   const updateList = useCallback((id: string, patch: Partial<SessionList>) => {
     setSessionsByAgent(current => ({ ...current, [id]: { ...(current[id] ?? { sessions: [] }), ...patch } }));
   }, []);
@@ -39,6 +40,7 @@ export function useAgentConnections() {
     return load;
   }, [updateList]);
   const select = useCallback((id: string, sessionId?: string, view: 'chat' | 'settings' = 'chat') => {
+    navigationRevision.current++;
     selectionRevision.current.set(id, (selectionRevision.current.get(id) ?? 0) + 1);
     setSelectedId(id);
     if (sessionId !== undefined) setSelectedSessions(current => ({ ...current, [id]: sessionId }));
@@ -86,17 +88,18 @@ export function useAgentConnections() {
     } catch (error) { updateList(id, { error: message(error) }); }
   }, [refreshSessions, updateList]);
   const forkSession = useCallback(async (id: string, sessionId: string) => {
+    const revision = ++navigationRevision.current;
     try {
       const session = await api().call(id, 'sessions.fork', { sessionId }) as AgentSessionItem;
       await loads.current.get(id)?.catch(() => undefined); await refreshSessions(id);
-      select(id, session.sessionId);
+      if (navigationRevision.current === revision) select(id, session.sessionId);
     } catch (error) { updateList(id, { error: message(error) }); }
   }, [refreshSessions, updateList, select]);
   const bindSession = useCallback(async (id: string, sessionId: string, projectId: string | null) => {
     try {
       await api().call(id, 'sessions.bind', { sessionId, projectId });
       await loads.current.get(id)?.catch(() => undefined); await refreshSessions(id);
-      // Remount the selected chat to reload its workspace and scoped file services.
+      // Refresh the selected controller without discarding its stream or draft.
       window.dispatchEvent(new CustomEvent('cardbush:agent-session-updated', { detail: { connectionId: id, sessionId } }));
     } catch (error) { updateList(id, { error: message(error) }); }
   }, [refreshSessions, updateList]);
@@ -112,6 +115,16 @@ export function useAgentConnections() {
     catch (error) { setError(message(error)); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (!connections.some(connection => connection.id === id)) return;
+      // A restore may finish while an older list request is still in flight.
+      void (async () => { await loads.current.get(id)?.catch(() => undefined); await refreshSessions(id); })().catch(() => undefined);
+    };
+    window.addEventListener('cardbush:agent-sessions-updated', updated);
+    return () => window.removeEventListener('cardbush:agent-sessions-updated', updated);
+  }, [connections, refreshSessions]);
   const hasManagedTunnels = connections.some(item => item.sshTunnel);
   useEffect(() => {
     if (!hasManagedTunnels) return;

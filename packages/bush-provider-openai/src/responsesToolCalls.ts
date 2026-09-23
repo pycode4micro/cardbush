@@ -7,6 +7,7 @@ type Call = {
   type: 'function_call' | 'tool_search_call';
   id?: string; itemId?: string; name?: string;
   arguments: string; argumentsDone: boolean;
+  itemCompleted: boolean;
   incomplete: boolean;
   emittedIdentity: boolean; emittedChars: number;
 };
@@ -32,7 +33,7 @@ export class ResponseToolCalls {
     let call = this.#calls.get(index);
     if (call && call.type !== type) this.#changed();
     if (!call) {
-      call = { type, arguments: '', argumentsDone: false, incomplete: false, emittedIdentity: false, emittedChars: 0 };
+      call = { type, arguments: '', argumentsDone: false, itemCompleted: false, incomplete: false, emittedIdentity: false, emittedChars: 0 };
       this.#calls.set(index, call);
     }
     return call;
@@ -82,11 +83,13 @@ export class ResponseToolCalls {
       // An item can be done because generation was interrupted. Wait for the
       // response terminal so output limits reach the Runtime's continuation path.
       call.incomplete = incomplete;
+      call.itemCompleted = false;
       if (incomplete) return;
       if (!call.id || !call.name || (item.status !== undefined && item.status !== 'completed')) {
         throw new ResponseToolCallError('provider_tool_call_incomplete', 'The provider did not complete a tool call.');
       }
       this.#completeArguments(call, item.type === 'tool_search_call' ? clientToolSearchArguments({ arguments: item.arguments }) : item.arguments);
+      call.itemCompleted = true;
     }
     this.#emit(call, index, aliases, append);
   }
@@ -118,6 +121,29 @@ export class ResponseToolCalls {
       }
       return index;
     });
+  }
+
+  truncatedSnapshot(items: { type: string; [key: string]: unknown }[],
+    mode: ResponsesToolSearchMode | undefined, aliases: Map<string, string> | undefined, append: (event: Delta) => void): number[] {
+    const indices = this.snapshotIndices(items);
+    for (const [position, item] of items.entries()) {
+      const index = indices[position]!;
+      // The incomplete response can still certify earlier completed items.
+      // Missing status, parseable JSON or arguments.done alone is insufficient.
+      this.item(item, index, item.status === 'completed', mode, aliases, append);
+      const call = this.#calls.get(index);
+      if (call && item.status !== 'completed') {
+        call.incomplete = true;
+        call.itemCompleted = false;
+      }
+    }
+    const completed: number[] = [];
+    for (const [index, call] of [...this.#calls.entries()].sort(([a], [b]) => a - b)) {
+      // Never leap over an unfinished earlier call in an interleaved batch.
+      if (!call.itemCompleted || call.incomplete || !call.id || !call.name || !call.argumentsDone) break;
+      completed.push(index);
+    }
+    return completed;
   }
 
   finish(): void {

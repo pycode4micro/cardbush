@@ -14,10 +14,16 @@ https://learn.chatgpt.com/docs/sandboxing
 
 It is not an automatic risk reviewer. There is no additional model request or
 Auto-review mode in this implementation. It is also not an ask-before-every-read
-mode. The host's command sandbox remains opt-in; see `EXECUTION_SANDBOX.md`.
+mode. Sandbox setup lives in Settings → Runtime. Detection never installs dependencies;
+the user clicks Install when needed, and successful installation enables isolation by
+default. Existing opt-outs persist across detection and restart; see `EXECUTION_SANDBOX.md`.
 With host mode `auto`, approval mode runs routine commands inside the sandbox,
 while full access runs ordinary processes. Mode `required` enforces the host
 boundary regardless of the UI selection.
+
+Settings are host-owned and loaded once per command invocation. Changing the setting
+does not alter a running command or a pending approval, and does not change tool schemas
+or rewrite model history. Explicit deployment modes `off` and `required` remain locked.
 
 ## Command approval
 

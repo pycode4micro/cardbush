@@ -73,9 +73,9 @@ assert.ok(consumerNode);
 const consumerSource = ts.transpileModule(consumerNode.getText(sourceFile), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText;
-const consumeEvents = new Function('thinking', 'assistantStreamChunk', 'toolLifecycle',
+const consumeEvents = new Function('runtimeThinkingEvent', 'assistantStreamChunk', 'toolLifecycle', 'conversationInteractions',
   consumerSource + '\nreturn consumeRuntimeEvents;'
-)((event, phase) => ({ phase }), event => ({ messageId: event.payload.messageId }), event => event);
+)((event, phase) => ({ phase }), event => ({ messageId: event.payload.messageId }), event => event, runtime => runtime.interactions);
 const replay = async kinds => {
   const states = [], deltas = [];
   const events = kinds.map((kind, index) => ({
@@ -86,7 +86,7 @@ const replay = async kinds => {
       : { messageId: 'fixture-message', delta: 'visible' },
   }));
   await consumeEvents(
-    { client: { async *events() { yield* events; } } },
+    { interactions: {}, client: { async *events() { yield* events; } } },
     { sessionId: 'fixture-session', turnId: 'fixture-turn' },
     {
       onConnectionState: update => states.push(update),

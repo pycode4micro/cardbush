@@ -91,6 +91,7 @@ import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
 import { useRuntimeDelegationWorkspace, selectRuntimePluginChoice } from '../../plugins/runtimeExtensions';
+import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 
 type ComposerImageAttachment = {
   id: string;
@@ -443,9 +444,12 @@ export function Composer({
     window.addEventListener('focus', refresh);
     return () => { active = false; unsubscribe?.(); window.removeEventListener('focus', refresh); };
   }, [host]);
-  const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
-  const [fileAttachments, setFileAttachments] = useState<ComposerFileAttachment[]>([]);
-  const [attachmentUploads, setAttachmentUploads] = useState(0);
+  const attachmentKey = conversationViewKey(host?.id, referenceContext.sessionId, 'attachments');
+  const [imageAttachments, setImageAttachments] = useConversationViewState<ComposerImageAttachment[]>(`${attachmentKey}:images`, () => [], value => value.length > 0);
+  const [fileAttachments, setFileAttachments] = useConversationViewState<ComposerFileAttachment[]>(`${attachmentKey}:files`, () => [], value => value.length > 0);
+  const [attachmentUploads, setAttachmentUploads] = useConversationViewState(`${attachmentKey}:uploads`, () => 0, value => value > 0);
+  const [, rememberDraft, currentSubmittedDraft] = useConversationViewState(`${attachmentKey}:text`, () => draft, value => Boolean(value));
+  useLayoutEffect(() => { rememberDraft(draft); }, [draft, rememberDraft]);
   const dropTargetRef = fileDropTarget ?? composerStackRef;
   const fileDragActive = useFileDropZone(dropTargetRef, transfer => {
     void handleDrop(transfer).catch(error => showUiError(
@@ -567,7 +571,7 @@ export function Composer({
     const value = [...attachmentPaths, draft.trimEnd()].filter(Boolean).join('\n');
     if (host) {
       if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
-      if (draftForExtraction.current.draft === draft) onDraftChange('');
+      if (currentSubmittedDraft() === draft) onDraftChange('');
       const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
       setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));

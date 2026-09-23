@@ -23,6 +23,7 @@ function fixture(initial = {}) {
     requestContext: { runtimeReady: true }, conversationsRef: { current: state.conversations },
     activeConversationIdRef: { current: state.active }, messagesByConversationRef: { current: state.messages },
     preparedConversationsRef: { current: {} }, fetchConversations: () => sessions.promise, fetchSkills: () => skills.promise,
+    conversationListRevisionRef: { current: 0 },
     useEffect: fn => { context.cancel = fn(); }, errorMessage: String,
   };
   for (const [setter, field] of Object.entries({ setConversations: 'conversations', setActiveConversationId: 'active',

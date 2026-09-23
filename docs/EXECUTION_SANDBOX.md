@@ -2,9 +2,19 @@
 
 本轮实现了共用终端的操作系统隔离入口，并将工作区路径授权、终端会话管理、平台隔离和资源治理分开。桌面端与独立 Agent 的 `terminal_exec` 使用相同实现。项目仍在原来的目录中，不分区、不创建虚拟磁盘、不复制项目。
 
-**目前为显式启用的命令沙盒，默认 `off`。它不是整个 CardBush 的安全边界，也尚未达到 Codex 的全部防护覆盖。** Windows AppContainer 和 Linux bubblewrap 已完成真实进程测试；本次 Linux 验收使用 Ubuntu 24.04 的实际 Agent 服务账号和 `NoNewPrivileges=yes`，不代表其他发行版已经实测。运行时按能力探测，不按发行版名称分支。macOS 暂不支持，开启隔离时拒绝执行。
+**桌面端和 Agent 服务检测到已安装且可用的命令沙盒后默认启用；尚未安装时不会自动下载。它不是整个 CardBush 的安全边界，也尚未达到 Codex 的全部防护覆盖。** Windows AppContainer 和 Linux bubblewrap 已完成真实进程测试；本次 Linux 验收使用 Ubuntu 24.04 的实际 Agent 服务账号和 `NoNewPrivileges=yes`，不代表其他发行版已经实测。运行时按能力探测，不按发行版名称分支。macOS 暂不支持，开启隔离时拒绝执行。
 
 ## 启用
+
+在 **设置 → 运行环境 → 命令沙盒** 查看当前主机的探测结果、点击安装、开关和重新检测。云 Agent 使用相同面板，操作作用于服务器；旧服务会提示更新，不回退到本机。组件未安装、已安装但被系统策略阻止、可用和系统不支持分别显示。
+
+启动和打开设置只进行固定无副作用命令的探测，不执行安装。Windows 组件随应用提供；缺失时需修复或更新应用。Linux 按主机实际可用且可信的包管理器识别安装方式，不设发行版名称白名单，也不要求 `/etc/os-release` 命中预置名称。Debian 系（apt-get）、Red Hat 系（dnf/dnf5/yum）和 Arch 系（pacman）及使用相同包管理器的衍生发行版走同一适配；另提供 zypper 和 apk 安装入口，扩大 SUSE/openSUSE、Alpine 系的覆盖。新发行版只要沿用已适配的包管理器，无需添加名称就能识别。检测不到受支持的可信入口时，保留禁用的安装按钮；即使没有安装入口，已经安装的 bubblewrap 仍按实际隔离能力判断是否可用。
+
+点击安装后调用检测到的可信系统包管理器执行固定的 bubblewrap 安装命令。本地图形环境可调用系统授权窗口，服务账号需具备管理员安装权限；否则在设置中显示供管理员使用的命令。不会自动修改软件源、AppArmor、SELinux、内核参数或容器策略。包管理器检测成功不等于沙盒已经可用：软件源仍需提供 bubblewrap，安装后还需通过实际能力检查；失败时显示原因，不误报安装成功。新增安装入口的命令参考 [DNF5](https://dnf5.readthedocs.io/en/latest/dnf5.8.html)、[SUSE](https://opensource.suse.com/bci-docs/guides/package-management/) 和 [Alpine](https://wiki.alpinelinux.org/wiki/Bubblewrap) 官方文档。
+
+安装和验证成功自动保存 `config/sandbox.json` 的启用状态；桌面配置位于 `product-host` 数据目录，Agent 位于自己的数据目录。已存在的关闭选择在重新检测和重启后保留。安装后使用 `auto` 策略，更改从下一条命令生效：正在运行或等待批准的命令使用原来的不可变配置。执行层读取宿主配置，不修改模型工具目录、系统提示词或历史消息。沙盒故障不会把此前启用的配置自动改为关闭。
+
+以下命令与环境变量保留给部署管理员，日常用户无需配置启动参数：
 
 独立 Agent 启动时增加：
 
@@ -16,11 +26,11 @@ node dist-electron/agentServiceCli.mjs \
 
 桌面端和 Agent 服务也可以在启动环境中配置以下变量。它们由实际运行 Runtime 的宿主读取，不属于模型参数或会话设置；修改后需重启宿主。
 
-桌面端也支持启动参数 `--execution-sandbox=auto`，可放在此安装的快捷方式中；已设置的 `CARDBUSH_EXECUTION_SANDBOX` 优先于此参数。该方式不会改变其他旧版本安装的环境变量。
+桌面端也支持启动参数 `--execution-sandbox=auto`，可放在此安装的快捷方式中；已设置的 `CARDBUSH_EXECUTION_SANDBOX` 优先于此参数。`auto` 是可由设置开关调整的默认策略；显式 `off` 和 `required` 是管理员锁定策略，界面不可覆盖。该方式不会改变其他旧版本安装的环境变量。
 
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
-| `CARDBUSH_EXECUTION_SANDBOX` | `off` | `auto`：申请批准时隔离、完全访问时使用普通进程；`required`：所有模式强制隔离，拒绝会话扩权。初始化失败均拒绝命令，不重试为普通进程 |
+| `CARDBUSH_EXECUTION_SANDBOX` | 跟随宿主安装与设置状态 | `auto`：申请批准时隔离、完全访问时使用普通进程；`required`：所有模式强制隔离，拒绝会话扩权；显式 `off` 锁定为关闭。未接入设置的独立 Runtime 库仍默认 `off`。要求隔离时初始化失败均拒绝命令，不重试为普通进程 |
 | `CARDBUSH_SANDBOX_NETWORK` | `disabled` | `disabled` 禁止命令联网；`enabled` 允许后端支持的联网，不提供域名白名单 |
 | `CARDBUSH_SANDBOX_READ_ROOTS` | `[]` | JSON 格式的绝对目录列表，额外可读、可执行的工具或参考目录 |
 | `CARDBUSH_SANDBOX_WRITE_ROOTS` | `[]` | JSON 格式的绝对目录列表，额外可写目录 |
@@ -72,7 +82,7 @@ Windows 原生测试覆盖实际文件读写、只读目录、junction、子进�
 
 2026-09-23 开发过程中，一轮合并回归的测试程序被 Windows 应用控制拦截，Code Integrity 事件 3077 和原生错误 4551 指向未满足签名要求，该轮 11 项未完成。提交前复核的 76 项本机回归全部通过，覆盖 Windows 沙盒、资源治理、审批、终端和 SSH；从 Runtime 包目录启动沙盒测试也通过。Linux 实机项在 Windows 上跳过，仍不能记为 Linux 验收通过。整个过程未关闭系统防护或更换启动方式绕过拦截；开发测试通过也不代表发行签名问题已解决。CI 已增加 Windows/Linux 真实沙盒测试，Linux 构建安装 bubblewrap。
 
-面向所有安装默认启用前仍需完成：更多 Linux 环境验收、发行签名、崩溃恢复、受保护配置和项目内已有硬链接的安全策略、更多语言运行时兼容性及大型项目 ACL 更新开销测量。Windows 系统已有的 AppContainer 公共资源权限仍可能可读；项目内的敏感文件也不会被此实现自动识别或隐藏。
+默认启用以当前主机实际探测通过为前提，后续仍需完成：更多 Linux 环境验收、发行签名、崩溃恢复、受保护配置和项目内已有硬链接的安全策略、更多语言运行时兼容性及大型项目 ACL 更新开销测量。Windows 系统已有的 AppContainer 公共资源权限仍可能可读；项目内的敏感文件也不会被此实现自动识别或隐藏。
 
 文件工具继续使用原有路径审批，不受本次子进程沙盒直接控制。插件 hooks、stdio MCP、浏览器、Computer Use 和宿主辅助进程的接入仍需逐项处理，不能把“命令沙盒”宣传成所有工具都已隔离。
 

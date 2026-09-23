@@ -14,7 +14,7 @@ export type AgentJob = {
   delegation?: { parentSessionId: string; parentTurnId: string };
 };
 export type AgentInfo = { protocol: 'cardbush.agent.v1'; apiVersion: 1; eventStreams: ['sse', 'ndjson']; id: string; name: string; platform: string; capabilities: {
-  desktop: false; computerUse: false; browserUi: false; durableQueue: true; eventReplay: true; projects: true; models: true; plugins: true; delegation?: boolean; conversationUi?: boolean; conversationManagement?: boolean; sharedConversation?: boolean; sharedSettings?: boolean;
+  desktop: false; computerUse: false; browserUi: false; durableQueue: true; eventReplay: true; projects: true; models: true; plugins: true; delegation?: boolean; conversationUi?: boolean; conversationManagement?: boolean; sharedConversation?: boolean; sharedSettings?: boolean; sandboxSettings?: boolean;
 } };
 export const agentOperations = ['info', 'projects.list', 'projects.save', 'projects.remove', 'projects.default',
   'sessions.list', 'sessions.create', 'sessions.get', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind',

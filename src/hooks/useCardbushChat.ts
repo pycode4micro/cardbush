@@ -128,6 +128,7 @@ import {
   uniqueMessageIds,
   findPersistedEditableUserMessage,
 } from '../features/chatMessages/transcript/messageFacts';
+import { trimConversationCache } from '../shared/conversationCache';
 
 // Keep existing helper imports working; new consumers should use the transcript modules.
 export {
@@ -166,6 +167,10 @@ export function useCardbushChat(
   availableModels: ManagedModelConfig[] = [],
   requestContext: {
     runtimeReady?: boolean;
+    // A remote host owns its selected session; selection is immediate and does
+    // not wait for a metadata mutation or restart this controller.
+    activeConversationId?: string;
+    viewActive?: boolean;
     language?: AppLanguage;
     disabledSkillNames?: Set<string>;
     disabledToolNames?: Set<string>;
@@ -203,7 +208,12 @@ export function useCardbushChat(
   const [preparedConversationsById, setPreparedConversationsById] = useState<
     Record<string, ConversationSummary>
   >({});
-  const [activeConversationId, setActiveConversationId] = useState('');
+  const [localActiveConversationId, setActiveConversationId] = useState('');
+  const activeConversationId = requestContext.activeConversationId ?? localActiveConversationId;
+  const viewActiveRef = useRef(true);
+  viewActiveRef.current = requestContext.viewActive !== false;
+  const navigationRevisionRef = useRef(0);
+  const conversationListRevisionRef = useRef(0);
   const [messagesByConversation, setMessagesByConversation] = useState<
     Record<string, ChatMessage[]>
   >({});
@@ -241,6 +251,7 @@ export function useCardbushChat(
   >({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => { setError(null); setNotice(null); }, [activeConversationId]);
   const [connectionRecoveryByConversation, setConnectionRecoveryByConversation] =
     useState<Record<string, RuntimeConnectionUpdate | undefined>>({});
   const [pendingInteraction, setPendingInteraction] =
@@ -409,6 +420,7 @@ export function useCardbushChat(
     if (!normalized) return;
     if (
       kind === 'completed' &&
+      viewActiveRef.current &&
       activeConversationIdRef.current === normalized &&
       isCardbushForeground()
     ) {
@@ -466,7 +478,7 @@ export function useCardbushChat(
 
   useEffect(() => {
     const clearVisibleCompletion = () => {
-      if (!isCardbushForeground()) return;
+      if (!viewActiveRef.current || !isCardbushForeground()) return;
       clearSessionAttention(activeConversationIdRef.current, 'completed');
     };
     window.addEventListener('focus', clearVisibleCompletion);
@@ -476,7 +488,7 @@ export function useCardbushChat(
       window.removeEventListener('focus', clearVisibleCompletion);
       document.removeEventListener('visibilitychange', clearVisibleCompletion);
     };
-  }, [activeConversationId, clearSessionAttention]);
+  }, [activeConversationId, requestContext.viewActive, clearSessionAttention]);
 
   useEffect(() => () => {
     if (backend.scope) for (const controller of Object.values(controllersRef.current)) controller.abort();
@@ -620,13 +632,14 @@ export function useCardbushChat(
       };
     }
     async function load() {
+      const revision = ++conversationListRevisionRef.current;
       setLoading(true);
       const startedWith = new Map(conversationsRef.current.map(item => [item.id, item]));
       const activeAtStart = activeConversationIdRef.current;
       const messagesAtStart = messagesByConversationRef.current;
       try {
         const loadedConversations = await fetchConversations();
-        if (cancelled) {
+        if (cancelled || conversationListRevisionRef.current !== revision) {
           return;
         }
         setConversations((current) =>
@@ -786,85 +799,82 @@ export function useCardbushChat(
     return request;
   }, [requestContext.contextWindowUsageAvailable]);
 
+  const historyRequestsRef = useRef(new Map<string, {
+    read: ReturnType<typeof beginHistoryRead>;
+    promise: Promise<Awaited<ReturnType<typeof fetchSessionMessages>> | null>;
+  }>());
+  const transcriptVisitsRef = useRef(new Map<string, number>());
+  const transcriptVisitSequenceRef = useRef(0);
+  const transcriptCount = Object.keys(messagesByConversation).length;
+  useEffect(() => {
+    transcriptVisitsRef.current.set(activeConversationId, ++transcriptVisitSequenceRef.current);
+    const protectedIds = new Set([activeConversationId, ...liveTranscriptSessionsRef.current,
+      ...sendingSessionsRef.current, ...historyRequestsRef.current.keys(),
+      ...queuedMessagesRef.current.map(queuedMessageConversationId), ...Object.keys(runningByConversation)]);
+    setMessagesByConversation(current => trimConversationCache(current, transcriptVisitsRef.current, protectedIds));
+  }, [activeConversationId, transcriptCount, runningByConversation]);
+  const loadSessionHistory = useCallback((sessionId: string) => {
+    const pending = historyRequestsRef.current.get(sessionId);
+    if (pending && isHistoryReadCurrent(pending.read)) return pending.promise;
+    const read = beginHistoryRead(sessionId);
+    const changes = requestContext.workspaceChangesAvailable === true
+      ? fetchSessionWorkspaceChanges(sessionId).catch(() => []) : Promise.resolve([]);
+    const promise = fetchSessionMessages(sessionId, { includeSuperseded: true }).then(result => {
+      if (!isHistoryReadCurrent(read)) return null;
+      // Publish the transcript first. A slow diff must not block reading a chat.
+      // The supplement may only enrich this exact snapshot, never a newer stream.
+      let applied: ChatMessage[] | undefined;
+      setMessagesByConversation(current => {
+        if (!isHistoryReadCurrent(read, current)) return current;
+        applied = mergeLoadedMessagesPreservingLocalState(current[sessionId] ?? [], result.messages);
+        return { ...current, [sessionId]: applied };
+      });
+      void changes.then(workspaceChanges => {
+        if (!workspaceChanges.length) return;
+        setMessagesByConversation(current => {
+          if (!applied || current[sessionId] !== applied || !historyReadsRef.current.isCurrent(read.ticket)
+            || liveTranscriptSessionsRef.current.has(sessionId)) return current;
+          return { ...current, [sessionId]: mergeWorkspaceChangeExecutions(applied, workspaceChanges) };
+        });
+      });
+      setConversations(current => current.some(item => item.id === sessionId)
+        ? current.map(item => item.id === sessionId ? { ...item,
+          projectDir: result.conversation.projectDir, workspaceContext: result.conversation.workspaceContext,
+          projectId: result.conversation.projectId } : item)
+        : [...current, result.conversation]);
+      persistAutoConversationTitle(result.conversation, firstUserTitleSource(result.messages, ''));
+      void refreshMeasuredContextWindowUsage(sessionId, result.latestTurn);
+      return result;
+    }).catch(caught => {
+      if (!isHistoryReadCurrent(read)) return null;
+      throw caught;
+    }).finally(() => {
+      if (historyRequestsRef.current.get(sessionId)?.promise === promise) historyRequestsRef.current.delete(sessionId);
+    });
+    historyRequestsRef.current.set(sessionId, { read, promise });
+    return promise;
+  }, [requestContext.workspaceChangesAvailable, beginHistoryRead, isHistoryReadCurrent,
+    persistAutoConversationTitle, refreshMeasuredContextWindowUsage]);
+
+  const activeHistoryLoaded = messagesByConversation[activeConversationId] !== undefined;
   useEffect(() => {
     const sessionId = activeConversationId.trim();
-    if (!sessionId || messagesByConversation[sessionId]) {
-      return;
-    }
-    let cancelled = false;
+    if (!sessionId || activeHistoryLoaded || requestContext.runtimeReady === false) return;
     const finishLoading = beginHistoryLoading(sessionId);
-    async function loadMessages() {
-      const historyRead = beginHistoryRead(sessionId);
-      try {
-        const [result, workspaceChanges] = await Promise.all([
-          fetchSessionMessages(sessionId, { includeSuperseded: true }),
-          requestContext.workspaceChangesAvailable === true
-            ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
-            : Promise.resolve([]),
-        ]);
-        if (!cancelled && isHistoryReadCurrent(historyRead)) {
-          const loadedMessages = mergeWorkspaceChangeExecutions(
-            result.messages,
-            workspaceChanges,
-          );
-          applyHistoryRead(historyRead, loadedMessages);
-          persistAutoConversationTitle(
-            result.conversation,
-            firstUserTitleSource(loadedMessages, ''),
-          );
-          void refreshMeasuredContextWindowUsage(
-            sessionId,
-            result.latestTurn,
-          );
-          if (result.conversation.projectDir || result.conversation.workspaceContext) {
-            setConversations((current) =>
-              current.map((item) =>
-                item.id === sessionId
-                  ? {
-                      ...item,
-                      projectDir: result.conversation.projectDir,
-                      workspaceContext: result.conversation.workspaceContext,
-                    }
-                  : item,
-              ),
-            );
-          }
-          setError(null);
-        }
-      } catch (caught) {
-        if (!cancelled && isHistoryReadCurrent(historyRead)) {
-          setError(errorMessage(caught));
-          applyHistoryRead(historyRead, []);
-        }
-      } finally {
-        finishLoading();
-      }
-    }
-    void loadMessages();
-    return () => {
-      cancelled = true;
-      finishLoading();
-    };
-  }, [
-    activeConversationId,
-    messagesByConversation,
-    persistAutoConversationTitle,
-    refreshMeasuredContextWindowUsage,
-    requestContext.workspaceChangesAvailable,
-    setMessageHistoryLoading,
-    beginHistoryRead,
-    isHistoryReadCurrent,
-    applyHistoryRead,
-    beginHistoryLoading,
-  ]);
+    // Reads remain owned by their session when the user navigates elsewhere.
+    // Returning to it can reuse this request or the completed snapshot.
+    void loadSessionHistory(sessionId).catch(caught => {
+      if (activeConversationIdRef.current === sessionId) setError(errorMessage(caught));
+    }).finally(finishLoading);
+  }, [activeConversationId, activeHistoryLoaded, requestContext.runtimeReady, loadSessionHistory, beginHistoryLoading]);
 
   const activeConversation = useMemo(
     () =>
       conversations.find((item) => item.id === activeConversationId) ??
       Object.values(preparedConversationsById).find(
         (item) => item.id === activeConversationId,
-      ),
-    [activeConversationId, conversations, preparedConversationsById],
+      ) ?? (requestContext.activeConversationId ? { id: activeConversationId, title: '', updatedAt: '', preview: '' } : undefined),
+    [activeConversationId, conversations, preparedConversationsById, requestContext.activeConversationId],
   );
 
   const activeMessages = activeConversationId
@@ -1051,8 +1061,15 @@ export function useCardbushChat(
   );
 
   const reloadConversations = useCallback(async () => {
+    const revision = ++conversationListRevisionRef.current;
+    const navigation = navigationRevisionRef.current;
+    const activeAtStart = activeConversationIdRef.current;
+    const startedWith = new Map(conversationsRef.current.map(item => [item.id, item]));
     const loadedConversations = await fetchConversations();
-    const keep = new Set([...loadedConversations.map(item => item.id), ...Object.keys(preparedConversationsRef.current), ...sendingSessionsRef.current]);
+    if (conversationListRevisionRef.current !== revision) return;
+    const keep = new Set([...loadedConversations.map(item => item.id), ...Object.keys(preparedConversationsRef.current),
+      ...sendingSessionsRef.current, ...liveTranscriptSessionsRef.current, activeConversationIdRef.current,
+      ...conversationsRef.current.filter(item => item !== startedWith.get(item.id)).map(item => item.id)]);
     pruneAssistantTurnTiming(keep);
     const prune = <T,>(state: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(state).filter(([id]) => keep.has(id)));
     for (const id of new Set([...conversationsRef.current.map(item => item.id), ...Object.keys(messagesByConversationRef.current)])) {
@@ -1070,10 +1087,10 @@ export function useCardbushChat(
     setConnectionRecoveryByConversation(prune);
     setMessageHistoryLoadingIds(current => new Set([...current].filter(id => keep.has(id))));
     setConversations((current) =>
-      mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations),
+      mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations, startedWith),
     );
     setActiveConversationId((current) =>
-      loadedConversations.some((item) => item.id === current)
+      navigationRevisionRef.current !== navigation || current !== activeAtStart || loadedConversations.some((item) => item.id === current)
         ? current
         : Object.values(preparedConversationsRef.current).some(
             (item) => item.id === current,
@@ -1202,7 +1219,7 @@ export function useCardbushChat(
           ),
         );
       },
-      { shouldAnimate: () => activeConversationIdRef.current === normalizedSessionId,
+      { shouldAnimate: () => viewActiveRef.current && activeConversationIdRef.current === normalizedSessionId,
         checkpoint: initialCursor.sequence > 0 && goalStreamCheckpointsRef.current[normalizedSessionId]?.turnId === normalizedTurnId
           ? goalStreamCheckpointsRef.current[normalizedSessionId].checkpoint : undefined,
         replace: (content, route) => setMessagesByConversation(state =>
@@ -1451,36 +1468,17 @@ export function useCardbushChat(
       await reloadConversations();
       return;
     }
-    const historyRead = beginHistoryRead(sessionId);
     const finishLoading = options?.silent ? () => undefined : beginHistoryLoading(sessionId);
     try {
-      const [result, workspaceChanges] = await Promise.all([
-        fetchSessionMessages(sessionId, { includeSuperseded: true }),
-        requestContext.workspaceChangesAvailable === true
-          ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
-          : Promise.resolve([]),
-      ]);
-      if (!isHistoryReadCurrent(historyRead)) return;
-      const loadedMessages = mergeWorkspaceChangeExecutions(
-        result.messages,
-        workspaceChanges,
-      );
-      applyHistoryRead(historyRead, loadedMessages);
-      persistAutoConversationTitle(
-        result.conversation,
-        firstUserTitleSource(loadedMessages, ''),
-      );
-      await refreshMeasuredContextWindowUsage(sessionId, result.latestTurn);
-      await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
-      await refreshGoal(sessionId);
-      await reloadConversations().catch(() => undefined);
-      if (!options?.silent) {
+      if (!await loadSessionHistory(sessionId)) return;
+      void loadTeamFlow(sessionId, { silent: true }).catch(() => null);
+      void refreshGoal(sessionId).catch(() => undefined);
+      void reloadConversations().catch(() => undefined);
+      if (!options?.silent && activeConversationIdRef.current === sessionId) {
         setError(null);
       }
     } catch (caught) {
-      if (!isHistoryReadCurrent(historyRead)) return;
-      await reloadConversations().catch(() => undefined);
-      if (!options?.silent) {
+      if (!options?.silent && activeConversationIdRef.current === sessionId) {
         setError(errorMessage(caught));
       }
       throw caught;
@@ -1491,22 +1489,16 @@ export function useCardbushChat(
     activeConversationId,
     loadTeamFlow,
     refreshGoal,
-    refreshMeasuredContextWindowUsage,
     reloadConversations,
-    persistAutoConversationTitle,
-    requestContext.workspaceChangesAvailable,
-    setMessageHistoryLoading,
-    beginHistoryRead,
-    isHistoryReadCurrent,
-    applyHistoryRead,
+    loadSessionHistory,
     beginHistoryLoading,
   ]);
 
   // Reattach to work owned by the host, using the same stream handlers as local
   // background turns. Closing this view never cancels a service-owned job.
   useEffect(() => {
-    if (!backend.watchSession || !activeConversationId) return;
-    let alive = true, revision = '', reading = false;
+    if (!backend.watchSession || !activeConversationId || requestContext.viewActive === false || requestContext.runtimeReady === false) return;
+    let alive = true, revision: string | undefined, reading = false;
     const sessionId = activeConversationId;
     const stop = backend.watchSession(sessionId, state => {
       if (!alive) return;
@@ -1527,7 +1519,7 @@ export function useCardbushChat(
     }, caught => { if (alive) setConnectionRecoveryByConversation(current => ({ ...current,
       [sessionId]: { state: 'retrying', source: 'network', sessionId, message: errorMessage(caught), createdAt: new Date().toISOString() } })); });
     return () => { alive = false; stop(); };
-  }, [backend, activeConversationId, refreshActiveSession, subscribeGoalTurn]);
+  }, [backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, refreshActiveSession, subscribeGoalTurn]);
 
   // Notifications can arrive while the previous read is in flight, or after a
   // short turn has already finished. Preserve both updates and committed history.
@@ -1708,6 +1700,7 @@ export function useCardbushChat(
           messagesByConversation[normalized] === undefined,
       );
       setActiveConversationId(normalized);
+      navigationRevisionRef.current++;
       clearSessionAttention(normalized, 'completed');
     },
     [
@@ -1719,6 +1712,7 @@ export function useCardbushChat(
   );
 
   const clearConversationSelection = useCallback(() => {
+    navigationRevisionRef.current++;
     const current = activeConversationIdRef.current.trim();
     if (current) setMessageHistoryLoading(current, false);
     setActiveConversationId('');
@@ -1761,6 +1755,7 @@ export function useCardbushChat(
       [draft.id]: current[draft.id] ?? [],
     }));
     setMessageHistoryLoading(draft.id, false);
+    navigationRevisionRef.current++;
     setActiveConversationId(draft.id);
     setError(null);
     return draft;
@@ -1845,6 +1840,7 @@ export function useCardbushChat(
       [optimistic.id]: current[optimistic.id] ?? [],
     }));
     setMessageHistoryLoading(optimistic.id, false);
+    navigationRevisionRef.current++;
     setActiveConversationId(optimistic.id);
     setError(null);
 
@@ -1882,18 +1878,23 @@ export function useCardbushChat(
   const openStoredConversation = useCallback(async (conversationId: string) => {
     const normalized = conversationId.trim();
     if (!normalized) return false;
+    const revision = ++navigationRevisionRef.current;
     try {
+      // Visible sessions need no promotion write. A late promotion response may
+      // update the list, but must not steal a newer navigation selection.
+      const existing = conversationsRef.current.find(item => item.id === normalized);
       // Explicitly opening a temporary execution promotes this existing session;
       // opening the result inspector alone never puts it in Recent.
-      const conversation = await updateConversation({ sessionId: normalized, metadata: { hidden: false } });
+      const conversation = existing ?? await updateConversation({ sessionId: normalized, metadata: { hidden: false } });
       setConversations(current => [conversation, ...current.filter(item => item.id !== normalized)]);
+      if (navigationRevisionRef.current !== revision) return false;
       setMessageHistoryLoading(normalized, messagesByConversationRef.current[normalized] === undefined);
       setActiveConversationId(normalized);
       clearSessionAttention(normalized, 'completed');
       setError(null);
       return true;
     } catch (caught) {
-      setError(errorMessage(caught));
+      if (navigationRevisionRef.current === revision) setError(errorMessage(caught));
       return false;
     }
   }, [clearSessionAttention, setMessageHistoryLoading]);
@@ -2268,7 +2269,10 @@ export function useCardbushChat(
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
       const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
-      const userMessageId = `user-${crypto.randomUUID()}`;
+      const retryMessage = backend.isSubmissionRetry?.(sessionId, outbound.userInput)
+        ? (messagesByConversationRef.current[sessionId] ?? []).filter(message => message.role === 'user' && message.metadata?.message_delivery === 'failed').at(-1)
+        : undefined;
+      const userMessageId = retryMessage?.id ?? `user-${crypto.randomUUID()}`;
       const submittedAt = new Date().toISOString();
       const userMessage: ChatMessage = {
         id: userMessageId,
@@ -2299,7 +2303,7 @@ export function useCardbushChat(
 
       setMessagesByConversation((current) => ({
         ...current,
-        [sessionId]: [...(current[sessionId] ?? []), userMessage, assistantMessage],
+        [sessionId]: [...(current[sessionId] ?? []).filter(message => message.id !== userMessageId), userMessage, assistantMessage],
       }));
       setConversations((current) =>
         upsertConversationPreview(
@@ -2318,7 +2322,7 @@ export function useCardbushChat(
             appendAssistantDelta(current, sessionId, assistantId, delta, route, release),
           );
         },
-        { shouldAnimate: () => activeConversationIdRef.current === sessionId,
+        { shouldAnimate: () => viewActiveRef.current && activeConversationIdRef.current === sessionId,
           replace: (content, route) => setMessagesByConversation(current =>
             replaceAssistantStreamContent(current, sessionId, assistantId, content, route)),
         },
@@ -2574,7 +2578,7 @@ export function useCardbushChat(
               (item) => item.id !== userMessage.id && item.id !== assistantId,
             ),
           }));
-          setError(null);
+          if (activeConversationIdRef.current === sessionId) setError(null);
           return;
         }
         if (!streamStarted) {
@@ -2587,7 +2591,7 @@ export function useCardbushChat(
             ),
           );
           if (!controller.signal.aborted) {
-            setError(errorMessage(caught));
+            if (activeConversationIdRef.current === sessionId) setError(errorMessage(caught));
             markSessionAttention(
               sessionId,
               'error',
@@ -2612,7 +2616,7 @@ export function useCardbushChat(
               signal: controller.signal,
               reason: rawErrorMessage(caught),
             });
-            setError(recovered ? null : errorMessage(caught));
+            if (activeConversationIdRef.current === sessionId) setError(recovered ? null : errorMessage(caught));
             if (recovered) {
               const refreshedGoal = await refreshGoal(sessionId);
               if (refreshedGoal?.status !== 'active') {
@@ -2638,7 +2642,7 @@ export function useCardbushChat(
             void reloadConversations().catch(() => undefined);
           }
           if (loadedMessages && hasCompletedAssistantForTurn(loadedMessages, turnId)) {
-            setError(null);
+            if (activeConversationIdRef.current === sessionId) setError(null);
             markSessionAttention(
               sessionId,
               'completed',
@@ -2646,7 +2650,7 @@ export function useCardbushChat(
               turnId,
             );
           } else {
-            setError(errorMessage(caught));
+            if (activeConversationIdRef.current === sessionId) setError(errorMessage(caught));
             markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
           }
         }
@@ -2840,7 +2844,7 @@ export function useCardbushChat(
             ),
           );
         },
-        { shouldAnimate: () => activeConversationIdRef.current === sessionId,
+        { shouldAnimate: () => viewActiveRef.current && activeConversationIdRef.current === sessionId,
           replace: (content, route) => setMessagesByConversation(current =>
             replaceAssistantStreamContent(current, sessionId, tempAssistant.id, content, route)),
         },
@@ -3096,7 +3100,7 @@ export function useCardbushChat(
             signal: controller.signal,
             reason: rawErrorMessage(caught),
           });
-          setError(recovered ? null : errorMessage(caught));
+          if (activeConversationIdRef.current === sessionId) setError(recovered ? null : errorMessage(caught));
           const turnId = activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId;
           if (recovered) {
             const refreshedGoal = await refreshGoal(sessionId);
@@ -3114,7 +3118,7 @@ export function useCardbushChat(
           return;
         }
         if (!controller.signal.aborted && !isPendingInteractionConflictError(caught)) {
-          setError(errorMessage(caught));
+          if (activeConversationIdRef.current === sessionId) setError(errorMessage(caught));
           markSessionAttention(
             sessionId,
             'error',
@@ -3122,7 +3126,7 @@ export function useCardbushChat(
             activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId,
           );
         } else if (isPendingInteractionConflictError(caught)) {
-          setError(null);
+          if (activeConversationIdRef.current === sessionId) setError(null);
         }
         const terminalTurnId =
           activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId ?? '';

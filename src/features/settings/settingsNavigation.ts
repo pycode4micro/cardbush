@@ -31,9 +31,9 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   mcp: { zh: '管理插件、技能和应用连接。', en: 'Manage plugins, skills, and app connections.' },
   browser: { zh: '设置默认主页、Chrome 连接和浏览器自动化。', en: 'Configure the start page, Chrome connection, and browser automation.' },
   'computer-use': { zh: '管理桌面控制、截图和用户输入优先设置。', en: 'Manage desktop control, screenshots, and user input priority.' },
-  runtime: { zh: '选择工具执行命令时使用的终端。', en: 'Choose the terminal used by tools to run commands.' },
+  runtime: { zh: '检测和安装沙盒，管理命令隔离与默认终端。', en: 'Check and install the sandbox, manage command isolation and the default terminal.' },
   proxy: { zh: '管理模型、插件市场及 MCP 的网络连接。', en: 'Manage connections for models, the plugin marketplace, and MCP.' },
-  cache: { zh: '恢复归档会话与项目，管理本地数据、日志和内置配置。', en: 'Restore archived chats and projects, and manage local data, logs, and bundled configuration.' },
+  cache: { zh: '恢复归档条目，管理当前环境的数据、日志和缓存。', en: 'Restore archived items and manage data, logs, and cache in the selected environment.' },
   diagnostics: { zh: '检查运行状态，查看版本和环境信息。', en: 'Check runtime health, version, and environment information.' },
 };
 
@@ -54,7 +54,7 @@ const keywords: Record<VisibleSettingsSection, string> = {
   mcp: '插件 市场 技能 账号 授权 浏览器 Chrome MCP skills marketplace accounts OAuth search browser',
   browser: '浏览器 Chrome 主页 初始页 Google 扩展 权限 登录 连接 browser home start page extension',
   'computer-use': '电脑 桌面 操控 截图 鼠标 键盘 用户输入 computer desktop screenshot pointer',
-  runtime: '终端 命令 PowerShell WSL Bash terminal runtime',
+  runtime: '沙盒 安装 检测 环境 隔离 权限 终端 命令 PowerShell WSL Bash sandbox install permissions terminal runtime',
   proxy: '代理 网络 插件市场 MCP HTTP HTTPS SOCKS NO_PROXY proxy network',
   cache: '归档 会话 项目 清理 删除 历史 日志 缓存 恢复 重置 配置包 archive archived chats projects cache history logs reset restore',
   diagnostics: '诊断 关于 版本 状态 检查 环境 Runtime Product Host version about health',

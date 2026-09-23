@@ -1655,6 +1655,16 @@ export async function deleteConversationApi(sessionId: string) {
 
 const productHostProtocol = 'cardbush.product_host_ipc.v1';
 
+export async function fetchSandboxSetup(): Promise<import('../../electron/sandboxTypes').SandboxSetupStatus> {
+  return await productHostValue({ kind: 'sandbox.get' }) as unknown as import('../../electron/sandboxTypes').SandboxSetupStatus;
+}
+export async function installSandbox(): Promise<import('../../electron/sandboxTypes').SandboxSetupStatus> {
+  return await productHostValue({ kind: 'sandbox.install', confirm: true }) as unknown as import('../../electron/sandboxTypes').SandboxSetupStatus;
+}
+export async function updateSandbox(enabled: boolean): Promise<import('../../electron/sandboxTypes').SandboxSetupStatus> {
+  return await productHostValue({ kind: 'sandbox.update', enabled }) as unknown as import('../../electron/sandboxTypes').SandboxSetupStatus;
+}
+
 export class ProductHostCommandError extends Error {
   readonly code: string;
 

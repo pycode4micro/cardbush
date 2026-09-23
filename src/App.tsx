@@ -352,6 +352,8 @@ function CardbushApp() {
     readInitialAppSettings(),
   );
   const [section, setSection] = useState<AppSection>('chat');
+  const agentsVisitedRef = useRef(false);
+  if (section === 'agents') agentsVisitedRef.current = true;
   const agents = useAgentConnections();
   const { compactLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
@@ -565,6 +567,7 @@ function CardbushApp() {
   }, [backendCapabilities.teamMode, section]);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     runtimeReady: runtimeStartup.phase === 'ready',
+    viewActive: section === 'chat',
     language,
     disabledSkillNames,
     standardImageInputEnabled: visualInputEnabled,
@@ -2291,9 +2294,8 @@ function CardbushApp() {
             </>
           )}
           <section className="main-stage" inert={compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
-            {section === 'agents' ? (
-              <Suspense fallback={<FeaturePanelLoading language={language} />}><LazyAgentsView visualInputEnabled={visualInputEnabledSetting} onOpenSettings={(id, section) => openSettings(section, 'plugins', id)} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>
-            ) : section === 'chat' ? (
+            {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} onOpenSettings={(id, section) => openSettings(section, 'plugins', id)} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
+            {section === 'agents' ? null : section === 'chat' ? (
               <ChatPanel
                 browserTabs={composerBrowserTabs}
                 language={language}

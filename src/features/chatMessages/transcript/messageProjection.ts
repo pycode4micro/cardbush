@@ -274,7 +274,9 @@ function mergeFinalAssistantTimingMetadata(
     return message.metadata;
   }
   return {
-    ...(message.metadata ?? {}),
+    // The committed snapshot has a reason but not the live terminal details.
+    // Preserve those facts when replacing a streamed row with saved history.
+    ...(existingMessage ? preserveLocalAssistantTimingMetadata(message, existingMessage) : message.metadata),
     cardbush_turn_started_at:
       turnStartedAt ??
       message.metadata?.cardbush_turn_started_at ??
@@ -472,7 +474,9 @@ function preserveLocalAssistantTimingMetadata(
   }
   return {
     ...(message.metadata ?? {}),
-    ...(source.metadata?.cardbush_terminal_snapshot === true
+    ...(source.metadata?.cardbush_terminal_snapshot === true &&
+        (!chatMessageTurnId(message) || !chatMessageTurnId(source) ||
+          chatMessageTurnId(message) === chatMessageTurnId(source))
       ? {
           cardbush_terminal_snapshot: true,
           cardbush_terminal_stopped:

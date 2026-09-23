@@ -11,6 +11,7 @@ const controls = read('src', 'features', 'settings', 'SettingsControls.tsx');
 const profilePanel = read('src', 'features', 'settings', 'SettingsPersonalizationPanel.tsx');
 const appearancePanel = read('src', 'features', 'settings', 'SettingsAppearancePanel.tsx');
 const usagePanel = read('src', 'features', 'settings', 'UsageStatisticsPanel.tsx');
+const modelsPanel = read('src', 'features', 'settings', 'ModelsSettingsPanel.tsx');
 const css = read('src', 'styles', 'app.css');
 const importedTheme = read('src', 'features', 'appearance', 'importedThemeStyle.ts');
 const electronMain = read('electron', 'main.ts');
@@ -27,6 +28,7 @@ const expectedSections = [
   'browser',
   'computer-use',
   'runtime',
+  'ssh',
   'proxy',
   'mcp',
   'cache',
@@ -57,7 +59,7 @@ assert.doesNotMatch(
 );
 assert.match(navigation, /const settingsDescriptions:/);
 assert.match(settings, /className="settings-navigation"/);
-assert.match(settings, /aria-current=\{section === id \? 'page' : undefined\}/);
+assert.match(settings, /aria-current=\{effectiveSection === id \? 'page' : undefined\}/);
 assert.match(settings, /className="settings-page-header"/);
 assert.match(controls, /className="settings-card-body"/);
 assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
@@ -70,7 +72,7 @@ assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
 assert.match(navigation, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
 assert.match(settings, /profile: SlidersHorizontal/);
 const runtimePanel = settings.match(
-  /if \(section === 'runtime'\)[\s\S]*?if \(section === 'proxy'\)/,
+  /if \(effectiveSection === 'runtime'\)[\s\S]*?if \(effectiveSection === 'proxy'\)/,
 )?.[0] ?? '';
 assert.match(profilePanel, /name="guidance-delivery-mode"/);
 assert.doesNotMatch(runtimePanel, /name="guidance-delivery-mode"/);
@@ -101,7 +103,7 @@ assert.doesNotMatch(app, /backgroundImagePath|has-custom-background|appSettings\
 assert.doesNotMatch(startup, /cardbush_background_image_path|data-start-custom-background/);
 assert.match(
   settings,
-  /if \(section === 'usage'\)[\s\S]*?<UsageStatisticsPanel/,
+  /if \(effectiveSection === 'usage'\)[\s\S]*?<UsageStatisticsPanel/,
   'Usage statistics must have a dedicated page',
 );
 assert.match(usagePanel, /className="usage-heatmap-grid"/);
@@ -128,12 +130,10 @@ assert.match(
   'Usage statistics must reflow when the settings content is narrow.',
 );
 assert.match(css, /\.settings-card-body\s*\{/);
-assert.match(settings, /const \[addModelExpanded, setAddModelExpanded\] = useState\(false\)/);
-assert.match(settings, /bodyHidden=\{!addModelExpanded\}/);
-assert.match(settings, /aria-expanded=\{addModelExpanded\}/);
-assert.match(settings, /const confirmResetModels = useCallback\(\(\) => \{/);
-assert.match(settings, /const confirmed = window\.confirm\([\s\S]*?if \(confirmed\) onResetModels\(\)/);
-assert.match(settings, /className="secondary-button danger model-clear-all-button"[\s\S]*?onClick=\{confirmResetModels\}/);
+assert.match(modelsPanel, /\[adding, setAdding\] = useState\(false\)/);
+assert.match(modelsPanel, /bodyHidden=\{!adding\}/);
+assert.match(modelsPanel, /aria-expanded=\{adding\}/);
+assert.match(modelsPanel, /className="secondary-button danger model-clear-all-button"[\s\S]*?if \(window\.confirm\([\s\S]*?void save\(\{ models: \[\], defaultModelId: '' \}\)/);
 assert.match(controls, /bodyHidden\?: boolean/);
 assert.match(controls, /!bodyHidden && <div className="settings-card-body">/);
 assert.match(css, /\.model-settings-stack\s*\{[\s\S]*?container-name:\s*model-settings/);

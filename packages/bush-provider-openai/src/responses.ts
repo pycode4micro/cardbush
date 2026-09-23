@@ -128,6 +128,8 @@ export function normalizeResponseStreamEvent(
         break;
       case "response.completed":
       case "response.incomplete": {
+        const truncated = event.type === 'response.incomplete' && incompleteFinishReason(event.response) === 'length';
+        let completedToolCallIndices: number[] | undefined;
         if (event.type === "response.completed") {
           const indices = toolCalls.snapshotIndices(event.response.output.map(item => ({ ...item })));
           for (const [position, item] of event.response.output.entries()) {
@@ -136,15 +138,20 @@ export function normalizeResponseStreamEvent(
           }
           toolCalls.finish();
         } else {
-          // Runtime owns output-limit continuation and discards this entire call
-          // batch. Preserve its prose without promoting truncated calls to ready.
+          if (truncated) completedToolCallIndices = toolCalls.truncatedSnapshot(
+            event.response.output.map(item => ({ ...item })), state.toolSearchMode, state.toolAliases, append,
+          );
           for (const [position, item] of event.response.output.entries()) text.item(item, position, true, append, true);
         }
         appendResponseUsage(event.response, append);
         append({ kind: "response_completed",
           finishReason: event.type === "response.incomplete" ? incompleteFinishReason(event.response)
             : toolCalls.hasCalls ? "tool_calls" : responseFinishReason(event.response),
-          providerReplay: responsesReplayData(event.response, state.toolSearchMode, state.compatibilityMode) });
+          ...(completedToolCallIndices ? { completedToolCallIndices } : {}),
+          // Keep projection mode pinned, but never replay an incomplete item or
+          // bind its original batch to the accepted subset of calls.
+          providerReplay: responsesReplayData(truncated ? { ...event.response, output: [] } : event.response,
+            state.toolSearchMode, state.compatibilityMode) });
         state.terminal = true;
         break;
       }

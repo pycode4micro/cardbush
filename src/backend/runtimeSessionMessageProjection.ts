@@ -168,6 +168,14 @@ export function projectRuntimeSessionMessage(
   const metadata: Record<string, unknown> = {};
   if (message.message.role === 'assistant') {
     metadata.toolCalls = message.message.toolCalls;
+    if (turn) {
+      // Committed history must retain the same terminal reason as the live
+      // event, including on a cold load without any event replay.
+      metadata.status = turn.status;
+      metadata.stopped = turn.status === 'stopped';
+      metadata.stop_reason = turn.reason;
+      metadata.stop_scenario = turn.reason;
+    }
   } else if (message.message.role === 'tool') {
     metadata.toolCallId = message.message.toolCallId;
   } else if (message.message.name) {

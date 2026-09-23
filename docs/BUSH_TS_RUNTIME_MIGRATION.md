@@ -122,6 +122,23 @@ requests keep the configured output limit. Maintenance starts with M and may
 double it on truncation, bounded by O and three generation attempts per
 maintenance job for truncation/format failures. Transport failures retain the
 existing Provider retry policy.
+
+Normal output truncation (`length`) preserves only the leading tool calls whose
+completion is confirmed by the provider protocol. Parseable arguments alone do
+not certify completion, and an unfinished earlier call blocks later calls in an
+interleaved batch. Confirmed calls pass through ordinary validation, permissions,
+hooks and execution; their real success/failure receipts precede one appended
+`output_limit_continuation` developer notice. The remaining arguments are discarded.
+If no call is confirmed complete, the turn ends immediately with
+`model_output_limit_exceeded` and its configured output allowance; there is no
+blind continuation retry. Completed work remains in history. Recovery uses the
+saved receipts and retains the existing refusal to replay an uncertain execution.
+Truncated provider responses cannot be continuation anchors or replay incomplete
+items. Projection mode remains pinned, while the request history grows by append
+and tool definitions and model parameters remain unchanged. These rules apply to
+both native and compatible Responses transports. Checkpoint maintenance retains
+its separate bounded recovery policy below.
+
 The complete maintenance request is measured again before dispatch. Exact
 provider counts do not pay an additional estimation reserve. Tool ingress uses
 the completed response's actual input/output usage when available and reserves
@@ -209,6 +226,16 @@ mismatch returns `bush.runtime_error.v1` with the stable
 `protocol_version_mismatch` code. Clean `build` and `typecheck` commands build all
 Runtime workspace packages first, so Electron and Vite never depend on stale
 local `dist` output.
+
+Desktop Runtime IPC channels are registered before creating the renderer and
+remain registered across initialization failures and explicit retries. Runtime,
+Product Host, and automation requests await the same initialization attempt.
+Failed startup preserves its original error until the user retries; background
+catalog and unread-count requests cannot initiate an uncontrolled retry loop.
+Timeouts invalidate the old initializer, and disposing a host prevents late
+callbacks from restarting it. Queued requests cancelled by the renderer or a
+document navigation are not dispatched, and completed operations are never
+replayed by the readiness gate.
 
 Product model settings now cross typed IPC through an opaque provider binding.
 Secrets remain inside the Utility Process registry and never enter Model Requests,

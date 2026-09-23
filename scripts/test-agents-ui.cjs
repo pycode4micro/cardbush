@@ -22,11 +22,11 @@ app.whenReady().then(async () => {
       import {InspectorTabPages} from ${JSON.stringify(path.join(root,'src/features/inspector/InspectorTabPages.tsx'))};
       import {RightInspectorResizer} from ${JSON.stringify(path.join(root,'src/components/RightInspectorResizer.tsx'))};
       const noop=()=>{};
-      function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:[]});
+      function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[viewActive,setViewActive]=useState(true);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:[]});
         const open=useCallback((id,title)=>tabs.openTab({id,title,kind:'conversation'}),[tabs.openTab]);const close=useCallback(id=>tabs.closeTabs(new Set([id])),[tabs.closeTabs]);
-        return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.tabs.length>0}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button></nav>
+        return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.tabs.length>0}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button><button onClick={()=>setViewActive(false)}>Local view</button><button onClick={()=>setViewActive(true)}>Agent view</button>{['a1','a2','a3'].map(id=><button key={id} onClick={()=>agents.select('a',id)}>{id}</button>)}</nav>
         <ChatSidebar language="zh" section="agents" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}} agents={agents.connections} activeAgentId={agents.selectedId} agentSessions={agents} onAgentSelect={agents.select} onSectionChange={()=>agents.select('')} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop} onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenPlugins={noop} onOpenSearch={noop}/>
-        <main className="main-stage" hidden={!!setting}><AgentsView language="zh" agents={agents} onOpenSettings={(id,section)=>setSetting({id,section})}/></main>
+        <main className="main-stage" hidden={!!setting}><AgentsView active={viewActive} language="zh" agents={agents} onOpenSettings={(id,section)=>setSetting({id,section})}/></main>
         {setting&&<SettingsView active onReady={noop} language="zh" languageMode="zh" systemLanguage="zh" themePreference="dark"
           agentConnections={agents.connections} agentId={setting.id} onAgentChange={id=>setSetting({...setting,id})}
           initialSection={setting.section} initialPluginTab="plugins" settings={preferences} onSettingsChange={fn=>setPreferences(fn)}
@@ -110,6 +110,10 @@ app.whenReady().then(async () => {
     if (!process.argv.includes('--images')) await run("localStorage.setItem('a:cardbush.permission_mode','user_free');localStorage.setItem('b:cardbush.permission_mode','all_free');undefined;");
     await run(js + '\n;undefined;');
     await until("document.querySelectorAll('.agents-card').length===3",'Agent overview renders');
+    if (process.argv.includes('--switching')) {
+      await require('./helpers/agent-session-switching.cjs')({ run, until, pause });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.argv.includes('--images')) {
       await require('./helpers/agent-chat-regressions.cjs')({ run, until, pause, win, root });
       assert.deepEqual(errors, []); return;
@@ -237,6 +241,8 @@ app.whenReady().then(async () => {
     assert.equal(await run("readers.at(-1).request.afterSequence"),1,'SSE reconnect resumes from the last displayed sequence');
     await run("readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_delta',sequence:1,payload:{segmentId:'live',delta:'重复'}}});readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_delta',sequence:2,payload:{segmentId:'live',delta:'第二段'}}})");
     await until("document.querySelector('.agent-chat .message-list').textContent.includes('实时第一段第二段')",'stream resumes without duplicate content');
+    assert.equal(await run("(document.querySelector('.agent-chat .message-list').textContent.match(/A 的工作/g)||[]).length"), 1, 'durable retry replaces its failed optimistic bubble');
+    assert.ok(await run("var content=document.querySelector('.agent-chat .message-list').textContent;content.indexOf('A 的工作')<content.indexOf('实时第一段')"), 'initial input remains before streamed events despite remote clock skew');
     assert.equal(await run("calls.filter(c=>c.operation==='chat.events').length"),0,'UI uses event streaming instead of event polling');
     await run("readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_delta',sequence:3,payload:{segmentId:'live',delta:'\\n\\n[远程文件](/srv/project/README.md) ![远程图片](file:///C:/private.png) [网页](https://example.com)'}}})");
     await until("!!document.querySelector('.agent-chat .message-list a[href=\"https://example.com\"]')",'shared Markdown displays web links');
@@ -288,7 +294,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelector('.agent-chat .composer-stack textarea').value"),'','successful guidance retry clears only its matching draft');
     await run(`readers.at(-1).listener({type:'event',event:{kind:'guidance_applied',sequence:27,payload:{messageId:${JSON.stringify(originalGuidance.messageId)},previousAssistantMessageId:'msg-second',queueDepth:0,afterRound:2}}});readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:28,payload:{messageId:'msg-after-guide',segmentId:'after-guide',ordinal:1,content:'已按引导调整'}}});undefined;`);
     await until("!!document.querySelector('.guidance-delivery-status.sent')&&document.querySelector('.agent-chat .message-list').textContent.includes('已按引导调整')",'applied guidance renders between assistant rounds');
-    assert.ok(await run("var content=document.querySelector('.agent-chat .message-list').textContent;content.indexOf('第二轮正文')<content.indexOf('请调整执行方向')&&content.indexOf('请调整执行方向')<content.indexOf('已按引导调整')"));
+    assert.ok(await run("var content=document.querySelector('.agent-chat .message-list').textContent;content.indexOf('第二轮正文')<content.indexOf('请调整执行方向')&&content.indexOf('请调整执行方向')<content.indexOf('已按引导调整')"), await run("document.querySelector('.agent-chat .message-list').textContent"));
     assert.equal(await run("document.querySelectorAll('.guidance-delivery-status').length"),1,'guidance receipt and applied event do not duplicate the user bubble');
 
     await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
@@ -299,7 +305,12 @@ app.whenReady().then(async () => {
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select B').click()");
     await until("document.querySelector('.agent-chat h1')?.textContent !== 'A 的工作'", 'leave A for replay');
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select A').click()");
-    await until(`readers.length>${readersBeforeReplay} && readers.at(-1).id==='a'`, 'guided conversation reconnects from its journal after switching Agents');
+    await until("document.querySelector('.agent-chat .message-list')?.textContent.includes('已按引导调整')", 'guided transcript survives switching Agents');
+    assert.equal(await run('readers.length'), readersBeforeReplay, 'switching Agents preserves the existing event reader');
+    assert.equal(await run('readers.at(-1).stopped'), false);
+    await run("readers.at(-1).listener({type:'error',error:'transport interruption after navigation'})");
+    await until(`readers.length>${readersBeforeReplay} && readers.at(-1).id==='a'`, 'transport interruption still reconnects after switching Agents');
+    assert.equal(await run('readers.at(-1).request.afterSequence'), 28, 'reconnection retains the cursor across navigation');
     await run(`readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:25,payload:{messageId:'msg-second',segmentId:'second',ordinal:1,content:'第二轮正文'}}});readers.at(-1).listener({type:'event',event:{kind:'tool_returned',sequence:26,payload:{assistantMessageId:'msg-second',toolCallId:'second-tool',toolName:'terminal_exec'}}});readers.at(-1).listener({type:'event',event:{kind:'guidance_applied',sequence:27,payload:{messageId:${JSON.stringify(originalGuidance.messageId)},previousAssistantMessageId:'msg-second',queueDepth:0,afterRound:2}}});readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:28,payload:{messageId:'msg-after-guide',segmentId:'after-guide',ordinal:1,content:'已按引导调整'}}});undefined;`);
     await until("document.querySelector('.agent-chat .message-list').textContent.includes('请调整执行方向')&&!!document.querySelector('.guidance-delivery-status.sent')",'replay restores the applied guidance body from the remote service without local storage');
     assert.equal(await run("calls.filter(c=>c.input?.kind==='runtime.enqueue_guidance').length"),2,'history reconstruction never resubmits guidance');
@@ -468,10 +479,29 @@ app.whenReady().then(async () => {
     await remoteMenu('置顶对话'); await until("snapshots.b[0].metadata.pinned===true",'pin persists on B');
     await remoteMenu('标记为未读'); await until("!!document.querySelector('[data-agent-id=b] .conversation-unread-indicator')",'remote unread indicator');
     await remoteMenu('归档对话'); await until("!document.querySelector('[data-agent-id=b] .remote-conversation')",'archived chat leaves ordinary list');
-    await run("[...document.querySelectorAll('[data-agent-id=b] button')].find(b=>b.textContent.includes('查看已归档')).click()");
-    await until("!!document.querySelector('[data-agent-id=b] .remote-conversation')",'archived conversation accessible');
-    assert.equal(await run("document.querySelectorAll('[data-agent-id=b] .remote-conversation').length"),1,'showing archives cannot expose pinned or archived child sessions');
-    await remoteMenu('恢复对话'); await until("snapshots.b[0].metadata.archived===false",'restore archived chat');
+    assert.equal(await run("document.querySelector('[data-agent-id=b]').textContent.includes('已归档对话')"),false,'archive collection is absent from the sidebar');
+    assert.ok(await run("!!document.querySelector('[data-agent-id=b] .agent-sidebar-empty')"),'an Agent with only archived chats still offers a new conversation');
+    await run("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['same-session']));document.querySelector('.agent-manage').click()");
+    await until("!!document.querySelector('.settings-shell [data-settings-section=cache]')",'open Agent settings');
+    await run("document.querySelector('.settings-shell [data-settings-section=cache]').click()");
+    await until("document.querySelectorAll('.archive-manager-row').length===1",'settings list the archived user conversation');
+    assert.equal(await run("document.querySelector('.archive-manager').textContent.includes('child')"),false,'archive settings exclude internal child sessions');
+    assert.equal(await run("document.querySelectorAll('.archive-manager-tabs button').length"),1,'remote settings only offer the supported archive type');
+    await pause(100); fs.writeFileSync(path.join(root,'tmp/agent-archives-settings.png'),(await win.webContents.capturePage()).toPNG());
+    await run(`window.archiveRestoreCall=cardbushDesktop.agents.call;window.failArchiveRestore=true;
+      cardbushDesktop.agents.call=async(id,operation,input)=>{
+        if(failArchiveRestore&&operation==='sessions.update'&&input.archived===false)throw Error('Fixture restore failed');
+        return archiveRestoreCall(id,operation,input);
+      };undefined;`);
+    await run("document.querySelector('.archive-manager-row button').click()");
+    await until("document.querySelector('.archive-manager [role=alert]')?.textContent.includes('Fixture restore failed')",'failed restore remains retryable');
+    assert.equal(await run("snapshots.b[0].metadata.archived"),true,'failed restoration does not remove the archive');
+    await run("failArchiveRestore=false;document.querySelector('.archive-manager-row button').click()");
+    await until("snapshots.b[0].metadata.archived===false && !!document.querySelector('[data-agent-id=b] .remote-conversation')",'settings restore refreshes the matching sidebar');
+    assert.equal(await run("document.querySelectorAll('.archive-manager-row').length"),0);
+    assert.deepEqual(await run("JSON.parse(localStorage.getItem('cardbush_archived_conversation_ids'))"),['same-session'],'remote restoration does not modify local archives with the same ID');
+    await run("cardbushDesktop.agents.call=archiveRestoreCall;document.querySelector('.settings-shell .back-button').click()");
+    await until("!document.querySelector('.settings-shell')",'return from archive settings');
     assert.equal(await run("snapshots.a[0].metadata.pinned"),undefined,'same raw session ID on A stays unaffected');
     await run("document.querySelector('[data-agent-id=b] .project-row').click()");
     assert.equal(await run("document.querySelector('[data-agent-id=b] .project-row').getAttribute('aria-expanded')"),'false','collapse Agent');
@@ -500,7 +530,7 @@ app.whenReady().then(async () => {
     assert.ok(await run("document.querySelector('.settings-shell .settings-select-row').textContent.includes('更新 Agent')"),'legacy capability has an actionable explanation');
     await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'return to legacy service chat');
-    await run("window.originalCall=cardbushDesktop.agents.call;window.rejectRefresh=true;cardbushDesktop.agents.call=async(id,operation,input)=>{if(id==='c'&&operation==='product.command'&&input?.kind==='models.get'&&rejectRefresh){rejectRefresh=false;throw Error('Fixture list refresh failed')}return originalCall(id,operation,input)};undefined;");
+    await run("window.originalCall=cardbushDesktop.agents.call;window.rejectRefresh=true;cardbushDesktop.agents.call=async(id,operation,input)=>{if(id==='c'&&operation==='sessions.list'&&rejectRefresh){rejectRefresh=false;throw Error('Fixture list refresh failed')}return originalCall(id,operation,input)};undefined;");
     await setDraft('刷新失败也已发送'); await run("document.querySelector('.agent-chat .composer-stack .send-button').click()");
     await until("(window.refreshErrorText=document.querySelector('.agent-chat [role=alert]')?.textContent)?.includes('会话列表刷新失败')",'refresh failure is reported separately');
     assert.equal(await run("refreshErrorText.includes('可重试发送')"),false,'refresh failure must not request resending');

@@ -82,6 +82,7 @@ export async function executeModelRound(
   let text = "";
   let reasoning = "";
   let finishReason: string | undefined;
+  let completedToolCallIndices: number[] | undefined;
   let completed = false;
   let providerResponseId: string | undefined;
   let providerReplay: ModelReplayData | undefined;
@@ -143,6 +144,7 @@ export async function executeModelRound(
       case "response_completed":
         completed = true;
         finishReason = event.finishReason;
+        completedToolCallIndices = event.completedToolCallIndices;
         providerReplay = event.providerReplay;
         break;
       case "response_failed":
@@ -159,7 +161,7 @@ export async function executeModelRound(
 
   let toolCalls: ToolCall[] = [];
   try {
-    toolCalls = accumulator.completed();
+    toolCalls = accumulator.completed(finishReason === 'length' ? completedToolCallIndices ?? [] : undefined);
   } catch (error) {
     failure ??= localFailure(
       request.requestId,
@@ -193,7 +195,8 @@ export async function executeModelRound(
   }
   return {
     status: "completed",
-    providerResponseId,
+    // The original provider response contains calls we deliberately discarded.
+    providerResponseId: finishReason === 'length' ? undefined : providerResponseId,
     text,
     reasoning,
     toolCalls,

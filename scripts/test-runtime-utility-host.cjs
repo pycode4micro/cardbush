@@ -417,9 +417,12 @@ async function run() {
     assert.equal(removedProvider.result.status, 'removed');
 
     let testWindow;
+    let releaseIpcReadiness, enteredIpc;
+    const ipcReadiness = new Promise(resolve => { releaseIpcReadiness = resolve; });
+    const ipcEntered = new Promise(resolve => { enteredIpc = resolve; });
     const unregisterIpc = registerRuntimeHostIpc(
       ipcMain,
-      controller,
+      async () => { enteredIpc(); await ipcReadiness; return controller; },
       (sender) => testWindow != null && sender.id === testWindow.webContents.id,
     );
     try {
@@ -432,7 +435,7 @@ async function run() {
         },
       });
       await testWindow.loadURL('data:text/html,<html><body>runtime-test</body></html>');
-      const preloadCapabilityResponse = await testWindow.webContents.executeJavaScript(`
+      const earlyCapabilityRequest = testWindow.webContents.executeJavaScript(`
         window.cardbushDesktop.runtime.command({
           protocol: 'bush.runtime_ipc.v1',
           type: 'command',
@@ -440,6 +443,12 @@ async function run() {
           command: { kind: 'runtime.get_capabilities', payload: {} }
         })
       `);
+      let earlyRequestSettled = false;
+      void earlyCapabilityRequest.then(() => { earlyRequestSettled = true; }, () => { earlyRequestSettled = true; });
+      await within(ipcEntered, 5000, 'early renderer IPC request');
+      assert.equal(earlyRequestSettled, false, 'real preload IPC waits for Runtime readiness instead of reporting an unregistered handler');
+      releaseIpcReadiness();
+      const preloadCapabilityResponse = await earlyCapabilityRequest;
       assert.equal(preloadCapabilityResponse.ok, true);
       assert.equal(
         preloadCapabilityResponse.result.eventProtocol,
@@ -472,7 +481,7 @@ async function run() {
       assert.ok(releasedSubscriptions.includes('reload-new'),'destroy releases the final quiet subscription');
       controller.stopStream = originalStopStream;
     } finally {
-      unregisterIpc();
+      unregisterIpc.dispose();
       testWindow?.destroy();
     }
     controller.stop();

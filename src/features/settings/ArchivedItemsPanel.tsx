@@ -1,5 +1,5 @@
 import { ArchiveRestore, Folder, MessageSquare, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { conversationMatchesScope } from '../conversationScope';
@@ -9,22 +9,32 @@ import { SettingsCard } from './SettingsControls';
 const pageSize = 20;
 const noProjects: ProjectItem[] = [];
 
-export function ArchivedItemsPanel({ language, conversations, projects = noProjects, onRestoreProjects, onNotify }: {
+type ArchivedItemsProps = {
   language: AppLanguage;
   conversations: ConversationSummary[];
   projects?: ProjectItem[];
   onRestoreProjects?: (ids: string[]) => void;
   onNotify: (message: string) => void;
-}) {
+};
+
+export function ArchivedItemsPanel(props: ArchivedItemsProps) {
   const archivedIds = useConversationArchives();
+  const conversations = useMemo(() => props.conversations.filter(item => archivedIds.has(item.id)), [props.conversations, archivedIds]);
+  return <ArchivedItemsManager {...props} conversations={conversations} onRestoreConversations={ids => setConversationsArchived(ids, false)}/>;
+}
+
+/** Both hosts share presentation; each supplies its own archived rows and restore operation. */
+export function ArchivedItemsManager({ language, conversations: archivedConversations, projects = noProjects, onRestoreProjects, onNotify,
+  onRestoreConversations, showProjects = true }: ArchivedItemsProps & {
+  onRestoreConversations: (ids: string[]) => void | Promise<void>; showProjects?: boolean;
+}) {
   const [tab, setTab] = useState<'conversations' | 'projects'>('conversations');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const restoring = useRef(false);
   const zh = language === 'zh';
-  const archivedConversations = useMemo(
-    () => conversations.filter(item => archivedIds.has(item.id)), [conversations, archivedIds],
-  );
   const archivedProjects = useMemo(() => projects.filter(item => item.archived), [projects]);
   const rows = useMemo(() => tab === 'conversations'
     ? archivedConversations.map(item => {
@@ -45,11 +55,12 @@ export function ArchivedItemsPanel({ language, conversations, projects = noProje
   const currentPage = Math.min(page, lastPage);
   const visibleRows = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
-  function restore(items: typeof rows) {
-    setError('');
+  async function restore(items: typeof rows) {
+    if (restoring.current) return;
+    restoring.current = true; setBusy(true); setError('');
     try {
       if (tab === 'conversations') {
-        setConversationsArchived(items.map(item => item.id), false);
+        await onRestoreConversations(items.map(item => item.id));
         const parentIds = [...new Set(items.flatMap(item => item.archivedProjectId ? [item.archivedProjectId] : []))];
         if (parentIds.length) onRestoreProjects?.(parentIds);
       } else {
@@ -59,25 +70,25 @@ export function ArchivedItemsPanel({ language, conversations, projects = noProje
         : `Restored ${items.length} ${tab === 'conversations' ? 'chats' : 'projects'}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
-    }
+    } finally { restoring.current = false; setBusy(false); }
   }
-  const canRestore = (items: typeof rows) => Boolean(items.length) &&
+  const canRestore = (items: typeof rows) => !busy && Boolean(items.length) &&
     (Boolean(onRestoreProjects) || (tab === 'conversations' && !items.some(item => item.archivedProjectId)));
 
   return <SettingsCard title={zh ? '归档管理' : 'Archived items'}
-    subtitle={zh ? '归档会隐藏侧栏条目并保留历史，恢复后回到原来的项目或最近列表。'
-      : 'Archiving hides sidebar entries and keeps their history. Restore them to their original project or recent list.'}>
+    subtitle={zh ? '归档会隐藏侧栏条目并保留历史，恢复后重新显示在侧栏。'
+      : 'Archiving hides sidebar entries and keeps their history. Restoring makes them visible in the sidebar again.'}>
     <div className="archive-manager">
       <div className="archive-manager-toolbar">
         <div className="archive-manager-tabs" role="group" aria-label={zh ? '归档类型' : 'Archive type'}>
-          {(['conversations', 'projects'] as const).map(value => <button key={value} type="button"
+          {(['conversations', 'projects'] as const).filter(value => showProjects || value === 'conversations').map(value => <button key={value} type="button" disabled={busy}
             aria-pressed={tab === value} onClick={() => { setTab(value); setPage(0); setError(''); }}>
             {value === 'conversations' ? <MessageSquare size={15} /> : <Folder size={15} />}
             {value === 'conversations' ? (zh ? '会话' : 'Chats') : (zh ? '项目' : 'Projects')}
             <span>{value === 'conversations' ? archivedConversations.length : archivedProjects.length}</span>
           </button>)}
         </div>
-        <button type="button" className="secondary-button" disabled={!canRestore(filtered)} onClick={() => restore(filtered)}>
+        <button type="button" className="secondary-button" disabled={!canRestore(filtered)} onClick={() => void restore(filtered)}>
           <ArchiveRestore size={14} />{query.trim() ? (zh ? '恢复搜索结果' : 'Restore results') : (zh ? '全部恢复' : 'Restore all')}
         </button>
       </div>
@@ -93,7 +104,7 @@ export function ArchivedItemsPanel({ language, conversations, projects = noProje
             {item.archivedProjectId && <small>{zh ? '所属项目也已归档，恢复时一并恢复项目。' : 'Its archived project will also be restored.'}</small>}
           </div>
           <button type="button" className="secondary-button" disabled={!canRestore([item])}
-            aria-label={`${zh ? '恢复' : 'Restore'} ${item.title}`} onClick={() => restore([item])}>
+            aria-label={`${zh ? '恢复' : 'Restore'} ${item.title}`} onClick={() => void restore([item])}>
             <ArchiveRestore size={14} />{zh ? '恢复' : 'Restore'}
           </button>
         </div>)}
