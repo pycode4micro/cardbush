@@ -277,6 +277,8 @@ export class PluginMarketplaceService {
         break;
       } catch (error) { if (!missing(error)) throw error; }
     }
+    // Headless installations may have no bundled plugins; their market starts empty.
+    if (!payload && source.builtin) payload = { name: 'cardbush-bundled', plugins: [] };
     if (!payload || !Array.isArray(payload.plugins) || typeof payload.name !== 'string') {
       throw new Error('No .agents/plugins/marketplace.json or .claude-plugin/marketplace.json was found at this source.');
     }

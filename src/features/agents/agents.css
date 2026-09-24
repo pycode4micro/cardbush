@@ -10,6 +10,17 @@
 .agents-cards .agents-card { flex-direction: column; align-items: flex-start; gap: 16px; min-height: 150px; text-align: left; padding: 24px; border-radius: 15px; }
 .agents-card strong { font-size: 16px; }.agents-card span { font-size: 12px; color: var(--text-soft, #aaa); overflow-wrap: anywhere; }
 .agents-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; color: var(--text-soft, #aaa); }
+.agent-connection-status { flex: none; display: flex; align-items: flex-start; gap: 10px; margin: 10px 14px; padding: 10px 12px; border-radius: 10px; color: var(--text-mid, #bbb); background: var(--surface-strong, #8881); font-size: 12px; line-height: 1.5; }
+.agent-connection-status > svg { flex: none; margin-top: 2px; }
+.agent-connection-status-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.agent-connection-status-copy strong { color: var(--text, #eee); font-weight: 600; }
+.agent-connection-status-copy details { font-size: 11px; color: var(--text-soft, #aaa); }
+.agent-connection-status-copy summary { cursor: pointer; width: fit-content; }
+.agent-connection-status-copy p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.agent-connection-status-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.agent-connection-status-actions button { padding: 4px 8px; border-radius: 6px; background: transparent; color: var(--text-mid, #bbb); cursor: pointer; font: inherit; }
+.agent-connection-status.recovered { align-items: center; }
+@media (max-width: 600px) { .agent-connection-status { flex-wrap: wrap; } .agent-connection-status-actions { margin-left: 26px; } }
 .agents-empty h2, .agents-empty p { margin: 0; }.agents-empty h2 { color: var(--text, #eee); }
 .agents-error { margin: 12px; padding: 10px 14px; border-radius: 8px; background: #d9545414; color: #df7975; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }.agents-error button { margin-left: 10px; }
 .agents-modal-backdrop { position: fixed; inset: 0; z-index: 12000; background: #0007; display: grid; place-items: center; padding: 20px; }

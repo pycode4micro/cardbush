@@ -1,5 +1,6 @@
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { AgentConnectionsController } from '../agents/useAgentConnections';
+import type { AgentConnection } from '../../../electron/agentTypes';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
@@ -232,7 +233,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onAgentSelect,
   agentSessions,
 }: {
-  agents?: Array<{ id: string; name: string }>;
+  agents?: Array<Pick<AgentConnection, 'id' | 'name' | 'connectionState'>>;
   activeAgentId?: string;
   onAgentSelect?: (id: string, sessionId?: string, view?: 'chat' | 'settings') => void;
   agentSessions?: AgentConnectionsController;
@@ -869,6 +870,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                 {agents.map(agent => {
                   const expanded = expandedAgentIds.has(agent.id);
                   const list = agentSessions?.sessionsByAgent[agent.id];
+                  const reconnecting = agent.connectionState === 'reconnecting';
                   const visibleSessions = list?.sessions.filter(session => !session.metadata?.archived) ?? [];
                   const active = section === 'agents' && activeAgentId === agent.id;
                   const create = () => { onAgentSelect?.(agent.id, ''); void agentSessions?.createSession(agent.id, language === 'zh' ? '新对话' : 'New conversation'); };
@@ -884,10 +886,10 @@ export const ChatSidebar = memo(function ChatSidebar({
                         { key: 'new', icon: <Plus size={15}/>, label: language === 'zh' ? '新建会话' : 'New chat', disabled: list?.creating, onClick: create },
                         { key: 'manage', icon: <Settings size={15}/>, label: language === 'zh' ? '管理此 Agent' : 'Manage Agent', onClick: manage },
                       ])}>
-                      <ChevronRight size={14} className={`agent-tree-chevron${expanded ? ' expanded' : ''}`} aria-hidden="true"/>
                       <div className="project-title"><span>{agent.name}</span></div>
                       <button className="row-new-chat" type="button" disabled={list?.creating} aria-label={language === 'zh' ? `在 ${agent.name} 新建会话` : `New chat in ${agent.name}`} onClick={event => { event.stopPropagation(); create(); }}><Plus size={14}/></button>
                       <button className="row-archive" type="button" aria-label={language === 'zh' ? `管理 ${agent.name}` : `Manage ${agent.name}`} onClick={event => { event.stopPropagation(); manage(); }}><Settings size={14}/></button>
+                      <ChevronRight size={14} className={`agent-tree-chevron${expanded ? ' expanded' : ''}`} aria-hidden="true"/>
                     </div>
                     {expanded && <>
                       {visibleSessions
@@ -900,7 +902,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                         return <ConversationRow key={session.sessionId}
                         conversation={{ id: session.sessionId, title: String(session.metadata?.title || (language === 'zh' ? '新对话' : 'Conversation')), preview: '', updatedAt: session.updatedAt ?? '' }}
                         active={active && agentSessions?.views[agent.id] !== 'settings' && agentSessions?.selectedSessions[agent.id] === session.sessionId}
-                        nested remote unread={unread} pinned={pinned} language={language}
+                        nested remote unread={unread} pinned={pinned} language={language} quickActionsAvailable={list?.management === true}
                         onTogglePin={() => update({ pinned: !pinned })} onToggleRead={() => update({ forcedUnread: !unread, ...(!unread ? {} : { readAt: new Date().toISOString() }) })} onArchive={() => update({ archived: true })}
                         onRename={title => agentSessions!.renameSession(agent.id, session.sessionId, title)}
                         onDelete={() => void agentSessions?.deleteSession(agent.id, session.sessionId)}
@@ -923,9 +925,10 @@ export const ChatSidebar = memo(function ChatSidebar({
                           { key: 'delete', icon: <Trash2 size={15}/>, label: language === 'zh' ? '删除对话' : 'Delete chat', separatorBefore: true, danger: true, onClick: options.onDelete },
                         ])}
                       />; })}
-                      {list?.loading && !visibleSessions.length && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在加载会话…' : 'Loading chats…'}</div>}
-                      {!list?.loading && !list?.error && !visibleSessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{language === 'zh' ? '新建会话' : 'New chat'}</button>}
-                      {list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
+                      {reconnecting && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在重新连接…' : 'Reconnecting…'}</div>}
+                      {!reconnecting && list?.loading && !visibleSessions.length && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在加载会话…' : 'Loading chats…'}</div>}
+                      {!reconnecting && !list?.loading && !list?.error && !visibleSessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{language === 'zh' ? '新建会话' : 'New chat'}</button>}
+                      {!reconnecting && list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
                     </>}
                   </div>;
                 })}
@@ -1292,6 +1295,7 @@ function ConversationRow({
   unread,
   nested,
   remote = false,
+  quickActionsAvailable = true,
   pinned,
   language,
   onTogglePin,
@@ -1311,6 +1315,7 @@ function ConversationRow({
   unread: boolean;
   nested?: boolean;
   remote?: boolean;
+  quickActionsAvailable?: boolean;
   pinned: boolean;
   language: AppLanguage;
   onTogglePin: () => void;
@@ -1384,7 +1389,7 @@ function ConversationRow({
   };
   return (
     <div
-      className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}`}
+      className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}${quickActionsAvailable ? '' : ' without-quick-actions'}`}
       draggable={!remote && !editingTitle}
       onDragStart={event => { event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
       role="button"
@@ -1502,7 +1507,7 @@ function ConversationRow({
             : <CircleAlert size={15} />}
         </span>
       )}
-      {!remote && !editingTitle && <button
+      {quickActionsAvailable && !editingTitle && <button
         className={`conversation-pin${pinned ? ' is-pinned' : ''}`}
         type="button"
         aria-label={pinned
@@ -1522,7 +1527,7 @@ function ConversationRow({
       >
         <Pin size={14} />
       </button>}
-      {!remote && !editingTitle && <button
+      {quickActionsAvailable && !editingTitle && <button
         className="conversation-archive"
         type="button"
         aria-label={language === 'zh' ? '归档对话' : 'Archive chat'}

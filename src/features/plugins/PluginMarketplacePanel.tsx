@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PluginMarketCatalog, PluginMarketPreview, PluginMarketSource } from '../../../electron/pluginMarketplaceTypes';
 import type { AppLanguage } from '../../types';
 import { marketError, marketRetryAt, networkError } from './pluginMarketErrors';
+import { useSettingsHost } from '../settings/SettingsHostContext';
 
 export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onNotify, onOpenNetwork }: {
   language: AppLanguage;
@@ -14,13 +15,15 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   onOpenNetwork?: () => void;
 }) {
   const zh = language === 'zh';
-  const bridge = window.cardbushDesktop;
+  const host = useSettingsHost();
+  const bridge = host.marketplace;
   const [sources, setSources] = useState<PluginMarketSource[]>([]);
   const [sourceId, setSourceId] = useState('builtin');
   const [catalog, setCatalog] = useState<PluginMarketCatalog | null>(null);
   const [preview, setPreview] = useState<PluginMarketPreview | null>(null);
   const [query, setQuery] = useState('');
   const [sourceInput, setSourceInput] = useState('');
+  const [directoryInput, setDirectoryInput] = useState('');
   const [busy, setBusy] = useState('catalog');
   const [error, setError] = useState('');
   const [retryPreview, setRetryPreview] = useState<{ sourceId: string; name: string } | null>(null);
@@ -47,12 +50,12 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   useEffect(() => {
     let active = true;
     if (!bridge?.pluginMarketSources) {
-      setError(zh ? '请重启 CardBush 以启用插件市场。' : 'Restart CardBush to enable plugin marketplaces.'); setBusy(''); return;
+      setError(host.remote ? (zh ? '请更新此 Agent 服务以启用插件市场。' : 'Update this Agent service to enable plugin marketplaces.') : (zh ? '请重启 CardBush 以启用插件市场。' : 'Restart CardBush to enable plugin marketplaces.')); setBusy(''); return;
     }
     void bridge.pluginMarketSources().then(value => { if (active) setSources(value); })
       .catch(caught => { if (active) setError(message(caught)); });
     return () => { active = false; generation.current++; };
-  }, [bridge, zh]);
+  }, [bridge, host.remote, zh]);
 
   const loadCatalog = useCallback(async (refresh = false) => {
     if (!bridge?.pluginMarketCatalog) return;
@@ -70,9 +73,9 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     if (!bridge || busy) return;
     setBusy('source'); setError(''); setRetryPreview(null);
     try {
-      const source = local ? await bridge.addLocalPluginMarket() : await bridge.addPluginMarket(sourceInput);
+      const source = local ? await bridge.addLocalPluginMarket(host.remote ? directoryInput.trim() : undefined) : await bridge.addPluginMarket(sourceInput);
       if (!source) return;
-      setSources(await bridge.pluginMarketSources()); setSourceInput(''); setAddOpen(false);
+      setSources(await bridge.pluginMarketSources()); setSourceInput(''); setDirectoryInput(''); setAddOpen(false);
       if (source.id === sourceId) await loadCatalog(true); else setSourceId(source.id);
     } catch (caught) { setError(message(caught)); }
     finally { setBusy(value => value === 'source' ? '' : value); }
@@ -128,7 +131,8 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     }}><ArrowLeft size={17} />{preview || busy.startsWith('preview:') ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
       <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>
-      {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy)} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen}><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
+      {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen}><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
+    {host.remote && <p className="plugin-market-hint">{zh ? '插件安装到当前 Agent；市场来源、运行依赖和网络设置均使用该 Agent 的环境。' : 'Plugins install on the selected Agent, using its marketplace sources, dependencies and network settings.'}</p>}
     {error && <div className="plugin-market-error" role="alert"><p>{marketError(error, zh, now)}</p>
       {retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy) || retrySeconds > 0} onClick={() => void openPlugin(retryPreview.name)}>
         <RefreshCw size={15} />{retrySeconds > 0 ? (zh ? `${retrySeconds} 秒后可重试` : `Retry in ${retrySeconds}s`) : (zh ? '重试获取插件' : 'Retry download')}
@@ -147,7 +151,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
       {preview.components.some(component => component.kind === 'command') && <p className="plugin-market-hint">{zh ? 'Commands 原生加载，启用后可在输入框通过 /插件名:命令名 调用。参数和动态上下文由宿主处理，执行遵循当前权限设置。' : 'Commands load natively. Invoke /plugin:command from the composer; the host handles arguments and dynamic context under the current permissions.'}</p>}
       {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{zh ? 'Hooks 可运行命令和 MCP 工具；Claude 格式还支持 HTTP、提示词评估和只读 Agent 验证。安装后需在插件详情中审核并信任具体定义。' : 'Hooks run commands and MCP tools. Claude plugins also support HTTP, prompt evaluation and read-only Agent verification. Review and trust each definition after installation.'}</p>}
       {preview.notes?.length ? <div className="plugin-market-notes"><strong>{zh ? '适配说明' : 'Adaptation notes'}</strong><ul>{preview.notes.map((note, index) => <li key={index}>{adaptationNote(note, zh)}</li>)}</ul></div> : null}
-      {preview.requirements.length > 0 && <p className="plugin-market-hint">{zh ? '需要本机可运行：' : 'Requires local executables: '}{preview.requirements.join(', ')}</p>}
+      {preview.requirements.length > 0 && <p className="plugin-market-hint">{host.remote ? (zh ? '需要 Agent 主机可运行：' : 'Requires executables on the Agent host: ') : (zh ? '需要本机可运行：' : 'Requires local executables: ')}{preview.requirements.join(', ')}</p>}
       {preview.issues.length > 0 ? <div className="plugin-market-issues" role="status"><strong>{zh ? '当前暂不能完整加载' : 'Not fully supported yet'}</strong><ul>{preview.issues.map((issue, index) => <li key={index}>{issueText(issue.code, zh)}{issue.detail && `：${issue.detail}`}</li>)}</ul></div>
         : !needsConfiguration && <p className="plugin-market-hint">{zh ? '结构检查通过。安装后启用插件；MCP 是否连接成功以运行状态为准。' : 'Structure checks passed. Installation enables the plugin; MCP connection health is shown separately.'}</p>}
       {!!preview.warnings?.length && <div className="plugin-market-notes" role="status"><strong>{zh ? '可安装，使用前需配置' : 'Ready to install; configuration needed before use'}</strong>
@@ -163,9 +167,13 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         <form className="plugin-market-add" onSubmit={event => { event.preventDefault(); void addSource(); }}>
           <input aria-label={zh ? '市场仓库地址' : 'Marketplace repository'} value={sourceInput} onChange={event => setSourceInput(event.currentTarget.value)} placeholder={zh ? 'Git 仓库地址或 owner/repo' : 'Git repository URL or owner/repo'} disabled={Boolean(busy)} />
           <button className="plugin-install-button" type="submit" disabled={Boolean(busy) || !sourceInput.trim()}>{busy === 'source' && <LoaderCircle className="spin" size={15} />}{busy === 'source' ? (zh ? '正在添加…' : 'Adding…') : (zh ? '添加市场' : 'Add marketplace')}</button>
-          <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void addSource(true)}><FolderOpen size={16} />{zh ? '本地市场' : 'Local marketplace'}</button>
+          {!host.remote && <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void addSource(true)}><FolderOpen size={16} />{zh ? '本地市场' : 'Local marketplace'}</button>}
         </form>
-        <p className="plugin-market-hint">{zh ? '支持 HTTP(S)、SSH Git 地址和本地目录。用 owner/repo@ref 或地址#ref 指定分支、标签或提交；Git 认证沿用本机配置。' : 'HTTP(S), SSH Git URLs and local directories. Use owner/repo@ref or URL#ref to pin a branch, tag or commit. Git uses your local authentication.'}</p>
+        {host.remote && <form className="plugin-market-add" onSubmit={event => { event.preventDefault(); void addSource(true); }}>
+          <input aria-label={zh ? 'Agent 主机上的市场目录' : 'Marketplace directory on the Agent host'} value={directoryInput} onChange={event => setDirectoryInput(event.currentTarget.value)} placeholder="/srv/plugins/marketplace" disabled={Boolean(busy)} />
+          <button className="plugin-back" type="submit" disabled={Boolean(busy) || !directoryInput.trim()}><FolderOpen size={16}/>{zh ? '添加主机目录' : 'Add host directory'}</button>
+        </form>}
+        <p className="plugin-market-hint">{host.remote ? (zh ? '支持 HTTP(S)、SSH Git 地址和 Agent 主机目录；Git 认证使用 Agent 主机配置。用 owner/repo@ref 或地址#ref 指定版本。' : 'Supports HTTP(S), SSH Git URLs and directories on the Agent host. Git uses that host’s authentication. Pin a version with owner/repo@ref or URL#ref.') : (zh ? '支持 HTTP(S)、SSH Git 地址和本地目录。用 owner/repo@ref 或地址#ref 指定分支、标签或提交；Git 认证沿用本机配置。' : 'HTTP(S), SSH Git URLs and local directories. Use owner/repo@ref or URL#ref to pin a branch, tag or commit. Git uses your local authentication.')}</p>
       </section>}
       <div className="plugin-market-toolbar"><div className="plugin-market-controls">
         <select aria-label={zh ? '选择插件市场' : 'Select marketplace'} value={sourceId} onChange={event => { setSourceId(event.currentTarget.value); setQuery(''); }} disabled={Boolean(busy)}>
@@ -178,7 +186,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
       {busy && busy !== 'source' && <p className="plugin-market-progress" role="status"><LoaderCircle className="spin" size={16} />{busy.startsWith('preview:') ? (zh ? '正在获取插件并检查兼容性…' : 'Downloading plugin and checking compatibility…') : (zh ? '正在读取市场…' : 'Loading marketplace…')}</p>}
       {catalog && <div className="plugin-section-title"><h3>{catalog.source.builtin ? (zh ? 'CardBush 精选' : 'CardBush featured') : catalog.displayName}</h3><span>{zh ? `${entries.length} 个插件` : `${entries.length} plugins`}</span></div>}
       <div className="plugin-market-grid">
-        {entries.map(entry => <PluginMarketCard key={`${sourceId}:${catalog?.fetchedAt}:${entry.name}`} entry={entry} sourceId={sourceId} busy={Boolean(busy)} zh={zh} onOpen={() => void openPlugin(entry.name)} />)}
+        {bridge && entries.map(entry => <PluginMarketCard bridge={bridge} key={`${sourceId}:${catalog?.fetchedAt}:${entry.name}`} entry={entry} sourceId={sourceId} busy={Boolean(busy)} zh={zh} onOpen={() => void openPlugin(entry.name)} />)}
         {catalog && !entries.length && !busy && <p className="plugin-catalog-empty">{zh ? '没有匹配的插件' : 'No matching plugins'}</p>}
       </div>
     </>}

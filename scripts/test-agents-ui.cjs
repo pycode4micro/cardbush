@@ -23,6 +23,8 @@ app.whenReady().then(async () => {
       import {RightInspectorResizer} from ${JSON.stringify(path.join(root,'src/components/RightInspectorResizer.tsx'))};
       const noop=()=>{};
       function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[viewActive,setViewActive]=useState(true);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:[]});
+        window.refreshAgentConnections=agents.refresh;
+        window.openFixtureSettings=(id,section='mcp')=>setSetting({id,section});
         const open=useCallback((id,title)=>tabs.openTab({id,title,kind:'conversation'}),[tabs.openTab]);const close=useCallback(id=>tabs.closeTabs(new Set([id])),[tabs.closeTabs]);
         return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.tabs.length>0}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button><button onClick={()=>setViewActive(false)}>Local view</button><button onClick={()=>setViewActive(true)}>Agent view</button>{['a1','a2','a3'].map(id=><button key={id} onClick={()=>agents.select('a',id)}>{id}</button>)}</nav>
         <ChatSidebar language="zh" section="agents" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}} agents={agents.connections} activeAgentId={agents.selectedId} agentSessions={agents} onAgentSelect={agents.select} onSectionChange={()=>agents.select('')} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop} onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenPlugins={noop} onOpenSearch={noop}/>
@@ -110,6 +112,18 @@ app.whenReady().then(async () => {
     if (!process.argv.includes('--images')) await run("localStorage.setItem('a:cardbush.permission_mode','user_free');localStorage.setItem('b:cardbush.permission_mode','all_free');undefined;");
     await run(js + '\n;undefined;');
     await until("document.querySelectorAll('.agents-card').length===3",'Agent overview renders');
+    if (process.argv.includes('--marketplace')) {
+      await require('./helpers/agent-marketplace.cjs')({ run, until, pause, win, root });
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.argv.includes('--connection-status')) {
+      await require('./helpers/agent-connection-status.cjs')({ run, until, pause, win, root });
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.argv.includes('--recovery')) {
+      await require('./helpers/agent-connection-recovery.cjs')({ run, until, pause });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.argv.includes('--switching')) {
       await require('./helpers/agent-session-switching.cjs')({ run, until, pause });
       assert.deepEqual(errors, []); return;
@@ -476,9 +490,33 @@ app.whenReady().then(async () => {
       await until("!!document.querySelector('[role=menuitem]')",'remote context menu');
       await run(`[...document.querySelectorAll('[role=menuitem]')].find(b=>b.textContent.includes(${JSON.stringify(label)})).click()`);
     };
-    await remoteMenu('置顶对话'); await until("snapshots.b[0].metadata.pinned===true",'pin persists on B');
+    const hoverSidebar = async selector => {
+      const point = await run(`(() => { const element=document.querySelector(${JSON.stringify(selector)}); element.scrollIntoView({block:'nearest'}); const r=element.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
+      win.webContents.sendInputEvent({type:'mouseMove',...point}); await pause(150); return point;
+    };
+    const clickSidebar = async selector => {
+      const point=await hoverSidebar(selector);
+      win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
+      win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});
+    };
+    win.webContents.sendInputEvent({type:'mouseMove',x:600,y:20}); await pause(150);
+    assert.equal(await run("getComputedStyle(document.querySelector('[data-agent-id=b] .agent-tree-chevron')).opacity"),'0','Agent arrow is hidden at rest');
+    await hoverSidebar('[data-agent-id=b] .agent-sidebar-row');
+    assert.equal(await run("getComputedStyle(document.querySelector('[data-agent-id=b] .agent-tree-chevron')).opacity"),'1','Agent arrow appears on hover');
+    assert.notEqual(await run("getComputedStyle(document.querySelector('[data-agent-id=b] .agent-sidebar-row')).backgroundColor"),'rgba(0, 0, 0, 0)','Agent hover has a background even when its chat is active');
+    assert.ok(await run("(() => { const row=document.querySelector('[data-agent-id=b] .agent-sidebar-row'); return row.querySelector('.row-new-chat').getBoundingClientRect().right<=row.querySelector('.row-archive').getBoundingClientRect().left && row.querySelector('.row-archive').getBoundingClientRect().right<=row.querySelector('.agent-tree-chevron').getBoundingClientRect().left; })()"),'new chat, settings and trailing arrow have separate hit areas');
+    await hoverSidebar('[data-agent-id=b] .remote-conversation');
+    assert.equal(await run("getComputedStyle(document.querySelector('[data-agent-id=b] .agent-tree-chevron')).opacity"),'0','Agent arrow disappears when pointer leaves');
+    assert.equal(await run("getComputedStyle(document.querySelector('[data-agent-id=b] .conversation-pin')).opacity"),'1','remote rows reveal native pin action');
+    assert.equal(await run("getComputedStyle(document.querySelector('[data-agent-id=b] .conversation-archive')).opacity"),'1','remote rows reveal native archive action');
+    assert.equal(await run("!!document.querySelector('[data-agent-id=a] .conversation-pin')"),false,'older services without management do not show inert actions');
+    fs.writeFileSync(path.join(root,'tmp/agent-sidebar-hover.png'),(await win.webContents.capturePage()).toPNG());
+    await clickSidebar('[data-agent-id=b] .conversation-pin'); await until("snapshots.b[0].metadata.pinned===true",'inline pin persists on B');
+    await remoteMenu('取消置顶'); await until("snapshots.b[0].metadata.pinned===false",'context menu shares inline pin state');
+    await remoteMenu('置顶对话'); await until("snapshots.b[0].metadata.pinned===true",'pin remains available from context menu');
     await remoteMenu('标记为未读'); await until("!!document.querySelector('[data-agent-id=b] .conversation-unread-indicator')",'remote unread indicator');
-    await remoteMenu('归档对话'); await until("!document.querySelector('[data-agent-id=b] .remote-conversation')",'archived chat leaves ordinary list');
+    await hoverSidebar('[data-agent-id=b] .remote-conversation');
+    await clickSidebar('[data-agent-id=b] .conversation-archive'); await until("!document.querySelector('[data-agent-id=b] .remote-conversation')",'inline archive removes chat from ordinary list');
     assert.equal(await run("document.querySelector('[data-agent-id=b]').textContent.includes('已归档对话')"),false,'archive collection is absent from the sidebar');
     assert.ok(await run("!!document.querySelector('[data-agent-id=b] .agent-sidebar-empty')"),'an Agent with only archived chats still offers a new conversation');
     await run("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['same-session']));document.querySelector('.agent-manage').click()");

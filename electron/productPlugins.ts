@@ -272,6 +272,18 @@ export async function inspectProductPlugin(source: string): Promise<CardbushPlug
     source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
 }
 
+async function renamePluginDirectory(from: string, to: string) {
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(from, to); return; }
+    catch (error) {
+      // File scanners can briefly hold a newly staged directory on Windows.
+      // Retry only the failed atomic rename, never acquisition or plugin startup.
+      if (attempt >= 4 || !['EBUSY', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      await new Promise(resolve => setTimeout(resolve, 80 * 2 ** attempt));
+    }
+  }
+}
+
 async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string, expectedId?: string) {
   const source = resolve(sourcePath);
   const resolved = await resolvePluginManifest(source);
@@ -307,7 +319,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
     validateRuntimeExtensions(staged);
     if (staged.manifest.name !== id) throw new Error('Plugin manifest name changed during installation. Try again.');
     let movedExisting = false;
-    try { await rename(target, backup); movedExisting = true; }
+    try { await renamePluginDirectory(target, backup); movedExisting = true; }
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'EBUSY' || code === 'EPERM') {
@@ -315,10 +327,10 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
       }
       if (code !== 'ENOENT') throw error;
     }
-    try { await rename(temporary, target); }
+    try { await renamePluginDirectory(temporary, target); }
     catch (error) {
       if (movedExisting) {
-        try { await rename(backup, target); }
+        try { await renamePluginDirectory(backup, target); }
         catch (restoreError) {
           preserveBackup = true;
           throw new AggregateError([error, restoreError], `Plugin update failed; previous plugin retained at ${backup}`);

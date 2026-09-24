@@ -61,6 +61,16 @@ CardBush 将 HTTP 请求和 SSE / NDJSON 事件流直接交给 SSH 通道，连�
 
 当前服务 CLI 从数据目录下的 `bundled/skills` 加载内置技能。需要这些技能时，将源码 `assets/skills` 下对应技能的完整目录安装到这里；用户自定义技能放在数据目录下的 `skills`，更新时不要覆盖。服务不会自动加载源码中的技能或复制桌面端插件。
 
+## 从插件市场安装
+
+在 **设置 → 设置环境** 选择目标 Agent，再进入 **插件 → 市场**，或 **添加 → 从市场安装插件**。市场列表、插件预览、安装、更新、启用和连接配置复用本机界面与安装逻辑；所有下载、文件替换和配置写入均在所选 Agent 上执行。安装后，该 Agent 的技能与工具目录会刷新。桌面端和服务端都需要更新；旧服务会显示更新提示。
+
+可添加 GitHub 简写（例如 `pycode4micro/cardbush-plugins`）、HTTP(S) / SSH Git 仓库地址，或 **Agent 主机上的市场目录**。目录必须是服务器上的绝对路径，Git 认证和依赖命令也使用服务器环境。没有内置插件的 Agent 初始市场为空，可以直接添加来源。安装预览使用固定快照，更新复用插件停服与替换流程；移除市场来源会保留已安装插件。
+
+来源与缓存保存在数据目录的 `plugin-marketplaces`，插件保存在 `plugins`，启用状态保存在 `config`。备份时也应保留市场来源文件 `plugin-marketplaces/sources.json`。每个 Agent 独立保存这些数据。市场下载使用该 Agent 的插件代理设置；无桌面界面的“系统代理”读取服务进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 与 `NO_PROXY` 环境变量，“跟随模型”在服务端沿用该环境。设置直连可显式绕过代理。
+
+客户端通过已有、受访问令牌保护的 `plugins.marketplace` 操作访问市场，支持 `sources`、`add`、`addLocal`、`remove`、`catalog`、`presentation`、`preview` 和 `install`，不需要额外端口。服务通过 `pluginMarketplace` 能力标记声明支持；预览凭证只在生成它的实例内有效。
+
 ## 本机服务与旧连接迁移
 
 本机也先独立启动 HTTP 服务，再添加地址和令牌。每个实例使用独立数据目录和端口：

@@ -5,7 +5,7 @@ const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; delete env.NODE
 // Use a fresh renderer for attachment cases; the main suite mutates model and
 // connection fixtures throughout its settings and recovery scenarios.
 const args = process.argv.slice(2);
-for (const scenario of args.length ? [args] : [[], ['--images'], ['--switching']]) {
+for (const scenario of args.length ? [args] : [[], ['--images'], ['--switching'], ['--recovery'], ['--connection-status'], ['--marketplace']]) {
   const result = spawnSync(process.env.CARDBUSH_TEST_ELECTRON || require('electron'), ['scripts/test-agents-ui.cjs', ...scenario], {
     env, windowsHide: true, stdio: 'inherit', timeout: 90_000,
   });

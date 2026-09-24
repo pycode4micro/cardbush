@@ -410,7 +410,7 @@ export function PluginManagementPanel({
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
   </div>;
   if (!host.remote && page.kind === 'accounts') return <AccountsPanel language={language} onBack={back}/>;
-  if (!host.remote && page.kind === 'marketplace') {
+  if (page.kind === 'marketplace') {
     return <><PluginMarketplacePanel language={language}
       onOpenNetwork={() => setMarketProxyOpen(true)}
       onBack={back}
@@ -515,7 +515,7 @@ export function PluginManagementPanel({
           <button className={tab === 'skills' ? 'active' : ''} type="button" onClick={() => setTab('skills')}>
             {language === 'zh' ? '技能' : 'Skills'}
           </button>
-          {!host.remote && <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>}
+          <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>
           {!host.remote && <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{language === 'zh' ? '账号' : 'Accounts'}</button>}
         </div>
         {tab !== 'accounts' && <div className="plugin-hub-actions">
@@ -535,14 +535,14 @@ export function PluginManagementPanel({
             </button>
             {addOpen && (
               <div className="plugin-add-menu">
-                {!host.remote && <><button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
+                <button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
                   <Store size={15} /><span><strong>{language === 'zh' ? '从市场安装插件' : 'Install from marketplace'}</strong><small>{language === 'zh' ? '浏览 GitHub 和本地插件市场' : 'Browse GitHub and local plugin marketplaces'}</small></span>
                 </button>
-                <button type="button" onClick={() => void installLocal('zip')}>
+                {!host.remote && <button type="button" onClick={() => void installLocal('zip')}>
                   <FileArchive size={15} />
                   <span><strong>{language === 'zh' ? '从 ZIP 安装插件' : 'Install from ZIP'}</strong><small>{language === 'zh' ? '直接导入插件压缩包' : 'Import a plugin archive'}</small></span>
-                </button>
-                </>}<button type="button" onClick={() => void installLocal('directory')}>
+                </button>}
+                <button type="button" onClick={() => void installLocal('directory')}>
                   <FolderOpen size={15} />
                   <span><strong>{language === 'zh' ? '从文件夹安装插件' : 'Install from folder'}</strong><small>{language === 'zh' ? '选择解压后的插件目录' : 'Choose an unpacked plugin'}</small></span>
                 </button>

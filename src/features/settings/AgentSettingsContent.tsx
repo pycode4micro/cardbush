@@ -29,6 +29,7 @@ export function AgentSettingsContent({ connection, section, language, settings, 
   const call = useCallback<AgentCall>(async (operation, input) => {
     const result = await window.cardbushDesktop!.agents!.call(connection.id, operation, input);
     if (['instructions.save', 'plugins.install', 'plugins.uninstall', 'plugins.connections.save', 'mcp.configure', 'mcp.remove', 'projects.save', 'projects.default', 'projects.remove'].includes(operation)
+      || (operation === 'plugins.marketplace' && input?.action === 'install')
       || (operation === 'product.command' && /\.update$|^maintenance\./.test(String(input?.kind)))) {
       window.dispatchEvent(new CustomEvent('cardbush:agent-settings-updated', { detail: connection.id }));
     }
@@ -39,7 +40,7 @@ export function AgentSettingsContent({ connection, section, language, settings, 
     void window.cardbushDesktop!.agents!.connect(connection.id).then(value => { if (alive) setInfo(value); }, error => { if (alive) setError(agentErrorText(error)); });
     return () => { alive = false; };
   }, [connection.id, retry]);
-  const host = useMemo(() => createAgentSettingsHost(call, info?.capabilities.sharedSettings === true), [call, info]);
+  const host = useMemo(() => createAgentSettingsHost(call, info?.capabilities.sharedSettings === true, info?.capabilities.pluginMarketplace === true), [call, info]);
   const instructions = useMemo<InstructionsSource>(() => ({ read: () => call('instructions.get'), save: (content, revision) => call('instructions.save', { content, revision }) }), [call]);
   const [preferences, setPreferences] = useAgentChatPreferences(connection.id, '');
   const reloadSkills = useCallback(async () => (await call<{ skills: SkillSummary[] }>('conversation.catalog')).skills.map(skill => ({ ...skill, logoPath: undefined, logoDarkPath: undefined })), [call]);

@@ -6,6 +6,7 @@ import { runtimeSessionReadRequestSchema } from '@cardbush/bush-protocol';
 import { createProductAgentTurnRequest, GOAL_CONTINUATION_PROMPT } from '@cardbush/bush-product-agent';
 import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, sessionSupersessionSchema, reasoningEffortSchema, decodeSessionSnapshot, type SessionSnapshot, type RuntimeEvent, type RuntimeProviderBindingRef, type ConversationExtractSource, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AgentRuntimeHost } from './agentRuntimeHost.mjs';
+import { AgentPluginMarketplaces } from './agentPluginMarketplaces.mjs';
 import { SandboxSetup } from './sandboxSetup.mjs';
 import { ElectronProductHostController } from './productHostController.mjs';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions.js';
@@ -37,6 +38,7 @@ export class AgentService {
   readonly runtime: AgentRuntimeHost;
   readonly product: ElectronProductHostController;
   readonly instructions: GlobalInstructionsStore;
+  readonly #marketplaces: AgentPluginMarketplaces;
   #state: AgentState;
   #writes: Promise<unknown> = Promise.resolve();
   #mutations: Promise<unknown> = Promise.resolve();
@@ -84,7 +86,9 @@ export class AgentService {
       dataRoot: root, runtimeStateRoot: runtimeRoot, runtimeBridge: this.runtime,
       bundledSkillRoot: join(bundled, 'skills'), userSkillRoot: join(root, 'skills'),
       bundledPluginRoot: join(bundled, 'plugins'), userPluginRoot: join(root, 'plugins'),
+      clearApplicationCaches: () => this.#marketplaces.collectCache(),
     });
+    this.#marketplaces = new AgentPluginMarketplaces(root, bundled, (pluginId, replace) => this.product.replacePlugin(pluginId, replace), env);
   }
 
   static async open(options: { dataRoot: string; name?: string; env?: NodeJS.ProcessEnv; bundledRoot?: string }) {
@@ -131,7 +135,7 @@ export class AgentService {
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
-    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sandboxSettings: true } }; }
+    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sandboxSettings: true, pluginMarketplace: true } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -201,6 +205,11 @@ export class AgentService {
         return operation === 'files.read' ? agentFileRead(workspace.workspaceDir, data) : agentFileUpload(workspace.workspaceDir, data);
       }
       case 'info': return this.info();
+      case 'plugins.marketplace': {
+        const result = await this.#marketplaces.call(data);
+        if (data.action === 'install') await this.product.refreshMcp();
+        return result;
+      }
       case 'projects.list': return { revision: this.#state.revision, projects: this.#state.projects, defaultProjectId: this.#state.defaultProjectId };
       case 'projects.save': {
         const path = z.string().min(1).parse(data.path);
@@ -536,6 +545,7 @@ export class AgentService {
   async close() {
     if (this.#closing) return; this.#closing = true;
     await this.#mutations;
+    await this.#marketplaces.close();
     for (const abort of this.#busy.values()) abort.abort();
     await this.runtime.close();
     if (this.#extracts) (await this.#extracts).close();

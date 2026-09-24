@@ -1,17 +1,19 @@
 import { ChevronRight, Store } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { PluginMarketEntry, PluginMarketPresentation } from '../../../electron/pluginMarketplaceTypes';
+import type { PluginMarketplaceApi } from './pluginMarketplaceApi';
 
 let active = 0;
 const waiting: Array<() => void> = [];
-async function loadPresentation(source: string, name: string) {
+async function loadPresentation(bridge: PluginMarketplaceApi, source: string, name: string) {
   if (active >= 6) await new Promise<void>(resolve => waiting.push(resolve));
   active++;
-  try { return await window.cardbushDesktop?.pluginMarketPresentation?.(source, name); }
+  try { return await bridge.pluginMarketPresentation(source, name); }
   finally { active--; waiting.shift()?.(); }
 }
 
-export function PluginMarketCard({ entry, sourceId, busy, zh, onOpen }: {
+export function PluginMarketCard({ bridge, entry, sourceId, busy, zh, onOpen }: {
+  bridge: PluginMarketplaceApi;
   entry: PluginMarketEntry; sourceId: string; busy: boolean; zh: boolean; onOpen: () => void;
 }) {
   const element = useRef<HTMLElement>(null);
@@ -24,11 +26,11 @@ export function PluginMarketCard({ entry, sourceId, busy, zh, onOpen }: {
     const observer = new IntersectionObserver(entries => {
       if (!entries.some(item => item.isIntersecting)) return;
       observer.disconnect();
-      void loadPresentation(sourceId, entry.name).then(value => { if (!disposed) setMetadata(value); }).catch(() => undefined);
+      void loadPresentation(bridge, sourceId, entry.name).then(value => { if (!disposed) setMetadata(value); }).catch(() => undefined);
     }, { rootMargin: '200px' });
     if (element.current) observer.observe(element.current);
     return () => { disposed = true; observer.disconnect(); };
-  }, [sourceId, entry.name]);
+  }, [bridge, sourceId, entry.name]);
   const logo = metadata?.logo || metadata?.logoDark;
   const darkLogo = metadata?.logoDark && metadata.logoDark !== logo && !darkFailed ? metadata.logoDark : '';
   return <article ref={element}><button className="plugin-featured-main" type="button" disabled={busy || !entry.available} onClick={onOpen}>

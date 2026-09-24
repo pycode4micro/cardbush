@@ -6,15 +6,15 @@ const path = require('node:path');
 module.exports = async function testQuickContextLayout({ run, until, pause, window, root }) {
   await window.webContents.insertCSS(
     fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8') + '\n' + [
-      'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; }',
+      'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; --chat-track-width: 780px; --chat-inline-gutter: 46px; }',
       'body[data-context-layout-test] .chat-panel { position: absolute; left: var(--test-chat-left); top: 30px; width: var(--test-chat-width); height: calc(100% - 30px); min-width: 0; }',
       '.context-layout-inspector { position: fixed; top: 30px; bottom: 0; left: calc(var(--test-chat-left) + var(--test-chat-width)); right: 0; z-index: 9; padding: 30px; background: #252a2e; color: #b9c0c5; font-size: 18px; border-left: 1px solid #666; }',
     ].join('\n'),
   );
   await run(`
     document.body.dataset.contextLayoutTest = '';
-    document.body.style.setProperty('--test-chat-left', '256px');
-    document.body.style.setProperty('--test-chat-width', '440px');
+    document.body.style.setProperty('--test-chat-left', '120px');
+    document.body.style.setProperty('--test-chat-width', '960px');
     const contextMessages = Array.from({ length: 65 }, (_, index) => [
       { id: 'context-user-' + index, role: 'user', turnId: 'context-turn-' + index, createdAt: '2026-09-05T00:00:00Z',
         content: '检查项目缺口与截图问题，这是第 ' + (index + 1) + ' 轮请求。' + 'very-long-unbroken-filename-'.repeat(8) },
@@ -73,17 +73,31 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   };
 
   for (const [width, height, chatWidth, left] of [
+    [1200, 800, 960, 120],
+    [1200, 800, 959, 120],
     [1200, 800, 440, 256],
     [980, 700, 330, 256],
     [780, 500, 300, 120],
     [1200, 800, 820, 10],
-    [1200, 800, 440, 256],
+    [1200, 800, 1160, 10],
   ]) {
     window.setContentSize(width, height);
     await run("document.body.style.setProperty('--test-chat-width', '" + chatWidth + "px'); document.body.style.setProperty('--test-chat-left', '" + left + "px')");
-    await assertFits('viewport ' + width + ' / pane ' + chatWidth);
+    if (chatWidth < 960) {
+      await until("getComputedStyle(document.querySelector('.quick-context-handle')).display === 'none'", 'narrow conversation hides rail');
+      assert.equal(await run("document.querySelector('.quick-context-panel').getClientRects().length"), 0, 'narrow conversation also hides the open preview');
+      assert.equal(await run("document.querySelector('.quick-context-tick').getClientRects().length"), 0, 'hidden ticks cannot overlap or intercept the transcript');
+    } else {
+      await until("getComputedStyle(document.querySelector('.quick-context-handle')).display !== 'none'", 'wide conversation restores rail');
+      assert.ok(await run("document.querySelector('.quick-context-handle').getBoundingClientRect().right + 8 <= document.querySelector('.message-row').getBoundingClientRect().left"), 'rail hit area stays clear of message text');
+      await assertFits('viewport ' + width + ' / pane ' + chatWidth);
+    }
     assert.equal(await run("retainedContextPanel === document.querySelector('.quick-context-panel')"), true, 'resize must not remount or clear the selected turn');
   }
+  await run("window.contextPanelClasses = document.querySelector('.chat-panel').className; document.querySelector('.chat-panel').classList.add('work-summary-docked', 'work-summary-visible'); undefined;");
+  await until("getComputedStyle(document.querySelector('.quick-context-handle')).display === 'none'", 'docked summary reduces the usable conversation width');
+  await run("document.querySelector('.chat-panel').className = contextPanelClasses; undefined;");
+  await until("getComputedStyle(document.querySelector('.quick-context-handle')).display !== 'none'", 'closing summary restores rail without a window resize');
   assert.ok(await run("document.querySelector('.quick-context-turn').scrollHeight > document.querySelector('.quick-context-turn').clientHeight"), 'long preview scrolls internally');
   // The main transcript restores its reading anchor with a smooth scroll after resize.
   await pause(1200);

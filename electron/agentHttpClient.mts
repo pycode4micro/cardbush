@@ -92,7 +92,7 @@ export class AgentHttpClient {
     this.#agentId = info.id; return info;
   }
   async call(operation: AgentOperation, input: Record<string, unknown>) {
-    const timeout = operation === 'product.command' && input.kind === 'sandbox.install' ? 300_000 : 60_000;
+    const timeout = operation === 'plugins.marketplace' || (operation === 'product.command' && input.kind === 'sandbox.install') ? 300_000 : 60_000;
     const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, AbortSignal.timeout(timeout));
     const data = await response.json() as { result: unknown }; return data.result;
   }

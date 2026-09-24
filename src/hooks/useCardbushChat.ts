@@ -1500,8 +1500,24 @@ export function useCardbushChat(
     if (!backend.watchSession || !activeConversationId || requestContext.viewActive === false || requestContext.runtimeReady === false) return;
     let alive = true, revision: string | undefined, reading = false;
     const sessionId = activeConversationId;
+    let watchFailure: RuntimeConnectionUpdate | undefined;
+    const clearWatchFailure = () => {
+      const recovered = watchFailure;
+      watchFailure = undefined;
+      if (!recovered) return;
+      setConnectionRecoveryByConversation(current => {
+        // Status polling cannot prove that a separate provider/event stream has
+        // recovered. Only dismiss the notice published by this watcher.
+        if (current[sessionId] !== recovered) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+    };
     const stop = backend.watchSession(sessionId, state => {
       if (!alive) return;
+      // Idle/completed sessions may never change revision or emit another event.
+      clearWatchFailure();
       queuedMessagesRef.current = state.queued;
       setQueuedMessages(current => JSON.stringify(current) === JSON.stringify(state.queued) ? current : state.queued);
       if (reading) return;
@@ -1516,9 +1532,16 @@ export function useCardbushChat(
         revision = state.revision;
         if (state.activeTurnId) subscribeGoalTurn(sessionId, state.activeTurnId);
       })().catch(caught => { if (alive) setError(errorMessage(caught)); }).finally(() => { reading = false; });
-    }, caught => { if (alive) setConnectionRecoveryByConversation(current => ({ ...current,
-      [sessionId]: { state: 'retrying', source: 'network', sessionId, message: errorMessage(caught), createdAt: new Date().toISOString() } })); });
-    return () => { alive = false; stop(); };
+    }, caught => {
+      if (!alive) return;
+      const failure: RuntimeConnectionUpdate = {
+        state: 'retrying', source: 'network', sessionId,
+        message: errorMessage(caught), createdAt: new Date().toISOString(),
+      };
+      watchFailure = failure;
+      setConnectionRecoveryByConversation(current => ({ ...current, [sessionId]: failure }));
+    });
+    return () => { alive = false; stop(); clearWatchFailure(); };
   }, [backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, refreshActiveSession, subscribeGoalTurn]);
 
   // Notifications can arrive while the previous read is in flight, or after a

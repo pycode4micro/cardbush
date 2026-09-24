@@ -51,6 +51,29 @@ try {
   });
   assert.equal(prepared, 1);
   fs.rename=originalRename;
+  let transientLocks = 2, commitAttempts = 0;
+  fs.rename = async (from, to) => {
+    if (resolve(to) === resolve(target) && String(from).includes(`${sep}staged${sep}`)) {
+      commitAttempts++;
+      if (transientLocks-- > 0) throw Object.assign(new Error('Temporary scanner lock'), { code: 'EPERM' });
+    }
+    return originalRename(from, to);
+  };
+  await installProductPlugin(source, installedRoot);
+  assert.equal(commitAttempts, 3, 'transient rename locks retry only the atomic commit');
+  assert.equal(await fs.readFile(join(target, 'payload.txt'), 'utf8'), 'new');
+  let lockedAttempts = 0;
+  fs.rename = async (from, to) => {
+    if (resolve(to) === resolve(target) && String(from).includes(`${sep}staged${sep}`)) {
+      lockedAttempts++;
+      throw Object.assign(new Error('Persistent scanner lock'), { code: 'EPERM' });
+    }
+    return originalRename(from, to);
+  };
+  await assert.rejects(installProductPlugin(source, installedRoot), /Persistent scanner lock/);
+  assert.equal(lockedAttempts, 5, 'persistent locks have a bounded retry budget');
+  assert.equal(await fs.readFile(join(target, 'payload.txt'), 'utf8'), 'new', 'persistent lock rolls back to the previous plugin');
+  fs.rename = originalRename;
   const originalManifest = await fs.readFile(join(source, '.codex-plugin', 'plugin.json'), 'utf8');
   await assert.rejects(installProductPlugin(source, installedRoot, async (_id, replace) => {
     await fs.writeFile(join(source, '.codex-plugin', 'plugin.json'), JSON.stringify({ ...JSON.parse(originalManifest), name: 'other-plugin' }));

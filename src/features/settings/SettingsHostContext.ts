@@ -1,9 +1,11 @@
 import { createContext, useContext } from 'react';
 import * as api from '../../backend/api';
+import { localPluginMarketplace, type PluginMarketplaceApi } from '../plugins/pluginMarketplaceApi';
 type Desktop = NonNullable<Window['cardbushDesktop']>;
 export const localSettingsHost = {
   remote: false,
   supportsPluginConnections: true,
+  get marketplace(): PluginMarketplaceApi | undefined { return window.cardbushDesktop?.pluginMarketSources ? localPluginMarketplace : undefined; },
   fetchSandboxSetup: api.fetchSandboxSetup,
   installSandbox: api.installSandbox,
   updateSandbox: api.updateSandbox,

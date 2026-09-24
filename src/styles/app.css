@@ -987,13 +987,24 @@ body.sidebar-resizing .right-inspector {
 
 .sidebar-agent-list { margin-bottom: 14px; }
 .agent-sidebar-row.active { background: color-mix(in srgb, gray 16%, transparent); }
-.agent-sidebar-group:has(.conversation-row.active) .agent-sidebar-row.active { background: transparent; }
-.agent-tree-chevron { flex: 0 0 14px; color: var(--sidebar-text-soft, var(--text-soft)); transition: transform 120ms ease; }
+.agent-sidebar-group:has(.conversation-row.active) .agent-sidebar-row.active:not(:hover):not(:focus-visible):not(:has(:focus-visible)) { background: transparent; }
+.agent-tree-chevron {
+  position: absolute;
+  right: 7px;
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
+  color: var(--sidebar-text-soft, var(--text-soft));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 120ms ease, opacity 100ms ease;
+}
+.agent-sidebar-row:is(:hover, :focus-visible, :has(:focus-visible)) .agent-tree-chevron { opacity: 1; }
 .agent-tree-chevron.expanded { transform: rotate(90deg); }
 .agent-sidebar-notice { padding: 8px 12px 8px var(--sidebar-tree-child); font-size: 11px; color: var(--text-soft); overflow-wrap: anywhere; }
 .agent-sidebar-notice button { display: block; margin-top: 5px; color: var(--text-mid); background: transparent; }
 .agent-sidebar-empty { width: 100%; color: var(--text-soft); font: inherit; text-align: left; }
-.conversation-row.remote-conversation { --conversation-title-hover-actions: 0px; }
+.conversation-row.without-quick-actions { --conversation-title-hover-actions: 0px; }
 
 .project-row {
   position: relative;
@@ -1014,9 +1025,13 @@ body.sidebar-resizing .right-inspector {
   border-radius: 6px;
 }
 
-.project-row:hover {
-  background: transparent;
+.project-row:is(:hover, :focus-visible, :has(:focus-visible)) {
+  background: color-mix(in srgb, gray 12%, transparent);
 }
+
+.project-row.agent-sidebar-row { padding-right: 70px; }
+.agent-sidebar-row .row-new-chat { right: 47px; }
+.agent-sidebar-row .row-archive { right: 25px; }
 
 .project-title {
   flex: 1;
@@ -1369,8 +1384,8 @@ body.sidebar-resizing .right-inspector {
   }
 }
 
-.conversation-row:hover {
-  background: transparent;
+.conversation-row:is(:hover, :focus-visible, :has(:focus-visible)) {
+  background: color-mix(in srgb, gray 12%, transparent);
 }
 
 .conversation-row.active:hover {
@@ -3764,15 +3779,19 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .quick-context-rail {
+  /* Measure the reading pane, including space taken by a docked summary.
+     Containment stays on the rail so other overlays keep their sizing origin. */
+  container: quick-context / inline-size;
   position: absolute;
   left: 10px;
-  right: 10px;
+  right: calc(10px + var(--work-summary-content-inset, 0px));
   top: 24px;
   bottom: 24px;
   z-index: 7;
   min-width: 0;
   min-height: 0;
   pointer-events: none;
+  transition: --work-summary-content-inset var(--panel-motion-duration) var(--panel-motion-ease);
 }
 
 .quick-context-handle {
@@ -3870,6 +3889,15 @@ body.right-inspector-resizing .right-inspector-resizer {
   min-width: 0;
   min-height: 0;
   pointer-events: none;
+}
+
+/* 960px of usable conversation width, minus the rail's two 10px insets.
+   Keep the entire 44px hit target clear of the centered 780px reading column. */
+@container quick-context (width < 940px) {
+  .quick-context-handle,
+  .quick-context-popovers {
+    display: none;
+  }
 }
 
 .quick-context-panel {
@@ -9198,6 +9226,7 @@ body.queue-reordering * {
   width: min(336px, calc(100% - var(--work-summary-anchor-right, 12px) - 12px));
 }
 
+.chat-panel.work-summary-docked.work-summary-visible .quick-context-rail,
 .chat-panel.work-summary-docked.work-summary-visible .chat-content-frame {
   --work-summary-content-inset: calc(336px + var(--work-summary-anchor-right, 12px) + 12px);
 }

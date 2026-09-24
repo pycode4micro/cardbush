@@ -7,6 +7,7 @@ import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useAgentChatPreferences } from './agentChatPreferences';
 import './agents.css';
 import { AgentConnectionForm } from './AgentConnectionForm';
+import { AgentConnectionStatus } from './AgentConnectionStatus';
 import type { AgentConnectionsController } from './useAgentConnections';
 import { TopBar } from '../../components/TopBar';
 import { ChatPanel } from '../chat/ChatPanel';
@@ -58,7 +59,13 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
     let alive = true; setError('');
     if (!active || !selectedId) { setConnecting(false); return; }
     setConnecting(true);
-    void api().connect(selectedId).then(info => { if (alive) { setConnectedHosts(current => ({ ...current, [selectedId]: info })); void onRefresh(); } }, error => { if (alive) setError(errorText(error)); })
+    void api().connect(selectedId).then(info => { if (alive) { setConnectedHosts(current => ({ ...current, [selectedId]: info })); void onRefresh(); } }, async error => {
+      // Read the manager's retry/terminal state before presenting the failure.
+      // Otherwise a transient SSH timeout flashes an alert until the next poll.
+      if (!alive) return;
+      await onRefresh();
+      if (alive) setError(errorText(error));
+    })
       .finally(() => { if (alive) setConnecting(false); });
     return () => { alive = false; }; // Leaving this view does not disconnect or stop remote work.
   }, [active, selectedId, reconnect, onRefresh]);
@@ -72,9 +79,9 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
     {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。项目、模型、插件和历史记录由各个 Agent 分别管理。' : 'Chat directly after connecting. Each Agent owns its projects, models, plugins and history.'}</p>
       <div className="agents-cards">{connections.map(item => <button key={item.id} className="agents-card" onClick={() => onSelect(item.id)}><Server size={24}/><strong>{item.name}</strong><span>{item.migrationIssue || (item.sshTunnel ? `${zh ? 'SSH 直连 · 服务器端口' : 'SSH direct · Server port'} ${item.sshTunnel.remotePort}` : item.url)}</span></button>)}
       <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{zh ? '添加连接' : 'Add connection'}</strong><span>SSH / HTTP / HTTPS</span></button></div></div>}
-    {connecting && !info && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
-    {!error && selected?.connectionState === 'reconnecting' && <div className="agents-error" role="status">{zh ? '正在自动重连：' : 'Reconnecting: '}{selected.connectionError}<button onClick={() => setEditing(selected)}>{zh ? '连接设置' : 'Connection settings'}</button></div>}
-    {error && <div className="agents-error" role="alert">{selected?.connectionState === 'reconnecting' ? (zh ? '正在自动重连：' : 'Reconnecting: ') + (selected.connectionError || error) : error}{selected && <button onClick={() => setEditing(selected)}>{zh ? '连接设置' : 'Connection settings'}</button>}<button onClick={() => setReconnect(value => value + 1)}>{zh ? '重试' : 'Retry'}</button></div>}
+    {connecting && !info && selected?.connectionState !== 'reconnecting' && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
+    {selected && <AgentConnectionStatus key={selected.id} connection={selected} language={language} error={error} pending={connecting} retained={Boolean(info)}
+      onEdit={() => setEditing(selected)} onRetry={() => setReconnect(value => value + 1)}/>}
     {connections.filter(item => connectedHosts[item.id]).map(connection => <AgentWorkspace {...appearance} key={connection.id}
       active={active && connection.id === selectedId} connection={connection} info={connectedHosts[connection.id]} language={language} agents={agents}
       onReconnect={() => { void api().disconnect(connection.id).then(() => setReconnect(value => value + 1)).catch(error => setError(errorText(error))); }}
@@ -99,6 +106,16 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   const visualInputAvailable = info.capabilities.sharedConversation === true;
   const [projects, setProjects] = useState<Projects>({ projects: [], defaultProjectId: null });
   const [error, setError] = useState('');
+  const wasReconnecting = useRef(false);
+  const [recoveryRevision, setRecoveryRevision] = useState(0);
+  useEffect(() => {
+    if (connection.connectionState === 'reconnecting') wasReconnecting.current = true;
+    else if (connection.connected && wasReconnecting.current) {
+      wasReconnecting.current = false;
+      setRecoveryRevision(current => current + 1);
+      window.dispatchEvent(new CustomEvent('cardbush:agent-connection-restored', { detail: connection.id }));
+    }
+  }, [connection.id, connection.connectionState, connection.connected]);
   const creating = agents.sessionsByAgent[connection.id]?.creating;
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -108,7 +125,7 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
     setError('');
   }, [call, connection.id, refreshSessions]);
   const refreshConversationList = useCallback(() => refreshSessions(connection.id), [connection.id, refreshSessions]);
-  useEffect(() => { let alive = true; void refresh().catch(error => { if (alive) setError(errorText(error)); }); return () => { alive = false; }; }, [refresh]);
+  useEffect(() => { let alive = true; void refresh().catch(error => { if (alive) setError(errorText(error)); }); return () => { alive = false; }; }, [refresh, recoveryRevision]);
   useEffect(() => {
     const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === connection.id) void refresh().catch(error => setError(errorText(error))); };
     window.addEventListener('cardbush:agent-settings-updated', updated);
@@ -125,7 +142,7 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
     </div>;
   return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
-    {active && error && <div className="agents-error" role="alert">{error}</div>}
+    {active && error && connection.connectionState !== 'reconnecting' && <div className="agents-error" role="alert">{error}</div>}
     <AgentChat {...appearance} active={active && Boolean(sessionId)} title={title} headerActions={headerActions} onCreate={() => void create()} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} chatPreferences={chatPreferences} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.(connection.id, 'models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>
     {active && !sessionId && <div className="agents-empty"><h2>{zh ? '有什么可以帮你？' : 'How can I help?'}</h2><p>{zh ? `与 ${connection.name} 开始新对话，或从左侧选择会话。` : `Start a chat with ${connection.name}, or select one in the sidebar.`}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{zh ? '开始对话' : 'Start chat'}</button></div>}
   </div>;
@@ -173,7 +190,14 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
       if (detail?.connectionId === connectionId && detail.sessionId === sessionId) void chat.refreshActiveSession({ silent: true }).catch(() => {});
     };
     window.addEventListener('cardbush:agent-session-updated', refresh);
-    return () => window.removeEventListener('cardbush:agent-session-updated', refresh);
+    const restored = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === connectionId && sessionId) void chat.refreshActiveSession({ silent: true }).catch(() => {});
+    };
+    window.addEventListener('cardbush:agent-connection-restored', restored);
+    return () => {
+      window.removeEventListener('cardbush:agent-session-updated', refresh);
+      window.removeEventListener('cardbush:agent-connection-restored', restored);
+    };
   }, [connectionId, sessionId, chat.refreshActiveSession]);
   const selectedModel = models.models.find(model => model.id === chat.selectedModel);
   const maxContextTokens = selectedModel?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;

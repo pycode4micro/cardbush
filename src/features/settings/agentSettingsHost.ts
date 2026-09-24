@@ -7,7 +7,7 @@ import type { AgentCall } from '../agents/agentConversationBackend';
 import type { SettingsHost } from './SettingsHostContext';
 
 type McpState = { configuration: { revision: number; servers: McpServerConfig[] }; runtime: McpSnapshotResult | null; runtimeError?: string };
-export function createAgentSettingsHost(call: AgentCall, supportsSharedSettings: boolean): SettingsHost {
+export function createAgentSettingsHost(call: AgentCall, supportsSharedSettings: boolean, supportsMarketplace = false): SettingsHost {
   const configuration = (value: Record<string, unknown>) => {
     const result = cardbushAppsConfigurationFromPayload(value);
     // Server filesystem paths are not local image URLs.
@@ -48,6 +48,16 @@ export function createAgentSettingsHost(call: AgentCall, supportsSharedSettings:
   return {
     remote: true,
     supportsPluginConnections: supportsSharedSettings,
+    marketplace: supportsMarketplace ? {
+      pluginMarketSources: () => call('plugins.marketplace', { action: 'sources' }),
+      pluginMarketCatalog: (sourceId, refresh) => call('plugins.marketplace', { action: 'catalog', sourceId, refresh }),
+      addPluginMarket: source => call('plugins.marketplace', { action: 'add', source }),
+      addLocalPluginMarket: directory => call('plugins.marketplace', { action: 'addLocal', directory }),
+      removePluginMarket: sourceId => call('plugins.marketplace', { action: 'remove', sourceId }),
+      previewMarketPlugin: (sourceId, name) => call('plugins.marketplace', { action: 'preview', sourceId, name }),
+      installMarketPlugin: token => call('plugins.marketplace', { action: 'install', token }),
+      pluginMarketPresentation: (sourceId, name) => call('plugins.marketplace', { action: 'presentation', sourceId, name }),
+    } : undefined,
     fetchSandboxSetup: () => call('product.command', { kind: 'sandbox.get' }),
     installSandbox: () => call('product.command', { kind: 'sandbox.install', confirm: true }),
     updateSandbox: enabled => call('product.command', { kind: 'sandbox.update', enabled }),
