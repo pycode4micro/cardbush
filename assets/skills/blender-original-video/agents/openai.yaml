@@ -1,0 +1,4 @@
+interface:
+  display_name: "Blender 原创视频预演"
+  short_description: "用语言设计空间、走位和镜头，先做可编辑预演，再生成并检查成片"
+  default_prompt: "请使用 $blender-original-video，把我的创意做成可编辑的 Blender 动态预演，再按我的授权生成最终视频。"
