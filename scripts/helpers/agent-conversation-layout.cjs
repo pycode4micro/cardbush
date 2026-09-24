@@ -3,6 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async function testAgentConversationLayout({ run, until, pause, win, root }) {
+  // The shared rail intentionally hides below a 940px reading pane. Measure its
+  // complete tick list at a supported width before exercising narrow layouts.
+  win.setSize(1420, 860);
   await run(`window.layoutBaseSnapshot = structuredClone(snapshots.b[0]);
     const history = Array.from({length: 24}, (_, index) => ({
       turnId: 'history-' + index, turnSequence: index + 1, status: 'completed', reason: 'done',

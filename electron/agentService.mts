@@ -397,7 +397,8 @@ export class AgentService {
         const kind = z.string().regex(/^(runtime|plugin)\./).parse(data.kind);
         // Execution always enters the service queue, not a transport-owned promise.
         if (/^runtime\.(run_|resume_|shutdown|upsert_provider|remove_provider|apply_mcp|prepare_plugin)/.test(kind)) throw new Error('Use the Agent service operation for this command.');
-        if (/delete_session|clear_sessions|switch_workspace|collect_cache|(?:revert|restore|update)_workspace/.test(kind)) this.#idle();
+        if (kind === 'runtime.delete_session') this.#idle(id.parse((data.payload as Record<string, unknown>)?.sessionId));
+        else if (/clear_sessions|switch_workspace|collect_cache|(?:revert|restore|update)_workspace/.test(kind)) this.#idle();
         return this.#command(kind, data.payload ?? {});
       }
       case 'product.command': if (String(data.kind).startsWith('maintenance.')) this.#idle(); return this.#product(data);
@@ -485,7 +486,8 @@ export class AgentService {
           if (signal.aborted || state.jobs.some(item => item.sessionId === job.sessionId && item.status === 'queued' && !item.guidance)) return;
           state.jobs.push({
             id: requestId, sessionId: job.sessionId, turnId: `turn-${randomUUID()}`, createdAt: new Date().toISOString(), status: 'queued', goalContinuation: true,
-            input: { ...job.input, requestId, text: GOAL_CONTINUATION_PROMPT, goalObjective: undefined, supersession: undefined, turnId: undefined, files: undefined, images: undefined, userMessageMetadata: undefined },
+            input: { ...job.input, requestId, text: GOAL_CONTINUATION_PROMPT, goalObjective: undefined, supersession: undefined, turnId: undefined, files: undefined, images: undefined,
+              userMessageMetadata: job.input.userMessageMetadata?.userTimeZone ? { userTimeZone: job.input.userMessageMetadata.userTimeZone } : undefined },
           });
         });
       }

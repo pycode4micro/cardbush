@@ -1,9 +1,9 @@
 .mcp-app-anchor { min-width: 0; }
-.mcp-app-panel { position: relative; box-sizing: border-box; width: 100%; max-width: none; max-height: none; margin: 0; padding: 0; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); }
-.mcp-app-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.mcp-app-panel { position: relative; box-sizing: border-box; width: 100%; max-width: none; max-height: none; margin: 0; padding: 0; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); }
+.mcp-app-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 40px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
 .mcp-app-panel.unframed:not(.fullscreen) { border-color: transparent; background: transparent; border-radius: 0; }
 .mcp-app-panel.unframed:not(.fullscreen) > .mcp-app-heading { border-bottom-color: transparent; }
-.mcp-app-title { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-mid); }
+.mcp-app-title { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text); }
 .mcp-app-title > svg { flex-shrink: 0; color: var(--text-soft); }
 .mcp-app-title strong { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-app-actions { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
@@ -31,6 +31,13 @@
 .mcp-app-error pre { margin: 8px 0 0; max-height: 120px; overflow: auto; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mcp-app-error > button { flex-shrink: 0; background: var(--surface-raised); }
 .mcp-app-panel.fullscreen { position: fixed; inset: 24px; width: auto; height: auto; display: flex; flex-direction: column; box-shadow: 0 10px 50px #0008; }
+.mcp-app-panel.reference-view { inset: max(24px, 5vh) max(24px, calc((100vw - 1120px) / 2)); }
+.message-app-reference { display: inline-flex; align-items: center; vertical-align: baseline; gap: 5px; max-width: 100%; margin: 0 2px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: .94em; line-height: 1.5; cursor: pointer; }
+.message-app-reference > svg { flex-shrink: 0; }
+.message-app-reference > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-app-reference:hover:not(:disabled) { background: var(--surface-raised); border-color: var(--text-soft); }
+.message-app-reference:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.message-app-reference:disabled { cursor: default; color: var(--text-mid); }
 .mcp-app-panel::backdrop { background: #0009; }
 .mcp-app-panel.fullscreen > .mcp-app-heading { flex-shrink: 0; }
 .mcp-app-panel.fullscreen .mcp-app-viewport { flex: 1; min-height: 0; }

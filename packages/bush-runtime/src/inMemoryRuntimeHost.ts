@@ -315,6 +315,7 @@ export class InMemoryRuntimeHost {
   readonly #workspaceTerminals = new TerminalSessionManager();
   readonly #remoteWorkspace?: RemoteWorkspaceBridge;
   #workspaceActions = 0;
+  #workspaceActionSessions?: ReadonlySet<string>;
   #switchingWorkspaceSession?: string;
   #turnAdmissions = 0;
   readonly #sessionAdmissions = new Map<string, number>();
@@ -770,7 +771,7 @@ export class InMemoryRuntimeHost {
     await this.#pluginHooks.removePlugin(pluginId);
   }
   hasActiveSession(sessionId: string): boolean {
-    if (this.#cacheMaintenance || this.#workspaceActions) return true;
+    if ((this.#cacheMaintenance || this.#workspaceActions) && (!this.#workspaceActionSessions || this.#workspaceActionSessions.has(sessionId))) return true;
     return [...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId);
   }
 
@@ -918,7 +919,7 @@ export class InMemoryRuntimeHost {
           const deleted = await this.#deleteSession(identity.sessionId);
           if (deleted) this.#scheduleCacheCleanup();
           return { sessionId: identity.sessionId, deleted };
-        });
+        }, this.#sessionDeletionScope(identity.sessionId));
       }
       case COLLECT_RUNTIME_CACHE_COMMAND:
         return this.#withCacheMaintenance(() => this.#collectCaches());
@@ -3131,7 +3132,16 @@ export class InMemoryRuntimeHost {
       return { messages: input.messages, count: 0 };
     }
     this.#guidanceQueues.delete(input.turnKey);
-    const guidanceMessages = queued.map((guidance) => {
+    const guidanceMessages = queued.flatMap((guidance) => {
+      // The product supplies a snapshot of this new user input. Append it once
+      // beside the guidance, without rewriting earlier clocks or visible text.
+      const timeContext = guidance.metadata?.timeContext;
+      const context: ModelMessage[] = typeof timeContext === 'string' && timeContext ? [{
+        role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: timeContext,
+      }] : [];
+      for (const message of context) input.generatedMessages.push({
+        messageId: `${guidance.messageId}:turn-context`, createdAt: guidance.createdAt, message,
+      });
       const message: ModelMessage = {
         role: "user",
         name: "turn_guidance",
@@ -3143,7 +3153,7 @@ export class InMemoryRuntimeHost {
         ...(guidance.metadata ? { metadata: guidance.metadata } : {}),
         message,
       });
-      return message;
+      return [...context, message];
     });
     queued.forEach((guidance, index) => {
       this.#eventLog.append(input.identity, {
@@ -3171,7 +3181,7 @@ export class InMemoryRuntimeHost {
     }
     return {
       messages,
-      count: guidanceMessages.length,
+      count: queued.length,
     };
   }
 
@@ -3250,7 +3260,9 @@ export class InMemoryRuntimeHost {
       this.#backgroundCacheController.abort();
       await this.#cacheMaintenance;
     }
-    if (this.#workspaceActions) throw new Error("A workspace action is in progress. Retry the Turn after it settles.");
+    if (this.#workspaceActions && (!this.#workspaceActionSessions || this.#workspaceActionSessions.has(sessionId))) {
+      throw new Error("A workspace action is in progress. Retry the Turn after it settles.");
+    }
     this.#turnAdmissions++;
     this.#sessionAdmissions.set(sessionId, (this.#sessionAdmissions.get(sessionId) ?? 0) + 1);
     try { return await operation(); } finally {
@@ -3280,13 +3292,29 @@ export class InMemoryRuntimeHost {
     try { return await operation(); } finally { this.#workspaceActions--; this.#switchingWorkspaceSession = undefined; }
   }
 
-  async #withCacheMaintenance<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.#activeAppCommands || this.#mcpApps.busy || this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size) {
+  #sessionDeletionScope(sessionId: string): Set<string> {
+    const related = new Set([sessionId]);
+    const sessions = this.#sessions.list();
+    // A child can be admitted before it has a persisted session snapshot.
+    for (const id of related) {
+      const parent = this.#sessions.snapshot(id)?.metadata?.parentSessionId;
+      if (typeof parent === 'string') related.add(parent);
+      for (const child of sessions) if (child.metadata?.parentSessionId === id) related.add(child.sessionId);
+      for (const task of this.#subagentTasks.list(id)) related.add(task.childSessionId);
+    }
+    return related;
+  }
+
+  async #withCacheMaintenance<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>): Promise<T> {
+    // A single deletion closes only that session's resources. Shared cache
+    // collection still waits for every owner; it is deferred until idle.
+    if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
+        (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {
       throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
     }
     let release!: () => void;
     this.#cacheMaintenance = new Promise<void>(resolve => { release = resolve; });
-    try { return await this.#withWorkspaceAction(operation); }
+    try { return await this.#withWorkspaceAction(operation, sessionIds); }
     finally {
       // Release only after the workspace guard is gone. Waiting callers must
       // neither collide with that guard nor inherit this operation's failure.
@@ -3399,12 +3427,17 @@ export class InMemoryRuntimeHost {
     return result;
   }
 
-  async #withWorkspaceAction<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.#activeTurns.size || this.#turnAdmissions || this.#workspaceActions) {
+  async #withWorkspaceAction<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>): Promise<T> {
+    const active = sessionIds
+      ? [...sessionIds].some(id => this.#sessionAdmissions.has(id)) || [...this.#activeTurns].some(key => sessionIds.has(JSON.parse(key)[0]))
+      : this.#activeTurns.size || this.#turnAdmissions;
+    if (active || this.#workspaceActions) {
+      if (sessionIds) throw new Error('请等待此会话及其子任务结束，再删除会话。 / Wait for this conversation and its child tasks before deleting it.');
       throw new Error("Workspace actions require active Turns and other workspace actions to settle first.");
     }
     this.#workspaceActions++;
-    try { return await operation(); } finally { this.#workspaceActions--; }
+    this.#workspaceActionSessions = sessionIds;
+    try { return await operation(); } finally { this.#workspaceActions--; this.#workspaceActionSessions = undefined; }
   }
 
   #publishWorkspace(workspace: WorkspaceDescriptor) {

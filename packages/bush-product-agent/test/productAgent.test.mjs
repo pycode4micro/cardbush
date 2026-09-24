@@ -80,8 +80,8 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   assert.match(request.prefixMessages[1].content, /Desktop: C:\\Users\\fixture\\Desktop/);
   assert.deepEqual(request.metadata.mcpContext.filesystemRoots, ["C:\\workspace"]);
   assert.equal(request.metadata.mcpContext.sessionTitle, "完成任务");
-  assert.equal(request.inputMessages[0].message.content, "完成任务");
-  assert.deepEqual(request.inputMessages[0].metadata.attachments, [{
+  assert.equal(request.inputMessages.at(-1).message.content, "完成任务");
+  assert.deepEqual(request.inputMessages.at(-1).metadata.attachments, [{
     id: "attachment-1",
     name: "brief.md",
     type: "document",
@@ -109,16 +109,17 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   assert.equal(nextRequest.prefixMessages[0].content, request.prefixMessages[0].content);
   assert.equal(nextRequest.metadata.subagentPermissionRouting, "user");
   assert.match(nextRequest.prefixMessages[1].content, /Workspace: D:\\next-workspace/);
-  assert.equal(nextRequest.inputMessages[0].message.content, "继续任务");
+  assert.equal(nextRequest.inputMessages.at(-1).message.content, "继续任务");
 });
 
-test("current time is obtained on demand without date inputs on startup or across midnight", () => {
+test("time snapshots append as internal user inputs across midnight without changing the prefix", () => {
   const create = (createdAt, turnId) => createProductAgentTurnRequest({
     requestId: `request_${turnId}`,
     sessionId: "session_cache",
     turnId,
     messageId: `message_${turnId}`,
     createdAt,
+    timeZone: "Asia/Shanghai",
     userText: "继续处理",
     model: "fixture",
     tools: [],
@@ -127,23 +128,30 @@ test("current time is obtained on demand without date inputs on startup or acros
     permissionMode: "task_free",
     planEnabled: true,
   });
-  const first = create("2026-08-29T23:59:59Z", "turn_before_midnight");
+  const first = create("2026-08-29T15:59:59Z", "turn_before_midnight");
   const second = create(
-    "2026-08-30T00:00:01Z",
+    "2026-08-29T16:00:01Z",
     "turn_after_midnight",
   );
   assert.deepEqual(second.prefixMessages, first.prefixMessages);
-  assert.deepEqual(second.inputMessages.map(item => item.message), first.inputMessages.map(item => item.message));
+  assert.deepEqual(first, create("2026-08-29T15:59:59Z", "turn_before_midnight"), 'replaying the same input never refreshes its clock');
   for (const request of [first, second]) {
-    assert.deepEqual(request.inputMessages.map(item => item.message), [{ role: 'user', content: '继续处理' }]);
+    assert.equal(request.inputMessages.length, 2);
+    assert.equal(request.inputMessages[0].message.role, 'user');
+    assert.equal(request.inputMessages[0].message.name, 'turn_runtime_context');
+    assert.equal(request.inputMessages[0].message.visibility, 'internal');
+    assert.deepEqual(request.inputMessages.at(-1).message, { role: 'user', content: '继续处理' });
     assert.equal(request.metadata.sessionEnvironmentProtocol, undefined);
     assert.equal(request.metadata.sessionEnvironmentLocalDate, undefined);
-    assert.doesNotMatch(JSON.stringify([...request.prefixMessages, ...request.inputMessages.map(item => item.message)]), /2026-08-29|2026-08-30/);
+    assert.doesNotMatch(JSON.stringify(request.prefixMessages), /2026-08-29|2026-08-30/);
     assert.equal(request.prefixMessages[0].content, CHILD_AGENT_SYSTEM_PROMPT);
-    assert.match(request.prefixMessages[0].content, /current date, time or time zone.*terminal Tool/);
   }
-  assert.equal(first.inputMessages[0].createdAt, '2026-08-29T23:59:59Z');
-  assert.equal(second.inputMessages[0].createdAt, '2026-08-30T00:00:01Z');
+  assert.match(first.inputMessages[0].message.content, /Current date: 2026-08-29 \(Saturday\)/);
+  assert.match(first.inputMessages[0].message.content, /Current time: 23:59:59 UTC\+08:00/);
+  assert.match(second.inputMessages[0].message.content, /Current date: 2026-08-30 \(Sunday\)/);
+  assert.match(second.inputMessages[0].message.content, /Current time: 00:00:01 UTC\+08:00/);
+  assert.equal(first.inputMessages[0].createdAt, '2026-08-29T15:59:59Z');
+  assert.equal(second.inputMessages[0].createdAt, '2026-08-29T16:00:01Z');
 });
 
 test("visual inputs carry ordered source facts without injecting data URLs or changing stable instructions", () => {
@@ -232,12 +240,14 @@ test("product requests append attachment facts while keeping the prefix and tool
   assert.equal(nextDay.inputMessages[1].message.content, "继续处理");
 });
 
-test("legacy date fields do not inject clock facts or alter dates authored by the user", () => {
+test("legacy date fields cannot replace the submission snapshot or alter dates authored by the user", () => {
   const userText = '我在 2026-09-17 修改过文件，今天请核对。';
   const request = createProductAgentTurnRequest({ requestId: 'legacy', sessionId: 'legacy', turnId: 'legacy', messageId: 'legacy',
-    createdAt: '2026-09-18T08:00:00Z', localDate: '2026-09-18', sessionEnvironmentLocalDate: '2026-09-17',
+    createdAt: '2026-09-18T08:00:00Z', timeZone: 'UTC', localDate: '2020-01-01', sessionEnvironmentLocalDate: '2020-01-02',
     userText, model: 'fixture', tools: [], permissionMode: 'task_free', planEnabled: false });
-  assert.deepEqual(request.inputMessages.map(item => item.message), [{ role: 'user', content: userText }]);
+  assert.deepEqual(request.inputMessages.at(-1).message, { role: 'user', content: userText });
+  assert.match(request.inputMessages[0].message.content, /Current date: 2026-09-18/);
+  assert.doesNotMatch(request.inputMessages[0].message.content, /2020-01/);
   assert.equal(request.inputMessages[0].createdAt, '2026-09-18T08:00:00Z');
 });
 

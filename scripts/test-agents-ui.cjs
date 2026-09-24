@@ -91,6 +91,7 @@ app.whenReady().then(async () => {
         if(id==='c'&&operation==='chat.send'&&('visionEnabled' in input||'conversationStyle' in input))throw Error('Unrecognized key: visionEnabled');
         if(operation==='conversation.extracts'&&input.action==='list'){calls.push({id,operation,input});return {permanent:[],pending:[]}}
         if(operation==='runtime.command'){
+          if(input.kind==='runtime.list_user_prompts'){calls.push({id,operation,input});return []}
           if(['runtime.get_goal','runtime.get_tool_execution'].includes(input.kind)){calls.push({id,operation,input});return null}
           if(input.kind==='runtime.list_turn_context_compactions'){calls.push({id,operation,input});return []}
           if(input.kind==='runtime.list_solution_selections'){calls.push({id,operation,input});return fixtureSelections}
@@ -112,6 +113,10 @@ app.whenReady().then(async () => {
     if (!process.argv.includes('--images')) await run("localStorage.setItem('a:cardbush.permission_mode','user_free');localStorage.setItem('b:cardbush.permission_mode','all_free');undefined;");
     await run(js + '\n;undefined;');
     await until("document.querySelectorAll('.agents-card').length===3",'Agent overview renders');
+    if (process.argv.includes('--welcome')) {
+      await require('./helpers/agent-welcome.cjs')({ run, until, pause, win, root });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.argv.includes('--marketplace')) {
       await require('./helpers/agent-marketplace.cjs')({ run, until, pause, win, root });
       assert.deepEqual(errors, []); return;
@@ -436,7 +441,8 @@ app.whenReady().then(async () => {
     await until("document.querySelector('.agent-sidebar-row.active .project-title')?.textContent==='Research Agent' && !!document.querySelector('.agent-sidebar-group:has(.agent-sidebar-row.active) .remote-conversation')",'B returns');
     await run("document.querySelector('.agent-sidebar-group:has(.agent-sidebar-row.active) .remote-conversation').click()");
     await until("document.querySelector('.agent-chat .composer-stack textarea')?.value==='B 的草稿'",'B draft preserved');
-    assert.equal(await run("document.querySelector('.agent-chat .message-list').textContent.includes('A 的工作')"),false,'A transcript never appears on B');
+    assert.equal(await run("document.querySelector('.agent-chat').textContent.includes('A 的工作')"),false,'A transcript never appears on B');
+    assert.equal(await run("!!document.querySelector('.agent-chat .welcome-composer')"),true,'empty B restores its draft on the shared welcome page');
     win.setSize(1100,820);await run("document.querySelector('.fixture-shell').classList.remove('narrow')");
     await run("document.querySelector('[data-agent-id=b] .remote-conversation').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await until("!!document.querySelector('.conversation-rename-form input')",'native inline rename');

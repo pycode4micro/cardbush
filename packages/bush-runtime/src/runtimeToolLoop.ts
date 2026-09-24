@@ -1,4 +1,5 @@
 import { projectMcpDiscoveryResult } from "./mcpToolDiscovery.js";
+import { modelMcpAppReference } from './mcpAppReference.js';
 import {
   type ModelMessage,
   type ModelRequest,
@@ -58,6 +59,7 @@ const MODEL_IMAGE_INPUT_ESTIMATED_TOKENS = 1_024;
 interface ModelToolResult {
   content: string;
   format: "json" | "text" | "mcp_discovery";
+  appReference?: string;
 }
 
 export class RuntimeToolLoop {
@@ -184,6 +186,7 @@ export class RuntimeToolLoop {
     const toolMessages: ModelMessage[] = [];
     const imageObservations: ToolImageObservation[][] = [];
     const renderedResults: Array<string | undefined> = [];
+    const appReferences: Array<string | undefined> = [];
     let hookStopTurn: string | undefined;
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
@@ -230,7 +233,12 @@ export class RuntimeToolLoop {
         // Assistant messages retain the requested call; execution facts retain the
         // arguments actually admitted and run after trusted PreToolUse rewrites.
         const executedCall = this.#activeToolControllers.get(toolCall.id)?.executedCall ?? toolCall;
-        this.#executionStore?.record(executedCall, executionIdentity, outcome, renderedResults[ordinal]);
+        appReferences[ordinal] = this.#executionStore && outcome.kind === 'returned' && outcome.hookFeedback === undefined
+          ? modelMcpAppReference(this.#registry, executedCall.name, outcome.result, { ...this.#identity, toolCallId: executedCall.id }) : undefined;
+        const modelText = appReferences[ordinal]
+          ? `${renderedResults[ordinal] ?? serializeNativeToolResult(modelFacingNativeToolResult(outcome.kind === 'returned' ? outcome.result : null, toolCall.name))}\n\n${appReferences[ordinal]}`
+          : renderedResults[ordinal];
+        this.#executionStore?.record(executedCall, executionIdentity, outcome, modelText);
         this.#appendToolOutcome(toolCall, executionIdentity, outcome);
         return outcome;
       } finally {
@@ -258,8 +266,8 @@ export class RuntimeToolLoop {
         return { content: serializeNativeToolResult(result), format: "mcp_discovery" };
       }
       return text === undefined
-        ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json" }
-        : { content: text, format: "text" };
+        ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json", appReference: appReferences[ordinal] }
+        : { content: text, format: "text", appReference: appReferences[ordinal] };
     });
     const ingressBudget = Number.isInteger(input.modelContextIngressBudgetTokens) &&
         Number(input.modelContextIngressBudgetTokens) >= 0
@@ -423,6 +431,18 @@ function projectNativeToolResult(
   sessionId: string,
   turnId: string,
   toolCallId: string,
+  maxChars = DEFAULT_TOOL_RESULT_MAX_CHARS,
+): string {
+  const suffix = result.appReference ? `\n\n${result.appReference}` : '';
+  const body = projectNativeToolResultBody(result, sessionId, turnId, toolCallId, Math.max(0, maxChars - suffix.length));
+  return body + suffix;
+}
+
+function projectNativeToolResultBody(
+  result: ModelToolResult,
+  sessionId: string,
+  turnId: string,
+  toolCallId: string,
   maxChars?: number,
 ): string {
   if (result.format === 'mcp_discovery') {
@@ -436,11 +456,11 @@ function projectNativeToolResult(
   const receipt = {
     archived: true,
     locator,
-    originalChars: serialized.length,
+    originalChars: serialized.length + (result.appReference ? result.appReference.length + 2 : 0),
     preview: "",
   };
   const renderReceipt = (preview: string) => result.format === "text"
-    ? `${JSON.stringify({ archived: true, locator, originalChars: serialized.length, format: "text" })}\n\n${preview}`
+    ? `${JSON.stringify({ archived: true, locator, originalChars: receipt.originalChars, format: "text" })}\n\n${preview}`
     : serializeNativeToolResult({ ...receipt, preview });
   const receiptChars = renderReceipt("").length;
   if (receiptChars >= serialized.length) return serialized;

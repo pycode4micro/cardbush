@@ -79,7 +79,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.querySelector('.compact-sidebar-backdrop').click()");
   await until('compactState.sidebarCollapsed', 'backdrop closes drawer');
   await run("document.querySelector('.window-sidebar-toggle').click()"); await pause(260);
-  await run("document.querySelector('.conversation-row').click()");
+  await run("document.querySelector('.conversation-row:not(.agent-sidebar-empty)').click()");
   await until("!!document.querySelector('.message-list') && compactState.sidebarCollapsed", 'history selection closes drawer');
   await fits('.composer-surface');
   assert.equal(await run('compactState.draft'), '保留输入草稿');

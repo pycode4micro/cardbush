@@ -1,21 +1,25 @@
 import { ArrowUpRight } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 import { fetchWelcomeHistory } from '../../backend/welcomeHistory';
 import { buildWelcomeSuggestions, type WelcomeSuggestion } from './welcomeSuggestionRanking';
+import { ConversationHostContext } from '../conversationHost';
 
 export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect }: {
   language: 'zh' | 'en'; disabled: boolean; hasDraft: boolean; onSelect: (suggestion: WelcomeSuggestion) => void;
 }) {
   const [history, setHistory] = useState<RuntimeUserPrompt[]>([]);
+  const host = useContext(ConversationHostContext);
+  const readHistory = host ? host.welcomeHistory : fetchWelcomeHistory;
   useEffect(() => {
     const controller = new AbortController();
+    setHistory([]);
     let pending = false, lastRead = 0;
     const refresh = () => {
-      if (document.hidden || pending || Date.now() - lastRead < 60000) return;
+      if (!readHistory || document.hidden || pending || Date.now() - lastRead < 60000) return;
       pending = true;
       lastRead = Date.now();
-      void fetchWelcomeHistory(controller.signal).then(rows => {
+      void readHistory(controller.signal).then(rows => {
         if (!controller.signal.aborted) setHistory(rows);
       }).catch(() => { /* Suggestions are optional; the composer remains usable. */ })
         .finally(() => { pending = false; });
@@ -28,7 +32,7 @@ export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect }: {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, []);
+  }, [readHistory]);
   const suggestions = useMemo(() => buildWelcomeSuggestions(history, language), [history, language]);
   const hasHistory = suggestions.some(item => item.fromHistory);
   return <div className="welcome-suggestions">

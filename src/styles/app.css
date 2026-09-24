@@ -9951,6 +9951,7 @@ body.queue-reordering * {
 
 .composer-surface {
   position: relative;
+  container: composer / inline-size;
   width: 100%;
   padding: 10px 8px 8px 12px;
   cursor: text;
@@ -10453,6 +10454,14 @@ body.queue-reordering * {
   gap: 6px;
 }
 
+.composer-footer svg {
+  flex-shrink: 0;
+}
+
+.composer-tools > .tool-chip:not(.composer-team-chip) {
+  flex: 0 0 28px;
+}
+
 .tool-chip {
   width: 28px;
   height: 26px;
@@ -10553,7 +10562,7 @@ body.queue-reordering * {
 
 .composer-actions .model-select {
   height: 30px;
-  min-width: 0;
+  min-width: 58px;
   max-width: 166px;
   padding: 0 8px;
   color: var(--text-mid);
@@ -10623,8 +10632,11 @@ body.queue-reordering * {
 }
 
 .send-button {
+  flex: 0 0 28px;
   width: 28px;
   height: 28px;
+  min-width: 28px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -10657,6 +10669,45 @@ body.queue-reordering * {
 
 .send-button:disabled {
   opacity: 0.5;
+}
+
+/* An inspector can narrow the composer in a wide window. Collapse labels
+   against the input's own width, while keeping every icon at its native size. */
+@container composer (max-width: 420px) {
+  .composer-footer { gap: 6px; }
+  .composer-tools, .composer-actions { gap: 4px; }
+  .composer-actions .model-select { min-width: 52px; max-width: min(166px, 44cqw); padding-inline: 5px; }
+
+  .permission-center-button,
+  .reference-plan-toggle,
+  .composer-tools .composer-team-chip {
+    flex: 0 0 28px;
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .permission-center-button span,
+  .permission-center-button svg:last-child,
+  .reference-plan-toggle span,
+  .composer-team-chip span {
+    display: none;
+  }
+}
+
+@container composer (max-width: 280px) {
+  .composer-actions .model-select {
+    flex: 0 0 30px;
+    width: 30px;
+    min-width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .composer-actions .model-select span,
+  .composer-actions .model-select svg:last-child {
+    display: none;
+  }
 }
 
 @keyframes cardbush-spin {
@@ -19129,27 +19180,6 @@ body.queue-reordering * {
     );
   }
 
-  .reference-plan-toggle {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .permission-center-button {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .reference-plan-toggle span {
-    display: none;
-  }
-
-  .permission-center-button span,
-  .permission-center-button svg:last-child {
-    display: none;
-  }
-
   .settings-content {
     padding: 32px 24px 40px;
   }
@@ -20429,14 +20459,6 @@ body.change-review-resizing .change-review-file-nav-viewport { transition: none;
   .frame-chip.window-frame-menu-trigger { padding-inline: 6px; }
   .window-sidebar-toggle { width: 28px; }
   .window-sidebar-track { transform: translateX(-100%); }
-}
-
-@media (max-width: 560px) {
-  .composer-footer { gap: 4px; }
-  .composer-tools, .composer-actions { gap: 3px; }
-  .composer-actions .model-select { max-width: 116px; padding-inline: 5px; }
-  .permission-center-button { max-width: 90px; padding-inline: 4px; }
-  .reference-plan-toggle { max-width: 84px; padding-inline: 4px; }
 }
 
 @media (max-height: 540px) {

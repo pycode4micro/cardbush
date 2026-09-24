@@ -137,6 +137,7 @@ export async function streamRuntimeChat(
     const instructionDocuments = await readAgentInstructions(request.projectDir, workspaceDir);
     const sharedAgentInput = {
       sessionId: request.sessionId,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       model: resolvedModel.model,
       providerBinding: resolvedModel.binding,
       tools,

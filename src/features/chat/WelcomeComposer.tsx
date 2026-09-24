@@ -1,5 +1,5 @@
 import { WorkspaceLocationButton } from '../ssh/WorkspaceLocationPicker';
-import { type RefObject, useRef } from 'react';
+import { type ReactNode, type RefObject, useRef } from 'react';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import { Composer } from '../composer';
 import { basename, samePath } from '../../shared/localPaths';
@@ -60,6 +60,8 @@ export function WelcomeComposer({
   onRemoveQueuedMessage,
   onSend,
   onCancel,
+  workspaceControl,
+  submissionPending,
 }: {
   language: AppLanguage;
   fileDropTarget?: RefObject<HTMLElement | null>;
@@ -102,6 +104,8 @@ export function WelcomeComposer({
   onRemoveQueuedMessage: (queuedId: string) => void;
   onSend: (text: string, options?: { immediate?: boolean }) => Promise<void | boolean>;
   onCancel: () => Promise<void>;
+  workspaceControl?: ReactNode;
+  submissionPending?: boolean;
 }) {
   const welcomeRef = useRef<HTMLDivElement>(null);
   const selectedProjectTitle = availableProjects.find(project => samePath(project.rootPath, selectedProjectDir))?.title
@@ -128,6 +132,7 @@ export function WelcomeComposer({
       draft={draft}
       onDraftChange={onDraftChange}
       sending={sending}
+      submissionPending={submissionPending}
       stopping={stopping}
       guidanceDeliveryMode={guidanceDeliveryMode}
       cancelEnabled={cancelEnabled}
@@ -177,13 +182,13 @@ export function WelcomeComposer({
         <WelcomeSuggestions language={language} disabled={sending} hasDraft={Boolean(draft.trim())} onSelect={selectSuggestion} />
       </div>
       <div className="welcome-input-stack">
-        <WelcomeProjectSwitcher
+        {workspaceControl !== undefined ? workspaceControl : <WelcomeProjectSwitcher
           language={language}
           projects={availableProjects}
           selectedProjectDir={selectedProjectDir}
           disabled={sending}
           onSelect={onProjectChange}
-        />
+        />}
         {welcomeComposer}
       </div>
     </div>

@@ -1,4 +1,6 @@
 import { CHECKPOINT_CONTINUATION_INSTRUCTIONS } from "@cardbush/bush-protocol";
+import { createTurnTimeContext } from "./timeContext.js";
+export { createTurnTimeContext } from "./timeContext.js";
 import { CONVERSATION_STYLE_INSTRUCTIONS, conversationStyleContext, type ConversationStyleSettings } from "./conversationStyle.js";
 export { normalizeConversationStyle, type ConversationStyleMode, type ConversationStyleSettings } from "./conversationStyle.js";
 import {
@@ -31,7 +33,7 @@ For other documents and downloadable files, use a descriptive Markdown link targ
 
 export const ROOT_AGENT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
-When the task depends on the current date, time or time zone (including relative dates such as today or tomorrow), obtain it through the terminal Tool.
+Internal user context supplies a date, time and time-zone snapshot at message submission. Use the latest snapshot to interpret relative dates such as today or tomorrow unless the user specifies another time zone. A snapshot stays fixed during the Tool loop; query the terminal only when a fresh clock reading is needed or the snapshot is absent. A runtime_host time zone describes the execution host, not the human user's location.
 
 ${COMMUNICATION_INSTRUCTIONS}
 
@@ -85,6 +87,8 @@ export interface ProductAgentTurnInput {
   turnId: string;
   messageId: string;
   createdAt: string;
+  /** User-device zone; remote callers may also supply userMessageMetadata.userTimeZone. */
+  timeZone?: string;
   userText: string;
   userMessageMetadata?: Record<string, unknown>;
   userMessageName?: string;
@@ -230,7 +234,7 @@ function createBaseProductAgentTurnRequest(
 
 /**
  * Product request shape: session-stable facts stay in the prefix while
- * append-only preferences and attachment facts are committed as internal inputs.
+ * append-only preferences, time snapshots and attachment facts are internal inputs.
  */
 export function createProductAgentTurnRequest(
   input: ProductAgentTurnInput,
@@ -337,6 +341,7 @@ function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string
 
 function volatileTurnContext(input: ProductAgentTurnInput): string {
   const content = [
+    createTurnTimeContext({ createdAt: input.createdAt, timeZone: input.timeZone ?? input.userMessageMetadata?.userTimeZone }),
     input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
     input.images?.length ? `Attached images (in visual input order):\n${input.images.slice(0, 4).map((source, index) =>
       `${index + 1}. ${/^data:/i.test(source) ? "Inline image; no local file path was supplied." : JSON.stringify(source)}`

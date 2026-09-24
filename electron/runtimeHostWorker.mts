@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { parentPort as nodeParentPort } from 'node:worker_threads';
 import {
   BUSH_RUNTIME_ERROR_PROTOCOL,
@@ -751,6 +752,8 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
       inputMessages: [
         { messageId: `context_${run.id}`, createdAt: activatedAt, message: { role: 'developer', name: 'automation_context', content:
           `This turn was activated by the saved automation ${JSON.stringify(job.name)}. Run: ${run.id}. Trigger: ${run.reason}. Activated at: ${activatedAt}. Time zone: ${job.timeZone}. Execute its saved prompt in this conversation. Do not infer a request to create further automations. Existing permissions still apply.` } },
+        { messageId: `time_${run.id}`, createdAt: activatedAt, message: { role: 'user', name: 'turn_runtime_context', visibility: 'internal',
+          content: createTurnTimeContext({ createdAt: activatedAt, timeZone: job.timeZone, timeZoneSource: 'scheduled_task' }) } },
         { messageId: `message_${run.id}`, createdAt: activatedAt, message: { role: 'user', name: 'automation_prompt', content: job.prompt } },
       ],
       sessionMetadata: {},

@@ -115,6 +115,53 @@ test('busy maintenance rejects before deleting any session or blob', async t => 
   assert.equal(result.counts.sessions, 2);
 });
 
+test('deleting an idle conversation preserves another conversation running its loop', async t => {
+  const entered = deferred(), release = deferred();
+  const f = await fixture(t, { provider: provider(async () => { entered.resolve(); await release.promise; }) });
+  f.sessionStore.ensureSession('idle');
+  const running = f.runtime.runSessionTurn(request('running'));
+  try {
+    await entered.promise;
+    await assert.rejects(f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'running' } }), /Wait for this conversation/);
+    assert.equal((await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'idle' } })).deleted, true);
+    assert.equal(f.runtime.hasActiveSession('running'), true);
+    assert.equal(f.sessionStore.snapshot('idle'), undefined);
+    await assert.rejects(f.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} }), /settle|active/);
+    release.resolve(); await running;
+    assert.ok(f.sessionStore.snapshot('running').turns.some(turn => turn.messages.some(item => item.message.content === 'Completed.')));
+  } finally { release.resolve(); await running; }
+});
+
+test('deletion protects child admissions before their session snapshot exists', async t => {
+  const release = deferred();
+  const f = await fixture(t, { provider: provider(() => release.promise) });
+  f.sessionStore.ensureSession('parent'); f.sessionStore.ensureSession('unrelated');
+  f.subagentTaskStore.start({ taskId: 'child-task', parentSessionId: 'parent', parentTurnId: 'parent-turn',
+    childSessionId: 'child', childTurnId: 'child-turn', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
+  const running = f.runtime.runSessionTurn(request('child'));
+  try {
+    await assert.rejects(f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'parent' } }), /Wait for this conversation/);
+    assert.equal((await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'unrelated' } })).deleted, true);
+    assert.ok(f.sessionStore.snapshot('parent'));
+  } finally { release.resolve(); await running; }
+  assert.equal((await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'parent' } })).deleted, true);
+});
+
+test('an unrelated direct turn can start while deletion closes the target resources', async t => {
+  const entered = deferred(), release = deferred();
+  const f = await fixture(t, { automation: { busy: false, async sessionDeleted() { entered.resolve(); await release.promise; } } });
+  f.sessionStore.ensureSession('delete-me');
+  const deletion = f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'delete-me' } });
+  try {
+    await entered.promise;
+    assert.equal(f.runtime.hasActiveSession('unrelated'), false);
+    assert.equal(f.runtime.hasActiveSession('delete-me'), true);
+    await assert.rejects(f.runtime.runSessionTurn(request('delete-me')), /workspace action/);
+    await within(f.runtime.runSessionTurn(request('unrelated')), 1000);
+    assert.ok(f.sessionStore.snapshot('unrelated').turns.length);
+  } finally { release.resolve(); await deletion; }
+});
+
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 async function within(promise, timeout = 500) {
   let timer;

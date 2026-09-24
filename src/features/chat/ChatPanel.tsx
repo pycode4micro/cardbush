@@ -2639,6 +2639,8 @@ export function ChatPanel({
             onRemoveQueuedMessage={onRemoveQueuedMessage}
             onSend={handleComposerSend}
             onCancel={onCancel}
+            workspaceControl={host ? composerAccessory ?? null : undefined}
+            submissionPending={submissionPending}
           />
         ) : (
           <div

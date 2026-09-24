@@ -85,7 +85,11 @@ Responses 请求会统一校验顶层工具、`tool_search_output` 和 `addition
 
 `mcpToolDiscovery` 只压缩发给模型的工具目录；运行时保留完整且有作用域的权威目录。搜索返回最多 10 项及各自 schema，结果与当前会话、轮次绑定；`mcp_call` 交给原工具的准入、Hooks、超时和取消处理。私有 Agent 工具与仅供界面调用的工具不会出现在父任务搜索中。读取型 Agent 仍可通过这两个入口调用其范围内的只读 MCP 工具。
 
-`mcpAppsHost` 以已记录的工具执行为入口，按 `_meta.ui.resourceUri` 或 `openai/outputTemplate` 读取同一服务的 HTML 资源。支持 `text/html;profile=mcp-app`、旧 `text/html+skybridge` 和 HTML。`McpAppPanel` 提供打开、关闭、内嵌 / 全屏、握手、工具结果、工具调用、资源读取、后续消息和上下文更新；兼容常用 `window.openai` 工具调用、状态、消息与显示 API。
+`mcpAppsHost` 以已记录的工具执行为入口，按 `_meta.ui.resourceUri` 或 `openai/outputTemplate` 读取同一服务的 HTML 资源。支持 `text/html;profile=mcp-app`、旧 `text/html+skybridge` 和 HTML。成功的 App 工具结果会附带 `runtime_app_reference`（标题、`cardbush-app:` 引用和 Markdown）；模型自行决定是否在最终回复中引用以及引用位置。未写进回复的 App 不产生入口，也不自动读取 HTML。引用只绑定原会话、原轮次、原工具调用，失败的工具结果不发放引用。引用信息仅追加到新的工具结果，归档时保留，不改写既有模型消息或工具定义。
+
+引用点击后才在独立视图中加载，页面不会将大型界面插入正文。新一轮开始会关闭界面并取消加载，重进会话或下一轮结束均不会自动重开。本机与云端共用解析和打开流程；云端需要同步更新 Runtime 才会在工具结果中提供引用。`McpAppPanel` 保留握手、工具结果、工具调用、资源读取、权限确认、后续消息、上下文更新及常用 `window.openai` API。
+
+App 通过 `hostContext.styles.variables` 和注入的 CSS 变量接收 CardBush 当前颜色、字体与圆角，主题变化不重载 iframe。采用 [MCP Apps 的宿主主题变量约定](https://apps.extensions.modelcontextprotocol.io/api/functions/app.applyHostStyleVariables.html)，插件可在自身 CSS 中使用 `--color-background-primary`、`--color-text-primary`、`--color-border-primary`、`--font-sans` 等变量，宿主不会强制覆盖图表或设计内容的颜色。
 
 同一界面的工具调用与资源读取由运行时按到达顺序排队，每个请求在实际执行时单独经过权限、Hooks 与执行记录，并收到各自的原始结果或错误。失败不阻断后续请求，也不自动重试。状态查询、授权答复、上下文更新和关闭不进入队列，避免被长请求挡住。取消、关闭或连接失效后，等待中的请求不会再执行；重新加载后的界面不会收到旧实例的迟到答复。连续请求的授权提示按权限 ID 区分，已答复的提示不会因迟到的状态响应再次出现。
 

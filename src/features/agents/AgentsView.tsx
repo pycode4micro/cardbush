@@ -37,7 +37,6 @@ const api = () => { const value = window.cardbushDesktop?.agents; if (!value) th
 
 type AgentChatAppearance = { visualInputEnabled?: boolean; onOpenSettings?: (id: string, section: SettingsSection) => void; theme?: ThemeMode; sidebarCollapsed?: boolean; windowMaximized?: boolean; thinkingVisible?: boolean; guidanceDeliveryMode?: 'queue' | 'immediate' };
 
-const noAction = async () => {};
 const emptyStates = new Map<string, boolean>();
 
 export function AgentsView({ language, agents, active = true, ...appearance }: {
@@ -202,6 +201,8 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
   const selectedModel = models.models.find(model => model.id === chat.selectedModel);
   const maxContextTokens = selectedModel?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
   const workspaceRoot = chat.activeConversation ? conversationWorkspaceRoot(chat.activeConversation) : undefined;
+  const availableProjects = useMemo(() => projects.projects.map(project => ({ id: project.id, title: project.name, rootPath: project.path })), [projects.projects]);
+  const selectedProject = projects.projects.find(project => project.id === chat.activeConversation?.projectId);
   const reports = useMemo(() => changeReportsFromMessages(chat.activeMessages), [chat.activeMessages]);
   const [error, setError] = useConversationViewState(viewKey('error'), () => '');
   const [submissionPending, setSubmissionPending] = useConversationViewState(viewKey('submission'), () => false, Boolean);
@@ -254,8 +255,14 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
     inspector?.open(reviewId, zh ? '审查' : 'Review');
   };
   const reviewOutlet = inspector?.outlets.get(reviewId);
-  const projectPicker = projects.projects.length > 0 && <div className="agent-project-picker"><SettingsDropdown label={zh ? '会话项目' : 'Conversation project'} disabled={busy} value={chat.activeConversation?.projectId ?? ''}
-    onChange={projectId => void call('sessions.bind', { sessionId, projectId: projectId || null }).then(async () => { await chat.refreshActiveSession({ silent: true }); await onChanged(); }).catch(error => setError(errorText(error)))} options={[
+  const selectProject = async (projectDir: string | null) => {
+    const project = projectDir ? projects.projects.find(item => item.path === projectDir) : undefined;
+    if (projectDir && !project) throw new Error(zh ? '请选择此 Agent 的项目。' : 'Select a project on this Agent.');
+    await call('sessions.bind', { sessionId, projectId: project?.id ?? null });
+    await chat.refreshActiveSession({ silent: true }); await onChanged();
+  };
+  const projectPicker = <div className="agent-project-picker"><SettingsDropdown label={zh ? '会话项目' : 'Conversation project'} disabled={busy || submissionPending || !management} value={selectedProject?.id ?? ''}
+    onChange={projectId => void selectProject(projects.projects.find(project => project.id === projectId)?.path ?? null).catch(error => setError(errorText(error)))} options={[
       { value: '', label: zh ? '独立目录' : 'Private workspace', disabled: !management },
       ...projects.projects.map(project => ({ value: project.id, label: project.name, icon: <Folder size={14}/> })),
     ]}/></div>;
@@ -266,10 +273,10 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
     <section className="agent-chat">
       <ChatPanel language={language} theme={theme} title={title} headerActions={headerActions}
         sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} inspectorOpen={inspector?.visible ?? false} onToggleInspector={() => openReview()}
-        activeConversationId={host.id} activeProjectDir={workspaceRoot} projectPathAliases={[]} selectedProjectDir="" availableProjects={[]} onWelcomeProjectChange={noAction}
+        activeConversationId={host.id} activeProjectDir={workspaceRoot} projectPathAliases={[]} selectedProjectDir={selectedProject?.path ?? ''} availableProjects={availableProjects} onWelcomeProjectChange={selectProject}
         messages={chat.activeMessages} changeReports={reports} activeTurnId={chat.activeTurnId}
-        loading={(chat.loading && !chat.activeMessages.length) || !chat.activeConversationId} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
-        welcomeEnabled={false} turnHistoryAvailable subagentObservabilityAvailable thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
+        loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
+        turnHistoryAvailable subagentObservabilityAvailable thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
         activeGoal={chat.activeGoal} goalAvailable={chat.goalAvailable} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting} shadowAvailable={false} shadowAccentColor="" shadowThemeVariables={{}}
         queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
         pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host.id } : null}

@@ -118,7 +118,7 @@ test('interface aliases remove only one namespace and preserve case and punctuat
 test('overlapping interface calls and resource reads queue in order with independent permissions and results', async t => {
   const { host, view, counts, executions } = await fixture(t);
   const head = host.command({ action: 'call', token: view.token, name: 'save', arguments: { n: 1 } });
-  const denied = assert.rejects(head, /permission was rejected/);
+  const denied = assert.rejects(head, /user rejected this action/i);
   const resource = host.command({ action: 'resource', token: view.token, uri: 'ui://queued' });
   const tail = host.command({ action: 'call', token: view.token, name: 'save', arguments: { n: 3 } });
   await host.command({ action: 'context', token: view.token, context: { structuredContent: { waiting: true } } });
@@ -164,7 +164,7 @@ test('a slow interface action preserves FIFO and each caller receives its own re
 test('cancelling a queued request settles it while the head awaits authorization and does not poison later work', async t => {
   const { host, view, counts, executions } = await fixture(t);
   const first = host.command({ action: 'call', token: view.token, name: 'save', arguments: { n: 1 } });
-  const denied = assert.rejects(first, /permission was rejected/);
+  const denied = assert.rejects(first, /user rejected this action/i);
   const firstAsk = await permission(host, view.token);
   const controller = new AbortController();
   const cancelled = assert.rejects(host.command({ action: 'call', token: view.token, name: 'save', arguments: { n: 2 } }, controller.signal), /cancelled|abort/i);
@@ -224,7 +224,7 @@ test('MCP Apps open only bound executions and preserve native UI data', async t 
 test('UI tool calls use Hook/permission coordinator and persist audit records', async t => {
   const { host, view, counts, executions } = await fixture(t);
   const first = host.command({ action: 'call', token: view.token, name: 'save', arguments: { n: 1 } });
-  const denied = assert.rejects(first, /permission was rejected/);
+  const denied = assert.rejects(first, /user rejected this action/i);
   const ask = await permission(host, view.token);
   assert.equal(counts().calls, 0); await host.command({ action: 'answer', token: view.token, permissionId: ask.permissionId, decision: 'deny' }); await denied;
   const second = host.command({ action: 'call', token: view.token, name: 'save', arguments: { n: 2 } });

@@ -247,6 +247,9 @@ test('unconfirmed guidance survives remount with its exact append identity and b
   const request = { sessionId, turnId, clientMessageId: 'restore-guidance', guidance: '保留原来的约束', createdAt: now };
   const first = api.createAgentConversationBackend(call, 'guidance-remount', watch);
   await assert.rejects(first.backend.sendGuidance(request), /acknowledgement lost/);
+  assert.equal(received[0].payload.content, request.guidance);
+  assert.equal(received[0].payload.metadata.userTimeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+  assert.ok(received[0].payload.metadata.timeContext.includes(now));
   const restored = api.createAgentConversationBackend(call, 'guidance-remount', watch);
   const loaded = await restored.backend.fetchSessionMessages(sessionId);
   assert.equal(loaded.messages.length, 1);
@@ -311,6 +314,7 @@ test('changing vision affects new submissions but preserves an unconfirmed reque
   await restored.backend.queue.enqueue({ ...request, standardImageInputEnabled: false, images: [], files: ['/srv/picture.png'] });
   assert.deepEqual(received[1], received[0], 'retry cannot rewrite the accepted payload or its request ID');
   assert.equal(received[1].visionEnabled, true);
+  assert.equal(received[1].userMessageMetadata.userTimeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
   await restored.backend.queue.enqueue({ ...request, userInput: '下一条消息', standardImageInputEnabled: false, images: [], files: ['/srv/picture.png'] });
   assert.notEqual(received[2].requestId, received[0].requestId);
   assert.equal('visionEnabled' in received[2], false);

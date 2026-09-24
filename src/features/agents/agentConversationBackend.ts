@@ -147,8 +147,9 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     if (!prior) {
       const referenced = await resolvePromptReferenceContext(input.text, request.sessionId, await client.getSession(request.sessionId), request.uiLanguage,
         (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve);
-      input.text = referenced.content; input.userMessageMetadata = { ...referenced.metadata, ...(request.attachments?.length ? { attachments: request.attachments } : {}) };
-      if (!Object.keys(input.userMessageMetadata).length) delete input.userMessageMetadata;
+      input.text = referenced.content; input.userMessageMetadata = { ...referenced.metadata,
+        userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...(request.attachments?.length ? { attachments: request.attachments } : {}) };
     }
     uncertain.set(request.sessionId, input); persist();
     const job = await call<Job>('chat.send', input);

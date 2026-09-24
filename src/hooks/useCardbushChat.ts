@@ -1839,7 +1839,7 @@ export function useCardbushChat(
     try {
       return await creation;
     } catch (caught) {
-      setError(errorMessage(caught));
+      if (activeConversationIdRef.current === prepared.id) setError(errorMessage(caught));
       throw caught;
     } finally {
       if (conversationCreationPromisesRef.current.get(prepared.id) === creation) {
@@ -2282,15 +2282,6 @@ export function useCardbushChat(
         return;
       }
       markSessionRunning(sessionId);
-      let conversation: ConversationSummary;
-      try {
-        conversation = await persistPreparedConversation(candidate);
-      } catch {
-        clearSessionRunning(sessionId);
-        return;
-      }
-      const projectDir = conversationProjectRequestDir(conversation);
-      const workspaceDir = conversationWorkspaceRoot(conversation);
       const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
       const retryMessage = backend.isSubmissionRetry?.(sessionId, outbound.userInput)
         ? (messagesByConversationRef.current[sessionId] ?? []).filter(message => message.role === 'user' && message.metadata?.message_delivery === 'failed').at(-1)
@@ -2331,12 +2322,11 @@ export function useCardbushChat(
       setConversations((current) =>
         upsertConversationPreview(
           current,
-          conversation,
+          candidate,
           visibleUserInput,
           titleSource,
         ),
       );
-      persistAutoConversationTitle(conversation, titleSource);
       setError(null);
       const controller = new AbortController();
       const streamBuffer = createFrameStreamBuffers(
@@ -2357,6 +2347,13 @@ export function useCardbushChat(
       let terminalSnapshot: TurnTerminalSnapshot | null = null;
 
       try {
+        // Paint the pending message and install its cancellation/read fences
+        // before filesystem or remote session creation can delay the first send.
+        const conversation = await persistPreparedConversation(candidate);
+        controller.signal.throwIfAborted();
+        const projectDir = conversationProjectRequestDir(conversation);
+        const workspaceDir = conversationWorkspaceRoot(conversation);
+        persistAutoConversationTitle(conversation, titleSource);
         await streamChat({
           sessionId,
           userInput: outbound.userInput,
@@ -4473,7 +4470,7 @@ async function chatAttachmentsFromOutbound(
   outbound: ReturnType<typeof splitStreamAttachmentMentions>,
   inspectLocal = true,
 ): Promise<ChatAttachment[]> {
-  const inspected = inspectLocal ? await window.cardbushDesktop
+  const inspected = inspectLocal && outbound.files.length > 0 ? await window.cardbushDesktop
     ?.inspectAttachments?.(outbound.files)
     .catch(() => []) : [];
   const kindByPath = new Map(

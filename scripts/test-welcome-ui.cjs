@@ -36,6 +36,7 @@ async function bundle() {
       const conversationsRef = useRef(conversations); conversationsRef.current = conversations;
       const workspaceSwitchesRef = useRef(new Map()), sendingSessionsRef = useRef(new Set()), activeTurnIdsRef = useRef({});
       const conversationCreationPromisesRef = useRef(new Map()), queuedMessagesRef = useRef([]);
+      const navigationRevisionRef = useRef(0);
       const queuedMessageConversationId = item => item.conversation.id;
       const [, setMessagesByConversation] = useState({}); const [, setError] = useState(null);
       const setMessageHistoryLoading = useCallback(() => {}, []), setActiveConversationId = setActiveId;
@@ -191,10 +192,10 @@ app.whenReady().then(async () => {
     }
     await run("routing.openConversation('saved-project-chat')");
     await until("routing.chat.activeConversationId === 'saved-project-chat'", 'open project history');
-    await until("document.querySelectorAll('.conversation-row').length === 2", 'project and independent history shown together');
+    await until("document.querySelectorAll('.conversation-row:not(.agent-sidebar-empty)').length === 2", 'project and independent history shown together');
     await run("routing.openConversation('saved-task-chat')");
     await until("routing.chat.activeConversationId === 'saved-task-chat' && routing.projectDir === ''", 'independent history restores its own context');
-    assert.equal(await run("document.querySelectorAll('.conversation-row').length"), 2, 'history stays visible across selection');
+    assert.equal(await run("document.querySelectorAll('.conversation-row:not(.agent-sidebar-empty)').length"), 2, 'history stays visible across selection');
     await run("routing.openConversation('saved-project-chat')"); await pause(30);
     await run("document.querySelector('.sidebar-nav .nav-row').click()");
     await until("routing.chat.activeConversationId !== 'saved-project-chat' && routing.projectDir === ''", 'general new chat starts independently');

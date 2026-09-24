@@ -3,7 +3,7 @@ import { CircleAlert, Loader2, Maximize2, Minimize2, PanelsTopLeft, RotateCw, X 
 import { conversationRuntime, type ConversationRuntime } from '../../backend/conversationRuntime';
 import { ConversationHostContext } from '../conversationHost';
 import type { AppLanguage } from '../../types';
-import { mcpAppDocument, mcpAppTheme, type McpAppView } from './mcpAppBridge';
+import { mcpAppDocument, mcpAppStyleVariables, mcpAppTheme, type McpAppView } from './mcpAppBridge';
 import './mcp-app.css';
 
 export async function mcpAppCommand(input: Record<string, unknown>, signal?: AbortSignal, runtimeOverride?: ConversationRuntime): Promise<any> {
@@ -22,17 +22,18 @@ function interfaceErrorCode(cause: unknown) {
   return error?.fact?.code ?? error?.code ?? '';
 }
 const staleInterface = (cause: unknown) => ['mcp_app_expired', 'mcp_app_connection_changed'].includes(interfaceErrorCode(cause));
-export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle, language, autoOpen = false }: { sessionId: string; turnId: string; toolCallId: string; title?: string; serverTitle?: string; language: AppLanguage; autoOpen?: boolean }) {
+export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle, language, autoOpen = false, onClose, presentation = 'inline' }: { sessionId: string; turnId: string; toolCallId: string; title?: string; serverTitle?: string; language: AppLanguage; autoOpen?: boolean; onClose?: () => void; presentation?: 'inline' | 'modal' }) {
   const host = useContext(ConversationHostContext);
   const command = useCallback((input: Record<string, unknown>, signal?: AbortSignal) => mcpAppCommand(input, signal, host?.runtime), [host?.runtime]);
   const [view, setView] = useState<McpAppView | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(autoOpen);
   const [errorCode, setErrorCode] = useState('');
   const answeredPermissions = useRef(new Set<string>());
   const [documentFailure, setDocumentFailure] = useState<{ kind: 'runtime' | 'resource'; detail: string } | null>(null);
-  const [permission, setPermission] = useState<any>(null), [pending, setPending] = useState<PendingAction | null>(null), [height, setHeight] = useState(320), [full, setFull] = useState(false);
+  const [permission, setPermission] = useState<any>(null), [pending, setPending] = useState<PendingAction | null>(null), [height, setHeight] = useState(320), [full, setFull] = useState(presentation === 'modal');
   const [inlineSpace, setInlineSpace] = useState(0), [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [frameReady, setFrameReady] = useState(false), [slow, setSlow] = useState(false), [theme, setTheme] = useState(mcpAppTheme);
-  const panel = useRef<HTMLDialogElement>(null), viewport = useRef<HTMLDivElement>(null), fullRef = useRef(false), recoveries = useRef(0);
+  const [styleVariables, setStyleVariables] = useState(mcpAppStyleVariables);
+  const panel = useRef<HTMLDialogElement>(null), viewport = useRef<HTMLDivElement>(null), fullRef = useRef(presentation === 'modal'), recoveries = useRef(0);
   const activeToken = useRef<string | null>(null), currentLanguage = useRef(language); currentLanguage.current = language;
   const frame = useRef<HTMLIFrameElement>(null), pendingRef = useRef<PendingAction | null>(null), opening = useRef<AbortController | null>(null);
   const frameLoads = useRef(0);
@@ -49,9 +50,10 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
   }, []);
   const zh = language === 'zh';
   const setDisplayMode = useCallback((expanded: boolean) => {
+    if (presentation === 'modal') return;
     if (expanded && !fullRef.current) setInlineSpace(panel.current?.getBoundingClientRect().height ?? 0);
     fullRef.current = expanded; setFull(expanded);
-  }, []);
+  }, [presentation]);
   // The same dialog/iframe enters the browser's top layer, escaping message
   // containment without moving DOM nodes or recreating the plugin document.
   useLayoutEffect(() => {
@@ -72,7 +74,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
     return () => observer.disconnect();
   }, [view, loading]);
   const hostContext = useRef(() => ({}));
-  hostContext.current = () => ({ theme, locale: zh ? 'zh-CN' : 'en-US', displayMode: fullRef.current ? 'fullscreen' : 'inline', availableDisplayModes: ['inline', 'fullscreen'],
+  hostContext.current = () => ({ theme, styles: { variables: styleVariables }, locale: zh ? 'zh-CN' : 'en-US', displayMode: fullRef.current ? 'fullscreen' : 'inline', availableDisplayModes: presentation === 'modal' ? ['fullscreen'] : ['inline', 'fullscreen'],
     containerDimensions: { width: viewport.current?.clientWidth ?? 0, ...(fullRef.current ? { height: viewport.current?.clientHeight ?? 0 } : { maxHeight: 900 }) } });
   const open = useCallback(async (recovering = false) => {
     if (opening.current && !opening.current.signal.aborted) return;
@@ -101,18 +103,21 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
     if (staleInterface(cause) && recoveries.current === 0) { recoveries.current++; void open(true); }
     else { setError(errorMessage(cause)); setErrorCode(interfaceErrorCode(cause)); }
   }, [open]);
-  const close = () => { activeToken.current = null; opening.current?.abort(); setLoading(false); pendingRef.current?.reject(new Error('Interface closed.')); pendingRef.current = null; setPending(null); setView(null); setError(''); setErrorCode(''); setDocumentFailure(null); setPermission(null); setDisplayMode(false); };
+  const close = () => { activeToken.current = null; opening.current?.abort(); setLoading(false); pendingRef.current?.reject(new Error('Interface closed.')); pendingRef.current = null; setPending(null); setView(null); setError(''); setErrorCode(''); setDocumentFailure(null); setPermission(null); setDisplayMode(false); onClose?.(); };
   // Keep srcdoc stable across progress renders, resizing and host theme changes.
-  const frameDocument = useMemo(() => view ? mcpAppDocument(view, language) : '', [view]);
+  const frameDocument = useMemo(() => view ? mcpAppDocument(view, language, theme, styleVariables) : '', [view]);
   useEffect(() => {
     const root = panel.current?.closest('.app') ?? document.documentElement;
-    const update = () => setTheme(mcpAppTheme(root)); update();
+    const update = () => {
+      setTheme(mcpAppTheme(root)); const next = mcpAppStyleVariables(root);
+      setStyleVariables(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+    }; update();
     const observer = new MutationObserver(update); observer.observe(root, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
     frame.current?.contentWindow?.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: hostContext.current() }, '*');
-  }, [theme, zh, full, viewportSize, frameReady]);
+  }, [theme, styleVariables, zh, full, viewportSize, frameReady]);
   const waiting = loading || !!view && !frameReady;
   useEffect(() => { setSlow(false); if (!waiting) return; const timer = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(timer); }, [waiting]);
   useEffect(() => { if (autoOpen) void open(); }, [autoOpen, open]);
@@ -166,7 +171,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
         const legacy = typeof data.id === 'string' && data.id.startsWith('openai-');
         if (!initialized && !legacy) throw new Error('Initialize the interface before sending requests.');
         if (data.method === 'ping' || data.method === 'notifications/message') { respond({}); return; }
-        if (data.method === 'ui/request-display-mode') { const mode = params.mode === 'fullscreen' ? 'fullscreen' : 'inline'; setDisplayMode(mode === 'fullscreen'); respond({ mode }); return; }
+        if (data.method === 'ui/request-display-mode') { const mode = presentation === 'modal' || params.mode === 'fullscreen' ? 'fullscreen' : 'inline'; setDisplayMode(mode === 'fullscreen'); respond({ mode }); return; }
         if (data.method === 'tools/call' || data.method === 'resources/read') {
           // Runtime owns the per-interface queue and permission lifecycle.
           activeCalls++;
@@ -214,11 +219,11 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
         : (zh ? '界面暂时未能加载' : 'Unable to load the interface')
     : documentFailure?.kind === 'runtime' ? (zh ? '插件界面运行出错，可重试。' : 'The plugin interface encountered an error. Try again.')
       : (zh ? '部分界面资源加载失败，可重试。' : 'Some interface resources failed to load. Try again.');
-  return <div className="mcp-app-anchor" style={full ? { height: inlineSpace } : undefined}><dialog ref={panel} className={`mcp-app-panel ${full ? 'fullscreen' : ''} ${prefersBorder ? '' : 'unframed'}`} aria-label={displayTitle} aria-modal={full || undefined} onCancel={event => { event.preventDefault(); setDisplayMode(false); }}>
+  return <div className="mcp-app-anchor" style={full ? { height: inlineSpace } : undefined}><dialog ref={panel} className={`mcp-app-panel ${full ? 'fullscreen' : ''} ${presentation === 'modal' ? 'reference-view' : ''} ${prefersBorder ? '' : 'unframed'}`} aria-label={displayTitle} aria-modal={full || undefined} onCancel={event => { event.preventDefault(); presentation === 'modal' ? close() : setDisplayMode(false); }}>
     <header className="mcp-app-heading">
       <span className="mcp-app-title" title={view ? String(view.tool.name) : undefined}><PanelsTopLeft size={16} /><strong>{displayTitle}</strong></span>
       <span className="mcp-app-actions">
-        {view && <><button type="button" title={zh ? '重新加载' : 'Reload'} aria-label={zh ? '重新加载' : 'Reload'} onClick={() => void open()}><RotateCw size={14} /></button><button type="button" title={full ? (zh ? '收起' : 'Collapse') : (zh ? '展开视图' : 'Expand view')} aria-label={full ? (zh ? '收起' : 'Collapse') : (zh ? '展开视图' : 'Expand view')} onClick={() => setDisplayMode(!fullRef.current)}>{full ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button></>}
+        {view && <><button type="button" title={zh ? '重新加载' : 'Reload'} aria-label={zh ? '重新加载' : 'Reload'} onClick={() => void open()}><RotateCw size={14} /></button>{presentation !== 'modal' && <button type="button" title={full ? (zh ? '收起' : 'Collapse') : (zh ? '展开视图' : 'Expand view')} aria-label={full ? (zh ? '收起' : 'Collapse') : (zh ? '展开视图' : 'Expand view')} onClick={() => setDisplayMode(!fullRef.current)}>{full ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>}</>}
         {(view || loading || error || documentFailure) && <button type="button" title={waiting ? (zh ? '取消加载' : 'Cancel loading') : (zh ? '关闭界面' : 'Close interface')} aria-label={waiting ? (zh ? '取消加载' : 'Cancel loading') : (zh ? '关闭界面' : 'Close interface')} onClick={close}><X size={16} /></button>}
       </span>
     </header>

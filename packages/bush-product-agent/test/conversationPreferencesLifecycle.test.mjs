@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { InMemoryRuntimeHost, SessionStore } from '@cardbush/bush-runtime';
+import { CacheChainTracker, InMemoryRuntimeHost, SessionStore } from '@cardbush/bush-runtime';
+import { toResponsesCreateParams } from '@cardbush/bush-provider-openai';
+import { responsesInputFingerprint } from '../../bush-provider-openai/dist/responsesInputFingerprint.js';
 import { createProductAgentTurnRequest } from '../dist/index.js';
 import { orderedCheckpointTool } from '../../bush-runtime/test/helpers/orderedCheckpoint.mjs';
 
@@ -82,11 +84,11 @@ test('only first, changed and restored preferences append; attachments and user 
   assert.ok(changes.every(item => !item.payload.frozenPrefixBreak));
 });
 
-test('resuming legacy date history preserves recorded times without appending clock updates', async t => {
+test('resuming across midnight appends a clock snapshot while preserving legacy history and its cache prefix', async t => {
   const { open, observed } = fixture(t);
   let { host, store } = open();
   const recordedAt = '2026-09-17T15:59:59Z';
-  const legacy = request('legacy_date', { createdAt: recordedAt });
+  const legacy = request('legacy_date', { createdAt: recordedAt, timeZone: 'Asia/Shanghai' });
   const clockFact = { role: 'user', name: 'session_environment', visibility: 'internal',
     content: JSON.stringify({ protocol: 'bush.session_environment.v1', kind: 'snapshot', localDate: '2026-09-17', effectiveAt: recordedAt }) };
   legacy.inputMessages.unshift({ messageId: 'legacy_date_fact', createdAt: recordedAt, message: clockFact });
@@ -95,7 +97,7 @@ test('resuming legacy date history preserves recorded times without appending cl
   await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
   ({ host, store } = open());
 
-  const next = request('after_midnight', { createdAt: '2026-09-17T16:00:01Z', userText: '昨晚的任务是什么时候完成的？' });
+  const next = request('after_midnight', { createdAt: '2026-09-17T16:00:01Z', timeZone: 'Asia/Shanghai', userText: '昨晚的任务是什么时候完成的？' });
   assert.equal((await host.runSessionTurn(next)).payload.status, 'completed');
   const snapshot = store.snapshot('preferences');
   assert.deepEqual(snapshot.turns[0], original);
@@ -104,6 +106,24 @@ test('resuming legacy date history preserves recorded times without appending cl
   assert.deepEqual(observed.at(-1).messages.filter(message => message.name?.startsWith('session_environment')), [clockFact]);
   assert.deepEqual(observed.at(-1).messages.slice(0, observed[0].messages.length), observed[0].messages);
   assert.equal(snapshot.turns.at(-1).messages.some(item => item.message.name?.startsWith('session_environment')), false);
+  const times = observed.at(-1).messages.filter(message => message.name === 'turn_runtime_context');
+  assert.equal(times.length, 2);
+  assert.match(times[0].content, /Current date: 2026-09-17/);
+  assert.match(times[1].content, /Current date: 2026-09-18/);
+  for (const toolSearchMode of ['native', 'function']) {
+    let tracker = new CacheChainTracker(), previous;
+    for (const modelRequest of observed) {
+      assert.equal(tracker.observe(modelRequest).frozenPrefixBreak, false);
+      const wire = toResponsesCreateParams(modelRequest, { toolSearchMode, disableProviderState: true });
+      assert.equal(tracker.observeProviderInput(responsesInputFingerprint(wire, wire, modelRequest.providerBinding)).frozenPrefixBreak, false);
+      if (previous) {
+        assert.deepEqual(wire.input.slice(0, previous.input.length), previous.input);
+        assert.deepEqual(wire.tools, previous.tools);
+      }
+      previous = wire;
+      tracker = new CacheChainTracker(JSON.parse(JSON.stringify(tracker.snapshot())));
+    }
+  }
 });
 
 for (const format of ['ordered', 'incremental']) for (const changed of [false, true]) test(`${format} compaction restores the current preference only when absent (${changed ? 'changed' : 'unchanged'} style), with stable restart replay`, async t => {

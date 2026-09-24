@@ -94,6 +94,11 @@ async function run() {
     assert.ok(activation, 'the trigger is part of committed turn input');
     assert.equal(activation.createdAt, executed.startedAt);
     assert.ok(activation.message.content.includes(executed.startedAt));
+    const timeContext = executionHistory.turns[0].messages.find(item => item.message.name === 'turn_runtime_context');
+    assert.equal(timeContext.message.role, 'user'); assert.equal(timeContext.message.visibility, 'internal');
+    assert.match(timeContext.message.content, /Time zone: Asia\/Shanghai/);
+    assert.match(timeContext.message.content, /Time zone source: scheduled_task/);
+    assert.ok(timeContext.message.content.includes(executed.startedAt));
     assert.equal((await automate({ action: 'reminder' })).total, 1);
     const conversation = await automate({ action: 'conversation', id: job.id, runIds: [executed.id] });
     assert.equal(conversation.sourceSession.id, 'session'); assert.equal(conversation.executionSessionAvailable, true);

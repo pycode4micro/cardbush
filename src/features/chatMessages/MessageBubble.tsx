@@ -76,6 +76,8 @@ import {
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { modelFailurePresentation } from './modelFailurePresentation';
 import { MessageToolArtifact, MessageToolOutputs } from '../tools/MessageToolOutputs';
+import { McpAppReferenceLink, McpAppReferencesContext } from '../tools/McpAppReferenceLink';
+import { MCP_APP_REFERENCE_SCHEME, parseMcpAppReference } from '@cardbush/bush-protocol';
 import { LoopExecutionPreviews, isLoopPreviewExecution } from '../tools/LoopExecutionPreviews';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import {
@@ -371,6 +373,9 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const host = useContext(ConversationHostContext);
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
+      if (href?.startsWith(MCP_APP_REFERENCE_SCHEME)) return parseMcpAppReference(href) && richFileReferences
+        ? <McpAppReferenceLink key={href} reference={href} language={language}>{children}</McpAppReferenceLink>
+        : <span>{children}</span>;
       const contextReference = href && parsePromptReference(href);
       if (contextReference) return <PromptReferenceLink reference={contextReference} />;
       if (href && parseFileMemoReference(href)) return richFileReferences
@@ -427,6 +432,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
+      if (src?.startsWith(MCP_APP_REFERENCE_SCHEME)) return <span>{alt}</span>;
       if (src && parseFileMemoReference(src)) return richFileReferences
         ? <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>
         : <span>{alt}</span>;
@@ -532,6 +538,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       return plugins;
     }, [workspaceRoot, richFileReferences, referenceMode]);
     const urlTransform = useCallback((url: string) => {
+      if (url.startsWith(MCP_APP_REFERENCE_SCHEME)) return parseMcpAppReference(url) ? url : '';
       if (parsePromptReference(url)) return url;
       if (parseFileMemoReference(url)) return url;
       if (referenceMode === 'remote') return /^(https?:\/\/|#)/i.test(url) ? defaultUrlTransform(url) : remoteMarkdownPath(url, workspaceRoot) ? url : '';
@@ -1209,6 +1216,7 @@ function MessageBubbleView({
   return (
     <PresentedMediaContext.Provider value={outputPresentation.inlineMedia}>
     <ToolMediaContext.Provider value={outputPresentation.mediaByExecution}>
+    <McpAppReferencesContext.Provider value={{ sessionId: host?.sessionId ?? message.conversationId ?? '', enabled: !sending && finalAssistantRound }}>
       <div className={`message-row assistant${isActiveAssistantTurn ? ' streaming' : ''}`}>
         <div className="assistant-bubble">
           {activations.map(target => <McpActivationStatus key={target.serverId}
@@ -1259,8 +1267,7 @@ function MessageBubbleView({
               {assistantBody}
             </AssistantCompletedDisclosure>
           )}
-          {/* Loop media belongs to its tool boundary; keep interactive interfaces mounted independently. */}
-          <MessageToolOutputs key="tool-outputs" sessionId={message.conversationId ?? ''} turnId={message.turnId ?? ''} executions={assistantProgressExecutions}
+          <MessageToolOutputs key="tool-outputs"
             artifacts={outputPresentation.artifacts.filter(artifact => !['image', 'video', 'audio'].includes(artifact.type))} language={language} />
           {showFinalAnswer && finalAnswerBody}
           {timeoutPresentation && (
@@ -1367,6 +1374,7 @@ function MessageBubbleView({
           )}
         </div>
       </div>
+    </McpAppReferencesContext.Provider>
     </ToolMediaContext.Provider>
     </PresentedMediaContext.Provider>
   );

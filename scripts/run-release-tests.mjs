@@ -23,7 +23,7 @@ run(['--test', 'scripts/test-runtime-startup-races.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
-for (const script of ['test-background-startup.mjs', 'test-conversation-switching.mjs', 'test-session-read-fences.mjs', 'test-startup-runtime-contract.mjs', 'test-runtime-host-lifecycle.mjs',
+for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', 'test-conversation-switching.mjs', 'test-session-read-fences.mjs', 'test-startup-runtime-contract.mjs', 'test-runtime-host-lifecycle.mjs',
   'test-local-path-metadata.mjs', 'test-settings-layout-contract.mjs', 'test-panel-motion-contract.mjs',
   'test-chat-scroll-contract.mjs', 'test-scroll-anchoring.mjs', 'test-keyboard-shortcuts.mjs', 'test-chrome-connector-contract.mjs',
   'test-release-cleanup-contract.mjs', 'test-visual-theme-context.mjs',

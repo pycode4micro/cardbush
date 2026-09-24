@@ -1,4 +1,5 @@
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
+import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
 import { defaultHostTerminalRuntime } from './hostPlatform';
 import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, SWITCH_RUNTIME_WORKSPACE_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
@@ -2575,14 +2576,17 @@ export async function sendGuidance(request: SendGuidanceRequest,
       ? await runtime.client.getSession(sessionId, request.signal) : undefined;
     const referencedInput = await resolvePromptReferenceContext(guidance, sessionId, snapshot, undefined,
       (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract);
+    const createdAt = request.createdAt ?? new Date().toISOString();
+    const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     await runtime.client.enqueueGuidance({
       protocol: 'bush.runtime_guidance.v1',
       sessionId,
       turnId,
       messageId: request.clientMessageId.trim(),
       content: referencedInput.content,
-      ...(referencedInput.metadata ? { metadata: referencedInput.metadata } : {}),
-      createdAt: request.createdAt ?? new Date().toISOString(),
+      metadata: { ...referencedInput.metadata, userTimeZone,
+        timeContext: createTurnTimeContext({ createdAt, timeZone: userTimeZone }) },
+      createdAt,
     }, request.signal);
     trace('guidance-accepted');
   } catch (error) {

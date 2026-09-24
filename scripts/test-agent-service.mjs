@@ -12,6 +12,7 @@ import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { AgentConnectionManager } from '../dist-electron/agentConnections.mjs';
 import { runRemoteSubagent } from '../dist-electron/remoteSubagent.mjs';
+import { createTurnTimeContext } from '../packages/bush-product-agent/dist/index.js';
 
 const tempRoot = resolve('tmp/agent-service-tests');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -42,7 +43,7 @@ async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
     const response = { id: `resp_${n}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
     emit({ type: 'response.created', response });
     emit({ type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } });
-    await pause(delay);
+    await (typeof delay === 'function' ? delay() : pause(delay));
     if (res.destroyed) return;
     emit(item.type === 'function_call'
       ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: item.arguments }
@@ -63,6 +64,23 @@ async function openService(t, name = 'fixture', delay = 80, tool, compatibility 
   return { root, model, service };
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+
+test('an Agent can delete an idle conversation while another task keeps running', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { service, model } = await openService(t, 'scoped deletion', () => gate);
+  try {
+    for (const sessionId of ['running', 'idle', 'idle-runtime']) await service.call('sessions.create', { sessionId });
+    const job = await service.call('chat.send', input('running', 'deletion-loop'));
+    await until(async () => model.calls.length, count => count === 1);
+    await assert.rejects(service.call('sessions.delete', { sessionId: 'running' }), /finish|stop/);
+    assert.equal((await service.call('sessions.delete', { sessionId: 'idle' })).deleted, true);
+    assert.equal((await service.call('runtime.command', { kind: 'runtime.delete_session', payload: { sessionId: 'idle-runtime' } })).deleted, true);
+    assert.equal((await service.call('chat.jobs', { sessionId: 'running' }))[0].status, 'running');
+    release();
+    await until(() => service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
+  } finally { release(); await service.close(); }
+});
 
 test('sandbox settings on the Agent enable installed isolation and persist an explicit opt-out across restart', async t => {
   const root = await directory(t);
@@ -121,10 +139,13 @@ for (const compatibility of [false, true]) test(`remote guidance appends within 
   const client = new AgentHttpClient(`http://127.0.0.1:${http.port}`, token);
   try {
     await client.call('sessions.create', { sessionId: 'guidance' });
-    const job = await client.call('chat.send', input('guidance', 'first', 'Initial request'));
+    const userTimeZone = 'America/Los_Angeles';
+    const job = await client.call('chat.send', { ...input('guidance', 'first', 'Initial request'), userMessageMetadata: { userTimeZone } });
     await until(() => f.model.calls.length, count => count === 1 + probeRequests);
+    const guidanceAt = new Date(Date.parse(job.createdAt) + 86400000).toISOString();
+    const timeContext = createTurnTimeContext({ createdAt: guidanceAt, timeZone: userTimeZone });
     const command = { kind: 'runtime.enqueue_guidance', payload: { protocol: 'bush.runtime_guidance.v1', sessionId: 'guidance', turnId: job.turnId,
-      messageId: 'same-guidance', content: 'Adjust the result.', createdAt: new Date().toISOString() } };
+      messageId: 'same-guidance', content: 'Adjust the result.', createdAt: guidanceAt, metadata: { userTimeZone, timeContext } } };
     assert.equal((await client.call('runtime.command', command)).accepted, true);
     await until(() => f.model.calls.length, count => count === 2 + probeRequests);
     assert.equal((await client.call('runtime.command', command)).accepted, true, 'receipt retry after queue drain acknowledges the original guidance');
@@ -137,6 +158,14 @@ for (const compatibility of [false, true]) test(`remote guidance appends within 
     const [before, after] = f.model.calls.slice(probeRequests);
     assert.deepEqual(after.tools, before.tools, 'guidance does not alter tool declarations');
     assert.deepEqual(after.input.slice(0, before.input.length), before.input, 'guidance appends after the complete previous request prefix');
+    const initialTimeContext = createTurnTimeContext({ createdAt: job.createdAt, timeZone: userTimeZone });
+    const clocks = snapshot.turns[0].messages.filter(item => item.message.name === 'turn_runtime_context');
+    assert.equal(clocks.length, 2, 'one snapshot for submission and one for guidance, regardless of retries');
+    assert.ok(clocks[0].message.content.includes(initialTimeContext));
+    assert.equal(clocks[1].message.content, timeContext);
+    assert.ok(clocks.every(item => item.message.role === 'user' && item.message.visibility === 'internal'));
+    assert.ok(JSON.stringify(before.input).includes(JSON.stringify(initialTimeContext).slice(1, -1)), 'client time zone reaches actual provider input');
+    assert.ok(JSON.stringify(after.input).includes(JSON.stringify(timeContext).slice(1, -1)));
     const replay = await client.call('chat.events', { sessionId: 'guidance', turnId: job.turnId, waitMs: 1 });
     assert.equal(replay.events.filter(event => event.kind === 'guidance_applied').length, 1);
     const observations = replay.events.filter(event => ['cache_chain_observed', 'provider_input_observed'].includes(event.kind));
@@ -848,15 +877,21 @@ test('remote goal continuations yield to queued user work and stop with cancella
     await f.service.call('sessions.create', { sessionId: 'goal-queue' });
     await f.service.call('chat.send', { ...input('goal-queue', 'goal-start', 'Initial task'), goalObjective: 'Keep working' });
     await until(() => f.model.calls.length, count => count === 1);
-    await f.service.call('chat.send', input('goal-queue', 'user-followup', 'Please handle my queued correction first'));
+    await f.service.call('chat.send', { ...input('goal-queue', 'user-followup', 'Please handle my queued correction first'),
+      userMessageMetadata: { userTimeZone: 'Pacific/Auckland', attachments: [{ name: 'do-not-repeat.png' }] } });
     const jobs = await until(() => f.service.call('chat.jobs'), jobs => jobs.some(job => job.goalContinuation && job.status === 'running'));
     assert.deepEqual(jobs.slice(0, 2).map(job => [job.id, job.status]), [['goal-start', 'completed'], ['user-followup', 'completed']]);
     assert.equal(jobs.filter(job => job.goalContinuation).length, 1);
     const active = jobs.find(job => job.goalContinuation);
+    await until(() => f.model.calls.length, count => count === 3);
     const goal = await f.service.call('runtime.command', { kind: 'runtime.get_goal', payload: { sessionId: 'goal-queue' } });
     await f.service.call('runtime.command', { kind: 'runtime.update_goal', payload: { sessionId: 'goal-queue', goalId: goal.goalId, expectedRevision: goal.revision, consumedTokens: goal.consumedTokens, status: 'cancelled', statusReason: 'User cancelled' } });
     await f.service.call('chat.stop', { id: active.id });
     await until(() => f.service.call('chat.jobs'), jobs => jobs.every(job => !['queued', 'running'].includes(job.status)));
+    const snapshot = await f.service.call('sessions.get', { sessionId: 'goal-queue' });
+    const continuationInputs = snapshot.turns.find(turn => turn.turnId === active.turnId).messages;
+    assert.match(continuationInputs.find(item => item.message.name === 'turn_runtime_context').message.content, /Time zone: Pacific\/Auckland/);
+    assert.deepEqual(continuationInputs.find(item => item.message.name === 'goal_continuation').metadata, { userTimeZone: 'Pacific/Auckland' });
     await pause(120);
     assert.equal((await f.service.call('chat.jobs')).length, 3, 'cancelled goals cannot schedule another continuation');
   } finally { await f.service.close(); }
