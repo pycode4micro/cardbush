@@ -60,8 +60,8 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
         <div className="loop-history-pre-test-notice">
           <strong>
             {language === 'zh'
-              ? '点击“历史执行 4 条 · 4 个工具”展开验证'
-              : 'Expand “Loop history 4 · 4 tools” to verify'}
+              ? '点击执行记录的动作标题展开验证'
+              : 'Expand the activity title to verify execution details'}
           </strong>
           <span>
             {language === 'zh'

@@ -6,7 +6,8 @@ const path = require('node:path');
 module.exports = async function testQuickContextLayout({ run, until, pause, window, root }) {
   await window.webContents.insertCSS(
     fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8') + '\n' + [
-      'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; --chat-track-width: 780px; --chat-inline-gutter: 46px; }',
+      'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; --chat-track-width: 780px; --chat-inline-gutter: clamp(18px, calc(3vw + 10px), 46px); }',
+      '@media (max-width: 760px) { body[data-context-layout-test] .app { --chat-inline-gutter: 12px; } }',
       'body[data-context-layout-test] .chat-panel { position: absolute; left: var(--test-chat-left); top: 30px; width: var(--test-chat-width); height: calc(100% - 30px); min-width: 0; }',
       '.context-layout-inspector { position: fixed; top: 30px; bottom: 0; left: calc(var(--test-chat-left) + var(--test-chat-width)); right: 0; z-index: 9; padding: 30px; background: #252a2e; color: #b9c0c5; font-size: 18px; border-left: 1px solid #666; }',
     ].join('\n'),
@@ -75,6 +76,10 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   for (const [width, height, chatWidth, left] of [
     [1200, 800, 960, 120],
     [1200, 800, 959, 120],
+    [1024, 700, 760, 240],
+    [720, 650, 680, 10],
+    [680, 520, 640, 10],
+    [680, 520, 639, 10],
     [1200, 800, 440, 256],
     [980, 700, 330, 256],
     [780, 500, 300, 120],
@@ -83,18 +88,22 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   ]) {
     window.setContentSize(width, height);
     await run("document.body.style.setProperty('--test-chat-width', '" + chatWidth + "px'); document.body.style.setProperty('--test-chat-left', '" + left + "px')");
-    if (chatWidth < 960) {
+    if (chatWidth < 640) {
       await until("getComputedStyle(document.querySelector('.quick-context-handle')).display === 'none'", 'narrow conversation hides rail');
       assert.equal(await run("document.querySelector('.quick-context-panel').getClientRects().length"), 0, 'narrow conversation also hides the open preview');
       assert.equal(await run("document.querySelector('.quick-context-tick').getClientRects().length"), 0, 'hidden ticks cannot overlap or intercept the transcript');
     } else {
       await until("getComputedStyle(document.querySelector('.quick-context-handle')).display !== 'none'", 'wide conversation restores rail');
-      assert.ok(await run("document.querySelector('.quick-context-handle').getBoundingClientRect().right + 8 <= document.querySelector('.message-row').getBoundingClientRect().left"), 'rail hit area stays clear of message text');
+      assert.ok(await run("document.querySelector('.quick-context-handle').getBoundingClientRect().right + 2 <= document.querySelector('.message-row').getBoundingClientRect().left"), 'rail hit area stays clear of message text');
       await assertFits('viewport ' + width + ' / pane ' + chatWidth);
     }
     assert.equal(await run("retainedContextPanel === document.querySelector('.quick-context-panel')"), true, 'resize must not remount or clear the selected turn');
   }
   await run("window.contextPanelClasses = document.querySelector('.chat-panel').className; document.querySelector('.chat-panel').classList.add('work-summary-docked', 'work-summary-visible'); undefined;");
+  await pause(400);
+  assert.notEqual(await run("getComputedStyle(document.querySelector('.quick-context-handle')).display"), 'none', 'rail stays available when the docked summary leaves enough room');
+  await assertFits('docked summary with a compact rail');
+  await run("document.body.style.setProperty('--test-chat-width', '960px')");
   await until("getComputedStyle(document.querySelector('.quick-context-handle')).display === 'none'", 'docked summary reduces the usable conversation width');
   await run("document.querySelector('.chat-panel').className = contextPanelClasses; undefined;");
   await until("getComputedStyle(document.querySelector('.quick-context-handle')).display !== 'none'", 'closing summary restores rail without a window resize');

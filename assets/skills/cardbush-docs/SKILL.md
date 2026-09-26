@@ -1,6 +1,6 @@
 ---
 name: cardbush-docs
-description: CardBush 使用与开发文档。用于在 CardBush 添加或配置 MCP 服务，创建、安装、更新、停用或卸载插件，修改应用主题与界面样式，以及定时自动化、日历导入、万年历和中国农历日期转换。CardBush plugins, MCP, themes, automations and calendar conversion. 不用于其他宿主的插件配置或无关网站、文档的样式设计。
+description: CardBush 使用与开发文档。用于应用中心、应用引用与快捷方式，添加或配置 MCP 服务，创建、安装、更新或卸载插件，修改应用主题与界面样式，以及定时自动化、日历导入、万年历和中国农历日期转换。CardBush apps, plugins, MCP, themes, automations and calendar conversion. 不用于其他宿主的插件配置或无关网站、文档的样式设计。
 license: Proprietary
 ---
 
@@ -10,6 +10,7 @@ license: Proprietary
 
 | 任务 | 读取文档 |
 |---|---|
+| 应用中心、快捷方式、@ 应用引用、独立应用链接 | [应用中心](references/app-center.md) |
 | 添加 MCP 服务、检查连接、配置插件 OAuth | [MCP 接入](references/mcp-management.md) |
 | 创建、安装、更新、停用或卸载 CardBush 插件包 | [插件管理](references/plugin-management.md)，再读 [插件契约](references/plugin-contract.md) |
 | 修改主题、配色、应用界面样式 | [样式管理](references/style-management.md)；新主题或全局变化再读 [主题契约](references/theme-contract.md) |

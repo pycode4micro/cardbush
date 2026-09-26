@@ -18,6 +18,7 @@ import { settleAtAbort } from "./abortSettlement.js";
 import type { PluginHookResult } from './pluginExtensions.js';
 import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
+import { stripToolDisplayTitle } from './toolDisplay.js';
 
 export interface ToolExecutionHooks {
   before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
@@ -32,10 +33,11 @@ export interface ToolExecutionIdentity {
   round: number;
   ordinal: number;
   assistantMessageId?: string;
+  display?: { title: string };
 }
 
 export interface ToolExecutionObserver {
-  running?: (toolCall: ToolCall, identity: ToolExecutionIdentity) => void;
+  running?: (toolCall: ToolCall, identity: ToolExecutionIdentity, executingCall: ToolCall) => void;
   completed?: (toolCall: ToolCall, identity: ToolExecutionIdentity, outcome: ToolExecutionOutcome) => void;
 }
 
@@ -89,6 +91,7 @@ export class ToolExecutionCoordinator {
     identity: ToolExecutionIdentity,
     signal?: AbortSignal,
     turn?: ToolHandlerContext["turn"],
+    parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
   ): Promise<ToolExecutionOutcome> {
     if (
       turn &&
@@ -120,7 +123,9 @@ export class ToolExecutionCoordinator {
     const hooks = registration.delegatesToolExecution ? undefined : this.#hooks;
     let parsedArguments: unknown;
     try {
-      parsedArguments = JSON.parse(toolCall.argumentsText);
+      const originalArguments = JSON.parse(toolCall.argumentsText);
+      parsedArguments = stripToolDisplayTitle(originalArguments, registration.definition);
+      if (parsedArguments !== originalArguments) toolCall = { ...toolCall, argumentsText: JSON.stringify(parsedArguments) };
     } catch (error) {
       return failedResult(
         "tool_arguments_invalid_json",
@@ -139,7 +144,7 @@ export class ToolExecutionCoordinator {
         hookResult = await hooks.before({ toolCall, input: parsedArguments, turn, signal });
         if (hookResult.blocked) return { ...failedResult('plugin_hook_blocked', hookResult.blocked, undefined, {}, 'permission'), hookMessages: hookResult.messages, hookStopTurn: hookResult.stopTurn };
         if (hookResult.updatedInput !== undefined) {
-          parsedArguments = hookResult.updatedInput;
+          parsedArguments = stripToolDisplayTitle(hookResult.updatedInput, registration.definition);
           input = registration.decodeInput(parsedArguments);
           toolCall = { ...toolCall, argumentsText: JSON.stringify(parsedArguments) };
         }
@@ -164,7 +169,7 @@ export class ToolExecutionCoordinator {
     let capabilityIds: string[] = [];
     if (hookResult.ask) {
       try {
-        const answer = await this.#permissions.request({ toolCallId: toolCall.id, reason: hookResult.ask,
+        const answer = await this.#permissions.request({ toolCallId: parentLifecycle?.toolCall.id ?? toolCall.id, executionToolCallId: toolCall.id, reason: hookResult.ask,
           actions: ['plugin_hook.confirm_tool'], targets: [], capabilityIds: [] }, signal);
         if (answer.decision === 'cancel') return cancelledResult('plugin_hook_permission_cancelled', actionManifest);
         if (answer.decision === 'deny') return failedResult('plugin_hook_permission_rejected', hookResult.ask, actionManifest, {}, 'permission');
@@ -228,7 +233,7 @@ export class ToolExecutionCoordinator {
             if (hookPermission?.permissionDecision === 'deny') return failedResult('plugin_hook_permission_rejected', hookPermission.blocked ?? 'Permission denied by a trusted hook.', actionManifest, {}, 'permission');
             answer = hookPermission?.permissionDecision === 'allow'
               ? { decision: 'allow_once', grantedCapabilityIds: [...admission.request.capabilityIds] }
-              : await this.#permissions.request({ ...admission.request, toolCallId: toolCall.id }, signal);
+              : await this.#permissions.request({ ...admission.request, toolCallId: parentLifecycle?.toolCall.id ?? toolCall.id, executionToolCallId: toolCall.id }, signal);
           } catch (error) {
             if (isAbortError(error)) {
               return cancelledResult(
@@ -275,7 +280,10 @@ export class ToolExecutionCoordinator {
     if (registration.mcpHook && this.#registry.resolve(toolCall.name) !== registration) {
       return failedResult('tool_definition_changed', 'The MCP connection changed while awaiting execution. Discover the current tool and try again.', actionManifest);
     }
-    this.#observer.running?.(toolCall, identity);
+    // Ordinary delegation belongs to the caller's receipt. Only explicitly
+    // recorded (for example background) calls have an independent lifecycle.
+    const lifecycle = parentLifecycle ?? { toolCall, identity };
+    this.#observer.running?.(lifecycle.toolCall, lifecycle.identity, toolCall);
     let nativeResult: unknown;
     const nestedHookMessages: string[] = [], nestedHookFeedback: string[] = [];
     let nestedHookStopTurn: string | undefined;
@@ -306,7 +314,8 @@ export class ToolExecutionCoordinator {
               ordinal: identity.ordinal * 1000 + (++nestedOrdinal),
             };
             const nested = await this.execute(nestedCall, nestedIdentity,
-              nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal, turn);
+              nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal, turn,
+              nestedOptions?.record ? undefined : lifecycle);
             if (nestedOptions?.record) this.#observer.completed?.(nestedCall, nestedIdentity, nested);
             nestedOptions?.onHooks?.(nested.hookMessages ?? [], nested.hookStopTurn);
             nestedHookMessages.push(...(nested.hookMessages ?? []));
@@ -318,6 +327,7 @@ export class ToolExecutionCoordinator {
               return nested.result;
             }
             throw Object.assign(new Error(nested.error.message), {
+              ...(nested.kind === 'cancelled' ? { name: 'AbortError' } : {}),
               code: nested.error.code,
               details: nested.error.details,
             });

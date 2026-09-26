@@ -73,7 +73,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
     baseline.current = remote; setDraft(JSON.parse(remote));
   }, [remote]);
   const dirty = JSON.stringify(draft) !== baseline.current || Object.keys(secrets).length > 0;
-  const services = plugin.components.filter(item => item.kind === 'mcp' || item.kind === 'app');
+  const services = plugin.components.filter(item => item.kind === 'mcp' || (item.kind === 'app' && !item.app));
   const change = (name: string, patch: Json) => { setSavedMessage(''); setDraft(current => ({ ...current, [name]: { ...record(current[name]), ...patch } })); };
   const troubleshoot = async (componentId: string, connection: Parameters<typeof pluginTroubleshootingPrompt>[1]) => {
     if (actionInFlight.current || dirty || !onOpenPrompt) return;

@@ -75,6 +75,7 @@ export class ToolExecutionStore {
       ordinal: identity.ordinal,
       recordedAt: this.#now(),
       toolCall,
+      display: identity.display,
       outcome: outcome.kind,
       actionManifest: outcome.actionManifest,
       ...(outcome.kind === "returned" ? { result: outcome.result } : {}),
@@ -247,6 +248,7 @@ function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<ob
       name: record.toolCall.name,
     },
     outcome: record.outcome,
+    display: record.display,
     actionManifest: record.actionManifest,
     resultAvailable: Object.prototype.hasOwnProperty.call(record, "result"),
     workspaceChanges: record.workspaceChanges.map(change => {

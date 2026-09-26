@@ -30,7 +30,9 @@ test('search keeps long descriptions compact and only an explicitly loaded schem
   const view = JSON.parse(content);
   assert.equal(view.action, 'search');
   assert.ok(view.matches.every(tool => tool.loaded === false));
-  assert.match(view.next_step, /action="load"/);
+  assert.equal(view.next_step, undefined, 'static instructions belong to the tool description');
+  assert.equal(view.protocol, undefined);
+  assert.equal(view.sessionId, undefined);
   assert.equal(view.catalog, undefined, 'one catalog, without duplicate entries');
   assert.ok(view.matches.some(tool => tool.name === 'mcp__seedream__generate'));
   assert.ok(view.matches.every(tool => tool.inputSchema === undefined && tool.description.length <= 512));

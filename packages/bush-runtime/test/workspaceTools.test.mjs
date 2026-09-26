@@ -475,6 +475,15 @@ test("PowerShell reports the last command status inside its scope, including tra
     });
     assert.equal(result.kind, "returned");
     assert.equal(result.result.exitCode, expectedExitCode, command);
+    const native = structuredClone(result.result);
+    const modelText = setup.registry.renderModelResult('terminal_exec', result.result);
+    if (expectedExitCode !== 0) assert.match(modelText, /command failed/);
+    if (command.includes('recovered')) {
+      assert.match(result.result.stderr, /does-not-exist/);
+      assert.match(modelText, /non-terminating errors even with exitCode 0/);
+      assert.match(modelText, /verify the requested output/);
+    }
+    assert.deepEqual(result.result, native, 'presentation must preserve native exit status and output');
   }
 });
 

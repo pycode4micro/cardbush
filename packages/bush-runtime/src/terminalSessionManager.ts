@@ -165,6 +165,14 @@ export class TerminalSessionManager {
     return result;
   }
 
+  /** Observe exit without draining stdout/stderr or taking ownership from manual poll. */
+  async waitForCompletion(ownerSessionId: string, sessionId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const terminal = this.#owned(ownerSessionId, sessionId);
+    await this.#wait(terminal, 3_600_000, signal, () => terminal.closed && terminal.state !== 'running');
+    signal?.throwIfAborted();
+    return this.#consume(terminal, false);
+  }
+
   async write(
     ownerSessionId: string,
     input: TerminalWriteInput,
@@ -238,17 +246,16 @@ export class TerminalSessionManager {
     return terminal;
   }
 
-  #consume(terminal: ManagedTerminalSession): Record<string, unknown> {
+  #consume(terminal: ManagedTerminalSession, consume = true): Record<string, unknown> {
     const stdout = decodeProcessOutput(Buffer.concat(terminal.stdout));
     const stderr = decodeProcessOutput(Buffer.concat(terminal.stderr));
-    terminal.stdout = [];
-    terminal.stderr = [];
-    terminal.stdoutBytes = 0;
-    terminal.stderrBytes = 0;
     const stdoutTruncated = terminal.stdoutTruncated;
     const stderrTruncated = terminal.stderrTruncated;
-    terminal.stdoutTruncated = false;
-    terminal.stderrTruncated = false;
+    if (consume) {
+      terminal.stdout = []; terminal.stderr = [];
+      terminal.stdoutBytes = 0; terminal.stderrBytes = 0;
+      terminal.stdoutTruncated = false; terminal.stderrTruncated = false;
+    }
     return {
       terminalSessionId: terminal.sessionId,
       pid: terminal.pid,

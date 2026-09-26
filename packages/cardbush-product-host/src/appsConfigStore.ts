@@ -16,6 +16,7 @@ export interface CardbushPluginComponent {
   hook?: { definitionHash: string; definition: Record<string, unknown>; executable: boolean };
   runtime?: { settings: boolean };
   mcp?: { transport?: string; url?: string; registeredAppId?: string; required?: boolean };
+  app?: { kind: 'url'; url: string } | { kind: 'renderer'; extensionId: string };
 }
 
 export interface CardbushPluginCatalogEntry {

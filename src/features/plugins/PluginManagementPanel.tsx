@@ -27,7 +27,8 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-react';
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { PageNavigationScope, usePageState } from '../navigation/PageNavigation';
 
 
 import type { McpConnectionOverview } from '../../backend/mcpConnectionOverview';
@@ -41,6 +42,7 @@ import type {
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
+import { PluginIcon } from '../../components/PluginIcon';
 import { PluginMarketplacePanel } from './PluginMarketplacePanel';
 import { usePluginNavigation, type PluginPage as Page, type ManageTab } from './usePluginNavigation';
 import './plugin-management.css';
@@ -59,6 +61,7 @@ export function PluginManagementPanel({
   onOpenPrompt,
   presentation = 'catalog',
   onOpenNetwork,
+  requestedPlugin,
 }: {
   language: AppLanguage;
   initialTab: 'plugins' | 'skills';
@@ -73,12 +76,22 @@ export function PluginManagementPanel({
   onOpenPrompt?: (prompt: string) => void;
   presentation?: 'catalog' | 'network';
   onOpenNetwork?: () => void;
+  requestedPlugin?: { id: string; nonce: number; extensionId?: string };
 }) {
   const host = useSettingsHost();
   const [installPath, setInstallPath] = useState('');
   const [installOpen, setInstallOpen] = useState(false);
-  const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
+  const [tab, setTab] = usePageState<'plugins' | 'skills' | 'accounts'>('plugin-tab', initialTab);
+  const navigationScope = useContext(PageNavigationScope);
   const { rootRef, entries, page, open: setPage, back, reset, dismissPlugin } = usePluginNavigation();
+  const appliedPluginRequest = useRef<typeof requestedPlugin>(undefined);
+  useEffect(() => {
+    if (!requestedPlugin || appliedPluginRequest.current === requestedPlugin) return;
+    appliedPluginRequest.current = requestedPlugin;
+    setTab('plugins'); setPage(requestedPlugin.extensionId
+      ? { kind: 'workspace', pluginId: requestedPlugin.id, extensionId: requestedPlugin.extensionId }
+      : { kind: 'plugin', pluginId: requestedPlugin.id });
+  }, [requestedPlugin, setPage]);
   const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp?.(serverId);
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [localSkills, setLocalSkills] = useState(skills);
@@ -125,7 +138,10 @@ export function PluginManagementPanel({
   }, [page, loadSkillDetail]);
 
   useEffect(() => setLocalSkills(skills), [skills]);
+  const previousInitialTab = useRef(initialTab);
   useEffect(() => {
+    if (previousInitialTab.current === initialTab) return;
+    previousInitialTab.current = initialTab;
     setTab(initialTab);
     reset();
   }, [initialTab, reset]);
@@ -290,7 +306,7 @@ export function PluginManagementPanel({
 
   const openSkill = useCallback((skill: SkillSummary) => {
     setPage({ kind: 'skill', skillName: skill.name });
-  }, []);
+  }, [setPage]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const plugins = configuration?.plugins ?? [];
@@ -608,7 +624,7 @@ export function PluginManagementPanel({
       const hidden = index !== entries.length - 1;
       return <div key={entry.id} className="plugin-navigation-page" data-plugin-page={entry.page.kind}
         hidden={hidden} inert={hidden} aria-hidden={hidden}>
-        {renderPage(entry.page, entries[index - 1]?.page)}
+        <PageNavigationScope.Provider value={`${navigationScope}:plugin:${entry.id}`}>{renderPage(entry.page, entries[index - 1]?.page)}</PageNavigationScope.Provider>
       </div>;
     })}
   </div>;
@@ -628,7 +644,7 @@ function PluginCatalog({ language, configuration, plugins, connections, mcpLoadi
   onOpen: (plugin: CardbushAppPlugin) => void;
   onInstall: (plugin: CardbushAppPlugin) => void;
 }) {
-  const [scope, setScope] = useState<'public' | 'personal'>('public');
+  const [scope, setScope] = usePageState<'public' | 'personal'>('plugin-catalog-scope', 'public');
   const scopedPlugins = plugins.filter((plugin) =>
     scope === 'public' ? plugin.source === 'bundled' : plugin.source === 'user');
   const installed = plugins.filter((plugin) => plugin.installed);
@@ -740,7 +756,7 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
                   aria-expanded={expanded}
                   onClick={() => toggleGroup(group.key)}
                 >
-                  <span className="skill-plugin-group-icon"><PackagePlus size={20} /></span>
+                  <span className="skill-plugin-group-icon"><PluginIcon size={20} /></span>
                   <strong>{group.label} · {countLabel}</strong>
                   <ChevronRight size={17} />
                 </button>
@@ -809,7 +825,7 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
   onOpen: (plugin: CardbushAppPlugin) => void;
   onPersist: (configuration: CardbushAppsConfiguration, message: string) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<ManageTab>(initialTab ?? 'plugins');
+  const [activeTab, setActiveTab] = usePageState<ManageTab>('plugin-manage-tab', initialTab ?? 'plugins');
   const installed = plugins.filter((plugin) => plugin.installed);
   const appCount = installed.reduce((sum, plugin) => sum + plugin.components.filter((item) => item.kind === 'app').length, 0);
   const mcpCount = connections.length;
@@ -1003,7 +1019,7 @@ function skillSourceText(language: AppLanguage, skill: SkillSummary): string {
 
 function PluginLogo({ plugin, large = false, compact = false }: { plugin: CardbushAppPlugin; large?: boolean; compact?: boolean }) {
   const source = plugin.logoPath ? fileUrl(plugin.logoPath) : '';
-  return <span className={`plugin-logo${large ? ' large' : ''}${compact ? ' compact' : ''}`} style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{source ? <img src={source} alt="" /> : <PackagePlus size={large ? 28 : 20} />}</span>;
+  return <span className={`plugin-logo${large ? ' large' : ''}${compact ? ' compact' : ''}`} style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{source ? <img src={source} alt="" /> : <PluginIcon size={large ? 28 : 20} />}</span>;
 }
 
 function SearchField({ language, value, onChange, kind }: { language: AppLanguage; value: string; onChange: (value: string) => void; kind: 'plugins' | 'skills' | 'apps' | 'mcp' | 'integrations' }) {

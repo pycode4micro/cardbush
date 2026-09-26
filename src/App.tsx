@@ -7,6 +7,12 @@ import { newBrowserTab } from './features/browser/browserStartPage';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
 import { defaultHostTerminalRuntime, normalizeHostTerminalRuntime } from './backend/hostPlatform';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
+import { AppCenterProvider } from './features/appCenter/AppCenter';
+import { requestAppCenter } from './features/appCenter/appCenterStore';
+import { requestPluginApplication } from './features/plugins/pluginNavigationRequests';
+import { PageNavigationContext, PageNavigationScope, usePageNavigation } from './features/navigation/PageNavigation';
+import type { AppPage } from './features/navigation/appPage';
+import { GlobalTooltip } from './components/GlobalTooltip';
 import { DEFAULT_MAX_CONTEXT_TOKENS, normalizeConversationStyle } from '@cardbush/bush-product-agent';
 import { readConversationStyle, saveConversationStyle } from './features/settings/conversationStyle';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
@@ -2088,7 +2094,6 @@ function CardbushApp() {
   const handleSidebarOpenSettings = useCallback(() => {
     openSettings('profile', 'plugins', section === 'agents' ? agents.selectedId : '');
   }, [openSettings, section, agents.selectedId]);
-  const handleSidebarOpenPlugins = useCallback(() => setSection('plugins'), []);
   const handleSearchOpenConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
     openConversation(conversationId);
@@ -2106,6 +2111,28 @@ function CardbushApp() {
     enabled: section === 'chat' && !settingsOpen && !conversationSearch.open,
     onOpenConversation: handlePreviousConversation,
   });
+  const currentPage: AppPage = settingsOpen
+    ? { section: 'settings', agentId: settingsAgentId, settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
+    : section === 'chat' ? { section, conversationId: chat.activeConversationId }
+    : section === 'agents' ? { section, agentId: agents.selectedId, sessionId: agents.selectedSessions[agents.selectedId] ?? '', view: agents.views[agents.selectedId] ?? 'chat' }
+    : { section };
+  const pageNavigation = usePageNavigation(currentPage, page => {
+    if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab, page.agentId); return; }
+    setSettingsOpen(false); setSection(page.section);
+    if (page.section === 'chat') {
+      if (page.conversationId) chat.openConversation(page.conversationId); else chat.clearConversationSelection();
+    } else if (page.section === 'agents') agents.select(page.agentId, page.sessionId, page.view);
+  }, page => {
+    if (page.section === 'chat') return !page.conversationId || [...chat.conversations, ...chat.preparedConversations].some(item => item.id === page.conversationId);
+    if (page.section === 'settings' || page.section === 'agents') {
+      if (page.agentId && !agents.connections.some(item => item.id === page.agentId)) return false;
+      if (page.section === 'agents' && page.sessionId) {
+        const list = agents.sessionsByAgent[page.agentId];
+        return !list || list.loading || Boolean(list.error) || list.sessions.some(item => item.sessionId === page.sessionId);
+      }
+    }
+    return true;
+  });
   const handleSearchCreateConversation = useCallback(() => {
     setSettingsOpen(false);
     createConversation();
@@ -2121,6 +2148,9 @@ function CardbushApp() {
 
   const toggleSidebar = () => setSidebarCollapsed(collapsed => !collapsed);
   const windowMenus = applicationMenus(language, {
+    openAppCenter: requestAppCenter,
+    openPlugins: () => { setSettingsOpen(false); setSection('plugins'); },
+    openAutomations: () => { setSettingsOpen(false); setSection('automations'); },
     newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
     openProject: window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined,
     openFiles: window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined,
@@ -2145,13 +2175,14 @@ function CardbushApp() {
       ? () => { setSettingsOpen(false); openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId }); } : undefined,
     openShadow: inspectorShadowAvailable ? () => { setSettingsOpen(false); openShadowInspectorTab(); } : undefined,
     previousConversation: conversationNavigation.canGoPrevious ? conversationNavigation.previous : undefined,
-    back: conversationNavigation.canGoBack ? conversationNavigation.goBack : undefined,
-    forward: conversationNavigation.canGoForward ? conversationNavigation.goForward : undefined,
+    back: pageNavigation.canGoBack ? pageNavigation.back : undefined,
+    forward: pageNavigation.canGoForward ? pageNavigation.forward : undefined,
     openTeam: backendCapabilities.teamMode ? () => { setSettingsOpen(false); setSection('team'); } : undefined,
   }, { sidebarVisible: !sidebarCollapsed, inspectorVisible: inspectorOpen && !settingsOpen,
     native: Boolean(window.cardbushDesktop?.executeWindowMenuAction), externalLinks: Boolean(window.cardbushDesktop?.openExternal) });
 
   return (
+    <PageNavigationContext.Provider value={pageNavigation}>
     <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
     <ConversationExtractionProvider activeSessionId={chat.activeConversationId} language={language}
       contextWindowTokens={appSettings.managedModelConfigs.find(config => config.id === chat.selectedModel)?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS}
@@ -2167,13 +2198,23 @@ function CardbushApp() {
       lang={language}
       style={appStyle}
     >
+      <AppCenterProvider language={language} onNavigate={(application, environmentId) => {
+        if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins', environmentId); return; }
+        if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings('profile', 'plugins', environmentId); return; }
+        if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
+        setSettingsOpen(false);
+        if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
+        else setSection(application.target === 'automations' ? 'automations' : 'plugins');
+        if (compactLayout) collapseSidebar();
+      }}>
+      <GlobalTooltip/>
       <WindowFrame
         language={language}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={toggleSidebar}
         menus={windowMenus}
-        onBack={conversationNavigation.canGoBack ? conversationNavigation.goBack : undefined}
-        onForward={conversationNavigation.canGoForward ? conversationNavigation.goForward : undefined}
+        onBack={pageNavigation.canGoBack ? pageNavigation.back : undefined}
+        onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
         onError={error => { void showUiError(language === 'zh' ? '操作失败' : 'Action failed', errorMessage(error)); }}
       />
       {conversationSearch.open && <ConversationSearchDialog
@@ -2188,6 +2229,7 @@ function CardbushApp() {
         onOpenFiles={window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined}
       />}
       {settingsMounted && (
+        <PageNavigationScope.Provider value={`settings:${settingsAgentId || 'local'}`}>
         <Suspense fallback={null}>
           <LazySettingsView
             agentConnections={agents.connections} agentId={settingsAgentId} onAgentChange={setSettingsAgentId}
@@ -2215,6 +2257,7 @@ function CardbushApp() {
             disabledSkillNames={disabledSkillNames}
             runtimeBusy={runningConversationIds.size > 0}
             initialSection={settingsInitialSection}
+            onSectionChange={setSettingsInitialSection}
             initialPluginTab={settingsPluginTab}
             onBack={() => setSettingsOpen(false)}
             onThemePreferenceChange={setThemePreference}
@@ -2237,7 +2280,9 @@ function CardbushApp() {
             onVisualInputEnabledChange={setVisualInputEnabled}
           />
         </Suspense>
+        </PageNavigationScope.Provider>
       )}
+      <PageNavigationScope.Provider value={`main:${section}`}>
       <ConversationInspectorContext.Provider value={{ open: openConversationInspector, close: closeInspectorTab, outlets: conversationInspectorOutlets, visible: inspectorOpen }}>
       <main
         className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
@@ -2279,7 +2324,6 @@ function CardbushApp() {
                   onOpenConversationChanges={handleSidebarOpenConversationChanges}
                   onOpenSettings={handleSidebarOpenSettings}
                   onOpenArchives={() => openSettings('cache')}
-                  onOpenPlugins={handleSidebarOpenPlugins}
                   onOpenSearch={conversationSearch.show}
                   softVisible={sidebarPresence.visible}
                 />
@@ -2627,6 +2671,7 @@ function CardbushApp() {
                   type="button"
                   onClick={closeInspector}
                   title={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
+                  data-shortcut="toggleInspector"
                   aria-label={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
                 >
                   <PanelRightClose size={16} />
@@ -2698,6 +2743,7 @@ function CardbushApp() {
                     type="button"
                     title={language === 'zh' ? '刷新当前页面' : 'Reload current page'}
                     aria-label={language === 'zh' ? '刷新当前页面' : 'Reload current page'}
+                    data-shortcut="reloadBrowser"
                     onClick={() => inspectorWebviewRefs.current
                       .get(activeInspectorTabIdentity)?.reload()}
                   >
@@ -2711,6 +2757,7 @@ function CardbushApp() {
                     <form
                       className="right-inspector-address editable"
                       title={activeInspectorAddress}
+                      data-shortcut="focusBrowserAddress"
                       onSubmit={(event) => {
                         event.preventDefault();
                         inspectorWebviewRefs.current
@@ -2851,6 +2898,7 @@ function CardbushApp() {
           ) : null}
       </main>
       </ConversationInspectorContext.Provider>
+      </PageNavigationScope.Provider>
       {projectRenameTarget && (
         <ProjectRenameDialog
           key={projectRenameTarget.id}
@@ -2864,10 +2912,12 @@ function CardbushApp() {
       )}
       <CopyToastHost language={language} />
       <McpUserRequests language={language} />
+      </AppCenterProvider>
     </div>
     </ImageGalleryProvider>
     </ConversationExtractionProvider>
     </WorkspaceChangeStateContext.Provider>
+    </PageNavigationContext.Provider>
   );
 }
 

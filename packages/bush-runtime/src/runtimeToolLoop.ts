@@ -1,4 +1,5 @@
 import { projectMcpDiscoveryResult } from "./mcpToolDiscovery.js";
+import { toolCallDisplay } from './toolDisplay.js';
 import { modelMcpAppReference } from './mcpAppReference.js';
 import {
   type ModelMessage,
@@ -72,6 +73,7 @@ export class RuntimeToolLoop {
   readonly #modelImages: ModelImageStore;
   readonly #permissionEventIdentity: RuntimeEventIdentity;
   readonly #permissionSource?: RuntimeToolLoopOptions["permissionSource"];
+  readonly #nestedExecutingCalls = new Map<string, ToolCall>();
   readonly #activeToolControllers = new Map<
     string,
     { controller: AbortController; toolName: string; executedCall?: ToolCall }
@@ -114,17 +116,29 @@ export class RuntimeToolLoop {
       registry: options.registry,
       permissions: options.externalPermissions ?? this.#permissions,
       observer: {
-        completed: (call, identity, outcome) => this.#appendToolOutcome(call, identity, outcome),
-        running: (toolCall, executionIdentity) => {
+        completed: (call, identity, outcome) => {
+          const executedCall = this.#nestedExecutingCalls.get(call.id) ?? call;
+          this.#nestedExecutingCalls.delete(call.id);
+          this.#executionStore?.record(executedCall, identity, outcome);
+          // Background cancellation may settle after the turn's terminal event.
+          if (!this.#eventLog.isTerminal(identity.sessionId, identity.turnId)) {
+            this.#appendToolOutcome(executedCall, identity, outcome);
+          }
+        },
+        running: (toolCall, executionIdentity, executingCall) => {
+          if (this.#eventLog.isTerminal(executionIdentity.sessionId, executionIdentity.turnId)) return;
           const active = this.#activeToolControllers.get(toolCall.id);
-          if (active) active.executedCall = toolCall;
+          if (executingCall.id === toolCall.id) {
+            if (active) active.executedCall = toolCall;
+            else this.#nestedExecutingCalls.set(toolCall.id, toolCall);
+          }
           this.#eventLog.append(this.#identity, {
             kind: "tool_running",
             payload: toolIdentity(toolCall, executionIdentity),
           });
           if (
             this.#permissions.pendingIds().length > 0 &&
-            this.#registry.resolve(toolCall.name)?.manifest.effect_kind === "desktop_control"
+            this.#registry.resolve(executingCall.name)?.manifest.effect_kind === "desktop_control"
           ) {
             this.cancelTool(toolCall.id);
           }
@@ -177,10 +191,14 @@ export class RuntimeToolLoop {
       modelContextIngressBudgetTokens?: number;
     },
   ): Promise<RuntimeToolRoundResult> {
+    const executionIdentities = toolCalls.map((toolCall, ordinal) => ({
+      ...this.#executionIdentity(input, ordinal),
+      display: toolCallDisplay(toolCall, this.#registry.resolve(toolCall.name)?.definition),
+    }));
     toolCalls.forEach((toolCall, ordinal) => {
       this.#eventLog.append(this.#identity, {
         kind: "tool_queued",
-        payload: toolIdentity(toolCall, this.#executionIdentity(input, ordinal)),
+        payload: toolIdentity(toolCall, executionIdentities[ordinal]!),
       });
     });
     const toolMessages: ModelMessage[] = [];
@@ -189,7 +207,7 @@ export class RuntimeToolLoop {
     const appReferences: Array<string | undefined> = [];
     let hookStopTurn: string | undefined;
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
-      const executionIdentity = this.#executionIdentity(input, ordinal);
+      const executionIdentity = executionIdentities[ordinal]!;
       const controller = new AbortController();
       const detachAbort = forwardAbort(input.signal, controller);
       if (hookStopTurn) controller.abort(new DOMException(hookStopTurn, 'AbortError'));
@@ -695,11 +713,13 @@ function toolIdentity(
   toolName: string;
   ordinal: number;
   assistantMessageId?: string;
+  display?: { title: string };
 } {
   return {
     toolCallId: toolCall.id,
     toolName: toolCall.name,
     ordinal: identity.ordinal,
     assistantMessageId: identity.assistantMessageId,
+    display: identity.display,
   };
 }

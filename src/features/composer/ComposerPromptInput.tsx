@@ -27,7 +27,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   language: AppLanguage;
   autoFocus?: boolean;
   readOnly?: boolean;
-  richReferences?: boolean;
+  richReferences?: boolean | 'applications';
   ariaLabel?: string;
   placeholder: string;
   onChange(value: string, caret: number): void;
@@ -41,10 +41,12 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const lastCaret = useRef(value.length);
   const change = useRef(onChange);
   change.current = onChange;
-  const parts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
+  const parsedParts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
     : pluginPromptParts(skillPart.text, plugins).flatMap<ComposerPromptPart>(part => part.reference ? [{ ...part, start: skillPart.start + part.start }]
       : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
-  const rich = richReferences && parts.some(isReference);
+  // Remote application references have no local file resolver or launch side effects.
+  const parts = richReferences === 'applications' ? parsedParts.map(part => part.contextReference?.kind === 'application' ? part : { text: part.text, start: part.start }) : parsedParts;
+  const rich = Boolean(richReferences) && parts.some(isReference);
   useImperativeHandle(ref, () => ({
     focus: () => focusEditor(rich ? editor.current : textarea.current),
     setSelectionRange: (start, end) => {
@@ -145,7 +147,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     role="textbox" aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')} aria-multiline="true" aria-readonly={readOnly}
     contentEditable={!readOnly} suppressContentEditableWarning data-placeholder={placeholder}
     onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; composing.current = false; }}
-    onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
+    onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onInput={event => {
       // An interrupted IME session may never emit compositionend. The next
       // committed input is authoritative and must not stay blocked forever.
@@ -183,7 +185,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
     aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')}
     onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; }}
-    onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
+    onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onChange={event => { lastCaret.current = event.currentTarget.selectionStart; onChange(event.target.value, lastCaret.current); }}
     onClick={select} onKeyUp={select} onKeyDown={keyDown} />;
 });
@@ -242,6 +244,7 @@ function referenceGlyph(kind: PromptReference['kind'] | 'plugin'): SVGSVGElement
   const path = document.createElementNS(svg.namespaceURI, 'path');
   path.setAttribute('d', kind === 'browser'
     ? 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c4 4 4 14 0 18-4-4-4-14 0-18Z'
+    : kind === 'application' ? 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z'
     : kind === 'user-turn' || kind === 'conversation-extract' ? 'M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3ZM7 8h10M7 12h7'
     : 'M8 3h3a3 3 0 1 1 6 0h4v6a3 3 0 1 0 0 6v6h-6a3 3 0 1 0-6 0H3v-6a3 3 0 1 0 0-6V3Z');
   svg.append(path); return svg;

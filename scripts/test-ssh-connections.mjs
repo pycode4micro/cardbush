@@ -85,7 +85,7 @@ async function fixture(t) {
   const [connection]=await manager.save(input);
   t.after(async()=>{await manager.close();for(const client of clients)client.end();await new Promise(resolve=>server.close(resolve));assert.equal(dirname(resolve(directory)),resolve(tmpdir()));await rm(directory,{recursive:true,force:true,maxRetries:5});});
   async function trust(){const response=await manager.test(connection.id);assert.equal(response.needsTrust,true);assert.match(response.fingerprint,/^SHA256:/);await manager.save({...connection,fingerprint:response.fingerprint});assert.equal((await manager.test(connection.id)).ok,true);}
-  return {manager,connection,input,trust,files,commands,clients,directory,uri:sshWorkspace(connection.id,'/work'),authCount:()=>authCount};
+  return {manager,connection,input,trust,files,commands,clients,jobs,directory,uri:sshWorkspace(connection.id,'/work'),authCount:()=>authCount};
 }
 
 // Exercise the actual workspace-tool decoding, SSH bridge and result validator.
@@ -198,6 +198,10 @@ test('remote paths, observed writes, stale revisions, cross-connection rejection
   await assert.rejects(exec('write_file',{path:'file.txt',content:'oops'}),/尚未读取/);
   const read=await exec('read_file',{path:'file.txt',range:{startLine:2,lineCount:1}});assert.equal(read.content,'中文\n');
   await exec('edit_file',{path:'file.txt',oldText:'中文',newText:'更新'});assert.match(f.files.get('/work/file.txt').toString(),/更新/);
+  const current = await exec('read_file', { path: 'file.txt' });
+  await exec('edit_file', { path: 'file.txt', range: { start: 2, end: 2, sha256: current.sha256 }, newText: '按行更新\n' });
+  assert.equal(f.files.get('/work/file.txt').toString(), 'first\n按行更新\nlast');
+  await assert.rejects(exec('edit_file', { path: 'file.txt', range: { start: 2, end: 2, sha256: current.sha256 }, newText: '' }), /版本/);
   await assert.rejects(exec('write_file',{path:'file.txt',content:'oops'},'two'),/尚未读取/);
   f.files.set('/work/file.txt',Buffer.from('external'));await assert.rejects(exec('write_file',{path:'file.txt',content:'oops'}),/变化/);
   await exec('write_file',{path:'nested/new.txt',content:'新文件'});assert.equal(f.files.get('/work/nested/new.txt').toString(),'新文件');
@@ -208,7 +212,8 @@ test('remote paths, observed writes, stale revisions, cross-connection rejection
 
 test('search drains all chunks; Git status retains spaces and renamed paths; terminal ownership and stop',async t=>{
   const f=await fixture(t);await f.trust();
-  const result=await f.manager.execute(f.uri,'one','search_file_content',{path:'.',query:'needle'});assert.match(result.output,/first/);assert.match(result.output,/last/);
+  const result=await f.manager.execute(f.uri,'one','search_file_content',{path:'.',query:'needle',contextBefore:2,contextAfter:3});assert.match(result.output,/first/);assert.match(result.output,/last/);
+  assert.ok(f.commands.some(command => /--before-context.+2.+--after-context.+3/.test(command)), 'both context limits reach the SSH command');
   const info=await f.manager.git(f.uri,'info');assert.equal(info.branch,'main');assert.deepEqual(info.changedFiles,[{status:'M',path:'spaced file.txt'},{status:'R',path:'new.txt'}]);
   let terminal=await f.manager.execute(f.uri,'one','terminal_exec',{cwd:'/work',command:'fixture-sleep',shell:'posix',yieldTimeMs:30});
   assert.equal(terminal.state,'running');assert.ok(terminal.pid);assert.equal((await f.manager.execute(f.uri,'one','workspace_busy',{})).running,true);
@@ -217,6 +222,29 @@ test('search drains all chunks; Git status retains spaces and renamed paths; ter
   terminal=await f.manager.execute(f.uri,'one','terminal_stop',{sessionId:terminal.terminalSessionId});assert.equal(terminal.state,'stopped');
   assert.equal((await f.manager.execute(f.uri,'one','workspace_busy',{})).running,false);
   assert.ok(f.commands.some(command=>command.startsWith('kill -TERM -')));
+});
+
+test('SSH completion observer waits for exit, preserves readable logs and cancels without stopping the process', async t => {
+  const f = await fixture(t); await f.trust();
+  const started = await f.manager.execute(f.uri, 'one', 'terminal_exec', { cwd: '/work', command: 'fixture-sleep', shell: 'posix', yieldTimeMs: 1 });
+  const input = { sessionId: started.terminalSessionId, yieldTimeMs: 1000 };
+  await assert.rejects(f.manager.execute(f.uri, 'other', 'terminal_observe', input), /不属于/);
+  const controller = new AbortController();
+  const cancelled = f.manager.execute(f.uri, 'one', 'terminal_observe', input, controller.signal);
+  controller.abort(new Error('cancel observer'));
+  await assert.rejects(cancelled, /cancel observer/);
+  assert.equal(f.manager.listTerminals('one').sessions[0].state, 'running');
+  let settled = false;
+  const completion = f.manager.execute(f.uri, 'one', 'terminal_observe', input).then(result => { settled = true; return result; });
+  const stream = [...f.jobs.values()][0];
+  stream.write('progress line\n');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(settled, false, 'output events must not be mistaken for exit');
+  stream.write('last line\n'); stream.exit(7); stream.end();
+  const finished = await completion;
+  assert.equal(finished.state, 'completed'); assert.equal(finished.exitCode, 7); assert.match(finished.stdout, /last line/);
+  const manual = await f.manager.execute(f.uri, 'one', 'terminal_poll', { ...input, yieldTimeMs: 1 });
+  assert.equal(manual.stdout, finished.stdout, 'observer does not drain output');
 });
 
 test('disconnect marks running command uncertain without replaying it',async t=>{

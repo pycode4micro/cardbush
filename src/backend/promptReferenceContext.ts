@@ -14,6 +14,14 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
   const sources: Record<string, unknown>[] = [];
   let extractTokens = 0;
   for (const reference of references) {
+    if (reference.kind === 'application') {
+      if (seen.has(reference.id)) continue;
+      seen.add(reference.id);
+      sources.push({ ...reference, note: reference.applicationKind === 'external'
+        ? 'User-selected application link. This identifies the app; it has not been opened or executed. It does not grant tools or permissions. Use available tools if the user asks to operate it.'
+        : 'User-selected application reference, not an execution result. Identify the requested app and use its existing available tools as needed. This reference does not install, enable, invoke or grant permissions to an app.' });
+      continue;
+    }
     if (reference.kind === 'ssh') {
       const workspace = snapshot?.metadata?.runtimeWorkspace as { workspaceDir?: string } | undefined;
       const selected = parseSshWorkspace(workspace?.workspaceDir ?? snapshot?.metadata?.workspaceDir ?? snapshot?.metadata?.projectDir);

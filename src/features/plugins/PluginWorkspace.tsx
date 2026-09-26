@@ -1,7 +1,8 @@
-import { Suspense, useEffect, useState, type ComponentProps } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useState, type ComponentProps } from 'react';
 import type { BackendCapabilities } from '../../types';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { PluginManagementPanel } from './PluginManagementPanel';
+import { subscribePluginDetailsRequest, takePluginDetailsRequest } from './pluginNavigationRequests';
 
 // Reuse the existing MCP editor without opening the settings shell. Load it
 // only when a server is selected, keeping the catalog entry lightweight.
@@ -17,6 +18,11 @@ type Props = Pick<ComponentProps<typeof PluginManagementPanel>,
 
 export function PluginWorkspace({ capabilities, ...props }: Props) {
   const [notice, setNotice] = useState('');
+  const [requestedPlugin, setRequestedPlugin] = useState<ReturnType<typeof takePluginDetailsRequest>>();
+  useLayoutEffect(() => {
+    const receive = () => { const request = takePluginDetailsRequest(); if (request) setRequestedPlugin(request); };
+    const unsubscribe = subscribePluginDetailsRequest(receive); receive(); return unsubscribe;
+  }, []);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(''), 1800);
@@ -24,7 +30,7 @@ export function PluginWorkspace({ capabilities, ...props }: Props) {
   }, [notice]);
 
   return <div className="feature-content plugin-workspace-scroll" data-plugin-scroll-container>
-    <PluginManagementPanel {...props} initialTab="plugins" onNotify={setNotice}
+    <PluginManagementPanel {...props} initialTab="plugins" onNotify={setNotice} requestedPlugin={requestedPlugin}
       renderMcp={serverId => <Suspense fallback={<p role="status">{props.language === 'zh' ? '正在加载 MCP 设置…' : 'Loading MCP settings…'}</p>}>
         <McpEditor initialServerId={serverId} language={props.language} capabilities={capabilities} onNotify={setNotice} />
       </Suspense>} />

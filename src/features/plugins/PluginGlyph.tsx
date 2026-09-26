@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Puzzle } from 'lucide-react';
+import { PluginIcon } from '../../components/PluginIcon';
 import { fileUrl } from '../../shared/localPaths';
 import type { CardbushAppPlugin } from '../../types';
 
@@ -8,5 +8,5 @@ export function PluginGlyph({ plugin }: { plugin?: Pick<CardbushAppPlugin, 'logo
   const logo = plugin?.logoPath || plugin?.logoDarkPath || '';
   return logo && logo !== failed
     ? <img className="composer-plugin-option-logo" src={fileUrl(logo)} alt="" draggable={false} onError={() => setFailed(logo)} />
-    : <Puzzle size={18} aria-hidden="true" />;
+    : <PluginIcon size={18} />;
 }

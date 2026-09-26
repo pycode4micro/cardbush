@@ -1,6 +1,6 @@
 import type { FunctionTool, ResponseInputItem, Tool } from "openai/resources/responses/responses";
 import { toolDefinitionSchema, type ModelRequest, type ToolDefinition } from "@cardbush/bush-protocol";
-import { mcpDiscoveryResults } from "@cardbush/bush-runtime";
+import { mcpDiscoveryResults, withToolDisplayTitle } from "@cardbush/bush-runtime";
 import { replayToolSearchMode, type ResponsesToolSearchMode } from "./responsesReplay.js";
 import { responseToolName } from "./responsesToolNames.js";
 
@@ -24,7 +24,7 @@ export function historicalToolSearchMode(request: ModelRequest): ResponsesToolSe
 
 export function responseFunctionTool(tool: ToolDefinition): FunctionTool {
   return { type: "function", name: responseToolName(tool.name), description: tool.description,
-    parameters: tool.inputSchema, strict: false };
+    parameters: withToolDisplayTitle(tool).inputSchema, strict: false };
 }
 
 export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMode): Tool[] | undefined {
@@ -32,7 +32,7 @@ export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMo
   return request.tools.flatMap((tool): Tool[] => {
     if (mode === "native" && tool.name === "mcp_search") return [{
       type: "tool_search", execution: "client", parameters: tool.inputSchema,
-      description: "Discover MCP tools progressively. action=search (default) returns names and short descriptions without loading schemas. action=load with query set to an exact name reads one full schema. Only then can the tool be called directly and reused across turns. Load again if its definition changes or leaves context. Use server to narrow searches and next_offset to page. Neither action executes the discovered tool or grants permission.",
+      description: tool.description + ' In native search mode, loaded tools can be called directly.',
     }];
     if (mode === "native" && tool.name === "mcp_call") return [];
     return [responseFunctionTool(tool)];

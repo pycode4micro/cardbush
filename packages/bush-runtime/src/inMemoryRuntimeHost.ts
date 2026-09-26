@@ -163,6 +163,7 @@ import {
 import { SubagentTaskStore } from "./subagentTaskStore.js";
 import { SubagentResumeStore } from './subagentResumeStore.js';
 import { BackgroundToolCalls } from './backgroundToolCalls.js';
+import { TerminalCompletionNotifications } from './terminalCompletionNotifications.js';
 import { asyncResultMessage } from './subagentTool.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
@@ -188,7 +189,7 @@ import {
 import { RuntimeRecoveryCoordinator } from "./runtimeRecoveryCoordinator.js";
 import { InMemoryRuntimeCapabilityStore } from "./runtimeCapabilityStore.js";
 import { SessionStore } from "./sessionStore.js";
-import { registerExecutionHistoryTool } from './executionHistory.js';
+import { executionHistoryScope, registerExecutionHistoryTool } from './executionHistory.js';
 import { ToolExecutionStore } from "./toolExecutionStore.js";
 import { TaskWorkspaceManager } from "./taskWorkspace.js";
 import {
@@ -324,6 +325,7 @@ export class InMemoryRuntimeHost {
   readonly #subagentTasks: SubagentTaskStore;
   readonly #subagentResume: SubagentResumeStore;
   readonly #backgroundTools: BackgroundToolCalls;
+  readonly #terminalNotifications: TerminalCompletionNotifications;
   readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
   readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean }>();
   readonly #activeExtensionCommands = new Map<string, number>();
@@ -484,7 +486,7 @@ export class InMemoryRuntimeHost {
     this.#modelImages = new ModelImageStore(runtimeDataRoot);
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
-      readToolResultText: (locator, signal) => this.#readArchivedToolResultText(locator, signal),
+      readToolResultText: (locator, signal, sessionId) => this.#readArchivedToolResultText(locator, signal, sessionId),
       modelImages: this.#modelImages,
       automation: options.automation,
     });
@@ -513,14 +515,18 @@ export class InMemoryRuntimeHost {
           ? join(options.dataRoot, "project-cognition.json")
           : undefined,
       });
+    this.#terminalNotifications = new TerminalCompletionNotifications(this.#workspaceTerminals, this.#toolExecutions, options.remoteWorkspace,
+      (session, turn, id, result) => this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
     if (options.registerDefaultWorkspaceTools !== false) {
       registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace, commandSandbox: options.commandSandbox, loadCommandSandbox: options.loadCommandSandbox,
+        onTerminalStarted: (context, result) => this.#terminalNotifications.watch(context, result),
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     this.#subagentResume = new SubagentResumeStore(options.dataRoot ? join(runtimeDataRoot, 'subagent-context') : undefined);
     this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
-      this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
+      this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result),
+      (session, turn) => this.#terminalNotifications.list(session, turn));
     this.#backgroundTools.register();
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
@@ -1026,9 +1032,12 @@ export class InMemoryRuntimeHost {
       }
       case LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND: {
         const input = turnToolExecutionsRequestSchema.parse(command.payload);
-        return input.detail === "summary"
+        const records = input.detail === "summary"
           ? this.#toolExecutions.listTurnSummaries(input.sessionId, input.turnId)
           : this.#toolExecutions.listTurn(input.sessionId, input.turnId);
+        // Exit observations have their own archive receipt, but are not new
+        // model-issued tool calls. Keep live and restored tool timelines identical.
+        return records.filter(record => record.actionManifest?.operation !== 'terminal.completion');
       }
       case LIST_RUNTIME_TURN_EVENTS_COMMAND: {
         const identity = runtimeTurnIdentitySchema.parse(command.payload);
@@ -2839,6 +2848,7 @@ export class InMemoryRuntimeHost {
       });
     } finally {
       this.#backgroundTools.endTurn(request.sessionId, request.turnId);
+      this.#terminalNotifications.endTurn(request.sessionId, request.turnId);
       clearMcpDiscovery(this.#toolRegistry, request);
       this.#guidanceQueues.delete(turnKey);
       this.#pendingAgentGuidance.delete(turnKey);
@@ -3227,12 +3237,28 @@ export class InMemoryRuntimeHost {
     throw new Error(`Permission ${answer.permissionId} is not pending.`);
   }
 
-  async #readArchivedToolResultText(locator: string, signal?: AbortSignal): Promise<string> {
+  async #readArchivedToolResultText(locator: string, signal?: AbortSignal, readerSessionId?: string): Promise<string> {
+    const history = /^tool-result:\/\/history\/([a-f0-9]{64})$/.exec(locator);
+    if (history) {
+      if (!readerSessionId) throw new Error('History locators require a current conversation.');
+      const scope = executionHistoryScope(await this.#sessions.listMetadata(signal), readerSessionId);
+      for (const session of scope.sessions) {
+        const page = await this.#toolExecutions.historySummaries(session.sessionId, signal);
+        const entry = page.entries.find(entry => entry.id === history[1]);
+        if (entry?.toolCallId) return this.#readArchivedToolResultText(
+          `tool-result://${[entry.sessionId, entry.turnId, entry.toolCallId].map(encodeURIComponent).join('/')}`, signal, readerSessionId);
+      }
+      throw new Error('Archived history result is deleted or outside this conversation/project.');
+    }
     const match = /^tool-result:\/\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(locator);
     if (!match) throw new Error("Invalid archived Tool result locator.");
     const [sessionId, turnId, toolCallId] = match.slice(1).map((value) =>
       decodeURIComponent(value!),
     );
+    if (readerSessionId && readerSessionId !== sessionId) {
+      const scope = executionHistoryScope(await this.#sessions.listMetadata(signal), readerSessionId);
+      if (!scope.sessions.some(session => session.sessionId === sessionId)) throw new Error('Archived result is outside this conversation/project.');
+    }
     const record = this.#toolExecutions.get(sessionId!, turnId!, toolCallId!);
     if (!record) throw new Error("Archived Tool result was not found.");
     const native = record.outcome === "returned"

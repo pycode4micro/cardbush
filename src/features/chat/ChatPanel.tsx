@@ -88,6 +88,7 @@ import type {
   AppLanguage,
   AppSettingsState,
   ChatMessage,
+  ChatToolExecution,
   ManagedModelConfig,
   PermissionMode,
   SubagentPermissionRouting,
@@ -429,6 +430,15 @@ export function ChatPanel({
     () => summarizeChangeReports(currentTurnChangeReports),
     [currentTurnChangeReports],
   );
+  const currentTurnToolExecutions = useMemo(() => {
+    if (!sending || !activeTurnId) return [];
+    const byId = new Map<string, ChatToolExecution>();
+    for (const message of renderMessages) {
+      if (message.turnId !== activeTurnId) continue;
+      for (const execution of message.toolExecutions ?? []) byId.set(execution.id, execution);
+    }
+    return [...byId.values()];
+  }, [activeTurnId, renderMessages, sending]);
   const activeAssistantForRender = useMemo(() => {
     if (!sending) return null;
     const active = streamingAssistantMessage(renderMessages, activeTurnId);
@@ -2779,6 +2789,8 @@ export function ChatPanel({
                 language={language}
                 running={sending || (activeGoal?.status === 'active' && !goalWaiting)}
                 stopping={stopping}
+                toolExecutions={currentTurnToolExecutions}
+                activityScope={`${activeConversationId}:${activeTurnId}`}
                 taskPlan={activeTaskPlan}
                 goal={activeGoal}
                 goalRounds={activeGoalRounds}

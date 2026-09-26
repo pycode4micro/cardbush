@@ -242,7 +242,7 @@ const desktopApi = {
   },
   showErrorDialog: (error: { title: string; message: string }) =>
     ipcRenderer.invoke('app:show-error', error) as Promise<void>,
-  restoreEditorFocus: (state: { documentFocused: boolean; passive?: boolean }) =>
+  restoreEditorFocus: (state: import('./rendererFocus').EditorFocusRequest) =>
     ipcRenderer.invoke('window:restore-editor-focus', state) as Promise<boolean>,
   wallpaperAccent: () =>
     ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<{

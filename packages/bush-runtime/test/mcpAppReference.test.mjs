@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { RuntimeToolLoop, ToolRegistry, ToolExecutionStore, InMemoryRuntimeEventLog, registerMcpDiscovery, synchronizeMcpDiscovery, InMemoryRuntimeHost } from '../dist/index.js';
+import { RuntimeToolLoop, ToolRegistry, ToolExecutionStore, InMemoryRuntimeEventLog, registerMcpDiscovery, synchronizeMcpDiscovery, InMemoryRuntimeHost, CacheChainTracker } from '../dist/index.js';
 import { parseMcpAppReference } from '@cardbush/bush-protocol';
+import { toResponsesCreateParams } from '../../bush-provider-openai/dist/index.js';
+import { responsesInputFingerprint } from '../../bush-provider-openai/dist/responsesInputFingerprint.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false };
 function setup(result = { content: [{ type: 'text', text: 'Saved revision 3' }], _meta: { secret: 'ui-only-value' } }) {
@@ -38,6 +40,8 @@ for (const gateway of [false, true]) for (const budget of [undefined, 0]) {
     assert.deepEqual(parseMcpAppReference(link.reference), { sessionId: 's', turnId: 't', toolCallId: 'c' });
     assert.match(link.markdown, /^\[Design \\\[v3\\\]\]\(cardbush-app:/);
     assert.match(link.usage, /UI has not been loaded or checked/);
+    assert.match(link.usage, /copy markdown exactly/);
+    assert.match(link.usage, /merely to obtain or validate this link/);
     assert.doesNotMatch(output.messages[0].content, /ui-only-value/);
     assert.deepEqual(fixture.counts(), { calls: 1, reads: 0 }, 'issuing a reference does not read HTML or replay the generating tool');
     const record = store.get('s', 't', 'c');
@@ -54,7 +58,7 @@ test('failed tool results do not promise an App result', async () => {
   assert.doesNotMatch(output.messages[0].content, /cardbush-app:|runtime_app_reference/);
 });
 
-test('model-authored App links preserve append-only request prefixes across rounds', async t => {
+for (const gateway of [false, true]) test(`${gateway ? 'mcp_call' : 'native'} App links preserve append-only request prefixes across rounds`, async t => {
   const dataRoot = await mkdtemp(join(tmpdir(), 'cardbush-app-reference-'));
   t.after(async () => { assert.ok(resolve(dataRoot).startsWith(resolve(tmpdir()) + sep + 'cardbush-app-reference-')); await rm(dataRoot, { recursive: true, force: true }); });
   const { registry, counts } = setup(); const requests = [];
@@ -62,8 +66,13 @@ test('model-authored App links preserve append-only request prefixes across roun
     const round = requests.length; requests.push(structuredClone(request));
     const event = (sequence, kind, fields = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: '2026-09-24T00:00:00Z', sequence, kind, ...fields });
     yield event(0, 'response_started');
-    if (round < 2) {
-      yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'c' + round, nameDelta: 'mcp__fixture__view', argumentsDelta: '{}' });
+    if (gateway && round === 0) {
+      yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'load', nameDelta: 'mcp_search', argumentsDelta: JSON.stringify({ action: 'load', query: 'mcp__fixture__view' }) });
+      yield event(2, 'response_completed', { finishReason: 'tool_calls' });
+    } else if (round < (gateway ? 3 : 2)) {
+      yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'c' + round,
+        nameDelta: gateway ? 'mcp_call' : 'mcp__fixture__view',
+        argumentsDelta: gateway ? JSON.stringify({ name: 'mcp__fixture__view', arguments: {} }) : '{}' });
       yield event(2, 'response_completed', { finishReason: 'tool_calls' });
     } else {
       const link = receipt(request.messages.findLast(message => message.role === 'tool').content);
@@ -71,11 +80,27 @@ test('model-authored App links preserve append-only request prefixes across roun
       yield event(2, 'response_completed', { finishReason: 'stop' });
     }
   } } });
-  const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', tools: [registry.resolve('mcp__fixture__view').definition], messages: [{ role: 'system', content: 'Stable instructions' }, { role: 'user', content: 'Create a design' }] });
-  assert.equal(terminal.payload.status, 'completed'); assert.equal(requests.length, 3);
+  const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
+    tools: gateway ? registry.definitions() : [registry.resolve('mcp__fixture__view').definition],
+    ...(gateway ? { metadata: { mcpToolDiscovery: true } } : {}),
+    messages: [{ role: 'system', content: 'Stable instructions' }, { role: 'user', content: 'Create a design' }] });
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal)); assert.equal(requests.length, gateway ? 4 : 3);
   for (let index = 1; index < requests.length; index++) {
     assert.deepEqual(requests[index].tools, requests[0].tools);
     assert.deepEqual(requests[index].messages.slice(0, requests[index - 1].messages.length), requests[index - 1].messages);
+  }
+  for (const toolSearchMode of ['native', 'function']) {
+    const tracker = new CacheChainTracker(); let previous;
+    for (const request of requests) {
+      assert.equal(tracker.observe(request).frozenPrefixBreak, false);
+      const params = toResponsesCreateParams(request, { toolSearchMode, disableProviderState: true });
+      assert.equal(tracker.observeProviderInput(responsesInputFingerprint(params, params, request.providerBinding)).frozenPrefixBreak, false, toolSearchMode);
+      if (previous) {
+        assert.deepEqual(params.input.slice(0, previous.input.length), previous.input, toolSearchMode);
+        assert.deepEqual(params.tools, previous.tools, toolSearchMode);
+      }
+      previous = params;
+    }
   }
   assert.deepEqual(counts(), { calls: 2, reads: 0 });
 });

@@ -23,6 +23,7 @@ export function WindowSidebarToggle({ language, collapsed, onToggle }: {
   return (
     <button className="window-sidebar-toggle no-drag" type="button"
       data-brand-visible={showBrand} data-collapsed={collapsed}
+      data-shortcut="toggleSidebar"
       title={label} aria-label={label} aria-expanded={!collapsed}
       onClick={() => { setShowBrand(false); onToggle(); }}>
       {/* Measure the themed brand naturally; the slot contracts to the icon after startup. */}

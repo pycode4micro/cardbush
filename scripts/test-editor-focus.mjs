@@ -5,64 +5,98 @@ const { restoreEditorFocus } = createRequire(import.meta.url)('../dist-electron/
 
 function fixture() {
   const state = { destroyed: false, contentsDestroyed: false, crashed: false,
-    focused: true, visible: true, minimized: false, enabled: true, pageFocused: false };
-  let calls = 0, widgetCalls = 0;
-  const contents = { mainFrame: {}, isDestroyed: () => state.contentsDestroyed,
+    focused: true, visible: true, minimized: false, enabled: true, pageFocused: false,
+    editorActive: true, documentFocused: true, owner: null, afterRead: undefined };
+  let calls = 0, widgetCalls = 0, reads = 0;
+  const mainFrame = {};
+  const contents = { mainFrame, focusedFrame: mainFrame, isDestroyed: () => state.contentsDestroyed,
     isCrashed: () => state.crashed, isFocused: () => state.pageFocused,
-    focus: () => { calls++; state.pageFocused = true; } };
+    focus: () => { calls++; state.pageFocused = true; },
+    executeJavaScript: async () => {
+      reads++; const result = { active: state.editorActive, documentFocused: state.documentFocused };
+      state.afterRead?.(); return result;
+    } };
   const window = { isDestroyed: () => state.destroyed, webContents: contents,
     isFocused: () => state.focused, isVisible: () => state.visible,
     isMinimized: () => state.minimized, isEnabled: () => state.enabled,
     focusOnWebView: () => { widgetCalls++; } };
-  return { state, window, event: { sender: contents, senderFrame: contents.mainFrame }, calls: () => calls, widgetCalls: () => widgetCalls };
+  const event = { sender: contents, senderFrame: mainFrame };
+  const restore = (request = {}, sender = event, target = window) => restoreEditorFocus(sender, target,
+    { requestId: 1, documentFocused: false, ...request }, () => state.owner);
+  return { state, window, contents, event, restore, calls: () => calls, widgetCalls: () => widgetCalls, reads: () => reads };
 }
 
-test('an editor click repairs page focus without raising or refocusing the native window', () => {
+test('explicit editor activation repairs native page and widget focus without raising the OS window', async () => {
   const f = fixture();
-  assert.equal(restoreEditorFocus(f.event, f.window), true);
+  assert.equal(await f.restore(), true);
   assert.equal(f.calls(), 1);
-  assert.equal(f.widgetCalls(), 0, 'healthy clicks do not disturb the render widget or IME');
-});
-
-test('a lost document focus repairs the render widget even when native focus already reports true', () => {
-  const f = fixture(); f.state.pageFocused = true;
-  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: false }), true);
   assert.equal(f.widgetCalls(), 1);
 });
 
-test('healthy editor activation leaves native focus and active IME composition untouched', () => {
+test('use current DOM focus, not the stale state sampled before the pointer default action', async () => {
   const f = fixture(); f.state.pageFocused = true;
-  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: true }), true);
+  assert.equal(await f.restore({ documentFocused: false }), true);
+  assert.equal(f.calls(), 0);
+  assert.equal(f.widgetCalls(), 0, 'healthy editor/IME is untouched');
+  f.state.documentFocused = false;
+  assert.equal(await f.restore({ documentFocused: true }), true);
+  assert.equal(f.widgetCalls(), 1, 'widget loss after the request was sent is repaired');
+});
+
+test('passive recovery repairs ownerless focus instead of mistaking it for preview focus', async () => {
+  const f = fixture(); f.state.documentFocused = false;
+  assert.equal(await f.restore({ passive: true }), true);
+  assert.equal(f.calls(), 1);
+  assert.equal(f.widgetCalls(), 1);
+});
+
+test('passive recovery does not steal focus from a native preview, webview or iframe', async () => {
+  const f = fixture(); f.state.documentFocused = false;
+  f.state.owner = { isDestroyed: () => false };
+  assert.equal(await f.restore({ passive: true }), false);
+  f.state.owner = f.contents; f.contents.focusedFrame = {};
+  assert.equal(await f.restore({ passive: true }), false);
+  assert.equal(f.calls(), 0);
+  assert.equal(f.widgetCalls(), 0);
+  f.contents.focusedFrame = f.contents.mainFrame;
+  assert.equal(await f.restore({ passive: true }), true);
+});
+
+test('discard requests whose editor was blurred, unmounted, disabled or superseded', async () => {
+  const f = fixture(); f.state.editorActive = false;
+  assert.equal(await f.restore(), false);
   assert.equal(f.calls(), 0);
   assert.equal(f.widgetCalls(), 0);
 });
 
-test('passive recovery repairs a stale editor widget without stealing native focus from a preview', () => {
-  const f = fixture();
-  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: false, passive: true }), false);
-  assert.equal(f.calls(), 0);
-  assert.equal(f.widgetCalls(), 0);
-  f.state.pageFocused = true;
-  assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: false, passive: true }), true);
-  assert.equal(f.calls(), 0);
-  assert.equal(f.widgetCalls(), 1);
-});
-
-test('late editor clicks cannot steal focus from other apps, hidden windows or modal dialogs', () => {
-  for (const [key, value] of Object.entries({ destroyed: true, contentsDestroyed: true,
-    crashed: true, focused: false, visible: false, minimized: true, enabled: false })) {
-    const f = fixture(); f.state[key] = value;
-    assert.equal(restoreEditorFocus(f.event, f.window, { documentFocused: false }), false, key);
-    assert.equal(f.calls(), 0, key);
-    assert.equal(f.widgetCalls(), 0, key);
+test('late requests cannot steal focus from another app, hidden windows or modal dialogs', async () => {
+  const guards = { destroyed: true, contentsDestroyed: true, crashed: true,
+    focused: false, visible: false, minimized: true, enabled: false };
+  for (const [key, value] of Object.entries(guards)) {
+    for (const duringRead of [false, true]) {
+      const f = fixture();
+      if (duringRead) f.state.afterRead = () => { f.state[key] = value; };
+      else f.state[key] = value;
+      assert.equal(await f.restore(), false, `${key}, during read=${duringRead}`);
+      assert.equal(f.calls(), 0, key);
+      assert.equal(f.widgetCalls(), 0, key);
+    }
   }
 });
 
-test('preview guests and subframes cannot redirect the main editor focus', () => {
+test('only the owning main frame with a valid focus request can activate the editor', async () => {
   const f = fixture();
-  assert.equal(restoreEditorFocus({ ...f.event, sender: {} }, f.window), false);
-  assert.equal(restoreEditorFocus({ ...f.event, senderFrame: {} }, f.window, { documentFocused: false }), false);
-  assert.equal(restoreEditorFocus(f.event, null), false);
+  assert.equal(await f.restore({}, { ...f.event, sender: {} }), false);
+  assert.equal(await f.restore({}, { ...f.event, senderFrame: {} }), false);
+  assert.equal(await f.restore({}, f.event, null), false);
+  for (const requestId of [undefined, 0, -1, 1.5, Infinity, '1']) assert.equal(await f.restore({ requestId }), false);
+  assert.equal(f.reads(), 0);
   assert.equal(f.calls(), 0);
-  assert.equal(f.widgetCalls(), 0);
+});
+
+test('renderer shutdown during a focus check is a cancelled repair', async () => {
+  const f = fixture();
+  f.contents.executeJavaScript = async () => { throw Error('frame disposed'); };
+  assert.equal(await f.restore(), false);
+  assert.equal(f.calls(), 0);
 });

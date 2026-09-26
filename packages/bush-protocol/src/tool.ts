@@ -159,6 +159,8 @@ export const runtimeToolErrorSchema = z.object({
 
 export type RuntimeToolError = z.infer<typeof runtimeToolErrorSchema>;
 
+export const toolDisplaySchema = z.object({ title: z.string().min(1), summary: z.string().optional() });
+
 export const toolExecutionRecordSchema = z.object({
   protocol: z.literal(BUSH_TOOL_EXECUTION_RECORD_PROTOCOL),
   requestId: z.string().min(1),
@@ -168,6 +170,7 @@ export const toolExecutionRecordSchema = z.object({
   ordinal: z.number().int().nonnegative(),
   recordedAt: z.string().min(1),
   toolCall: toolCallSchema,
+  display: toolDisplaySchema.optional(),
   outcome: z.enum(["returned", "failed", "cancelled"]),
   actionManifest: actionManifestSchema.optional(),
   result: z.unknown().optional(),
@@ -229,6 +232,7 @@ export const toolExecutionSummarySchema = z.object({
   ordinal: z.number().int().nonnegative(),
   recordedAt: z.string().min(1),
   toolCall: toolCallSchema.pick({ protocol: true, id: true, name: true }),
+  display: toolDisplaySchema.optional(),
   outcome: z.enum(["returned", "failed", "cancelled"]),
   actionManifest: actionManifestSchema.optional(),
   resultAvailable: z.boolean(),

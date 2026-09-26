@@ -18,7 +18,7 @@ export function pluginMcpConnections(
     // Components describe capabilities; several declarations can belong to one
     // connection. Count by owner + runtime ID, preferring transport metadata.
     const components = plugin.components
-      .filter(component => component.kind === 'mcp' || component.kind === 'app')
+      .filter(component => component.kind === 'mcp' || (component.kind === 'app' && !component.app))
       .sort((a, b) => Number(a.kind === 'app') - Number(b.kind === 'app'));
     const connections = new Map<string, PluginMcpConnection>();
     for (const component of components) {

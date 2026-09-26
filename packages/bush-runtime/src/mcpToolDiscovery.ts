@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { withToolDisplayTitle } from './toolDisplay.js';
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
@@ -12,10 +13,17 @@ export function projectMcpDiscoveryResult(text: string, maxChars?: number): stri
   let result: any;
   try { result = JSON.parse(text); } catch { return undefined; }
   if (result?.protocol !== MCP_DISCOVERY_PROTOCOL || !Array.isArray(result.matches)) return undefined;
-  // New search receipts are already compact; an explicit load is one complete
-  // definition. Oversized receipts use the ordinary immutable result archive.
+  // Search receipts stay compact; explicit loads contain complete definitions.
+  // Oversized receipts use the ordinary immutable result archive.
   if (result.action === 'search' || result.action === 'load') {
-    return text.length <= (maxChars ?? (result.action === 'load' ? 128_000 : 16_000)) ? text : undefined;
+    const { next_step: _next, ...receipt } = result;
+    if (result.action === 'search') {
+      delete receipt.protocol; delete receipt.sessionId; delete receipt.more;
+      receipt.matches = result.matches.map(({ name, description, descriptionTruncated, loaded }: any) =>
+        ({ name, description, ...(descriptionTruncated ? { descriptionTruncated } : {}), loaded }));
+    }
+    const compact = JSON.stringify(receipt);
+    return compact.length <= (maxChars ?? (result.action === 'load' ? 128_000 : 16_000)) ? compact : undefined;
   }
   const catalog = result.matches.map((item: any) => ({ name: item.name, server: item.server, tool: item.tool,
     revision: item.revision, ...(item.interface ? { interface: item.interface } : {}), ...(typeof item.description === 'string' ? { summary: item.description.slice(0, 160) } : {}) }));
@@ -176,7 +184,7 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   }
   const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
     (!tool.name.startsWith('agent_memory_') || request.metadata.pluginAgentMemoryActive === true) &&
-    (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook));
+    (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.
   request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(tools) };
   return tools;
@@ -184,22 +192,41 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
 
 export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'mcp.search', risk: 'low' as const, owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register<{ action: 'search' | 'load'; query: string; server?: string; limit?: number; offset: number }>({
-    definition: { name: 'mcp_search', description: 'Discover MCP tools progressively. action=search (default) returns names and short descriptions, without schemas; use server to narrow results and next_offset to page. action=load reads one complete schema: set query to the exact name from search. Load before calling a tool; reuse a schema already visible in context with mcp_call. Load again if it changes or leaves context. Oversized results remain available through read_archived_tool_result. Neither action executes the discovered tool or grants permission.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['search', 'load'], default: 'search' }, query: { type: 'string', minLength: 1 }, server: { type: 'string' }, limit: { ...searchLimitParameter }, offset: { type: 'integer', minimum: 0, default: 0 } }, required: ['query'], additionalProperties: false } },
+  registry.register<{ action: 'search' | 'load'; query: string; names?: string[]; server?: string; limit?: number; offset: number }>({
+    definition: { name: 'mcp_search', description: 'Discover MCP tools. action=search (default) requires query and returns short summaries; narrow by server or page with next_offset. action=load accepts one exact query OR names (up to 16 exact names) to load schemas together. Batch errors are per name; deferred names exceeded the result budget and still need loading. Load before calling via mcp_call; reuse visible schemas, reload only after change or compaction. Oversized single schemas use read_archived_tool_result. Discovery executes no tool and grants no permission.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['search', 'load'], default: 'search' }, query: { type: 'string', minLength: 1 }, names: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1 } }, server: { type: 'string' }, limit: { ...searchLimitParameter }, offset: { type: 'integer', minimum: 0, default: 0 } }, additionalProperties: false } },
     manifest, parallelSafe: true,
     decodeInput: input => {
       const value = input as Record<string, unknown>;
-      if (!value || typeof value.query !== 'string' || !value.query.trim() || (value.server !== undefined && typeof value.server !== 'string') || (value.reload !== undefined && typeof value.reload !== 'boolean')) throw new Error('MCP search needs a non-empty query, optional server and boolean reload.');
+      if (!value || Array.isArray(value) || (value.server !== undefined && typeof value.server !== 'string') || (value.reload !== undefined && typeof value.reload !== 'boolean')) throw new Error('MCP search needs a query or names, optional server and boolean reload.');
       // Decode old in-flight calls without advertising a second loading API.
       const action = value.action ?? (value.reload === true ? 'load' : 'search');
       if (action !== 'search' && action !== 'load') throw new Error('action must be search or load.');
+      if (value.names !== undefined) {
+        if (action !== 'load' || value.query !== undefined || !Array.isArray(value.names) || !value.names.length || value.names.length > 16 || !value.names.every(name => typeof name === 'string' && name.trim())) throw new Error('names requires action=load and 1–16 exact names, without query.');
+      } else if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('query must be nonempty.');
       if (value.reload === true && action !== 'load') throw new Error('reload cannot be combined with action=search.');
       if (value.offset !== undefined && (!Number.isSafeInteger(value.offset) || Number(value.offset) < 0)) throw new Error('offset must be a nonnegative integer.');
-      if (action === 'load' && Number(value.offset)) throw new Error('action=load reads one exact name and does not accept a page offset.');
-      return { action, query: value.query.trim(), server: value.server as string | undefined, limit: searchResultLimitSchema.optional().parse(value.limit), offset: Number(value.offset) || 0 };
+      if (action === 'load' && Number(value.offset)) throw new Error('action=load reads exact names and does not accept a page offset.');
+      return { action, query: typeof value.query === 'string' ? value.query.trim() : '', ...(Array.isArray(value.names) ? { names: [...new Set(value.names.map(name => (name as string).trim()))] } : {}), server: value.server as string | undefined, limit: searchResultLimitSchema.optional().parse(value.limit), offset: Number(value.offset) || 0 };
     },
     execute: async context => {
       if (!context.turn) throw new Error('MCP discovery requires a task.');
+      if (context.input.names) {
+        const matches: Record<string, unknown>[] = [], errors: Array<{ name: string; error: string }> = [], deferred: string[] = [];
+        let chars = 0;
+        for (const name of context.input.names) {
+          context.signal?.throwIfAborted();
+          try {
+            const result = await registry.resolve('mcp_search')!.execute({ ...context, input: { ...context.input, names: undefined, query: name } }) as { matches: Record<string, unknown>[] };
+            const size = JSON.stringify(result.matches).length;
+            if (matches.length && chars + size > 96_000) { deferred.push(name); continue; }
+            matches.push(...result.matches); chars += size;
+          } catch (error) { context.signal?.throwIfAborted(); errors.push({ name, error: error instanceof Error ? error.message : String(error) }); }
+        }
+        return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: context.turn.request.sessionId, action: 'load', matches,
+          ...(matches.some(match => 'interface' in match) ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
+          ...(errors.length ? { errors } : {}), ...(deferred.length ? { deferred } : {}) };
+      }
       const limit = context.input.action === 'load' ? 1 : await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
       const request = context.turn.request;
       const visible = new Set(request.tools.map(tool => tool.name));
@@ -237,10 +264,7 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       remember(registry, request, loaded);
       const next = context.input.offset + matches.length;
       return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, action: context.input.action,
-        next_step: context.input.action === 'load'
-          ? 'Read this complete schema, then call the tool using its exact name and arguments (mcp_call when available).'
-          : 'Search results are summaries, not tool schemas. For loaded=false, call mcp_search with action="load" and query set to the exact name. Then call using the returned schema (mcp_call when available).',
-        ...(context.input.action === 'load' ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
+        ...(context.input.action === 'load' && matches.some(match => 'interface' in match) ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
         matches, total: context.input.action === 'load' ? 1 : candidates.length,
         more: context.input.action !== 'load' && candidates.length > next,
         ...(context.input.action !== 'load' && candidates.length > next ? { next_offset: next } : {}) };

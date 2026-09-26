@@ -11,7 +11,7 @@ import type { AutomationScheduler } from './automationScheduler.js';
 export interface ExtendedBuiltinOptions {
   dataRoot?: string;
   readToolResult?: (locator: string) => unknown;
-  readToolResultText?: (locator: string, signal?: AbortSignal) => string | Promise<string>;
+  readToolResultText?: (locator: string, signal?: AbortSignal, sessionId?: string) => string | Promise<string>;
   modelImages?: ModelImageStore;
   automation?: AutomationScheduler;
 }
@@ -31,10 +31,10 @@ function registerArchivedToolResult(
   readToolResult?: (locator: string) => unknown,
   readToolResultText?: ExtendedBuiltinOptions['readToolResultText'],
 ) {
-  registry.register<{ locator: string; offset: number; maxChars: number }>({
+  registry.register<{ locator: string; offset: number; maxChars: number; query?: string; contextChars: number; limit: number }>({
     definition: {
       name: "read_archived_tool_result",
-      description: "Read an exact chunk from a complete Tool result archived by Runtime. Call only when a preceding Tool result explicitly provides a tool-result:// locator. Never pass a local path, file:// URL, Skill resource, or guessed locator.",
+      description: "Read an exact chunk from an archived Tool result, or supply query to search a literal keyword (case-insensitive). Search returns exact character offsets and bounded context; use a match offset to read more. next_offset continues either operation. Search snippets do not load MCP schemas. Use only a tool-result:// locator supplied by a Tool result or execution-history search, never a guessed locator or file path.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -48,6 +48,9 @@ function registerArchivedToolResult(
           },
           offset: { type: "integer", minimum: 0, default: 0 },
           max_chars: { type: "integer", minimum: 500, maximum: 50000, default: 12000 },
+          query: { type: 'string', minLength: 1, maxLength: 500 },
+          context_chars: { type: 'integer', minimum: 0, maximum: 2000, default: 200 },
+          limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 },
         },
       },
     },
@@ -60,17 +63,21 @@ function registerArchivedToolResult(
       if (!locator.startsWith("tool-result://")) {
         throw new Error("locator must be the exact tool-result:// value returned by a preceding Tool result.");
       }
+      if (input.query !== undefined && (typeof input.query !== 'string' || !input.query.length || input.query.length > 500)) throw new Error('query must contain 1–500 characters.');
       return {
         locator,
         offset: clamp(input.offset, 0, Number.MAX_SAFE_INTEGER, 0),
         maxChars: clamp(input.max_chars, 500, 50_000, 12_000),
+        query: input.query as string | undefined,
+        contextChars: clamp(input.context_chars, 0, 2000, 200),
+        limit: clamp(input.limit, 1, 50, 10),
       };
     },
     execute: async (context) => {
       if (!readToolResult && !readToolResultText) throw new Error("Archived Tool result lookup is unavailable.");
       let serialized: string | undefined;
       if (readToolResultText) {
-        serialized = omitToolImageDataFromText(await readToolResultText(context.input.locator, context.signal));
+        serialized = omitToolImageDataFromText(await readToolResultText(context.input.locator, context.signal, context.sessionId));
       } else {
         const native = readToolResult!(context.input.locator);
         serialized = JSON.stringify(omitToolImageData(native));
@@ -79,6 +86,26 @@ function registerArchivedToolResult(
       }
       if (typeof serialized !== "string") throw new Error("Archived Tool result could not be serialized.");
       const offset = Math.min(context.input.offset, serialized.length);
+      if (context.input.query !== undefined) {
+        const expression = new RegExp(context.input.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+        expression.lastIndex = offset;
+        const matches: Array<{ offset: number; end_offset: number; context_offset: number; text: string }> = [];
+        let used = 0, next = serialized.length, complete = true, match: RegExpExecArray | null;
+        while ((match = expression.exec(serialized))) {
+          context.signal?.throwIfAborted();
+          if (matches.length >= context.input.limit) { next = match.index; complete = false; break; }
+          const remaining = context.input.maxChars - used;
+          if (remaining < match[0].length) { next = match.index; complete = false; break; }
+          const around = Math.min(context.input.contextChars, Math.floor((remaining - match[0].length) / 2));
+          const start = Math.max(0, match.index - around);
+          const end = Math.min(serialized.length, expression.lastIndex + around);
+          const text = serialized.slice(start, end);
+          if (used + text.length > context.input.maxChars && matches.length) { next = match.index; complete = false; break; }
+          matches.push({ offset: match.index, end_offset: expression.lastIndex, context_offset: start, text });
+          used += text.length;
+        }
+        return { locator: context.input.locator, query: context.input.query, matches, next_offset: next, complete, originalChars: serialized.length };
+      }
       return success(context, {
         locator: context.input.locator,
         offset,

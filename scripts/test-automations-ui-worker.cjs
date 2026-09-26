@@ -12,7 +12,7 @@ app.whenReady().then(async () => {
   const click = label => read(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(label)}&&b.checkVisibility()).click()`);
   const field = (label, value) => read(`(()=>{const input=Array.from(document.querySelectorAll('label')).find(e=>e.textContent.startsWith(${JSON.stringify(label)})).querySelector('input,textarea,select');Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event(input.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);
   const capture = async name => { await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await new Promise(resolve=>setTimeout(resolve,180)); writeFileSync(resolve('tmp',name),(await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); };
-  const openPicker = async (trigger = 'today') => { await read(`document.querySelector('[data-date-picker-trigger="${trigger}"]').click()`); await until('document.querySelector(".calendar-date-picker").matches(":popover-open")'); };
+  const openPicker = async (trigger = 'title') => { await read(`document.querySelector('[data-date-picker-trigger="${trigger}"]').click()`); await until('document.querySelector(".calendar-date-picker").matches(":popover-open")'); };
   const goToToday = async () => { await openPicker(); await click('回到今天'); await until('!document.querySelector(".calendar-date-picker").matches(":popover-open")'); };
   try {
     await win.loadFile(join(directory,'index.html')); await until('document.body.innerText.includes("还没有自动化")');
@@ -159,7 +159,7 @@ app.whenReady().then(async () => {
     const outside = await read('(()=>{const r=document.querySelector(".automation-search").getBoundingClientRect();return {x:Math.round(r.left+20),y:Math.round(r.top+10)}})()');
     win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...outside}); win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...outside});
     await until('!document.querySelector(".calendar-date-picker").matches(":popover-open")');
-    const triggerPoint = await read('(()=>{const r=document.querySelector("[data-date-picker-trigger=today]").getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()');
+    const triggerPoint = await read('(()=>{const r=document.querySelector("[data-date-picker-trigger=title]").getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()');
     win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...triggerPoint}); win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...triggerPoint});
     await until('document.querySelector(".calendar-date-picker").matches(":popover-open")');
     win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...triggerPoint}); win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...triggerPoint});

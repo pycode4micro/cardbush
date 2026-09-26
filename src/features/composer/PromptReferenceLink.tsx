@@ -1,6 +1,7 @@
 import { Fragment, useContext } from 'react';
 import { ConversationHostContext, type ConversationHost } from '../conversationHost';
-import { Globe, MessageSquare } from 'lucide-react';
+import { Globe, LayoutGrid, MessageSquare } from 'lucide-react';
+import { requestApplication } from '../appCenter/appCenterStore';
 import { openInspector } from '../inspector/inspectorEvents';
 import { openWorkSummaryInspector } from '../subagents/subagentObservabilityEvents';
 import { promptReferenceHref, promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
@@ -9,6 +10,7 @@ import { showUiError } from '../../shared/showUiError';
 
 export async function openPromptReference(reference: PromptReference, host?: ConversationHost) {
   if (reference.kind === 'ssh') return;
+  if (reference.kind === 'application') { requestApplication(reference.id, host?.environmentId, reference); return; }
   if (host && reference.kind !== 'browser') {
     if (reference.kind === 'conversation-extract') host.openExtract?.(reference.id);
     else host.openWorkSummary?.({ kind: 'turn-history', sessionId: reference.sessionId, turnId: reference.turnId });
@@ -33,7 +35,7 @@ export function PromptReferenceLink({ reference }: { reference: PromptReference 
       event.preventDefault();
       void openPromptReference(reference, host);
     }}>
-    {reference.kind === 'browser' ? <Globe size={16} /> : <MessageSquare size={16} />}
+    {reference.kind === 'application' ? <LayoutGrid size={16}/> : reference.kind === 'browser' ? <Globe size={16} /> : <MessageSquare size={16} />}
     <span>{reference.title}</span>
   </a>;
 }

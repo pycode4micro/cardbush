@@ -15,6 +15,7 @@ import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
 import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
 import { SettingsCard, SettingsDivider, SettingsRadio, SettingsInput, InfoRow } from './settings/SettingsControls';
 import { settingsLabels, settingsDescriptions, settingsNavigationGroups, settingsSectionMatchesQuery, visibleSettingsSection, type VisibleSettingsSection } from './settings/settingsNavigation';
+import { usePageState } from './navigation/PageNavigation';
 import type { WindowMaterialPreference } from './appearance/windowAppearance';
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
 import type { SoftPanelPresence } from '../hooks/useSoftPanelPresence';
@@ -26,10 +27,12 @@ import {
   Check,
   CheckCircle2,
   Clipboard,
+  Container,
   Cpu,
   Keyboard,
   LoaderCircle,
   Monitor,
+  Network,
   PackageOpen,
   Search,
   SlidersHorizontal,
@@ -38,7 +41,6 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
-  Terminal,
   Trash2,
   Upload,
   X,
@@ -72,7 +74,7 @@ import {
   type McpServerConfigInput,
 } from '../backend/api';
 import packageMetadata from '../../package.json';
-import { McpLogoIcon } from '../components/McpLogoIcon';
+import { PluginIcon } from '../components/PluginIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { CompactSidebarBackdrop } from '../components/CompactSidebarBackdrop';
 import { basename } from '../shared/localPaths';
@@ -114,8 +116,8 @@ const defaultFontSettings = {
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
   profile: SlidersHorizontal, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
-  models: Cpu, mcp: McpLogoIcon, browser: Monitor, 'computer-use': Keyboard,
-  projects: PackageOpen, runtime: Terminal, ssh: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
+  models: Cpu, mcp: PluginIcon, browser: Monitor, 'computer-use': Keyboard,
+  projects: PackageOpen, runtime: Container, ssh: Network, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
 export function SettingsView({
   agentConnections = [], agentId = '', onAgentChange,
@@ -137,6 +139,7 @@ export function SettingsView({
   skills,
   disabledSkillNames,
   initialSection,
+  onSectionChange,
   initialPluginTab,
   onBack,
   onThemePreferenceChange,
@@ -179,6 +182,7 @@ export function SettingsView({
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   initialSection: SettingsSection;
+  onSectionChange?: (section: SettingsSection) => void;
   initialPluginTab: 'plugins' | 'skills';
   onBack: () => void;
   onThemePreferenceChange: (value: ThemePreference) => void;
@@ -201,11 +205,13 @@ export function SettingsView({
   visualInputEnabled: boolean;
   onVisualInputEnabledChange: (enabled: boolean) => void;
 }) {
-  const [section, setSection] = useState<VisibleSettingsSection>(
+  const [localSection, setLocalSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
   );
+  const section = onSectionChange ? visibleSettingsSection(initialSection) : localSection;
+  const setSection = (value: VisibleSettingsSection) => onSectionChange ? onSectionChange(value) : setLocalSection(value);
   const [settingsQuery, setSettingsQuery] = useState('');
-  const [networkTab, setNetworkTab] = useState<'models' | 'plugins'>('models');
+  const [networkTab, setNetworkTab] = usePageState<'models' | 'plugins'>('network-tab', 'models');
   const settingsContentRef = useRef<HTMLElement>(null);
   const sectionScrollPositions = useRef<Record<string, number>>({});
   const agent = agentConnections.find(item => item.id === agentId);
@@ -217,14 +223,13 @@ export function SettingsView({
     ...group, sections: group.sections.filter(id => settingsSectionMatchesQuery(id, settingsQuery)),
   })).filter(group => group.sections.length > 0);
   const [toast, setToast] = useState('');
-  const [pluginMcpTarget, setPluginMcpTarget] = useState<{ serverId?: string } | null>(null);
+  const [pluginMcpTarget, setPluginMcpTarget] = usePageState<{ serverId?: string } | null>('mcp-target', null);
   useLayoutEffect(() => {
     onReady();
   }, [onReady]);
 
   useEffect(() => {
-    setSection(visibleSettingsSection(initialSection));
-    setPluginMcpTarget(null);
+    setLocalSection(visibleSettingsSection(initialSection));
     setSettingsQuery('');
   }, [initialSection]);
 
@@ -1785,7 +1790,7 @@ export function McpServersPanel({
           ) : (
             userServers.map((server) => (
               <div className="mcp-simple-row" key={server.id}>
-                <McpLogoIcon className="mcp-logo-icon" size={18} />
+                <PluginIcon size={18} />
                 <strong>{server.name || server.id}</strong>
                 {server.status === 'waiting_for_resources' && <span role="status">{language === 'zh' ? '等待可用资源，稍后自动连接' : 'Waiting for resources; connects automatically'}</span>}
                 {!host.remote && server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {

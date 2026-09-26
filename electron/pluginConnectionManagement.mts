@@ -78,7 +78,7 @@ export class PluginConnectionManager {
     const config = await this.options.apps.read();
     const plugins = config.plugins.filter(plugin => plugin.installed && !['chrome', 'computer-use'].includes(plugin.id) && (!pluginId || plugin.id === pluginId));
     const connections = [];
-    for (const plugin of plugins) for (const component of plugin.components.filter(item => item.kind === 'mcp' || item.kind === 'app')) {
+    for (const plugin of plugins) for (const component of plugin.components.filter(item => item.kind === 'mcp' || (item.kind === 'app' && !item.app))) {
       const settings = record(record(plugin.config.mcp_servers)[component.id]);
       const registeredAppId = component.mcp?.registeredAppId;
       const source = registeredAppId && settings.server ? 'bound_server'
@@ -158,7 +158,7 @@ export class PluginConnectionManager {
       let applicationError;
       try { await this.options.refresh(); } catch (error) { applicationError = error instanceof Error ? error.message : String(error); }
       return { saved: true, configurationRevision: saved.revision, connections,
-        ...await this.runtimeStatus(new Set(plugin.components.filter(component => component.kind === 'mcp' || component.kind === 'app')
+        ...await this.runtimeStatus(new Set(plugin.components.filter(component => component.kind === 'mcp' || (component.kind === 'app' && !component.app))
           .map(component => `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`))), ...(applicationError ? { applicationError } : {}) };
     } finally {
       for (const ref of created) await this.options.credentials?.write(ref, undefined);
@@ -193,7 +193,7 @@ export class PluginConnectionManager {
     const shared = new Set([...otherPlugins.flatMap(item => references(item.config)),
       ...mcp.servers.map(server => mcpOAuthFromConfig(server.oauth).clientSecretRef)]);
     const owned = references(plugin.config).filter(ref => !shared.has(ref));
-    for (const component of plugin.components.filter(item => item.kind === 'mcp' || item.kind === 'app')) {
+    for (const component of plugin.components.filter(item => item.kind === 'mcp' || (item.kind === 'app' && !item.app))) {
       const settings = record(record(plugin.config.mcp_servers)[component.id]);
       const server = await this.resolve(plugin, component.id, { ...settings, enabled: true, required: false }, mcp).catch(() => null);
       if (server && server.transport.kind !== 'stdio' && server.transport.auth !== 'openai') owned.push(credentialKey(server));
@@ -221,7 +221,7 @@ export class PluginConnectionManager {
     catch (error) { return { runtime: null, runtimeError: error instanceof Error ? error.message : String(error) }; }
   }
   private component(plugin: CardbushAppPluginConfig, name: string) {
-    if (!plugin.components.some(item => item.id === name && (item.kind === 'mcp' || item.kind === 'app'))) throw new Error('Unknown plugin MCP connection.');
+    if (!plugin.components.some(item => item.id === name && (item.kind === 'mcp' || (item.kind === 'app' && !item.app)))) throw new Error('Unknown plugin MCP connection.');
   }
   private async resolve(plugin: CardbushAppPluginConfig, name: string, settings: Json, configured?: Awaited<ReturnType<ProductMcpConfigStore['read']>>) {
     const root = pluginRootForManifest(plugin.manifestPath);

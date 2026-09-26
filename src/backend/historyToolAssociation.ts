@@ -24,7 +24,11 @@ export function attachHistoryToolExecutions(
       (message.toolExecutions ?? []).map((execution) => [execution.id, execution]),
     );
     for (const execution of attached) {
-      byId.set(execution.id, { ...byId.get(execution.id), ...execution });
+      const current = byId.get(execution.id);
+      byId.set(execution.id, { ...current, ...execution, metadata: {
+        ...current?.metadata, ...execution.metadata,
+        ...(current?.metadata.displayTitle ? { displayTitle: current.metadata.displayTitle } : {}),
+      } });
     }
     return {
       ...message,

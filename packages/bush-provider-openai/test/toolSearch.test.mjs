@@ -12,6 +12,12 @@ import { InMemoryProviderCapabilityStore, normalizeResponseStreamEvent, OpenAIRe
 const scope = 'arbitrary-service', model = 'arbitrary-model-714';
 const capability = { scope, model, capability: 'client_tool_search' };
 const compatibility = { scope, model, capability: 'responses_compatibility' };
+function assertDisplayProjection(parameters, native) {
+  const { _display_title, ...properties } = parameters.properties;
+  assert.equal(_display_title.type, 'string');
+  assert.ok(!parameters.required?.includes('_display_title'));
+  assert.deepEqual({ ...parameters, properties }, native);
+}
 const registry = new ToolRegistry(); registerMcpDiscovery(registry);
 const request = overrides => modelRequestSchema.parse({
   protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model,
@@ -488,12 +494,12 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
       assert.equal(executed, 0);
       if (mode === 'native') {
         const loaded = body.input.find(item => item.type === 'tool_search_output' && item.call_id === 'load').tools[0];
-        assert.deepEqual(loaded.parameters, inputSchema); assert.equal(loaded.description, description);
-        return { output: [functionItem('use', loaded.name)] };
+        assertDisplayProjection(loaded.parameters, inputSchema); assert.equal(loaded.description, description);
+        return { output: [{ ...functionItem('use', loaded.name), arguments: JSON.stringify({ _display_title: '查阅项目文档' }) }] };
       }
       const loaded = JSON.parse(body.input.find(item => item.type === 'function_call_output' && item.call_id === 'load').output);
       assert.deepEqual(loaded.matches[0].inputSchema, inputSchema); assert.equal(loaded.matches[0].description, description);
-      return { output: [{ ...functionItem('use', 'mcp_call'), arguments: JSON.stringify({ name: fullName, arguments: {} }) }] };
+      return { output: [{ ...functionItem('use', 'mcp_call'), arguments: JSON.stringify({ name: fullName, arguments: {}, _display_title: '查阅项目文档' }) }] };
     }
     assert.equal(executed, 1);
     return { output: [textItem()] };
@@ -501,7 +507,7 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
   const tools = new ToolRegistry();
   tools.register({ definition: { name: fullName, description, inputSchema },
     manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'test', dispatch_scope: 'parent_session', mutating: false },
-    decodeInput: value => value, execute: () => { executed++; return { found: true }; },
+    decodeInput: value => value, execute: ({ input }) => { assert.deepEqual(input, {}); executed++; return { found: true }; },
     mcpHook: { server: 'docs', tool: 'document_lookup', call: async () => ({}) } });
   const host = new InMemoryRuntimeHost({ toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
@@ -509,6 +515,7 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
     sessionId: 's', turnId: 'progressive', model, tools: tools.definitions(), prefixMessages: [],
     inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read project documents' } }] });
   assert.equal(terminal.payload.status, 'completed'); assert.equal(round, 4); assert.equal(executed, 1);
+  assert.equal(host.events('s', 'progressive').find(event => event.kind === 'tool_returned' && event.payload.toolCallId === 'use').payload.display.title, '查阅项目文档');
   const breaks = host.events('s', 'progressive').filter(event => event.kind === 'provider_input_observed' && event.payload.frozenPrefixBreak);
   assert.deepEqual(breaks.map(event => event.payload.changedParameters), mode === 'native' ? [] : [['tools']],
     'only the initial explicit protocol rejection changes parameters; search/load/call keeps the accepted prefix');
@@ -555,7 +562,7 @@ test('changed schemas replace stale declarations with one full replay, then resu
   assert.equal(params.store, true, 'the new root can still be used for subsequent chaining');
   const results = params.input.filter(item => item.type === 'tool_search_output');
   assert.deepEqual(results.map(item => item.tools.length), [0, 1]);
-  assert.deepEqual(results[1].tools[0].parameters, updated.inputSchema);
+  assertDisplayProjection(results[1].tools[0].parameters, updated.inputSchema);
   assertClosedToolBatches(params.input);
   const next = toResponsesCreateParams(request({ messages: [...messages, { role: 'user', content: 'Continue' }],
     providerState: { ...providerState, previousResponseId: 'updated-response', inputMessageOffset: messages.length },

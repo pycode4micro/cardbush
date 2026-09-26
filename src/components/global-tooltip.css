@@ -1,0 +1,4 @@
+.global-tooltip{position:fixed;inset:auto;margin:0;display:flex;align-items:center;gap:9px;width:max-content;max-width:min(360px,calc(100vw - 16px));padding:8px 13px;box-sizing:border-box;border:1px solid var(--border);border-radius:999px;background:var(--surface-raised);color:var(--text);box-shadow:0 4px 18px var(--shadow);font:12px/1.5 var(--app-font-family);overflow-wrap:anywhere;pointer-events:none;z-index:10000;animation:tooltip-reveal 120ms ease-out}
+.global-tooltip kbd{flex-shrink:0;color:var(--text-soft);font:11px/1.5 var(--app-font-family);white-space:nowrap}
+@keyframes tooltip-reveal{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.global-tooltip{animation:none}}

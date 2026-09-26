@@ -18,6 +18,6 @@ export function modelMcpAppReference(registry: ToolRegistry, name: string, resul
   const title = (registration.mcpApp.title || registration.mcpApp.serverTitle || registration.mcpHook.tool).slice(0, 120);
   return JSON.stringify({ runtime_app_reference: {
     reference, title, markdown: mcpAppReferenceMarkdown(title, reference),
-    usage: 'To offer this interactive result, include its Markdown link in your final reply where it fits the explanation. Do not invent references. The App opens only when the user clicks after the turn ends. Its UI has not been loaded or checked; describe only facts in the tool result.',
+    usage: 'This reference is ready to use: copy markdown exactly into your final reply where it fits the explanation. Do not reconstruct identifiers or call archive readers, App status, or the generating tool merely to obtain or validate this link. The App opens only when the user clicks after the turn ends. Its UI has not been loaded or checked; describe only facts in the tool result.',
   } });
 }

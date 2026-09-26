@@ -11,14 +11,16 @@ const startSchema = z.object({
 }).strict();
 const manageSchema = z.object({ action: z.enum(['list', 'wait', 'cancel']).default('list'),
   task_ids: z.array(z.string().min(1)).min(1).max(32).optional(), mode: z.enum(['any', 'all']).default('any') }).strict();
-type Job = { id: string; key: string; name: string; controller: AbortController; status: string;
+export type BackgroundToolJob = { id: string; key: string; name: string; controller: AbortController; status: string;
   attempts: number; promise: Promise<JoinedSubagentResult['message']>; stop?: string };
+type Job = BackgroundToolJob;
 
 /** Active-turn work only: no scheduled wakeups, new conversations or plugin-specific protocol. */
 export class BackgroundToolCalls {
   private jobs = new Map<string, Job>();
   constructor(private registry: ToolRegistry, private onResult: (session: string, turn: string, id: string,
-    result: Promise<JoinedSubagentResult['message']>) => void) {}
+    result: Promise<JoinedSubagentResult['message']>) => void,
+    private extraJobs?: (session: string, turn: string) => BackgroundToolJob[]) {}
   private key(session: string, turn: string) { return JSON.stringify([session, turn]); }
   stopReason(session: string, turn: string) { return [...this.jobs.values()].find(job => job.key === this.key(session, turn) && job.stop)?.stop; }
   endTurn(session: string, turn: string) {
@@ -33,14 +35,14 @@ export class BackgroundToolCalls {
       decodeInput: value => startSchema.parse(value), execute: context => this.start(context),
     });
     this.registry.register({
-      definition: { name: 'manage_tool_calls', description: 'List, wait for (any/all), or cancel background MCP calls belonging to this active turn. Waiting suspends without polling the model. Tool results arrive separately once as background_tool_result; this tool returns execution status. Other tasks continue when any completes. Cancellation and turn termination stop renewal.',
+      definition: { name: 'manage_tool_calls', description: 'List, wait for (any/all), or cancel background MCP calls and terminal completion notifications in this active turn. Waiting suspends without model polling. Completed results arrive separately once as background_tool_result. Use task_ids from start_mcp_tool or completion_task_id from terminal_exec. With no IDs, wait targets only pending tasks. Cancelling a terminal notification stops observing, not the process; use terminal_stop to stop it. Turn termination stops observers and MCP renewal.',
         inputSchema: z.toJSONSchema(manageSchema) as Record<string, unknown> },
       manifest: { effect_kind: 'observation', operation: 'mcp.background.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
       executionChannel: 'runtime:background_tool_wait', parallelSafe: true,
       decodeInput: value => manageSchema.parse(value), execute: async context => {
         const { action, task_ids, mode } = context.input;
-        const scoped = [...this.jobs.values()].filter(job => job.key === this.key(context.sessionId, context.turnId));
-        const jobs = task_ids ? task_ids.map(id => { const job = scoped.find(item => item.id === id); if (!job) throw new Error('Background tool task does not belong to this active turn.'); return job; }) : scoped;
+        const scoped = [...this.jobs.values(), ...this.extraJobs?.(context.sessionId, context.turnId) ?? []].filter(job => job.key === this.key(context.sessionId, context.turnId));
+        const jobs = task_ids ? task_ids.map(id => { const job = scoped.find(item => item.id === id); if (!job) throw new Error('Background tool task does not belong to this active turn.'); return job; }) : action === 'wait' ? scoped.filter(job => job.status === 'running') : scoped;
         if (action === 'cancel') jobs.forEach(job => job.controller.abort());
         if (action === 'wait' && jobs.length) await (mode === 'all' ? Promise.all(jobs.map(job => job.promise)) : Promise.race(jobs.map(job => job.promise)));
         return { tasks: jobs.map(job => ({ task_id: job.id, name: job.name, status: job.status, attempts: job.attempts })) };

@@ -3,12 +3,13 @@ export type BrowserPromptReference = { kind: 'browser'; tabId: string; url: stri
 export type TurnPromptReference = { kind: 'user-turn'; sessionId: string; turnId: string; messageId: string; title: string };
 export type ConversationExtractReference = { kind: 'conversation-extract'; id: string; title: string };
 export type SshPromptReference = { kind: 'ssh'; connectionId: string; path: string; title: string };
-export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference | SshPromptReference;
+export type ApplicationPromptReference = { kind: 'application'; id: string; title: string; applicationKind: 'builtin' | 'plugin' | 'external'; target: string; componentId?: string };
+export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference | SshPromptReference | ApplicationPromptReference;
 export type PromptReferencePart = { text: string; start: number; reference?: PromptReference };
 
 export function promptReferenceHref(reference: PromptReference): string {
   const { kind, ...fields } = reference;
-  return `cardbush-reference://${kind}?${new URLSearchParams(fields).toString()}`;
+  return `cardbush-reference://${kind}?${new URLSearchParams(Object.entries(fields).filter((entry): entry is [string, string] => typeof entry[1] === 'string')).toString()}`;
 }
 
 export function promptReferenceMarkdown(reference: PromptReference): string {
@@ -24,6 +25,19 @@ export function parsePromptReference(href: string): PromptReference | null {
     const title = value('title');
     const valid = (text: string) => Boolean(text.trim()) && !/[\x00-\x1f\x7f]/.test(text);
     if (!valid(title)) return null;
+    if (url.hostname === 'application' && valid(value('id')) && value('id').length <= 400 && title.length <= 200) {
+      const applicationKind = value('applicationKind'), target = value('target'), id = value('id');
+      if (applicationKind === 'builtin' && ['plugins', 'automations', 'settings'].includes(target) && id === `builtin:${target}`)
+        return { kind: 'application', id, title, applicationKind, target };
+      if (applicationKind === 'plugin' && valid(target) && valid(value('componentId')) && id === `plugin:${encodeURIComponent(target)}:${encodeURIComponent(value('componentId'))}`)
+        return { kind: 'application', id, title, applicationKind, target, componentId: value('componentId') };
+      if (applicationKind === 'external' && /^external:[a-z0-9-]{1,80}$/i.test(id) && target.length <= 4096) {
+        const address = new URL(target);
+        if (['http:', 'https:'].includes(address.protocol) && !address.username && !address.password)
+          return { kind: 'application', id, title, applicationKind, target: address.href };
+      }
+      return null;
+    }
     if (url.hostname === 'ssh' && /^[a-z0-9-]+$/.test(value('connectionId')) && value('path').startsWith('/') && valid(value('path'))) return { kind: 'ssh', connectionId: value('connectionId'), path: value('path'), title };
     if (url.hostname === 'conversation-extract' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value('id'))) {
       return { kind: 'conversation-extract', id: value('id'), title };

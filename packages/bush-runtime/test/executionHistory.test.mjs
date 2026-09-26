@@ -312,3 +312,36 @@ test('migrating a valid old summary still checks its bounded raw record checksum
   await writeFile(join(f.root, `${hash('one')}.jsonl`), JSON.stringify(envelope) + '\n');
   await assert.rejects(persistence.historySummaries('one'), /journal checksum mismatch/);
 });
+
+test('history locators read exact evidence only in the current live project', async t => {
+  const store = new ToolExecutionStore(), sessions = new SessionStore(), registry = new ToolRegistry();
+  sessions.ensureSession('one', { projectDir: 'C:/same' }); sessions.ensureSession('two', { projectDir: 'C:/same' });
+  sessions.ensureSession('outside', { projectDir: 'C:/elsewhere' });
+  createRecord(store, 'cross', 'two', { output: 'exact evidence: 中文😀' });
+  const host = new InMemoryRuntimeHost({ sessionStore: sessions, toolRegistry: registry, toolExecutionStore: store, registerDefaultWorkspaceTools: false });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const search = registry.resolve(EXECUTION_HISTORY_TOOL);
+  const page = await search.execute({ sessionId: 'one', input: search.decodeInput(query) });
+  const locator = page.results[0].locator;
+  assert.match(locator, /^tool-result:\/\/history\/[a-f0-9]{64}$/);
+  const reader = registry.resolve('read_archived_tool_result');
+  const read = (sessionId, value = locator) => reader.execute({ sessionId, input: reader.decodeInput({ locator: value }) });
+  assert.match((await read('one')).text, /exact evidence: 中文😀/);
+  await assert.rejects(read('outside'), /outside/);
+  await assert.rejects(read('outside', 'tool-result://two/turn_cross/cross'), /outside/);
+  sessions.deleteSession('two');
+  await assert.rejects(read('one'), /deleted/);
+});
+
+test('v2 summary migration adds locators without rewriting the journal', async t => {
+  const f = await disk(t), persistence = f.open();
+  const record = createRecord(new ToolExecutionStore({ now: () => now }), 'v2');
+  const history = { ...summarizeExecution(record), summaryVersion: 2 }; delete history.toolCallId;
+  const row = { protocol: 'bush.tool_execution_journal_record.v1', checksum: hash(JSON.stringify(record)), history, historyChecksum: hash(JSON.stringify(history)), record };
+  const path = join(f.root, `${hash('one')}.jsonl`), original = JSON.stringify(row) + '\n';
+  await writeFile(path, original);
+  const page = await persistence.historySummaries('one');
+  assert.equal(page.entries[0].summaryVersion, EXECUTION_HISTORY_SUMMARY_VERSION);
+  assert.equal(page.entries[0].toolCallId, 'v2');
+  assert.equal(await readFile(path, 'utf8'), original);
+});

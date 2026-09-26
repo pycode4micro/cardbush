@@ -77,7 +77,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     const preview = await api.filePreview(connectionId, sessionId, path);
     return { source: preview.url, dispose: () => { void api.releaseFilePreview(preview.id).catch(() => {}); } };
   }, [connectionId, sessionId, enabled]);
-  const host = useMemo<ConversationHost>(() => ({ id: `${connectionId}:${sessionId}`, plugins, pluginCommands: catalog.pluginCommands, uploadFiles, openFile,
+  const host = useMemo<ConversationHost>(() => ({ id: `${connectionId}:${sessionId}`, environmentId: connectionId, plugins, pluginCommands: catalog.pluginCommands, uploadFiles, openFile,
     welcomeHistory: signal => client.listUserPrompts(welcomeHistoryRequest(), signal),
     openExtract: id => openFile(`cardbush-extract://${id}.md`),
     readFile, previewFile, readDirectory: management ? input => call('files.list', { ...input, sessionId }) : undefined,

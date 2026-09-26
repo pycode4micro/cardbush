@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema, providerInputObservationSchema } from "./cacheChain.js";
-import { toolErrorKindSchema } from "./tool.js";
+import { toolDisplaySchema, toolErrorKindSchema } from "./tool.js";
 import { modelEventSchema, modelFailureDiagnosticsSchema, providerCompatibilityDiagnosticSchema } from "./model.js";
 import { runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema } from './solutionSelection.js';
 
@@ -119,12 +119,7 @@ const toolIdentitySchema = z.object({
   toolName: z.string().min(1),
   ordinal: z.number().int().nonnegative(),
   assistantMessageId: z.string().min(1).optional(),
-  display: z
-    .object({
-      title: z.string().min(1),
-      summary: z.string().optional(),
-    })
-    .optional(),
+  display: toolDisplaySchema.optional(),
 });
 
 const contextCompactionIdentitySchema = z.object({

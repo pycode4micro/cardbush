@@ -40,8 +40,8 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   --panel-motion-duration: 240ms;
   --panel-motion-ease: cubic-bezier(0.22, 0.72, 0.25, 1);
   --panel-resize-hit-width: 16px;
-  --scrollbar-thumb: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--surface) 86%, var(--text) 14%);
+  --scrollbar-thumb: color-mix(in srgb, var(--surface) 74%, var(--text) 26%);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--surface) 62%, var(--text) 38%);
   --scrollbar-track: transparent;
   --menu-surface: var(--surface-raised);
   --menu-border: color-mix(in srgb, var(--text) 12%, var(--menu-surface));
@@ -331,7 +331,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   outline: none;
   position: fixed;
   z-index: 1100;
-  min-width: 280px;
+  min-width: 220px;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - var(--window-frame-height) - 16px);
   overflow-y: auto;
@@ -339,7 +339,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 8px 0;
+  padding: 6px 0;
   color: var(--text);
   background: var(--menu-surface);
   border: 1px solid var(--menu-border);
@@ -350,11 +350,11 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 .window-frame-menu-popover button {
   flex: 0 0 auto;
   width: 100%;
-  min-height: 34px;
+  min-height: 30px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 6px 18px 6px 20px;
+  gap: 8px;
+  padding: 4px 12px;
   color: var(--text);
   background: transparent;
   border-radius: 0;
@@ -391,7 +391,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 }
 
 .window-frame-menu-popover kbd {
-  margin-left: 20px;
+  margin-left: 8px;
   font: inherit;
   font-size: 13px;
   color: var(--menu-secondary);
@@ -404,6 +404,10 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   height: 1px;
   margin: 10px 0;
   background: var(--menu-separator);
+}
+
+.window-menu-separator {
+  margin: 5px 0;
 }
 
 .window-frame-menu-popover button > svg {
@@ -861,7 +865,27 @@ body.sidebar-resizing .right-inspector {
 }
 
 .sidebar-sections {
+  --sidebar-section-motion-duration: 200ms;
   min-height: 100%;
+}
+
+.sidebar-section-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--sidebar-section-motion-duration) var(--ease-standard),
+    opacity var(--sidebar-section-motion-duration) var(--ease-standard);
+}
+
+.sidebar-section-body[data-expanded="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.sidebar-section-body-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar-conversation-list {
@@ -883,12 +907,12 @@ body.sidebar-resizing .right-inspector {
 
 .section-header {
   position: relative;
-  height: 24px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   color: var(--sidebar-text-soft, var(--text-soft));
-  border-radius: 7px;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 700;
 }
@@ -922,6 +946,7 @@ body.sidebar-resizing .right-inspector {
   pointer-events: none;
 }
 
+.section-action.section-action-visible:not(:disabled),
 .section-header:hover .section-action:not(:disabled),
 .section-header:has(.section-action:focus-visible) .section-action:not(:disabled),
 .section-header-wrap:has(.sidebar-menu) .section-action:not(:disabled) {
@@ -968,7 +993,7 @@ body.sidebar-resizing .right-inspector {
   opacity: 0;
   transition:
     opacity 100ms ease,
-    transform 120ms ease;
+    transform var(--sidebar-section-motion-duration) var(--ease-standard);
 }
 
 .section-header:hover .section-chevron,
@@ -3405,6 +3430,8 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .welcome-suggestion {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 108px;
   padding: 14px 16px 22px;
@@ -3891,9 +3918,23 @@ body.right-inspector-resizing .right-inspector-resizer {
   pointer-events: none;
 }
 
-/* 960px of usable conversation width, minus the rail's two 10px insets.
-   Keep the entire 44px hit target clear of the centered 780px reading column. */
+/* Keep the rail available in smaller panes without intercepting message text.
+   The compact hit target fits inside the current transcript gutter. */
 @container quick-context (width < 940px) {
+  .quick-context-handle {
+    left: -6px;
+    width: clamp(8px, calc(var(--chat-inline-gutter, 16px) - 12px), 28px);
+    min-width: 0;
+  }
+
+  .quick-context-tick:hover::before,
+  .quick-context-tick:focus-visible::before {
+    width: min(15px, 100%);
+  }
+}
+
+/* 640px of usable conversation width, minus the rail's two 10px insets. */
+@container quick-context (width < 620px) {
   .quick-context-handle,
   .quick-context-popovers {
     display: none;
@@ -7413,7 +7454,9 @@ body.right-inspector-resizing .right-inspector-resizer {
   color: var(--danger);
 }
 
-.tool-execution-row.waiting {
+.tool-execution-row.waiting,
+.tool-execution-row.diagnostic,
+.tool-execution-diagnostic {
   color: var(--warning);
 }
 
@@ -10452,6 +10495,14 @@ body.queue-reordering * {
 .composer-actions {
   flex: 0 1 auto;
   gap: 6px;
+}
+
+.tool-execution-status {
+  flex: 0 0 auto;
+  min-width: 3em;
+  color: var(--text-soft);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .composer-footer svg {
@@ -14951,7 +15002,7 @@ body.queue-reordering * {
   white-space: nowrap;
 }
 
-.mcp-logo-mark {
+.plugin-icon {
   display: inline-block;
   flex: 0 0 auto;
   object-fit: contain;
@@ -16581,7 +16632,6 @@ body.queue-reordering * {
 }
 
 .mcp-simple-row > svg,
-.mcp-simple-row > .mcp-logo-mark,
 .mcp-empty-row > svg {
   color: var(--text-mid);
 }

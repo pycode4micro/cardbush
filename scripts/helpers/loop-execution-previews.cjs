@@ -56,7 +56,7 @@ module.exports = async ({run, until, pause, window, root}) => {
   await until("document.querySelector('.loop-subagent-preview')?.textContent.includes('运行中') && !document.querySelector('.loop-subagent-preview').disabled", 'child execution preview follows the actual running task');
   assert.equal(await run("document.querySelectorAll('.message-row.user').length"), 1, 'child input is never a user bubble');
   assert.doesNotMatch(await run('document.body.innerText'), /PRIVATE CHILD|subagent_result/);
-  assert.equal(await run("document.querySelector('.tool-execution-summary').textContent.includes('1 项操作')"), true, 'only ordinary tools count in the tool list');
+  assert.equal(await run("document.querySelector('.tool-execution-label').textContent"), '执行命令', 'ordinary tools show an action title');
   assert.equal(await run("document.querySelector('.loop-execution-previews').previousElementSibling.classList.contains('tool-execution-block')"), true, 'previews occupy the row after ordinary tools');
   assert.equal(await run("document.querySelector('.loop-execution-previews').getBoundingClientRect().top >= document.querySelector('.tool-execution-block').getBoundingClientRect().bottom"), true);
   await run("document.querySelector('.tool-execution-summary').click()");
@@ -102,7 +102,7 @@ module.exports = async ({run, until, pause, window, root}) => {
   `);
   await until("document.querySelectorAll('.loop-subagent-preview').length===2 && document.querySelectorAll('.tool-image-thumbnail img').length===4", 'only dispatched children and images appear in preview groups');
   assert.equal(await run("document.querySelectorAll('.loop-subagent-preview[data-execution-id=wait]').length"), 0, 'await never creates child cards, even when its result contains task IDs');
-  assert.match(await run("document.querySelector('.tool-execution-block').textContent"), /2 项操作/, 'await is counted with ordinary tools');
+  assert.match(await run("document.querySelector('.tool-execution-block').textContent"), /等待任务结果/, 'await remains in the ordinary activity list');
   await until("[...document.querySelectorAll('.tool-image-thumbnail img')].every(img=>img.complete&&img.naturalWidth===240)", 'all thumbnails decode');
   assert.match(await run("document.querySelector('.loop-image-previews .loop-preview-summary').textContent"), /已查看 4 张图像/);
   assert.match(await run("document.querySelector('.loop-subagent-previews .loop-preview-summary').textContent"), /2 个子 Agent/);

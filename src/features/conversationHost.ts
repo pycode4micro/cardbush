@@ -8,6 +8,7 @@ import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 /** Explicit host services; absence keeps the existing desktop behavior. */
 export interface ConversationHost {
   id: string;
+  environmentId?: string;
   sessionId?: string;
   runtime?: ConversationRuntime;
   openWorkSummary?(detail: WorkSummaryInspectorDetail): void;

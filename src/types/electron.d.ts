@@ -127,7 +127,7 @@ declare global {
       windowScrollDiagnosticConfig?: () => Promise<import('../../electron/windowScrollDiagnostics').WindowScrollDiagnosticConfig | undefined>;
       onWindowScrollDiagnosticEvent?: (callback: (event: Record<string, unknown>) => void) => () => void;
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
-      restoreEditorFocus?: (state: { documentFocused: boolean; passive?: boolean }) => Promise<boolean>;
+      restoreEditorFocus?: (state: import('../../electron/rendererFocus').EditorFocusRequest) => Promise<boolean>;
       wallpaperAccent: () => Promise<{
         r: number;
         g: number;

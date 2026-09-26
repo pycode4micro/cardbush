@@ -1,4 +1,5 @@
-import { ChevronRight, Store } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
+import { PluginIcon } from '../../components/PluginIcon';
 import { useEffect, useRef, useState } from 'react';
 import type { PluginMarketEntry, PluginMarketPresentation } from '../../../electron/pluginMarketplaceTypes';
 import type { PluginMarketplaceApi } from './pluginMarketplaceApi';
@@ -36,7 +37,7 @@ export function PluginMarketCard({ bridge, entry, sourceId, busy, zh, onOpen }: 
   return <article ref={element}><button className="plugin-featured-main" type="button" disabled={busy || !entry.available} onClick={onOpen}>
     <span className={`plugin-logo${darkLogo && !failed ? ' has-dark-logo' : ''}`}>{logo && !failed
       ? <><img className="plugin-logo-light" src={logo} alt="" loading="lazy" onError={() => setFailed(true)} />
-        {darkLogo && <img className="plugin-logo-dark" src={darkLogo} alt="" loading="lazy" onError={() => setDarkFailed(true)} />}</> : <Store size={22} />}</span>
+        {darkLogo && <img className="plugin-logo-dark" src={darkLogo} alt="" loading="lazy" onError={() => setDarkFailed(true)} />}</> : <PluginIcon size={22} />}</span>
     <span className="plugin-market-card-copy"><strong>{metadata?.displayName || entry.name}</strong>
       <small>{metadata?.description || entry.description || entry.category}</small>
       <span className="plugin-market-kind">{!entry.available ? entry.unavailableReason === 'policy' ? (zh ? '暂未开放' : 'Unavailable')

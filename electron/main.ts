@@ -1970,15 +1970,17 @@ ipcMain.handle('window:menu-context', (event) => windowMenuContext(event, mainWi
 ipcMain.handle('window:menu-action', (event, action: unknown, editTargetId: unknown) =>
   executeWindowMenuAction(event, mainWindow, action, editTargetId, requestAppQuit));
 
-ipcMain.handle('window:restore-editor-focus', (event, state?: { documentFocused?: boolean; passive?: boolean }) => {
+ipcMain.handle('window:restore-editor-focus', async (event, state: import('./rendererFocus').EditorFocusRequest) => {
   const target = mainWindow?.webContents === event.sender
     ? mainWindow : shadowWindows.get(event.sender.id)?.window ?? null;
   const wasFocused = !event.sender.isDestroyed() && event.sender.isFocused();
-  const restored = restoreEditorFocus(event, target, state);
+  const restored = await restoreEditorFocus(event, target, state);
   if (!wasFocused || state?.documentFocused === false || !restored) {
     appendDebugLog('input-focus', {
       stage: 'editor-focus-request', windowId: target?.id, passive: state?.passive === true,
       documentFocused: state?.documentFocused === true, wasFocused, restored,
+      windowFocused: target && !target.isDestroyed() ? target.isFocused() : false,
+      focusedContentsId: electronWebContents.getFocusedWebContents()?.id,
     });
   }
   return restored;

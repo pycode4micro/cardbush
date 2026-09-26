@@ -27,13 +27,14 @@ import { terminalInputPermission } from './commandPermission.js';
 import { authorizedCommandSandbox, commandSandboxPlan, decodeAdditionalCommandPermissions, type AdditionalCommandPermissions } from './commandSandboxAdmission.js';
 import { spawnResourceManagedProcess } from "./processResourceGuard.js";
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
-import { renderTextFields } from "./toolResultText.js";
+import { renderTerminalResult, renderTextFields } from "./toolResultText.js";
 
 interface PathInput { path: string }
 interface ReadFileInput extends PathInput { encoding: BufferEncoding; range?: FileLineRange }
 interface WriteFileInput extends PathInput { content: string; encoding: BufferEncoding }
 interface EditFileInput extends PathInput {
   oldText: string;
+  range?: { start: number; end: number; sha256: string };
   newText: string;
   replaceAll: boolean;
   encoding: BufferEncoding;
@@ -42,8 +43,11 @@ interface SearchInput extends PathInput {
   query: string;
   regex: boolean;
   globs: string[];
+  contextBefore: number;
+  contextAfter: number;
 }
 interface TerminalInput {
+  notifyOnExit: boolean;
   command: string;
   cwd: string;
   yieldTimeMs: number;
@@ -165,6 +169,7 @@ export function registerWorkspaceTools(
   registry: ToolRegistry,
   observations: WorkspaceObservationStore = new WorkspaceObservationStore(),
   options: { createChangeId?: () => string; terminals?: TerminalSessionManager;
+    onTerminalStarted?: (context: ToolHandlerContext<any>, result: Record<string, unknown>) => string | undefined;
     ownsFileVersion?: (sessionId: string, path: string) => Promise<boolean>; remote?: RemoteWorkspaceBridge;
     commandSandbox?: CommandSandboxConfiguration; loadCommandSandbox?: () => Promise<CommandSandboxConfiguration> } = {},
 ): WorkspaceObservationStore {
@@ -182,7 +187,20 @@ export function registerWorkspaceTools(
     return policy;
   };
   function registerIfMissing<T>(targetRegistry: ToolRegistry, registration: ToolRegistration<T>) {
-    if (!targetRegistry.resolve(registration.definition.name)) targetRegistry.register(routeWorkspaceTool(registration, terminals, options.remote, commandSandbox.mode === 'required'));
+    if (targetRegistry.resolve(registration.definition.name)) return;
+    const routed = routeWorkspaceTool(registration, terminals, options.remote, commandSandbox.mode === 'required');
+    if (registration.definition.name === 'terminal_exec' && options.onTerminalStarted) {
+      const execute = routed.execute;
+      routed.execute = async context => {
+        const result = await execute(context) as Record<string, unknown>;
+        if (result.state === 'running' && (context.input as TerminalInput).notifyOnExit && context.turn) {
+          const taskId = options.onTerminalStarted!(context, result);
+          return { ...result, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId } : {}) };
+        }
+        return result;
+      };
+    }
+    targetRegistry.register(routed);
   }
 
   registerIfMissing(registry, {
@@ -222,12 +240,14 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "search_file_content",
-      description: "Search file content beneath a file or directory using ripgrep and return exact matching lines.",
+      description: "Search file content beneath a file or directory. Matching lines use path:line:column:text; optional context lines use path-line-text. Overlapping context is returned once.",
       inputSchema: objectSchema({
         query: { type: "string", minLength: 1 },
         path: { type: "string", minLength: 1 },
         regex: { type: "boolean", default: false },
         globs: { type: "array", items: { type: "string" }, default: [] },
+        context_before: { type: "integer", minimum: 0, maximum: 100, default: 0 },
+        context_after: { type: "integer", minimum: 0, maximum: 100, default: 0 },
       }, ["query", "path"]),
     },
     manifest: manifest("filesystem.search", "observation", false),
@@ -238,6 +258,8 @@ export function registerWorkspaceTools(
     execute: async (context: ToolHandlerContext<SearchInput>) => {
       const path = await resolveToolPath(context, context.input.path);
       const args = ["--line-number", "--column", "--no-heading", "--color", "never"];
+      if (context.input.contextBefore) args.push('--before-context', String(context.input.contextBefore));
+      if (context.input.contextAfter) args.push('--after-context', String(context.input.contextAfter));
       if (!context.input.regex) args.push("--fixed-strings");
       for (const glob of context.input.globs) args.push("--glob", glob);
       args.push("--", context.input.query, path);
@@ -304,14 +326,17 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "edit_file",
-      description: "Replace exact text in one previously read file. Fails if the current file revision was not observed or the old text is absent/ambiguous. Returns a compact execution receipt; full review and revert evidence is stored separately by Runtime.",
+      description: "Edit one previously read file. Use old_text for exact unique replacement, or start_line/end_line (1-based inclusive) with expected_sha256 from read_file to replace complete lines, including their line endings, with new_text. Do not combine modes. Stale revisions and ambiguous matches fail without writing. Full review/revert evidence is stored by Runtime.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         old_text: { type: "string", minLength: 1 },
+        start_line: { type: "integer", minimum: 1 },
+        end_line: { type: "integer", minimum: 1 },
+        expected_sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
         new_text: { type: "string" },
         replace_all: { type: "boolean", default: false },
         encoding: { type: "string", default: "utf8" },
-      }, ["path", "old_text", "new_text"]),
+      }, ["path", "new_text"]),
     },
     manifest: manifest("filesystem.edit", "filesystem_change", true),
     decodeInput: decodeEdit,
@@ -324,7 +349,18 @@ export function registerWorkspaceTools(
         assertObservedIfExisting(context, observations, path, before);
         const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
         const source = before.toString(context.input.encoding);
-        const count = occurrences(source, context.input.oldText);
+        let oldText = context.input.oldText, rangeOffsets: { start: number; end: number } | undefined;
+        if (context.input.range) {
+          const range = context.input.range;
+          if (digest(before) !== range.sha256) throw codedError('workspace_revision_mismatch', 'expected_sha256 differs from the current file. Read it again before editing.');
+          const lines = source.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [];
+          if (range.end > lines.length) throw codedError('edit_line_range_invalid', `File has ${lines.length} lines; the range is outside it.`);
+          const start = lines.slice(0, range.start - 1).join('').length;
+          const end = start + lines.slice(range.start - 1, range.end).join('').length;
+          rangeOffsets = { start, end };
+          oldText = source.slice(start, end);
+        }
+        const count = rangeOffsets ? 1 : occurrences(source, oldText);
         if (count === 0) {
           throw codedError(
             "edit_old_text_not_found",
@@ -339,11 +375,11 @@ export function registerWorkspaceTools(
         }
         const replacements = context.input.replaceAll ? count : 1;
         assertInProcessFileSize(before.length + replacements * (
-          Buffer.byteLength(context.input.newText, context.input.encoding) - Buffer.byteLength(context.input.oldText, context.input.encoding)
+          Buffer.byteLength(context.input.newText, context.input.encoding) - Buffer.byteLength(oldText, context.input.encoding)
         ));
-        const next = context.input.replaceAll
-          ? source.replaceAll(context.input.oldText, () => context.input.newText)
-          : source.replace(context.input.oldText, () => context.input.newText);
+        const next = rangeOffsets ? source.slice(0, rangeOffsets.start) + context.input.newText + source.slice(rangeOffsets.end)
+          : context.input.replaceAll ? source.replaceAll(oldText, () => context.input.newText)
+          : source.replace(oldText, () => context.input.newText);
         assertInProcessFileSize(Buffer.byteLength(next, context.input.encoding));
         await writeFile(path, next, { encoding: context.input.encoding });
         const after = await readFileBounded(path, context.signal);
@@ -388,6 +424,7 @@ export function registerWorkspaceTools(
           default: defaultTerminalShell(),
           description: "Explicit command interpreter. Runtime never rewrites commands between shell syntaxes.",
         },
+        notify_on_exit: { type: 'boolean', default: true, description: 'After yielding a running command, Runtime delivers one completion notification during this turn and waits before ending it. Do other independent work; do not repeatedly poll. Set false for persistent servers or interactive processes that should outlive the task. Notifications stop when the turn is stopped; the command is not restarted.' },
         additional_permissions: {
           type: 'object', additionalProperties: false,
           description: 'Request extra sandbox access for this command and its descendants only. Requires approval; does not disable isolation. Check partial results before retrying a denied operation; never repeat completed side effects. Direct SSH does not support sandbox extensions.',
@@ -402,7 +439,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.execute", "process_execution", true),
     decodeInput: input => decodeTerminal(input, Boolean(options.remote)),
-    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
+    renderModelResult: renderTerminalResult,
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       const lexicalProjectRoots = protectedProjectRoots(context);
@@ -462,7 +499,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.poll", "observation", false),
     decodeInput: decodeTerminalPoll,
-    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
+    renderModelResult: renderTerminalResult,
     execute: (context: ToolHandlerContext<TerminalPollInput>) =>
       terminals.poll(context.sessionId, context.input, context.signal),
   });
@@ -483,7 +520,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.write", "process_execution", true),
     decodeInput: decodeTerminalWrite,
-    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
+    renderModelResult: renderTerminalResult,
     authorize: (context: ToolAdmissionContext<TerminalWriteInput>) => {
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return terminal.sandbox ? { kind: 'allow' as const }
@@ -503,7 +540,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.stop", "process_control", true),
     decodeInput: decodeTerminalSession,
-    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
+    renderModelResult: renderTerminalResult,
     authorize: (context: ToolAdmissionContext<TerminalSessionInput>) => {
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return {
@@ -722,9 +759,17 @@ function decodeWrite(input: unknown): WriteFileInput {
 
 function decodeEdit(input: unknown): EditFileInput {
   const object = objectInput(input);
+  let range: EditFileInput['range'];
+  if (object.start_line !== undefined || object.end_line !== undefined || object.expected_sha256 !== undefined) {
+    if (object.old_text !== undefined || object.replace_all !== undefined) throw new Error('Do not combine line ranges with old_text or replace_all.');
+    if (!Number.isSafeInteger(object.start_line) || Number(object.start_line) < 1 || !Number.isSafeInteger(object.end_line) || Number(object.end_line) < Number(object.start_line) || typeof object.expected_sha256 !== 'string' || !/^[a-f\d]{64}$/i.test(object.expected_sha256)) throw new Error('Line edits require start_line <= end_line and expected_sha256 from read_file.');
+    if (['hex', 'base64', 'base64url'].includes(encoding(object.encoding))) throw new Error('Line ranges require a text encoding.');
+    range = { start: Number(object.start_line), end: Number(object.end_line), sha256: object.expected_sha256.toLowerCase() };
+  }
   return {
     path: requiredString(object.path, "path"),
-    oldText: requiredString(object.old_text, "old_text", false),
+    oldText: range ? '' : requiredString(object.old_text, "old_text", false),
+    ...(range ? { range } : {}),
     newText: stringValue(object.new_text, "new_text"),
     replaceAll: booleanValue(object.replace_all, false),
     encoding: encoding(object.encoding),
@@ -733,11 +778,18 @@ function decodeEdit(input: unknown): EditFileInput {
 
 function decodeSearch(input: unknown): SearchInput {
   const object = objectInput(input);
+  const contextLines = (value: unknown) => {
+    if (value === undefined) return 0;
+    if (!Number.isInteger(value) || Number(value) < 0 || Number(value) > 100) throw new Error('Search context must be an integer between 0 and 100.');
+    return Number(value);
+  };
   return {
     query: requiredString(object.query, "query", false),
     path: requiredString(object.path, "path"),
     regex: booleanValue(object.regex, false),
     globs: stringArray(object.globs, "globs"),
+    contextBefore: contextLines(object.context_before),
+    contextAfter: contextLines(object.context_after),
   };
 }
 
@@ -758,6 +810,7 @@ function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput 
   }
   return {
     command: requiredString(object.command, "command", false),
+    notifyOnExit: booleanValue(object.notify_on_exit, true),
     cwd: typeof object.cwd === "string" ? object.cwd.trim() : "",
     yieldTimeMs: Number(yieldTime),
     shell: shell as TerminalShell,
@@ -971,18 +1024,18 @@ async function searchFileContentWithNode(
       text = utf16 ? new TextDecoder(utf16, { fatal: true }).decode(bytes) : bytes.toString("utf8").replace(/^\ufeff/, "");
     } catch { continue; }
     if (text.includes("\0")) continue;
-    const lines = text.split(/\r\n|\r|\n/);
+    const lines = text ? text.split(/\r\n|\r|\n/) : [];
+    if (/[\r\n]$/.test(text)) lines.pop();
+    const columns = lines.map(line => { if (regex) { regex.lastIndex = 0; return regex.exec(line)?.index ?? -1; } return line.indexOf(input.query); });
+    const selected = new Set<number>();
+    for (const [index, column] of columns.entries()) if (column >= 0) {
+      for (let i = Math.max(0, index - input.contextBefore); i <= Math.min(lines.length - 1, index + input.contextAfter); i++) selected.add(i);
+    }
     for (let index = 0; index < lines.length; index += 1) {
+      if (!selected.has(index)) continue;
       const line = lines[index]!;
-      let column = -1;
-      if (regex) {
-        regex.lastIndex = 0;
-        column = regex.exec(line)?.index ?? -1;
-      } else {
-        column = line.indexOf(input.query);
-      }
-      if (column < 0) continue;
-      const match = `${file}:${index + 1}:${column + 1}:${line}\n`;
+      const column = columns[index]!;
+      const match = column >= 0 ? `${file}:${index + 1}:${column + 1}:${line}\n` : `${file}-${index + 1}-${line}\n`;
       outputBytes += Buffer.byteLength(match);
       if (outputBytes > maximumOutputBytes) {
         return {
@@ -1045,7 +1098,7 @@ function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
     "Execute one command in the selected working directory.",
-    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. This bounds the call's wait, not the command's duration. If state=running, pass the returned terminalSessionId to terminal_poll as session_id to continue waiting; do not restart the command.`,
+    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. This bounds the call's wait, not the command's duration. If completion_notification=true, do independent work or call manage_tool_calls action=wait with completion_task_id to wait without polling. Otherwise use terminal_poll with the returned terminalSessionId. Never restart a running command.`,
     process.platform === "win32"
       ? "To delay before rechecking an external task, use shell=powershell with a sleep command, e.g. Start-Sleep -Seconds 30. Reuse an existing running wait session when available."
       : "To delay before rechecking an external task, use shell=posix with a sleep command, e.g. sleep 30. Reuse an existing running wait session when available.",

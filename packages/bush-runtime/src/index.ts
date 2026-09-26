@@ -54,3 +54,4 @@ export * from './fileMemo.js';
 export * from './mcpHostCapabilities.js';
 export type { SearchResultLimitProvider } from './searchResultLimit.js';
 export type { RuntimeRendererHost, RuntimeRendererSnapshot, RuntimeRendererExtension } from './rendererExtension.js';
+export { withToolDisplayTitle } from './toolDisplay.js';

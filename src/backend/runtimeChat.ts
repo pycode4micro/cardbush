@@ -731,6 +731,8 @@ function toolRecord(
     metadata: {
       actionManifest: record.actionManifest,
       nativeResult: record.result,
+      lifecycleSequence: event.sequence,
+      ...((record.display ?? event.payload.display)?.title ? { displayTitle: (record.display ?? event.payload.display)!.title } : {}),
       ...(mcpServerId ? { mcpServerId } : {}),
       workspaceChanges: record.workspaceChanges,
       error: record.error,

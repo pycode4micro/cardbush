@@ -45,6 +45,7 @@ export interface ToolAdmissionContext<TInput = unknown> {
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
+  /** Internal calls share the caller's lifecycle unless record is true (independent background receipt). */
   invokeTool: (name: string, input: unknown, options?: { signal?: AbortSignal; record?: boolean; onHooks?: (messages: string[], stop?: string) => void }) => Promise<unknown>;
   recordWorkspaceChange: (change: WorkspaceChange) => void;
 }
@@ -87,8 +88,9 @@ export interface ToolRegistration<TInput = unknown> {
 }
 
 export interface PermissionResolver {
+  /** executionToolCallId keeps delegated waiters distinct while toolCallId identifies their visible receipt. */
   request(
-    input: ToolPermissionRequest & { toolCallId: string },
+    input: ToolPermissionRequest & { toolCallId: string; executionToolCallId?: string },
     signal?: AbortSignal,
   ): Promise<RuntimePermissionAnswer>;
 }

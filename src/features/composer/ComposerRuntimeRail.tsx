@@ -22,6 +22,7 @@ import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import type { GoalToolUpdate } from '../../shared/goalState';
 import type {
   AppLanguage,
+  ChatToolExecution,
   TaskPlanSnapshot,
 } from '../../types';
 import type {
@@ -32,6 +33,10 @@ import type {
 import { useLiveThinkingNotice } from './useLiveThinkingNotice';
 import type { ThinkingNotice } from './thinkingNoticeProjection';
 import { useQueueReorder } from './useQueueReorder';
+import { useToolActivity } from '../tools/useToolActivity';
+import { toolActionTitle, toolActivityStatus } from '../tools/toolExecutionState';
+
+const emptyToolExecutions: ChatToolExecution[] = [];
 
 export type { ThinkingNotice } from './thinkingNoticeProjection';
 
@@ -59,6 +64,8 @@ export function ComposerRuntimeRail({
   language,
   running,
   stopping = false,
+  toolExecutions = emptyToolExecutions,
+  activityScope = '',
   taskPlan,
   goal,
   goalRounds = [],
@@ -84,6 +91,8 @@ export function ComposerRuntimeRail({
   language: AppLanguage;
   running: boolean;
   stopping?: boolean;
+  toolExecutions?: ChatToolExecution[];
+  activityScope?: string;
   taskPlan?: TaskPlanSnapshot;
   goal?: ExperimentalGoal | null;
   goalRounds?: GoalToolUpdate[];
@@ -129,6 +138,9 @@ export function ComposerRuntimeRail({
   );
   const expanded = panelPresence.mounted;
   const completedPlanSteps = taskPlan?.nodes.filter((node) => node.status === 'completed').length ?? 0;
+  const activity = useToolActivity(toolExecutions, activityScope);
+  const activityTitle = running && activity ? toolActionTitle(activity, language) : '';
+  const activityStatus = running && activity ? toolActivityStatus(activity, language, true) : '';
   const processingSummary = runtimeProcessingSummary({
     language,
     taskPlan,
@@ -149,7 +161,7 @@ export function ComposerRuntimeRail({
         label: running
           ? stopping
             ? language === 'zh' ? '停止中' : 'Stopping'
-            : language === 'zh' ? '处理中' : 'Working'
+            : activityStatus || (language === 'zh' ? '处理中' : 'Working')
           : goal
             ? language === 'zh' ? '目标' : 'Goal'
             : language === 'zh' ? '计划' : 'Plan',
@@ -157,9 +169,9 @@ export function ComposerRuntimeRail({
           ? language === 'zh'
             ? '正在确认停止并保存本轮执行轨迹'
             : 'Confirming the stop and preserving this turn'
-          : processingSummary ||
+          : activityTitle || processingSummary ||
             (language === 'zh' ? '正在准备下一步' : 'Preparing the next step'),
-        title: processingSummary,
+        title: activityTitle || processingSummary,
       });
     }
     if (thinkingNotice) {
@@ -202,6 +214,8 @@ export function ComposerRuntimeRail({
     hasProcessing,
     language,
     processingSummary,
+    activityTitle,
+    activityStatus,
     queuePreview,
     queuedMessageCount,
     running,

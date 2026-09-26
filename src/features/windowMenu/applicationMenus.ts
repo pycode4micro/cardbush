@@ -15,6 +15,7 @@ export type ApplicationMenu = { id: string; label: string; items: WindowMenuEntr
 type Actions = {
   newConversation: () => void; openProject?: () => void; openFiles?: () => void;
   openSettings: () => void; showShortcuts: () => void; openDiagnostics: () => void;
+  openAppCenter?: () => void; openPlugins?: () => void; openAutomations?: () => void;
   toggleSidebar: () => void; toggleInspector: () => void; search: () => void;
   openBrowser: () => void; focusBrowserAddress?: () => void; reloadBrowser?: () => void;
   openReview?: () => void; openHistory?: () => void; openShadow?: () => void;
@@ -38,6 +39,11 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
   const menus: ApplicationMenu[] = [
     { id: 'file', label: label('文件', 'File'), items: [
       item('newConversation', '新会话', 'New chat', actions.newConversation, 'newConversation'), separator,
+      item('openAppCenter', '应用中心', 'App center', actions.openAppCenter, 'openAppCenter'),
+      { id: 'applications', label: label('应用', 'Applications'), children: [
+        item('openPlugins', '插件', 'Plugins', actions.openPlugins, 'openPlugins'),
+        item('openAutomations', '定时与自动化', 'Automations', actions.openAutomations, 'openAutomations'),
+      ] }, separator,
       item('openProject', '打开文件夹…', 'Open folder…', actions.openProject, 'openProject'),
       item('openFiles', '打开文件…', 'Open files…', actions.openFiles, 'openFiles'), separator,
       native('close', '关闭窗口', 'Close window', 'closeWindow'),

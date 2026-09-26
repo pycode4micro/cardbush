@@ -8,6 +8,8 @@ import type {
   ToolPermissionRequest,
 } from "./toolRegistry.js";
 
+type PermissionInvocation = Parameters<PermissionResolver['request']>[0];
+
 export interface RuntimePermissionBrokerOptions {
   createPermissionId?: () => string;
   onRequested?: (
@@ -54,16 +56,18 @@ export class RuntimePermissionBroker implements PermissionResolver {
   }
 
   request(
-    input: ToolPermissionRequest & { toolCallId: string },
+    input: PermissionInvocation,
     signal?: AbortSignal,
   ): Promise<RuntimePermissionAnswer> {
     const request = normalizeRequest(input);
+    // Delegated executions can share a visible row without sharing an abort waiter.
+    const waiterId = request.executionToolCallId ?? request.toolCallId;
     const requestKey = permissionRequestKey(request);
     const existingPermissionId = this.#pendingByRequest.get(requestKey);
     if (existingPermissionId) {
       const existing = this.#pending.get(existingPermissionId);
       if (existing) {
-        return this.#addWaiter(existingPermissionId, existing, request.toolCallId, signal);
+        return this.#addWaiter(existingPermissionId, existing, waiterId, request.toolCallId, signal);
       }
       this.#pendingByRequest.delete(requestKey);
     }
@@ -82,7 +86,7 @@ export class RuntimePermissionBroker implements PermissionResolver {
     };
     this.#pending.set(permissionId, pending);
     this.#pendingByRequest.set(requestKey, permissionId);
-    const answer = this.#addWaiter(permissionId, pending, request.toolCallId, signal);
+    const answer = this.#addWaiter(permissionId, pending, waiterId, request.toolCallId, signal);
     try {
       this.#onRequested?.({ ...request, permissionId });
     } catch (error) {
@@ -99,31 +103,30 @@ export class RuntimePermissionBroker implements PermissionResolver {
   #addWaiter(
     permissionId: string,
     pending: PendingPermission,
+    waiterId: string,
     toolCallId: string,
     signal?: AbortSignal,
   ): Promise<RuntimePermissionAnswer> {
-    if (pending.waiters.has(toolCallId)) {
-      throw new Error(`Tool call ${toolCallId} already awaits permission ${permissionId}.`);
+    if (pending.waiters.has(waiterId)) {
+      throw new Error(`Tool call ${waiterId} already awaits permission ${permissionId}.`);
     }
     if (signal?.aborted) return Promise.reject(abortError());
     return new Promise((resolve, reject) => {
       const onAbort = () => {
         const current = this.#pending.get(permissionId);
-        const waiter = current?.waiters.get(toolCallId);
+        const waiter = current?.waiters.get(waiterId);
         if (!current || !waiter) return;
-        current.waiters.delete(toolCallId);
+        current.waiters.delete(waiterId);
         waiter.removeAbortListener();
-        if (current.waiters.size === 0) this.#deletePending(permissionId, current);
-        this.#onCancelled?.({
-          permissionId,
-          toolCallId,
-          reason: "turn_cancelled",
-        });
+        if (current.waiters.size === 0) {
+          this.#deletePending(permissionId, current);
+          this.#onCancelled?.({ permissionId, toolCallId, reason: "turn_cancelled" });
+        }
         waiter.reject(abortError());
       };
       const removeAbortListener = () =>
         signal?.removeEventListener("abort", onAbort);
-      pending.waiters.set(toolCallId, {
+      pending.waiters.set(waiterId, {
         resolve,
         reject,
         removeAbortListener,
@@ -175,8 +178,8 @@ function abortError(): Error {
 }
 
 function normalizeRequest(
-  input: ToolPermissionRequest & { toolCallId: string },
-): ToolPermissionRequest & { toolCallId: string } {
+  input: PermissionInvocation,
+): PermissionInvocation {
   const reason = input.reason.trim();
   const toolCallId = input.toolCallId.trim();
   const actions = uniqueNonempty(input.actions);
@@ -196,6 +199,7 @@ function normalizeRequest(
   return {
     reason,
     toolCallId,
+    ...(input.executionToolCallId?.trim() ? { executionToolCallId: input.executionToolCallId.trim() } : {}),
     actions,
     targets,
     capabilityIds,

@@ -7,8 +7,8 @@ export const THEME_BACKGROUNDS: Readonly<Record<ThemeMode, string>> = {
 };
 
 export const THEME_ACCENTS: Readonly<Record<ThemeMode, string>> = {
-  bright: '#7b9e87',
-  dark: '#7b9e87',
+  bright: '#175fb5',
+  dark: '#83baff',
   cyberpunk: '#00e7f0',
 };
 

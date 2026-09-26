@@ -24,13 +24,21 @@ export function mergeToolExecutionUpdate(
   const currentSettled = toolExecutionStateRank(current.state) >= 2;
   const incomingRunning = toolExecutionStateRank(incoming.state) < 2;
   const artifacts = mergeToolArtifacts(current.artifacts, incoming.artifacts);
+  const currentSequence = current.metadata.lifecycleSequence;
+  const incomingSequence = incoming.metadata.lifecycleSequence;
+  const staleEvent = typeof currentSequence === 'number' && typeof incomingSequence === 'number' && incomingSequence < currentSequence;
   const merged = {
     ...current,
     ...incoming,
-    metadata: { ...current.metadata, ...incoming.metadata },
+    metadata: { ...current.metadata, ...incoming.metadata,
+      // A call's title is immutable. History enrichment and replay must not
+      // replace it with a tool name or a transient error/status string.
+      ...(current.metadata.displayTitle ? { displayTitle: current.metadata.displayTitle } : {}),
+      ...(staleEvent ? { lifecycleSequence: currentSequence } : {}),
+    },
     ...(artifacts.length > 0 ? { artifacts } : {}),
   };
-  if (!currentSettled || !incomingRunning) {
+  if (!staleEvent && (!currentSettled || !incomingRunning)) {
     return merged;
   }
   return {

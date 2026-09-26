@@ -97,9 +97,10 @@
 .automation-calendar-month { min-width: 0; }
 .automation-calendar-heading, .automation-agenda-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; margin-bottom: 10px; }
 .automation-calendar-heading h2, .automation-agenda-heading h2 { margin: 0; font-size: 17px; font-weight: 600; }
-.automation-calendar-controls { display: flex; align-items: center; gap: 4px; }
-.automation-calendar-controls button { display: flex; align-items: center; justify-content: center; height: 29px; min-width: 29px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; cursor: pointer; }
-.automation-calendar-controls button:hover { color: var(--text); background: var(--surface-hover, var(--border)); }
+.automation-calendar-controls { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 2px; border: 1px solid var(--border); border-radius: 8px; }
+.automation-calendar-controls > button { display: flex; flex: none; align-items: center; justify-content: center; height: 28px; width: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-mid); font: inherit; cursor: pointer; }
+.automation-calendar-controls > button:hover { color: var(--text); background: var(--surface-hover, var(--border)); }
+.automation-calendar-controls > button svg { flex: none; }
 .automation-calendar-weekdays, .automation-calendar-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .automation-calendar-weekdays { margin-bottom: 4px; color: var(--text-mid); font-size: 11px; text-align: center; }
 .automation-calendar-weekdays span { padding: 4px 0; }
@@ -141,11 +142,10 @@
 .automation-calendar-notice > svg { flex: none; }
 .automation-calendar-notice p { margin-block: 6px; line-height: 18px; }
 .calendar-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
-.calendar-toolbar .automation-calendar-heading { margin: 0; gap: 18px; }
-.calendar-period-title { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 7px; padding: 4px 5px; margin-left: -5px; color: var(--text); background: transparent; font: inherit; cursor: pointer; }
+.calendar-toolbar .automation-calendar-heading { margin: 0; }
+.calendar-period-title { display: inline-flex; align-items: center; gap: 7px; height: 28px; border: 0; border-radius: 5px; padding: 0 7px; color: var(--text); background: transparent; font: inherit; white-space: nowrap; cursor: pointer; }
 .calendar-period-title svg { color: var(--text-mid); flex: none; }
 .calendar-period-title:hover, .calendar-period-title[aria-expanded=true] { background: color-mix(in srgb, var(--text) 7%, transparent); }
-.automation-calendar-controls [data-date-picker-trigger] { gap: 4px; }
 .calendar-period-title:focus-visible, .automation-calendar-controls button:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
 .calendar-date-picker { position: fixed; inset: auto; margin: 0; padding: 12px; box-sizing: border-box; overflow: auto; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface-raised, var(--surface)); box-shadow: 0 12px 36px var(--shadow); font: inherit; font-size: 12px; }
 .calendar-date-picker::backdrop { background: transparent; }
@@ -236,8 +236,6 @@
   .automation-agenda-list { max-height: 480px; }
 }
 @container (max-width: 520px) {
-  .calendar-toolbar .automation-calendar-heading { gap: 8px; }
-  .automation-calendar-controls button { min-width: 25px; padding-inline: 4px; }
   .calendar-period-title { gap: 4px; }
   .automation-calendar-date { height: 56px; }
   .calendar-year-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

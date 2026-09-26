@@ -39,6 +39,8 @@
 
 ## CardBush 自己的目录
 
+应用中心的可操作页面使用独立的 `cardbush.applications` 声明，支持网页地址或插件自己的 Runtime renderer，见 [应用中心与应用引用](app-center.md)。普通注册 MCP 的 `apps` 声明仍是连接能力，不应当作可打开页面，也不应通过应用中心跳转连接设置。
+
 - 开发环境公共插件：应用根目录 `assets/plugins`，由其中的 `marketplace.json` 编目。仅在开发内置公共插件时修改该市场文件。
 - 个人插件：`app.getPath('userData')/plugins/<id>`；从宿主确定实际 userData，不将某台电脑的用户名、`APPDATA` 推测值或 Codex 目录当成固定路径。
 - 插件状态：`userData/product-host/config/apps.json`，由 Product Host 管理。

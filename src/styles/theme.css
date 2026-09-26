@@ -87,8 +87,8 @@ button {
   --surface-strong: #ffffff;
   --surface-raised: #ffffff;
   --border: #e5e0d8;
-  --accent: #7b9e87;
-  --accent-soft: #ebf2ed;
+  --accent: var(--info);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--surface));
   --text: #1e1c1a;
   --text-mid: #6b6560;
   --text-soft: #756e66;
@@ -106,8 +106,8 @@ button {
   --action-hover: color-mix(in srgb, var(--text) 85%, var(--surface));
   --on-action: var(--surface);
   --sidebar-width: 232px;
-  --wallpaper-accent-rgb: 123 158 135;
-  --wallpaper-accent-hex: #7b9e87;
+  --wallpaper-accent-rgb: 23 95 181;
+  --wallpaper-accent-hex: var(--accent);
 }
 
 .app {
@@ -127,8 +127,8 @@ button {
   --surface-strong: #ffffff;
   --surface-raised: #ffffff;
   --border: #e5e0d8;
-  --accent: #7b9e87;
-  --accent-soft: #ebf2ed;
+  --accent: var(--info);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--surface));
   --text: #1e1c1a;
   --text-mid: #6b6560;
   --text-soft: #756e66;
@@ -143,8 +143,8 @@ button {
   --surface-strong: #2b2b2b;
   --surface-raised: #32312f;
   --border: #2a2926;
-  --accent: #7b9e87;
-  --accent-soft: #1a2820;
+  --accent: var(--info);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--surface));
   --text: #f0ede7;
   --text-mid: #b7afa5;
   --text-soft: #80786f;
@@ -157,6 +157,7 @@ button {
   --model-logo-filter: brightness(0) invert(1);
   --shadow: rgba(0, 0, 0, 0.25);
   --user-bubble: #2b2b2b;
+  --wallpaper-accent-rgb: 131 186 255;
 }
 
 @media (min-width: 1160px) {

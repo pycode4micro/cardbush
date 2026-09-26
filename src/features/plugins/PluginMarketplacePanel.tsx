@@ -5,6 +5,7 @@ import type { PluginMarketCatalog, PluginMarketPreview, PluginMarketSource } fro
 import type { AppLanguage } from '../../types';
 import { marketError, marketRetryAt, networkError } from './pluginMarketErrors';
 import { useSettingsHost } from '../settings/SettingsHostContext';
+import { usePageState, usePageBack } from '../navigation/PageNavigation';
 
 export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onNotify, onOpenNetwork }: {
   language: AppLanguage;
@@ -18,7 +19,9 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const host = useSettingsHost();
   const bridge = host.marketplace;
   const [sources, setSources] = useState<PluginMarketSource[]>([]);
-  const [sourceId, setSourceId] = useState('builtin');
+  const [sourceId, setSourceId] = usePageState('market-source', 'builtin');
+  const [previewTarget, setPreviewTarget] = usePageState<{ sourceId: string; name: string } | null>('market-preview', null);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
   const [catalog, setCatalog] = useState<PluginMarketCatalog | null>(null);
   const [preview, setPreview] = useState<PluginMarketPreview | null>(null);
   const [query, setQuery] = useState('');
@@ -67,7 +70,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     } catch (caught) { if (revision === generation.current) setError(message(caught)); }
     finally { if (revision === generation.current) setBusy(''); }
   }, [bridge, sourceId]);
-  useEffect(() => { void loadCatalog(); return () => { generation.current++; }; }, [loadCatalog]);
+  useEffect(() => { if (!previewTarget) void loadCatalog(); return () => { generation.current++; }; }, [loadCatalog, previewTarget]);
 
   const addSource = async (local = false) => {
     if (!bridge || busy) return;
@@ -90,22 +93,27 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     } catch (caught) { setError(message(caught)); }
     finally { setBusy(value => value === 'source' ? '' : value); }
   };
-  const openPlugin = async (name: string) => {
+  const openPlugin = (name: string) => {
     if (catalog?.source.builtin) { onOpenBundled(name); return; }
     if (!bridge || busy) return;
+    setPreviewTarget({ sourceId, name }); setPreviewAttempt(value => value + 1);
+  };
+  useEffect(() => {
+    if (!bridge || !previewTarget) { setPreview(null); return; }
+    const { sourceId, name } = previewTarget;
     const revision = ++generation.current;
     setBusy(`preview:${name}`); setError(''); setRetryPreview(null); setPreview(null); setInstalledId(''); setActivated(false);
-    try {
-      const detail = await bridge.previewMarketPlugin(sourceId, name);
+    void bridge.previewMarketPlugin(sourceId, name).then(detail => {
       if (revision === generation.current) setPreview(detail);
-    } catch (caught) {
+    }).catch(caught => {
       if (revision === generation.current) {
         setError(message(caught));
         if (marketRetryAt(message(caught)) !== undefined || /HTTP 429\b/.test(message(caught))) setRetryPreview({ sourceId, name });
       }
-    }
-    finally { if (revision === generation.current) setBusy(''); }
-  };
+    }).finally(() => { if (revision === generation.current) setBusy(''); });
+    return () => { generation.current++; };
+  }, [bridge, previewTarget, previewAttempt]);
+  const navigateBack = usePageBack(() => { if (previewTarget) setPreviewTarget(null); else onBack(); });
   const install = async () => {
     if (!bridge || !preview || busy || preview.issues.length) return;
     setBusy('install'); setError('');
@@ -127,7 +135,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   return <div className="plugin-market-page plugin-catalog-page">
     <button className="plugin-back" type="button" disabled={busy === 'install'} onClick={() => {
       generation.current++;
-      if (preview || busy.startsWith('preview:')) { setPreview(null); setBusy(''); setError(''); } else onBack();
+      setError(''); navigateBack();
     }}><ArrowLeft size={17} />{preview || busy.startsWith('preview:') ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
       <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>

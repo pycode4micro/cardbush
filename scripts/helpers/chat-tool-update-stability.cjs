@@ -36,7 +36,7 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
     window.updateStabilityTool = (id, state, sequence) => {
       stabilityState = views.appendToolExecution(stabilityState, stabilitySession, 'stable-intro', {
         id, name: 'terminal_exec', state, success: state === 'completed', output: '', summary: 'Check render',
-        durationMs: 10, metadata: {}, assistantMessageId: 'owner-' + id,
+        durationMs: 10, metadata: {displayTitle:'Check rendered assets'}, assistantMessageId: 'owner-' + id,
         turnId: 'stable-turn', sequence, contentOffset: 0, contentOffsetExplicit: true,
         createdAt: '2026-09-13T00:00:01Z',
       });
@@ -100,7 +100,7 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
   await run("stableToolBlock.querySelector('.tool-execution-summary').click()");
   await until("stableToolBlock.querySelectorAll('[data-execution-id]').length === 6", 'tool details still expand');
   await run("updateStabilityTool('stable-tool-5', 'failed', 5)");
-  await until("stableToolBlock.textContent.includes('1 failed')", 'late tool results still update');
+  await until("stableToolBlock.querySelector('.tool-execution-status').textContent === 'Failed'", 'late tool results still update');
   assert.equal(await run('stableImage.isConnected && stableParagraph.isConnected'), true);
   await run("stableToolBlock.querySelector('.tool-execution-summary').click()");
   console.log('Tool update stability passed (' + theme + '): lifecycle, large media, per-frame geometry, detached reading and disclosure.');

@@ -139,7 +139,7 @@ export function WindowFrame(props: Props) {
   const popup = (entries: WindowMenuEntry[], position: OpenMenu, nested: boolean, label: string) =>
     <MenuPopup key={position.id} position={position} nested={nested} label={label} onKeyDown={event => onMenuKey(event, entries, nested)}>
       {entries.map((entry, index) => 'separator' in entry ? <div className="window-menu-separator" role="separator" key={'separator-' + index} /> :
-        <button key={entry.id} data-menu-item={entry.id} type="button" disabled={entry.disabled}
+        <button key={entry.id} data-menu-item={entry.id} data-shortcut={entry.shortcut} title={entry.label} type="button" disabled={entry.disabled}
           role={entry.checked === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={entry.checked}
           aria-haspopup={entry.children ? 'menu' : undefined} aria-expanded={entry.children ? submenu?.id === entry.id : undefined}
           onPointerEnter={event => {
@@ -182,7 +182,7 @@ export function WindowFrame(props: Props) {
       {([{ id: 'back', label: zh ? '返回' : 'Back', action: onBack, icon: ArrowLeft, shortcut: 'navigateBack' },
         { id: 'forward', label: zh ? '前进' : 'Forward', action: onForward, icon: ArrowRight, shortcut: 'navigateForward' }] as const).map(item =>
         <button key={item.id} type="button" className="frame-chip" data-history-action={item.id} disabled={!item.action}
-          aria-label={item.label} title={[item.label, shortcuts.label(item.shortcut)].filter(Boolean).join(' · ')}
+          aria-label={item.label} title={item.label} data-shortcut={item.shortcut}
           onClick={() => { close(); item.action?.(); }}><item.icon size={15} /></button>)}
     </div>
     <div className="window-frame-menu-group no-drag" role="menubar" aria-label={zh ? '应用菜单' : 'Application menu'}>
@@ -244,7 +244,7 @@ function MenuPopup({ position, nested, label, children, onKeyDown }: {
 function WindowButton({ label, glyph, danger, onClick }: {
   label: string; glyph: string; danger?: boolean; onClick: () => void | Promise<void>;
 }) {
-  return <button className={`window-button no-drag ${danger ? 'danger' : ''}`} type="button" aria-label={label} title={label} onClick={onClick}>
+  return <button className={`window-button no-drag ${danger ? 'danger' : ''}`} type="button" aria-label={label} title={label} data-shortcut={glyph === 'close' ? 'closeWindow' : undefined} onClick={onClick}>
     <span className={`window-glyph ${glyph}`} aria-hidden="true" />
   </button>;
 }

@@ -44,6 +44,7 @@ export function TopBar({
         className="topbar-inspector-action icon-only"
         type="button"
         data-inspector-toggle
+        data-shortcut="toggleInspector"
         onClick={() => onToggleInspector()}
         title={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}
         aria-label={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}

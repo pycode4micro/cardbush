@@ -295,11 +295,14 @@ app.whenReady().then(async () => {
     await until("calls.some(c=>c.input?.kind==='runtime.answer_solution_selection')",'custom solution sent');
     assert.equal(await run("calls.find(c=>c.input?.kind==='runtime.answer_solution_selection').input.payload.text"),'My alternative');
     await run(`readers.at(-1).listener({type:'event',event:{kind:'solution_selection_answered',sequence:10,payload:{sessionId:'same-session',turnId:'turn-a',selectionId:'selection-1',kind:'text',text:'My alternative'}}});for(let i=0;i<7;i++){readers.at(-1).listener({type:'event',event:{kind:'tool_running',sequence:11+i*2,createdAt:'2026-09-22T00:00:00Z',payload:{toolCallId:'tool-'+i,toolName:'read_file'}}});readers.at(-1).listener({type:'event',event:{kind:'tool_returned',sequence:12+i*2,createdAt:'2026-09-22T00:00:00Z',payload:{toolCallId:'tool-'+i,toolName:'read_file'}}})}undefined;`);
-    await until("document.querySelector('.tool-execution-summary')?.textContent.includes('已处理 7 项操作')",'all tool operations shown with final state');
+    await until("document.querySelector('.tool-execution-label')?.textContent === '读取文件' && document.querySelector('.tool-execution-status')?.textContent === '已返回'",'cloud operations use the shared action title and final state');
+    await run("document.querySelector('.tool-execution-summary').click()");
+    await until("document.querySelectorAll('.tool-execution-row').length === 7",'all cloud operations remain available in details');
+    await run("document.querySelector('.tool-execution-summary').click()");
 
     await run(`readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:25,payload:{messageId:'msg-second',segmentId:'second',ordinal:1,content:'第二轮正文'}}});readers.at(-1).listener({type:'event',event:{kind:'tool_returned',sequence:26,payload:{assistantMessageId:'msg-second',toolCallId:'second-tool',toolName:'terminal_exec'}}});undefined;`);
     await until("document.querySelectorAll('.agent-chat .tool-execution-summary').length===2",'interleaved text owns separate tool groups');
-    assert.deepEqual(await run("[...document.querySelectorAll('.agent-chat .tool-execution-summary')].map(e=>e.textContent.match(/\\d+/)[0])"),['7','1']);
+    assert.deepEqual(await run("[...document.querySelectorAll('.agent-chat .tool-execution-label')].map(e=>e.textContent)"),['读取文件','执行命令']);
     assert.ok(await run("var paragraphs=[...document.querySelectorAll('.agent-chat .markdown-content p')];var second=paragraphs.find(e=>e.textContent==='第二轮正文');var tools=[...document.querySelectorAll('.agent-chat .tool-execution-summary')];!!second&&!!(tools[0].compareDocumentPosition(second)&Node.DOCUMENT_POSITION_FOLLOWING)&&!!(second.compareDocumentPosition(tools[1])&Node.DOCUMENT_POSITION_FOLLOWING)"),'DOM alternates narration, tools, narration, tools');
     const sendsBeforeGuidance=await run("calls.filter(c=>c.operation==='chat.send').length");
     await setDraft('请调整执行方向');

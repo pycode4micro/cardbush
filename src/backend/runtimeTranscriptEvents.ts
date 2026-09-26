@@ -49,6 +49,8 @@ export function toolLifecycle(
     turnId: event.turnId,
     assistantMessageId: event.payload.assistantMessageId,
     metadata: {
+      lifecycleSequence: event.sequence,
+      ...(event.payload.display?.title ? { displayTitle: event.payload.display.title } : {}),
       ...('error' in event.payload ? { error: event.payload.error } : {}),
     },
   };

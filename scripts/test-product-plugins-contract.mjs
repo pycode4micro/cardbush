@@ -8,6 +8,7 @@ import { CardbushAppsConfigStore } from '@cardbush/product-host';
 
 import {
   installProductPlugin,
+  inspectProductPlugin,
   loadEnabledProductPluginSkillRootEntries,
   loadEnabledProductPluginSkillRoots,
   loadProductPluginCatalog,
@@ -166,6 +167,43 @@ try {
     assert.equal(activeRoots.includes(helper.skillRoots[0]), installed && enabled);
     assert.equal(updated.plugins.find(plugin => plugin.id === helper.id).installed, installed);
   }
+
+  // Real page declarations survive install and the Product Host catalog. A
+  // registered MCP app and a settings renderer alone never become launchers.
+  const pagesRoot = join(temporary, 'source', 'page-fixture');
+  await mkdir(join(pagesRoot, '.codex-plugin'), { recursive: true });
+  await writeFile(join(pagesRoot, 'main.mjs'), 'export const apiVersion=1;');
+  await writeFile(join(pagesRoot, 'renderer.mjs'), 'export const apiVersion=1;');
+  await writeFile(join(pagesRoot, '.app.json'), JSON.stringify({ apps: { connector: { id: 'fixture-connector' } } }));
+  const pageManifest = { name: 'page-fixture', version: '1.0.0', apps: './.app.json', cardbush: {
+    runtimeExtension: { apiVersion: 1, entry: './main.mjs', renderer: './renderer.mjs' },
+    applications: [{ id: 'web', title: 'Web app', url: 'https://example.test/board' }, { id: 'canvas', title: 'Canvas', renderer: true }],
+  } };
+  const savePageManifest = value => writeFile(join(pagesRoot, '.codex-plugin', 'plugin.json'), JSON.stringify(value));
+  await savePageManifest(pageManifest);
+  await installProductPlugin(pagesRoot, temporary);
+  const pagePlugin = (await store.read()).plugins.find(plugin => plugin.id === pageManifest.name);
+  assert.ok(pagePlugin.installed && pagePlugin.enabled);
+  assert.deepEqual(pagePlugin.components.filter(component => component.app).map(component => [component.id, component.app]), [
+    ['page:web', { kind: 'url', url: 'https://example.test/board' }], ['page:canvas', { kind: 'renderer', extensionId: 'page-fixture' }],
+  ]);
+  assert.equal(pagePlugin.components.find(component => component.id === 'connector').app, undefined);
+  await savePageManifest({ ...pageManifest, cardbush: { runtimeExtension: pageManifest.cardbush.runtimeExtension } });
+  assert.equal((await inspectProductPlugin(pagesRoot)).components.filter(component => component.app).length, 0);
+  for (const application of [
+    { id: 'invalid', title: 'Invalid', url: 'javascript:alert(1)' },
+    { id: 'invalid', title: 'Invalid', url: 'file:///private/index.html' },
+    { id: 'invalid', title: 'Invalid', url: 'https://user:pass@example.test' },
+    { id: 'invalid', title: 'Invalid', renderer: true, url: 'https://example.test' },
+    { id: '../invalid', title: 'Invalid', url: 'https://example.test' },
+  ]) {
+    await savePageManifest({ ...pageManifest, cardbush: { ...pageManifest.cardbush, applications: [application] } });
+    await assert.rejects(inspectProductPlugin(pagesRoot), /Application/);
+  }
+  await savePageManifest({ ...pageManifest, cardbush: { applications: [{ id: 'missing', title: 'Missing renderer', renderer: true }] } });
+  await assert.rejects(inspectProductPlugin(pagesRoot), /packaged Runtime renderer/);
+  await savePageManifest({ ...pageManifest, cardbush: { applications: [pageManifest.cardbush.applications[0], pageManifest.cardbush.applications[0]] } });
+  await assert.rejects(inspectProductPlugin(pagesRoot), /unique/);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

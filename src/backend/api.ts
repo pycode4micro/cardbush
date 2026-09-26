@@ -1374,7 +1374,7 @@ export function runtimeHistoryToolExecution(
     id: record.toolCall.id,
     name: record.toolCall.name,
     state: record.outcome === 'returned' ? 'completed' : record.outcome,
-    summary: record.error?.message ?? record.toolCall.name,
+    summary: record.display?.title ?? record.error?.message ?? record.toolCall.name,
     output,
     success: record.outcome === 'returned',
     durationMs: 0,
@@ -1386,6 +1386,7 @@ export function runtimeHistoryToolExecution(
     ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
+      ...(record.display?.title ? { displayTitle: record.display.title } : {}),
       ...(mcpServerId ? { mcpServerId } : {}),
       ...(hasNativeResult
         ? { nativeResult: record.result }
@@ -1703,12 +1704,15 @@ export function cardbushAppsConfigurationFromPayload(
         : 'AVAILABLE',
       components: arrayFrom(value.components).map((candidate) => {
         const component = asRecord(candidate);
+        const page = asRecord(component.app);
         const kind = component.kind === 'skill' || component.kind === 'app' || component.kind === 'agent' || component.kind === 'hook' || component.kind === 'command' || component.kind === 'runtime' ? component.kind : 'mcp';
         return {
           kind,
           id: String(component.id ?? ''),
           name: String(component.name ?? component.id ?? ''),
           description: String(component.description ?? ''),
+          ...(page.kind === 'url' && typeof page.url === 'string' ? { app: { kind: 'url' as const, url: page.url } }
+            : page.kind === 'renderer' && typeof page.extensionId === 'string' ? { app: { kind: 'renderer' as const, extensionId: page.extensionId } } : {}),
           ...(component.runtime ? { runtime: { settings: asRecord(component.runtime).settings === true } } : {}),
           ...(component.mcp ? { mcp: { transport: optionalString(asRecord(component.mcp).transport), url: optionalString(asRecord(component.mcp).url), registeredAppId: optionalString(asRecord(component.mcp).registeredAppId), required: asRecord(component.mcp).required === true } } : {}),
           ...(component.hook && typeof asRecord(component.hook).definitionHash === 'string' ? { hook: {

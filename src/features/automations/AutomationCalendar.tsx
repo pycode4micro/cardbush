@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type KeyboardEvent } from 'react';
 import { CalendarClock, ChevronDown, ChevronRight } from 'lucide-react';
+import { usePageState } from '../navigation/PageNavigation';
 import type { AutomationJob } from '@cardbush/bush-protocol';
 import { chineseDate } from '../../../assets/skills/cardbush-docs/scripts/calendar-date.mjs';
 import { CalendarDataControls, useCalendarData } from './CalendarDataControls';
@@ -12,7 +13,7 @@ export function AutomationCalendar({ jobs, language, renderJob, onShowPlans, que
   onShowPlans: () => void; query?: string;
 }) {
   const zh = language === 'zh', locale = zh ? 'zh-CN' : 'en-US', filter = query.trim();
-  const [selected, setSelected] = useState(() => localDay(new Date())), [view, setView] = useState<CalendarView>('month');
+  const [selected, setSelected] = usePageState('calendar-date', () => localDay(new Date())), [view, setView] = usePageState<CalendarView>('calendar-view', 'month');
   const [now, setNow] = useState(Date.now), [dateLimit, setDateLimit] = useState(48);
   const [agendaLimit, setAgendaLimit] = useState(100);
   const data = useCalendarData();

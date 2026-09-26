@@ -27,7 +27,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
             onSectionChange: noop, onConversationChange: noop, onCreateConversation: () => searchEvents.push('new'),
             onAddProject: noop, onProjectAction: noop, onDeleteConversation: noop, onRenameConversation: async () => true,
             onOpenConversationChanges: noop, onOpenSettings: () => searchEvents.push('settings'),
-            onOpenPlugins: () => searchEvents.push('plugins'), onOpenSearch: controller.show }),
+            onOpenSearch: controller.show }),
           h('section', { className: 'main-stage', style: { padding: 24, display: 'flex', flexDirection: 'column' } },
             h('h2', null, '优化渲染性能'),
             h('div', { id: 'search-fixture-transcript', style: { overflow: 'auto', height: 440 } },
@@ -47,7 +47,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     };
     void 0;
   `);
-  await until("!!document.querySelector('.sidebar-search-button')", 'sidebar search icon');
+  await until("!!document.querySelector('[data-shortcut=searchConversations]')", 'Recent search icon');
   await run("document.querySelector('.app').style.width = '100%'");
   const key = async (keyCode, modifiers = []) => {
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
@@ -66,14 +66,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const query = async value => { await run(`setSearchQuery(${JSON.stringify(value)})`); await pause(45); };
   const selected = () => run("document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchConversation || document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchAction");
 
-  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav .nav-row')].map(node => node.textContent)"), ['新会话', '插件', '定时与自动化']);
-  assert.equal(await run("document.querySelector('.sidebar-search-button').textContent"), '');
-  assert.equal(await run("document.querySelector('.sidebar-search-button').getAttribute('aria-keyshortcuts')"), 'Control+F');
-  const dock = await run(`(() => { const s = document.querySelector('.settings-dock').getBoundingClientRect(),
-    f = document.querySelector('.sidebar-search-button').getBoundingClientRect(); return { aligned: Math.abs((s.top+s.bottom)/2-(f.top+f.bottom)/2)<1, after: f.left >= s.right }; })()`);
-  assert.deepEqual(dock, { aligned: true, after: true });
-  await run("document.querySelectorAll('.sidebar-nav .nav-row')[1].click()");
-  assert.deepEqual(await run('searchEvents'), ['plugins']);
+  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav .nav-row')].map(node => node.textContent)"), ['新会话']);
+  assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').textContent"), '');
+  assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').getAttribute('aria-keyshortcuts')"), 'Control+F');
+  assert.match(await run("document.querySelector('[data-shortcut=searchConversations]').closest('.section-header').textContent"), /最近/);
+  assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run(`window.searchDraftNode = document.querySelector('#search-fixture-draft');
     searchDraftNode.focus(); searchDraftNode.setSelectionRange(2, 5);
     window.searchTranscriptNode = document.querySelector('#search-fixture-transcript'); searchTranscriptNode.scrollTop = 210;`);
@@ -101,17 +98,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("document.activeElement === searchEditable && getSelection().toString() === '编辑原来'"), true, 'contenteditable draft selection is restored');
   await run('searchEditable.remove()');
 
-  await run("document.querySelector('.sidebar-search-button').click()");
+  await run("document.querySelector('[data-shortcut=searchConversations]').click()");
   await until("!!document.querySelector('[data-conversation-search][open]')", 'icon opens search');
   await query('预算');
   assert.equal(await selected(), 'two', 'summary matching');
   await run(`document.querySelector('[data-conversation-search] input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }))`);
-  assert.deepEqual(await run('searchEvents'), ['plugins'], 'IME confirmation must not navigate');
+  assert.deepEqual(await run('searchEvents'), [], 'IME confirmation must not navigate');
   await query('广告报表');
   assert.equal(await run("document.querySelectorAll('[data-search-conversation]').length"), 1, 'project name matching');
   await key('Return');
   await until("!document.querySelector('[data-conversation-search]')", 'Enter selects a result');
-  assert.deepEqual(await run('searchEvents'), ['plugins', 'two']);
+  assert.deepEqual(await run('searchEvents'), ['two']);
 
   await open();
   await key('Down');
@@ -148,7 +145,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("!!document.querySelector('.sidebar')"), false, 'shortcut works without a sidebar');
 
   await run("views.saveKeyboardShortcuts({searchConversations:{key:'k',ctrl:true}}); updateSearchFixture({ collapsed: false })");
-  await until("document.querySelector('.sidebar-search-button')?.title.includes('Ctrl + K')", 'shortcut tooltip follows preferences');
+  await until("document.querySelector('[data-shortcut=searchConversations]')?.getAttribute('aria-keyshortcuts')==='Control+K'", 'search button follows shortcut preferences');
   await run("document.querySelector('#search-fixture-draft').focus()"); await key('F', ['control']);
   assert.equal(await run("!!document.querySelector('[data-conversation-search]')"), false, 'old shortcut no longer opens search');
   await key('K', ['control']); await until("!!document.querySelector('[data-conversation-search][open]')", 'remapped shortcut');

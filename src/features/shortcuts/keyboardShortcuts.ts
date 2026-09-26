@@ -8,6 +8,12 @@ type ShortcutDefinition = {
 const appContexts: ShortcutContext[] = ['composer', 'queue', 'transcript', 'edit', 'sidebar'];
 
 export const shortcutDefinitions = [
+  { id: 'openAppCenter', group: 'application', contexts: appContexts, defaultBinding: { key: 'a', ctrl: true, shift: true },
+    title: { zh: '应用中心', en: 'App center' }, description: { zh: '打开应用与快捷方式抽屉。', en: 'Open applications and shortcuts.' } },
+  { id: 'openPlugins', group: 'application', contexts: appContexts, defaultBinding: { key: 'p', ctrl: true, alt: true },
+    title: { zh: '插件', en: 'Plugins' }, description: { zh: '打开插件管理。', en: 'Open plugin management.' } },
+  { id: 'openAutomations', group: 'application', contexts: appContexts, defaultBinding: { key: 't', ctrl: true, alt: true },
+    title: { zh: '定时与自动化', en: 'Automations' }, description: { zh: '打开日历和定时任务。', en: 'Open the calendar and scheduled tasks.' } },
   { id: 'extractConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'e', ctrl: true, shift: true },
     title: { zh: '提取对话', en: 'Extract conversation' }, description: { zh: '打开当前会话的提取弹窗。', en: 'Extract the current conversation as Markdown.' } },
   { id: 'newConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'n', ctrl: true },
@@ -22,10 +28,10 @@ export const shortcutDefinitions = [
     title: { zh: '切换侧边栏', en: 'Toggle sidebar' }, description: { zh: '展开或收起左侧栏。', en: 'Show or hide the left sidebar.' } },
   { id: 'toggleInspector', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'b', ctrl: true, alt: true },
     title: { zh: '切换右侧栏', en: 'Toggle right sidebar' }, description: { zh: '展开或收起文件与浏览器预览。', en: 'Show or hide the file and browser preview.' } },
-  { id: 'navigateBack', group: 'conversation', contexts: appContexts, defaultBinding: { key: '[', ctrl: true },
-    title: { zh: '返回', en: 'Back' }, description: { zh: '返回访问过的会话。', en: 'Go back through visited conversations.' } },
-  { id: 'navigateForward', group: 'conversation', contexts: appContexts, defaultBinding: { key: ']', ctrl: true },
-    title: { zh: '前进', en: 'Forward' }, description: { zh: '前进到返回前的会话。', en: 'Go forward through conversation history.' } },
+  { id: 'navigateBack', group: 'application', contexts: appContexts, defaultBinding: { key: '[', ctrl: true },
+    title: { zh: '返回', en: 'Back' }, description: { zh: '返回访问过的页面或会话。', en: 'Go back through visited pages and conversations.' } },
+  { id: 'navigateForward', group: 'application', contexts: appContexts, defaultBinding: { key: ']', ctrl: true },
+    title: { zh: '前进', en: 'Forward' }, description: { zh: '前进到返回前的页面或会话。', en: 'Go forward through page and conversation history.' } },
   { id: 'focusBrowserAddress', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'l', ctrl: true },
     title: { zh: '聚焦浏览器地址栏', en: 'Focus browser address' }, description: { zh: '编辑当前浏览器标签页的网址。', en: 'Edit the address of the current browser tab.' } },
   { id: 'reloadBrowser', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'r', ctrl: true },

@@ -11,7 +11,7 @@ module.exports = async function testChatToolPackages({ run, until, pause, theme 
       id: 'package-tool-' + index, assistantMessageId: 'msg_package_' + index, turnId: packageTurn,
       name: 'terminal_exec', state: 'completed', summary: 'operation-' + index, output: 'result-' + index,
       success: true, durationMs: 5, contentOffset: 0, sequence: index,
-      createdAt: new Date(Date.UTC(2026, 8, 8, 0, 0, index)).toISOString(), metadata: {}, ...overrides,
+      createdAt: new Date(Date.UTC(2026, 8, 8, 0, 0, index)).toISOString(), metadata: {displayTitle:'Inspect operation ' + index}, ...overrides,
     });
     window.appendPackageTool = (index, overrides) => {
       packageState = views.appendToolExecution(packageState, packageSession, 'package-placeholder', packageExecution(index, overrides));
@@ -30,7 +30,7 @@ module.exports = async function testChatToolPackages({ run, until, pause, theme 
     }] } });
     renderPackages();
   `);
-  await until("firstPackage.textContent.includes('2')", 'file change joins the existing package');
+  await until("firstPackage.querySelector('.tool-execution-label').textContent === 'Edit file'", 'file change joins the existing package');
   assert.equal(await run("firstPackage === document.querySelector('.message-row.streaming .tool-execution-block')"), true, 'a file change cannot replace the package DOM');
   assert.equal(await run("document.querySelectorAll('.message-row.streaming .tool-change-block, .message-row.streaming .tool-execution-detail').length"), 0, 'individual tools and file changes start collapsed');
   await run(`
@@ -75,7 +75,7 @@ module.exports = async function testChatToolPackages({ run, until, pause, theme 
     renderPackages();
   `);
   await until("document.querySelectorAll('.message-row.streaming .tool-execution-block').length === 2", 'new narration begins a new execution package');
-  assert.equal(await run("firstPackage.isConnected && firstPackage.textContent.includes('101')"), true, 'new calls do not return to the package before the narration');
+  assert.equal(await run("firstPackage.isConnected && firstPackage.querySelector('.tool-execution-label').textContent === 'Organize context'"), true, 'new calls do not return to the package before the narration');
   await run("window.secondPackage = document.querySelector('[data-segment-id=msg_package_narration] .tool-execution-block'); void 0;");
   assert.equal(await run("secondPackage.textContent.includes('Awaiting permission')"), true, 'required permission remains visible while collapsed');
   assert.equal(await run("Boolean(firstPackage.compareDocumentPosition(document.querySelector('[data-segment-id=msg_package_narration] p')) & Node.DOCUMENT_POSITION_FOLLOWING)"), true);
@@ -84,7 +84,7 @@ module.exports = async function testChatToolPackages({ run, until, pause, theme 
     appendPackageTool(103);
     renderPackages();
   `);
-  await until("firstPackage.textContent.includes('1 failed') && secondPackage.textContent.includes('2 actions')", 'late results update their original package');
+  await until("firstPackage.querySelector('.tool-execution-status').textContent === 'Failed' && secondPackage.querySelector('.tool-execution-status').textContent === 'Returned'", 'late results update their original package');
   assert.equal(await run("firstPackage.isConnected && secondPackage.isConnected"), true);
   await run(`
     packageState = views.applyTurnTerminalSnapshot(packageState, packageSession, 'package-placeholder', {

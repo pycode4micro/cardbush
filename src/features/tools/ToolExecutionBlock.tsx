@@ -46,7 +46,11 @@ import {
   isToolCancelled,
   isToolRunning,
   isToolRunningInContext,
+  terminalExecutionNotice,
+  toolActionTitle,
+  toolActivityStatus,
 } from './toolExecutionState';
+import { useToolActivity } from './useToolActivity';
 import {
   defaultToolExecutionExpanded,
   readToolExecutionDisclosure,
@@ -111,19 +115,28 @@ export function ToolExecutionBlock({
     };
   }, []);
   const blockRef = useRef<HTMLDivElement>(null);
+  const detailScope = JSON.stringify([host?.id ?? 'local', message.conversationId, message.turnId]);
   const renderedExecutions = useMemo(
     () => executions.map((execution) => {
-      const detail = hydratedExecutions.get(execution.id);
-      return detail ? { ...execution, ...detail, metadata: { ...detail.metadata,
-        workspaceCheckpointCovered: execution.metadata.workspaceCheckpointCovered ?? detail.metadata.workspaceCheckpointCovered,
-        revert_status: execution.metadata.revert_status ?? detail.metadata.revert_status,
+      const detail = hydratedExecutions.get(`${detailScope}\u0000${execution.id}`);
+      return detail ? { ...detail, ...execution, output: detail.output || execution.output,
+        artifacts: detail.artifacts ?? execution.artifacts,
+        metadata: { ...detail.metadata, ...execution.metadata,
+          displayTitle: execution.metadata.displayTitle ?? detail.metadata.displayTitle,
+          nativeResult: detail.metadata.nativeResult ?? execution.metadata.nativeResult,
+          nativeResultDeferred: false,
+          workspaceChangeDetailsDeferred: false,
+          workspaceChanges: detail.metadata.workspaceChanges ?? execution.metadata.workspaceChanges,
+          workspaceCheckpointCovered: execution.metadata.workspaceCheckpointCovered ?? detail.metadata.workspaceCheckpointCovered,
+          revert_status: execution.metadata.revert_status ?? detail.metadata.revert_status,
       } } : execution;
     }),
-    [executions, hydratedExecutions],
+    [detailScope, executions, hydratedExecutions],
   );
   const running = renderedExecutions.some((execution) =>
     isToolRunningInContext(execution, active),
   );
+  const activity = useToolActivity(renderedExecutions, disclosureId);
   const failedCount = renderedExecutions.filter((execution) =>
     isToolFailedInContext(execution, active),
   ).length;
@@ -160,14 +173,14 @@ export function ToolExecutionBlock({
   const deferredDetailRequestKey = deferredExecutionKey &&
     deferredDetailSessionId &&
     deferredDetailTurnId
-    ? `${deferredDetailSessionId}\u0000${deferredDetailTurnId}\u0000${deferredExecutionKey}`
+    ? `${detailScope}\u0000${deferredDetailSessionId}\u0000${deferredDetailTurnId}\u0000${deferredExecutionKey}`
     : '';
   const deferredDetailStatus = deferredDetailRequestKey
     ? detailRequests.get(deferredDetailRequestKey)
     : undefined;
   const detailsDeferred = executions.some((execution) =>
     hasDeferredExecutionDetails(execution) &&
-    !hydratedExecutions.has(execution.id));
+    !hydratedExecutions.has(`${detailScope}\u0000${execution.id}`));
   const requestDeferredDetails = useCallback(() => {
     setChangeDetailsRequested(true);
     setExpanded(true);
@@ -192,7 +205,7 @@ export function ToolExecutionBlock({
         if (!detailViewMountedRef.current) return;
         const next = new Map<string, ChatToolExecution>();
         for (const detail of details) {
-          if (visibleIds.has(detail.id)) next.set(detail.id, detail);
+          if (visibleIds.has(detail.id)) next.set(`${detailScope}\u0000${detail.id}`, detail);
         }
         if (next.size > 0) {
           setHydratedExecutions((current) => new Map([
@@ -213,6 +226,7 @@ export function ToolExecutionBlock({
       });
   }, [
     host,
+    detailScope,
     deferredDetailRequestKey,
     deferredDetailSessionId,
     deferredDetailStatus,
@@ -279,30 +293,17 @@ export function ToolExecutionBlock({
     />
   ) : null;
 
-  const awaitingPermission = running && renderedExecutions.some(
-    execution => execution.state === 'awaiting_permission',
-  );
-  const awaitingSolution = running && renderedExecutions.some(execution => execution.state === 'awaiting_solution');
-  const runSummary = awaitingSolution ? language === 'zh' ? '等待方案选择' : 'Awaiting solution selection' : awaitingPermission
-    ? language === 'zh' ? '等待授权' : 'Awaiting permission'
-    : running
-      ? language === 'zh'
-        ? `正在处理 · ${renderedExecutions.length} 项操作`
-        : `Processing · ${renderedExecutions.length} actions`
-      : failedCount > 0
-        ? language === 'zh'
-          ? `已处理 ${renderedExecutions.length} 项操作，${failedCount} 项失败`
-          : `Processed ${renderedExecutions.length} actions, ${failedCount} failed`
-        : language === 'zh'
-          ? `已处理 ${renderedExecutions.length} 项操作`
-          : `Processed ${renderedExecutions.length} actions`;
+  const runSummary = activity ? toolActionTitle(activity, language) : language === 'zh' ? '执行记录' : 'Activity';
+  const status = !running && failedCount > 0
+    ? language === 'zh' ? '执行失败' : 'Failed'
+    : activity ? toolActivityStatus(activity, language, active) : '';
   const historySummary = historyLabel && !running
     ? language === 'zh'
-      ? `历史执行记录 · ${runSummary}`
-      : `Execution history · ${runSummary}`
-    : runSummary;
+      ? `历史执行记录 · ${runSummary} · ${status}`
+      : `Execution history · ${runSummary} · ${status}`
+    : `${runSummary} · ${status}`;
   const summary = runSummary;
-  const logoExecution = renderedExecutions[0];
+  const logoExecution = activity;
 
   return (
     <div
@@ -318,6 +319,7 @@ export function ToolExecutionBlock({
       >
         <ToolLogo name={logoExecution?.name ?? ''} size={16} />
         <span className="tool-execution-label">{summary}</span>
+        <span className="tool-execution-status">{status}</span>
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
       {expanded && (
@@ -328,7 +330,7 @@ export function ToolExecutionBlock({
               execution={execution}
               expanded={selectedExecutionId === execution.id}
               onToggle={() => setSelectedExecutionId(current => current === execution.id ? null : execution.id)}
-              detailsDeferred={hasDeferredExecutionDetails(execution) && !hydratedExecutions.has(execution.id)}
+              detailsDeferred={hasDeferredExecutionDetails(execution) && !hydratedExecutions.has(`${detailScope}\u0000${execution.id}`)}
               detailsStatus={deferredDetailStatus}
               onRetryDetails={retryDeferredDetails}
               message={message}
@@ -526,7 +528,7 @@ function browserStorage() {
 }
 
 function isToolFailed(execution: ChatToolExecution) {
-  return execution.state === 'failed';
+  return execution.state === 'failed' || terminalExecutionNotice(execution, 'en')?.failed === true;
 }
 
 function isToolFailedInContext(execution: ChatToolExecution, active: boolean) {
@@ -779,22 +781,22 @@ function ToolExecutionRow({
   const rowRef = useRef<HTMLElement>(null);
   const detailId = useId();
   const failed = isToolFailedInContext(execution, active);
+  const terminalNotice = terminalExecutionNotice(execution, language);
   const interrupted = !active && isToolRunning(execution);
   const waiting = active && (execution.state === 'awaiting_permission' || execution.state === 'awaiting_solution');
   const status = active && activeToolStatusLabel(execution, language) ||
     (isToolCancelled(execution) || interrupted
       ? language === 'zh' ? '已中止' : 'Stopped'
-      : failed ? language === 'zh' ? '失败' : 'Failed'
-        : language === 'zh' ? '已执行' : 'Executed');
+      : terminalNotice?.label ?? (failed ? language === 'zh' ? '失败' : 'Failed'
+        : language === 'zh' ? '已执行' : 'Executed'));
   const name = isContextCompactionPresentationExecution(execution)
     ? language === 'zh' ? '上下文压缩' : 'Context compaction'
     : displayToolName(execution.name);
-  const summary = execution.summary.trim();
-  const label = !summary || summary === execution.name || summary === name ? name : summary;
+  const label = toolActionTitle(execution, language);
   const duration = formatDuration(execution.durationMs);
   return (
     <section ref={rowRef} className={`tool-execution-detail ${expanded ? 'expanded' : ''}`} data-execution-id={execution.id}>
-      <button className={`tool-execution-row ${failed ? 'failed' : waiting ? 'waiting' : ''}`}
+      <button className={`tool-execution-row ${failed ? 'failed' : waiting ? 'waiting' : terminalNotice ? 'diagnostic' : ''}`}
         type="button" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined}
         title={`${name}${label !== name ? `\n${label}` : ''}`}
         onClick={() => preserveScrollPositionForToggle(rowRef.current, onToggle)}>
@@ -846,6 +848,7 @@ function ToolExecutionDetail({
   const hasSummary = summary && summary !== execution.name && summary !== displayToolName(execution.name);
   const error = asRecord(execution.metadata.error);
   const failureMessage = typeof error.message === 'string' ? error.message : '';
+  const terminalNotice = terminalExecutionNotice(execution, language);
   const goalUpdate = goalToolUpdateFromExecution(execution);
   const output = execution.output;
   const childExecutions = subagentChildToolExecutions(execution);
@@ -862,6 +865,7 @@ function ToolExecutionDetail({
     <div className="tool-execution-body">
       {hasSummary && !goalUpdate && summary !== failureMessage && <pre className="tool-execution-input">{summary}</pre>}
       {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
+      {terminalNotice && <p className={terminalNotice.failed ? 'tool-execution-error' : 'tool-execution-diagnostic'}>{terminalNotice.detail}</p>}
       {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />

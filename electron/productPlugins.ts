@@ -428,6 +428,26 @@ async function componentsFromManifest(
   const result: CardbushPluginComponent[] = [];
   const runtime = await resolveRuntimePluginPackage(root, manifest);
   if (runtime) result.push({ kind: 'runtime', id: runtime.id, name: runtime.id, description: 'Installed CardBush native extension', runtime: { settings: Boolean(runtime.renderer) } });
+  // Registered MCP connections are not launchable pages. Applications opt in
+  // separately, with an actual web URL or this package's validated renderer.
+  const applications = objectOrEmpty(manifest.cardbush).applications;
+  if (applications !== undefined) {
+    if (!Array.isArray(applications) || applications.length > 16) throw new Error('cardbush.applications must contain at most 16 pages.');
+    const ids = new Set<string>();
+    for (const value of applications) {
+      const page = objectOrEmpty(value), id = requiredString(page.id, 'application.id');
+      if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || ids.has(id)) throw new Error('Application page IDs must be unique within a plugin.');
+      ids.add(id);
+      let app: NonNullable<CardbushPluginComponent['app']>;
+      if (page.renderer === true && page.url === undefined && runtime?.renderer) app = { kind: 'renderer', extensionId: runtime.id };
+      else if (page.renderer === undefined && typeof page.url === 'string' && page.url.length <= 4096) {
+        const url = new URL(page.url);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Application pages require an HTTP / HTTPS URL without credentials.');
+        app = { kind: 'url', url: url.href };
+      } else throw new Error('Application pages require a web URL or a packaged Runtime renderer.');
+      result.push({ kind: 'app', id: `page:${id}`, name: requiredString(page.title, 'application.title'), description: string(page.description), app });
+    }
+  }
   for (const command of extensions.commands) result.push({ kind: 'command', id: command.id, name: `/${command.id}`, description: command.description });
   for (const agent of extensions.agents) result.push({ kind: 'agent', id: agent.id, name: agent.name, description: agent.description,
     ...(agent.mcpServers?.some(server => typeof server !== 'string') ? { hook: { definitionHash: agent.definitionHash!, definition: { agent: agent.id, mcpServers: agent.mcpServers }, executable: true } } : {}) });

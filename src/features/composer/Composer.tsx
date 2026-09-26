@@ -1,4 +1,7 @@
 import { usePluginCatalog } from '../plugins/pluginCatalog';
+import { useApplications } from '../appCenter/appCenterStore';
+import { applicationReference } from '../appCenter/appCenterModel';
+import { ApplicationIcon } from '../appCenter/AppCenter';
 import { ConversationHostContext } from '../conversationHost';
 import { useSshConnections } from '../ssh/SshConnectionsPanel';
 import { pickWorkspace } from '../ssh/WorkspaceLocationPicker';
@@ -168,7 +171,7 @@ type ComposerCommandState = {
 };
 
 type ComposerCommandItem = {
-  category?: 'ssh' | 'actions' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns' | 'extracts';
+  category?: 'ssh' | 'actions' | 'apps' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns' | 'extracts';
   id: string;
   title: string;
   subtitle: string;
@@ -418,6 +421,7 @@ export function Composer({
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
   const plugins = usePluginCatalog();
+  const applications = useApplications(language);
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
   const referenceContext = useContext(ComposerReferenceContext);
   const sshConnections = useSshConnections(!host);
@@ -991,6 +995,9 @@ export function Composer({
       return [];
     }
     const items: ComposerCommandItem[] = commandState.mode === 'mention' ? [
+      ...applications.map(app => ({ id: `application:${app.id}`, category: 'apps' as const, title: app.title, subtitle: app.description,
+        icon: <ApplicationIcon app={app} size={18}/>, value: `${promptReferenceMarkdown(applicationReference(app))} `,
+        searchText: `app application 应用 ${app.title} ${app.description}` })),
       ...sshConnections.map(connection => ({
         id: `ssh:${connection.id}`, category: 'ssh' as const, title: connection.name, subtitle: `${connection.username}@${connection.host}`,
         icon: <Globe size={18} />, disabled: !referenceContext.onWorkspaceSelect,
@@ -1026,10 +1033,10 @@ export function Composer({
           searchText: `turn 用户 指令 ${turnLabel} ${message.content}` };
       }).reverse(),
     ] : commandState.mode === 'plugin' ? pluginCommandItems : slashCommands;
-    const order = ['actions', 'ssh', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
+    const order = ['actions', 'apps', 'ssh', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
     return rankComposerCommandItems(host ? items.filter(item => item.category !== 'ssh') : items, commandState.query).slice(0, 50)
       .sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
-  }, [commandState, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language, sshConnections, host]);
+  }, [commandState, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language, sshConnections, host, applications]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -1370,7 +1377,7 @@ export function Composer({
         )}
         <ComposerPromptInput
           readOnly={inputReadOnly || submissionPending}
-          richReferences={!host}
+          richReferences={host ? 'applications' : true}
           ref={textareaRef}
           plugins={plugins}
           skills={skills}
@@ -1594,10 +1601,10 @@ function ComposerCommandPalette({
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listRef = useRef<HTMLDivElement>(null);
-  const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的浏览器或用户指令' : 'No matching browser tabs or user instructions') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
+  const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的应用或引用' : 'No matching apps or references') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   const categories = language === 'zh'
-    ? { ssh: 'SSH 连接', actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
-    : { ssh: 'SSH connections', actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
+    ? { ssh: 'SSH 连接', actions: '快捷操作', apps: '应用', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
+    : { ssh: 'SSH connections', actions: 'Actions', apps: 'Applications', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
   useLayoutEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     const list = listRef.current;

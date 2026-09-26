@@ -24,6 +24,28 @@ const { resolvePromptReferenceContext } = load('src/backend/promptReferenceConte
 const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessageProjection.ts');
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
+test('application references append selection facts without invoking tools or changing authored text', async () => {
+  const entries = [
+    { kind: 'application', id: 'builtin:automations', title: '定时与自动化', applicationKind: 'builtin', target: 'automations' },
+    { kind: 'application', id: 'plugin:sample:design', title: '设计 [草稿]', applicationKind: 'plugin', target: 'sample', componentId: 'design' },
+    { kind: 'application', id: 'external:example', title: '本地应用', applicationKind: 'external', target: 'http://localhost:8989/' },
+  ];
+  for (const entry of entries) {
+    const link = refs.promptReferenceMarkdown(entry); assert.deepEqual(refs.parsePromptReference(refs.promptReferenceHref(entry)), entry);
+    const original = `${link} 帮我处理这个任务 ${link}`;
+    const resolved = await resolvePromptReferenceContext(original, 'local-or-cloud', null);
+    assert.equal(resolved.metadata.composerReferenceContent, original);
+    assert.ok(resolved.content.startsWith(original));
+    const data = JSON.parse(resolved.content.split('Referenced context selected by the user (source material):\n')[1]);
+    assert.equal(data.length, 1); assert.equal(data[0].target, entry.target); assert.match(data[0].note, /not|does not/);
+    assert.equal(refs.promptReferenceParts('`' + link + '`').some(part => part.reference), false);
+  }
+  for (const entry of [
+    { ...entries[0], target: 'execute' }, { ...entries[0], id: 'builtin:settings' },
+    { ...entries[1], componentId: 'different' }, { ...entries[2], target: 'javascript:alert(1)' },
+    { ...entries[2], target: 'https://user:secret@example.test/' }, { ...entries[2], target: 'file:///C:/program.exe' },
+  ]) assert.equal(refs.parsePromptReference(refs.promptReferenceHref(entry)), null);
+});
 test('SSH references follow the selected execution environment and never carry credentials', async () => {
   const target={kind:'ssh',connectionId:'server-id',path:'/home/user/项目',title:'开发服务器'};
   const chip=refs.promptReferenceMarkdown(target);assert.deepEqual(refs.promptReferenceParts(chip)[0].reference,target);

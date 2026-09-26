@@ -1,4 +1,6 @@
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
+import { AppCenterDock } from '../appCenter/AppCenter';
 import type { AgentConnectionsController } from '../agents/useAgentConnections';
 import type { AgentConnection } from '../../../electron/agentTypes';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
@@ -9,7 +11,6 @@ import { ConversationHostContext } from '../conversationHost';
 import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
-  CalendarClock,
   CircleAlert,
   CircleCheck,
   ChevronDown,
@@ -49,7 +50,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { McpLogoIcon } from '../../components/McpLogoIcon';
+import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 
 import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
@@ -63,7 +64,6 @@ import type {
   ProjectItem,
   SessionAttentionState,
 } from '../../types';
-import { sectionLabels } from '../appSections';
 import { useAutomationUnreadCount } from '../automations/useAutomationUnreadCount';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { conversationProjectDir, conversationWorkspaceRoot } from '../conversationWorkspace';
@@ -225,7 +225,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenConversationChanges,
   onOpenSettings,
   onOpenArchives,
-  onOpenPlugins,
   onOpenSearch,
   softVisible = true,
   agents = [],
@@ -256,7 +255,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
   onOpenArchives?: () => void;
-  onOpenPlugins: () => void;
   onOpenSearch: () => void;
   softVisible?: boolean;
 }) {
@@ -267,10 +265,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       value: performance.now() - sidebarRenderStartedAt,
     });
   });
-  const t = (id: AppSection) => sectionLabels[id][language];
-  const keyboardShortcuts = useKeyboardShortcuts();
   const searchLabel = language === 'zh' ? '搜索会话' : 'Search chats';
-  const searchShortcut = keyboardShortcuts.label('searchConversations');
   const unreadAutomations = useAutomationUnreadCount();
   const archivedConversationIds = useConversationArchives();
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
@@ -825,6 +820,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         <NavRow
           icon={<Edit3 size={14} />}
           label={language === 'zh' ? '新会话' : 'New chat'}
+          shortcut="newConversation"
           onClick={onCreateConversation}
           onContextMenu={(event) =>
             openContextMenu(event, 'nav:new-chat', [
@@ -837,13 +833,6 @@ export const ChatSidebar = memo(function ChatSidebar({
             ])
           }
         />
-        <NavRow
-          active={section === 'plugins'}
-          icon={<McpLogoIcon size={16} />}
-          label={language === 'zh' ? '插件' : 'Plugins'}
-          onClick={onOpenPlugins}
-        />
-        <NavRow active={section === 'automations'} icon={<CalendarClock size={14}/>} label={t('automations')} trailing={unreadAutomations > 0 ? <span className="automation-nav-count" aria-label={language === 'zh' ? `${unreadAutomations} 条未读结果` : `${unreadAutomations} unread results`}>{unreadAutomations > 99 ? '99+' : unreadAutomations}</span> : undefined} onClick={() => onSectionChange('automations')} />
       </nav>
 
       <div className="sidebar-scroll">
@@ -855,18 +844,20 @@ export const ChatSidebar = memo(function ChatSidebar({
                 expanded={expandedSections.has('pinned')}
                 onToggle={() => toggleSection('pinned')}
               />
-              {expandedSections.has('pinned') && (
-                pinnedProjects.length > 0 || pinnedConversations.length > 0
+              <SectionBody expanded={expandedSections.has('pinned')}>
+                {pinnedProjects.length > 0 || pinnedConversations.length > 0
                   ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
                   : (
                     <div className="sidebar-pinned-empty">
                       {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
                     </div>
                   )
-              )}
+                }
+              </SectionBody>
 
               <SectionHeader title="Agents" action={<Plus size={14}/>} actionLabel={language === 'zh' ? '管理 Agents' : 'Manage Agents'} expanded={expandedSections.has('agents')} onToggle={() => toggleSection('agents')} onAction={() => onAgentSelect ? onAgentSelect('') : onSectionChange('agents')} />
-              {expandedSections.has('agents') && <div className="sidebar-agent-list">
+              <SectionBody expanded={expandedSections.has('agents')}>
+              <div className="sidebar-agent-list">
                 {agents.map(agent => {
                   const expanded = expandedAgentIds.has(agent.id);
                   const list = agentSessions?.sessionsByAgent[agent.id];
@@ -932,13 +923,14 @@ export const ChatSidebar = memo(function ChatSidebar({
                     </>}
                   </div>;
                 })}
-                {agents.length === 0 && <button className="conversation-row agent-sidebar-empty" onClick={() => onSectionChange('agents')}><Plus size={15}/><span>{language === 'zh' ? '连接 Agent' : 'Connect an Agent'}</span></button>}
-              </div>}
+              </div>
+              </SectionBody>
 
               <SectionHeader
                 title={language === 'zh' ? '项目' : 'Projects'}
                 action={<FolderOpen size={14} />}
                 actionLabel={language === 'zh' ? '添加项目' : 'Add project'}
+                actionShortcut="openProject"
                 expanded={expandedSections.has('projects')}
                 onToggle={() => toggleSection('projects')}
                 onAction={onAddProject}
@@ -971,18 +963,23 @@ export const ChatSidebar = memo(function ChatSidebar({
                   ])
                 }
               />
-              {expandedSections.has('projects') && regularProjects.map(renderProjectBlock)}
+              <SectionBody expanded={expandedSections.has('projects')}>
+                {regularProjects.map(renderProjectBlock)}
+              </SectionBody>
               <div data-workspace-drop="recent" className={`workspace-drop-target${workspaceDropTarget === 'recent' ? ' workspace-drop-active' : ''}`}
                 {...workspaceDropHandlers(null)}>
               <SectionHeader
                 title={language === 'zh' ? '最近' : 'Recent'}
-                action={<MessageSquare size={14} />}
-                actionLabel={language === 'zh' ? '最近会话' : 'Recent chats'}
+                action={<Search size={14} />}
+                actionLabel={searchLabel}
+                actionShortcut="searchConversations"
+                alwaysShowAction
+                onAction={onOpenSearch}
                 expanded={expandedSections.has('recent')}
                 onToggle={() => toggleSection('recent')}
               />
-              {expandedSections.has('recent') && (
-                recentConversations.length > 0 ? (
+              <SectionBody expanded={expandedSections.has('recent')}>
+                {recentConversations.length > 0 ? (
                   <div className="sidebar-conversation-list">
                     {recentConversations.map(renderStandaloneConversation)}
                   </div>
@@ -990,36 +987,14 @@ export const ChatSidebar = memo(function ChatSidebar({
                   <div className="sidebar-conversation-empty">
                     {language === 'zh' ? '点击上方“新会话”开始' : 'Use New chat above to begin.'}
                   </div>
-                )
-              )}
+                )}
+              </SectionBody>
               </div>
         </div>
       </div>
 
       <div className="sidebar-footer">
-      <button
-        className="settings-dock"
-        type="button"
-        onClick={onOpenSettings}
-        onContextMenu={(event) =>
-          openContextMenu(event, 'settings', [
-            {
-              key: 'open-settings',
-              icon: <Settings size={15} />,
-              label: language === 'zh' ? '打开设置' : 'Open settings',
-              onClick: onOpenSettings,
-            },
-          ])
-        }
-      >
-        <Settings size={17} />
-        <span>{language === 'zh' ? '设置' : 'Settings'}</span>
-      </button>
-      <button className="sidebar-search-button" type="button" onClick={onOpenSearch}
-        aria-label={searchLabel} aria-haspopup="dialog" aria-keyshortcuts={keyboardShortcuts.aria('searchConversations')}
-        title={searchShortcut ? `${searchLabel} (${searchShortcut})` : searchLabel}>
-        <Search size={17} aria-hidden="true" />
-      </button>
+        <AppCenterDock language={language} unread={unreadAutomations}/>
       </div>
       </div>
       {contextMenu && (
@@ -1044,6 +1019,7 @@ function NavRow({
   onClick,
   onContextMenu,
   trailing,
+  shortcut,
 }: {
   active?: boolean;
   icon: React.ReactNode;
@@ -1051,10 +1027,13 @@ function NavRow({
   onClick: () => void;
   onContextMenu?: (event: ReactMouseEvent) => void;
   trailing?: React.ReactNode;
+  shortcut?: ShortcutId;
 }) {
   return (
     <button
       className={`nav-row ${active ? 'active' : ''}`}
+      data-shortcut={shortcut}
+      title={label}
       type="button"
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -1068,6 +1047,22 @@ function NavRow({
   );
 }
 
+function SectionBody({ expanded, children }: { expanded: boolean; children: ReactNode }) {
+  const { mounted, visible } = useSoftPanelPresence(expanded, 200);
+  return (
+    <div
+      className="sidebar-section-body"
+      data-expanded={visible}
+      aria-hidden={!expanded}
+      inert={expanded ? undefined : true}
+    >
+      <div className="sidebar-section-body-inner">
+        {mounted ? children : null}
+      </div>
+    </div>
+  );
+}
+
 function SectionHeader({
   title,
   action,
@@ -1076,6 +1071,8 @@ function SectionHeader({
   onToggle,
   onAction,
   onContextMenu,
+  actionShortcut,
+  alwaysShowAction = false,
 }: {
   title: string;
   action: React.ReactNode;
@@ -1084,8 +1081,11 @@ function SectionHeader({
   onToggle?: () => void;
   onAction?: () => void;
   onContextMenu?: (event: ReactMouseEvent) => void;
+  actionShortcut?: ShortcutId;
+  alwaysShowAction?: boolean;
 }) {
   const interactive = Boolean(onToggle);
+  const shortcuts = useKeyboardShortcuts();
   return (
     <div
       className={`section-header ${interactive ? 'interactive' : ''}`}
@@ -1109,7 +1109,9 @@ function SectionHeader({
         <ChevronDown className={`section-chevron${expanded ? '' : ' collapsed'}`} size={14} aria-hidden="true" />
       </span>
       <button
-        className="section-action"
+        className={`section-action${alwaysShowAction ? ' section-action-visible' : ''}`}
+        data-shortcut={actionShortcut}
+        aria-keyshortcuts={actionShortcut ? shortcuts.aria(actionShortcut) : undefined}
         data-sidebar-menu-trigger="true"
         type="button"
         aria-label={actionLabel}

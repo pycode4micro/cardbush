@@ -165,17 +165,17 @@ export class SshConnectionManager {
     if (name === 'workspace_busy') return { running: [...this.#terminals.values()].some(item => item.root === uri && item.state === 'running') };
     if (name === 'workspace_stop') { await Promise.all([...this.#terminals.values()].filter(item => item.root === uri).map(item => this.#stop(item))); return { stopped:true }; }
     if (name === 'terminal_list') return { sessions: [...this.#terminals.values()].filter(item => item.owner === owner && item.connectionId === target.connectionId).map(item => ({ terminalSessionId: item.id, state: item.state, command: item.command, cwd: item.cwd })) };
-    if (['terminal_poll','terminal_write','terminal_stop'].includes(name)) {
+    if (['terminal_poll','terminal_write','terminal_stop','terminal_observe'].includes(name)) {
       const terminal = this.#terminals.get(input.sessionId);
       if (!terminal || terminal.owner !== owner || terminal.connectionId !== target.connectionId) throw Error('远程终端不属于当前会话。');
       if (name === 'terminal_write') { if (terminal.state !== 'running') throw Error('远程终端已停止。'); terminal.channel.write(input.chars); }
       if (name === 'terminal_stop') await this.#stop(terminal);
-      return this.#poll(terminal, name === 'terminal_stop' ? 1 : input.yieldTimeMs, signal);
+      return this.#poll(terminal, name === 'terminal_stop' ? 1 : input.yieldTimeMs, signal, name === 'terminal_observe');
     }
     if (name === 'terminal_exec' || name === 'search_file_content') {
       const path = this.#path(target.connectionId, target.path, input.cwd ?? input.path);
       if (name === 'terminal_exec' && input.shell !== 'posix') throw Error('SSH 远程终端请使用 shell="posix"。');
-      const command = name === 'terminal_exec' ? input.command : ['rg', '--line-number', '--column', '--no-heading', '--color', 'never', ...(input.regex ? [] : ['--fixed-strings']), ...(input.globs ?? []).flatMap((glob: string) => ['--glob', glob]), '--', input.query, path].map(quote).join(' ');
+      const command = name === 'terminal_exec' ? input.command : ['rg', '--line-number', '--column', '--no-heading', '--color', 'never', ...(input.regex ? [] : ['--fixed-strings']), ...(input.contextBefore ? ['--before-context', String(input.contextBefore)] : []), ...(input.contextAfter ? ['--after-context', String(input.contextAfter)] : []), ...(input.globs ?? []).flatMap((glob: string) => ['--glob', glob]), '--', input.query, path].map(quote).join(' ');
       if (name === 'search_file_content') { const result = await this.#capture(uri, command, [0,1], signal); return { matched: result.stdout.length > 0, output: result.stdout, complete:true, exitCode:result.exitCode, ...(result.stderr ? {warnings:result.stderr} : {}) }; }
       const terminal = await this.#start(target.connectionId, uri, owner, command, path, signal);
       try { return await this.#poll(terminal, input.yieldTimeMs ?? 1000, signal); }
@@ -198,7 +198,19 @@ export class SshConnectionManager {
         try { before = await this.#readBytes(sftp, path); } catch (error) { if ((error as { code?: number }).code !== 2 || name === 'edit_file') throw error; }
         if (before && this.#observed.get(observation) !== sha(before)) throw Error('远程文件尚未读取或已变化，请先重新 read_file。');
         let content = input.content;
-        if (name === 'edit_file') { const original = before!.toString(input.encoding), count = original.split(input.oldText).length - 1; if (!count || (!input.replaceAll && count !== 1)) throw Error('old_text 缺失或不唯一。'); content = input.replaceAll ? original.replaceAll(input.oldText, () => input.newText) : original.replace(input.oldText, () => input.newText); }
+        if (name === 'edit_file') {
+          const original = before!.toString(input.encoding);
+          if (input.range) {
+            if (sha(before!) !== input.range.sha256) throw Error('远程文件版本已变化，请重新 read_file。');
+            const lines = original.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [];
+            if (input.range.end > lines.length) throw Error('编辑行范围超出文件。');
+            content = lines.slice(0, input.range.start - 1).join('') + input.newText + lines.slice(input.range.end).join('');
+          } else {
+            const count = original.split(input.oldText).length - 1;
+            if (!count || (!input.replaceAll && count !== 1)) throw Error('old_text 缺失或不唯一。');
+            content = input.replaceAll ? original.replaceAll(input.oldText, () => input.newText) : original.replace(input.oldText, () => input.newText);
+          }
+        }
         const next = Buffer.from(content, input.encoding ?? 'utf8'); if (next.length > MAX_BYTES) throw Error('远程写入超过 8 MiB。');
         const temporary = path + '.cardbush-' + randomUUID();
         try {
@@ -310,12 +322,13 @@ export class SshConnectionManager {
     else { const branch=(await git('branch','--show-current')).trim(); if(!branch)throw Error('Cannot push detached HEAD'); let upstream='';try{upstream=await git('rev-parse','--abbrev-ref','--symbolic-full-name','@{u}');}catch{} output=upstream.trim()?await git('push'):await git('push','-u','origin',branch); }
     return { output: output.trim() };
   }
-  async #poll(terminal: Terminal, milliseconds: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async #poll(terminal: Terminal, milliseconds: number, signal?: AbortSignal, observe = false): Promise<Record<string, unknown>> {
     signal?.throwIfAborted();
-    if (terminal.state === 'running' && !terminal.stdout && !terminal.stderr) await new Promise<void>((resolve,reject) => {
-      const done = () => { clearTimeout(timer); terminal.changed.off('data',done); signal?.removeEventListener('abort',abort); resolve(); };
+    if (terminal.state === 'running' && (observe || (!terminal.stdout && !terminal.stderr))) await new Promise<void>((resolve,reject) => {
+      const changed = () => { if (!observe || terminal.state !== 'running') done(); };
+      const done = () => { clearTimeout(timer); terminal.changed.off('data',changed); signal?.removeEventListener('abort',abort); resolve(); };
       const abort = () => { done(); reject(signal?.reason); };
-      const timer=setTimeout(done,Math.min(30_000,Math.max(1,milliseconds))); terminal.changed.once('data',done); signal?.addEventListener('abort',abort,{once:true});
+      const timer=setTimeout(done,Math.min(30_000,Math.max(1,milliseconds))); terminal.changed.on('data',changed); signal?.addEventListener('abort',abort,{once:true});
     });
     signal?.throwIfAborted();
     // SSH can yield before the PID arrives or without an exit status after a
@@ -331,7 +344,7 @@ export class SshConnectionManager {
       exitCode: terminal.exitCode ?? null,
       outputTruncated: terminal.truncated,
     };
-    terminal.stdout='';terminal.stderr='';return result;
+    if (!observe) { terminal.stdout='';terminal.stderr=''; } return result;
   }
   async close() { this.#closing = true; for (const client of this.#opening.values()) client.destroy(); await Promise.allSettled([...this.#terminals.values()].map(item => this.#stop(item))); for (const pending of this.#clients.values()) (await pending.catch(() => undefined))?.end(); this.#clients.clear();this.#opening.clear();this.#connected.clear(); }
 }

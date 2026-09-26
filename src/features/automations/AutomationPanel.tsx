@@ -4,6 +4,7 @@ import { isAutomationResult } from '@cardbush/bush-protocol';
 import { openAutomationRun } from './automationEvents';
 import type { AutomationCommand, AutomationDefinition, AutomationJob, AutomationOverview, AutomationRun } from '@cardbush/bush-protocol';
 import { AutomationCalendar } from './AutomationCalendar';
+import { usePageState } from '../navigation/PageNavigation';
 import { AutomationPlanCard } from './AutomationPlanCard';
 import type { AutomationCalendarEntry } from './automationCalendarModel';
 import './automations.css';
@@ -35,7 +36,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
-  const [view, setView] = useState<'calendar' | 'unread' | 'today' | 'all' | 'plans'>('calendar');
+  const [view, setView] = usePageState<'calendar' | 'unread' | 'today' | 'all' | 'plans'>('automation-view', 'calendar');
   const [form, setForm] = useState<{ id: string; revision: number; name: string; prompt: string; sessionId: string; executionMode: 'isolated' | 'conversation'; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
   const generation = useRef(0), mutation = useRef(false);
   const refresh = useCallback(async () => {

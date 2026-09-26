@@ -70,6 +70,7 @@ export function executionHistoryResults(matches: ReturnType<typeof searchExecuti
   return { total_matches: matches.length,
     match_type: page.length ? (page[0].tier === 2 ? 'identifier' : page[0].tier === 1 ? 'keywords' : 'related') : 'none',
     results: page.map(({ entry, matched }) => ({ record_id: entry.id, recorded_at: entry.recordedAt,
-      tool: entry.tool, outcome: entry.outcome, summary: entry.summary, matched_keywords: matched })),
+      tool: entry.tool, outcome: entry.outcome, summary: entry.summary, matched_keywords: matched,
+      ...(entry.toolCallId ? { locator: `tool-result://history/${entry.id}` } : {}) })),
     next_offset: offset + page.length < matches.length ? offset + page.length : null };
 }

@@ -20,7 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import { McpLogoIcon } from '../../components/McpLogoIcon';
+import { PluginIcon } from '../../components/PluginIcon';
 
 type ToolLogoDefinition = {
   icon: LucideIcon;
@@ -60,7 +60,7 @@ export function ToolLogo({
   const normalized = name.trim().toLowerCase();
   if (normalized.startsWith('mcp__')) {
     return (
-      <McpLogoIcon
+      <PluginIcon
         className={`tool-logo tool-logo-mcp ${className}`.trim()}
         size={size}
       />
