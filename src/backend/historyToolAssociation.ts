@@ -27,7 +27,7 @@ export function attachHistoryToolExecutions(
       const current = byId.get(execution.id);
       byId.set(execution.id, { ...current, ...execution, metadata: {
         ...current?.metadata, ...execution.metadata,
-        ...(current?.metadata.displayTitle ? { displayTitle: current.metadata.displayTitle } : {}),
+        ...(current?.metadata?.displayTitle ? { displayTitle: current.metadata.displayTitle } : {}),
       } });
     }
     return {

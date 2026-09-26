@@ -654,7 +654,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /data-inspector-toggle\s+onClick=\{\(\) => onToggleInspector\(\)\}/,
+  /data-inspector-toggle\s+(?:data-shortcut="[^"]+"\s+)?onClick=\{\(\) => onToggleInspector\(\)\}/,
   'The top-bar sidebar button must not forward its React click event into the review opener.',
 );
 assert.match(
@@ -841,33 +841,15 @@ const toolBlockSource = fs.readFileSync(
   ),
   'utf8',
 );
-const toolStateSource = fs.readFileSync(
-  path.join(
-    process.cwd(),
-    'src',
-    'features',
-    'tools',
-    'toolExecutionState.ts',
-  ),
-  'utf8',
-);
-const toolStateTranspiled = ts.transpileModule(toolStateSource, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-});
-const toolStateModule = { exports: {} };
-vm.runInNewContext(toolStateTranspiled.outputText, {
-  module: toolStateModule,
-  exports: toolStateModule.exports,
-});
+const toolStateModule = await loadChatTranscript({ source: `export * from ${JSON.stringify(
+  path.join(process.cwd(), 'src', 'features', 'tools', 'toolExecutionState.ts'),
+)};` });
 const {
   activeToolStatusLabel,
   isToolCancelled,
   isToolRunning,
   runningToolLabel,
-} = toolStateModule.exports;
+} = toolStateModule;
 const awaitingPermissionTool = {
   ...baseTool,
   id: 'tool-awaiting-permission',
@@ -878,7 +860,7 @@ assert.equal(isToolRunning(awaitingPermissionTool), true);
 assert.equal(activeToolStatusLabel(awaitingPermissionTool, 'zh'), '等待授权');
 assert.equal(
   runningToolLabel([awaitingPermissionTool], 'zh'),
-  'read_file 等待授权',
+  '读取文件 · 等待授权',
 );
 assert.equal(
   activeToolStatusLabel({ ...awaitingPermissionTool, state: 'queued' }, 'zh'),

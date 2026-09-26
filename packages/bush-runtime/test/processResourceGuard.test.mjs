@@ -245,8 +245,12 @@ test('CPU hard cap limits a saturated worker without polling from the runtime', 
   const result = await task.done;
   assert.equal(result.exitCode, 0, JSON.stringify(result));
   const cpuMs = Number(result.stdout.match(/cpuMs=([\d.]+)/)[1]);
+  const elapsedMs = Number(result.stdout.match(/elapsedMs=([\d.]+)/)[1]);
   const cores = Number(result.stdout.match(/cores=(\d+)/)[1]);
-  assert.ok(cpuMs < 2000 * cores * 0.3, `CPU budget did not apply: ${cpuMs} ms across ${cores} cores`);
+  assert.ok(elapsedMs >= 2000 && cpuMs > 0, result.stdout);
+  // Compare the same measurement interval; CLR startup and host descheduling
+  // are not part of the worker's two-second saturated workload.
+  assert.ok(cpuMs < elapsedMs * cores * 0.3, `CPU budget did not apply: ${cpuMs} CPU ms over ${elapsedMs} elapsed ms across ${cores} cores`);
 });
 
 test('disk pressure stops a writer using a small controlled test file', native, async t => {

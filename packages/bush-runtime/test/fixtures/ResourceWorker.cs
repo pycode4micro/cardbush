@@ -20,6 +20,9 @@ internal static class ResourceWorker
         if (mode == "cpu")
         {
             int count = Environment.ProcessorCount;
+            var process = Process.GetCurrentProcess();
+            var cpuBefore = process.TotalProcessorTime;
+            var elapsed = Stopwatch.StartNew();
             long end = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 2;
             var threads = new List<Thread>();
             for (int i = 0; i < count; i++)
@@ -28,7 +31,9 @@ internal static class ResourceWorker
                 threads.Add(thread); thread.Start();
             }
             foreach (Thread thread in threads) thread.Join();
-            Console.WriteLine("cpuMs=" + Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds);
+            elapsed.Stop();
+            Console.WriteLine("cpuMs=" + (process.TotalProcessorTime - cpuBefore).TotalMilliseconds);
+            Console.WriteLine("elapsedMs=" + elapsed.Elapsed.TotalMilliseconds);
             Console.WriteLine("cores=" + count);
             return 0;
         }

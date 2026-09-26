@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { InMemoryRuntimeHost, TaskWorkspaceManager, ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools, registerSkillTools } from '../dist/index.js';
@@ -8,7 +8,7 @@ import { parseSshWorkspace, sshWorkspace } from '@cardbush/bush-protocol';
 import { protectedPosixTerminalDeletion } from '../dist/terminalCommandSafety.js';
 
 const remote=sshWorkspace('test-connection','/home/user/My Project');
-async function storage(t){const root=await mkdtemp(join(tmpdir(),'cardbush-ssh-runtime-'));t.after(async()=>{assert.equal(dirname(resolve(root)),resolve(tmpdir()));await rm(root,{recursive:true,force:true,maxRetries:5});});return root;}
+async function storage(t){const root=await realpath(await mkdtemp(join(tmpdir(),'cardbush-ssh-runtime-')));t.after(async()=>{assert.equal(dirname(root).toLowerCase(),(await realpath(tmpdir())).toLowerCase());await rm(root,{recursive:true,force:true,maxRetries:5});});return root;}
 test('SSH identities preserve case, Unicode and reserved characters',()=>{
   const path='/home/项目/A #100%';assert.deepEqual(parseSshWorkspace(sshWorkspace('abc',path)),{connectionId:'abc',path});
   for(const invalid of ['ssh://user@host/path','ssh://abc/%00','ssh://abc/%broken'])assert.throws(()=>parseSshWorkspace(invalid));
