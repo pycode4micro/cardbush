@@ -150,6 +150,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.deepEqual(layout, { inside: true, iconRight: true, iconReachable: true, textFits: true }, width + 'px queue layout');
   }
   await run("document.querySelector('.chat-panel').style.width = ''");
+  // Restoring the wide composer also updates its ResizeObserver-driven queue
+  // bounds. Let that layout settle before sending a native click to a point.
+  await pause(250);
   const guidePoint = await run("(() => { const r = document.querySelector('.runtime-queue-guide').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
   native('mouseMove', guidePoint);
   native('mouseDown', guidePoint, { button: 'left', clickCount: 1 });
