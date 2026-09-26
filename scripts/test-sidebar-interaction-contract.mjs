@@ -28,7 +28,7 @@ const rightInspectorResizerSource = fs.readFileSync(
 
 assert.match(
   sidebarSource,
-  /className="section-action"[\s\S]*?event\.currentTarget\.blur\(\)/,
+  /className=\{`section-action[^`]*`\}[\s\S]*?event\.currentTarget\.blur\(\)/,
   'Mouse activation must not leave section actions visibly focused',
 );
 assert.match(
@@ -120,8 +120,10 @@ assert.match(
   'Native window controls must use a neutral Windows-style hover surface',
 );
 assert.match(stylesSource, /\.window-button\.danger:hover\s*\{[\s\S]*?background:\s*#c42b1c/);
-assert.match(sidebarSource, /label=\{language === 'zh' \? '新会话' : 'New chat'\}[\s\S]*?label=\{language === 'zh' \? '插件' : 'Plugins'\}/,
-  'Plugin navigation follows New chat in the sidebar');
+assert.match(sidebarSource, /className="sidebar-footer"[\s\S]*?<AppCenterDock/,
+  'Application navigation lives in the sidebar footer dock');
+assert.doesNotMatch(sidebarSource, /onSectionChange\('(plugins|automations)'\)/,
+  'Application entries must not be duplicated above the sidebar sections');
 assert.doesNotMatch(appSource, /工具管理|Tool management/);
 assert.match(
   appSource,
@@ -324,7 +326,7 @@ assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s
   'The shared picker retains an explicit choice to start without a project');
 assert.match(
   appSource,
-  /className="welcome-input-stack">\s*<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
+  /className="welcome-input-stack">\s*\{workspaceControl !== undefined \? workspaceControl : <WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
   'The optional project selector must always be available above the welcome composer',
 );
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);

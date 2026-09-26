@@ -5,6 +5,7 @@ import {
   type CSSProperties,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -74,20 +75,34 @@ export function QuickContextRail({
     Math.min(railWindowStart, maxRailWindowStart),
     Math.min(railWindowStart, maxRailWindowStart) + railCapacity,
   );
+  const hasRailTurns = railTurns.length > 0;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const rail = railRef.current;
     const handle = railHandleRef.current;
-    if (!handle) return undefined;
+    const chatBody = rail?.closest<HTMLElement>('.chat-body');
+    if (!rail || !handle || !chatBody) return undefined;
     const updateCapacity = () => {
+      // Match the rail's actual visibility, including a docked work summary.
+      // Reserve the same reading margin for the transcript and composer.
+      if (getComputedStyle(handle).display !== 'none') {
+        chatBody.style.setProperty('--chat-reading-gutter', 'max(56px, var(--chat-inline-gutter, 16px))');
+      } else {
+        chatBody.style.removeProperty('--chat-reading-gutter');
+      }
       const availableHeight = Math.max(0, handle.clientHeight - 20);
       const nextCapacity = Math.max(8, Math.min(96, Math.floor(availableHeight / 9)));
       setRailCapacity((current) => current === nextCapacity ? current : nextCapacity);
     };
     const resizeObserver = new ResizeObserver(updateCapacity);
+    resizeObserver.observe(rail);
     resizeObserver.observe(handle);
     updateCapacity();
-    return () => resizeObserver.disconnect();
-  }, []);
+    return () => {
+      resizeObserver.disconnect();
+      chatBody.style.removeProperty('--chat-reading-gutter');
+    };
+  }, [hasRailTurns]);
 
   useEffect(() => {
     setRailWindowStart((current) => {

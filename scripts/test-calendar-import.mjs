@@ -6,6 +6,7 @@ import { join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseCalendarImport } from '../dist-electron/calendarImport.mjs';
 import { CalendarStore, importCalendarFile } from '../dist-electron/calendarStore.mjs';
+import { bundledCalendars } from '../dist-electron/calendarBuiltins.mjs';
 import { calendarDatasetSchema, CALENDAR_FILE_BYTES } from '@cardbush/bush-protocol';
 import { chineseDate, gregorianFromChinese } from '../assets/skills/cardbush-docs/scripts/calendar-date.mjs';
 
@@ -82,13 +83,13 @@ test('store import/replacement, cancellation, concurrent changes and reload are 
   const file = join(root, 'input.json'), storePath = join(root, 'storage/calendars.json');
   await writeFile(file, JSON.stringify(dataset));
   const store = new CalendarStore(storePath), choose = async () => file;
-  assert.deepEqual((await store.command({ action: 'list' }, choose)).state.datasets, []);
-  assert.equal((await store.command({ action: 'import' }, choose)).state.datasets.length, 1);
+  assert.equal((await store.command({ action: 'list' }, choose)).state.datasets.length, 2);
+  assert.equal((await store.command({ action: 'import' }, choose)).state.datasets.length, 3);
   await Promise.all([store.command({ action: 'lunar', enabled: false }, choose), store.command({ action: 'enabled', id: 'test', enabled: false }, choose)]);
   await writeFile(file, JSON.stringify({ ...dataset, entries: [{ ...entry, title: '更新的标题' }] }));
   let result = await store.command({ action: 'import' }, choose);
-  assert.equal(result.state.datasets.length, 1); assert.equal(result.state.datasets[0].enabled, false); assert.equal(result.state.chineseLunar, false);
-  assert.equal(result.state.datasets[0].calendar.entries[0].title, '更新的标题');
+  assert.equal(result.state.datasets.length, 3); assert.equal(result.state.datasets.find(item=>item.calendar.id==='test').enabled, false); assert.equal(result.state.chineseLunar, false);
+  assert.equal(result.state.datasets.find(item=>item.calendar.id==='test').calendar.entries[0].title, '更新的标题');
   assert.equal((await store.command({ action: 'import' }, async () => undefined)).cancelled, true);
   const before = await readFile(storePath, 'utf8');
   await writeFile(file, '{not json'); await assert.rejects(store.command({ action: 'import' }, choose));
@@ -96,10 +97,41 @@ test('store import/replacement, cancellation, concurrent changes and reload are 
   await writeFile(file, Buffer.alloc(CALENDAR_FILE_BYTES + 1)); await assert.rejects(importCalendarFile(file), /8 MiB/);
   assert.equal(await readFile(storePath, 'utf8'), before);
   result = await new CalendarStore(storePath).command({ action: 'list' }, choose);
-  assert.equal(result.state.datasets[0].enabled, false);
+  assert.equal(result.state.datasets.find(item => item.calendar.id === 'test').enabled, false);
   await store.command({ action: 'remove', id: 'test' }, choose);
-  assert.equal((await new CalendarStore(storePath).command({ action: 'list' }, choose)).state.datasets.length, 0);
+  assert.equal((await new CalendarStore(storePath).command({ action: 'list' }, choose)).state.datasets.length, 2);
 }));
+
+test('bundled calendars are offline, disabled by default and enabled independently with persistence', async () => fixture(async root => {
+  const storePath=join(root,'calendar.json'), store=new CalendarStore(storePath), choose=async()=>undefined;
+  let result=await store.command({action:'list'},choose);
+  assert.deepEqual(result.state.datasets.map(item=>[item.calendar.id,item.enabled,item.builtin]),[['cardbush.chinese',false,true],['cardbush.us',false,true]]);
+  assert.equal(result.state.chineseLunar,false);
+  result=await store.command({action:'enabled',id:'cardbush.chinese',enabled:true},choose);
+  assert.equal(result.state.chineseLunar,true);assert.equal(result.state.datasets[1].enabled,false);
+  result=await new CalendarStore(storePath).command({action:'list'},choose);
+  assert.equal(result.state.chineseLunar,true);
+  await store.command({action:'enabled',id:'cardbush.us',enabled:true},choose);
+  result=await store.command({action:'enabled',id:'cardbush.chinese',enabled:false},choose);
+  assert.equal(result.state.chineseLunar,false);assert.equal(result.state.datasets[1].enabled,true);
+  await assert.rejects(store.command({action:'remove',id:'cardbush.chinese'},choose),/内置/);
+  const file=join(root,'overwrite.json');await writeFile(file,JSON.stringify({...dataset,id:'cardbush.us'}));
+  await assert.rejects(store.command({action:'import'},async()=>file),/内置/);
+  await writeFile(storePath,JSON.stringify({version:1,chineseLunar:true,datasets:[{calendar:dataset,enabled:true}]}));
+  result=await new CalendarStore(storePath).command({action:'list'},choose);
+  assert.equal(result.state.chineseLunar,false,'legacy implicit lunar default does not enable a bundled calendar');
+  assert.equal(result.state.datasets.find(item=>item.calendar.id==='test').enabled,true,'existing imported choices survive');
+}));
+
+test('bundled holiday dates match lunar boundaries and US federal observed dates', async () => {
+  const [cn,us]=await bundledCalendars();
+  const has=(calendar,date,title)=>calendar.entries.some(entry=>entry.date===date&&entry.title===title);
+  for(const [date,title] of [['2026-02-16','除夕'],['2026-02-17','春节'],['2026-04-05','清明节'],['2026-06-19','端午节'],['2026-09-25','中秋节'],['2027-02-06','春节']]) assert.ok(has(cn.calendar,date,title),date+' '+title);
+  assert.equal(cn.calendar.entries.filter(entry=>entry.date.startsWith('2025')&&entry.title==='端午节').length,1,'leap months do not repeat festivals');
+  for(const [date,title] of [['2026-07-04','独立日 / Independence Day'],['2026-07-03','独立日 / Independence Day（补休 / observed）'],['2026-11-26','感恩节 / Thanksgiving Day'],['2027-12-31','元旦 / New Year’s Day（补休 / observed）']]) assert.ok(has(us.calendar,date,title),date+' '+title);
+  assert.equal(us.calendar.entries.some(entry=>entry.date.startsWith('2020')&&entry.title.includes('Juneteenth')),false);
+  for(const item of [cn,us]) { assert.equal(item.enabled,false);calendarDatasetSchema.parse(item.calendar);assert.ok(item.calendar.entries.every(entry=>entry.date>='2020-01-01'&&entry.date<'2051-01-01')); }
+});
 
 test('worker handles ICS and refuses invalid UTF-8, schema and damaged storage', async () => fixture(async root => {
   const file = join(root, 'calendar.ics');

@@ -364,6 +364,11 @@ declare global {
         callback: (action: CardlingDesktopAction) => void,
       ) => () => void;
       onCardlingCollapse: (callback: () => void) => () => void;
+      localApplications?: {
+        refreshIcons: (paths: string[]) => Promise<Record<string, string>>;
+        pick: (language: 'zh' | 'en') => Promise<import('../shared/localApplications').LocalApplication | null>;
+        open: (targetPath: string) => Promise<void>;
+      };
       openPath: (targetPath: string) => Promise<string>;
       openFileInCardbush: (targetPath: string) => Promise<string>;
       showFileContextMenu: (targetPath: string, options?: import('../../electron/fileContextMenu').FileContextMenuOptions) => Promise<string>;

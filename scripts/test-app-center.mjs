@@ -3,9 +3,13 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import test from 'node:test';
 const exports = {};
-new Function('exports', ts.transpileModule(readFileSync('src/features/appCenter/appCenterModel.ts', 'utf8'), {
+const localApps = {};
+new Function('exports', ts.transpileModule(readFileSync('src/shared/localApplications.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText)(exports);
+}).outputText)(localApps);
+new Function('exports', 'require', ts.transpileModule(readFileSync('src/features/appCenter/appCenterModel.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(exports, name => { assert.equal(name, '../../shared/localApplications'); return localApps; });
 const { normalizeAppCenterPreferences, applicationLink, applicationCatalog, applicationReference, moveApplication } = exports;
 test('app preferences validate external links and preserve shortcut order independently of plugin availability', () => {
   const normalized = normalizeAppCenterPreferences({ display: 'hover', shortcuts: ['builtin:settings', 'plugin:demo:canvas', 'builtin:settings'], links: [
@@ -39,4 +43,17 @@ test('drag reorder supports moving before an item, appending and adding without 
   assert.deepEqual(moveApplication(['a', 'b'], 'a', 'a'), ['a', 'b']);
   const prefs = normalizeAppCenterPreferences({ order: ['builtin:settings', 'builtin:plugins', 'builtin:settings'] });
   assert.deepEqual(applicationCatalog('zh', [], prefs).map(app => app.id), ['builtin:settings', 'builtin:plugins', 'builtin:automations']);
+});
+
+test('local apps persist icons and dock pins, reject invalid metadata, and deduplicate Windows paths', () => {
+  const app = { id: 'local:editor', title: ' 本地编辑器 ', path: 'C:\\Program Files\\编辑器\\editor.exe', icon: 'data:image/png;base64,aWNvbg==' };
+  const prefs = normalizeAppCenterPreferences({ localApps: [app, { ...app, id: 'local:duplicate', path: 'c:/program files/编辑器/editor.exe' },
+    {...app,id:'builtin:settings'}, {...app,id:'local:url',path:'https://example.test/app.exe'}, {...app,id:'local:relative',path:'editor.exe'},
+    {...app,id:'local:shortcut',path:'C:\\快捷方式.lnk',icon:'https://example.test/tracker.png'}], shortcuts:['local:editor'] });
+  assert.equal(prefs.localApps.length,2); assert.equal(prefs.localApps[0].title,'本地编辑器');
+  assert.equal(prefs.localApps[1].icon,undefined); assert.deepEqual(prefs.shortcuts,['local:editor']);
+  assert.deepEqual(normalizeAppCenterPreferences(JSON.parse(JSON.stringify(prefs))),prefs);
+  const entry = applicationCatalog('zh',[],prefs).find(item=>item.id===app.id);
+  assert.equal(entry.kind,'local'); assert.equal(entry.target,app.path); assert.equal(entry.icon,app.icon);
+  assert.deepEqual(applicationReference(entry),{kind:'application',id:app.id,title:'本地编辑器',applicationKind:'local',target:app.path});
 });

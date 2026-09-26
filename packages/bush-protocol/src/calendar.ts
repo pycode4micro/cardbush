@@ -29,7 +29,7 @@ export const calendarDatasetSchema = z.object({
 });
 export type CalendarEntry = z.infer<typeof calendarEntrySchema>;
 export type CalendarDataset = z.infer<typeof calendarDatasetSchema>;
-export type CalendarState = { datasets: Array<{ calendar: CalendarDataset; enabled: boolean }>; chineseLunar: boolean };
+export type CalendarState = { datasets: Array<{ calendar: CalendarDataset; enabled: boolean; builtin?: boolean }>; chineseLunar: boolean };
 export const calendarCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(), z.object({ action: z.literal('import') }).strict(),
   z.object({ action: z.literal('remove'), id: z.string() }).strict(),

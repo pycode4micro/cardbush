@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { shortcutDefinitions, type ShortcutId } from '../features/shortcuts/keyboardShortcuts';
 import { useKeyboardShortcuts } from '../features/shortcuts/useKeyboardShortcuts';
+import { observeExplicitInteraction } from '../shared/explicitInteraction';
 import './global-tooltip.css';
 
 /** One delegated tooltip host also upgrades existing native title controls. */
@@ -9,6 +10,16 @@ export function GlobalTooltip() {
   const [tip, setTip] = useState<{ anchor: HTMLElement; text: string; shortcut: string } | null>(null);
   useEffect(() => {
     let active: HTMLElement | null = null, originalTitle: string | null = null, originalDescription: string | null = null, timer = 0;
+    let dismissed: HTMLElement | null = null, dismissedTitle: string | null = null;
+    const targetFor = (source: EventTarget | null) => source instanceof Element
+      ? source.closest<HTMLElement>('[data-tooltip], [data-global-tooltip-active], [data-global-tooltip-dismissed], [title], button[aria-label], [aria-keyshortcuts]') : null;
+    function releaseDismissed() {
+      if (dismissed) {
+        dismissed.removeAttribute('data-global-tooltip-dismissed');
+        if (dismissedTitle !== null && !dismissed.hasAttribute('title')) dismissed.setAttribute('title', dismissedTitle);
+      }
+      dismissed = null; dismissedTitle = null;
+    }
     function clear() {
       clearTimeout(timer); setTip(null);
       if (active) {
@@ -20,8 +31,18 @@ export function GlobalTooltip() {
       }
       active = null;
     }
-    function show(event: Event) {
-      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tooltip], [data-global-tooltip-active], [title], button[aria-label], [aria-keyshortcuts]') : null;
+    function dismiss(event: Event) {
+      const target = targetFor(event.target);
+      clear(); releaseDismissed();
+      if (!target) return;
+      dismissed = target; dismissedTitle = target.getAttribute('title');
+      target.setAttribute('data-global-tooltip-dismissed', '');
+      // Keep the native title suppressed too, until the pointer leaves.
+      target.removeAttribute('title');
+    }
+    function show(source: EventTarget | null, keyboard = false) {
+      const target = targetFor(source);
+      if (target && target === dismissed) { clear(); return; }
       if (target === active) return;
       clear(); if (!target || target.closest('[inert]')) return;
       const text = target.dataset.tooltip || target.getAttribute('title') || target.getAttribute('aria-label'); if (!text) return;
@@ -35,20 +56,33 @@ export function GlobalTooltip() {
       target.setAttribute('data-global-tooltip-active', '');
       target.removeAttribute('title');
       timer = window.setTimeout(() => {
-        if (target !== active || !target.isConnected) return;
+        if (target !== active || !target.isConnected || !document.hasFocus() || document.hidden) return;
         target.setAttribute('aria-describedby', [originalDescription, id].filter(Boolean).join(' '));
         setTip({ anchor: target, text: caption, shortcut: shortcut && !caption.includes(shortcut) ? shortcut : '' });
-      }, event.type === 'focusin' ? 100 : 380);
+      }, keyboard ? 100 : 380);
     }
-    function leave(event: Event) { if (active && event.target instanceof Node && active.contains(event.target) && !active.contains((event as MouseEvent).relatedTarget as Node | null)) clear(); }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') clear(); };
-    document.addEventListener('pointerover', show); document.addEventListener('focusin', show);
+    function leave(event: Event) {
+      const related = (event as MouseEvent).relatedTarget as Node | null;
+      if (active && event.target instanceof Node && active.contains(event.target) && !active.contains(related)) clear();
+      if (event.type === 'pointerout' && dismissed && event.target instanceof Node && dismissed.contains(event.target) && !dismissed.contains(related)) releaseDismissed();
+    }
+    const keydown = (event: KeyboardEvent) => { if (['Escape', 'Enter', ' '].includes(event.key)) dismiss(event); };
+    const stopInteraction = observeExplicitInteraction({
+      pointerMove: event => { if (!event.buttons) show(event.target); }, pointerDown: dismiss,
+      reset: () => { clear(); releaseDismissed(); },
+      focus: event => show(event.target, true),
+      keyboard: event => {
+        if (['Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'F6'].includes(event.key)) {
+          releaseDismissed(); show(document.activeElement, true);
+        }
+      },
+    });
     document.addEventListener('pointerout', leave); document.addEventListener('focusout', leave);
-    document.addEventListener('pointerdown', clear, true); document.addEventListener('keydown', escape, true);
-    window.addEventListener('scroll', clear, true); window.addEventListener('resize', clear); window.addEventListener('blur', clear);
-    return () => { clear(); document.removeEventListener('pointerover', show); document.removeEventListener('focusin', show);
-      document.removeEventListener('pointerout', leave); document.removeEventListener('focusout', leave); document.removeEventListener('pointerdown', clear, true); document.removeEventListener('keydown', escape, true);
-      window.removeEventListener('scroll', clear, true); window.removeEventListener('resize', clear); window.removeEventListener('blur', clear); };
+    document.addEventListener('keydown', keydown, true); document.addEventListener('click', dismiss, true);
+    window.addEventListener('scroll', clear, true); window.addEventListener('resize', clear);
+    return () => { stopInteraction(); clear(); releaseDismissed();
+      document.removeEventListener('pointerout', leave); document.removeEventListener('focusout', leave); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', dismiss, true);
+      window.removeEventListener('scroll', clear, true); window.removeEventListener('resize', clear); };
   }, [shortcuts, id]);
   useLayoutEffect(() => {
     const element = node.current; if (!tip || !element) return;

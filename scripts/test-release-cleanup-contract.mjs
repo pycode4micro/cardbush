@@ -56,7 +56,7 @@ assert(
   'runtime errors must expose an inline localized retry action',
 );
 assert(
-  app.includes('onToggleWorkSummary={renderMessages.length > 0') &&
+  app.includes('onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0') &&
     app.includes('onToggleInspector={onToggleInspector}') &&
     app.includes('conversationContentAvailable={renderMessages.length > 0}') &&
     app.includes('{conversationContentAvailable && onToggleWorkSummary && (') &&
@@ -103,7 +103,7 @@ assert(
   'markdown copy action must support both UI languages',
 );
 assert(
-  messageBubble.includes('recordAssistantFeedback(message, nextRating)') &&
+  messageBubble.includes('recordAssistantFeedback(host ? { ...message, id: feedbackId, conversationId: host.id } : message, nextRating)') &&
     !messageBubble.includes('反馈给 LEM'),
   'assistant thumbs stay local and independent of optional memory plugins',
 );

@@ -1,4 +1,4 @@
-.feature-content.automation-panel { max-width: 1100px; margin: 0 auto; padding: 14px 20px 16px; width: 100%; min-width: 0; min-height: 0; box-sizing: border-box; overflow-y: auto; color: var(--text); font-family: var(--app-font-family, inherit); }
+.feature-content.automation-panel { max-width: 1100px; margin: 0 auto; padding: 14px 20px 16px; width: 100%; min-width: 0; min-height: 0; box-sizing: border-box; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; color: var(--text); font-family: var(--app-font-family, inherit); }
 .automation-heading, .automation-card header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .automation-heading { margin-bottom: 8px; }
 .automation-heading > .automation-actions { margin-left: auto; }
@@ -226,6 +226,7 @@
 .calendar-data-body button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: inherit; font: inherit; cursor: pointer; }
 .calendar-data-body button:disabled { opacity: .5; cursor: default; }
 .calendar-data-row { padding: 9px 0; border-top: 1px solid var(--border); }
+.calendar-data-builtin { flex: none; color: var(--text-mid); font-size: 10px; }
 .calendar-data-row label span { overflow-wrap: anywhere; }
 .calendar-data-row small { display: block; color: var(--text-mid); font-size: 10px; margin-top: 4px; }
 .calendar-data-row button { border: 0; }

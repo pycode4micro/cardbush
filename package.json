@@ -108,7 +108,7 @@
     "test:global-instructions": "npm run build --workspace @cardbush/bush-product-agent && tsc -p tsconfig.node.json && node --test scripts/test-global-instructions.mjs && node scripts/run-settings-context-ui-test.mjs",
     "test:settings-layout": "node scripts/test-settings-layout-contract.mjs",
     "test:keyboard-shortcuts": "node scripts/test-keyboard-shortcuts.mjs && node scripts/run-app-views-test.mjs keyboard-shortcuts",
-    "test:app-center": "node --test scripts/test-app-center.mjs scripts/test-composer-references.mjs && node scripts/test-keyboard-shortcuts.mjs && node scripts/run-app-views-test.mjs app-center",
+    "test:app-center": "tsc -p tsconfig.node.json && node --test scripts/test-app-center.mjs scripts/test-local-applications.mjs scripts/test-composer-references.mjs && node scripts/test-local-applications-native.mjs && node scripts/test-keyboard-shortcuts.mjs && node scripts/run-app-views-test.mjs app-center",
     "test:page-navigation": "node --test scripts/test-page-navigation.mjs && node scripts/run-app-views-test.mjs page-navigation",
     "test:window-menu": "tsc -p tsconfig.node.json && node scripts/test-window-menu.mjs",
     "test:os-mode-removed": "node scripts/test-os-mode-removed-contract.mjs",

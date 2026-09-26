@@ -1,0 +1,2382 @@
+{
+  "protocol": "cardbush.calendar.v1",
+  "id": "cardbush.us",
+  "name": "美国日历与节日",
+  "timeZone": "America/New_York",
+  "source": "U.S. Office of Personnel Management https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/；全国联邦节日及标准周末补休，不包含地区性、临时行政假日。",
+  "recurrenceWindow": {
+    "from": "2020-01-01",
+    "to": "2051-01-01"
+  },
+  "entries": [
+    {
+      "id": "2020-01-01-元旦 / New Year’s Day",
+      "date": "2020-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-01-20-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2020-01-20",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-02-17-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2020-02-17",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-05-25-阵亡将士纪念日 / Memorial Day",
+      "date": "2020-05-25",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-07-03-独立日 / Independence Day（补休 / observed）",
+      "date": "2020-07-03",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2020-07-04-独立日 / Independence Day",
+      "date": "2020-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-09-07-劳动节 / Labor Day",
+      "date": "2020-09-07",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-10-12-哥伦布日 / Columbus Day",
+      "date": "2020-10-12",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-11-11-退伍军人节 / Veterans Day",
+      "date": "2020-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-11-26-感恩节 / Thanksgiving Day",
+      "date": "2020-11-26",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2020-12-25-圣诞节 / Christmas Day",
+      "date": "2020-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-01-01-元旦 / New Year’s Day",
+      "date": "2021-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-01-18-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2021-01-18",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-02-15-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2021-02-15",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-05-31-阵亡将士纪念日 / Memorial Day",
+      "date": "2021-05-31",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-06-18-六月节 / Juneteenth（补休 / observed）",
+      "date": "2021-06-18",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2021-06-19-六月节 / Juneteenth",
+      "date": "2021-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-07-04-独立日 / Independence Day",
+      "date": "2021-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-07-05-独立日 / Independence Day（补休 / observed）",
+      "date": "2021-07-05",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2021-09-06-劳动节 / Labor Day",
+      "date": "2021-09-06",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-10-11-哥伦布日 / Columbus Day",
+      "date": "2021-10-11",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-11-11-退伍军人节 / Veterans Day",
+      "date": "2021-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-11-25-感恩节 / Thanksgiving Day",
+      "date": "2021-11-25",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-12-24-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2021-12-24",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2021-12-25-圣诞节 / Christmas Day",
+      "date": "2021-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2021-12-31-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2021-12-31",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2022-01-01-元旦 / New Year’s Day",
+      "date": "2022-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-01-17-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2022-01-17",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-02-21-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2022-02-21",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-05-30-阵亡将士纪念日 / Memorial Day",
+      "date": "2022-05-30",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-06-19-六月节 / Juneteenth",
+      "date": "2022-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-06-20-六月节 / Juneteenth（补休 / observed）",
+      "date": "2022-06-20",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2022-07-04-独立日 / Independence Day",
+      "date": "2022-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-09-05-劳动节 / Labor Day",
+      "date": "2022-09-05",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-10-10-哥伦布日 / Columbus Day",
+      "date": "2022-10-10",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-11-11-退伍军人节 / Veterans Day",
+      "date": "2022-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-11-24-感恩节 / Thanksgiving Day",
+      "date": "2022-11-24",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-12-25-圣诞节 / Christmas Day",
+      "date": "2022-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2022-12-26-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2022-12-26",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2023-01-01-元旦 / New Year’s Day",
+      "date": "2023-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-01-02-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2023-01-02",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2023-01-16-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2023-01-16",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-02-20-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2023-02-20",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-05-29-阵亡将士纪念日 / Memorial Day",
+      "date": "2023-05-29",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-06-19-六月节 / Juneteenth",
+      "date": "2023-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-07-04-独立日 / Independence Day",
+      "date": "2023-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-09-04-劳动节 / Labor Day",
+      "date": "2023-09-04",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-10-09-哥伦布日 / Columbus Day",
+      "date": "2023-10-09",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-11-10-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2023-11-10",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2023-11-11-退伍军人节 / Veterans Day",
+      "date": "2023-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-11-23-感恩节 / Thanksgiving Day",
+      "date": "2023-11-23",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2023-12-25-圣诞节 / Christmas Day",
+      "date": "2023-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-01-01-元旦 / New Year’s Day",
+      "date": "2024-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-01-15-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2024-01-15",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-02-19-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2024-02-19",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-05-27-阵亡将士纪念日 / Memorial Day",
+      "date": "2024-05-27",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-06-19-六月节 / Juneteenth",
+      "date": "2024-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-07-04-独立日 / Independence Day",
+      "date": "2024-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-09-02-劳动节 / Labor Day",
+      "date": "2024-09-02",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-10-14-哥伦布日 / Columbus Day",
+      "date": "2024-10-14",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-11-11-退伍军人节 / Veterans Day",
+      "date": "2024-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-11-28-感恩节 / Thanksgiving Day",
+      "date": "2024-11-28",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2024-12-25-圣诞节 / Christmas Day",
+      "date": "2024-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-01-01-元旦 / New Year’s Day",
+      "date": "2025-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-01-20-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2025-01-20",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-02-17-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2025-02-17",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-05-26-阵亡将士纪念日 / Memorial Day",
+      "date": "2025-05-26",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-06-19-六月节 / Juneteenth",
+      "date": "2025-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-07-04-独立日 / Independence Day",
+      "date": "2025-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-09-01-劳动节 / Labor Day",
+      "date": "2025-09-01",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-10-13-哥伦布日 / Columbus Day",
+      "date": "2025-10-13",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-11-11-退伍军人节 / Veterans Day",
+      "date": "2025-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-11-27-感恩节 / Thanksgiving Day",
+      "date": "2025-11-27",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2025-12-25-圣诞节 / Christmas Day",
+      "date": "2025-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-01-01-元旦 / New Year’s Day",
+      "date": "2026-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-01-19-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2026-01-19",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-02-16-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2026-02-16",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-05-25-阵亡将士纪念日 / Memorial Day",
+      "date": "2026-05-25",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-06-19-六月节 / Juneteenth",
+      "date": "2026-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-07-03-独立日 / Independence Day（补休 / observed）",
+      "date": "2026-07-03",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2026-07-04-独立日 / Independence Day",
+      "date": "2026-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-09-07-劳动节 / Labor Day",
+      "date": "2026-09-07",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-10-12-哥伦布日 / Columbus Day",
+      "date": "2026-10-12",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-11-11-退伍军人节 / Veterans Day",
+      "date": "2026-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-11-26-感恩节 / Thanksgiving Day",
+      "date": "2026-11-26",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2026-12-25-圣诞节 / Christmas Day",
+      "date": "2026-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-01-01-元旦 / New Year’s Day",
+      "date": "2027-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-01-18-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2027-01-18",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-02-15-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2027-02-15",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-05-31-阵亡将士纪念日 / Memorial Day",
+      "date": "2027-05-31",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-06-18-六月节 / Juneteenth（补休 / observed）",
+      "date": "2027-06-18",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2027-06-19-六月节 / Juneteenth",
+      "date": "2027-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-07-04-独立日 / Independence Day",
+      "date": "2027-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-07-05-独立日 / Independence Day（补休 / observed）",
+      "date": "2027-07-05",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2027-09-06-劳动节 / Labor Day",
+      "date": "2027-09-06",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-10-11-哥伦布日 / Columbus Day",
+      "date": "2027-10-11",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-11-11-退伍军人节 / Veterans Day",
+      "date": "2027-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-11-25-感恩节 / Thanksgiving Day",
+      "date": "2027-11-25",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-12-24-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2027-12-24",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2027-12-25-圣诞节 / Christmas Day",
+      "date": "2027-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2027-12-31-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2027-12-31",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2028-01-01-元旦 / New Year’s Day",
+      "date": "2028-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-01-17-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2028-01-17",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-02-21-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2028-02-21",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-05-29-阵亡将士纪念日 / Memorial Day",
+      "date": "2028-05-29",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-06-19-六月节 / Juneteenth",
+      "date": "2028-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-07-04-独立日 / Independence Day",
+      "date": "2028-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-09-04-劳动节 / Labor Day",
+      "date": "2028-09-04",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-10-09-哥伦布日 / Columbus Day",
+      "date": "2028-10-09",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-11-10-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2028-11-10",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2028-11-11-退伍军人节 / Veterans Day",
+      "date": "2028-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-11-23-感恩节 / Thanksgiving Day",
+      "date": "2028-11-23",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2028-12-25-圣诞节 / Christmas Day",
+      "date": "2028-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-01-01-元旦 / New Year’s Day",
+      "date": "2029-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-01-15-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2029-01-15",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-02-19-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2029-02-19",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-05-28-阵亡将士纪念日 / Memorial Day",
+      "date": "2029-05-28",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-06-19-六月节 / Juneteenth",
+      "date": "2029-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-07-04-独立日 / Independence Day",
+      "date": "2029-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-09-03-劳动节 / Labor Day",
+      "date": "2029-09-03",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-10-08-哥伦布日 / Columbus Day",
+      "date": "2029-10-08",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-11-11-退伍军人节 / Veterans Day",
+      "date": "2029-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-11-12-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2029-11-12",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2029-11-22-感恩节 / Thanksgiving Day",
+      "date": "2029-11-22",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2029-12-25-圣诞节 / Christmas Day",
+      "date": "2029-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-01-01-元旦 / New Year’s Day",
+      "date": "2030-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-01-21-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2030-01-21",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-02-18-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2030-02-18",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-05-27-阵亡将士纪念日 / Memorial Day",
+      "date": "2030-05-27",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-06-19-六月节 / Juneteenth",
+      "date": "2030-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-07-04-独立日 / Independence Day",
+      "date": "2030-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-09-02-劳动节 / Labor Day",
+      "date": "2030-09-02",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-10-14-哥伦布日 / Columbus Day",
+      "date": "2030-10-14",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-11-11-退伍军人节 / Veterans Day",
+      "date": "2030-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-11-28-感恩节 / Thanksgiving Day",
+      "date": "2030-11-28",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2030-12-25-圣诞节 / Christmas Day",
+      "date": "2030-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-01-01-元旦 / New Year’s Day",
+      "date": "2031-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-01-20-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2031-01-20",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-02-17-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2031-02-17",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-05-26-阵亡将士纪念日 / Memorial Day",
+      "date": "2031-05-26",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-06-19-六月节 / Juneteenth",
+      "date": "2031-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-07-04-独立日 / Independence Day",
+      "date": "2031-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-09-01-劳动节 / Labor Day",
+      "date": "2031-09-01",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-10-13-哥伦布日 / Columbus Day",
+      "date": "2031-10-13",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-11-11-退伍军人节 / Veterans Day",
+      "date": "2031-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-11-27-感恩节 / Thanksgiving Day",
+      "date": "2031-11-27",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2031-12-25-圣诞节 / Christmas Day",
+      "date": "2031-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-01-01-元旦 / New Year’s Day",
+      "date": "2032-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-01-19-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2032-01-19",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-02-16-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2032-02-16",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-05-31-阵亡将士纪念日 / Memorial Day",
+      "date": "2032-05-31",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-06-18-六月节 / Juneteenth（补休 / observed）",
+      "date": "2032-06-18",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2032-06-19-六月节 / Juneteenth",
+      "date": "2032-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-07-04-独立日 / Independence Day",
+      "date": "2032-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-07-05-独立日 / Independence Day（补休 / observed）",
+      "date": "2032-07-05",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2032-09-06-劳动节 / Labor Day",
+      "date": "2032-09-06",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-10-11-哥伦布日 / Columbus Day",
+      "date": "2032-10-11",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-11-11-退伍军人节 / Veterans Day",
+      "date": "2032-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-11-25-感恩节 / Thanksgiving Day",
+      "date": "2032-11-25",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-12-24-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2032-12-24",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2032-12-25-圣诞节 / Christmas Day",
+      "date": "2032-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2032-12-31-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2032-12-31",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2033-01-01-元旦 / New Year’s Day",
+      "date": "2033-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-01-17-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2033-01-17",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-02-21-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2033-02-21",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-05-30-阵亡将士纪念日 / Memorial Day",
+      "date": "2033-05-30",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-06-19-六月节 / Juneteenth",
+      "date": "2033-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-06-20-六月节 / Juneteenth（补休 / observed）",
+      "date": "2033-06-20",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2033-07-04-独立日 / Independence Day",
+      "date": "2033-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-09-05-劳动节 / Labor Day",
+      "date": "2033-09-05",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-10-10-哥伦布日 / Columbus Day",
+      "date": "2033-10-10",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-11-11-退伍军人节 / Veterans Day",
+      "date": "2033-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-11-24-感恩节 / Thanksgiving Day",
+      "date": "2033-11-24",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-12-25-圣诞节 / Christmas Day",
+      "date": "2033-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2033-12-26-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2033-12-26",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2034-01-01-元旦 / New Year’s Day",
+      "date": "2034-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-01-02-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2034-01-02",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2034-01-16-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2034-01-16",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-02-20-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2034-02-20",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-05-29-阵亡将士纪念日 / Memorial Day",
+      "date": "2034-05-29",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-06-19-六月节 / Juneteenth",
+      "date": "2034-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-07-04-独立日 / Independence Day",
+      "date": "2034-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-09-04-劳动节 / Labor Day",
+      "date": "2034-09-04",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-10-09-哥伦布日 / Columbus Day",
+      "date": "2034-10-09",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-11-10-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2034-11-10",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2034-11-11-退伍军人节 / Veterans Day",
+      "date": "2034-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-11-23-感恩节 / Thanksgiving Day",
+      "date": "2034-11-23",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2034-12-25-圣诞节 / Christmas Day",
+      "date": "2034-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-01-01-元旦 / New Year’s Day",
+      "date": "2035-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-01-15-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2035-01-15",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-02-19-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2035-02-19",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-05-28-阵亡将士纪念日 / Memorial Day",
+      "date": "2035-05-28",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-06-19-六月节 / Juneteenth",
+      "date": "2035-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-07-04-独立日 / Independence Day",
+      "date": "2035-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-09-03-劳动节 / Labor Day",
+      "date": "2035-09-03",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-10-08-哥伦布日 / Columbus Day",
+      "date": "2035-10-08",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-11-11-退伍军人节 / Veterans Day",
+      "date": "2035-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-11-12-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2035-11-12",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2035-11-22-感恩节 / Thanksgiving Day",
+      "date": "2035-11-22",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2035-12-25-圣诞节 / Christmas Day",
+      "date": "2035-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-01-01-元旦 / New Year’s Day",
+      "date": "2036-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-01-21-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2036-01-21",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-02-18-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2036-02-18",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-05-26-阵亡将士纪念日 / Memorial Day",
+      "date": "2036-05-26",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-06-19-六月节 / Juneteenth",
+      "date": "2036-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-07-04-独立日 / Independence Day",
+      "date": "2036-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-09-01-劳动节 / Labor Day",
+      "date": "2036-09-01",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-10-13-哥伦布日 / Columbus Day",
+      "date": "2036-10-13",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-11-11-退伍军人节 / Veterans Day",
+      "date": "2036-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-11-27-感恩节 / Thanksgiving Day",
+      "date": "2036-11-27",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2036-12-25-圣诞节 / Christmas Day",
+      "date": "2036-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-01-01-元旦 / New Year’s Day",
+      "date": "2037-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-01-19-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2037-01-19",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-02-16-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2037-02-16",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-05-25-阵亡将士纪念日 / Memorial Day",
+      "date": "2037-05-25",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-06-19-六月节 / Juneteenth",
+      "date": "2037-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-07-03-独立日 / Independence Day（补休 / observed）",
+      "date": "2037-07-03",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2037-07-04-独立日 / Independence Day",
+      "date": "2037-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-09-07-劳动节 / Labor Day",
+      "date": "2037-09-07",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-10-12-哥伦布日 / Columbus Day",
+      "date": "2037-10-12",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-11-11-退伍军人节 / Veterans Day",
+      "date": "2037-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-11-26-感恩节 / Thanksgiving Day",
+      "date": "2037-11-26",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2037-12-25-圣诞节 / Christmas Day",
+      "date": "2037-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-01-01-元旦 / New Year’s Day",
+      "date": "2038-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-01-18-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2038-01-18",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-02-15-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2038-02-15",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-05-31-阵亡将士纪念日 / Memorial Day",
+      "date": "2038-05-31",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-06-18-六月节 / Juneteenth（补休 / observed）",
+      "date": "2038-06-18",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2038-06-19-六月节 / Juneteenth",
+      "date": "2038-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-07-04-独立日 / Independence Day",
+      "date": "2038-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-07-05-独立日 / Independence Day（补休 / observed）",
+      "date": "2038-07-05",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2038-09-06-劳动节 / Labor Day",
+      "date": "2038-09-06",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-10-11-哥伦布日 / Columbus Day",
+      "date": "2038-10-11",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-11-11-退伍军人节 / Veterans Day",
+      "date": "2038-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-11-25-感恩节 / Thanksgiving Day",
+      "date": "2038-11-25",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-12-24-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2038-12-24",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2038-12-25-圣诞节 / Christmas Day",
+      "date": "2038-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2038-12-31-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2038-12-31",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2039-01-01-元旦 / New Year’s Day",
+      "date": "2039-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-01-17-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2039-01-17",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-02-21-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2039-02-21",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-05-30-阵亡将士纪念日 / Memorial Day",
+      "date": "2039-05-30",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-06-19-六月节 / Juneteenth",
+      "date": "2039-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-06-20-六月节 / Juneteenth（补休 / observed）",
+      "date": "2039-06-20",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2039-07-04-独立日 / Independence Day",
+      "date": "2039-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-09-05-劳动节 / Labor Day",
+      "date": "2039-09-05",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-10-10-哥伦布日 / Columbus Day",
+      "date": "2039-10-10",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-11-11-退伍军人节 / Veterans Day",
+      "date": "2039-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-11-24-感恩节 / Thanksgiving Day",
+      "date": "2039-11-24",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-12-25-圣诞节 / Christmas Day",
+      "date": "2039-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2039-12-26-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2039-12-26",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2040-01-01-元旦 / New Year’s Day",
+      "date": "2040-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-01-02-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2040-01-02",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2040-01-16-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2040-01-16",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-02-20-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2040-02-20",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-05-28-阵亡将士纪念日 / Memorial Day",
+      "date": "2040-05-28",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-06-19-六月节 / Juneteenth",
+      "date": "2040-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-07-04-独立日 / Independence Day",
+      "date": "2040-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-09-03-劳动节 / Labor Day",
+      "date": "2040-09-03",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-10-08-哥伦布日 / Columbus Day",
+      "date": "2040-10-08",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-11-11-退伍军人节 / Veterans Day",
+      "date": "2040-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-11-12-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2040-11-12",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2040-11-22-感恩节 / Thanksgiving Day",
+      "date": "2040-11-22",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2040-12-25-圣诞节 / Christmas Day",
+      "date": "2040-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-01-01-元旦 / New Year’s Day",
+      "date": "2041-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-01-21-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2041-01-21",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-02-18-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2041-02-18",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-05-27-阵亡将士纪念日 / Memorial Day",
+      "date": "2041-05-27",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-06-19-六月节 / Juneteenth",
+      "date": "2041-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-07-04-独立日 / Independence Day",
+      "date": "2041-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-09-02-劳动节 / Labor Day",
+      "date": "2041-09-02",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-10-14-哥伦布日 / Columbus Day",
+      "date": "2041-10-14",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-11-11-退伍军人节 / Veterans Day",
+      "date": "2041-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-11-28-感恩节 / Thanksgiving Day",
+      "date": "2041-11-28",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2041-12-25-圣诞节 / Christmas Day",
+      "date": "2041-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-01-01-元旦 / New Year’s Day",
+      "date": "2042-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-01-20-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2042-01-20",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-02-17-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2042-02-17",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-05-26-阵亡将士纪念日 / Memorial Day",
+      "date": "2042-05-26",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-06-19-六月节 / Juneteenth",
+      "date": "2042-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-07-04-独立日 / Independence Day",
+      "date": "2042-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-09-01-劳动节 / Labor Day",
+      "date": "2042-09-01",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-10-13-哥伦布日 / Columbus Day",
+      "date": "2042-10-13",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-11-11-退伍军人节 / Veterans Day",
+      "date": "2042-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-11-27-感恩节 / Thanksgiving Day",
+      "date": "2042-11-27",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2042-12-25-圣诞节 / Christmas Day",
+      "date": "2042-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-01-01-元旦 / New Year’s Day",
+      "date": "2043-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-01-19-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2043-01-19",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-02-16-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2043-02-16",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-05-25-阵亡将士纪念日 / Memorial Day",
+      "date": "2043-05-25",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-06-19-六月节 / Juneteenth",
+      "date": "2043-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-07-03-独立日 / Independence Day（补休 / observed）",
+      "date": "2043-07-03",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2043-07-04-独立日 / Independence Day",
+      "date": "2043-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-09-07-劳动节 / Labor Day",
+      "date": "2043-09-07",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-10-12-哥伦布日 / Columbus Day",
+      "date": "2043-10-12",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-11-11-退伍军人节 / Veterans Day",
+      "date": "2043-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-11-26-感恩节 / Thanksgiving Day",
+      "date": "2043-11-26",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2043-12-25-圣诞节 / Christmas Day",
+      "date": "2043-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-01-01-元旦 / New Year’s Day",
+      "date": "2044-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-01-18-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2044-01-18",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-02-15-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2044-02-15",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-05-30-阵亡将士纪念日 / Memorial Day",
+      "date": "2044-05-30",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-06-19-六月节 / Juneteenth",
+      "date": "2044-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-06-20-六月节 / Juneteenth（补休 / observed）",
+      "date": "2044-06-20",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2044-07-04-独立日 / Independence Day",
+      "date": "2044-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-09-05-劳动节 / Labor Day",
+      "date": "2044-09-05",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-10-10-哥伦布日 / Columbus Day",
+      "date": "2044-10-10",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-11-11-退伍军人节 / Veterans Day",
+      "date": "2044-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-11-24-感恩节 / Thanksgiving Day",
+      "date": "2044-11-24",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-12-25-圣诞节 / Christmas Day",
+      "date": "2044-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2044-12-26-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2044-12-26",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2045-01-01-元旦 / New Year’s Day",
+      "date": "2045-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-01-02-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2045-01-02",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2045-01-16-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2045-01-16",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-02-20-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2045-02-20",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-05-29-阵亡将士纪念日 / Memorial Day",
+      "date": "2045-05-29",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-06-19-六月节 / Juneteenth",
+      "date": "2045-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-07-04-独立日 / Independence Day",
+      "date": "2045-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-09-04-劳动节 / Labor Day",
+      "date": "2045-09-04",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-10-09-哥伦布日 / Columbus Day",
+      "date": "2045-10-09",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-11-10-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2045-11-10",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2045-11-11-退伍军人节 / Veterans Day",
+      "date": "2045-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-11-23-感恩节 / Thanksgiving Day",
+      "date": "2045-11-23",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2045-12-25-圣诞节 / Christmas Day",
+      "date": "2045-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-01-01-元旦 / New Year’s Day",
+      "date": "2046-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-01-15-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2046-01-15",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-02-19-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2046-02-19",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-05-28-阵亡将士纪念日 / Memorial Day",
+      "date": "2046-05-28",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-06-19-六月节 / Juneteenth",
+      "date": "2046-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-07-04-独立日 / Independence Day",
+      "date": "2046-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-09-03-劳动节 / Labor Day",
+      "date": "2046-09-03",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-10-08-哥伦布日 / Columbus Day",
+      "date": "2046-10-08",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-11-11-退伍军人节 / Veterans Day",
+      "date": "2046-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-11-12-退伍军人节 / Veterans Day（补休 / observed）",
+      "date": "2046-11-12",
+      "title": "退伍军人节 / Veterans Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2046-11-22-感恩节 / Thanksgiving Day",
+      "date": "2046-11-22",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2046-12-25-圣诞节 / Christmas Day",
+      "date": "2046-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-01-01-元旦 / New Year’s Day",
+      "date": "2047-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-01-21-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2047-01-21",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-02-18-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2047-02-18",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-05-27-阵亡将士纪念日 / Memorial Day",
+      "date": "2047-05-27",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-06-19-六月节 / Juneteenth",
+      "date": "2047-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-07-04-独立日 / Independence Day",
+      "date": "2047-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-09-02-劳动节 / Labor Day",
+      "date": "2047-09-02",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-10-14-哥伦布日 / Columbus Day",
+      "date": "2047-10-14",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-11-11-退伍军人节 / Veterans Day",
+      "date": "2047-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-11-28-感恩节 / Thanksgiving Day",
+      "date": "2047-11-28",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2047-12-25-圣诞节 / Christmas Day",
+      "date": "2047-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-01-01-元旦 / New Year’s Day",
+      "date": "2048-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-01-20-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2048-01-20",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-02-17-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2048-02-17",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-05-25-阵亡将士纪念日 / Memorial Day",
+      "date": "2048-05-25",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-06-19-六月节 / Juneteenth",
+      "date": "2048-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-07-03-独立日 / Independence Day（补休 / observed）",
+      "date": "2048-07-03",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2048-07-04-独立日 / Independence Day",
+      "date": "2048-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-09-07-劳动节 / Labor Day",
+      "date": "2048-09-07",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-10-12-哥伦布日 / Columbus Day",
+      "date": "2048-10-12",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-11-11-退伍军人节 / Veterans Day",
+      "date": "2048-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-11-26-感恩节 / Thanksgiving Day",
+      "date": "2048-11-26",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2048-12-25-圣诞节 / Christmas Day",
+      "date": "2048-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-01-01-元旦 / New Year’s Day",
+      "date": "2049-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-01-18-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2049-01-18",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-02-15-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2049-02-15",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-05-31-阵亡将士纪念日 / Memorial Day",
+      "date": "2049-05-31",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-06-18-六月节 / Juneteenth（补休 / observed）",
+      "date": "2049-06-18",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2049-06-19-六月节 / Juneteenth",
+      "date": "2049-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-07-04-独立日 / Independence Day",
+      "date": "2049-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-07-05-独立日 / Independence Day（补休 / observed）",
+      "date": "2049-07-05",
+      "title": "独立日 / Independence Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2049-09-06-劳动节 / Labor Day",
+      "date": "2049-09-06",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-10-11-哥伦布日 / Columbus Day",
+      "date": "2049-10-11",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-11-11-退伍军人节 / Veterans Day",
+      "date": "2049-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-11-25-感恩节 / Thanksgiving Day",
+      "date": "2049-11-25",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-12-24-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2049-12-24",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2049-12-25-圣诞节 / Christmas Day",
+      "date": "2049-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2049-12-31-元旦 / New Year’s Day（补休 / observed）",
+      "date": "2049-12-31",
+      "title": "元旦 / New Year’s Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2050-01-01-元旦 / New Year’s Day",
+      "date": "2050-01-01",
+      "title": "元旦 / New Year’s Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-01-17-马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "date": "2050-01-17",
+      "title": "马丁·路德·金纪念日 / Martin Luther King Jr. Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-02-21-华盛顿诞辰日 / Washington’s Birthday",
+      "date": "2050-02-21",
+      "title": "华盛顿诞辰日 / Washington’s Birthday",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-05-30-阵亡将士纪念日 / Memorial Day",
+      "date": "2050-05-30",
+      "title": "阵亡将士纪念日 / Memorial Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-06-19-六月节 / Juneteenth",
+      "date": "2050-06-19",
+      "title": "六月节 / Juneteenth",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-06-20-六月节 / Juneteenth（补休 / observed）",
+      "date": "2050-06-20",
+      "title": "六月节 / Juneteenth（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    },
+    {
+      "id": "2050-07-04-独立日 / Independence Day",
+      "date": "2050-07-04",
+      "title": "独立日 / Independence Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-09-05-劳动节 / Labor Day",
+      "date": "2050-09-05",
+      "title": "劳动节 / Labor Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-10-10-哥伦布日 / Columbus Day",
+      "date": "2050-10-10",
+      "title": "哥伦布日 / Columbus Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-11-11-退伍军人节 / Veterans Day",
+      "date": "2050-11-11",
+      "title": "退伍军人节 / Veterans Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-11-24-感恩节 / Thanksgiving Day",
+      "date": "2050-11-24",
+      "title": "感恩节 / Thanksgiving Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-12-25-圣诞节 / Christmas Day",
+      "date": "2050-12-25",
+      "title": "圣诞节 / Christmas Day",
+      "kind": "holiday"
+    },
+    {
+      "id": "2050-12-26-圣诞节 / Christmas Day（补休 / observed）",
+      "date": "2050-12-26",
+      "title": "圣诞节 / Christmas Day（补休 / observed）",
+      "kind": "holiday",
+      "description": "按美国联邦雇员周一至周五工作制的周末补休规则。"
+    }
+  ]
+}

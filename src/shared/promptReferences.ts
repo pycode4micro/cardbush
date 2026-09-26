@@ -1,9 +1,11 @@
+import { localApplicationPath } from './localApplications';
+
 /** Explicit, portable Markdown references created by the composer. No ambient context. */
 export type BrowserPromptReference = { kind: 'browser'; tabId: string; url: string; title: string };
 export type TurnPromptReference = { kind: 'user-turn'; sessionId: string; turnId: string; messageId: string; title: string };
 export type ConversationExtractReference = { kind: 'conversation-extract'; id: string; title: string };
 export type SshPromptReference = { kind: 'ssh'; connectionId: string; path: string; title: string };
-export type ApplicationPromptReference = { kind: 'application'; id: string; title: string; applicationKind: 'builtin' | 'plugin' | 'external'; target: string; componentId?: string };
+export type ApplicationPromptReference = { kind: 'application'; id: string; title: string; applicationKind: 'builtin' | 'plugin' | 'external' | 'local'; target: string; componentId?: string };
 export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference | SshPromptReference | ApplicationPromptReference;
 export type PromptReferencePart = { text: string; start: number; reference?: PromptReference };
 
@@ -31,6 +33,8 @@ export function parsePromptReference(href: string): PromptReference | null {
         return { kind: 'application', id, title, applicationKind, target };
       if (applicationKind === 'plugin' && valid(target) && valid(value('componentId')) && id === `plugin:${encodeURIComponent(target)}:${encodeURIComponent(value('componentId'))}`)
         return { kind: 'application', id, title, applicationKind, target, componentId: value('componentId') };
+      if (applicationKind === 'local' && /^local:[a-z0-9-]{1,80}$/i.test(id) && localApplicationPath(target))
+        return { kind: 'application', id, title, applicationKind, target };
       if (applicationKind === 'external' && /^external:[a-z0-9-]{1,80}$/i.test(id) && target.length <= 4096) {
         const address = new URL(target);
         if (['http:', 'https:'].includes(address.protocol) && !address.username && !address.password)

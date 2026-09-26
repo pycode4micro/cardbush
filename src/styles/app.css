@@ -653,7 +653,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   flex: 1 0 auto;
   display: flex;
   flex-direction: column;
-  padding: 12px 10px;
+  padding: 12px 10px 0;
   contain: layout style;
 }
 
@@ -1639,7 +1639,7 @@ body.sidebar-resizing .right-inspector {
   align-items: center;
   gap: 4px;
   margin-top: 10px;
-  padding-top: 2px;
+  padding: 7px 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
 
@@ -3810,8 +3810,8 @@ body.right-inspector-resizing .right-inspector-resizer {
      Containment stays on the rail so other overlays keep their sizing origin. */
   container: quick-context / inline-size;
   position: absolute;
-  left: 10px;
-  right: calc(10px + var(--work-summary-content-inset, 0px));
+  left: 20px;
+  right: calc(20px + var(--work-summary-content-inset, 0px));
   top: 24px;
   bottom: 24px;
   z-index: 7;
@@ -3824,12 +3824,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 .quick-context-handle {
   position: absolute;
   inset: 0;
-  width: 44px;
+  width: 24px;
   height: 100%;
-  min-width: 44px;
+  min-width: 24px;
   min-height: 120px;
   padding: 0;
-  border: 0;
   border: 0;
   border-radius: 0;
   opacity: 1;
@@ -3918,23 +3917,8 @@ body.right-inspector-resizing .right-inspector-resizer {
   pointer-events: none;
 }
 
-/* Keep the rail available in smaller panes without intercepting message text.
-   The compact hit target fits inside the current transcript gutter. */
-@container quick-context (width < 940px) {
-  .quick-context-handle {
-    left: -6px;
-    width: clamp(8px, calc(var(--chat-inline-gutter, 16px) - 12px), 28px);
-    min-width: 0;
-  }
-
-  .quick-context-tick:hover::before,
-  .quick-context-tick:focus-visible::before {
-    width: min(15px, 100%);
-  }
-}
-
-/* 640px of usable conversation width, minus the rail's two 10px insets. */
-@container quick-context (width < 620px) {
+/* 640px of usable conversation width, minus the rail's two 20px insets. */
+@container quick-context (width < 600px) {
   .quick-context-handle,
   .quick-context-popovers {
     display: none;
@@ -3943,9 +3927,9 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .quick-context-panel {
   position: absolute;
-  left: 48px;
+  left: 36px;
   top: 50%;
-  width: min(300px, max(0px, calc(100% - 48px)));
+  width: min(300px, max(0px, calc(100% - 36px)));
   max-height: min(460px, 100%);
   min-width: 0;
   display: flex;
@@ -3966,10 +3950,10 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .quick-context-turn-preview {
   position: absolute;
-  left: 48px;
+  left: 36px;
   top: clamp(min(62px, 50%), var(--quick-context-preview-top, 50%), max(50%, calc(100% - 62px)));
   z-index: 3;
-  width: min(390px, max(0px, calc(100% - 48px)));
+  width: min(390px, max(0px, calc(100% - 36px)));
   max-height: min(124px, 100%);
   padding: 11px 13px;
   overflow: hidden;
@@ -9714,8 +9698,8 @@ body.queue-reordering * {
 .chat-panel .composer-dock {
   /* Balance the right scrollbar with equal outer margins while preserving
      the reading width and leaving the native scrollbar outside the dock. */
-  padding-left: calc(var(--chat-inline-gutter, 16px) + var(--message-list-scrollbar-inset, 0px) / 2);
-  padding-right: max(0px, calc(var(--chat-inline-gutter, 16px) - var(--message-list-scrollbar-inset, 0px) / 2));
+  padding-left: calc(var(--chat-reading-gutter, var(--chat-inline-gutter, 16px)) + var(--message-list-scrollbar-inset, 0px) / 2);
+  padding-right: max(0px, calc(var(--chat-reading-gutter, var(--chat-inline-gutter, 16px)) - var(--message-list-scrollbar-inset, 0px) / 2));
 }
 
 .composer-dock.action-only {

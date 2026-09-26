@@ -18,6 +18,14 @@ app.whenReady().then(async () => {
     await win.loadFile(join(directory,'index.html')); await until('document.body.innerText.includes("还没有自动化")');
     assert.deepEqual(await read('Array.from(document.querySelectorAll(".automation-tabs button")).map(b=>b.textContent.trim())'), ['日历','未读0','今天','全部结果','计划管理']);
     assert.equal(await read('document.querySelector(".automation-tabs [aria-pressed=true]").textContent'), '日历');
+    await until('document.querySelectorAll(".calendar-data-row").length===2');
+    assert.equal(await read('document.querySelectorAll(".calendar-data-row input:checked,.calendar-lunar-date,.calendar-import-entry").length'),0,'bundled data is present but not enabled');
+    assert.equal(await read('getComputedStyle(document.querySelector(".automation-panel")).scrollbarGutter'),'stable');
+    await read(`window.calendarGeometry=()=>{const panel=document.querySelector('.automation-panel');return {width:panel.clientWidth,search:document.querySelector('.automation-search').getBoundingClientRect().width,month:document.querySelector('.automation-calendar-month').getBoundingClientRect().width,overflow:panel.scrollHeight>panel.clientHeight};};window.calendarBefore=calendarGeometry();document.querySelector('.calendar-data-controls').open=true;const spacer=document.createElement('div');spacer.id='calendar-overflow-fixture';spacer.style.height='2000px';document.querySelector('.automation-panel').append(spacer);`);
+    assert.equal(await read('calendarBefore.overflow'),false,'baseline has no panel scrollbar');
+    assert.ok(await read('calendarGeometry().overflow'),'fixture triggers the panel scrollbar');
+    assert.deepEqual(await read('(({width,search,month})=>({width,search,month}))(calendarGeometry())'),await read('(({width,search,month})=>({width,search,month}))(calendarBefore)'),'scrollbar appearance preserves calendar and text widths');
+    await read("document.querySelector('#calendar-overflow-fixture').remove();document.querySelector('.calendar-data-controls').open=false");
     await click('新建自动化');
     assert.equal(await read('setupRequests'),1,'new automation opens conversational setup');
     assert.equal(await read('!!document.querySelector(".automation-form")'),false,'creation does not open a manual form');
@@ -168,6 +176,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('getComputedStyle(document.querySelector(".automation-calendar-date-items")).display'),'none','narrow month cells use dots instead of clipped labels');
     const search = value => read(`(()=>{const input=document.querySelector('.automation-search');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await search('明天检查构建'); await until('document.querySelectorAll(".automation-calendar-date").length===1');
+    await until('document.querySelector(".automation-calendar-date").dataset.selected==="true"');
     assert.equal(await read('document.querySelector(".automation-calendar-date").dataset.date'),await read('fixtureKey(new Date(fixtureAt(1,0)))'));
     assert.equal(await read('document.querySelectorAll(".automation-agenda-list .automation-card").length'),1);
     await click('日'); await until('document.querySelector(".automation-calendar").dataset.view==="day"');
@@ -181,7 +190,7 @@ app.whenReady().then(async () => {
       {id:'today',date:fixtureKey(fixtureDay),title:'当天资料',kind:'note'},
       {id:'future-april',date:(fixtureDay.getFullYear()+2)+'-04-08',title:'特殊日春季',kind:'holiday',description:'<script>不能执行</script>'},
       {id:'future-may',date:(fixtureDay.getFullYear()+2)+'-05-09',title:'特殊日夏季',kind:'note'}]}`);
-    await click('导入 JSON / ICS'); await until('document.querySelectorAll(".calendar-data-row").length===1');
+    await click('导入 JSON / ICS'); await until('document.querySelectorAll(".calendar-data-row").length===3');
     await until('document.querySelectorAll(".calendar-import-entry").length===1');
     assert.equal(await read('calls.filter(c=>c.action!=="list").length'),before,'calendar import never creates an automation');
     await search('特殊日'); await until('document.querySelector(".automation-calendar-heading h2").textContent.includes(String(fixtureDay.getFullYear()+2))');
@@ -208,14 +217,22 @@ app.whenReady().then(async () => {
     assert.equal(await read('!!document.querySelector(".calendar-import-entry script")'),false);
     await search(''); await click('年'); await until('document.querySelectorAll(".calendar-year-month").length===12'); await capture('automations-calendar-year.png');
     await click('月');
-    await read('document.querySelector(".calendar-data-actions input").click()'); await until('document.querySelectorAll(".calendar-lunar-date").length===0');
-    await read('document.querySelector(".calendar-data-actions input").click()'); await until('document.querySelectorAll(".calendar-lunar-date").length>0');
-    await read('document.querySelector(".calendar-data-row input").click()');
+    await read(`document.querySelector('[data-calendar-id="cardbush.chinese"] input').click()`); await until('document.querySelectorAll(".calendar-lunar-date").length>0');
+    await read(`document.querySelector('[data-calendar-id="cardbush.chinese"] input').click()`); await until('document.querySelectorAll(".calendar-lunar-date").length===0');
+    await read(`document.querySelector('[data-calendar-id="fixture-dates"] input').click()`);
     await until('document.querySelectorAll(".calendar-import-entry").length===0');
     await search('特殊日'); await until('document.body.innerText.includes("没有匹配的日期")');
-    await read('document.querySelector(".calendar-data-row input").click()');
+    await read(`document.querySelector('[data-calendar-id="fixture-dates"] input').click()`);
     await until('document.querySelectorAll(".calendar-import-entry").length===1');
-    await read('document.querySelector(".calendar-data-row button").click()'); await until('document.querySelectorAll(".calendar-data-row").length===0');
+    await read(`document.querySelector('[data-calendar-id="fixture-dates"] button').click()`); await until('document.querySelectorAll(".calendar-data-row").length===2');
+    await read(`document.querySelector('[data-calendar-id="cardbush.us"] input').click()`);
+    await search('感恩节'); await until('document.querySelector(".calendar-import-entry")?.textContent.includes("Thanksgiving")');
+    assert.equal(await read('document.querySelectorAll(".calendar-lunar-date").length'),0,'US calendar does not turn on lunar dates');
+    await read(`document.querySelector('[data-calendar-id="cardbush.us"] input').click()`);
+    await until('document.body.innerText.includes("没有匹配的日期")');
+    await search(''); await goToToday();
+    await read('document.querySelector(".automation-panel").scrollTop=document.querySelector(".automation-panel").scrollHeight');
+    await capture('automations-bundled-calendars.png');
     await search(''); win.setSize(420,900); await until('window.innerWidth<450');
     await click('计划管理'); await until('document.querySelectorAll(".automation-card").length===19');
     assert.equal(await read('document.querySelectorAll(".automation-prompt").length'),0,'many plans remain collapsed');

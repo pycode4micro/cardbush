@@ -1,6 +1,8 @@
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
+import { inspectLocalApplication, launchLocalApplication, localApplicationDialog, validateLocalApplication } from './localApplications';
+import { pickWindowsApplication, readWindowsApplicationIcon, readWindowsApplicationIcons } from './windowsApplicationShortcuts';
 import type { SandboxSetupHost } from './sandboxTypes';
 import type { RuntimeHostIpcRegistration } from './runtimeHostController.mjs' with { 'resolution-mode': 'import' };
 import type { SshConnectionInput } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
@@ -2311,6 +2313,53 @@ ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string) => {
   };
 });
 
+ipcMain.handle('app-center:pick-local', async (event, language: string) => {
+  assertMainWindowSender(event.sender.id);
+  if (process.platform === 'win32') {
+    const owner = mainWindow, abort = new AbortController();
+    const close = () => abort.abort();
+    owner?.once('closed', close);
+    try {
+      const selected = await pickWindowsApplication(language, owner?.getNativeWindowHandle(), abort.signal);
+      return selected ? await inspectLocalApplication(selected.path, readWindowsApplicationIcon) : null;
+    } finally { owner?.removeListener('closed', close); }
+  }
+  const options = { ...localApplicationDialog(language), defaultPath: app.getPath('desktop') };
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) return null;
+  return inspectLocalApplication(result.filePaths[0], async target => {
+    const icon = await app.getFileIcon(target, { size: 'normal' });
+    return icon.isEmpty() ? '' : icon.toDataURL();
+  });
+});
+
+ipcMain.handle('app-center:refresh-local-icons', async (event, paths: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (!Array.isArray(paths) || paths.length > 100) throw Error('Invalid local apps');
+  const valid = (await Promise.all(paths.map(async target => {
+    try { await validateLocalApplication(target); return target as string; } catch { return null; }
+  }))).filter((target): target is string => target !== null);
+  if (process.platform === 'win32') return readWindowsApplicationIcons(valid);
+  return Object.fromEntries(await Promise.all(valid.map(async target => [target,
+    await app.getFileIcon(target, { size: 'normal' }).then(icon => icon.toDataURL()).catch(() => ''),
+  ])));
+});
+
+ipcMain.handle('app-center:open-local', async (event, target: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  await launchLocalApplication(target, async applicationPath => {
+    if (process.platform !== 'linux') return shell.openPath(applicationPath);
+    await new Promise<void>((resolve, reject) => {
+      const desktopEntry = path.extname(applicationPath).toLowerCase() === '.desktop';
+      const child = spawn(desktopEntry ? 'gio' : applicationPath, desktopEntry ? ['launch', applicationPath] : [], {
+        cwd: path.dirname(applicationPath), detached: true, stdio: 'ignore', shell: false,
+      });
+      child.once('error', reject); child.once('spawn', () => { child.unref(); resolve(); });
+    });
+    return '';
+  });
+});
+
 ipcMain.handle('dialog:pick-attachments', async () => {
   const options: OpenDialogOptions = {
     title: 'Select attachments',
@@ -2507,7 +2556,8 @@ ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string
   if (kind === 'folder') {
     return { path: normalizedPath, name, kind };
   }
-  const iconImage = await app
+  const shortcutIcon = await readWindowsApplicationIcon(normalizedPath).catch(() => '');
+  const iconImage = shortcutIcon ? nativeImage.createFromDataURL(shortcutIcon) : await app
     .getFileIcon(normalizedPath, { size: 'large' })
     .catch(() => nativeImage.createEmpty());
   return {

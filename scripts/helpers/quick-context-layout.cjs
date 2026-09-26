@@ -94,7 +94,9 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
       assert.equal(await run("document.querySelector('.quick-context-tick').getClientRects().length"), 0, 'hidden ticks cannot overlap or intercept the transcript');
     } else {
       await until("getComputedStyle(document.querySelector('.quick-context-handle')).display !== 'none'", 'wide conversation restores rail');
-      assert.ok(await run("document.querySelector('.quick-context-handle').getBoundingClientRect().right + 2 <= document.querySelector('.message-row').getBoundingClientRect().left"), 'rail hit area stays clear of message text');
+      assert.ok(await run("document.querySelector('.quick-context-handle').getBoundingClientRect().left - document.querySelector('.chat-body').getBoundingClientRect().left >= 20"), 'rail keeps a visible inset from the conversation edge');
+      await until("document.querySelector('.quick-context-handle').getBoundingClientRect().right + 2 <= document.querySelector('.message-row').getBoundingClientRect().left", 'rail hit area stays clear of message text');
+      assert.ok(await run("(() => {const message=document.querySelector('.message-row').getBoundingClientRect(),composer=document.querySelector('.composer-surface').getBoundingClientRect();return Math.abs(message.left-composer.left)<2&&Math.abs(message.right-composer.right)<2})()"), 'composer and transcript keep the same reading column');
       await assertFits('viewport ' + width + ' / pane ' + chatWidth);
     }
     assert.equal(await run("retainedContextPanel === document.querySelector('.quick-context-panel')"), true, 'resize must not remount or clear the selected turn');

@@ -13,6 +13,8 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationPanel} from '${local('src/features/automations/AutomationPanel.tsx')}';
 import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
+import chinaCalendar from '${local('assets/calendars/china.json')}';
+import usCalendar from '${local('assets/calendars/us.json')}';
 import {importedThemeStyleVariables} from '${local('src/features/appearance/importedThemeStyle.ts')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
 window.listeners=new Set(); window.calls=[]; window.opened=[]; window.openedRuns=[]; window.setupRequests=0; window.failSave=false;
@@ -20,11 +22,12 @@ window.pickerThemeTokens=[];window.pickerTheme=theme=>{const app=document.queryS
 window.addEventListener('cardbush:open-automation-run',event=>openedRuns.push(event.detail));
 window.state={available:true,jobs:[],sessions:[{id:'session',title:'构建与导出检查',model:'Fixture'}]};
 window.notify=()=>{for(const listener of listeners)listener()};
-window.calendarState={datasets:[],chineseLunar:true};window.calendarCalls=[];window.calendarListeners=new Set();window.importCalendar=undefined;
+window.calendarState={datasets:[chinaCalendar,usCalendar].map(calendar=>({calendar,enabled:false,builtin:true})),chineseLunar:false};window.calendarCalls=[];window.calendarListeners=new Set();window.importCalendar=undefined;
 window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return()=>calendarListeners.delete(fn)},calendarCommand:async command=>{
  calendarCalls.push(command);if(command.action==='import'&&importCalendar){calendarState.datasets=calendarState.datasets.filter(item=>item.calendar.id!==importCalendar.id);calendarState.datasets.push({calendar:structuredClone(importCalendar),enabled:true})}
  if(command.action==='lunar')calendarState.chineseLunar=command.enabled;
  if(command.action==='enabled')calendarState.datasets.find(item=>item.calendar.id===command.id).enabled=command.enabled;
+ calendarState.chineseLunar=calendarState.datasets.find(item=>item.calendar.id==='cardbush.chinese').enabled;
  if(command.action==='remove')calendarState.datasets=calendarState.datasets.filter(item=>item.calendar.id!==command.id);
  return {state:structuredClone(calendarState),...(command.action==='import'&&importCalendar?{imported:importCalendar.name}:{})};
 },onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
@@ -40,7 +43,7 @@ window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return(
  else if(command.action==='delete')state.jobs=state.jobs.filter(job=>job.id!==command.id);
  notify();return structuredClone(job);
 }};
-createRoot(document.getElementById('root')).render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
+createRoot(document.getElementById('root')).render(<div className="app theme-cyberpunk" style={{display:'flex',flexDirection:'column',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
 `;
 try {
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{
