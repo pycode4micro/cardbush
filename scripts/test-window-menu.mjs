@@ -48,6 +48,7 @@ function Fixture(){
   const toggleSidebar=()=>setSidebar(value=>!value);
   const menus=applicationMenus(language,{newConversation:action('new'),openProject:action('folder'),openFiles:action('files'),
     openSettings:action('settings'),showShortcuts:action('shortcuts'),openDiagnostics:action('diagnostics'),
+    openAppCenter:action('app-center'),openPlugins:action('plugins'),openAutomations:action('automations'),
     toggleSidebar,toggleInspector:()=>setPreview(value=>!value),search:action('search'),openBrowser:action('browser'),
     focusBrowserAddress:preview?action('address'):undefined,reloadBrowser:preview?action('reload'):undefined,
     openReview:action('review'),openHistory:action('history'),previousConversation:nav.canGoPrevious?nav.previous:undefined,

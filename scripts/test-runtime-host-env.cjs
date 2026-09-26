@@ -63,9 +63,10 @@ async function run() {
     const controller = new RuntimeUtilityProcessController({ modulePath: fixture, env });
     try {
       await controller.start();
-      // Windows exposes empty environment values as absent in the child. The
-      // lifecycle test checks that the original empty string reaches fork.
-      const empty = process.platform === 'win32' ? null : '';
+      // Electron utility processes expose empty environment values as absent
+      // on Windows and Linux. The lifecycle test checks the original value
+      // reaches fork; explicit policy values must still survive unchanged.
+      const empty = ['win32', 'linux'].includes(process.platform) ? null : '';
       const expected = { sandbox: mode === '' ? empty : mode ?? null, futurePresent: false,
         empty, unicode: '中文 = sandbox', coordination: 'desktop' };
       assert.deepEqual(await command(controller, 'probe'), expected);

@@ -51,6 +51,10 @@ app.whenReady().then(async () => {
     assert.equal(await run(`document.activeElement.dataset.menuItem`), 'newConversation');
     await until(`getComputedStyle(document.activeElement).backgroundColor!=='rgba(0, 0, 0, 0)'`);
     await key('ArrowDown');
+    assert.equal(await run(`document.activeElement.dataset.menuItem`), 'openAppCenter');
+    await key('ArrowDown');
+    assert.equal(await run(`document.activeElement.dataset.menuItem`), 'applications');
+    await key('ArrowDown');
     assert.equal(await run(`document.activeElement.dataset.menuItem`), 'openProject');
     await move('[data-menu-item="openFiles"]');
     await until(`document.querySelector('.window-frame').dataset.menuInput==='pointer'`);
@@ -80,6 +84,7 @@ app.whenReady().then(async () => {
     await key('Tab', {ctrlKey:true}); await until(`document.querySelector('#active').textContent==='a'`);
 
     await menu('file'); await item('newConversation'); await until(`calls.includes('new')`);
+    await menu('file'); await item('openAppCenter'); await until(`calls.includes('app-center')`);
     await menu('file'); await item('openProject'); await until(`calls.includes('folder')`);
     await key('p', {ctrlKey:true}); await until(`calls.includes('files')`);
     await key('t', {ctrlKey:true}); await until(`calls.includes('browser')`);
