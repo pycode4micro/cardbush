@@ -541,13 +541,14 @@ for (const format of ['ordered-partition', 'ordered-exhausted', 'separate', 'ide
   nineSources().forEach((messages, index) => seed(store, `old_${index}`, index + 1, messages));
   const original = structuredClone(store.snapshot('budget').turns);
   const eventLog = new InMemoryRuntimeEventLog(), checkpoints = new InMemoryRuntimeCheckpointStore();
-  let executions = 0, maintenance = 0, ready;
+  let executions = 0, maintenance = 0, ready, initialTools;
   const paused = new Promise(resolve => { ready = resolve; });
   const controller = new AbortController();
   const registry = observationRegistry(() => executions++);
   const first = new InMemoryRuntimeHost({ sessionStore: store, eventLog, checkpointStore: checkpoints,
     toolRegistry: registry, registerDefaultWorkspaceTools: false,
     provider: { countInputTokens: activeCount, async *stream(input) {
+      initialTools ??= structuredClone(input.tools);
       if (!isMaintenance(input)) { yield *observe(input); return; }
       maintenance++;
       if (ordered && (maintenance <= 2 || format === 'ordered-exhausted' && [3, 4, 6, 7].includes(maintenance))) {
@@ -595,7 +596,7 @@ for (const format of ['ordered-partition', 'ordered-exhausted', 'separate', 'ide
   assert.equal(executions, 1, 'completed Tool receipts survive restart');
   const sizes = observed.filter(isMaintenance).map(input => sourceRows(input).filter(row => row.target !== 'not_requested').length);
   assert.deepEqual(sizes, format === 'ordered-partition' ? [9, 1, 10] : [10]);
-  for (const input of observed) assert.deepEqual(input.tools, saved.request.tools);
+  for (const input of observed) assert.deepEqual(input.tools, initialTools, 'restart preserves the dispatched tool catalog, including host display metadata');
   assert.deepEqual(restoredStore.snapshot('budget').turns.slice(0, 9), original);
   const committed = committedCheckpoint(restoredStore.snapshot('budget').turns.at(-1));
   assert.equal(format === 'ordered-partition' ? committed.summaries[9]

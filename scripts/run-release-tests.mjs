@@ -14,7 +14,7 @@ function run(args) {
 }
 const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', name, 'test'))
   .filter(file => file.endsWith('.test.mjs')).map(file => `packages/${name}/test/${file}`));
-run(['--test', '--test-concurrency=3', ...tests]);
+run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
 run(['--test', 'scripts/test-app-center.mjs', 'scripts/test-local-applications.mjs', 'scripts/test-calendar-import.mjs']);
 run(['scripts/test-local-applications-native.mjs']);

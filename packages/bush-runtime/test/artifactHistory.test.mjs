@@ -41,9 +41,10 @@ test('removed presentation tools retain their original attachments through durab
   assert.equal(registry.resolve('present_artifact'), undefined);
   assert.ok(registry.resolve('remember_file'));
   assert.ok(registry.resolve('mcp_app_status'));
+  const persistedRecord = JSON.parse(JSON.stringify(record));
   assert.deepEqual(await host.sendCommand({ kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
-    payload: { sessionId: 's', turnId: 't', toolCallId: 'old-call' } }), record);
+    payload: { sessionId: 's', turnId: 't', toolCallId: 'old-call' } }), persistedRecord);
   assert.deepEqual(await host.sendCommand({ kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
-    payload: { sessionId: 's', turnId: 't', detail: 'full' } }), [record]);
+    payload: { sessionId: 's', turnId: 't', detail: 'full' } }), [persistedRecord]);
   assert.deepEqual(await readFile(join(journal, filename)), originalBytes, 'history reads do not rewrite the original journal');
 });

@@ -449,6 +449,7 @@ test("stores native tool output and Runtime-owned workspace changes separately",
       name: record.toolCall.name,
     },
     outcome: "returned",
+    display: record.display,
     actionManifest: record.actionManifest,
     resultAvailable: true,
     workspaceChanges: [{

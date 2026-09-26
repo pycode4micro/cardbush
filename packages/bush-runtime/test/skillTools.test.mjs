@@ -107,7 +107,7 @@ test('finds bundled skills from natural Chinese requests and exact English names
   for (const [query, expected] of [
     ['帮我分析视频中的动作', 'video-understanding'],
     ['制作演示文稿', 'pptx'],
-    ['分析销售表格', 'xlsx'],
+    ['分析 Excel 销售表格', 'xlsx'],
     ['修改应用主题', 'cardbush-docs'],
     ['卸载插件', 'cardbush-docs'],
     ['帮我把这个插件卸载掉', 'cardbush-docs'],

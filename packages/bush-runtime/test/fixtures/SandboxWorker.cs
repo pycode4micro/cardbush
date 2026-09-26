@@ -9,7 +9,16 @@ internal static class SandboxWorker
 {
     private static int Main(string[] args)
     {
-        if (args[0] == "acl") { Console.Write(Directory.GetAccessControl(args[1]).GetSecurityDescriptorSddlForm(AccessControlSections.Access)); return 0; }
+        if (args[0] == "acl")
+        {
+            var security = Directory.GetAccessControl(args[1]);
+            var descriptor = new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0);
+            // Windows may upgrade a legacy DACL to automatic inheritance on its first edit.
+            // Compare every ACE and the remaining flags (including inheritance protection),
+            // rather than the OS-maintained marker recording that conversion.
+            descriptor.SetFlags(descriptor.ControlFlags & ~ControlFlags.DiscretionaryAclAutoInherited);
+            Console.Write(descriptor.GetSddlForm(AccessControlSections.Access)); return 0;
+        }
         if (args[0] == "wait-write")
         {
             Console.WriteLine("ready"); Console.Out.Flush(); Console.ReadLine();

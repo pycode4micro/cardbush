@@ -285,7 +285,8 @@ test('Runtime captures a real terminal-only Turn before publishing its terminal 
       }
     }
   })();
-  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: 'task', turnId: 'turn', model: 'fixture', tools: catalog.filter(tool => tool.name === 'terminal_exec'), inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'change' } }] });
+  // This fixture tests Git checkpoint capture; command permission boundaries have a separate live suite.
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: 'task', turnId: 'turn', model: 'fixture', permissionMode: 'all_free', tools: catalog.filter(tool => tool.name === 'terminal_exec'), inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'change' } }] });
   await observed;
   assert.equal(terminal.payload.status, 'completed');
   assert.equal(terminal.payload.details.workspaceCheckpointError, undefined);
@@ -745,7 +746,7 @@ test('background terminals do not decide model completion or prevent dialogue, b
     const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
     if (calls++ === 0) {
       yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'server', nameDelta: 'terminal_exec',
-        argumentsDelta: JSON.stringify({ command: "node -e \"require('node:fs').writeFileSync('file.txt','server started');setTimeout(()=>{},30000)\"", yield_time_ms: 1000 }) };
+        argumentsDelta: JSON.stringify({ command: "node -e \"require('node:fs').writeFileSync('file.txt','server started');setTimeout(()=>{},30000)\"", yield_time_ms: 1000, notify_on_exit: false }) };
       yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' };
       return;
     }
@@ -762,7 +763,7 @@ test('background terminals do not decide model completion or prevent dialogue, b
   await host.sendCommand({ kind: CREATE_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'task', workspace: { sourceDir: source, mode: 'worktree' }, metadata: {} } });
   workspaceDir = (await host.sendCommand({ kind: GET_RUNTIME_WORKSPACE_COMMAND, payload: { sessionId: 'task' } })).workspace.workspaceDir;
   const catalog = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
-  const request = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `request-${turnId}`, sessionId: 'task', turnId, model: 'fixture', tools: catalog.filter(tool => tool.name === 'terminal_exec'), inputMessages: [{ messageId: `user-${turnId}`, message: { role: 'user', content: 'continue' } }] });
+  const request = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `request-${turnId}`, sessionId: 'task', turnId, model: 'fixture', permissionMode: 'all_free', tools: catalog.filter(tool => tool.name === 'terminal_exec'), inputMessages: [{ messageId: `user-${turnId}`, message: { role: 'user', content: 'continue' } }] });
   const update = async action => {
     const review = await host.sendCommand({ kind: GET_RUNTIME_WORKSPACE_COMMAND, payload: { sessionId: 'task' } });
     return host.sendCommand({ kind: UPDATE_RUNTIME_WORKSPACE_COMMAND, payload: { sessionId: 'task', action, expectedRevision: review.workspace.revision, expectedSnapshotId: review.snapshotId } });

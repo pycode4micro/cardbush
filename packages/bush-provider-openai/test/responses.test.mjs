@@ -225,7 +225,9 @@ test("projects Bush messages into stateless Responses input items", () => {
     type: "function",
     name: "open_page",
     description: "Open a page",
-    parameters: { type: "object" },
+    parameters: { type: "object", properties: {
+      _display_title: { type: "string", description: "Short action title for the user. Host display only." },
+    } },
     strict: false,
   });
   assert.deepEqual(request.input.map((item) => item.type), [
