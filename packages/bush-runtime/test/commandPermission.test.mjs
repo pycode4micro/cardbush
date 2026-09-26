@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
-import { mkdtemp, mkdir, rm, symlink, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import {
   InMemoryRuntimeCapabilityStore, ToolExecutionCoordinator, ToolRegistry,
@@ -75,10 +75,10 @@ test('unsandboxed execution asks inside the workspace and grants only the exact 
 });
 
 async function directories(t) {
-  const folder = await mkdtemp(join(tmpdir(), 'cardbush-permission-test-'));
+  const folder = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-permission-test-')));
   const paths = Object.fromEntries(['work', 'read', 'write'].map(name => [name, join(folder, name)]));
   await Promise.all(Object.values(paths).map(path => mkdir(path)));
-  t.after(async () => { assert.equal(dirname(folder).toLowerCase(), resolve(tmpdir()).toLowerCase()); await rm(folder, { recursive: true, force: true }); });
+  t.after(async () => { assert.equal(dirname(folder).toLowerCase(), (await realpath(tmpdir())).toLowerCase()); await rm(folder, { recursive: true, force: true }); });
   return { folder, ...paths };
 }
 

@@ -157,7 +157,9 @@ export async function prepareExecutionSandbox(input: {
   if (!(await stat(cwd)).isDirectory()) throw sandboxError('sandbox_policy_invalid', 'The command working directory does not exist.');
   if (process.platform === 'win32' && !input.windowsHostPath) throw sandboxError('sandbox_unavailable', 'The Windows sandbox host is unavailable.');
   if (process.platform === 'win32') await requireWindowsSandbox(input.windowsHostPath!);
-  const directory = await mkdtemp(join(tmpdir(), 'cardbush-sandbox-'));
+  // Windows TEMP may use an 8.3 alias (for example RUNNER~1). The native
+  // supervisor requires canonical roots, including its own private directory.
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-sandbox-')));
   const privateRoot = join(directory, 'private');
   const windowsPolicyPath = process.platform === 'win32' ? join(directory, 'policy.json') : undefined;
   let prepared = false;
@@ -219,7 +221,7 @@ function within(root: string, path: string): boolean {
 }
 
 async function removeSandboxDirectory(directory: string) {
-  if (dirname(resolve(directory)).toLowerCase() !== resolve(tmpdir()).toLowerCase() || !basename(directory).startsWith('cardbush-sandbox-')) {
+  if (dirname(resolve(directory)).toLowerCase() !== (await realpath(tmpdir())).toLowerCase() || !basename(directory).startsWith('cardbush-sandbox-')) {
     throw sandboxError('sandbox_cleanup_failed', 'Refusing to clean an unexpected sandbox directory.');
   }
   await rm(directory, { recursive: true, force: true });
