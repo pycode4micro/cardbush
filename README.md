@@ -2,22 +2,22 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-A desktop AI workspace for conversations, files, coding and MCP plugins. CardBush runs its Agent Runtime inside the application: no separate local server or Python installation is needed for core chat and terminal tools.
+A desktop AI workspace for conversations, files, coding, automation and MCP plugins. Use the built-in local Agent, work in an SSH project, or connect to an independent Agent service over HTTPS or SSH. Local and remote conversations share the same interface; core local chat and command tools need no separate server or Python installation.
 
 ## Download
 
-Current release: **1.0.0-beta.3**. Choose the package for your operating system.
+Source version: **1.0.0-beta.4**. The installers below become available when both platforms pass the tagged release workflow. Until publication completes, use the latest completed version on the [Releases page](https://github.com/pycode4micro/cardbush/releases).
 
 | System | Download | Suitable computers |
 | --- | --- | --- |
-| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.3/CardBush-1.0.0-beta.3-windows-x64.exe) | Intel / AMD 64-bit |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.3/CardBush-1.0.0-beta.3-linux-x86_64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
+| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64-bit |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-linux-x86_64.AppImage) | x86-64 desktop Linux; CI validates Ubuntu 22.04 |
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-Both packages use the same Beta 3 source tag. This update fixes queued guidance ordering and plugin updates blocked by running services, improves streaming and scrolling, and includes scheduling, calendar, review and runtime updates since Beta 2. See the [release notes](docs/releases/1.0.0-beta.3.md); SHA-256 checksums are attached to the release.
+Both packages use the same Beta 4 source tag. This update adds independent Agent services and SSH workspaces, an App Center, shared local/remote conversations and settings, command sandboxes, and improvements to tool execution and context recovery. See the [release notes](docs/releases/1.0.0-beta.4.md). Releases include SHA-256 checksums and packaged startup reports; a successful main-branch build alone does not publish a release.
 
-Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8 and macOS packages are not part of this release. These beta packages are unsigned.
+Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8 and macOS packages are not part of this release. The Windows release workflow requires a publisher signing certificate; ordinary CI builds produce unsigned development installers.
 
 ### Install and start
 
@@ -26,21 +26,27 @@ Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU 
 **Linux:** download the AppImage, allow it to execute, then run it:
 
 ```sh
-chmod +x CardBush-1.0.0-beta.3-linux-x86_64.AppImage
-./CardBush-1.0.0-beta.3-linux-x86_64.AppImage
+chmod +x CardBush-1.0.0-beta.4-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.4-linux-x86_64.AppImage
 ```
 
 AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1`. Chromium also requires a working sandbox; do not disable it as an installation workaround.
 
-On first launch, open **Settings → Models** and configure a supported provider, model and API key. Model usage is billed by your provider. Plugins may require their own dependencies or credentials; follow each plugin's installation instructions.
+On first launch, open **App Center → Settings → Models** and configure a supported provider, model and API key. The settings environment selector chooses the local host or a connected Agent. Model usage is billed by your provider. Plugins may require their own dependencies or credentials; follow each plugin's installation instructions.
 
 ## What is included?
 
-- Streaming conversations, projects, file attachments and previews.
-- File search and editing, terminal commands, tool permissions and execution history.
-- Task queues, guidance, subagents, persistent sessions and automations while the application is running.
-- MCP plugins, skills and an integrated browser.
-- Personalization, keyboard shortcuts and persistent usage statistics.
+- Shared local/remote chat, streaming, projects, image attachments, previews, queued messages and in-turn guidance.
+- An App Center for plugins, automation and settings, with draggable shortcuts, application links, Windows application shortcuts and `@` application references.
+- File search and version-checked editing, batched MCP schema loading, searchable archived tool results and terminal completion notifications.
+- **Ask for approval / Full access** permission modes, with separately managed Windows and Linux command sandboxes.
+- Persistent sessions, subagents, automations, calendar views and optional offline Chinese/US display calendars.
+- MCP plugins, skills, an integrated browser, conversation extraction and context recovery. Built-in skills include Agent deployment and Blender video previsualization.
+- Page back/forward navigation, theme-aware tooltips and shortcuts, personalization and persistent usage statistics.
+
+Open **Agents → +** to connect an independent service. The service owns its model configuration, credentials, projects, plugins and task queue; accepted tasks continue when the desktop disconnects. An **SSH project** instead keeps the Agent on the desktop and runs supported file/command operations on the selected SSH host. See [Agent services](docs/AGENT_SERVICES.md) and [SSH workspaces](docs/SSH_WORKSPACES.md).
+
+App Center entries open actual pages or user-selected applications. Ordinary MCP connectors remain in plugin settings. An `@` reference supplies context to the Agent; it does not execute an application or grant permissions. See [App Center behavior](assets/skills/cardbush-docs/references/app-center.md).
 
 Team workflows are a separate installable plugin, not part of the desktop bundle. See [Team plugin architecture](docs/TEAM_PLUGIN_EXTRACTION.md).
 
@@ -50,14 +56,16 @@ Team workflows are a separate installable plugin, not part of the desktop bundle
 | --- | --- | --- |
 | Chat, files, previews, MCP and integrated browser | Yes | Yes |
 | Terminal commands | PowerShell / cmd | POSIX Shell |
-| Embedded terminal selection | PowerShell; installed Git Bash / WSL | Native Shell; installed PowerShell |
 | Bundled search | Native ripgrep | Native ripgrep |
+| Command sandbox | AppContainer | bubblewrap, when supported by the host |
 | Windows computer-use plugin | Yes | Unavailable |
 | Chrome native connector | Yes | Unavailable; integrated browser remains available |
 | Native process CPU / memory enforcement | Windows Job Objects | Not yet implemented |
 | Managed process admission and owned-process cleanup | Yes | Yes |
 
-Linux does not claim the same resource isolation as Windows. External plugins remain separate programs with their own platform requirements. The terminal setting does not rewrite Agent commands into another Shell language.
+Linux does not claim the same CPU/memory enforcement as Windows. External plugins remain separate programs with their own platform requirements. A remote service exposes its own capabilities, not those of the desktop connecting to it.
+
+Sandbox settings detect the host environment; dependency installation requires a user click. An installed, available sandbox is enabled by default unless the user or administrator has disabled it. With the normal `auto` policy, **Ask for approval** isolates commands and requests additional access when needed; **Full access** uses ordinary processes. An administrator's `required` policy remains binding in either mode. The command sandbox does not cover every MCP, plugin or browser action. See [permissions](docs/PERMISSIONS.md) and [sandbox scope and limits](docs/EXECUTION_SANDBOX.md).
 
 ## Develop
 
@@ -73,12 +81,14 @@ npm run dev
 npm run build
 npm run typecheck
 npm run test:release
-npm run package:win     # Windows: NSIS installer
+npm run package:win     # Windows: signed NSIS installer; publisher certificate required
 npm run package:linux   # Linux: AppImage
 npm run smoke:packaged
 ```
 
 On headless Linux, run desktop tests with `xvfb-run -a npm run test:release`. Outputs are in `release/`. `npm run test:release` requires a preceding build; it runs package tests, adversarial cases, platform contracts and Electron UI checks without repeatedly rebuilding each package. `npm run test:all` also runs the wider feature-specific checks. Provider tests use local mock HTTP servers; no live API key is needed.
+
+For a headless Agent service, use `npm ci --ignore-scripts`, `npm run build:agent`, then `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`. It runs under Node.js without launching Electron. Use a dedicated data directory and configure authentication and SSH/HTTPS access as described in the [deployment guide](docs/AGENT_SERVICES.md). Desktop installers do not deploy or update this service.
 
 Electron downloads use the official source by default. An optional `ELECTRON_MIRROR` can be configured for your network. Repair an incomplete download with `npm run fix:electron`.
 
@@ -88,19 +98,25 @@ Electron downloads use the official source by default. An optional `ELECTRON_MIR
 | --- | --- |
 | `packages/cardbush-platform` | Host capabilities, Shell resolution, executable discovery and native resource paths |
 | `packages/bush-runtime` | Provider-independent Agent loop, tools, permissions and state |
+| `packages/bush-product-agent` | Shared product instructions and turn-request construction |
+| `packages/cardbush-product-host` | Shared model, plugin, MCP, sandbox and maintenance command contracts/configuration |
 | `packages/bush-protocol` | Typed commands, events and IPC contracts |
 | `packages/bush-provider-openai` | OpenAI-compatible provider transport |
-| `electron` | Desktop lifecycle, isolated Utility Runtime host and native adapters |
-| `src` | React UI and typed Runtime client |
+| `packages/bush-mcp-client` | MCP transports and tool/resource integration |
+| `packages/bush-runtime-electron` | Typed Runtime transport/client reused by desktop and Node hosts |
+| `electron` | Desktop lifecycle, Utility Runtime host, headless Agent service and host adapters |
+| `src` | Shared React conversation/settings UI and local/remote backend adapters |
 | `scripts` | Development, regression tests, packaging and smoke checks |
 
-Platform selection is centralized in `@cardbush/platform`; its browser-safe contracts and Node adapters are separate exports. OS-specific clipboard, computer-use and native process code stays in explicit adapters. Adding a host does not require changing the Agent loop. This release supports the application's terminal; it does not introduce a standalone CLI Agent.
+Platform selection is centralized in `@cardbush/platform`; its browser-safe contracts and Node adapters are separate exports. The desktop hosts Runtime in an Electron utility process; the independent service hosts the same worker with Node.js. Product Host and backend adapters select the owner of configuration and operations. The conversation UI consumes shared Runtime events rather than maintaining a separate cloud transcript.
 
-See [cross-platform maintenance and release guide](docs/CROSS_PLATFORM_RELEASE.md), [app host](docs/host/CARDBUSH_APP_HOST.md) and [bundled apps MCP](docs/host/CARDBUSH_APPS_MCP.md).
+See the [architecture overview](docs/ARCHITECTURE.md), [cross-platform maintenance and release guide](docs/CROSS_PLATFORM_RELEASE.md), [tool interaction contracts](docs/TOOL_INTERACTION.md) and [bundled apps MCP](docs/host/CARDBUSH_APPS_MCP.md).
 
 ## Data and security
 
-The application stores conversations, usage records and settings locally under Electron's user-data directory. Clearing transient caches does not reset recorded usage. The renderer uses context isolation and no Node.js integration. Model providers and external plugins receive the data needed for their requested operations.
+Local conversations, usage records and settings live under Electron's user-data directory. Each independent Agent stores its own data and credentials in its server data directory; switching environments does not copy them to another host. Local automation requires the desktop to be running; independent Agent queues and supported automation run while that service is running. Clearing transient caches does not reset recorded usage.
+
+The renderer uses context isolation and no Node.js integration. Remote Agent access is authenticated and represents access to that instance, not a multi-tenant account system. Model providers and external plugins receive the data needed for their requested operations. File/tool permissions and OS command isolation are separate controls.
 
 Do not attach credentials, raw conversation stores or unredacted logs to public issues.
 
