@@ -5,7 +5,8 @@ const path = require('node:path');
 
 module.exports = async function testQuickContextLayout({ run, until, pause, window, root }) {
   await window.webContents.insertCSS(
-    fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8') + '\n' + [
+    fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(root, 'src/components/global-tooltip.css'), 'utf8') + '\n' + [
       'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; --chat-track-width: 780px; --chat-inline-gutter: clamp(18px, calc(3vw + 10px), 46px); }',
       '@media (max-width: 760px) { body[data-context-layout-test] .app { --chat-inline-gutter: 12px; } }',
       'body[data-context-layout-test] .chat-panel { position: absolute; left: var(--test-chat-left); top: 30px; width: var(--test-chat-width); height: calc(100% - 30px); min-width: 0; }',
@@ -45,6 +46,12 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
     undefined;
   `);
   await until("document.querySelectorAll('.quick-context-tick').length > 3", 'context rail fixture');
+  await run(`
+    window.contextTooltipHost=document.createElement('div');
+    document.querySelector('.app').append(contextTooltipHost);
+    window.contextTooltipRoot=require(${JSON.stringify(require.resolve('react-dom/client'))}).createRoot(contextTooltipHost);
+    contextTooltipRoot.render(h(views.GlobalTooltip));
+  `);
   await run("document.querySelector('.quick-context-tick').click()");
   await until("document.querySelector('.quick-context-panel.detail')?.textContent.includes('我先全面')", 'full turn preview');
   await run("window.retainedContextPanel = document.querySelector('.quick-context-panel'); undefined");
@@ -141,18 +148,31 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   assert.equal(await run('copiedContextReply'), await run("chatProps.messages.find(message => message.role === 'assistant').content.trim()"), 'copy retains the complete assistant reply');
   await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
   await until("!document.querySelector('.quick-context-panel')", 'close context panel');
+  // Hidden test windows need Chromium focus without taking over the desktop.
+  const ownsDebugger = !window.webContents.debugger.isAttached();
+  if (ownsDebugger) window.webContents.debugger.attach('1.3');
+  await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+  await until('document.hasFocus()', 'tooltip window focus');
   window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
   await pause(80);
   for (const edge of ['first', 'last']) {
     const tickPoint = await run("(() => { const ticks = [...document.querySelectorAll('.quick-context-tick')]; const r = ticks[" + (edge === 'first' ? '0' : 'ticks.length - 1') + "].getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()");
     window.webContents.sendInputEvent({ type: 'mouseMove', ...tickPoint });
-    await until("!!document.querySelector('.quick-context-turn-preview')", 'edge tooltip');
-    await assertFits(edge + ' tick tooltip', '.quick-context-turn-preview');
+    await until("!!document.querySelector('.global-tooltip:popover-open')", 'edge capsule tooltip');
+    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 1, 'read-only hover has one tooltip');
+    assert.equal(await run("!!document.querySelector('.quick-context-turn-preview')"), false, 'no duplicate request preview');
+    assert.ok(await run("(() => { const r=document.querySelector('.global-tooltip').getBoundingClientRect(); return r.left>=8 && r.right<=innerWidth-8 && r.top>=8 && r.bottom<=innerHeight-8; })()"), 'edge capsule stays inside viewport');
     window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
-    await until("!document.querySelector('.quick-context-turn-preview')", 'leave tooltip');
+    await until("!document.querySelector('.global-tooltip')", 'leave tooltip');
   }
   await run("document.querySelector('.quick-context-tick').click()");
   await until("!!document.querySelector('.quick-context-panel')", 'reopen');
+  const expandedTick = await run("(() => {const r=document.querySelector('.quick-context-tick[aria-expanded=true]').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()");
+  window.webContents.sendInputEvent({type:'mouseMove', ...expandedTick});
+  await pause(450);
+  assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'open interactive turn preview replaces trigger help');
+  await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false });
+  if (ownsDebugger) window.webContents.debugger.detach();
   await run("document.querySelector('.message-list').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))");
   await until("!document.querySelector('.quick-context-panel')", 'outside click still closes panel');
   await run("document.querySelector('.quick-context-tick').click()");
@@ -169,7 +189,8 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await until("!!document.querySelector('.quick-context-panel.detail')", 'reopen before session switch');
   await run("updateChat({ activeConversationId: 'session-context-other' })");
   await until("!document.querySelector('.quick-context-panel')", 'session switch closes the previous turn preview');
-  await run(`document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest;
+  await run(`contextTooltipRoot.unmount(); contextTooltipHost.remove();
+    document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest;
     if (contextClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', contextClipboardDescriptor);
     else delete navigator.clipboard;`);
   console.log('Quick context layout passed: retained turn previews, copy, jump, session isolation, split-pane widths, live resize, short window, expanded composer, themes, scroll isolation and edge tooltips.');

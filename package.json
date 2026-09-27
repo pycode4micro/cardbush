@@ -82,7 +82,7 @@
     "test:agent-language": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && node --test scripts/test-agent-language.mjs",
     "test:composer-actions": "node --test scripts/test-composer-quick-actions-contract.mjs scripts/test-plugin-prompts.mjs",
     "test:composer-references": "npm run build:runtime && node --test scripts/test-composer-references.mjs scripts/test-composer-quick-actions-contract.mjs packages/bush-runtime/test/sessionRuntimeHost.test.mjs && node scripts/test-plugin-connections-ui.mjs && node scripts/test-inspector-navigation-ui.mjs",
-    "test:editor-focus": "tsc -p tsconfig.node.json && node --test scripts/test-editor-focus.mjs && node scripts/test-editor-focus-worker.cjs",
+    "test:editor-focus": "tsc -p tsconfig.node.json && node --test scripts/test-editor-focus.mjs && node scripts/test-editor-focus-worker.cjs && node scripts/run-app-views-test.mjs delete-focus",
     "test:panel-motion": "node scripts/test-panel-motion-contract.mjs",
     "test:composer-resize": "node scripts/run-app-views-test.mjs composer-resize",
     "test:work-summary-outputs": "node --test scripts/test-work-summary-outputs.mjs && node scripts/test-work-summary-outputs-ui.mjs",

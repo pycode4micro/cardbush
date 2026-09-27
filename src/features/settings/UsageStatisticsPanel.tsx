@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { loadCumulativeUsageStatistics, type CumulativeUsageStatistics } from './usageActivity';
@@ -10,8 +10,6 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [activityRange, setActivityRange] = useState<UsageHeatmapRange>('year');
-  const [hovered, setHovered] = useState<{ text: string; x: number; y: number } | null>(null);
-  const tooltip = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -32,19 +30,6 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
     return () => { alive = false; window.clearInterval(timer); window.removeEventListener('focus', onFocus); };
   }, [active, retry]);
 
-  useEffect(() => {
-    const node = tooltip.current;
-    if (!hovered || !node) { node?.hidePopover(); return; }
-    node.showPopover();
-    const halfWidth = node.getBoundingClientRect().width / 2;
-    node.style.left = `${Math.min(Math.max(hovered.x, halfWidth + 12), window.innerWidth - halfWidth - 12)}px`;
-    const dismiss = () => setHovered(null);
-    document.addEventListener('scroll', dismiss, true);
-    window.addEventListener('resize', dismiss);
-    return () => { document.removeEventListener('scroll', dismiss, true); window.removeEventListener('resize', dismiss); };
-  }, [hovered]);
-  useEffect(() => { setHovered(null); }, [activityRange, active]);
-
   const heatmap = useMemo(() => usageHeatmap(statistics?.activity ?? [], language, activityRange), [statistics?.activity, language, activityRange]);
   const locale = zh ? 'zh-CN' : 'en-US';
   const statItems = [
@@ -58,11 +43,6 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
     const date = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(new Date(`${day.date}T12:00:00`));
     if (day.date < startedDay) return zh ? `${date} · 尚未开始记录` : `${date} · Before recording began`;
     return zh ? `${date} 使用了 ${day.tokens.toLocaleString(locale)} 个 Token` : `${date}: ${day.tokens.toLocaleString(locale)} tokens used`;
-  };
-  const showDay = (day: typeof heatmap.days[number], element: HTMLElement) => {
-    if (!statistics || day.future) { setHovered(null); return; }
-    const rect = element.getBoundingClientRect();
-    setHovered({ text: describeDay(day), x: Math.min(Math.max(rect.left + rect.width / 2, 140), window.innerWidth - 140), y: rect.top - 10 });
   };
 
   return <div className="usage-settings">
@@ -83,7 +63,7 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
         {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
       </div>
     </div>
-    <div className="usage-heatmap-scroll" onPointerLeave={() => setHovered(null)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setHovered(null); }}>
+    <div className="usage-heatmap-scroll">
       <div className={`usage-heatmap-frame range-${activityRange}`} style={{ '--usage-heatmap-columns': heatmap.weekCount } as CSSProperties}>
         <div className="usage-heatmap-grid" key={`${activityRange}-${Boolean(statistics)}-${active}`} aria-label={zh ? 'Token 使用活动' : 'Token usage activity'}>
           {heatmap.days.map((day, index) => <button type="button" key={day.date}
@@ -91,7 +71,6 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
             style={{ '--usage-enter-delay': `${Math.floor(index / 7) * 11}ms` } as CSSProperties}
             aria-label={statistics ? describeDay(day) : day.date} aria-disabled={day.future || !statistics}
             tabIndex={index === Math.min(heatmap.todayIndex, heatmap.days.length - 1) ? 0 : -1}
-            onPointerEnter={event => showDay(day, event.currentTarget)} onFocus={event => showDay(day, event.currentTarget)}
             onKeyDown={event => {
               const offset = ({ ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 } as Record<string, number>)[event.key];
               if (offset === undefined) return;
@@ -107,8 +86,6 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
         </div>
       </div>
     </div>
-    <div ref={tooltip} popover="manual" className="usage-tooltip" role="tooltip"
-      style={hovered ? { left: hovered.x, top: hovered.y } : undefined}>{hovered?.text}</div>
     {statistics && <div className="usage-insights">
       <span>{zh ? `${statistics.requestCount.toLocaleString(locale)} 次模型请求` : `${statistics.requestCount.toLocaleString(locale)} model requests`}</span>
       <span>{zh ? `最长连续 ${statistics.longestStreak} 天` : `${statistics.longestStreak}-day longest streak`}</span>

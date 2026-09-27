@@ -171,7 +171,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!document.querySelector('.global-tooltip')", 'hover shortcut tooltip visible');
   assert.equal(await run("document.querySelector('.global-tooltip kbd').textContent"), 'Ctrl + Shift + A');
   assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '999px');
-  assert.equal(await run("document.querySelector('.app-center-launcher').hasAttribute('title')"), false, 'no duplicate native tooltip');
+  assert.equal(await run("document.querySelector('.app-center-launcher').title"), '', 'no duplicate native tooltip');
   await run(`centerReactivate();document.querySelector('.app-center-launcher').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:${launcher.x},clientY:${launcher.y}}));document.querySelector('.app-center-launcher').dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerType:'mouse',clientX:${launcher.x},clientY:${launcher.y}}));`);
   await pause(500);
   assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'stationary pointer restoration does not summon a tooltip');
@@ -179,6 +179,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.webContents.sendInputEvent({type:'mouseMove',x:launcher.x+2,y:launcher.y});
   await until("!!document.querySelector('.global-tooltip') && document.querySelector('.app-center-dock').dataset.hoverExpanded==='true'", 'moving within the dock after returning restores normal hover');
   await require('./tooltip-activation.cjs')({ run, until, pause, window });
+  await require('./tooltip-titles.cjs')({ run, until, pause, window, root });
   await run("views.saveKeyboardShortcuts({openAppCenter:{key:'k',ctrl:true,shift:true}})");
   window.webContents.sendInputEvent({type:'mouseMove',x:700,y:400}); await pause(30);
   window.webContents.sendInputEvent({type:'mouseMove',...launcher});

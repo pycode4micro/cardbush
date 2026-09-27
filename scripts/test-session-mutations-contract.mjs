@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { setImmediate as nextTask } from 'node:timers/promises';
 import ts from 'typescript';
 
 function evaluate(source, bindings) {
@@ -22,7 +23,7 @@ const original = { revision: 7, supersededMessageIds: [], turns: [{ messages: [
 let dispatched;
 const edit = evaluate(`${editSource}\nglobalThis.run = editMessage;`, {
   crypto: globalThis.crypto,
-  createDesktopRuntimeSession: () => ({
+  conversationRuntime: () => ({
     client: { getSession: async () => structuredClone(original),
       supersedeSessionMessages: () => { assert.fail('Preparation must never supersede durable messages'); } },
     dispose() {},
@@ -60,7 +61,7 @@ for (const rejected of [true, false]) {
   const ctx = evaluate(`${deletion}\nglobalThis.run = deleteConversation;`, {
     useCallback: (callback) => callback,
     conversationsRef: { current: conversations }, localize: (_, english) => english,
-    window: { confirm: text => { confirmations.push(text); return true; } },
+    confirmAction: async options => { confirmations.push(options); return true; },
     historyReadsRef: { current: { invalidate: id => invalidatedReads.push(['history', id]) } },
     contextUsageReadsRef: { current: { invalidate: id => invalidatedReads.push(['usage', id]) } },
     clearSessionAttention: () => { clearedAttention++; }, setMessageHistoryLoading() {},
@@ -71,7 +72,8 @@ for (const rejected of [true, false]) {
     setError: (value) => { error = value; }, errorMessage: (value) => value.message,
   });
   const pending = ctx.run('s');
-  assert.deepEqual(confirmations, ['Delete “Source conversation”?\nScheduled tasks are unaffected.']);
+  await nextTask();
+  assert.deepEqual(JSON.parse(JSON.stringify(confirmations)), [{ title: 'Delete conversation', message: 'Delete “Source conversation”?\nScheduled tasks are unaffected.', confirmLabel: 'Delete', cancelLabel: 'Cancel' }]);
   assert.equal(error, null, 'retrying deletion clears the previous visible error');
   assert.equal(conversations.length, 2, 'The pending delete stays visible');
   assert.deepEqual(messages.s, ['original']);
@@ -88,7 +90,7 @@ for (const rejected of [true, false]) {
 }
 const cancelled = evaluate(`${deletion}\nglobalThis.run = deleteConversation;`, {
   useCallback: callback => callback, conversationsRef: { current: [{ id: 's', title: '待删除的会话' }] },
-  localize: chinese => chinese, window: { confirm: text => { assert.equal(text, '确定删除会话“待删除的会话”吗？\n定时任务不受影响。'); return false; } },
+  localize: chinese => chinese, confirmAction: async options => { assert.equal(options.message, '确定删除会话“待删除的会话”吗？\n定时任务不受影响。'); return false; },
   clearSessionAttention: () => assert.fail('Cancel must not alter attention'), setMessageHistoryLoading() {},
   deleteConversationApi: () => assert.fail('Cancel must not send a deletion command'),
   setError: () => assert.fail('Cancel must not alter local state'),
@@ -101,6 +103,7 @@ for (const exists of [true, false]) {
   let selected, error, loaded = [], requests = [];
   const ctx = evaluate(`${opening}\nglobalThis.run = openStoredConversation;`, {
     useCallback: callback => callback,
+    navigationRevisionRef: { current: 0 }, conversationsRef: { current: [] },
     updateConversation: async request => {
       requests.push(request); if (!exists) throw Error('Conversation does not exist');
       return { id: request.sessionId, title: 'Temporary execution', metadata: { hidden: false } };

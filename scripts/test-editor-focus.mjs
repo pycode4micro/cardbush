@@ -50,6 +50,17 @@ test('passive recovery repairs ownerless focus instead of mistaking it for previ
   assert.equal(f.widgetCalls(), 1);
 });
 
+test('explicit editor activation checks native owner and child frame even when focus flags look healthy', async () => {
+  for (const otherFrame of [false, true]) {
+    const f = fixture(); f.state.pageFocused = true; f.state.documentFocused = true;
+    if (otherFrame) f.contents.focusedFrame = {};
+    else f.state.owner = { isDestroyed: () => false };
+    assert.equal(await f.restore(), true);
+    assert.equal(f.calls(), 1, 'explicit input activation takes native ownership from the preview');
+    assert.equal(f.widgetCalls(), 1, 'the active editor receives keyboard input');
+  }
+});
+
 test('passive recovery does not steal focus from a native preview, webview or iframe', async () => {
   const f = fixture(); f.state.documentFocused = false;
   f.state.owner = { isDestroyed: () => false };

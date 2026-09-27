@@ -34,16 +34,17 @@ export async function restoreEditorFocus(
     // Do not raise a background window or bypass a modal, including a window
     // deactivated while the renderer was answering the focus check.
     if (!current?.active || !eligible()) return false;
+    const owner = focusedContents();
+    const previewOwnsFocus = Boolean(owner && owner !== contents && !owner.isDestroyed())
+      || Boolean(contents.focusedFrame && contents.focusedFrame !== contents.mainFrame);
     if (state.passive) {
-      const owner = focusedContents();
-      if (owner && owner !== contents && !owner.isDestroyed()) return false;
-      if (contents.focusedFrame && contents.focusedFrame !== contents.mainFrame) return false;
+      if (previewOwnsFocus) return false;
       // No native owner is a lost focus, not proof that a preview owns it.
     }
     const wasFocused = contents.isFocused();
-    if (!wasFocused) contents.focus();
+    if (!wasFocused || previewOwnsFocus) contents.focus();
     // focus() can be a no-op when Chromium's widget and native focus disagree.
-    if (!current.documentFocused || !wasFocused) target!.focusOnWebView();
+    if (!current.documentFocused || !wasFocused || previewOwnsFocus) target!.focusOnWebView();
     return contents.isFocused();
   } catch {
     // Closing/navigating a view can dispose its frame during the check.

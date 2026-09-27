@@ -33,6 +33,8 @@ import {
 import { normalizeChatMessagesForDisplay } from './features/chatMessages/transcript/messageProjection';
 import { useBatchedTranscript } from './features/chatMessages/useBatchedTranscript';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
+import { GlobalTooltip } from './components/GlobalTooltip';
+import { useScrollBottomPresence } from './hooks/useScrollBottomPresence';
 import { ImageGalleryProvider } from './features/chatMessages/ImageGalleryContext';
 import {
   themeBackgroundColor,
@@ -393,6 +395,10 @@ export function ShadowWindow({
     () => [...renderedSourceMessages, ...renderedShadowMessages],
     [renderedShadowMessages, renderedSourceMessages],
   );
+  const scrollBottomVisible = useScrollBottomPresence({
+    scrollerRef: transcriptRef, requestedVisible: showScrollBottom,
+    scope: conversation?.id ?? '', enabled: !initializing && !closing,
+  });
 
   return (
     <main
@@ -404,6 +410,7 @@ export function ShadowWindow({
           } as CSSProperties
         : undefined}
     >
+      {!embedded && <GlobalTooltip/>}
       <header className={`shadow-window-titlebar${embedded ? ' shadow-inspector-titlebar' : ''}`}>
         <div className={`shadow-window-title${embedded ? '' : ' window-drag'}`}>
           <ShadowCloneIcon size={15} />
@@ -498,11 +505,11 @@ export function ShadowWindow({
           </ImageGalleryProvider>
         </div>
         <button
-          className={`scroll-bottom shadow-window-scroll-bottom${showScrollBottom ? '' : ' hidden'}`}
+          className={`scroll-bottom shadow-window-scroll-bottom${scrollBottomVisible ? '' : ' hidden'}`}
           type="button"
           aria-label={language === 'zh' ? '回到底部' : 'Scroll to bottom'}
-          aria-hidden={!showScrollBottom}
-          tabIndex={showScrollBottom ? 0 : -1}
+          aria-hidden={!scrollBottomVisible}
+          tabIndex={scrollBottomVisible ? 0 : -1}
           onClick={scrollTranscriptToBottom}
         >
           <ArrowDown size={16} strokeWidth={1.8} />

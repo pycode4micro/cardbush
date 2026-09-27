@@ -138,7 +138,9 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".calendar-date-picker").matches(":popover-open")');
     assert.equal(await read('document.activeElement.dataset.datePickerTrigger'), 'title', 'Escape restores the invoking control');
     await read('pickerTheme("dark")');
-    await openPicker(); await field('年份', '2024');
+    await openPicker();
+    const yearSteps = 2024 - await read('new Date().getFullYear()');
+    for (let step = 0; step < Math.abs(yearSteps); step++) await read(`document.querySelector('[data-picker-step="${yearSteps < 0 ? 'previous' : 'next'}"]').click()`);
     await read(`document.querySelector('[data-picker-period="2024-02"]').click()`);
     await until('document.querySelector(".automation-calendar-heading h2").textContent.includes("2024年2月")');
     await openPicker('title'); await read('document.querySelector("[data-picker-mode=day]").click()');
@@ -148,9 +150,11 @@ app.whenReady().then(async () => {
     await read(`document.querySelector('[data-picker-date="2024-02-29"]').click()`);
     await until('document.querySelector(".automation-calendar").dataset.view==="day"');
     assert.ok(await read('document.querySelector(".automation-calendar-heading h2").textContent.includes("2024年2月29日")'));
-    await openPicker(); await field('年份', '2025');
+    await openPicker(); await read('document.querySelector("[data-picker-mode=month]").click()');
+    await read('document.querySelector("[data-picker-step=next]").click()');
+    await read('document.querySelector("[data-picker-mode=day]").click()');
     assert.equal(await read(`!!document.querySelector('[data-picker-date="2025-02-29"]')`), false);
-    await read('document.querySelector(".calendar-picker-navigation input").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true}))');
+    await read(`document.querySelector('[data-picker-date="2025-02-28"]').click()`);
     await until('document.querySelector(".automation-calendar-heading h2").textContent.includes("2025年2月28日")');
     await openPicker(); await read('document.querySelector("[data-picker-mode=year]").click();');
     await read('document.querySelector("[data-picker-step=next]").click()');

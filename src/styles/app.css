@@ -95,13 +95,13 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   background-clip: padding-box;
 }
 
-.app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle) {
+.app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle):not(.compact-sidebar-backdrop):not(.scroll-bottom) {
   transition-property: color, background-color, border-color, box-shadow, opacity, scale;
   transition-duration: var(--motion-fast);
   transition-timing-function: var(--ease-standard);
 }
 
-.app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle):active {
+.app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle):not(.compact-sidebar-backdrop):not(.scroll-bottom):active {
   scale: 0.975;
   transition-duration: 80ms;
 }
@@ -911,10 +911,10 @@ body.sidebar-resizing .right-inspector {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: var(--sidebar-text-soft, var(--text-soft));
+  color: var(--sidebar-text-muted, var(--text-soft));
   border-radius: 8px;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .section-header.interactive {
@@ -923,7 +923,7 @@ body.sidebar-resizing .right-inspector {
 
 .section-header.interactive:hover,
 .section-header.interactive:focus-visible {
-  color: var(--sidebar-text, var(--text));
+  color: var(--sidebar-text-soft, var(--text-soft));
   background: color-mix(in srgb, gray 10%, transparent);
   outline: none;
 }
@@ -3948,47 +3948,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   pointer-events: auto;
 }
 
-.quick-context-turn-preview {
-  position: absolute;
-  left: 36px;
-  top: clamp(min(62px, 50%), var(--quick-context-preview-top, 50%), max(50%, calc(100% - 62px)));
-  z-index: 3;
-  width: min(390px, max(0px, calc(100% - 36px)));
-  max-height: min(124px, 100%);
-  padding: 11px 13px;
-  overflow: hidden;
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
-  border-radius: 14px;
-  box-shadow: 0 14px 34px color-mix(in srgb, var(--shadow) 92%, transparent);
-  backdrop-filter: blur(16px) saturate(112%);
-  -webkit-backdrop-filter: blur(16px) saturate(112%);
-  pointer-events: none;
-  transform: translateY(-50%);
-  animation: quick-context-preview-in 140ms ease-out;
-}
-
-.quick-context-turn-preview small {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--text-soft);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.quick-context-turn-preview p {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  color: var(--text-mid);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .quick-context-panel::before {
   content: "";
   position: absolute;
@@ -5659,6 +5618,27 @@ body.right-inspector-resizing .right-inspector-resizer {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* Bold prose and inline code have distinct emphasis. Only inline code gets a
+   theme-aware capsule, without inheriting bold weight from surrounding text. */
+.assistant-final-answer .markdown-content :not(pre) > code {
+  padding: 0.08em 0.38em;
+  color: var(--markdown-emphasis-text);
+  background: var(--markdown-emphasis-bg);
+  font-weight: 400;
+  border-radius: 999px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  overflow-wrap: anywhere;
+}
+
+.assistant-final-answer .markdown-content strong {
+  font-weight: 700;
+}
+
+.assistant-final-answer .markdown-content a strong {
+  color: inherit;
 }
 
 .assistant-bubble pre code,
@@ -8170,7 +8150,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   opacity: 1;
   cursor: pointer;
   appearance: none;
-  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.2, 0.72, 0.25, 1), background-color 120ms ease;
+  transition: opacity 150ms ease, background-color 120ms ease;
   transform: translateX(-50%);
   z-index: 6;
 }
@@ -8185,7 +8165,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 .scroll-bottom:focus-visible {
   color: var(--text);
   background: var(--surface-strong);
-  transform: translate(-50%, -1px);
 }
 
 .scroll-bottom:focus-visible {
@@ -8193,14 +8172,9 @@ body.right-inspector-resizing .right-inspector-resizer {
   outline-offset: 3px;
 }
 
-.scroll-bottom:active {
-  transform: translate(-50%, 1px);
-}
-
 .scroll-bottom.hidden {
   pointer-events: none;
   opacity: 0;
-  transform: translate(-50%, 4px) scale(0.94);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -15360,12 +15334,6 @@ body.queue-reordering * {
   background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
 }
 
-.app.has-custom-background .scroll-bottom.hidden {
-  pointer-events: none;
-  opacity: 0;
-  transform: translate(-50%, 4px) scale(0.94);
-}
-
 .settings-stack {
   display: grid;
   gap: 26px;
@@ -20408,12 +20376,6 @@ body.change-review-resizing .change-review-file-nav-viewport { transition: none;
 .usage-heatmap-cell.level-3 { background: color-mix(in srgb, #3b82f6 67%, var(--surface)); }
 .usage-heatmap-cell.level-4 { background: #3b82f6; }
 @keyframes usage-cell-enter { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
-.usage-tooltip {
-  position: fixed; inset: auto; margin: 0; padding: 9px 12px; translate: -50% -100%;
-  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 4px 16px #0003; color: var(--text); font-size: 12px; pointer-events: none;
-  max-width: min(320px, calc(100vw - 24px));
-}
 .usage-insights { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; color: var(--text-mid); font-size: 12px; }
 .usage-recording-note { margin: 0; color: var(--text-soft); font-size: 11px; line-height: 1.7; }
 .usage-load-error { display: flex; align-items: center; gap: 10px; color: var(--danger); font-size: 12px; }
@@ -20465,9 +20427,16 @@ body.change-review-resizing .change-review-file-nav-viewport { transition: none;
     z-index: 40;
     border: 0;
     border-radius: 0;
-    background: color-mix(in srgb, black 32%, transparent);
+    background: color-mix(in srgb, var(--bg) 28%, transparent);
+    backdrop-filter: blur(6px) saturate(0.9);
+    -webkit-backdrop-filter: blur(6px) saturate(0.9);
+    opacity: 0;
+    transition: opacity 180ms var(--ease-standard);
     cursor: default;
   }
+
+  .compact-sidebar-backdrop[data-visible="true"] { opacity: 1; }
+  .compact-sidebar-backdrop[aria-hidden="true"] { pointer-events: none; }
 
   .desktop-shell > .sidebar-resizer, .settings-shell > .sidebar-resizer,
   .right-inspector-resizer { display: none; }

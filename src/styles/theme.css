@@ -89,6 +89,8 @@ button {
   --border: #e5e0d8;
   --accent: var(--info);
   --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  --markdown-emphasis-bg: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --markdown-emphasis-text: var(--text);
   --text: #1e1c1a;
   --text-mid: #6b6560;
   --text-soft: #756e66;

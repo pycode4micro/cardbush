@@ -2,9 +2,9 @@ import { useContext } from 'react';
 import { ConversationHostContext } from '../conversationHost';
 import { ArrowUpRight, Check, Copy, X } from 'lucide-react';
 import {
-  type CSSProperties,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -34,6 +34,7 @@ export function QuickContextRail({
   turnHistoryAvailable?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
+  const panelId = useId();
   const userSignature = useMemo(
     () => messages
       .filter((message) => message.role === 'user')
@@ -52,10 +53,6 @@ export function QuickContextRail({
   const [copied, setCopied] = useState(false);
   const [railCapacity, setRailCapacity] = useState(72);
   const [railWindowStart, setRailWindowStart] = useState(0);
-  const [hoveredTurnPreview, setHoveredTurnPreview] = useState<{
-    messageId: string;
-    top: number;
-  } | null>(null);
   const [visibleUserMessageId, setVisibleUserMessageId] = useState('');
   const railRef = useRef<HTMLElement>(null);
   const railHandleRef = useRef<HTMLDivElement>(null);
@@ -64,9 +61,6 @@ export function QuickContextRail({
     () => messages.filter((message) => message.role === 'user'),
     [userSignature],
   );
-  const hoveredTurn = hoveredTurnPreview
-    ? railTurns.find((message) => message.id === hoveredTurnPreview.messageId) ?? null
-    : null;
   const currentRailIndex = railTurns.findIndex((message) => message.id === (
     visibleUserMessageId || lastUserMessage?.id
   ));
@@ -326,50 +320,20 @@ export function QuickContextRail({
                 className={`quick-context-tick${isCurrentTurn ? ' current' : ''}`}
                 aria-current={isCurrentTurn ? 'true' : undefined}
                 aria-label={compactText(message.content, 120)}
-                onPointerEnter={(event) => {
-                  const railRect = railRef.current?.getBoundingClientRect();
-                  const tickRect = event.currentTarget.getBoundingClientRect();
-                  if (!railRect) return;
-                  setHoveredTurnPreview({
-                    messageId: message.id,
-                    top: tickRect.top + tickRect.height / 2 - railRect.top,
-                  });
-                }}
-                onPointerLeave={() => setHoveredTurnPreview(null)}
-                onFocus={(event) => {
-                  const railRect = railRef.current?.getBoundingClientRect();
-                  const tickRect = event.currentTarget.getBoundingClientRect();
-                  if (!railRect) return;
-                  setHoveredTurnPreview({
-                    messageId: message.id,
-                    top: tickRect.top + tickRect.height / 2 - railRect.top,
-                  });
-                }}
-                onBlur={() => setHoveredTurnPreview(null)}
-                onClick={() => {
-                  setHoveredTurnPreview(null);
-                  selectRailTurn(message);
-                }}
+                aria-haspopup="dialog"
+                aria-expanded={panelView === 'detail' && selectedTurn?.message.id === message.id}
+                aria-controls={panelView === 'detail' && selectedTurn?.message.id === message.id ? panelId : undefined}
+                onClick={() => selectRailTurn(message)}
               />
             );
           })}
         </span>
       </div>
       <div className="quick-context-popovers">
-        {hoveredTurn && panelView === 'closed' && (
-          <div
-            className="quick-context-turn-preview"
-            role="tooltip"
-            style={{ '--quick-context-preview-top': `${hoveredTurnPreview?.top ?? 0}px` } as CSSProperties}
-          >
-            <small>{language === 'zh' ? '用户请求' : 'User request'}</small>
-            <p>{hoveredTurn.content}</p>
-          </div>
-        )}
         {panelView !== 'closed' && (
-          <section className={`quick-context-panel ${panelView}`}>
+          <section id={panelId} role="dialog" aria-labelledby={`${panelId}-title`} className={`quick-context-panel ${panelView}`}>
             <header>
-              <strong>
+              <strong id={`${panelId}-title`}>
                 {language === 'zh' ? '本轮对话' : 'Conversation turn'}
               </strong>
               <button

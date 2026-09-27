@@ -18,6 +18,7 @@ app.whenReady().then(async () => {
       'src/features/settings/conversationStyle.ts',
       'src/features/shortcuts/keyboardShortcuts.ts',
       'src/components/WindowSidebarToggle.tsx', 'src/components/SidebarResizer.tsx',
+      'src/components/GlobalTooltip.tsx',
       'src/hooks/useSoftPanelPresence.ts', 'src/features/sidebar/ChatSidebar.tsx',
       'src/features/sidebar/conversationArchives.ts',
     ].map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n')
@@ -56,7 +57,7 @@ app.whenReady().then(async () => {
   })()`);
   try {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await win.webContents.insertCSS(['src/styles/theme.css', 'src/styles/app.css', 'src/styles/themes/cyberpunk.css', 'src/features/settings/keyboardSettings.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
+    await win.webContents.insertCSS(['src/styles/theme.css', 'src/styles/app.css', 'src/styles/themes/cyberpunk.css', 'src/features/settings/keyboardSettings.css', 'src/components/global-tooltip.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
     await run(`
       window.failures = []; window.usageReads = 0;
       window.usageFixture = { startedAt:'2025-09-12T00:00:00Z', promptTokens:59446000, completionTokens:515000, totalTokens:59961000,
@@ -117,6 +118,7 @@ app.whenReady().then(async () => {
         window.setSettingsActive = setActive;
         window.restoreSidebarWidth = () => setWidth(272);
         return h('div', { className: 'app theme-' + (window.settingsTheme || 'dark'), style: { width: '100vw', height: '100vh', minWidth: 0, '--sidebar-width': width + 'px' } },
+          h(views.GlobalTooltip),
           h('header', { className: 'window-frame window-drag' }, h(views.WindowSidebarToggle, {
             language: 'zh', collapsed, onToggle: () => setCollapsed(value => !value),
           })),
@@ -317,16 +319,24 @@ app.whenReady().then(async () => {
     await click('使用统计');
     await until("!!document.querySelector('.usage-stat-grid') && document.querySelector('.usage-stat-grid').getAttribute('aria-busy') === 'false'");
     assert.equal(await run('usageReads'), 1, 'usage loads only when its page opens');
-    assert.equal(await run("document.querySelector('.usage-stat').title"), '59,961,000', 'usage retains the supplied totals');
+    assert.equal(await run("document.querySelector('.usage-stat').dataset.globalTooltipTitle"), '59,961,000', 'usage retains the supplied totals');
     assert.equal(await run("document.querySelector('.usage-settings .settings-card')"), null, 'usage is a flat summary rather than a nested card');
     assert.equal(await run("document.querySelectorAll('.usage-heatmap-cell').length"), 371);
     assert.equal(await run("getComputedStyle(document.querySelector('.usage-heatmap-cell.entering')).animationName"), 'usage-cell-enter');
     await pause(900);
-    await run("document.querySelector('.usage-heatmap-cell[tabindex=\"0\"]').focus(); document.activeElement.dispatchEvent(new FocusEvent('focusin', {bubbles:true}))");
-    await until("document.querySelector('.usage-tooltip:popover-open')?.textContent.includes('Token')");
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await until('document.hasFocus()');
+    await run("document.querySelector('.usage-heatmap-cell[tabindex=\"0\"]').focus()");
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Left'});
+    win.webContents.sendInputEvent({type:'keyUp',keyCode:'Left'});
+    await until("document.querySelector('.global-tooltip:popover-open')?.textContent.includes('Token')");
+    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 1, 'heatmap uses only the shared capsule tooltip');
     await pause(140);
     fs.writeFileSync(path.join(root, 'tmp/settings-usage-reorganized.png'), (await win.webContents.capturePage()).toPNG());
-    await run("document.querySelector('.usage-heatmap-cell[tabindex=\"0\"]').blur()");
+    await run("document.activeElement.blur()");
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false });
+    win.webContents.debugger.detach();
     await run("settingsTheme = 'bright'; renderSettings()"); await pause(150);
     fs.writeFileSync(path.join(root, 'tmp/settings-usage-light.png'), (await win.webContents.capturePage()).toPNG());
     win.setContentSize(760, 720); await pause(150);
@@ -343,7 +353,7 @@ app.whenReady().then(async () => {
     // Failed reads must keep the last recorded totals, then recover on retry.
     await run("window.readUsageNormally = cardbushDesktop.usageStatistics; cardbushDesktop.usageStatistics = async () => { throw Error('fixture unavailable'); }; dispatchEvent(new Event('focus'));");
     await until("!!document.querySelector('.usage-load-error')");
-    assert.equal(await run("document.querySelector('.usage-stat').title"), '59,961,000');
+    assert.equal(await run("document.querySelector('.usage-stat').dataset.globalTooltipTitle"), '59,961,000');
     await run("cardbushDesktop.usageStatistics = readUsageNormally; void 0"); await click('重试');
     await until("!document.querySelector('.usage-load-error')");
 

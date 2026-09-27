@@ -1,6 +1,7 @@
 import { localConversationBackend, type ConversationBackend } from '../backend/conversationBackend';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { confirmAction } from '../components/confirmAction';
 import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
 
 import { useCapabilityCatalogRefresh } from './useCapabilityCatalogRefresh';
@@ -1924,10 +1925,12 @@ export function useCardbushChat(
 
   const deleteConversation = useCallback(async (conversationId: string) => {
     const title = conversationsRef.current.find(item => item.id === conversationId)?.title || conversationId;
-    if (!window.confirm(localize(
-      `确定删除会话“${title}”吗？\n定时任务不受影响。`,
-      `Delete “${title}”?\nScheduled tasks are unaffected.`,
-    ))) return;
+    if (!await confirmAction({
+      title: localize('删除会话', 'Delete conversation'),
+      message: localize(`确定删除会话“${title}”吗？\n定时任务不受影响。`, `Delete “${title}”?\nScheduled tasks are unaffected.`),
+      confirmLabel: localize('删除', 'Delete'),
+      cancelLabel: localize('取消', 'Cancel'),
+    })) return;
     setError(null);
     try {
       await deleteConversationApi(conversationId);

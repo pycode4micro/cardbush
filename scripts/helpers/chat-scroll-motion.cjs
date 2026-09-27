@@ -62,16 +62,44 @@ module.exports = async ({ run, until, pause, window }) => {
     fs.mkdirSync(path.dirname(preview), { recursive: true });
     fs.writeFileSync(preview, (await window.capturePage()).toPNG());
     await run(`{ window.motionFrames = []; const sample = () => {
-      motionFrames.push({ time: performance.now(), top: motionList().scrollTop, bottom: motionBottom() });
+      const button = document.querySelector('.scroll-bottom');
+      const bounds = button.getBoundingClientRect();
+      motionFrames.push({ time: performance.now(), top: motionList().scrollTop, bottom: motionBottom(),
+        hidden: button.classList.contains('hidden'), opacity: Number(getComputedStyle(button).opacity),
+        x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
       window.motionFrame = requestAnimationFrame(sample);
     }; sample(); document.querySelector('.scroll-bottom').click(); }`);
-    await pause(550);
+    await pause(1200);
     const frames = await run('cancelAnimationFrame(motionFrame); motionFrames');
     const unique = new Set(frames.map(frame => Math.round(frame.top)));
     assert.ok(unique.size >= 4, 'Bottom jump must animate through real intermediate positions, not snap twice');
     assert.ok(frames.slice(1).every((frame, i) => frame.top >= frames[i].top - 1), 'Bottom animation must not reverse direction: ' + JSON.stringify(frames));
     const final = frames.at(-1);
     assert.ok(Math.abs(final.bottom - final.top) < 2, 'Bottom animation must finish at the actual latest content');
+    const arrival = frames.find(frame => frame.bottom - frame.top <= 1);
+    const dismissed = frames.find(frame => frame.hidden);
+    assert.ok(frames.filter(frame => frame.bottom - frame.top > 1).every(frame => !frame.hidden), 'clicking cannot hide the button while scrolling');
+    assert.ok(arrival && dismissed && dismissed.time - arrival.time >= 180 && dismissed.time - arrival.time < 500,
+      'hide begins 200ms after actual arrival: ' + JSON.stringify({ arrival, dismissed }));
+    assert.ok(frames.some(frame => frame.hidden && frame.opacity > 0 && frame.opacity < 1), 'arrival hold is followed by a fade');
+    assert.ok(frames.every(frame => ['x','y','width','height'].every(key => Math.abs(frame[key]-frames[0][key])<0.75)),
+      'bottom button must fade in place without shifting or shrinking');
+    assert.equal(final.opacity, 0);
+
+    // Leaving during the hold cancels it, even within the old 36px threshold.
+    await run('motionWheel(-220); motionList().scrollTop = motionBottom() - 500');
+    await until("!document.querySelector('.scroll-bottom').classList.contains('hidden')", 'show button before hold cancellation');
+    await run("document.querySelector('.scroll-bottom').click()");
+    await until('motionBottom()-motionList().scrollTop<=1 && !motionList().dataset.scrollAnimating', 'jump arrives before hold cancellation');
+    await pause(60);
+    await run('motionWheel(-12); motionList().scrollTop = motionBottom()-12');
+    await pause(650);
+    assert.equal(await run("document.querySelector('.scroll-bottom').classList.contains('hidden')"), false, 'near the bottom is not the bottom; upward input cancels hiding');
+    await run('motionList().scrollTop = motionBottom()');
+    await pause(60);
+    await run('motionAppend()');
+    await pause(650);
+    assert.ok(await run("motionBottom()-motionList().scrollTop>1 && !document.querySelector('.scroll-bottom').classList.contains('hidden')"), 'growing content cancels a pending hide when it moves the tail out of view');
 
     await run('motionWheel(-500); motionList().scrollTop = motionBottom() - 2000');
     await pause(80);
@@ -92,7 +120,8 @@ module.exports = async ({ run, until, pause, window }) => {
     }
 
     await run("document.querySelector('.scroll-bottom').click()");
-    await pause(550);
+    await until("document.querySelector('.scroll-bottom').getAttribute('aria-hidden')==='true'", 'button hides after arrival hold');
+    await pause(200);
     const button = await run(`(() => { const button = document.querySelector('.scroll-bottom'); const icon = button.querySelector('svg');
       const a = button.getBoundingClientRect(), b = icon.getBoundingClientRect();
       return { hidden: button.getAttribute('aria-hidden'), tab: button.tabIndex, label: button.getAttribute('aria-label'),
@@ -107,6 +136,9 @@ module.exports = async ({ run, until, pause, window }) => {
       await run('motionWheel(-300); motionList().scrollTop = motionBottom() - 1200');
       await pause(60);
       assert.ok(await run(`document.querySelector('.scroll-bottom').click(); Math.abs(motionBottom() - motionList().scrollTop) < 2`), 'Reduced motion must land immediately');
+      await pause(100);
+      assert.equal(await run("document.querySelector('.scroll-bottom').classList.contains('hidden')"), false, 'reduced motion retains the 200ms arrival hold');
+      await until("document.querySelector('.scroll-bottom').classList.contains('hidden')", 'reduced motion still dismisses after the hold');
     } finally {
       await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
       window.webContents.debugger.detach();

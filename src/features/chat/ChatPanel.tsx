@@ -26,6 +26,7 @@ import {
   normalizeActiveTurnTranscriptForDisplay,
 } from '../chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
+import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
 import { isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
 import {
@@ -2501,6 +2502,10 @@ export function ChatPanel({
   useEffect(() => {
     setWorkSummaryVisible(false);
   }, [activeConversationId]);
+  const scrollBottomVisible = useScrollBottomPresence({
+    scrollerRef: listScrollerRef, requestedVisible: showScrollBottom, scope: scrollPositionKey,
+    enabled: !loading && !showWelcome, revision: scrollMountRevision,
+  });
   if (import.meta.env.DEV && isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
   }
@@ -2873,13 +2878,13 @@ export function ChatPanel({
         <button
           ref={setScrollBottomRef}
           className={`scroll-bottom ${
-            loading || showWelcome || !showScrollBottom ? 'hidden' : ''
+            !scrollBottomVisible ? 'hidden' : ''
           }`}
           type="button"
           aria-label={language === 'zh' ? '回到底部' : 'Back to bottom'}
           title={language === 'zh' ? '回到底部' : 'Back to bottom'}
-          aria-hidden={loading || showWelcome || !showScrollBottom}
-          tabIndex={loading || showWelcome || !showScrollBottom ? -1 : 0}
+          aria-hidden={!scrollBottomVisible}
+          tabIndex={scrollBottomVisible ? 0 : -1}
           onClick={scrollToBottom}
         >
           <ArrowDown size={18} strokeWidth={2} aria-hidden="true" />

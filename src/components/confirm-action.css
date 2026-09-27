@@ -1,0 +1,19 @@
+.confirm-action-dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  box-sizing: border-box;
+  padding: 22px;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 16px 48px var(--shadow);
+}
+.confirm-action-dialog::backdrop { background: color-mix(in srgb, var(--bg) 35%, transparent); backdrop-filter: blur(4px); }
+.confirm-action-dialog h2 { margin: 0 0 12px; font-size: 16px; }
+.confirm-action-dialog p { margin: 0; white-space: pre-wrap; color: var(--text-mid); font-size: 13px; line-height: 1.7; }
+.confirm-action-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.confirm-action-dialog button { min-height: 34px; padding: 7px 15px; border: 1px solid var(--border); border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer; }
+.confirm-action-dialog button.danger { background: var(--danger); border-color: transparent; color: var(--surface); }
+.confirm-action-dialog button:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; }

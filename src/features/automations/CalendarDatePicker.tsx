@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { calendarDayKey, calendarMonthDays, localDay, shiftCalendarMonth } from './automationCalendarModel';
 
 export type CalendarView = 'day' | 'month' | 'year';
@@ -15,11 +15,10 @@ export function CalendarDatePicker({ selected, view, title, zh, onMove, onSelect
   const id = useId(), panel = useRef<HTMLDivElement>(null), anchor = useRef<HTMLButtonElement>(null);
   const focusOnOpen = useRef(false);
   const [open, setOpen] = useState(false), [mode, setMode] = useState<CalendarView>(view);
-  const [cursor, setCursor] = useState(selected), [yearText, setYearText] = useState(String(selected.getFullYear()));
+  const [cursor, setCursor] = useState(selected);
   const [error, setError] = useState('');
   const locale = zh ? 'zh-CN' : 'en-US', cursorYear = cursor.getFullYear(), decade = Math.floor(cursorYear / 10) * 10;
   const selectedKey = calendarDayKey(selected), todayKey = calendarDayKey(new Date());
-  const yearValid = /^\d{4}$/.test(yearText) && Number(yearText) >= firstYear && Number(yearText) <= lastYear;
   const close = (restoreFocus = false) => {
     panel.current?.hidePopover(); setOpen(false);
     if (restoreFocus) anchor.current?.focus({ preventScroll: true });
@@ -28,12 +27,12 @@ export function CalendarDatePicker({ selected, view, title, zh, onMove, onSelect
     if (open && anchor.current === button) { close(true); return; }
     anchor.current = button;
     const date = inYear(selected, Math.max(firstYear, Math.min(lastYear, selected.getFullYear())));
-    setCursor(date); setYearText(String(date.getFullYear())); setMode(view); setError('');
+    setCursor(date); setMode(view); setError('');
     focusOnOpen.current = true; setOpen(true);
   };
   const browse = (date: Date) => {
     if (!supported(date)) return;
-    setCursor(date); setYearText(String(date.getFullYear())); setError('');
+    setCursor(date); setError('');
   };
   const choose = (date: Date, nextView = mode) => {
     if (!onSelect(localDay(date), nextView)) {
@@ -59,7 +58,7 @@ export function CalendarDatePicker({ selected, view, title, zh, onMove, onSelect
     });
     if (focusOnOpen.current) {
       focusOnOpen.current = false;
-      (node.querySelector<HTMLElement>('.calendar-picker-cell[data-current=true]:not(:disabled)') ?? node.querySelector<HTMLElement>('input'))?.focus({ preventScroll: true });
+      (node.querySelector<HTMLElement>('.calendar-picker-cell[data-current=true]:not(:disabled)') ?? node.querySelector<HTMLElement>('.calendar-picker-cell[tabindex="0"]:not(:disabled)'))?.focus({ preventScroll: true });
     }
   }, [open, mode, cursorYear, cursor.getMonth(), error]);
   useEffect(() => {
@@ -93,7 +92,7 @@ export function CalendarDatePicker({ selected, view, title, zh, onMove, onSelect
     <div className="automation-calendar-controls" role="group" aria-label={zh ? '日期导航' : 'Date navigation'}>
       <button type="button" aria-label={zh ? { day: '上一天', month: '上个月', year: '上一年' }[view] : `Previous ${view}`} onClick={() => onMove(-1)}><ChevronLeft size={16}/></button>
       <h2 aria-live="polite"><button type="button" className="calendar-period-title" data-date-picker-trigger="title" {...commonTrigger}
-        aria-label={zh ? `选择日期范围，${title}` : `Choose date range, ${title}`} onClick={event => show(event.currentTarget)}>{title}<ChevronDown size={13}/></button></h2>
+        aria-label={zh ? `选择日期范围，${title}` : `Choose date range, ${title}`} onClick={event => show(event.currentTarget)}>{title}</button></h2>
       <button type="button" aria-label={zh ? { day: '下一天', month: '下个月', year: '下一年' }[view] : `Next ${view}`} onClick={() => onMove(1)}><ChevronRight size={16}/></button>
     </div>
     <div id={id} ref={panel} popover="auto" className="calendar-date-picker" role="dialog" aria-label={zh ? '选择日期范围' : 'Choose date range'}
@@ -103,10 +102,7 @@ export function CalendarDatePicker({ selected, view, title, zh, onMove, onSelect
       <div className="calendar-view-switch calendar-picker-modes" role="group" aria-label={zh ? '选择范围类型' : 'Period type'}>{(['day', 'month', 'year'] as const).map(value => <button type="button" data-picker-mode={value} key={value} aria-pressed={mode === value} onClick={() => { setMode(value); setError(''); }}>{zh ? { day: '日', month: '月', year: '年' }[value] : { day: 'Day', month: 'Month', year: 'Year' }[value]}</button>)}</div>
       <div className="calendar-picker-navigation">
         <button type="button" data-picker-step="previous" disabled={!supported(shifted(-1))} aria-label={zh ? (mode === 'day' ? '上个月' : mode === 'month' ? '上一年' : '上十年') : 'Previous period'} onClick={() => browse(shifted(-1))}><ChevronLeft size={16}/></button>
-        <label><span>{zh ? '年份' : 'Year'}</span><input type="number" inputMode="numeric" min={firstYear} max={lastYear} aria-label={zh ? '年份' : 'Year'} aria-invalid={!yearValid} value={yearText}
-          onChange={event => { const value = event.target.value; setYearText(value); setError(''); if (/^\d{4}$/.test(value) && Number(value) >= firstYear && Number(value) <= lastYear) setCursor(inYear(cursor, Number(value))); }}
-          onBlur={() => { if (!yearValid) setYearText(String(cursorYear)); }} onKeyDown={event => { if (event.key === 'Enter' && yearValid) { event.preventDefault(); choose(inYear(cursor, Number(yearText))); } }}/></label>
-        <span className="calendar-picker-period">{mode === 'day' ? cursor.toLocaleDateString(locale, { month: 'long' }) : mode === 'year' ? `${decade}–${decade + 9}` : ''}</span>
+        <span className="calendar-picker-period" aria-live="polite">{mode === 'year' ? `${decade}–${decade + 9}` : cursor.toLocaleDateString(locale, { year: 'numeric', ...(mode === 'day' ? { month: 'long' } : {}) })}</span>
         <button type="button" data-picker-step="next" disabled={!supported(shifted(1))} aria-label={zh ? (mode === 'day' ? '下个月' : mode === 'month' ? '下一年' : '下十年') : 'Next period'} onClick={() => browse(shifted(1))}><ChevronRight size={16}/></button>
       </div>
       {mode === 'day' && <div className="calendar-picker-weekdays" aria-hidden="true">{(zh ? ['一', '二', '三', '四', '五', '六', '日'] : ['M', 'T', 'W', 'T', 'F', 'S', 'S']).map((label, index) => <span key={index}>{label}</span>)}</div>}

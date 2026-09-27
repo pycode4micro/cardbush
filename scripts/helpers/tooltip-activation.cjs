@@ -29,10 +29,11 @@ module.exports = async ({ run, until, pause, window }) => {
     await until('tooltipClicks===1', 'real mouse click activates the control');
     mouse('mouseMove',{x:button.x+2}); await pause(430);
     assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'movement within the clicked control does not reopen help');
-    assert.equal(await run("document.querySelector('#tooltip-action').hasAttribute('title')"), false, 'native title cannot replace the dismissed tooltip');
+    assert.equal(await run("document.querySelector('#tooltip-action').title"), '', 'native title cannot replace the dismissed tooltip');
     assert.equal(await run("document.querySelector('#tooltip-action').getAttribute('aria-describedby')"), 'tooltip-description', 'existing accessible description is retained');
     window.webContents.sendInputEvent({type:'mouseMove',x:700,y:400});
-    await until("document.querySelector('#tooltip-action').title==='Activation help'", 'leaving restores the native title');
+    await until("!document.querySelector('#tooltip-action').hasAttribute('data-global-tooltip-dismissed')", 'leaving releases activation suppression');
+    assert.equal(await run("document.querySelector('#tooltip-action').title"), '', 'leaving does not restore native help');
     mouse('mouseMove');
     await until(tooltipVisible, 'leaving and reentering enables a new hover');
     await run("document.querySelector('#tooltip-action').click()");
@@ -55,6 +56,24 @@ module.exports = async ({ run, until, pause, window }) => {
     }
     key('Tab'); key('Tab',['shift']);
     await until(tooltipVisible, 'new keyboard navigation restores help after activation');
+
+    // A popup may open on hover/focus without a click. It still owns the trigger.
+    await run("document.querySelector('#tooltip-action').setAttribute('aria-haspopup','dialog'); document.querySelector('#tooltip-action').setAttribute('aria-expanded','true')");
+    await until("!document.querySelector('.global-tooltip')", 'opening an interactive popup dismisses existing help');
+    window.webContents.sendInputEvent({type:'mouseMove',x:700,y:400}); await pause(40); mouse('mouseMove'); await pause(430);
+    assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'reentering an open popup trigger does not stack help');
+    assert.equal(await run("document.querySelector('#tooltip-action').title"), '', 'popup ownership cannot restore native help');
+    assert.equal(await run("document.querySelector('#tooltip-action').getAttribute('aria-describedby')"), 'tooltip-description', 'popup ownership preserves the existing accessible description');
+    await run("document.querySelector('#tooltip-action').setAttribute('aria-expanded','false')");
+    window.webContents.sendInputEvent({type:'mouseMove',x:700,y:400}); await pause(40); mouse('mouseMove');
+    await until(tooltipVisible, 'help returns on a fresh hover after the popup closes');
+    window.webContents.sendInputEvent({type:'mouseMove',x:700,y:400}); await pause(40); mouse('mouseMove'); await pause(40);
+    await run("document.querySelector('#tooltip-action').setAttribute('aria-expanded','true')");
+    await pause(430);
+    assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'opening a popup cancels delayed help too');
+    await run("document.querySelector('#tooltip-action').removeAttribute('aria-haspopup')");
+    mouse('mouseMove',{x:button.x+1});
+    await until(tooltipVisible, 'expanded controls without a popup retain their help');
   } finally {
     await run('tooltipFixture.remove()');
     window.webContents.sendInputEvent({type:'mouseMove',x:700,y:400});

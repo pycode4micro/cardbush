@@ -132,10 +132,13 @@
 
 .app.theme-cyberpunk .section-header,
 .app.theme-cyberpunk .settings-nav-group-label {
-  color: var(--cyber-cyan);
   font-family: var(--mono-font-family);
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.app.theme-cyberpunk .settings-nav-group-label {
+  color: var(--cyber-cyan);
 }
 
 .app.theme-cyberpunk .project-title span {
@@ -948,8 +951,7 @@
 .app.theme-cyberpunk .sidebar-menu,
 .app.theme-cyberpunk .sidebar-context-menu,
 .app.theme-cyberpunk .right-inspector-add-menu,
-.app.theme-cyberpunk .quick-context-panel,
-.app.theme-cyberpunk .quick-context-turn-preview {
+.app.theme-cyberpunk .quick-context-panel {
   color: var(--text);
   background: rgba(7, 10, 11, 0.98);
   border-color: rgba(0, 231, 240, 0.34);

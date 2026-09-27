@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async ({ run, until, pause, window, root }) => {
+  await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/windowMaterial.css'), 'utf8'));
   const main = fs.readFileSync(path.join(root, 'electron/main.ts'), 'utf8');
   assert.match(main, /function createWindow[\s\S]*?minWidth: 480,\s*minHeight: 480,/);
   await run(`
@@ -78,7 +79,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.ok(await run("document.querySelector('.main-stage').getBoundingClientRect().width > innerWidth-4"), 'drawer does not squeeze the chat');
   await run("document.querySelector('.compact-sidebar-backdrop').click()");
   await until('compactState.sidebarCollapsed', 'backdrop closes drawer');
+  await until("document.querySelector('.compact-sidebar-backdrop')?.inert === true", 'closing backdrop releases interaction');
   await run("document.querySelector('.window-sidebar-toggle').click()"); await pause(260);
+  assert.equal(await run("document.querySelector('.compact-sidebar-backdrop')?.inert"), false, 'reopening during fade keeps the backdrop interactive');
   await run("document.querySelector('.conversation-row:not(.agent-sidebar-empty)').click()");
   await until("!!document.querySelector('.message-list') && compactState.sidebarCollapsed", 'history selection closes drawer');
   await fits('.composer-surface');
@@ -115,5 +118,26 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await fits('.composer-surface');
     fs.writeFileSync(path.join(root,`tmp/compact-window-${theme}.png`),(await window.webContents.capturePage()).toPNG());
   }
+  await resize(710,760);
+  for (const material of ['none','mica']) for (const theme of ['dark','bright']) {
+    await run(`document.documentElement.dataset.windowMaterial = ${JSON.stringify(material)};
+      compactActions.setTheme(${JSON.stringify(theme)}); compactState.setSidebarCollapsed(false)`);
+    await pause(300);
+    await fits('.sidebar');
+    const hit = await run(`(() => {
+      const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+      return {
+        sidebar: !!document.elementFromPoint(sidebar.left + 30, sidebar.top + 30)?.closest('.sidebar'),
+        backdrop: !!document.elementFromPoint(innerWidth - 30, sidebar.top + 70)?.closest('.compact-sidebar-backdrop'),
+        contentInert: document.querySelector('.main-stage').inert,
+      };
+    })()`);
+    assert.deepEqual(hit,{sidebar:true,backdrop:true,contentInert:true},'only the exposed background dismisses the drawer');
+    fs.writeFileSync(path.join(root,`tmp/compact-drawer-${material}-${theme}.png`),(await window.webContents.capturePage()).toPNG());
+    await run("document.querySelector('.compact-sidebar-backdrop').click()");
+    await until("!document.querySelector('.compact-sidebar-backdrop')", 'faded backdrop unmounts');
+    assert.equal(await run("document.querySelector('.main-stage').inert"), false, 'closed drawer restores content interaction');
+  }
+  await run('delete document.documentElement.dataset.windowMaterial');
   console.log('Compact window UI passed: 480x480, 560x520, 750x620; welcome/history/composer, drawer, inspector, settings, draft and wide-layout preservation.');
 };

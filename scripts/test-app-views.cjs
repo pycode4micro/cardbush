@@ -92,9 +92,11 @@ async function buildViews() {
     'src/features/settings/SettingsKeyboardPanel.tsx',
     'src/features/shortcuts/useKeyboardShortcuts.ts',
     'src/features/shortcuts/keyboardShortcuts.ts',
+    'src/components/GlobalTooltip.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus' ? ['src/components/confirmAction.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'app-center' ? [
       'src/features/appCenter/AppCenter.tsx', 'src/features/appCenter/appCenterStore.ts',
-      'src/components/GlobalTooltip.tsx', 'src/components/WindowFrame.tsx',
+      'src/components/WindowFrame.tsx',
       'src/features/windowMenu/applicationMenus.ts', 'src/features/conversationHost.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation' ? [
@@ -326,7 +328,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['ssh', 'compact-window', 'quick-context', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -511,6 +513,12 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'quick-context') {
       await require('./helpers/quick-context-layout.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no context rail renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus') {
+      await require('./helpers/delete-conversation-focus.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no deletion focus renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
