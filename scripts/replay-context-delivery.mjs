@@ -60,21 +60,25 @@ for (const turn of turns) {
 }
 for (const record of records.filter(record => record.toolCall.name === 'mcp_search' && record.outcome === 'returned')) {
   const raw = JSON.stringify(record.result);
-  if (record.result?.protocol !== 'bush.mcp_discovery.v1') continue;
+  if (record.result?.protocol !== 'bush.mcp_discovery.v1' || !['search', 'load'].includes(record.result.action)) continue;
   const projected = projectMcpDiscoveryResult(raw);
+  if (!projected) {
+    report.discovery.push({ inputChars: raw.length, archived: true, totalHits: record.result.matches.length });
+    continue;
+  }
   const view = JSON.parse(projected);
-  assert.deepEqual(view.catalog.map(tool => tool.name), record.result.matches.map(tool => tool.name));
-  for (const match of view.matches) assert.deepEqual(match, record.result.matches.find(tool => tool.name === match.name));
+  assert.deepEqual(view.matches.map(tool => tool.name), record.result.matches.map(tool => tool.name));
+  if (record.result.action === 'load') for (const match of view.matches) assert.deepEqual(match, record.result.matches.find(tool => tool.name === match.name));
   const message = turns.flatMap(turn => turn.messages).find(item => item.message.role === 'tool' && item.message.toolCallId === record.toolCall.id)?.message;
-  const seedreamMatches = record.result.matches.filter(match => /seedream/i.test(match.name));
+  const seedreamMatches = record.result.matches.filter(match => /seedream/i.test(match.name) && match.inputSchema);
   const hasSeedream = seedreamMatches.length > 0;
   for (const match of seedreamMatches) {
-    const exactResult = { ...record.result, total: 1, more: false, matches: [match] };
+    const exactResult = { ...record.result, action: 'load', total: 1, more: false, matches: [match] };
     const exactView = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(exactResult)));
     assert.deepEqual(exactView.matches, [match], 'An isolated historical Seedream definition must be delivered intact');
   }
   report.discovery.push({ inputChars: raw.length, previousVisibleChars: message?.content.length, projectedChars: projected.length,
-    totalHits: view.catalog.length, completeDefinitions: view.matches.filter(match => match.inputSchema).length,
+    totalHits: view.matches.length, completeDefinitions: view.matches.filter(match => match.inputSchema).length,
     ...(hasSeedream ? { previousSeedreamVisible: /seedream/i.test(message?.content ?? ''),
       seedreamVisible: /seedream/i.test(projected), exactSeedreamReloadComplete: true, seedreamSchemaLoaded: view.matches.some(match => /seedream/i.test(match.name) && match.inputSchema) } : {}) });
 }

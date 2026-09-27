@@ -231,7 +231,7 @@ test('native history converts losslessly, tool images follow complete batches, a
   const first = request();
   const round = await executeModelRound(f.provider, first);
   const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: JSON.stringify({
-    protocol: 'bush.mcp_discovery.v1', sessionId: 's', matches: [], total: 0, more: false,
+    protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', matches: [], total: 0, more: false,
   }) }, { role: 'assistant', content: '', toolCalls: [
     { id: 'image', name: 'view_image', argumentsText: '{}' }, { id: 'other', name: 'inspect', argumentsText: '{}' },
   ] }, { role: 'tool', toolCallId: 'image', content: 'image receipt', images: [{ url: 'https://example.test/image.png', detail: 'high' }] },

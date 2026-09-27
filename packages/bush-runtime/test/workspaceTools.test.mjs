@@ -332,7 +332,9 @@ test("requires an exact observed revision before edit and permits inherited fork
     new_text: "after",
   });
   assert.equal(rejected.kind, "failed");
-  assert.match(rejected.error.message, /read_file first/);
+  assert.equal(rejected.error.code, "workspace_revision_not_observed");
+  assert.match(rejected.error.message, /read_file.*expected_sha256/);
+  assert.equal(readFileSync(path, "utf8"), "before\n");
 
   const read = await setup.execute("parent", "read_file", { path });
   assert.equal(read.kind, "returned");
@@ -365,7 +367,9 @@ test("invalidates read evidence when the file changes outside Runtime", async (t
   });
 
   assert.equal(outcome.kind, "failed");
-  assert.match(outcome.error.message, /has not been observed/);
+  assert.equal(outcome.error.code, "workspace_revision_not_observed");
+  assert.match(outcome.error.message, /read_file.*expected_sha256/);
+  assert.equal(readFileSync(path, "utf8"), "changed externally");
 });
 
 test("write and edit return compact receipts while Runtime retains full change evidence", async (t) => {

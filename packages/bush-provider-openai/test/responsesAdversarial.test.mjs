@@ -85,7 +85,7 @@ test('200 deterministic parallel stream interleavings retain call identity and a
 test('all 120 mixed result orders close batches before receipts and preserve incremental prefixes', () => {
   const calls = ['mcp_search', 'local_read', 'mcp_search', 'local_read', 'local_read'].map((name, index) => ({ id: `call_${index}`, name, argumentsText: '{}' }));
   const outputs = calls.map(call => ({ role: 'tool', toolCallId: call.id, content: call.name === 'mcp_search'
-    ? JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', matches: [], total: 0, more: false }) : `result ${call.id}` }));
+    ? JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', matches: [], total: 0, more: false }) : `result ${call.id}` }));
   const permutations = function* (remaining, prefix = []) {
     if (!remaining.length) yield prefix;
     else for (let index = 0; index < remaining.length; index++) yield* permutations(remaining.filter((_, i) => i !== index), [...prefix, remaining[index]]);

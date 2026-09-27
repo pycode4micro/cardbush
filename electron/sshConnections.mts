@@ -5,6 +5,7 @@ import { dirname, posix } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { openSshTunnel } from './sshTunnel.mjs';
 import { parseSshWorkspace, sshWorkspace, type SshConnection, type SshConnectionInput, type SshTestResult } from '@cardbush/bush-protocol';
+import { workspaceEditRecoveryError } from '@cardbush/bush-runtime/workspace-edit-recovery';
 
 type Saved = Omit<SshConnection, 'hasPassword' | 'hasPassphrase' | 'status'> & { password?: string; passphrase?: string };
 type Cipher = { encrypt(value: string): string; decrypt(value: string): string };
@@ -196,18 +197,22 @@ export class SshConnectionManager {
       try {
         let before: Buffer | undefined;
         try { before = await this.#readBytes(sftp, path); } catch (error) { if ((error as { code?: number }).code !== 2 || name === 'edit_file') throw error; }
-        if (before && this.#observed.get(observation) !== sha(before)) throw Error('远程文件尚未读取或已变化，请先重新 read_file。');
+        if (before && this.#observed.get(observation) !== sha(before)) {
+          if (name === 'edit_file') throw workspaceEditRecoveryError('workspace_revision_not_observed', '远程文件尚未读取或版本已变化。');
+          throw Error('远程文件尚未读取或已变化，请先重新 read_file。');
+        }
         let content = input.content;
         if (name === 'edit_file') {
           const original = before!.toString(input.encoding);
           if (input.range) {
-            if (sha(before!) !== input.range.sha256) throw Error('远程文件版本已变化，请重新 read_file。');
+            if (sha(before!) !== input.range.sha256) throw workspaceEditRecoveryError('workspace_revision_mismatch', '远程文件版本与 expected_sha256 不一致。');
             const lines = original.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [];
-            if (input.range.end > lines.length) throw Error('编辑行范围超出文件。');
+            if (input.range.end > lines.length) throw workspaceEditRecoveryError('edit_line_range_invalid', `编辑行范围超出文件（共 ${lines.length} 行）。`);
             content = lines.slice(0, input.range.start - 1).join('') + input.newText + lines.slice(input.range.end).join('');
           } else {
             const count = original.split(input.oldText).length - 1;
-            if (!count || (!input.replaceAll && count !== 1)) throw Error('old_text 缺失或不唯一。');
+            if (!count) throw workspaceEditRecoveryError('edit_old_text_not_found', 'old_text 未匹配当前远程文件。');
+            if (!input.replaceAll && count !== 1) throw workspaceEditRecoveryError('edit_old_text_ambiguous', `old_text 匹配 ${count} 处，目标不唯一。`);
             content = input.replaceAll ? original.replaceAll(input.oldText, () => input.newText) : original.replace(input.oldText, () => input.newText);
           }
         }
@@ -217,7 +222,10 @@ export class SshConnectionManager {
           await this.#ensureDirectory(sftp, posix.dirname(path));
           const stats = before ? await call<import('ssh2').Stats>(done => sftp.stat(path, done)) : undefined;
           await call<void>(done => sftp.writeFile(temporary, next, { flag: 'wx', mode: stats ? stats.mode & 0o777 : 0o644 }, done));
-          if (before && sha(await this.#readBytes(sftp,path)) !== sha(before)) throw Error('远程文件在写入前发生变化，请重新读取。');
+          if (before && sha(await this.#readBytes(sftp,path)) !== sha(before)) {
+            if (name === 'edit_file') throw workspaceEditRecoveryError('workspace_revision_mismatch', '远程文件在写入前版本发生变化。');
+            throw Error('远程文件在写入前发生变化，请重新读取。');
+          }
           // The ordinary SFTP rename refuses to overwrite a concurrently created file.
           await call<void>(done => before ? sftp.ext_openssh_rename(temporary,path,done) : sftp.rename(temporary,path,done));
         } catch (error) { await call<void>(done => sftp.unlink(temporary,done)).catch(() => {}); throw error; }

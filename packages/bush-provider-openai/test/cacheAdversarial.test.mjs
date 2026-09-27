@@ -63,7 +63,7 @@ const registry = new ToolRegistry(); registerMcpDiscovery(registry);
 const definition = { name: 'mcp__docs__read', description: 'Read docs', inputSchema: { type: 'object' } };
 const search = (id, description = definition.description) => [
   { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"query":"docs"}' }] },
-  { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's',
+  { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load',
     matches: [{ ...definition, description, server: 'docs', tool: 'read', revision: description }], total: 1, more: false }) },
 ];
 function request(messages) { return { ...base, tools: registry.definitions(), metadata: { ...base.metadata, mcpToolDiscovery: true }, messages }; }

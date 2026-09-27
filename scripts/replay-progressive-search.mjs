@@ -16,7 +16,7 @@ const sourcePaths = ['sessions', 'tool-executions'].map(directory => join(root, 
 const sourceBytes = await Promise.all(sourcePaths.map(path => readFile(path)));
 const events = sourceBytes[0].toString().trim().split('\n').map(line => JSON.parse(line).event);
 const records = sourceBytes[1].toString().trim().split('\n').map(line => JSON.parse(line).record);
-const searches = records.filter(record => record.toolCall.name === 'mcp_search' && record.result?.protocol === 'bush.mcp_discovery.v1');
+const searches = records.filter(record => record.toolCall.name === 'mcp_search' && record.result?.protocol === 'bush.mcp_discovery.v1' && ['search', 'load'].includes(record.result.action));
 const originalMessages = new Map(events.filter(event => event.kind === 'turn_committed')
   .flatMap(event => event.payload.messages).filter(item => item.message.role === 'tool')
   .map(item => [item.message.toolCallId, item.message.content]));
@@ -37,9 +37,9 @@ for (const definition of definitions.values()) registry.register({ definition,
 const search = registry.resolve('mcp_search');
 const request = { sessionId, turnId: 'offline', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
 const rows = [];
-for (const record of searches) {
+for (const record of searches.filter(record => record.result.action === 'search')) {
   const args = JSON.parse(record.toolCall.argumentsText);
-  const result = await search.execute({ input: search.decodeInput({ ...args, action: 'search', reload: false }), turn: { request, contextMessages: [] } });
+  const result = await search.execute({ input: search.decodeInput(args), turn: { request, contextMessages: [] } });
   assert.deepEqual(result.matches.map(match => match.name), record.result.matches.map(match => match.name), 'The recorded hit page must be reproduced exactly.');
   assert.ok(result.matches.every(match => !match.inputSchema));
   const projected = projectMcpDiscoveryResult(JSON.stringify(result));

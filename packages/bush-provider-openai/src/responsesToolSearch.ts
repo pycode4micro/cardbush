@@ -39,6 +39,13 @@ export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMo
   });
 }
 
+/** Identity stays in durable Runtime history for discovery recovery, not in model text. */
+function discoveryReceipt(output: Record<string, unknown>): string {
+  const { protocol: _protocol, sessionId: _sessionId, next_step: _next, ...receipt } = output;
+  if (receipt.more === false) delete receipt.more;
+  return JSON.stringify(receipt);
+}
+
 /** A derived view of the very same discovery results used by the Runtime. */
 export function discoveryInputProjection(request: ModelRequest) {
   const results = new Map([...mcpDiscoveryResults(request.messages, request.sessionId)]
@@ -63,11 +70,8 @@ export function discoveryInputProjection(request: ModelRequest) {
     }) ?? [];
     if (nativeCalls.has(message.toolCallId)) {
       // Keep compact references, paging and errors visible without duplicating schemas.
-      const receipt = result ? JSON.stringify({ ...result.output, matches: result.output.matches.map(match => {
+      const receipt = result ? discoveryReceipt({ ...result.output, matches: result.output.matches.map(match => {
         if (!match || typeof match !== "object") return match;
-        // Summary names must remain the Runtime's exact lookup identities,
-        // including names too long for native function declarations.
-        if ((result.output as { action?: string }).action === 'search') return match;
         const { description: _description, inputSchema: _schema, ...reference } = match as Record<string, unknown>;
         return { ...reference, ...(typeof reference.name === "string" ? { name: responseToolName(reference.name) } : {}) };
       }) }) : message.content;
@@ -78,6 +82,15 @@ export function discoveryInputProjection(request: ModelRequest) {
     } else if (result && nativeCalls.has(result.searchCallId) && tools.length) {
       // An archived search is loaded only after the exact complete result is read.
       supplementalItems.push({ type: "additional_tools", role: "developer", tools });
+    } else if (result?.searchCallId === message.toolCallId) {
+      // Portable function calls get the same compact receipt, with full schemas.
+      // Keep archive pages and unrelated tool output byte-exact, and do not mutate
+      // the stored messages used by revision/session checks or prefix replay.
+      const receipt = discoveryReceipt(result.output);
+      items = items.map(item => item.type === 'function_call_output' && item.call_id === message.toolCallId
+        ? { ...item, output: typeof item.output === 'string' ? receipt : item.output.map(part =>
+          part.type === 'input_text' && part.text === message.content ? { ...part, text: receipt } : part) }
+        : item);
     }
     // A user message or additional_tools item can close the provider's result
     // batch. Emit every pending call's output first, including parallel local

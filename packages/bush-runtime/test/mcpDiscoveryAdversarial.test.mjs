@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mcpDiscoveryResults } from '../dist/mcpToolDiscovery.js';
 
-const payload = JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', matches: [{ name: 'mcp__docs__read', description: 'Read docs',
+const payload = JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', matches: [{ name: 'mcp__docs__read', description: 'Read docs',
   inputSchema: { type: 'object' }, revision: 'v1' }] });
 const locator = 'tool-result://s/t/search';
 const history = () => [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] },
@@ -10,6 +10,13 @@ const history = () => [{ role: 'assistant', content: '', toolCalls: [{ id: 'sear
 const page = (id, offset, text) => [{ role: 'assistant', content: '', toolCalls: [{ id, name: 'read_archived_tool_result', argumentsText: JSON.stringify({ locator, offset }) }] },
   { role: 'tool', toolCallId: id, content: JSON.stringify({ locator, offset, next_offset: offset + text.length }) + '\n\n[text]\n' + text }];
 const results = messages => [...mcpDiscoveryResults(messages, 's')];
+
+test('search summaries and results without a load action never restore schemas', () => {
+  for (const action of [undefined, 'search', 'reload']) {
+    const content = JSON.stringify({ ...JSON.parse(payload), action });
+    assert.deepEqual(results([history()[0], { role: 'tool', toolCallId: 'search', content }]), []);
+  }
+});
 
 test('exact overlapping and out-of-order archive pages load one schema only once', () => {
   const middle = Math.floor(payload.length / 2);

@@ -29,3 +29,21 @@ test('MCP model projection removes image bytes, including nested resources, with
   assert.equal(JSON.parse(text).isError, true);
   assert.deepEqual(raw, before);
 });
+
+test('duplicate structured JSON is shown once while images, prose and distinct JSON remain', () => {
+  const structuredContent = { action: 'observe', output: { state_id: 'fresh-state', window: { hwnd: 12 }, accessibility: { elements: [{ name: 'UNIQUE-CONTROL' }] } } };
+  const raw = { content: [
+    { type: 'text', text: JSON.stringify(structuredContent, null, 2) },
+    { type: 'text', text: 'Keep this warning' },
+    { type: 'text', text: '{"different":true}' },
+    { type: 'image', mimeType: 'image/png', data: 'image-bytes' },
+  ], structuredContent, isError: false };
+  const before = structuredClone(raw);
+  const text = projectMcpResult(raw);
+  assert.equal(text.split('UNIQUE-CONTROL').length - 1, 1);
+  assert.equal(text.split('fresh-state').length - 1, 1);
+  assert.match(text, /Keep this warning/);
+  assert.equal(JSON.parse(text).content.length, 3);
+  assert.doesNotMatch(text, /image-bytes/);
+  assert.deepEqual(raw, before);
+});

@@ -28,6 +28,7 @@ import { authorizedCommandSandbox, commandSandboxPlan, decodeAdditionalCommandPe
 import { spawnResourceManagedProcess } from "./processResourceGuard.js";
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTerminalResult, renderTextFields } from "./toolResultText.js";
+import { workspaceEditRecoveryError } from './workspaceEditRecovery.js';
 
 interface PathInput { path: string }
 interface ReadFileInput extends PathInput { encoding: BufferEncoding; range?: FileLineRange }
@@ -326,7 +327,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "edit_file",
-      description: "Edit one previously read file. Use old_text for exact unique replacement, or start_line/end_line (1-based inclusive) with expected_sha256 from read_file to replace complete lines, including their line endings, with new_text. Do not combine modes. Stale revisions and ambiguous matches fail without writing. Full review/revert evidence is stored by Runtime.",
+      description: "Edit one previously read file. Use old_text for exact unique replacement, or start_line/end_line (1-based inclusive) with expected_sha256 from read_file to replace complete lines, including their line endings, with new_text. Do not combine modes. Stale revisions and ambiguous matches fail without writing. After a match failure, inspect with read_file and use a unique match or version-checked line range instead of repeating the same edit. Full review/revert evidence is stored by Runtime.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         old_text: { type: "string", minLength: 1 },
@@ -352,9 +353,9 @@ export function registerWorkspaceTools(
         let oldText = context.input.oldText, rangeOffsets: { start: number; end: number } | undefined;
         if (context.input.range) {
           const range = context.input.range;
-          if (digest(before) !== range.sha256) throw codedError('workspace_revision_mismatch', 'expected_sha256 differs from the current file. Read it again before editing.');
+          if (digest(before) !== range.sha256) throw workspaceEditRecoveryError('workspace_revision_mismatch', 'expected_sha256 differs from the current file.');
           const lines = source.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [];
-          if (range.end > lines.length) throw codedError('edit_line_range_invalid', `File has ${lines.length} lines; the range is outside it.`);
+          if (range.end > lines.length) throw workspaceEditRecoveryError('edit_line_range_invalid', `File has ${lines.length} lines; the range is outside it.`);
           const start = lines.slice(0, range.start - 1).join('').length;
           const end = start + lines.slice(range.start - 1, range.end).join('').length;
           rangeOffsets = { start, end };
@@ -362,15 +363,15 @@ export function registerWorkspaceTools(
         }
         const count = rangeOffsets ? 1 : occurrences(source, oldText);
         if (count === 0) {
-          throw codedError(
+          throw workspaceEditRecoveryError(
             "edit_old_text_not_found",
             "old_text was not found in the current file revision.",
           );
         }
         if (!context.input.replaceAll && count !== 1) {
-          throw codedError(
+          throw workspaceEditRecoveryError(
             "edit_old_text_ambiguous",
-            `old_text matched ${count} times; set replace_all or provide a unique value.`,
+            `old_text matched ${count} times; the target is ambiguous.`,
           );
         }
         const replacements = context.input.replaceAll ? count : 1;
@@ -622,6 +623,9 @@ function assertObservedIfExisting(
       workspaceRoot(context),
     )
   ) {
+    if (context.toolCall?.name === 'edit_file') {
+      throw workspaceEditRecoveryError('workspace_revision_not_observed', 'The current file revision has not been read or has changed since it was read.');
+    }
     throw codedError(
       "workspace_revision_not_observed",
       `Current file revision ${sha256} has not been observed by this Agent context; read_file first.`,

@@ -25,25 +25,7 @@ export function projectMcpDiscoveryResult(text: string, maxChars?: number): stri
     const compact = JSON.stringify(receipt);
     return compact.length <= (maxChars ?? (result.action === 'load' ? 128_000 : 16_000)) ? compact : undefined;
   }
-  const catalog = result.matches.map((item: any) => ({ name: item.name, server: item.server, tool: item.tool,
-    revision: item.revision, ...(item.interface ? { interface: item.interface } : {}), ...(typeof item.description === 'string' ? { summary: item.description.slice(0, 160) } : {}) }));
-  const output = { protocol: result.protocol, sessionId: result.sessionId, catalog, ...(result.hostCapabilities ? { hostCapabilities: result.hostCapabilities } : {}),
-    matches: [] as unknown[], total: result.total, more: result.more, next_offset: result.next_offset,
-    unloaded: result.matches.map((item: any) => item.name) as string[] };
-  const serialize = () => JSON.stringify({ ...output, ...(output.unloaded.length ? {
-    load: 'These definitions were not included in this result. Search the exact tool name with reload=true and limit=1 to load a complete definition. A definition that still exceeds the available context remains unloaded.',
-  } : {}) });
-  // An exact, single-tool load may exceed the ordinary log preview limit.
-  const budget = maxChars ?? (result.matches.length === 1 ? 128_000 : 16_000);
-  for (const item of result.matches) {
-    const index = output.unloaded.indexOf(item.name);
-    output.unloaded.splice(index, 1);
-    output.matches.push(item);
-    if (serialize().length > budget) {
-      output.matches.pop(); output.unloaded.splice(index, 0, item.name);
-    }
-  }
-  return serialize();
+  return undefined;
 }
 type LoadedTools = Map<string, string>;
 const selected = new WeakMap<ToolRegistry, Map<string, LoadedTools>>();
@@ -104,7 +86,7 @@ export function mcpSchemaRequiredError(name: string) {
 export function* mcpDiscoveryResults(messages: ModelMessage[], sessionId: string): Generator<{
   messageIndex: number;
   searchCallId: string;
-  output: { protocol: string; sessionId: string; matches: unknown[]; total?: number; more?: boolean };
+  output: { protocol: string; sessionId: string; action: 'load'; matches: unknown[]; total?: number; more?: boolean };
 }> {
   const calls = new Map<string, string>();
   const archives = new Map<string, { length: number; chunks: Map<number, string>; invalid?: boolean; emitted?: boolean }>();
@@ -151,7 +133,7 @@ export function* mcpDiscoveryResults(messages: ModelMessage[], sessionId: string
         // Later duplicate reads must not inject the same large definitions again.
         archive.emitted = true;
       } else continue;
-      if (output?.protocol === MCP_DISCOVERY_PROTOCOL && output.sessionId === sessionId && Array.isArray(output.matches)) {
+      if (output?.protocol === MCP_DISCOVERY_PROTOCOL && output.sessionId === sessionId && output.action === 'load' && Array.isArray(output.matches)) {
         yield { messageIndex, searchCallId, output };
       }
     }
@@ -197,14 +179,15 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
     manifest, parallelSafe: true,
     decodeInput: input => {
       const value = input as Record<string, unknown>;
-      if (!value || Array.isArray(value) || (value.server !== undefined && typeof value.server !== 'string') || (value.reload !== undefined && typeof value.reload !== 'boolean')) throw new Error('MCP search needs a query or names, optional server and boolean reload.');
-      // Decode old in-flight calls without advertising a second loading API.
-      const action = value.action ?? (value.reload === true ? 'load' : 'search');
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('MCP search requires an object.');
+      const unknown = Object.keys(value).filter(key => !['action', 'query', 'names', 'server', 'limit', 'offset'].includes(key));
+      if (unknown.length) throw new Error(`Unknown MCP search fields: ${unknown.join(', ')}. Use action=search or action=load.`);
+      if (value.server !== undefined && typeof value.server !== 'string') throw new Error('server must be a string.');
+      const action = value.action ?? 'search';
       if (action !== 'search' && action !== 'load') throw new Error('action must be search or load.');
       if (value.names !== undefined) {
         if (action !== 'load' || value.query !== undefined || !Array.isArray(value.names) || !value.names.length || value.names.length > 16 || !value.names.every(name => typeof name === 'string' && name.trim())) throw new Error('names requires action=load and 1–16 exact names, without query.');
       } else if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('query must be nonempty.');
-      if (value.reload === true && action !== 'load') throw new Error('reload cannot be combined with action=search.');
       if (value.offset !== undefined && (!Number.isSafeInteger(value.offset) || Number(value.offset) < 0)) throw new Error('offset must be a nonnegative integer.');
       if (action === 'load' && Number(value.offset)) throw new Error('action=load reads exact names and does not accept a page offset.');
       return { action, query: typeof value.query === 'string' ? value.query.trim() : '', ...(Array.isArray(value.names) ? { names: [...new Set(value.names.map(name => (name as string).trim()))] } : {}), server: value.server as string | undefined, limit: searchResultLimitSchema.optional().parse(value.limit), offset: Number(value.offset) || 0 };

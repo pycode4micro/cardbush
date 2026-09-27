@@ -224,6 +224,33 @@ test('search drains all chunks; Git status retains spaces and renamed paths; ter
   assert.ok(f.commands.some(command=>command.startsWith('kill -TERM -')));
 });
 
+test('SSH edit failures retain recovery guidance through the host bridge and can safely retry by line', async t => {
+  const { handleMcpHostRequest } = await import('../dist-electron/mcpHostBridge.js');
+  const f = await fixture(t); await f.trust();
+  const source = 'if ready:\r\n    repeat()\r\n    repeat()\r\n';
+  f.files.set('/work/file.txt', Buffer.from(source));
+  const exec = (name, input) => f.manager.execute(f.uri, 'one', name, { path: 'file.txt', ...input });
+  await exec('read_file', {});
+  for (const oldText of ['  repeat()\n', 'repeat()']) {
+    const response = await handleMcpHostRequest({ protocol: 'cardbush.mcp_host.v1', type: 'request', id: 'edit',
+      operation: 'ssh.workspace', payload: {} }, new AbortController().signal,
+    () => exec('edit_file', { oldText, newText: 'wrong', replaceAll: false, encoding: 'utf8' }));
+    assert.match(response.error, /No file was changed.*read_file.*start_line\/end_line.*expected_sha256/);
+    assert.match(response.error, /only when every match/);
+    assert.equal(f.files.get('/work/file.txt').toString(), source);
+  }
+  const read = await exec('read_file', {});
+  await exec('edit_file', { range: { start: 3, end: 3, sha256: read.sha256 }, newText: '    selected()\r\n', encoding: 'utf8' });
+  assert.equal(f.files.get('/work/file.txt').toString(), 'if ready:\r\n    repeat()\r\n    selected()\r\n');
+  const current = await exec('read_file', {});
+  for (const range of [{ start: 1, end: 1, sha256: read.sha256 }, { start: 8, end: 8, sha256: current.sha256 }]) {
+    await assert.rejects(exec('edit_file', { range, newText: 'wrong', encoding: 'utf8' }), /No file was changed.*read_file/);
+  }
+  const external = 'external update\n'; f.files.set('/work/file.txt', Buffer.from(external));
+  await assert.rejects(exec('edit_file', { oldText: 'external', newText: 'wrong', encoding: 'utf8' }), /No file was changed.*read_file/);
+  assert.equal(f.files.get('/work/file.txt').toString(), external);
+});
+
 test('SSH completion observer waits for exit, preserves readable logs and cancels without stopping the process', async t => {
   const f = await fixture(t); await f.trust();
   const started = await f.manager.execute(f.uri, 'one', 'terminal_exec', { cwd: '/work', command: 'fixture-sleep', shell: 'posix', yieldTimeMs: 1 });

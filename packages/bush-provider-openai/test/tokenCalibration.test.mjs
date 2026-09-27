@@ -11,7 +11,7 @@ test('wire schema replacement and native fallback invalidate calibration even wi
   const registry = new ToolRegistry(); registerMcpDiscovery(registry);
   const discovery = (id, description) => [
     { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"query":"read"}' }] },
-    { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's',
+    { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load',
       matches: [{ name: 'mcp__docs__read', description, inputSchema: { type: 'object' }, server: 'docs', tool: 'read', revision: description }], total: 1, more: false }) },
   ];
   const first = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',

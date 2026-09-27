@@ -39,6 +39,39 @@ test('line edits preserve exact boundaries and reject stale, mixed and out-of-ra
   assert.equal(readFileSync(path, 'utf8'), 'a\r\n  same\r\n  changed\r\n尾😀');
 });
 
+test('failed exact edits guide a version-checked line retry without changing indentation or repeated matches', async t => {
+  const root = temporary(t), path = join(root, 'source.py'), { run } = fixture(root);
+  const source = 'if ready:\r\n    repeat()\r\n    repeat()\r\n'; writeFileSync(path, source);
+  await run('read_file', { path });
+  for (const [old_text, code] of [['  repeat()\n', 'edit_old_text_not_found'], ['repeat()', 'edit_old_text_ambiguous']]) {
+    const result = await run('edit_file', { path, old_text, new_text: 'wrong()' });
+    assert.equal(result.kind, 'failed'); assert.equal(result.error.code, code);
+    for (const text of ['No file was changed', 'Do not repeat', 'read_file', 'start_line/end_line', 'expected_sha256', 'only when every match']) {
+      assert.ok(result.error.message.includes(text), text);
+    }
+    assert.equal(readFileSync(path, 'utf8'), source);
+  }
+  const read = await run('read_file', { path });
+  const retry = await run('edit_file', { path, start_line: 3, end_line: 3, expected_sha256: read.result.sha256, new_text: '    selected()\r\n' });
+  assert.equal(retry.kind, 'returned', JSON.stringify(retry));
+  assert.equal(readFileSync(path, 'utf8'), 'if ready:\r\n    repeat()\r\n    selected()\r\n');
+  const external = 'new external content\n'; writeFileSync(path, external);
+  const stale = await run('edit_file', { path, start_line: 3, end_line: 3, expected_sha256: read.result.sha256, new_text: 'wrong' });
+  assert.equal(stale.kind, 'failed'); assert.equal(stale.error.code, 'workspace_revision_not_observed');
+  assert.match(stale.error.message, /read_file.*expected_sha256/);
+  assert.equal(readFileSync(path, 'utf8'), external);
+  const current = await run('read_file', { path });
+  for (const [args, code] of [
+    [{ start_line: 1, end_line: 1, expected_sha256: read.result.sha256 }, 'workspace_revision_mismatch'],
+    [{ start_line: 3, end_line: 3, expected_sha256: current.result.sha256 }, 'edit_line_range_invalid'],
+  ]) {
+    const failed = await run('edit_file', { path, ...args, new_text: 'wrong' });
+    assert.equal(failed.kind, 'failed'); assert.equal(failed.error.code, code);
+    assert.match(failed.error.message, /No file was changed.*read_file.*expected_sha256/);
+    assert.equal(readFileSync(path, 'utf8'), external);
+  }
+});
+
 test('search context includes adjacent lines once, through ripgrep and Node fallback', async t => {
   const root = temporary(t), path = join(root, 'context.txt'), { registry, run } = fixture(root);
   writeFileSync(path, 'before\nneedle one\nbetween\nneedle two\nafter\nunrelated');

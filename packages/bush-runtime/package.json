@@ -6,6 +6,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./workspace-edit-recovery": {
+      "types": "./dist/workspaceEditRecovery.d.ts",
+      "import": "./dist/workspaceEditRecovery.js"
+    },
     "./processes": {
       "types": "./dist/processes.d.ts",
       "import": "./dist/processes.js"

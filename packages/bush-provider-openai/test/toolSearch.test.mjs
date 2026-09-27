@@ -33,7 +33,7 @@ const functionItem = (id = 'read', name = 'mcp__docs__read') => ({ type: 'functi
 const assistant = round => ({ role: 'assistant', content: round.text, reasoningContent: round.reasoning,
   toolCalls: round.toolCalls, providerReplay: round.providerReplay });
 const tool = { name: 'mcp__docs__read', description: 'Read docs', inputSchema: { type: 'object', properties: {} } };
-const searchResult = matches => JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's',
+const searchResult = matches => JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load',
   matches: matches ?? [{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }], total: 1, more: false });
 const unsupported = { status: 400, error: { code: 'unsupported_value', param: 'tools[0].type',
   message: "The tool type 'tool_search' is not supported." } };
@@ -63,7 +63,7 @@ function declaredNames(params) {
 
 function searchMessages(id, matches) {
   return [
-    { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"query":"docs","reload":true}' }] },
+    { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"action":"load","query":"mcp__docs__read"}' }] },
     { role: 'tool', toolCallId: id, content: searchResult(matches) },
   ];
 }
@@ -136,7 +136,7 @@ test('unknown services negotiate native search, preserve output and append calla
   assert.deepEqual(messages, original);
 });
 
-test('native tool_search keeps the compact hit directory and publishes only complete budgeted definitions', async t => {
+test('native tool_search publishes complete loaded definitions without a duplicate catalog', async t => {
   const f = await fixture(t, () => ({ output: [searchItem()] }));
   const first = request(), round = await executeModelRound(f.provider, first);
   const large = { ...tool, name: 'mcp__docs__large', description: 'x'.repeat(20000), server: 'docs', tool: 'large', revision: 'v2' };
@@ -144,11 +144,14 @@ test('native tool_search keeps the compact hit directory and publishes only comp
   const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content }];
   const original = structuredClone(messages), params = toResponsesCreateParams(request({ messages }));
   const output = params.input.find(item => item.type === 'tool_search_output');
-  assert.deepEqual(output.tools.map(tool => tool.name), [tool.name]);
+  assert.deepEqual(output.tools.map(tool => tool.name), [tool.name, large.name]);
+  assert.equal(output.tools[1].description, large.description);
+  assertDisplayProjection(output.tools[1].parameters, large.inputSchema);
   const receipt = params.input.find(item => item.type === 'message' && typeof item.content === 'string' && item.content.startsWith('[tool_search_result data]'));
   assert.ok(receipt.content.includes(large.name));
-  assert.ok(receipt.content.includes('unloaded'));
-  assert.ok(receipt.content.includes('catalog'));
+  assert.ok(!receipt.content.includes('unloaded'));
+  assert.ok(!receipt.content.includes('catalog'));
+  assert.equal(projectMcpDiscoveryResult(searchResult([large]), 16000), undefined, 'oversized complete definitions go to the archive');
   assertClosedToolBatches(params.input);
   assert.deepEqual(messages, original);
 });
@@ -521,6 +524,50 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
     'only the initial explicit protocol rejection changes parameters; search/load/call keeps the accepted prefix');
 });
 
+for (const mode of ['function', 'native']) test(`${mode}: load receipts omit internal boilerplate without changing recovery history or appended prefixes`, () => {
+  const result = { ...JSON.parse(searchResult()), action: 'load', next_step: 'Repeated instructions',
+    errors: [{ name: 'missing', error: 'Unavailable' }], deferred: ['large'],
+    hostCapabilities: { interfaces: { mcpApps: true } } };
+  const messages = searchMessages('load');
+  messages[1].content = JSON.stringify(result);
+  const original = structuredClone(messages);
+  const options = { toolSearchMode: mode };
+  const params = toResponsesCreateParams(request({ messages }), options);
+  const receipt = mode === 'function'
+    ? JSON.parse(params.input.find(item => item.type === 'function_call_output').output)
+    : JSON.parse(params.input.find(item => item.type === 'message').content.split('\n').slice(2).join('\n'));
+  for (const field of ['protocol', 'sessionId', 'next_step', 'more']) assert.equal(receipt[field], undefined, field);
+  for (const field of ['action', 'errors', 'deferred', 'hostCapabilities']) assert.deepEqual(receipt[field], result[field]);
+  if (mode === 'function') assert.deepEqual(receipt.matches, result.matches, 'complete schemas and revisions remain visible');
+  else assertDisplayProjection(params.input.find(item => item.type === 'tool_search_output').tools[0].parameters, tool.inputSchema);
+  const next = toResponsesCreateParams(request({ messages: [...messages, { role: 'user', content: 'Continue' }] }), options);
+  assert.deepEqual(next.input.slice(0, params.input.length), params.input, 'new input does not rewrite the projected prefix');
+  assert.deepEqual(messages, original, 'internal session/revision receipts remain intact for recovery');
+});
+
+test('portable discovery projection leaves unrelated results and archive bytes unchanged and retains pagination', () => {
+  const messages = searchMessages('load');
+  const raw = messages[1].content;
+  for (const [name, content] of [['read_file', raw], ['mcp_search', raw.replace('"sessionId":"s"', '"sessionId":"other"')],
+    ['mcp_search', 'Trusted hook replacement']]) {
+    const candidate = structuredClone(messages);
+    candidate[0].toolCalls[0].name = name; candidate[1].content = content;
+    const params = toResponsesCreateParams(request({ messages: candidate }), { toolSearchMode: 'function' });
+    assert.equal(params.input.find(item => item.type === 'function_call_output').output, content);
+  }
+  messages[1].content = JSON.stringify({ ...JSON.parse(raw), action: 'search', more: true, next_offset: 5 });
+  const page = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'function' });
+  const receipt = JSON.parse(page.input.find(item => item.type === 'function_call_output').output);
+  assert.equal(receipt.more, true); assert.equal(receipt.next_offset, 5);
+  const locator = 'tool-result://s/t/load';
+  messages[1].content = JSON.stringify({ archived: true, locator, originalChars: raw.length, preview: '' });
+  const archive = JSON.stringify({ locator, offset: 0, next_offset: raw.length }) + '\n\n[text]\n' + raw;
+  messages.push({ role: 'assistant', content: '', toolCalls: [{ id: 'page', name: 'read_archived_tool_result', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'page', content: archive });
+  const archived = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'function' });
+  assert.equal(archived.input.find(item => item.type === 'function_call_output' && item.call_id === 'page').output, archive);
+});
+
 test('reloads keep the first declaration, exact call receipts and incremental cache prefixes', () => {
   const definition = { ...tool, inputSchema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'number' } } } };
   const match = { ...definition, server: 'docs', tool: 'read', revision: 'v1' };
@@ -584,7 +631,7 @@ test('direct exposure, long aliases and portable results retain their own declar
   assert.ok(native.input.filter(item => item.type === 'tool_search_output').every(item => !item.tools.length));
   const portable = toResponsesCreateParams(req, { toolSearchMode: 'function' });
   assert.equal(portable.input.filter(item => item.type === 'function_call_output').length, 2);
-  assert.equal(portable.input.find(item => item.type === 'function_call_output').output, messages[1].content);
+  assert.deepEqual(JSON.parse(portable.input.find(item => item.type === 'function_call_output').output), { action: 'load', matches, total: 1 });
   assert.throws(() => toResponsesCreateParams(request({ tools: [tool, { ...tool, description: 'conflict' }] })), /Conflicting tool definitions/);
 });
 

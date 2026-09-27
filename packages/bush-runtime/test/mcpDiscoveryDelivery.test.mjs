@@ -64,7 +64,9 @@ test('exact names rank before description mentions; pagination and isolated larg
   assert.deepEqual(view.matches[0], isolated.matches[0]);
   assert.ok(view.matches[0].description.length > 16_000);
   assert.equal(view.catalog, undefined);
-  assert.deepEqual(await search({ query: 'mcp__fixture__aaa_long', reload: true }), isolated, 'old exact reload calls remain decodable');
+  for (const reload of [true, false]) assert.throws(() => search({ query: 'mcp__fixture__aaa_long', reload }), /Unknown MCP search fields: reload/);
+  assert.throws(() => search({ query: '*', typo: true }), /Unknown MCP search fields: typo/);
+  for (const value of [null, [], 'query', 1]) assert.throws(() => search(value), /requires an object/);
   await assert.rejects(() => search({ action: 'load', query: 'image generator' }), /exact name/);
   await assert.rejects(() => search({ action: 'load', query: '*', server: 'fixture' }), /exact name/);
   assert.throws(() => search({ action: 'unexpected', query: '*' }), /action/);
@@ -101,17 +103,20 @@ test('a load constrained by context is archived intact and cannot make an unseen
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__fixture__aaa_long'), false);
 });
 
-test('adversarial sizes never produce partial definitions or hide hit identities', () => {
+test('load size limits preserve complete definitions or defer the whole result to the archive', () => {
   for (const count of [1, 3, 10]) for (const length of [10, 15_999, 80_000, 150_000]) for (const budget of [0, 6000, 16000, 128000]) {
-    const result = { protocol: 'bush.mcp_discovery.v1', sessionId: 's', total: count, more: false,
+    const result = { protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', total: count, more: false,
       matches: Array.from({ length: count }, (_, i) => ({ name: `mcp__s__tool${i}`, server: 's', tool: `tool${i}`, revision: 'v1',
         description: '文'.repeat(length), inputSchema: { type: 'object', properties: { requiredDetail: { const: i } } } })) };
-    const raw = JSON.stringify(result), rendered = projectMcpDiscoveryResult(raw, budget), view = JSON.parse(rendered);
-    assert.deepEqual(view.catalog.map(tool => tool.name), result.matches.map(tool => tool.name));
-    for (const tool of view.matches) assert.deepEqual(tool, result.matches.find(original => original.name === tool.name));
-    const minimum = projectMcpDiscoveryResult(raw, 0).length;
-    assert.ok(rendered.length <= Math.max(budget, minimum));
-    assert.equal(view.matches.length + view.unloaded.length, count);
+    const raw = JSON.stringify(result), rendered = projectMcpDiscoveryResult(raw, budget);
+    if (raw.length > budget) assert.equal(rendered, undefined);
+    else { assert.deepEqual(JSON.parse(rendered), result); assert.ok(rendered.length <= budget); }
+  }
+});
+
+test('a discovery receipt requires an explicit current action', () => {
+  for (const action of [undefined, null, 'reload']) {
+    assert.equal(projectMcpDiscoveryResult(JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action, matches: [] })), undefined);
   }
 });
 
