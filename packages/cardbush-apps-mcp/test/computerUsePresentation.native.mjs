@@ -9,6 +9,9 @@ import { computerUsePresentationNative } from '../dist/plugins/computerUsePresen
 import { ComputerUsePresentation, computerUsePresentation } from '../dist/plugins/computerUsePresentation.js';
 import { executeComputerUse } from '../dist/plugins/computerUseRuntime.js';
 import { defaultAppsRuntimeConfig } from '../dist/config.js';
+import sharp from 'sharp';
+import { runComputerUsePowerShell } from '../dist/plugins/computerUsePowerShell.js';
+import { computerUseCaptureLayersScript } from '../dist/plugins/computerUseCaptureLayers.js';
 
 if (process.platform !== 'win32') throw new Error('This smoke test requires Windows.');
 const fixture = String.raw`
@@ -19,12 +22,14 @@ using System.Windows.Forms;
 using System.Web.Script.Serialization;
 using System.Threading;
 using System.Collections.Generic;
+using System.Text;
 public static class Fixture {
   delegate bool EnumProc(IntPtr h, IntPtr p);
   [StructLayout(LayoutKind.Sequential)] struct RECT { public int l,t,r,b; }
   [StructLayout(LayoutKind.Sequential)] struct POINT { public int x,y; }
   [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h,EnumProc p,IntPtr l);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h,StringBuilder text,int capacity);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h,out RECT r);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
@@ -59,7 +64,7 @@ public static class Fixture {
           if(op=="activate") { f.WindowState=FormWindowState.Normal; f.Activate(); }
           if(op=="background") { cover.Show(); cover.Activate(); }
           var children=new List<object>(); IntPtr stop=IntPtr.Zero; RECT stopRect=new RECT();
-          EnumChildWindows(f.Handle,(h,p)=> { RECT r; GetWindowRect(h,out r); if(r.b-r.t==32){stop=h;stopRect=r;} children.Add(new {hwnd=h.ToInt64(), visible=IsWindowVisible(h),x=r.l,y=r.t,width=r.r-r.l,height=r.b-r.t}); return true; },IntPtr.Zero);
+          EnumChildWindows(f.Handle,(h,p)=> { RECT r; GetWindowRect(h,out r); if(r.b-r.t==32){stop=h;stopRect=r;} var text=new StringBuilder(256);GetWindowText(h,text,text.Capacity);children.Add(new {hwnd=h.ToInt64(), text=text.ToString(), visible=IsWindowVisible(h),x=r.l,y=r.t,width=r.r-r.l,height=r.b-r.t}); return true; },IntPtr.Zero);
           if(op=="stop" && stop!=IntPtr.Zero) PostMessage(stop,0x202,new IntPtr(0),new IntPtr((16<<16)|(stopRect.r-stopRect.l-20)));
           if(op=="capture") {
             RECT r; GetWindowRect(f.Handle,out r);
@@ -118,6 +123,13 @@ try {
   const frame=normal.children.find(x=>x.width>700 && x.height>300);
   const badge=normal.children.find(x=>x.height===32);
   assert.ok(frame?.visible && badge?.visible,`frame and Stop are visible children of the fixture: ${JSON.stringify(normal)}`);
+  const assertRetained=async(label,status)=>{
+    const state=await inspect();
+    assert.ok(state.children.find(x=>x.hwnd===frame.hwnd)?.visible,`${label}: same frame remains visible`);
+    const actual=state.children.find(x=>x.hwnd===badge.hwnd);
+    assert.ok(actual?.visible,`${label}: same badge remains visible`);
+    if(status) assert.match(actual.text,status,label);
+  };
   const foreign=await command('observe',{scope:'other-session',hwnd});
   assert.match(foreign.error,/Another session/);
   assert.equal((await command('action',{hwnd,action:'click',x:335,y:230})).error,undefined);
@@ -134,8 +146,41 @@ try {
   const minimized=await inspect(); assert.ok(minimized.children.filter(x=>x.hwnd===frame.hwnd || x.hwnd===badge.hwnd).every(x=>!x.visible));
   await inspect('activate'); await wait(100);
   await command('pause');
+  await assertRetained('user takeover',/已暂停/);
   const pausedAction=await command('action',{hwnd,action:'click',x:100,y:100});
   assert.match(pausedAction.error,/taken over/);
+  await command('hold');
+  await assertRetained('rejected input preserves pause',/已暂停/);
+  await inspect('background'); await wait(100);
+  await assertRetained('foreground loss retains attached surfaces',/已暂停/);
+  await inspect('activate'); await wait(1250);
+  assert.equal((await command('observe',{hwnd})).paused,false);
+  await assertRetained('resume reuses the same surfaces',/待命/);
+  await command('hold');
+  await assertRetained('recoverable failure',/等待观察/);
+  await command('observe',{hwnd});
+  // Hold a real capture mask across finish. Its delayed restore must not bring
+  // the ended session back. The fixture's IPC never sends user input.
+  const mask=runComputerUsePowerShell(`${computerUseCaptureLayersScript}
+$handles = [CardBushCaptureLayers]::Hide([IntPtr]${hwnd})
+try { Start-Sleep -Milliseconds 1800 }
+finally { [CardBushCaptureLayers]::Restore($handles) }
+$handles.Length`,{env:{...process.env},timeoutMs:10000});
+  const maskingDeadline=Date.now()+5000;
+  let masked=false;
+  while(Date.now()<maskingDeadline) {
+    const state=await inspect();
+    masked=[frame.hwnd,badge.hwnd].every(h=>state.children.some(x=>x.hwnd===h && !x.visible));
+    if(masked) break;
+    await wait(40);
+  }
+  assert.equal(masked,true,'capture hides both tagged surfaces');
+  await command('finish');
+  assert.equal(Number((await mask).trim()),2);
+  const finishedCapture=await inspect();
+  assert.ok([frame.hwnd,badge.hwnd].every(h=>finishedCapture.children.some(x=>x.hwnd===h && !x.visible)),'capture restore cannot resurrect a finished session');
+  await command('observe',{hwnd});
+  await assertRetained('new observation after finish',/待命/);
   await inspect('stop');
   const stopped=await overlay.next(); assert.equal(stopped.kind,'stopped'); assert.equal(stopped.reason,'button');
   await wait(250);
@@ -158,21 +203,53 @@ try {
   const config=defaultAppsRuntimeConfig().computerUse.config;
   const background=await inspect('background');
   assert.notEqual(background.foreground,hwnd,'only the second disposable fixture takes foreground');
-  let observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+  let observed=await executeComputerUse({action:'observe',hwnd,include_text:true},config,undefined,'runtime-smoke');
+  const cleanCapture=observed.paths[0];
+  const runtimeLayers=(await inspect()).children.filter(x=>x.height===32 || x.width>700 && x.height>300).map(x=>x.hwnd);
+  assert.equal(runtimeLayers.length,2);
+  const assertRuntimeRetained=async()=>{
+    const state=await inspect();
+    assert.ok(runtimeLayers.every(h=>state.children.some(x=>x.hwnd===h && x.visible)),'runtime retains visible surfaces after preflight rejection and observation');
+  };
   assert.equal(observed.output.is_foreground,false);
   assert.equal(observed.output.actionable,false);
   assert.equal(observed.output.window_action_available,true);
-  assert.match(observed.output.next_step,/operation="activate"/);
+  assert.match(observed.output.next_step,/window\/activate/);
   assert.notEqual((await inspect()).foreground,hwnd,'observation must not steal focus');
   for(const input of [{action:'type',text:'must not be sent'},{action:'click',x:20,y:20}]) {
     await assert.rejects(executeComputerUse({...input,hwnd,state_id:observed.output.state_id},config,undefined,'runtime-smoke'),/not foreground; no input was sent.*operation=activate/);
-    observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+    await wait(250);
+    await assertRuntimeRetained();
+    observed=await executeComputerUse({action:'observe',hwnd,include_text:true},config,undefined,'runtime-smoke');
+    await assertRuntimeRetained();
+    assert.ok(observed.output.accessibility.elements.every(x=>!/^CardBush · |^CardBush 操作中/.test(x.name)),'our retained badge is excluded from application UIA evidence');
   }
+  // Both shots have identical application content; only the second has an
+  // attached presentation. Compare the client pixels containing its badge.
+  const crop={left:450,top:45,width:275,height:40};
+  const pixels=path=>sharp(path).extract(crop).removeAlpha().raw().toBuffer();
+  assert.deepEqual(await pixels(observed.paths[0]),await pixels(cleanCapture),'capture excludes the retained badge');
   assert.equal((await inspect()).count,0,'rejected actions have not clicked the fixture');
   const activated=await executeComputerUse({action:'window',operation:'activate',hwnd,state_id:observed.output.state_id},config,undefined,'runtime-smoke');
   assert.equal(activated.output.operation,'focus');
   assert.equal((await inspect()).foreground,hwnd,'activation succeeds only when the target actually becomes foreground');
-  observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+  const originalObserve=computerUsePresentation.observe;
+  let reached,unblock;
+  const pendingObservation=new Promise(resolve=>{reached=resolve;});
+  const observationGate=new Promise(resolve=>{unblock=resolve;});
+  computerUsePresentation.observe=async function(...args) {
+    await originalObserve.apply(this,args);
+    reached(); await observationGate;
+  };
+  const pending=executeComputerUse({action:'observe',hwnd,include_text:true},config,undefined,'runtime-smoke');
+  try {
+    await Promise.race([pendingObservation,pending.then(()=>assert.fail('observation bypassed the gate'))]);
+    await assert.rejects(executeComputerUse({action:'observe'},config,undefined,'runtime-smoke'),/already using the desktop/,'observation retains the desktop lease until completion');
+    await assertRuntimeRetained();
+  } finally {
+    unblock(); computerUsePresentation.observe=originalObserve;
+    observed=await pending;
+  }
   assert.equal(observed.output.is_foreground,true);
   assert.equal(observed.output.actionable,true);
   let button=observed.output.accessibility.elements.find(x=>x.name==='Increment 0');
@@ -180,19 +257,21 @@ try {
   const semantic=button.patterns.some(p=>['Invoke','Toggle','SelectionItem','ExpandCollapse'].includes(p));
   if(!semantic) {
     await assert.rejects(executeComputerUse({action:'click',hwnd,state_id:observed.output.state_id,element_index:button.index},config,undefined,'runtime-smoke'),error=>{
-      if(String(error.stderr).includes('no semantic action')) return true;
-      throw error;
+      assert.equal(error.info?.code,'invalid_action');
+      assert.equal(error.info?.execution,'not_dispatched');
+      assert.match(error.message,/does not support click/);
+      return true;
     },'unsupported UIA actions fail instead of reporting success');
-    observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+    observed=await executeComputerUse({action:'observe',hwnd,include_text:true},config,undefined,'runtime-smoke');
     button=observed.output.accessibility.elements.find(x=>x.name==='Increment 0');
   }
   const selector=semantic ? {element_index:button.index} : {x:Math.round(button.bounds.x+button.bounds.width/2),y:Math.round(button.bounds.y+button.bounds.height/2)};
   const clicked=await executeComputerUse({action:'click',hwnd,state_id:observed.output.state_id,...selector},config,undefined,'runtime-smoke');
   assert.equal(clicked.output.input_mode,semantic?'ui_automation':'send_input');
-  const verified=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+  const verified=await executeComputerUse({action:'observe',hwnd,include_text:true},config,undefined,'runtime-smoke');
   assert.ok(verified.output.accessibility.elements.some(x=>x.name==='Increment 1'),`the real action completed exactly once: ${JSON.stringify({clicked:clicked.output,elements:verified.output.accessibility.elements})}`);
   await executeComputerUse({action:'finish'},config,undefined,'runtime-smoke');
-  console.log(JSON.stringify({passed:true,screenshot,inputMode:clicked.output.input_mode,checks:['native child window clipping','single owner','window move','screenshot hide','minimize','pause blocks action','stop button','pointer unchanged','stop aborts running operation','stopped turn cannot restart','explicit finish cleanup','background observation does not steal focus','two preflight failures allow activation recovery','activation verifies actual foreground','real Runtime observe/click/verify/finish','unsupported UIA cannot report success']}));
+  console.log(JSON.stringify({passed:true,screenshot,inputMode:clicked.output.input_mode,checks:['native child window clipping','single owner','window move','screenshot hide','minimize','pause blocks action with stable surfaces','foreground loss retains surfaces','resume reuses surfaces','recoverable errors retain surfaces','capture restoration respects finish','stop button','pointer unchanged','stop aborts running operation','stopped turn cannot restart','explicit finish cleanup','background observation does not steal focus','two preflight failures allow activation recovery','capture excludes the badge','UIA excludes the badge','observation retains desktop lease','activation verifies actual foreground','real Runtime observe/click/verify/finish','unsupported UIA cannot report success']}));
 } catch (error) {
   console.error(String(error.stderr || error.stack || error).slice(-5000));
   process.exitCode=1;

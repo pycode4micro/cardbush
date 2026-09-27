@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { formatComputerUseError } from '../dist/plugins/computerUseErrors.js';
 import { supportedAccessibilityActions, validateAccessibilityAction } from '../dist/plugins/computerUseRuntime.js';
+import { computerUsePowerShellParameters } from '../dist/plugins/computerUsePowerShell.js';
 
 const source = await readFile(new URL('../src/plugins/computerUseRuntime.ts', import.meta.url), 'utf8');
 const windowsOnly = { skip: process.platform !== 'win32' };
@@ -111,6 +112,7 @@ function Get-CardBushLaunchWindows {
 }`);
   assert.notEqual(script, launchScript);
   return powershell(String.raw`
+${computerUsePowerShellParameters({ CARDBUSH_APP_TARGET: process.env.ComSpec })}
 $script:fixtureLaunched=$false
 function Start-Process {
   param($FilePath,$WorkingDirectory,[switch]$PassThru)
@@ -119,7 +121,7 @@ function Start-Process {
   $script:fixtureLaunched=$true
   [PSCustomObject]@{Id=421}
 }
-${script}`, { CARDBUSH_APP_TARGET: process.env.ComSpec, FIXTURE_BEFORE: JSON.stringify(before), FIXTURE_AFTER: JSON.stringify(after), FIXTURE_FAIL_BEFORE: failBefore ? '1' : '0', FIXTURE_FAIL_AFTER: failAfter ? '1' : '0' });
+${script}`, { FIXTURE_BEFORE: JSON.stringify(before), FIXTURE_AFTER: JSON.stringify(after), FIXTURE_FAIL_BEFORE: failBefore ? '1' : '0', FIXTURE_FAIL_AFTER: failAfter ? '1' : '0' });
 }
 
 test('launch feedback distinguishes new windows, reused windows, unrelated windows and failed checks', windowsOnly, async () => {

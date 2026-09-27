@@ -25,7 +25,7 @@ const scope=`terminal-test-${randomUUID()}`;let hwnd;
 const ps=value=>"'"+value.replaceAll("'","''")+"'";
 const hash=async file=>createHash('sha256').update(await readFile(file)).digest('hex');
 async function waitFor(read,condition,label){let value;for(let i=0;i<60;i++){value=await read();if(condition(value))return value;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error(`Timed out: ${label}`);}
-const call=input=>executeComputerUse(input,config,undefined,scope);
+const call=input=>executeComputerUse({include_text:true,observe_after:false,...input},config,undefined,scope);
 const observe=()=>call({action:'observe',hwnd});
 const bound=(state,input)=>({...input,hwnd,state_id:state.output.state_id});
 const report={title,directory,checks:[]};
@@ -60,7 +60,10 @@ try{
   state=await observe();
   assert.equal(await readFile(resultPath,'utf8'),marker,'busy child did not execute a shell command');
   await assert.rejects(readFile(unintendedPath),{code:'ENOENT'});
-  await assert.rejects(call(bound(state,{action:'key',key:'End'})),/without visible progress/);
+  // Preparatory input can span four distinct actions, but ACKs from a busy
+  // terminal do not prove that a shell command ran or clear the progress guard.
+  for(const key of ['End','Home']) { await call(bound(state,{action:'key',key})); state=await observe(); }
+  await assert.rejects(call(bound(state,{action:'key',key:'End'})),error=>error.info?.code==='progress_unverified');
   report.checks.push({name:'busy terminal accepts input without executing a shell command',passed:true,screenshotUnchanged:await hash(busyImage)===await hash(state.paths[0]),before:busyImage,after:state.paths[0]});
   console.log('PASS busy terminal dispatch is distinct from shell execution');
 }catch(error){report.error=String(error.stderr||error.stack||error);process.exitCode=1;console.error(report.error.slice(-5000));}

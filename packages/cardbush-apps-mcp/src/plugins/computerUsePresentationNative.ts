@@ -1,5 +1,7 @@
 // Private Windows presentation worker. This source travels with the plugin's
 // compiled JS, so packaging does not depend on Electron or extra host assets.
+import { controlLayerCapture, controlLayerEnabled, controlLayerMarker } from './computerUseCaptureLayers.js';
+
 export const computerUsePresentationNative = String.raw`
 using System;
 using System.Collections.Generic;
@@ -38,12 +40,16 @@ public static class CardBushPresentation {
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
   [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool SetProp(IntPtr hwnd,string name,IntPtr value);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr GetProp(IntPtr hwnd,string name);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr RemoveProp(IntPtr hwnd,string name);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool SetWindowText(IntPtr hwnd,string text);
 
   static Form dispatcher;
   static Layer frame, badge;
   static IntPtr target;
   static string scope = "";
-  static bool paused, suspended, pointer, active, closing, windowAction;
+  static bool paused, suspended, pointer, active, closing, windowAction, contextChanged, acting;
   static DateTime touched, entered, lastHuman = DateTime.MinValue, fadeStarted;
   static float pointerX, pointerY;
   static bool click;
@@ -73,33 +79,55 @@ public static class CardBushPresentation {
   static void Stop(string reason) {
     if (!active) return;
     Emit(new { kind="stopped", scope=scope, reason=reason });
-    active = false; pointer = false; closing = true; fadeStarted = DateTime.UtcNow;
+    active = false; acting = false; pointer = false; closing = true; fadeStarted = DateTime.UtcNow;
+    EnableLayers(false);
     ReleaseInput();
     timer.Interval = 30;
   }
-  static void Human(bool escape) {
+  static void Human(bool escape, string source="physical_input") {
     lastHuman = DateTime.UtcNow;
     if (!active) return;
     if (escape) { Stop("escape"); return; }
     if (!paused) {
-      paused=true; pointer=false;
+      paused=true; acting=false; pointer=false;
       ReleaseInput();
-      Emit(new { kind="paused", scope=scope });
+      Emit(new { kind="paused", scope=scope, reason=source });
       Redraw();
     }
+  }
+  static void ContextChanged(string reason) {
+    if(!active || contextChanged) return;
+    contextChanged=true; acting=false; pointer=false;
+    ReleaseInput();
+    Emit(new { kind="context_changed", scope=scope, reason=reason, target_hwnd=target.ToInt64(), foreground_hwnd=GetForegroundWindow().ToInt64() });
+    Redraw();
   }
   static void Redraw() {
     byte opacity=closing ? (byte)Math.Max(0,255*(1-(DateTime.UtcNow-fadeStarted).TotalMilliseconds/180)) : (byte)255;
     if(frame!=null) { SetLayeredWindowAttributes(frame.Handle,0xFF00FF,opacity,3); frame.Invalidate(); }
-    if(badge!=null) { SetLayeredWindowAttributes(badge.Handle,0xFF00FF,opacity,3); badge.Invalidate(); }
+    // Form.Text updates managed Form styles, which can hide our native child
+    // surface. Set only its native accessible text; keep style/lifetime stable.
+    if(badge!=null) { SetWindowText(badge.Handle,StatusText()); SetLayeredWindowAttributes(badge.Handle,0xFF00FF,opacity,3); badge.Invalidate(); }
+  }
+  static string StatusText() { return paused ? "CardBush · 已暂停" : contextChanged ? "CardBush · 等待观察" : acting ? "CardBush 操作中" : "CardBush · 待命"; }
+  static void EnableLayers(bool enabled) {
+    foreach(Layer layer in new Layer[]{frame,badge}) if(layer!=null && !layer.IsDisposed) {
+      if(enabled) SetProp(layer.Handle,"${controlLayerEnabled}",new IntPtr(1));
+      else RemoveProp(layer.Handle,"${controlLayerEnabled}");
+    }
+  }
+  static void RestoreCaptureLayers() {
+    foreach(Layer layer in new Layer[]{frame,badge}) if(layer!=null && !layer.IsDisposed) RemoveProp(layer.Handle,"${controlLayerCapture}");
   }
   static void HideLayers() { if(frame!=null) frame.Hide(); if(badge!=null) badge.Hide(); }
   static void SyncWindow() {
     if (frame==null || badge==null) return;
     if (!IsWindow(target)) { Stop("window_closed"); HideLayers(); return; }
     // A child of the target cannot float over another application's window.
-    // Foreground loss also hides both surfaces (including minimized windows).
-    if (suspended || (!active && !closing) || IsIconic(target) || GetAncestor(GetForegroundWindow(),2)!=target) {
+    // Keep it attached in the background and while paused. Parent clipping and
+    // z-order contain it; foreground loss still stops input independently.
+    if (suspended || (!active && !closing) || IsIconic(target) ||
+        GetProp(frame.Handle,"${controlLayerCapture}")!=IntPtr.Zero || GetProp(badge.Handle,"${controlLayerCapture}")!=IntPtr.Zero) {
       HideLayers(); return;
     }
     RECT r;
@@ -118,6 +146,7 @@ public static class CardBushPresentation {
       layer.Dispose();
       throw new Exception("Cannot attach Computer Use presentation to this window. Control was not started.");
     }
+    if(!SetProp(handle,"${controlLayerMarker}",new IntPtr(1))) { layer.Dispose(); throw new Exception("Cannot mark the Computer Use presentation surface."); }
     return layer;
   }
   static void Bind(IntPtr hwnd) {
@@ -131,21 +160,23 @@ public static class CardBushPresentation {
     try {
       if(op=="shutdown") { Application.ExitThread(); return; }
       if(op=="suspend") { suspended=true; HideLayers(); }
-      else if(op=="restore") { suspended=false; SyncWindow(); }
+      else if(op=="restore") { suspended=false; RestoreCaptureLayers(); SyncWindow(); }
       else if(op=="finish") {
-        if(scope==requestScope) { ReleaseInput(); active=false; pointer=false; closing=true; fadeStarted=DateTime.UtcNow; timer.Interval=30; }
+        if(scope==requestScope) { ReleaseInput(); active=false; acting=false; pointer=false; EnableLayers(false); closing=true; fadeStarted=DateTime.UtcNow; timer.Interval=30; }
       } else if(op=="observe") {
         if (active && scope!=requestScope) throw new Exception("Another session owns the Computer Use window. Finish that control session first.");
         if (!IsWindow(new IntPtr(Number(v,"hwnd")))) throw new Exception("The target window no longer exists.");
         bool newScope=scope!=requestScope;
         if(newScope) paused=false;
-        scope=requestScope; active=true; closing=false; suspended=false; pointer=false; windowAction=false;
+        scope=requestScope; active=true; acting=false; closing=false; suspended=false; pointer=false; windowAction=false; contextChanged=false;
         Bind(new IntPtr(Number(v,"hwnd")));
+        EnableLayers(true);
         if (paused && (DateTime.UtcNow-lastHuman).TotalMilliseconds>=1200) paused=false;
         touched=DateTime.UtcNow; timer.Interval=250; SyncWindow();
       } else if(op=="action") {
         if(!active || scope!=requestScope || target.ToInt64()!=Number(v,"hwnd")) throw new Exception("Observe the exact target window before control.");
         if(paused) throw new Exception("User has taken over. Observe again after the user finishes.");
+        if(contextChanged) throw new Exception("The foreground window changed. Observe again before input; this is not evidence of user input.");
         windowAction=Text(v,"action")=="window";
         if(Text(v,"action")!="window" && GetAncestor(GetForegroundWindow(),2)!=target) throw new Exception("The target window is not foreground; no input was sent. Observe the exact hwnd for a fresh state_id, use action=window with operation=activate and that state_id/hwnd, then observe again to verify foreground before input. Observing alone does not activate the window.");
         pointer=v.ContainsKey("x") && v["x"]!=null && v.ContainsKey("y") && v["y"]!=null;
@@ -154,9 +185,10 @@ public static class CardBushPresentation {
           pointerX=Number(v,"x")+wr.Left-origin.X; pointerY=Number(v,"y")+wr.Top-origin.Y;
         }
         click=Text(v,"action")=="click" || Text(v,"action")=="invoke";
-        touched=DateTime.UtcNow; suspended=false; Redraw(); SyncWindow();
-      } else if(op=="idle") { if(scope==requestScope) { ReleaseInput(); pointer=false; windowAction=false; touched=DateTime.UtcNow; Redraw(); } }
-      else if(op=="pause") { if(scope==requestScope) Human(false); }
+        acting=true; touched=DateTime.UtcNow; suspended=false; Redraw(); SyncWindow();
+      } else if(op=="idle") { if(scope==requestScope) { ReleaseInput(); acting=false; pointer=false; windowAction=false; touched=DateTime.UtcNow; Redraw(); } }
+      else if(op=="pause") { if(scope==requestScope) Human(false,"input_activity"); }
+      else if(op=="hold") { if(active && scope==requestScope) { ReleaseInput(); acting=false; pointer=false; windowAction=false; contextChanged=true; touched=DateTime.UtcNow; SyncWindow(); } }
       Emit(new { kind="ack", id=id, paused=paused });
     } catch(Exception ex) { Emit(new { kind="ack", id=id, error=ex.Message }); }
   }
@@ -165,7 +197,7 @@ public static class CardBushPresentation {
     Application.EnableVisualStyles();
     dispatcher=new Form(); IntPtr handle=dispatcher.Handle;
     onWindow=(hook,evt,hwnd,obj,child,thread,time)=> {
-      if(evt==3 && active && !suspended && !windowAction && GetAncestor(GetForegroundWindow(),2)!=target) Human(false);
+      if(evt==3 && active && !windowAction && GetAncestor(GetForegroundWindow(),2)!=target) ContextChanged("foreground_changed");
       if(evt==3 || (hwnd==target && obj==0)) SyncWindow();
     };
     eventHooks.Add(SetWinEventHook(3,3,IntPtr.Zero,onWindow,0,0,2));
@@ -175,8 +207,8 @@ public static class CardBushPresentation {
         MOUSE input=(MOUSE)Marshal.PtrToStructure(data,typeof(MOUSE));
         long inputMessage=msg.ToInt64();
         bool buttonUp=inputMessage==0x202 || inputMessage==0x205 || inputMessage==0x208;
-        if(input.extra==inputTag && !buttonUp && (!active || paused || GetAncestor(GetForegroundWindow(),2)!=target)) {
-          if(active && !paused) Human(false);
+        if(input.extra==inputTag && !buttonUp && (!active || paused || contextChanged || GetAncestor(GetForegroundWindow(),2)!=target)) {
+          if(active && !paused) ContextChanged("foreground_changed");
           return new IntPtr(1);
         }
         if(input.extra==inputTag) {
@@ -186,22 +218,22 @@ public static class CardBushPresentation {
           if(message==0x204) heldMouse|=16; else if(message==0x205) heldMouse&=~16u;
           if(message==0x207) heldMouse|=64; else if(message==0x208) heldMouse&=~64u;
         }
-        if((input.flags&1)==0) Human(false);
+        if(input.extra!=inputTag && (input.flags&1)==0) Human(false,"mouse");
       }
       return CallNextHookEx(IntPtr.Zero,code,msg,data);
     };
     onKey=(code,msg,data)=> {
       if(code>=0) {
         KEY input=(KEY)Marshal.PtrToStructure(data,typeof(KEY));
-        if(input.extra==inputTag && (input.flags&0x80)==0 && (!active || paused || GetAncestor(GetForegroundWindow(),2)!=target)) {
-          if(active && !paused) Human(false);
+        if(input.extra==inputTag && (input.flags&0x80)==0 && (!active || paused || contextChanged || GetAncestor(GetForegroundWindow(),2)!=target)) {
+          if(active && !paused) ContextChanged("foreground_changed");
           return new IntPtr(1);
         }
         if(input.extra==inputTag && active && !paused) touched=DateTime.UtcNow;
         if(input.extra==inputTag && input.key!=0xE7) {
           if((input.flags&0x80)==0) heldKeys.Add((byte)input.key); else heldKeys.Remove((byte)input.key);
         }
-        if((input.flags&0x10)==0 && (msg.ToInt64()==0x100 || msg.ToInt64()==0x104)) Human(input.key==27);
+        if(input.extra!=inputTag && (input.flags&0x10)==0 && (msg.ToInt64()==0x100 || msg.ToInt64()==0x104)) Human(input.key==27,"keyboard");
       }
       return CallNextHookEx(IntPtr.Zero,code,msg,data);
     };
@@ -260,7 +292,7 @@ public static class CardBushPresentation {
         using(var bg=new SolidBrush(Color.FromArgb(20,29,31))) g.FillRoundedRectangle(bg,0,0,Width,Height,12);
         using(var pen=new Pen(cyan)) g.DrawRectangle(pen,0,0,Width-1,Height-1);
         using(var font=new Font("Segoe UI",9)) {
-          TextRenderer.DrawText(g,paused?"CardBush · 已暂停":"CardBush 操作中",font,new Point(10,7),Color.FromArgb(212,226,225));
+          TextRenderer.DrawText(g,StatusText(),font,new Point(10,7),Color.FromArgb(212,226,225));
           TextRenderer.DrawText(g,"停止",font,new Point(Width-43,7),Color.FromArgb(90,223,215));
         }
       } else {

@@ -1,15 +1,16 @@
 // Opt-in real desktop tests. Every input targets an isolated test window.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchDesktopFixture } from './helpers/desktopFixture.mjs';
-import { executeComputerUse } from '../dist/plugins/computerUseRuntime.js';
+import { executeComputerUse, windowStateCaptureScript } from '../dist/plugins/computerUseRuntime.js';
 import { computerUsePresentation } from '../dist/plugins/computerUsePresentation.js';
 import { defaultAppsRuntimeConfig } from '../dist/config.js';
+import { runComputerUsePowerShell } from '../dist/plugins/computerUsePowerShell.js';
+import { computerUseCaptureLayersScript } from '../dist/plugins/computerUseCaptureLayers.js';
+import { computerUseVisualProgressScript } from '../dist/plugins/computerUseProgress.js';
 
 if(process.platform!=='win32')throw new Error('Windows required');
 const fixture=launchDesktopFixture();
@@ -17,8 +18,10 @@ const config=defaultAppsRuntimeConfig().computerUse.config;
 const checks=[];let hwnd;let sequence=0;
 const hash=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
 const textError=error=>[error.message||String(error),error.stderr].filter(Boolean).join('\n');
-const act=(scope,input,signal)=>executeComputerUse(input,config,signal,scope);
-const observe=scope=>act(scope,{action:'observe',hwnd});
+// These cases deliberately exercise the explicit observe/action contract. The
+// default action+observation path is covered by computerUseFlow.native.mjs.
+const act=(scope,input,signal)=>executeComputerUse({observe_after:false,...input},config,signal,scope);
+const observe=scope=>act(scope,{action:'observe',hwnd,include_text:true});
 const element=(observed,id)=>{const found=observed.output.accessibility.elements.find(e=>e.automation_id===id);assert.ok(found,`Missing ${id}`);return found;};
 const bound=(observed,input)=>({...input,hwnd,state_id:observed.output.state_id});
 const reject=async(promise,pattern)=>assert.rejects(promise,error=>{assert.match(textError(error),pattern);return true;});
@@ -28,13 +31,12 @@ try{
   const ready=await fixture.ready;hwnd=ready.hwnd;
   await check('failed target capture never returns pixels from an overlapping window',async()=>{
     await fixture.command('overlap');
-    const source=await readFile(new URL('../src/plugins/computerUseRuntime.ts',import.meta.url),'utf8');
-    const script=source.match(/const windowStateCaptureScript = String.raw`([\s\S]*?)`;/)?.[1];
+    const script=windowStateCaptureScript;
     assert.ok(script,'native capture script found');
     const fault=script.replace('[CardBushWindowCapture]::PrintWindow($h, $hdc, 2)','$false');
     assert.notEqual(fault,script,'inject PrintWindow failure');
     const directory=await mkdtemp(join(tmpdir(),'cardbush-capture-fault-'));const path=join(directory,'must-not-exist.png');
-    await reject(promisify(execFile)('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from('$ErrorActionPreference="Stop"\n'+fault,'utf16le').toString('base64')],{windowsHide:true,timeout:20000,env:{...process.env,CARDBUSH_WINDOW_HWND:String(hwnd),CARDBUSH_CAPTURE_PATH:path}}),/capture failed/);
+    await reject(runComputerUsePowerShell(`${computerUseCaptureLayersScript}\n${computerUseVisualProgressScript}\n${fault}`,{cwd:process.cwd(),timeoutMs:20000,env:process.env,parameters:{CARDBUSH_WINDOW_HWND:String(hwnd),CARDBUSH_CAPTURE_PATH:path}}),/capture failed/);
     await assert.rejects(readFile(path),{code:'ENOENT'});
     await fixture.command('uncover');
   });
@@ -140,7 +142,7 @@ try{
     assert.ok((await fixture.command('inspect')).dragMoves>0);
     observed=await observe(scope);const scroll=element(observed,'fixture-scroll');
     await act(scope,bound(observed,{action:'scroll',x:scroll.bounds.x+100,y:scroll.bounds.y+70,delta:-3}));
-    const actual=await fixture.command('inspect');assert.ok(actual.wheels>0&&actual.scroll>0);
+    await appState(actual=>actual.wheels>0&&actual.scroll>0,'scroll input changes the fixture offset');
   });
   await check('cancellation before and during input preparation sends no text',async scope=>{
     let observed=await observe(scope);const before=(await fixture.command('inspect')).text;

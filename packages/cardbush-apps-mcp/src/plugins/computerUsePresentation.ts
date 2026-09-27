@@ -1,8 +1,19 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { computerUsePresentationNative } from './computerUsePresentationNative.js';
+import { ComputerUseFailure, computerUseFailure } from './computerUseErrors.js';
 
-type Notice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean };
+export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number };
+type Notice = ComputerUseNotice;
+
+export function computerUseNoticeFailure(notice: Notice): ComputerUseFailure {
+  const details = { source: notice.reason ?? notice.kind, ...(notice.target_hwnd ? { target_hwnd: notice.target_hwnd } : {}), ...(notice.foreground_hwnd ? { foreground_hwnd: notice.foreground_hwnd } : {}) };
+  if (notice.kind === 'paused') return new ComputerUseFailure('user_takeover', 'Computer Use yielded to user input. Observe again after the user finishes.', 'not_dispatched', details);
+  if (notice.kind === 'context_changed') return new ComputerUseFailure('window_changed', 'The foreground window changed. Remaining input stopped; inspect the new observation before continuing.', 'not_dispatched', details);
+  if (notice.reason === 'escape' || notice.reason === 'button') return new ComputerUseFailure('user_stopped', 'Desktop control was stopped for this turn. Do not retry; return to the user.', 'not_dispatched', details);
+  if (notice.reason === 'window_closed') return new ComputerUseFailure('window_unavailable', 'The target window no longer exists. Discover or observe the intended related window.', 'not_dispatched', details);
+  return new ComputerUseFailure('control_unavailable', 'Computer Use control worker closed or its lease expired. Observe again before continuing.', 'not_dispatched', details);
+}
 type Target = { hwnd: number; elements: Array<{ index: number; focused: boolean; bounds?: { x: number; y: number; width: number; height: number } }> };
 type Pending = { resolve: (value: Notice) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
@@ -15,11 +26,12 @@ export class ComputerUsePresentation {
   #owner = '';
   #stopped = new Set<string>();
   #paused = new Set<string>();
+  #interruptions = new Map<string, ComputerUseFailure>();
   #controller?: AbortController;
   #idleTimer?: ReturnType<typeof setTimeout>;
 
   assertAvailable(scope: string): void {
-    if (this.#stopped.has(scope)) throw new Error('Desktop control was stopped for this turn. Do not retry; return to the user.');
+    if (this.#stopped.has(scope)) throw this.#interruptions.get(scope) ?? computerUseNoticeFailure({ kind: 'stopped', reason: 'button' });
     if (this.#owner && this.#owner !== scope) throw new Error('Another Computer Use session owns the window. Wait for it to finish.');
   }
 
@@ -31,14 +43,16 @@ export class ComputerUsePresentation {
       const result = await this.#send({ op: 'observe', scope, hwnd });
       this.assertAvailable(scope);
       if (result.paused) this.#paused.add(scope); else this.#paused.delete(scope);
+      if (!result.paused) this.#interruptions.delete(scope);
     } catch (error) { if (this.#owner === scope) this.#owner = previous; throw error; }
   }
 
   isPaused(scope: string): boolean { return this.#paused.has(scope) && !this.#stopped.has(scope); }
+  interruption(scope: string): ComputerUseFailure | undefined { return this.#interruptions.get(scope); }
 
   async action(scope: string, input: Record<string, unknown>, target: Target, signal?: AbortSignal) {
     this.assertAvailable(scope);
-    if (this.#paused.has(scope)) throw new Error('User has taken over. Wait and observe the target again before continuing.');
+    if (this.#paused.has(scope)) throw this.#interruptions.get(scope) ?? computerUseNoticeFailure({ kind: 'paused' });
     const element = target.elements.find((item) => item.index === input.element_index) ??
       target.elements.find((item) => item.focused);
     const bounds = element?.bounds;
@@ -72,6 +86,12 @@ export class ComputerUsePresentation {
     this.#paused.add(scope);
     if (this.#child) await this.#send({ op: 'pause', scope });
   }
+  async hold(scope: string): Promise<void> {
+    if (this.#owner !== scope || !this.#child) return;
+    // Retain the same window surfaces while waiting for a fresh observation.
+    // This neither synthesizes human activity nor resumes suspended input.
+    await this.#send({ op: 'hold', scope });
+  }
   async finish(scope: string): Promise<void> {
     if (this.#owner !== scope) return;
     this.#controller?.abort(new Error('Computer Use control session finished.'));
@@ -79,6 +99,7 @@ export class ComputerUsePresentation {
     if (this.#child) await this.#send({ op: 'finish', scope });
     this.#owner = '';
     this.#paused.delete(scope);
+    if (!this.#stopped.has(scope)) this.#interruptions.delete(scope);
     this.#controller = undefined;
   }
 
@@ -133,14 +154,19 @@ export class ComputerUsePresentation {
       const pending = this.#pending.get(notice.id);
       if (!pending) return;
       clearTimeout(pending.timer); this.#pending.delete(notice.id);
-      if (notice.error) pending.reject(new Error(notice.error)); else pending.resolve(notice);
+      if (notice.error) pending.reject(computerUseFailure(notice.error)); else pending.resolve(notice);
       return;
     }
     if (!notice.scope || notice.scope !== this.#owner) return;
-    if (notice.kind === 'paused' || notice.kind === 'stopped') {
-      this.#paused.add(notice.scope);
-      if (notice.kind === 'stopped') { this.#stopped.add(notice.scope); this.#owner = ''; }
-      const error = new Error(notice.kind === 'paused' ? 'Computer Use yielded to user input. Observe again before resuming.' : 'Computer Use stopped by the user or its presentation lifetime limit.');
+    if (notice.kind === 'paused' || notice.kind === 'stopped' || notice.kind === 'context_changed') {
+      const error = computerUseNoticeFailure(notice);
+      // A foreground transition (including an application's own popup) is not
+      // physical user activity. Only explicit stop is latched for the turn.
+      if (error.info.code === 'user_takeover') this.#paused.add(notice.scope);
+      if (error.info.code === 'user_stopped') this.#stopped.add(notice.scope);
+      if (this.#paused.has(notice.scope) && error.info.code === 'window_changed') return;
+      this.#interruptions.set(notice.scope, error);
+      if (notice.kind === 'stopped') this.#owner = '';
       this.#controller?.abort(error);
     }
   }

@@ -15,6 +15,9 @@ import {
   selectWindowTarget,
 } from '../dist/plugins/computerUseRuntime.js';
 
+const observedWindow = { hwnd: 901, processName: 'fixture', title: 'fixture', bounds: { x: 0, y: 0, width: 800, height: 600 }, elements: [] };
+const evidence = (extra = {}) => ({ source: 'window', target: '0:901', bounds: observedWindow.bounds, foreground: true, consistent: true, explicit: true, ...extra });
+
 test('creates an independent MCP server with standard MCP annotations', () => {
   const server = createCardbushAppsServer();
   assert.ok(server);
@@ -146,7 +149,9 @@ test('honors Runtime cancellation before issuing desktop input', async () => {
 test('preserves Unicode in generic application resolution failures', {
   skip: process.platform !== 'win32',
 }, async () => {
-  const config = defaultAppsRuntimeConfig().computerUse.config;
+  // The deliberately nonexistent app cannot receive desktop input. Keep this
+  // error-formatting test independent of the user's current mouse activity.
+  const config = { ...defaultAppsRuntimeConfig().computerUse.config, yieldToUser: false };
   await assert.rejects(
     executeComputerUse({
       action: 'open_app',
@@ -248,12 +253,12 @@ test('stops unchanged repeated-action loops per turn scope', () => {
   const click = { action: 'click', x: 100, y: 120 };
   const observe = (brightness) => {
     const release = guard.begin(scope, { action: 'observe' });
-    guard.recordObservation(scope, Buffer.alloc(256, brightness).toString('base64'));
+    guard.recordObservation(scope, Buffer.alloc(256, brightness).toString('base64'), evidence());
     release();
   };
   const act = () => {
     const release = guard.begin(scope, click);
-    guard.recordAction(scope, click);
+    guard.recordAction(scope, click, true, observedWindow);
     release();
   };
 
@@ -264,8 +269,11 @@ test('stops unchanged repeated-action loops per turn scope', () => {
   observe(20);
   assert.throws(() => guard.begin(scope, click), /repeated action loop/);
 
-  observe(90);
-  assert.doesNotThrow(() => guard.begin(scope, click)());
+  assert.throws(() => observe(90), (error) => error.info.code === 'policy_blocked' && error.info.details.terminal);
+  guard.releaseObservation(scope);
+  guard.recordObservation(scope, Buffer.alloc(256, 90).toString('base64'), evidence());
+  assert.throws(() => guard.begin(scope, { action: 'key', key: 'enter' }), /repeated action loop/);
+  assert.doesNotThrow(() => guard.begin('next-turn', click)());
 });
 
 test('requires observation after bounded action chains and user activity', () => {
@@ -274,7 +282,7 @@ test('requires observation after bounded action chains and user activity', () =>
   for (const key of ['a', 'b', 'c']) {
     const input = { action: 'key', key };
     const release = guard.begin(scope, input);
-    guard.recordAction(scope, input);
+    guard.recordAction(scope, input, true, observedWindow);
     release();
   }
   assert.throws(
@@ -283,7 +291,7 @@ test('requires observation after bounded action chains and user activity', () =>
   );
 
   const observeRelease = guard.begin(scope, { action: 'observe' });
-  guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'));
+  guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'), evidence());
   observeRelease();
   guard.recordUserYield(scope);
   assert.throws(
@@ -292,30 +300,36 @@ test('requires observation after bounded action chains and user activity', () =>
   );
 });
 
-test('stops alternating actions when observations show no progress', () => {
+test('allows a bounded preparation chain then requires an explicit progress review', () => {
   const guard = new ComputerUseSafetyGuard();
   const scope = 'session-3:turn-8';
   const visual = Buffer.alloc(256, 44).toString('base64');
   const observe = () => {
     const release = guard.begin(scope, { action: 'observe' });
-    guard.recordObservation(scope, visual);
+    guard.recordObservation(scope, visual, evidence());
     release();
   };
   const act = (input) => {
     const release = guard.begin(scope, input);
-    guard.recordAction(scope, input);
+    guard.recordAction(scope, input, true, observedWindow);
     release();
   };
 
   observe();
   act({ action: 'click', x: 10, y: 10 });
   observe();
+  act({ action: 'type', text: 'find this' });
+  observe();
+  act({ action: 'key', key: 'enter' });
+  observe();
   act({ action: 'scroll', delta: -2 });
   observe();
-  assert.throws(
-    () => guard.begin(scope, { action: 'key', key: 'enter' }),
-    /without visible progress/,
-  );
+  const corrective = { action: 'key', key: 'escape' };
+  assert.throws(() => guard.begin(scope, corrective), (error) => error.info.code === 'progress_unverified');
+  observe();
+  act(corrective);
+  observe();
+  assert.throws(() => guard.begin(scope, { action: 'key', key: 'enter' }), (error) => error.info.code === 'policy_blocked');
 });
 
 test('counts failed attempts so identical errors cannot retry forever', () => {
@@ -324,7 +338,7 @@ test('counts failed attempts so identical errors cannot retry forever', () => {
   const input = { action: 'click', x: 70, y: 80, hwnd: 999 };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const release = guard.begin(scope, input);
-    guard.recordAction(scope, input, false);
+    guard.recordAction(scope, input, false, observedWindow);
     release();
   }
   assert.throws(() => guard.begin(scope, input), /repeated action loop/);
@@ -336,7 +350,7 @@ test('preflight rejections preserve the observe/activate/observe/input recovery 
   const visual = Buffer.alloc(256, 42).toString('base64');
   const observe = () => {
     const release = guard.begin(scope, { action: 'observe', hwnd: 901 });
-    guard.recordObservation(scope, visual, 'background');
+    guard.recordObservation(scope, visual, evidence({ foreground: false }));
     release();
   };
   for (const input of [{ action: 'type', text: 'demo' }, { action: 'click', element_index: 6 }]) {
@@ -348,9 +362,9 @@ test('preflight rejections preserve the observe/activate/observe/input recovery 
   observe();
   const activate = { action: 'window', operation: 'activate', hwnd: 901 };
   const release = guard.begin(scope, activate);
-  guard.recordAction(scope, activate);
+  guard.recordAction(scope, activate, true, observedWindow);
   release();
-  guard.recordObservation(scope, visual, 'foreground');
+  guard.recordObservation(scope, visual, evidence());
   assert.doesNotThrow(() => guard.begin(scope, { action: 'type', text: 'demo' })());
 });
 
@@ -361,9 +375,9 @@ test('repeated preflight rejection blocks the same action but permits correction
     const release = guard.begin('rejected', input);
     guard.recordPreflightFailure('rejected', input);
     release();
-    guard.recordObservation('rejected', 'unchanged');
+    guard.recordObservation('rejected', 'unchanged', evidence());
   }
-  assert.throws(() => guard.begin('rejected', input), /repeated action loop/);
+  assert.throws(() => guard.begin('rejected', input), /failed preflight twice/);
   assert.doesNotThrow(() => guard.begin('rejected', { action: 'window', operation: 'activate', hwnd: 901 })());
 });
 
@@ -375,7 +389,7 @@ test('alternating preflight errors remain bounded across observations and finish
     guard.recordPreflightFailure('invalid', input);
     release();
     const observed = guard.begin('invalid', { action: 'observe', hwnd: 901 });
-    guard.recordObservation('invalid', `visual-${attempt}`);
+    guard.recordObservation('invalid', `visual-${attempt}`, evidence());
     observed();
   }
   guard.releaseObservation('invalid');
@@ -385,14 +399,14 @@ test('alternating preflight errors remain bounded across observations and finish
 
 test('possibly dispatched failures still stop alternating no-progress cycles', () => {
   const guard = new ComputerUseSafetyGuard();
-  guard.recordObservation('partial', 'unchanged');
+  guard.recordObservation('partial', 'unchanged', evidence());
   for (const input of [{ action: 'click', x: 10, y: 10 }, { action: 'key', keys: ['enter'] }]) {
     const release = guard.begin('partial', input);
-    guard.recordAction('partial', input, false);
+    guard.recordAction('partial', input, false, observedWindow);
     release();
-    guard.recordObservation('partial', 'unchanged');
+    guard.recordObservation('partial', 'unchanged', evidence());
   }
-  assert.throws(() => guard.begin('partial', { action: 'window', operation: 'activate' }), /without visible progress/);
+  assert.throws(() => guard.begin('partial', { action: 'window', operation: 'activate' }), /no verified progress/);
 });
 
 test('ends repeated user-yield and passive-observation loops', () => {
@@ -401,7 +415,7 @@ test('ends repeated user-yield and passive-observation loops', () => {
   const visual = Buffer.alloc(256, 60).toString('base64');
   const observe = () => {
     const release = guard.begin(scope, { action: 'observe' });
-    guard.recordObservation(scope, visual);
+    guard.recordObservation(scope, visual, evidence());
     release();
   };
 
@@ -416,7 +430,7 @@ test('ends repeated user-yield and passive-observation loops', () => {
   );
   assert.throws(
     () => guard.begin(scope, { action: 'observe' }),
-    /repeated observation loop/,
+    /ended desktop control for this turn/,
   );
 });
 
@@ -446,7 +460,7 @@ test('binds each target observation to one exact window and one action', () => {
     bounds: { x: 10, y: 20, width: 800, height: 600 },
     elements: [],
   };
-  guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'));
+  guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'), evidence());
   const stateId = guard.bindObservation(scope, binding);
   assert.match(stateId, /^desktop_state_/);
   const claimed = guard.claimObservation(scope, { state_id: stateId, hwnd: 901 });
@@ -464,7 +478,7 @@ test('invalidates observed state after another session changes the desktop', () 
   const guard = new ComputerUseSafetyGuard();
   const scopeA = 'session-a:turn-a';
   const scopeB = 'session-b:turn-b';
-  guard.recordObservation(scopeA, Buffer.alloc(256, 30).toString('base64'));
+  guard.recordObservation(scopeA, Buffer.alloc(256, 30).toString('base64'), evidence());
   const stateId = guard.bindObservation(scopeA, {
     hwnd: 901,
     processName: 'notepad',
@@ -472,7 +486,7 @@ test('invalidates observed state after another session changes the desktop', () 
     bounds: { x: 10, y: 20, width: 800, height: 600 },
     elements: [],
   });
-  guard.recordAction(scopeB, { action: 'open_app', app: 'calc' });
+  guard.recordAction(scopeB, { action: 'open_app', app: 'calc' }, true, observedWindow);
   assert.throws(
     () => guard.claimObservation(scopeA, { state_id: stateId, hwnd: 901 }),
     /possibly in another session/,
@@ -482,7 +496,7 @@ test('invalidates observed state after another session changes the desktop', () 
 test('rejects a state token paired with another window', () => {
   const guard = new ComputerUseSafetyGuard();
   const scope = 'session-window:turn-window';
-  guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'));
+  guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'), evidence());
   const stateId = guard.bindObservation(scope, {
     hwnd: 901,
     processName: 'notepad',
@@ -508,15 +522,15 @@ test('does not let one-use state ids hide repeated actions', () => {
     elements: [],
   };
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    guard.recordObservation(scope, visual);
+    guard.recordObservation(scope, visual, evidence());
     const stateId = guard.bindObservation(scope, binding);
     const input = { action: 'click', x: 20, y: 30, hwnd: 901, state_id: stateId };
     const release = guard.begin(scope, input);
     guard.claimObservation(scope, input);
-    guard.recordAction(scope, input);
+    guard.recordAction(scope, input, true, observedWindow);
     release();
   }
-  guard.recordObservation(scope, visual);
+  guard.recordObservation(scope, visual, evidence());
   const stateId = guard.bindObservation(scope, binding);
   assert.throws(
     () => guard.begin(scope, { action: 'click', x: 20, y: 30, hwnd: 901, state_id: stateId }),
@@ -530,11 +544,11 @@ test('treats semantic accessibility changes as visible progress', () => {
   const visual = Buffer.alloc(256, 42).toString('base64');
   const click = { action: 'click', element_index: 2, hwnd: 901 };
 
-  guard.recordObservation(scope, visual, 'semantic-before');
+  guard.recordObservation(scope, visual, evidence({ focusedFingerprint: 'before' }));
   let release = guard.begin(scope, click);
-  guard.recordAction(scope, click);
+  guard.recordAction(scope, click, true, observedWindow);
   release();
-  guard.recordObservation(scope, visual, 'semantic-after');
+  guard.recordObservation(scope, visual, evidence({ focusedFingerprint: 'after' }));
 
   release = guard.begin(scope, click);
   release();
@@ -560,7 +574,7 @@ test('expires unused target observations after the short action window', () => {
   try {
     const guard = new ComputerUseSafetyGuard();
     const scope = 'session-expiry:turn-expiry';
-    guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'));
+    guard.recordObservation(scope, Buffer.alloc(256, 30).toString('base64'), evidence());
     const stateId = guard.bindObservation(scope, {
       hwnd: 901,
       processName: 'notepad',

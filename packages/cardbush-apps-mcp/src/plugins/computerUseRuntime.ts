@@ -1,14 +1,20 @@
-import { execFile } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { promisify } from 'node:util';
+import { join, win32 } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { ComputerUsePluginConfig } from '../config.js';
 import { computerUsePresentation } from './computerUsePresentation.js';
-import { formatComputerUseError } from './computerUseErrors.js';
+import { computerUseCaptureLayersScript } from './computerUseCaptureLayers.js';
+import { computerUseAccessibilityScript } from './computerUseAccessibility.js';
+import { ComputerUseFailure, computerUseFailure, type ComputerUseFailureInfo } from './computerUseErrors.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import { computerUsePowerShellParameters, runComputerUsePowerShell } from './computerUsePowerShell.js';
+import { computerUseVisualProgressScript, hasVisualProgress, type ProgressEvidence, type ProgressBounds } from './computerUseProgress.js';
+import { prepareComputerUseNativeCode } from './computerUseNativeCode.js';
+import { collectComputerUseTimings, type ComputerUseTimings } from './computerUseTimings.js';
+import { computerUseImageScript, saveComputerUseImageScript } from './computerUseImage.js';
 
 export interface ComputerUseArtifact {
   artifact_id: string;
@@ -19,12 +25,12 @@ export interface ComputerUseArtifact {
   metadata: Record<string, unknown>;
 }
 
-const execFileAsync = promisify(execFile);
-
 export interface ComputerUseResult {
   output: unknown;
   paths: string[];
   artifacts: ComputerUseArtifact[];
+  error?: ComputerUseFailureInfo;
+  timings?: ComputerUseTimings;
 }
 
 type ComputerUseWindowBounds = {
@@ -36,6 +42,7 @@ type ComputerUseWindowBounds = {
 
 type ComputerUseObservedElement = {
   index: number;
+  resultOffset: number;
   runtimeId: string;
   name: string;
   automationId: string;
@@ -62,6 +69,8 @@ export type ComputerUseObservationBinding = {
   title: string;
   bounds: ComputerUseWindowBounds;
   elements: ComputerUseObservedElement[];
+  ownerHwnd?: number;
+  focusedBounds?: ComputerUseWindowBounds;
 };
 
 type ComputerUseSafetyState = {
@@ -71,22 +80,27 @@ type ComputerUseSafetyState = {
   lastActionFingerprint: string;
   repeatedActionCount: number;
   preflightFailures: number;
-  lastObservationFingerprint: string;
   unchangedActionCycles: number;
-  actionSinceObservation: boolean;
   observationsWithoutAction: number;
   mustObserveAfterYield: boolean;
   userYieldCount: number;
   expectedInputTick?: number;
   observation?: ComputerUseObservationBinding;
-  lastObservationSemanticFingerprint: string;
+  observations: Map<string, { visual: string; evidence: ProgressEvidence }>;
+  pending?: { target?: string; visual: string; evidence?: ProgressEvidence; region?: ProgressBounds };
+  lastRegion?: { target: string; bounds: ProgressBounds };
+  uncertainActionCycles: number;
+  lastAttemptDispatched: boolean;
+  review: 'none' | 'required' | 'ready' | 'used';
+  terminal?: ComputerUseFailure;
 };
 
 const maxActionsWithoutObservation = 3;
 const maxRepeatedActionAttempts = 2;
 const maxPreflightFailures = 6;
 const maxUserYields = 2;
-const maxPassiveObservations = 3;
+const maxPassiveObservations = 6;
+const maxUnverifiedActions = 4;
 const safetyStateTtlMs = 20 * 60_000;
 const observationStateTtlMs = 30_000;
 
@@ -106,32 +120,44 @@ export class ComputerUseSafetyGuard {
       throw new ComputerUseDesktopBusyError('Another Computer Use action is already using the desktop. Wait for it to finish, then observe before continuing.');
     }
     const action = String(input.action ?? '').trim();
+    if (state.terminal) throw state.terminal;
     if (isObservationAction(action)) {
       if (state.observationsWithoutAction >= maxPassiveObservations) {
-        throw new Error('Computer Use stopped a repeated observation loop. The desktop is not progressing; wait for a new user request or use another route.');
+        this.#stop(state, 'observation_loop', 'Computer Use stopped a repeated observation loop. Return to the user instead of polling again.');
       }
     } else {
-      if (state.mustObserveAfterYield) {
-        throw new Error('Computer Use yielded to user input. Call observe before attempting another desktop action.');
-      }
       if (state.userYieldCount >= maxUserYields) {
-        throw new Error('Computer Use yielded to the user repeatedly and ended desktop control for this turn. Do not retry until a new user request.');
+        this.#stop(state, 'repeated_takeover', 'Computer Use yielded to the user repeatedly and ended desktop control for this turn.');
+      }
+      if (state.mustObserveAfterYield) {
+        throw new ComputerUseFailure('observation_required', 'Computer Use yielded to user input. Let the user finish, then observe the target once.');
       }
       if (state.actionsSinceObservation >= maxActionsWithoutObservation) {
-        throw new Error(`Computer Use paused after ${maxActionsWithoutObservation} actions without observation. Observe the desktop before continuing.`);
+        throw new ComputerUseFailure('observation_required', `Computer Use paused after ${maxActionsWithoutObservation} actions without observation. Observe the target before continuing.`);
       }
       const fingerprint = actionFingerprint(input);
       if (
         fingerprint === state.lastActionFingerprint &&
         state.repeatedActionCount >= maxRepeatedActionAttempts
       ) {
-        throw new Error('Computer Use stopped a repeated action loop. The same action did not produce a visible change; use another route or report the blocker.');
+        if (state.lastAttemptDispatched) {
+          this.#stop(state, 'repeated_action', 'Computer Use stopped a repeated action loop. The same action has already been dispatched twice without verified progress.');
+        }
+        throw new ComputerUseFailure('invalid_action', 'The same action failed preflight twice. Observe and choose a different corrective action; no input was dispatched.', 'not_dispatched', { reason: 'repeated_preflight' });
       }
-      if (state.unchangedActionCycles >= maxRepeatedActionAttempts) {
-        throw new Error('Computer Use stopped after two action cycles without visible progress. Use another route or report the blocker instead of retrying.');
+      if (state.uncertainActionCycles >= maxRepeatedActionAttempts || state.review === 'used') {
+        this.#stop(state, 'unverified_execution', 'Computer Use stopped because execution still has no verified progress. Report the blocker instead of replaying input.');
       }
       if (state.preflightFailures >= maxPreflightFailures) {
-        throw new Error('Computer Use stopped after repeated preflight rejections. Report the blocker and wait for a new user request.');
+        this.#stop(state, 'preflight_limit', 'Computer Use stopped after repeated preflight rejections. Report the blocker and wait for a new user request.');
+      }
+      if (state.unchangedActionCycles >= maxUnverifiedActions && state.review !== 'ready') {
+        state.review = 'required';
+        state.observation = undefined;
+        throw new ComputerUseFailure('progress_unverified', 'Progress could not be verified. Observe the same target once, inspect what actually happened, then choose one different corrective action.', 'not_dispatched', { target: state.pending?.target });
+      }
+      if (state.review === 'ready' && fingerprint === state.lastActionFingerprint) {
+        throw new ComputerUseFailure('progress_unverified', 'The review permits a different corrective action, not a replay of the last input.', 'not_dispatched', { target: state.pending?.target });
       }
     }
     state.busy = true;
@@ -147,37 +173,41 @@ export class ComputerUseSafetyGuard {
   recordObservation(
     scopeId: string,
     visualFingerprint: string,
-    semanticFingerprint = '',
+    evidence: ProgressEvidence,
   ): void {
     if (!scopeId) return;
     const state = this.#state(scopeId);
-    const hadObservation = Boolean(state.lastObservationFingerprint);
-    const visualChanged = hadObservation &&
-      !sameVisualState(state.lastObservationFingerprint, visualFingerprint);
-    const semanticChanged = Boolean(
-      state.lastObservationSemanticFingerprint &&
-      semanticFingerprint &&
-      state.lastObservationSemanticFingerprint !== semanticFingerprint,
-    );
-    const changed = visualChanged || semanticChanged;
-    if (hadObservation && state.actionSinceObservation) {
-      state.unchangedActionCycles = changed ? 0 : state.unchangedActionCycles + 1;
-    } else if (changed) {
-      state.unchangedActionCycles = 0;
-    }
-    state.observationsWithoutAction = state.actionSinceObservation || changed
-      ? 1
-      : state.observationsWithoutAction + 1;
+    if (state.terminal) return;
+    state.observationsWithoutAction += 1;
+    state.observation = undefined;
+    // Discovery, another window, and changing UIA filters are not evidence that
+    // an input succeeded. Preserve the action's original comparison baseline.
+    if (evidence.source !== 'window' || !evidence.target || evidence.consistent === false) return;
+    const pending = state.pending;
+    const sameTarget = pending?.target === evidence.target;
+    const before = sameTarget ? pending?.evidence : undefined;
+    const changed = Boolean(pending && (
+      evidence.relatedTransition || (sameTarget && before && (
+        hasVisualProgress(pending.visual, visualFingerprint, evidence.bounds, pending.region) ||
+        (before.focusedFingerprint && evidence.focusedFingerprint && before.focusedFingerprint !== evidence.focusedFingerprint) ||
+        (before.bounds && evidence.bounds && ['x', 'y', 'width', 'height'].some((key) => before.bounds![key as keyof ProgressBounds] !== evidence.bounds![key as keyof ProgressBounds])) ||
+        (before.foreground === false && evidence.foreground === true)
+      ))
+    ));
+    state.observations.set(evidence.target, { visual: visualFingerprint, evidence });
+    if (state.observations.size > 16) state.observations.delete(state.observations.keys().next().value!);
     state.actionsSinceObservation = 0;
-    state.actionSinceObservation = false;
     state.mustObserveAfterYield = false;
     if (changed) {
+      state.unchangedActionCycles = 0;
+      state.uncertainActionCycles = 0;
+      state.review = 'none';
       state.lastActionFingerprint = '';
       state.repeatedActionCount = 0;
+      state.pending = undefined;
+    } else if (state.review === 'required' && sameTarget && evidence.explicit) {
+      state.review = 'ready';
     }
-    state.lastObservationFingerprint = visualFingerprint;
-    state.lastObservationSemanticFingerprint = semanticFingerprint;
-    state.observation = undefined;
     state.touchedAt = Date.now();
   }
 
@@ -232,12 +262,24 @@ export class ComputerUseSafetyGuard {
     scopeId: string,
     input: Record<string, unknown>,
     successful = true,
+    observation?: ComputerUseObservationBinding,
   ): void {
     if (!scopeId) return;
     const state = this.#state(scopeId);
     const fingerprint = actionFingerprint(input);
+    const target = observation ? `${observation.processId ?? 0}:${observation.hwnd}` : undefined;
+    const baseline = target ? state.observations.get(target) : undefined;
+    const region = observation ? actionRegion(input, observation, target === state.lastRegion?.target ? state.lastRegion?.bounds : undefined) : undefined;
+    if (target && region) state.lastRegion = { target, bounds: region };
+    state.pending = { target, visual: baseline?.visual ?? '', evidence: baseline?.evidence, region };
     state.actionsSinceObservation += 1;
-    state.actionSinceObservation = true;
+    // Clipboard contents are verified independently. Setting them is not an
+    // attempted visual transition, and must not spend the UI progress budget.
+    if (input.action !== 'clipboard' || !successful) state.unchangedActionCycles += 1;
+    if (!successful) state.uncertainActionCycles += 1;
+    if (state.review === 'ready') state.review = 'used';
+    state.observationsWithoutAction = 0;
+    state.lastAttemptDispatched = true;
     state.repeatedActionCount = fingerprint === state.lastActionFingerprint
       ? state.repeatedActionCount + 1
       : 1;
@@ -256,6 +298,7 @@ export class ComputerUseSafetyGuard {
     const state = this.#state(scopeId);
     const fingerprint = actionFingerprint(input);
     state.preflightFailures += 1;
+    state.lastAttemptDispatched = false;
     state.repeatedActionCount = fingerprint === state.lastActionFingerprint
       ? state.repeatedActionCount + 1
       : 1;
@@ -309,22 +352,34 @@ export class ComputerUseSafetyGuard {
       lastActionFingerprint: '',
       repeatedActionCount: 0,
       preflightFailures: 0,
-      lastObservationFingerprint: '',
       unchangedActionCycles: 0,
-      actionSinceObservation: false,
       observationsWithoutAction: 0,
       mustObserveAfterYield: false,
       userYieldCount: 0,
-      lastObservationSemanticFingerprint: '',
+      observations: new Map(),
+      uncertainActionCycles: 0,
+      lastAttemptDispatched: false,
+      review: 'none',
     };
     this.#states.set(scopeId, created);
     return created;
   }
 
+  #stop(state: ComputerUseSafetyState, reason: string, message: string): never {
+    state.terminal = new ComputerUseFailure('policy_blocked', message, 'not_dispatched', { reason, terminal: true });
+    state.observation = undefined;
+    state.pending = undefined;
+    state.observations.clear();
+    state.lastRegion = undefined;
+    throw state.terminal;
+  }
+
   #cleanup(): void {
     const cutoff = Date.now() - safetyStateTtlMs;
     for (const [scopeId, state] of this.#states) {
-      if (!state.busy && state.touchedAt < cutoff) this.#states.delete(scopeId);
+      // Expiring bulky idle observations must not revive a blocked turn. The
+      // terminal entry is small (its image baselines were released by #stop).
+      if (!state.busy && !state.terminal && state.touchedAt < cutoff) this.#states.delete(scopeId);
     }
   }
 }
@@ -336,6 +391,13 @@ export async function executeComputerUse(
   config: ComputerUsePluginConfig,
   signal?: AbortSignal,
   scopeId = 'unscoped',
+): Promise<ComputerUseResult> {
+  const { value, timings } = await collectComputerUseTimings(() => executeComputerUseRequest(input, config, signal, scopeId));
+  return { ...value, timings };
+}
+
+async function executeComputerUseRequest(
+  input: Record<string, unknown>, config: ComputerUsePluginConfig, signal: AbortSignal | undefined, scopeId: string,
 ): Promise<ComputerUseResult> {
   throwIfAborted(signal);
   ensureWindows();
@@ -350,15 +412,35 @@ export async function executeComputerUse(
   try { release = computerUseSafety.begin(scopeId, input); }
   catch (error) {
     // A rejected concurrent caller does not own the active operation's lease.
-    if (!(error instanceof ComputerUseDesktopBusyError)) await computerUsePresentation.finish(scopeId).catch(() => undefined);
-    throw error;
+    if (!(error instanceof ComputerUseDesktopBusyError)) await computerUsePresentation.hold(scopeId).catch(() => undefined);
+    throw computerUseFailure(error);
   }
   let presentationAction: Awaited<ReturnType<typeof computerUsePresentation.action>> | undefined;
   let actionMayHaveDispatched = false;
+  let actionRecorded = false;
+  let actionObservation: ComputerUseObservationBinding | undefined;
+  let nativeAction: NativeActionContext | undefined;
   const requestSignal = signal;
+  const releaseAction = async () => {
+    await presentationAction?.release().catch(() => undefined);
+    presentationAction = undefined;
+  };
+  const acknowledgeAction = async (output: Record<string, unknown>) => {
+    if (actionRecorded) return;
+    computerUseSafety.recordAction(scopeId, input, true, actionObservation);
+    actionRecorded = true;
+    computerUseSafety.recordInputTick(scopeId, output.last_input_tick);
+    await releaseAction();
+  };
+  const prepareAction = (previous: ComputerUseObservationBinding): NativeActionContext => ({
+    input, config, previous, acknowledge: acknowledgeAction,
+  });
+  const completeAction = async (output: Record<string, unknown>): Promise<ComputerUseResult> => {
+    await acknowledgeAction(output);
+    return observeAfterAction(input, config, scopeId, actionObservation!, output, requestSignal, nativeAction);
+  };
   try {
     if (action === 'observe' || action === 'screenshot') {
-      await computerUsePresentation.suspend();
       if (hasWindowSelector(input)) {
         const exactHwnd = optionalInteger(input.hwnd);
         const target = exactHwnd != null
@@ -367,36 +449,8 @@ export async function executeComputerUse(
               await listWindows(signal) as Array<Record<string, unknown>>,
               input,
             );
-        const capture = await captureWindowState(
-          config.screenshotDirectory,
-          target,
-          action === 'observe',
-          optionalInteger(input.max_elements) ?? 160,
-          signal,
-        );
-        selectWindowTarget([record(capture.output.window)], input);
-        computerUseSafety.recordObservation(
-          scopeId,
-          capture.visualFingerprint,
-          capture.semanticFingerprint,
-        );
-        const stateId = action === 'observe'
-          ? computerUseSafety.bindObservation(scopeId, capture.binding)
-          : undefined;
-        if (stateId) await computerUsePresentation.observe(scopeId, capture.binding.hwnd);
-        return {
-          output: {
-            ...capture.output,
-            ...(stateId ? {
-              state_id: stateId,
-              state_usage: 'one_action',
-              state_ttl_ms: observationStateTtlMs,
-              coordinate_space: 'window',
-            } : {}),
-          },
-          paths: [capture.path],
-          artifacts: [capture.artifact],
-        };
+        // Keep the desktop lease and cleanup until the capture actually settles.
+        return await observeWindow(input, config, scopeId, target, signal);
       }
       const windows = await listWindows(signal) as Array<Record<string, unknown>>;
       if (action === 'observe') {
@@ -404,17 +458,17 @@ export async function executeComputerUse(
         computerUseSafety.recordObservation(
           scopeId,
           discoveryFingerprint,
-          discoveryFingerprint,
+          { source: 'discovery' },
         );
         return plain({
           windows,
           actionable: false,
           capture_performed: false,
-          next_step: 'Choose exactly one window and call observe again with its hwnd to obtain state_id, a target-window screenshot, and accessibility elements.',
+          next_step: 'Choose exactly one window and observe its hwnd. Use include_text=true if accessibility elements are needed.',
         });
       }
       const capture = await captureDesktop(config.screenshotDirectory, signal);
-      computerUseSafety.recordObservation(scopeId, capture.visualFingerprint);
+      computerUseSafety.recordObservation(scopeId, capture.visualFingerprint, { source: 'desktop' });
       return {
         output: {
           ...capture.output,
@@ -442,6 +496,8 @@ export async function executeComputerUse(
     }
     if (action === 'window') {
       const observation = computerUseSafety.claimObservation(scopeId, input);
+      actionObservation = observation;
+      nativeAction = prepareAction(observation);
       if (String(input.operation ?? '').trim().toLowerCase() === 'close' && !config.allowWindowClose) {
         throw new Error('Closing windows is disabled in Computer Use settings.');
       }
@@ -449,12 +505,14 @@ export async function executeComputerUse(
       presentationAction = await computerUsePresentation.action(scopeId, input, observation, signal);
       signal = presentationAction.signal;
       actionMayHaveDispatched = true;
-      const output = await controlWindow(input, observation, signal);
-      computerUseSafety.recordAction(scopeId, input);
-      return plain(output);
+      const output = await controlWindow(input, observation, signal, nativeAction);
+      return await completeAction(output);
     }
-    if (['click', 'invoke', 'set_value', 'type', 'key', 'scroll', 'drag'].includes(action)) {
+    if (['click', 'invoke', 'set_value', 'type', 'clipboard', 'key', 'scroll', 'drag'].includes(action)) {
       const observation = computerUseSafety.claimObservation(scopeId, input);
+      actionObservation = observation;
+      nativeAction = prepareAction(observation);
+      if (action === 'clipboard') await validateClipboardInput(input);
       const semanticAction = action === 'invoke' || action === 'set_value' ||
         (action === 'click' && optionalInteger(input.element_index) != null);
       if (semanticAction) validateAccessibilityAction(action, input, observation);
@@ -469,9 +527,9 @@ export async function executeComputerUse(
           config,
           computerUseSafety.expectedInputTick(scopeId),
           signal,
+          nativeAction,
         );
-        computerUseSafety.recordAction(scopeId, input);
-        return plain(output);
+        return await completeAction(output);
       }
       const output = await runInput(
         action,
@@ -480,37 +538,55 @@ export async function executeComputerUse(
         config,
         computerUseSafety.expectedInputTick(scopeId),
         signal,
+        nativeAction,
       );
-      computerUseSafety.recordAction(scopeId, input);
-      computerUseSafety.recordInputTick(scopeId, output.last_input_tick);
-      return plain(output);
+      return await completeAction(output);
     }
     throw new Error(`Unsupported computer_use action: ${action}`);
   } catch (error) {
-    if (error instanceof ComputerUseUserActiveError || computerUsePresentation.isPaused(scopeId)) {
+    if (requestSignal?.aborted || isAbortError(error)) throw error;
+    const interruption = computerUsePresentation.interruption(scopeId);
+    const failure = computerUseFailure(
+      interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped' ? interruption : error,
+      actionRecorded ? 'dispatched' : actionMayHaveDispatched ? 'unknown' : 'not_dispatched',
+    );
+    if (failure.info.code === 'user_takeover') {
       computerUseSafety.recordUserYield(scopeId);
-    } else if (!isObservationAction(action) && !isAbortError(error)) {
+    } else if (!isObservationAction(action) && !actionRecorded) {
       // Once dispatched, failed input may have partially reached the desktop.
       // Presentation/state validation failures occur before target input starts.
-      if (actionMayHaveDispatched) computerUseSafety.recordAction(scopeId, input, false);
+      if (actionMayHaveDispatched) computerUseSafety.recordAction(scopeId, input, false, actionObservation);
       else computerUseSafety.recordPreflightFailure(scopeId, input);
     }
-    if (error instanceof ComputerUseUserActiveError || computerUsePresentation.isPaused(scopeId)) {
-      await computerUsePresentation.pause(scopeId).catch(() => undefined);
-    } else {
-      await computerUsePresentation.finish(scopeId).catch(() => undefined);
+    await releaseAction();
+    if (input.observe_after !== false && actionObservation && actionMayHaveDispatched &&
+        (failure.info.code === 'window_changed' || failure.info.code === 'window_unavailable')) {
+      // A click may have opened a dialog before its ACK arrived. Return evidence,
+      // never replay the click. This consumes no human-takeover budget.
+      const recovery = await observeAfterAction(input, config, scopeId, actionObservation,
+        { action, execution: failure.info.execution }, requestSignal);
+      return { ...recovery, error: failure.info };
     }
-    throw error;
+    if (failure.info.code === 'user_takeover') {
+      await computerUsePresentation.pause(scopeId).catch(() => undefined);
+    } else if (['user_stopped', 'control_unavailable'].includes(failure.info.code)) {
+      await computerUsePresentation.finish(scopeId).catch(() => undefined);
+    } else {
+      await computerUsePresentation.hold(scopeId).catch(() => undefined);
+    }
+    throw failure;
   } finally {
     await presentationAction?.release().catch(() => undefined);
     if (requestSignal?.aborted) await computerUsePresentation.finish(scopeId).catch(() => undefined);
-    else await computerUsePresentation.restore().catch(() => undefined);
+    // A killed capture cannot run its PowerShell finally block. Clear its mask
+    // even after cancellation; native active/closing state controls visibility.
+    await computerUsePresentation.restore().catch(() => undefined);
     release();
   }
 }
 
 const openApplicationScript = String.raw`
-$requested = $env:CARDBUSH_APP_TARGET.Trim()
+$requested = $script:CARDBUSH_APP_TARGET.Trim()
 if (-not $requested) { throw 'Application target is empty.' }
 
 function Get-CardBushLaunchWindows { @([CardBushWindowList]::Read()) }
@@ -651,8 +727,12 @@ public static class CardBushDesktopDpi {
 $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 try {
-  $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
-  $bitmap.Save($env:CARDBUSH_CAPTURE_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
+  $hiddenLayers = [CardBushCaptureLayers]::Hide([IntPtr]::Zero)
+  try {
+    if ($hiddenLayers.Length -gt 0) { [void][CardBushCaptureLayers]::DwmFlush() }
+    $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+  } finally { [CardBushCaptureLayers]::Restore($hiddenLayers) }
+  $bitmap.Save($script:CARDBUSH_CAPTURE_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
   $sample = New-Object System.Drawing.Bitmap 16, 16
   $sampleGraphics = [System.Drawing.Graphics]::FromImage($sample)
   try {
@@ -665,7 +745,7 @@ try {
         $fingerprint[$y * 16 + $x] = [byte][Math]::Round(($pixel.R * 0.299) + ($pixel.G * 0.587) + ($pixel.B * 0.114))
       }
     }
-    [PSCustomObject]@{ path=$env:CARDBUSH_CAPTURE_PATH; x=$bounds.Left; y=$bounds.Top; width=$bounds.Width; height=$bounds.Height; visual_fingerprint=[Convert]::ToBase64String($fingerprint) } | ConvertTo-Json -Compress
+    [PSCustomObject]@{ path=$script:CARDBUSH_CAPTURE_PATH; x=$bounds.Left; y=$bounds.Top; width=$bounds.Width; height=$bounds.Height; visual_fingerprint=[Convert]::ToBase64String($fingerprint) } | ConvertTo-Json -Compress
   } finally {
     $sampleGraphics.Dispose()
     $sample.Dispose()
@@ -675,7 +755,7 @@ try {
   $bitmap.Dispose()
 }`;
   const rawOutput = record(json(await powershell(
-    script,
+    `${computerUseCaptureLayersScript}\n${script}`,
     { CARDBUSH_CAPTURE_PATH: path },
     signal,
   )));
@@ -693,68 +773,114 @@ try {
   return { path, output, artifact, visualFingerprint };
 }
 
+type WindowCaptureOptions = {
+  includeScreenshot?: boolean; followOwnedWindow?: boolean; expectedProcessId?: number; ownerHwnd?: number;
+  elementQuery?: unknown; elementOffset?: number; region?: unknown; scale?: unknown; grid?: unknown;
+};
+type PreparedWindowCapture = { path: string; raw: Record<string, unknown> };
+type NativeActionContext = {
+  input: Record<string, unknown>; config: ComputerUsePluginConfig; previous: ComputerUseObservationBinding;
+  acknowledge: (output: Record<string, unknown>) => Promise<void>;
+  acknowledgement?: Record<string, unknown>; capture?: PreparedWindowCapture; observationError?: unknown;
+};
+
+function prepareWindowCapture(
+  configuredDirectory: string, hwnd: number, includeAccessibility: boolean, maxElements: number, options: WindowCaptureOptions,
+) {
+  const directory = configuredDirectory || process.env.CARDBUSH_OWNED_CAPTURE_ROOT || join(tmpdir(), 'cardbush-apps', 'captures');
+  const path = join(directory, `window-${hwnd}-${Date.now()}-${randomUUID()}.png`);
+  return { path, parameters: {
+    CARDBUSH_CAPTURE_PATH: path,
+    CARDBUSH_WINDOW_HWND: String(hwnd),
+    CARDBUSH_INCLUDE_ACCESSIBILITY: includeAccessibility ? '1' : '0',
+    CARDBUSH_MAX_ELEMENTS: String(maxElements),
+    CARDBUSH_ELEMENT_QUERY: JSON.stringify(options.elementQuery ?? {}),
+    CARDBUSH_ELEMENT_OFFSET: String(options.elementOffset ?? 0),
+    CARDBUSH_INCLUDE_SCREENSHOT: options.includeScreenshot === false ? '0' : '1',
+    CARDBUSH_FOLLOW_OWNED_WINDOW: options.followOwnedWindow ? '1' : '0',
+    CARDBUSH_EXPECTED_WINDOW_PID: String(options.expectedProcessId ?? 0),
+    CARDBUSH_OBSERVED_OWNER_HWND: String(options.ownerHwnd ?? 0),
+    CARDBUSH_IMAGE_OPTIONS: JSON.stringify({ region: options.region, scale: options.scale, grid: options.grid }),
+  } };
+}
+
 async function captureWindowState(
   configuredDirectory: string,
   target: Record<string, unknown>,
   includeAccessibility: boolean,
   maxElements: number,
   signal?: AbortSignal,
+  options: WindowCaptureOptions = {},
+  prepared?: PreparedWindowCapture,
 ) {
   const hwnd = optionalInteger(target.hwnd);
   if (hwnd == null || hwnd <= 0) throw new Error('Target window does not have a valid hwnd.');
-  const directory = configuredDirectory || process.env.CARDBUSH_OWNED_CAPTURE_ROOT || join(tmpdir(), 'cardbush-apps', 'captures');
-  await mkdir(directory, { recursive: true });
-  const path = join(directory, `window-${hwnd}-${Date.now()}-${randomUUID()}.png`);
-  const rawOutput = record(json(await powershell(windowStateCaptureScript, {
-    CARDBUSH_CAPTURE_PATH: path,
-    CARDBUSH_WINDOW_HWND: String(hwnd),
-    CARDBUSH_INCLUDE_ACCESSIBILITY: includeAccessibility ? '1' : '0',
-    CARDBUSH_MAX_ELEMENTS: String(maxElements),
-  }, signal)));
+  const request = prepared ?? prepareWindowCapture(configuredDirectory, hwnd, includeAccessibility, maxElements, options);
+  const path = request.path;
+  const rawOutput = 'raw' in request ? request.raw : record(json(await powershell(windowObservationScript, request.parameters, signal)));
   const visualFingerprint = optionalString(rawOutput.visual_fingerprint);
   const bounds = windowBounds(rawOutput.bounds);
   const capturedWindow = recordOrEmpty(rawOutput.window);
-  if (optionalInteger(capturedWindow.hwnd) !== hwnd) {
+  const capturedHwnd = optionalInteger(capturedWindow.hwnd);
+  if (!capturedHwnd || (capturedHwnd !== hwnd && !options.followOwnedWindow)) {
     throw new Error('Target window identity changed during capture. Observe again.');
   }
-  const window: Record<string, unknown> = { ...target, ...capturedWindow, hwnd };
+  const window: Record<string, unknown> = { ...target, ...capturedWindow, hwnd: capturedHwnd };
   const elements = includeAccessibility
     ? observedElements(recordOrEmpty(rawOutput.accessibility).elements)
     : [];
   const foregroundHwnd = optionalInteger(rawOutput.foreground_hwnd) ?? 0;
-  const isForeground = foregroundHwnd === hwnd;
+  const isForeground = foregroundHwnd === capturedHwnd;
+  const consistent = rawOutput.capture_consistent !== false;
   const accessibilityRecord = recordOrEmpty(rawOutput.accessibility);
-  const semanticFingerprint = JSON.stringify([
-    isForeground,
-    accessibilityFingerprint(elements),
-    optionalString(accessibilityRecord.text_fingerprint),
-  ]);
+  const focusedBounds = rawOutput.focused_bounds ? windowBounds(rawOutput.focused_bounds) : undefined;
+  // Leave room for state, window identity and recovery information in the model
+  // result. A long document's UIA values must not bury the one-use state token.
+  const publicElements: ReturnType<typeof publicObservedElement>[] = [];
+  let elementCharacters = 0;
+  for (const element of elements) {
+    const item = publicObservedElement(element);
+    const size = JSON.stringify(item).length;
+    if (elementCharacters + size > 10_000) break;
+    publicElements.push(item);
+    elementCharacters += size;
+  }
+  const nextOffset = publicElements.length < elements.length
+    ? elements[publicElements.length]!.resultOffset
+    : optionalInteger(accessibilityRecord.next_offset);
   const accessibility = includeAccessibility
     ? {
         available: accessibilityRecord.available === true,
         total_elements: optionalInteger(accessibilityRecord.total_elements) ?? elements.length,
-        returned_elements: elements.length,
-        truncated: accessibilityRecord.truncated === true,
+        matched_elements: optionalInteger(accessibilityRecord.matched_elements) ?? elements.length,
+        offset: options.elementOffset ?? 0,
+        returned_elements: publicElements.length,
+        truncated: nextOffset != null || accessibilityRecord.scan_truncated === true,
+        ...(options.elementQuery ? { query: options.elementQuery } : {}),
+        ...(nextOffset != null ? { next_offset: nextOffset, next_step: 'For a specific control use element_query (name, automation_id, control_type or focused). Otherwise continue with element_offset=next_offset. Each observation replaces state_id and element indexes.' } : {}),
+        ...(accessibilityRecord.scan_truncated === true ? { scan_truncated: true, next_step: 'The UIA scan reached its 5000-element limit. Navigate the visible UI to narrow the tree; do not keep increasing max_elements.' } : {}),
         ...(optionalString(accessibilityRecord.error)
           ? { error: optionalString(accessibilityRecord.error) }
           : {}),
-        elements: elements.map(publicObservedElement),
+        elements: publicElements,
       }
     : undefined;
   const output = {
-    path,
+    ...(options.includeScreenshot === false ? {} : { path }),
     window,
+    requested_hwnd: hwnd,
+    target_relation: optionalString(rawOutput.target_relation) || 'target',
+    foreground_window: rawOutput.foreground_window,
     bounds,
+    ...(options.includeScreenshot === false ? {} : { image: rawOutput.image }),
     capture_method: optionalString(rawOutput.capture_method) || 'unknown',
     foreground_hwnd: foregroundHwnd,
     is_foreground: isForeground,
-    actionable: includeAccessibility && isForeground,
-    window_action_available: includeAccessibility,
-    next_step: !includeAccessibility
-      ? 'Call observe with this exact hwnd before any action.'
-      : isForeground
-        ? 'Use the one-use state_id and exact hwnd for one action, then observe again to verify the result.'
-        : 'The target is in the background. Use this state_id and hwnd with action="window", operation="activate", then observe the same hwnd again and verify is_foreground before input. Observing alone does not activate a window.',
+    capture_consistent: consistent,
+    actionable: consistent && isForeground,
+    window_action_available: consistent,
+    ...(!consistent ? { next_step: 'Foreground changed during capture. Observe the intended target again before any action.' }
+      : !isForeground ? { next_step: 'The target is in the background. Use window/activate with its state_id and hwnd, then inspect the returned observation. Observe alone never activates a window.' } : {}),
     ...(accessibility ? { accessibility } : {}),
   };
   const artifact: ComputerUseArtifact = {
@@ -767,28 +893,111 @@ async function captureWindowState(
       model_input: true,
       read_only: true,
       source: 'cardbush_apps',
-      target_hwnd: hwnd,
+      target_hwnd: capturedHwnd,
+      image: rawOutput.image,
     },
   };
   const binding: Omit<ComputerUseObservationBinding, 'stateId' | 'generation' | 'createdAt'> = {
-    hwnd,
+    hwnd: capturedHwnd,
     processId: optionalInteger(window.process_id),
     processName: optionalString(window.process_name),
     title: optionalString(window.title),
     bounds,
-    elements,
+    elements: elements.slice(0, publicElements.length),
+    ownerHwnd: optionalInteger(window.owner_hwnd),
+    focusedBounds,
   };
   return {
     path,
     output,
     artifact,
     visualFingerprint,
-    semanticFingerprint,
+    progressEvidence: {
+      source: 'window', target: `${binding.processId ?? 0}:${binding.hwnd}`, bounds,
+      focusedBounds, focusedFingerprint: optionalString(rawOutput.focused_fingerprint),
+      foreground: isForeground, consistent,
+    } satisfies ProgressEvidence,
     binding,
   };
 }
 
-const windowStateCaptureScript = String.raw`
+async function observeWindow(
+  input: Record<string, unknown>, config: ComputerUsePluginConfig, scopeId: string,
+  target: Record<string, unknown>, signal?: AbortSignal, previous?: ComputerUseObservationBinding,
+  prepared?: PreparedWindowCapture,
+): Promise<ComputerUseResult> {
+  const includeScreenshot = input.include_screenshot !== false;
+  const capture = await captureWindowState(config.screenshotDirectory, target,
+    input.include_text === true, optionalInteger(input.max_elements) ?? 80, signal, {
+      includeScreenshot, followOwnedWindow: Boolean(previous),
+      expectedProcessId: previous?.processId, ownerHwnd: previous?.ownerHwnd,
+      elementQuery: input.element_query, elementOffset: optionalInteger(input.element_offset),
+      region: input.region, scale: input.scale, grid: input.grid,
+    }, prepared);
+  if (!previous) selectWindowTarget([record(capture.output.window)], input);
+  computerUseSafety.recordObservation(scopeId, capture.visualFingerprint, {
+    ...capture.progressEvidence,
+    explicit: !previous && input.action === 'observe',
+    relatedTransition: Boolean(previous && ['owned_popup', 'owner_window'].includes(capture.output.target_relation)),
+  });
+  const interrupted = previous ? computerUsePresentation.interruption(scopeId) : undefined;
+  const canBind = input.action !== 'screenshot' && capture.output.capture_consistent &&
+    interrupted?.info.code !== 'user_takeover' && interrupted?.info.code !== 'user_stopped';
+  let stateId: string | undefined;
+  if (canBind) {
+    await computerUsePresentation.observe(scopeId, capture.binding.hwnd);
+    if (!computerUsePresentation.isPaused(scopeId)) stateId = computerUseSafety.bindObservation(scopeId, capture.binding);
+  }
+  const paused = computerUsePresentation.isPaused(scopeId);
+  return {
+    output: {
+      ...(stateId ? { state_id: stateId, state_usage: 'one_action', state_ttl_ms: observationStateTtlMs } : {}),
+      coordinate_space: 'window',
+      ...capture.output,
+      actionable: Boolean(stateId) && capture.output.actionable && !paused,
+      window_action_available: Boolean(stateId) && !paused,
+      ...(paused ? { control_state: 'user_takeover', next_step: 'Let the user finish, then observe once before further input.' } : {}),
+      ...(interrupted?.info.code === 'user_stopped' ? { control_state: 'user_stopped', error: interrupted.info } : {}),
+    },
+    paths: includeScreenshot ? [capture.path] : [],
+    artifacts: includeScreenshot ? [capture.artifact] : [],
+  };
+}
+
+async function observeAfterAction(
+  input: Record<string, unknown>, config: ComputerUsePluginConfig, scopeId: string,
+  previous: ComputerUseObservationBinding, acknowledgement: Record<string, unknown>, signal?: AbortSignal,
+  nativeAction?: NativeActionContext,
+): Promise<ComputerUseResult> {
+  const output = { ...acknowledgement, execution: acknowledgement.execution ?? 'dispatched' };
+  if (input.observe_after === false) return plain({ ...output, next_step: 'Observe the target before further input.' });
+  try {
+    const interruption = computerUsePresentation.interruption(scopeId);
+    if (interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped') throw interruption;
+    if (nativeAction?.observationError) throw nativeAction.observationError;
+    if (!nativeAction?.capture) await delay(Math.max(0, Math.min(1000, optionalInteger(input.settle_ms) ?? 120)), undefined, { signal });
+    const observed = await observeWindow({ ...input, action: 'observe', hwnd: previous.hwnd }, config, scopeId,
+      { hwnd: previous.hwnd }, signal, previous, nativeAction?.capture);
+    return { ...observed, output: { ...output, observation: observed.output } };
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) throw error;
+    const failure = computerUseFailure(error);
+    if (failure.info.code === 'user_takeover') await computerUsePresentation.pause(scopeId).catch(() => undefined);
+    else if (['user_stopped', 'control_unavailable'].includes(failure.info.code)) {
+      await computerUsePresentation.finish(scopeId).catch(() => undefined);
+    } else await computerUsePresentation.hold(scopeId).catch(() => undefined);
+    // A failed refresh never changes a dispatched action into a retryable action.
+    // No state token is issued, but the input acknowledgement is retained.
+    return plain({ ...output, observation: { actionable: false, error: {
+      ...failure.info, execution: output.execution,
+      recovery: failure.info.code === 'user_stopped' || failure.info.code === 'user_takeover' ? failure.info.recovery
+        : 'The input may already have taken effect. Observe before further input; do not replay the action to recover its observation.',
+    } } });
+  }
+}
+
+export const windowStateCaptureScript = String.raw`
+${computerUseImageScript}
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -802,6 +1011,8 @@ public static class CardBushWindowCapture {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder value, int capacity);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, StringBuilder value, int capacity);
   [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
   [DllImport("user32.dll", EntryPoint="SetProcessDpiAwarenessContext")] private static extern bool SetDpiContext(IntPtr value);
@@ -812,10 +1023,35 @@ public static class CardBushWindowCapture {
   }
   public static string WindowTitle(IntPtr hwnd) { var value = new StringBuilder(2048); GetWindowText(hwnd, value, value.Capacity); return value.ToString(); }
   public static uint WindowProcessId(IntPtr hwnd) { uint processId; GetWindowThreadProcessId(hwnd, out processId); return processId; }
+  public static string WindowClass(IntPtr hwnd) { var value=new StringBuilder(256); GetClassName(hwnd,value,value.Capacity); return value.ToString(); }
+  public static bool IsOwnedBy(IntPtr child, IntPtr owner) {
+    if(owner==IntPtr.Zero || child==owner) return false;
+    for(int depth=0;child!=IntPtr.Zero && depth<32;depth++) {
+      child=GetWindow(child,4); if(child==owner) return true;
+    }
+    return false;
+  }
 }
+
 '@
 [CardBushWindowCapture]::EnableDpiAwareness()
-$h = [IntPtr]([Int64]$env:CARDBUSH_WINDOW_HWND)
+$h = [IntPtr]([Int64]$script:CARDBUSH_WINDOW_HWND)
+$foreground = [CardBushWindowCapture]::GetForegroundWindow()
+$relation = 'target'
+$expectedPid = [uint32]$script:CARDBUSH_EXPECTED_WINDOW_PID
+$requestedExists = [CardBushWindowCapture]::IsWindow($h)
+if ($requestedExists -and $expectedPid -gt 0 -and [CardBushWindowCapture]::WindowProcessId($h) -ne $expectedPid) {
+  throw 'The target window identity changed after observation. Observe the exact window again.'
+}
+if ($script:CARDBUSH_FOLLOW_OWNED_WINDOW -eq '1' -and $foreground -ne $h -and $expectedPid -gt 0 -and [CardBushWindowCapture]::WindowProcessId($foreground) -eq $expectedPid) {
+  # Ownership plus the observed process identity is required. Same-process
+  # siblings, unknown dialogs and another application's foreground are not trusted.
+  if ($requestedExists -and [CardBushWindowCapture]::IsOwnedBy($foreground, $h)) {
+    $h = $foreground; $relation = 'owned_popup'
+  } elseif ($script:CARDBUSH_OBSERVED_OWNER_HWND -ne '0' -and $foreground.ToInt64() -eq [Int64]$script:CARDBUSH_OBSERVED_OWNER_HWND) {
+    $h = $foreground; $relation = 'owner_window'
+  }
+}
 if (-not [CardBushWindowCapture]::IsWindow($h)) { throw 'The target window is no longer available. Observe again.' }
 $rect = New-Object CardBushWindowCapture+RECT
 if (-not [CardBushWindowCapture]::GetWindowRect($h, [ref]$rect)) { throw 'Unable to read the target window bounds.' }
@@ -827,173 +1063,75 @@ $processName = ''
 try { $processName = [Diagnostics.Process]::GetProcessById($processId).ProcessName } catch {}
 $windowTitle = [CardBushWindowCapture]::WindowTitle($h)
 
+$captureTimer = [Diagnostics.Stopwatch]::StartNew()
 $bitmap = New-Object System.Drawing.Bitmap $width, $height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $captureMethod = 'print_window'
 try {
   $hdc = $graphics.GetHdc()
-  try { $captured = [CardBushWindowCapture]::PrintWindow($h, $hdc, 2) }
+  try {
+    # Keep control visible during process startup, encoding and accessibility.
+    # Mask only our own child surfaces around the actual native capture.
+    $hiddenLayers = [CardBushCaptureLayers]::Hide($h)
+    try { $captured = [CardBushWindowCapture]::PrintWindow($h, $hdc, 2) }
+    finally { [CardBushCaptureLayers]::Restore($hiddenLayers) }
+  }
   finally { $graphics.ReleaseHdc($hdc) }
   if (-not $captured) {
     throw 'Target window capture failed. A screen crop could contain another window, so no target observation was issued.'
   }
-  $bitmap.Save($env:CARDBUSH_CAPTURE_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
-  $sample = New-Object System.Drawing.Bitmap 32, 32
-  $sampleGraphics = [System.Drawing.Graphics]::FromImage($sample)
-  try {
-    $sampleGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Low
-    $sampleGraphics.DrawImage($bitmap, 0, 0, 32, 32)
-    $fingerprint = New-Object byte[] 1024
-    for ($sampleY = 0; $sampleY -lt 32; $sampleY++) {
-      for ($sampleX = 0; $sampleX -lt 32; $sampleX++) {
-        $pixel = $sample.GetPixel($sampleX, $sampleY)
-        $fingerprint[$sampleY * 32 + $sampleX] = [byte][Math]::Round(($pixel.R * 0.299) + ($pixel.G * 0.587) + ($pixel.B * 0.114))
-      }
-    }
-  } finally {
-    $sampleGraphics.Dispose()
-    $sample.Dispose()
+  if ($script:CARDBUSH_INCLUDE_SCREENSHOT -ne '0') {
+    ${saveComputerUseImageScript}
   }
+  $fingerprint = [CardBushVisualProgress]::Read($bitmap)
 } finally {
   $graphics.Dispose()
   $bitmap.Dispose()
+  if ($null -ne $script:CardBushTimings) { $script:CardBushTimings.screenshot_ms += $captureTimer.ElapsedMilliseconds }
 }
 
-$accessibilityAvailable = $false
-$accessibilityError = $null
-$totalElements = 0
-$truncated = $false
-$elements = [System.Collections.Generic.List[object]]::new()
-$visibleText = [Text.StringBuilder]::new()
-$textFingerprint = ''
-if ($env:CARDBUSH_INCLUDE_ACCESSIBILITY -eq '1') {
-  try {
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle($h)
-    if ($null -eq $root) { throw 'UI Automation could not bind to the target window.' }
-    $all = $root.FindAll(
-      [System.Windows.Automation.TreeScope]::Descendants,
-      [System.Windows.Automation.Condition]::TrueCondition
-    )
-    $totalElements = $all.Count
-    $maxElements = [Math]::Max(20, [Math]::Min(300, [int]$env:CARDBUSH_MAX_ELEMENTS))
-    for ($sourceIndex = 0; $sourceIndex -lt $all.Count -and $elements.Count -lt $maxElements; $sourceIndex++) {
-      try {
-        $element = $all.Item($sourceIndex)
-        $current = $element.Current
-        if (-not $current.IsControlElement) { continue }
-        $runtimeId = @($element.GetRuntimeId()) -join '.'
-        if (-not $runtimeId) { continue }
-        $elementRect = $current.BoundingRectangle
-        $elementBounds = $null
-        if (
-          -not [double]::IsNaN($elementRect.X) -and
-          -not [double]::IsInfinity($elementRect.X) -and
-          $elementRect.Width -gt 0 -and
-          $elementRect.Height -gt 0
-        ) {
-          $elementBounds = [PSCustomObject]@{
-            x = [Math]::Round($elementRect.X - $rect.Left)
-            y = [Math]::Round($elementRect.Y - $rect.Top)
-            width = [Math]::Round($elementRect.Width)
-            height = [Math]::Round($elementRect.Height)
-          }
-        }
-        $patterns = @($element.GetSupportedPatterns() | ForEach-Object {
-          $_.ProgrammaticName -replace 'PatternIdentifiers\.Pattern$', ''
-        } | Where-Object {
-          $_ -in @('Invoke', 'Toggle', 'SelectionItem', 'ExpandCollapse', 'Value', 'RangeValue', 'Text', 'Scroll', 'LegacyIAccessible')
-        })
-        $name = [string]$current.Name
-        $automationId = [string]$current.AutomationId
-        if ($current.IsOffscreen -and -not $current.HasKeyboardFocus) { continue }
-        if (-not $name -and -not $automationId -and $patterns.Count -eq 0) { continue }
-        $isPassword = [bool]$current.IsPassword
-        $currentValue = $null
-        $semanticState = $null
-        $valueReadOnly = $null
-        $patternObject = $null
-        if (-not $isPassword -and $element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$patternObject)) {
-          $valuePattern = [System.Windows.Automation.ValuePattern]$patternObject
-          $currentValue = [string]$valuePattern.Current.Value
-          $valueReadOnly = [bool]$valuePattern.Current.IsReadOnly
-        } elseif (-not $isPassword -and $element.TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern, [ref]$patternObject)) {
-          $rangePattern = [System.Windows.Automation.RangeValuePattern]$patternObject
-          $currentValue = [string]$rangePattern.Current.Value
-          $valueReadOnly = [bool]$rangePattern.Current.IsReadOnly
-        }
-        $patternObject = $null
-        # Small terminal/document changes disappear in a downsampled screenshot.
-        # Hash bounded visible TextPattern content; never include password text.
-        if (-not $isPassword -and $visibleText.Length -lt 32768) {
-          try {
-            if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$patternObject)) {
-              $ranges = ([System.Windows.Automation.TextPattern]$patternObject).GetVisibleRanges()
-              foreach ($range in @($ranges | Select-Object -First 4)) {
-                $remaining = 32768 - $visibleText.Length
-                if ($remaining -le 0) { break }
-                [void]$visibleText.Append($range.GetText([Math]::Min(8192, $remaining)))
-              }
-            }
-          } catch { }
-        }
-        $patternObject = $null
-        if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$patternObject)) {
-          $semanticState = [string]([System.Windows.Automation.TogglePattern]$patternObject).Current.ToggleState
-        } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$patternObject)) {
-          $semanticState = if (([System.Windows.Automation.SelectionItemPattern]$patternObject).Current.IsSelected) { 'selected' } else { 'not_selected' }
-        } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$patternObject)) {
-          $semanticState = [string]([System.Windows.Automation.ExpandCollapsePattern]$patternObject).Current.ExpandCollapseState
-        }
-        $elements.Add([PSCustomObject]@{
-          index = $elements.Count
-          runtime_id = $runtimeId
-          name = $name
-          automation_id = $automationId
-          control_type = (([string]$current.ControlType.ProgrammaticName) -replace '^ControlType\.', '')
-          class_name = [string]$current.ClassName
-          enabled = [bool]$current.IsEnabled
-          focused = [bool]$current.HasKeyboardFocus
-          offscreen = [bool]$current.IsOffscreen
-          password = $isPassword
-          bounds = $elementBounds
-          patterns = $patterns
-          value = $currentValue
-          state = $semanticState
-          read_only = $valueReadOnly
-        })
-      } catch {
-        continue
-      }
-    }
-    $truncated = $sourceIndex -lt $all.Count
-    $accessibilityAvailable = $true
-  } catch {
-    $accessibilityError = $_.Exception.Message
-  }
-}
+$uiaTimer = [Diagnostics.Stopwatch]::StartNew()
+${computerUseAccessibilityScript}
+if ($null -ne $script:CardBushTimings) { $script:CardBushTimings.uia_ms += $uiaTimer.ElapsedMilliseconds }
 
-if ($visibleText.Length -gt 0) {
-  $hasher = [Security.Cryptography.SHA256]::Create()
-  try { $textFingerprint = [Convert]::ToBase64String($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($visibleText.ToString()))) }
-  finally { $hasher.Dispose() }
+$afterRect = New-Object CardBushWindowCapture+RECT
+if (-not [CardBushWindowCapture]::IsWindow($h) -or [CardBushWindowCapture]::WindowProcessId($h) -ne $processId) {
+  throw 'The target window identity changed during capture. Observe again.'
 }
+if (-not [CardBushWindowCapture]::GetWindowRect($h, [ref]$afterRect) -or $afterRect.Left -ne $rect.Left -or $afterRect.Top -ne $rect.Top -or $afterRect.Right -ne $rect.Right -or $afterRect.Bottom -ne $rect.Bottom) {
+  throw 'The target window bounds changed during capture. Observe again.'
+}
+$finalForeground = [CardBushWindowCapture]::GetForegroundWindow()
+$foregroundRelation = 'unrelated'
+if ($finalForeground -eq $h) { $foregroundRelation = 'target' }
+elseif ([CardBushWindowCapture]::IsOwnedBy($finalForeground, $h)) { $foregroundRelation = 'owned_popup' }
+elseif ([CardBushWindowCapture]::IsOwnedBy($h, $finalForeground)) { $foregroundRelation = 'owner_window' }
 
 [PSCustomObject]@{
-  path = $env:CARDBUSH_CAPTURE_PATH
-  window = [PSCustomObject]@{ process_id=$processId; hwnd=$h.ToInt64(); title=$windowTitle; process_name=$processName }
+  path = $script:CARDBUSH_CAPTURE_PATH
+  image = $imageMapping
+  window = [PSCustomObject]@{ process_id=$processId; hwnd=$h.ToInt64(); title=$windowTitle; process_name=$processName; owner_hwnd=[CardBushWindowCapture]::GetWindow($h,4).ToInt64(); class_name=[CardBushWindowCapture]::WindowClass($h) }
+  target_relation = $relation
+  foreground_window = [PSCustomObject]@{ hwnd=$finalForeground.ToInt64(); process_id=[CardBushWindowCapture]::WindowProcessId($finalForeground); owner_hwnd=[CardBushWindowCapture]::GetWindow($finalForeground,4).ToInt64(); relation=$foregroundRelation }
   bounds = [PSCustomObject]@{ x=$rect.Left; y=$rect.Top; width=$width; height=$height }
   capture_method = $captureMethod
-  foreground_hwnd = [CardBushWindowCapture]::GetForegroundWindow().ToInt64()
+  foreground_hwnd = $finalForeground.ToInt64()
+  capture_consistent = $foreground -eq $finalForeground
   visual_fingerprint = [Convert]::ToBase64String($fingerprint)
+  focused_fingerprint = $focusedFingerprint
+  focused_bounds = $focusedBounds
   accessibility = [PSCustomObject]@{
-    text_fingerprint = $textFingerprint
     available = $accessibilityAvailable
     total_elements = $totalElements
-    truncated = $truncated
+    matched_elements = $matchedElements
+    scan_truncated = $scanTruncated
+    next_offset = $nextOffset
     error = $accessibilityError
     elements = $elements.ToArray()
   }
 } | ConvertTo-Json -Depth 8 -Compress`;
+
+const windowObservationScript = `${computerUseCaptureLayersScript}\n${computerUseVisualProgressScript}\n${windowStateCaptureScript}`;
 
 const windowListScript = String.raw`
 Add-Type -TypeDefinition @'
@@ -1008,16 +1146,21 @@ public static class CardBushWindowList {
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int capacity);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
-  public class Item { public long hwnd; public uint process_id; public string title,process_name; }
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd,uint command);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd,StringBuilder text,int capacity);
+  public class Item { public long hwnd,owner_hwnd; public bool is_foreground; public uint process_id; public string title,process_name,class_name; }
   public static Item[] Read(){
     var items=new List<Item>();
     EnumWindows((hwnd,p)=>{
       if(!IsWindowVisible(hwnd))return true;
       var title=new StringBuilder(4096);GetWindowText(hwnd,title,title.Capacity);
-      if(title.Length==0 || title.ToString()=="Program Manager")return true;
+      IntPtr owner=GetWindow(hwnd,4); bool foreground=GetForegroundWindow()==hwnd;
+      if((title.Length==0 && owner==IntPtr.Zero && !foreground) || title.ToString()=="Program Manager")return true;
       uint pid;GetWindowThreadProcessId(hwnd,out pid);string name="";
       try{name=Process.GetProcessById((int)pid).ProcessName;}catch{}
-      items.Add(new Item{hwnd=hwnd.ToInt64(),process_id=pid,title=title.ToString(),process_name=name});
+      var className=new StringBuilder(256);GetClassName(hwnd,className,className.Capacity);
+      items.Add(new Item{hwnd=hwnd.ToInt64(),process_id=pid,title=title.ToString(),process_name=name,owner_hwnd=owner.ToInt64(),is_foreground=foreground,class_name=className.ToString()});
       return true;
     },IntPtr.Zero);
     return items.ToArray();
@@ -1037,6 +1180,7 @@ async function controlWindow(
   input: Record<string, unknown>,
   observation: ComputerUseObservationBinding,
   signal?: AbortSignal,
+  nativeAction?: NativeActionContext,
 ) {
   const operation = String(input.operation ?? 'activate').trim().toLowerCase();
   const normalized = operation === 'activate' ? 'focus' : operation;
@@ -1062,7 +1206,7 @@ async function controlWindow(
   };
   if (normalized === 'move' && (bounds.x == null || bounds.y == null)) throw new Error('move requires x and y.');
   if (normalized === 'resize' && (bounds.width == null || bounds.height == null)) throw new Error('resize requires width and height.');
-  await powershell(windowControlScript, {
+  await runNativeAction(`${windowControlScript}\n[PSCustomObject]@{action='window';operation=$op} | ConvertTo-Json -Compress`, {
     CARDBUSH_WINDOW_HWND: String(target.hwnd),
     CARDBUSH_WINDOW_OPERATION: normalized,
     CARDBUSH_EXPECTED_WINDOW_PID: String(observation.processId ?? 0),
@@ -1074,7 +1218,7 @@ async function controlWindow(
     CARDBUSH_EXPECTED_WINDOW_Y: String(observation.bounds.y),
     CARDBUSH_EXPECTED_WINDOW_WIDTH: String(observation.bounds.width),
     CARDBUSH_EXPECTED_WINDOW_HEIGHT: String(observation.bounds.height),
-  }, signal);
+  }, signal, 15_000, nativeAction);
   return { action: 'window', operation: normalized, target };
 }
 
@@ -1181,6 +1325,7 @@ async function runAccessibilityAction(
   config: ComputerUsePluginConfig,
   expectedInputTick: number | undefined,
   signal?: AbortSignal,
+  nativeAction?: NativeActionContext,
 ): Promise<Record<string, unknown>> {
   const element = validateAccessibilityAction(action, input, observation);
   const elementIndex = element.index;
@@ -1209,17 +1354,17 @@ async function runAccessibilityAction(
     observed_state: element.state ?? '',
     value,
   }), 'utf8').toString('base64');
-  const result = record(json(await powershell(accessibilityActionScript, {
+  const result = await runNativeAction(accessibilityActionScript, {
     CARDBUSH_UIA_ACTION_BASE64: payload,
     CARDBUSH_YIELD_TO_USER: config.yieldToUser ? '1' : '0',
     CARDBUSH_EXPECTED_INPUT_TICK: String(expectedInputTick ?? 0),
-  }, signal)));
+  }, signal, 15_000, nativeAction);
   if (result.yielded_to_user === true) throw new ComputerUseUserActiveError();
   return result;
 }
 
 const accessibilityActionScript = String.raw`
-$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CARDBUSH_UIA_ACTION_BASE64))
+$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($script:CARDBUSH_UIA_ACTION_BASE64))
 $p = $json | ConvertFrom-Json
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -1245,8 +1390,8 @@ public static class CardBushUiaWindow {
 }
 '@
 [CardBushUiaWindow]::EnableDpiAwareness()
-$yieldToUser = $env:CARDBUSH_YIELD_TO_USER -eq '1'
-$expectedInputTick = [uint32]$env:CARDBUSH_EXPECTED_INPUT_TICK
+$yieldToUser = $script:CARDBUSH_YIELD_TO_USER -eq '1'
+$expectedInputTick = [uint32]$script:CARDBUSH_EXPECTED_INPUT_TICK
 $wait = [Diagnostics.Stopwatch]::StartNew()
 $ready = -not $yieldToUser
 while (-not $ready -and $wait.ElapsedMilliseconds -lt 2400) {
@@ -1330,6 +1475,7 @@ if ([bool]$p.has_observed_state) {
 }
 
 $usedPattern = $null
+$inputTimer = [Diagnostics.Stopwatch]::StartNew()
 [CardBushUiaWindow]::CheckTarget($h, [uint32]$p.observed_process_id)
 if ($p.action -eq 'set_value') {
   $pattern = $null
@@ -1371,6 +1517,7 @@ if ($p.action -eq 'set_value') {
   }
 }
 
+if ($null -ne $script:CardBushTimings) { $script:CardBushTimings.input_ms += $inputTimer.ElapsedMilliseconds }
 [PSCustomObject]@{
   action = $p.action
   input_mode = 'ui_automation'
@@ -1388,6 +1535,7 @@ async function runInput(
   config: ComputerUsePluginConfig,
   expectedInputTick: number | undefined,
   signal?: AbortSignal,
+  nativeAction?: NativeActionContext,
 ): Promise<Record<string, unknown>> {
   const payload = Buffer.from(JSON.stringify({
     action,
@@ -1397,7 +1545,7 @@ async function runInput(
     observed_process_id: observation.processId,
     coordinate_space: 'window',
   }), 'utf8').toString('base64');
-  const output = await powershell(
+  const result = await runNativeAction(
     computerInputScript,
     {
       CARDBUSH_INPUT_BASE64: payload,
@@ -1407,10 +1555,79 @@ async function runInput(
     },
     signal,
     action === 'type' ? 15_000 + String(input.text ?? '').length * 50 : 15_000,
+    nativeAction,
   );
-  const result = output.trim() ? record(json(output)) : { action };
   if (result.yielded_to_user === true) throw new ComputerUseUserActiveError();
   return result;
+}
+
+export async function validateClipboardInput(input: Record<string, unknown>): Promise<void> {
+  if ((input.text != null) === (input.files != null)) throw new ComputerUseFailure('invalid_action', 'clipboard requires exactly one of text or files.');
+  if (input.text != null) {
+    if (typeof input.text !== 'string' || input.text.length > 8192 || input.text.includes('\0')) throw new ComputerUseFailure('invalid_action', 'Clipboard text must be at most 8192 characters without NUL.');
+    return;
+  }
+  if (!Array.isArray(input.files) || input.files.length < 1 || input.files.length > 64) throw new ComputerUseFailure('invalid_action', 'Clipboard requires 1 to 64 existing files.');
+  for (const path of input.files) {
+    if (typeof path !== 'string' || !win32.isAbsolute(path) ||
+        !/^(?:[a-z]:[\\/]|\\\\[^\\/]+\\[^\\/]+\\)/i.test(path) || path.includes('\0') || /^\\\\[?.]\\/.test(path)) {
+      throw new ComputerUseFailure('invalid_action', 'Clipboard files require absolute Windows file paths, not device paths.');
+    }
+    if (!(await stat(path).catch(() => undefined))?.isFile()) throw new ComputerUseFailure('invalid_action', `Clipboard file is unavailable or not a file: ${path}`);
+  }
+}
+
+async function runNativeAction(
+  script: string, parameters: Record<string, string>, signal: AbortSignal | undefined, timeoutMs: number, context?: NativeActionContext,
+): Promise<Record<string, unknown>> {
+  if (!context || context.input.observe_after === false) return record(json(await powershell(script, parameters, signal, timeoutMs)));
+  const { input, previous, config } = context;
+  const request = prepareWindowCapture(config.screenshotDirectory, previous.hwnd,
+    input.include_text === true, optionalInteger(input.max_elements) ?? 80, {
+      includeScreenshot: input.include_screenshot !== false, followOwnedWindow: true,
+      expectedProcessId: previous.processId, ownerHwnd: previous.ownerHwnd,
+      elementQuery: input.element_query, elementOffset: optionalInteger(input.element_offset),
+      region: input.region, scale: input.scale, grid: input.grid,
+    });
+  const settle = Math.max(0, Math.min(1000, optionalInteger(input.settle_ms) ?? 120));
+  // Only one action is dispatched. Its ACK reaches Node before capture starts:
+  // Node records it and releases the active input lease, then permits observation.
+  // Failure/cancellation after the ACK never turns into a replay of that action.
+  const combined = `
+$cardbushAckJson = (& {
+${script}
+}) -join [Environment]::NewLine
+$cardbushAck = $cardbushAckJson | ConvertFrom-Json
+if ($cardbushAck.yielded_to_user) { $cardbushAckJson; return }
+[Console]::Out.WriteLine('CARDBUSH_ACTION_COMPLETED:' + $cardbushAckJson)
+[Console]::Out.Flush()
+if ([Console]::In.ReadLine() -ne 'observe') { throw 'The action was acknowledged but observation was cancelled.' }
+try {
+  $cardbushSettle = [Diagnostics.Stopwatch]::StartNew()
+  if (${settle} -gt 0) { Start-Sleep -Milliseconds ${settle} }
+  $script:CardBushTimings.settle_ms += $cardbushSettle.ElapsedMilliseconds
+  $cardbushCaptureJson = (& {
+${computerUsePowerShellParameters(request.parameters)}
+${windowObservationScript}
+  }) -join [Environment]::NewLine
+  [PSCustomObject]@{ acknowledgement=$cardbushAck; capture=($cardbushCaptureJson | ConvertFrom-Json) } | ConvertTo-Json -Depth 12 -Compress
+} catch {
+  [PSCustomObject]@{ acknowledgement=$cardbushAck; observation_error=$_.Exception.Message } | ConvertTo-Json -Depth 6 -Compress
+}`;
+  try {
+    const result = record(json(await powershell(combined, parameters, signal, timeoutMs + 15_000, async acknowledgement => {
+      context.acknowledgement = acknowledgement;
+      await context.acknowledge(acknowledgement);
+    })));
+    if (result.yielded_to_user) return result;
+    if (result.capture) context.capture = { path: request.path, raw: record(result.capture) };
+    else context.observationError = new ComputerUseFailure('observation_failed', optionalString(result.observation_error) || 'The action completed without an observation.', 'dispatched');
+    return record(result.acknowledgement);
+  } catch (error) {
+    if (!context.acknowledgement || signal?.aborted) throw error;
+    context.observationError = error;
+    return context.acknowledgement;
+  }
 }
 
 const windowControlScript = String.raw`
@@ -1432,24 +1649,25 @@ public static class CardBushWindowControl {
 }
 '@
 [CardBushWindowControl]::EnableDpiAwareness()
-$h = [IntPtr]([Int64]$env:CARDBUSH_WINDOW_HWND)
-$op = $env:CARDBUSH_WINDOW_OPERATION
+$h = [IntPtr]([Int64]$script:CARDBUSH_WINDOW_HWND)
+$op = $script:CARDBUSH_WINDOW_OPERATION
 [uint32]$actualPid = 0
 [void][CardBushWindowControl]::GetWindowThreadProcessId($h, [ref]$actualPid)
-$expectedPid = [uint32]$env:CARDBUSH_EXPECTED_WINDOW_PID
+$expectedPid = [uint32]$script:CARDBUSH_EXPECTED_WINDOW_PID
 if ($actualPid -eq 0 -or ($expectedPid -gt 0 -and $actualPid -ne $expectedPid)) { throw 'The target window identity changed after observation. Observe the exact window again.' }
 $rect = New-Object CardBushWindowControl+RECT
 if (-not [CardBushWindowControl]::GetWindowRect($h, [ref]$rect)) { throw 'The target window is no longer available. Observe again.' }
-$expectedX = [int]$env:CARDBUSH_EXPECTED_WINDOW_X
-$expectedY = [int]$env:CARDBUSH_EXPECTED_WINDOW_Y
-$expectedWidth = [int]$env:CARDBUSH_EXPECTED_WINDOW_WIDTH
-$expectedHeight = [int]$env:CARDBUSH_EXPECTED_WINDOW_HEIGHT
+$expectedX = [int]$script:CARDBUSH_EXPECTED_WINDOW_X
+$expectedY = [int]$script:CARDBUSH_EXPECTED_WINDOW_Y
+$expectedWidth = [int]$script:CARDBUSH_EXPECTED_WINDOW_WIDTH
+$expectedHeight = [int]$script:CARDBUSH_EXPECTED_WINDOW_HEIGHT
 if (
   [Math]::Abs($rect.Left - $expectedX) -gt 2 -or
   [Math]::Abs($rect.Top - $expectedY) -gt 2 -or
   [Math]::Abs(($rect.Right - $rect.Left) - $expectedWidth) -gt 2 -or
   [Math]::Abs(($rect.Bottom - $rect.Top) - $expectedHeight) -gt 2
 ) { throw 'The target window bounds changed after observation. Observe again.' }
+$inputTimer = [Diagnostics.Stopwatch]::StartNew()
 switch ($op) {
   'focus' {
     [void][CardBushWindowControl]::ShowWindow($h,9)
@@ -1462,18 +1680,83 @@ switch ($op) {
   'maximize' { [void][CardBushWindowControl]::ShowWindow($h,3) }
   'restore' { [void][CardBushWindowControl]::ShowWindow($h,9) }
   'close' { [void][CardBushWindowControl]::PostMessage($h,0x0010,[IntPtr]::Zero,[IntPtr]::Zero) }
-  'move' { [void][CardBushWindowControl]::SetWindowPos($h,[IntPtr]::Zero,[int]$env:CARDBUSH_WINDOW_X,[int]$env:CARDBUSH_WINDOW_Y,$rect.Right-$rect.Left,$rect.Bottom-$rect.Top,0x0014) }
-  'resize' { [void][CardBushWindowControl]::SetWindowPos($h,[IntPtr]::Zero,$rect.Left,$rect.Top,[int]$env:CARDBUSH_WINDOW_WIDTH,[int]$env:CARDBUSH_WINDOW_HEIGHT,0x0014) }
-}`;
+  'move' { [void][CardBushWindowControl]::SetWindowPos($h,[IntPtr]::Zero,[int]$script:CARDBUSH_WINDOW_X,[int]$script:CARDBUSH_WINDOW_Y,$rect.Right-$rect.Left,$rect.Bottom-$rect.Top,0x0014) }
+  'resize' { [void][CardBushWindowControl]::SetWindowPos($h,[IntPtr]::Zero,$rect.Left,$rect.Top,[int]$script:CARDBUSH_WINDOW_WIDTH,[int]$script:CARDBUSH_WINDOW_HEIGHT,0x0014) }
+}
+if ($null -ne $script:CardBushTimings) { $script:CardBushTimings.input_ms += $inputTimer.ElapsedMilliseconds }
+`;
 
 const computerInputScript = String.raw`
-$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CARDBUSH_INPUT_BASE64))
+$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($script:CARDBUSH_INPUT_BASE64))
 $p = $json | ConvertFrom-Json
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 public static class CardBushInput {
+  [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+  [DllImport("user32.dll",SetLastError=true)] static extern bool OpenClipboard(IntPtr window);
+  [DllImport("user32.dll")] static extern bool CloseClipboard();
+  [DllImport("user32.dll",SetLastError=true)] static extern bool EmptyClipboard();
+  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetClipboardData(uint format,IntPtr data);
+  [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateWindowEx(uint ex,string cls,string title,uint style,int x,int y,int width,int height,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
+  [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr window);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GlobalAlloc(uint flags,UIntPtr bytes);
+  [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);
+  [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr memory);
+  [DllImport("kernel32.dll")] static extern IntPtr GlobalFree(IntPtr memory);
+  [DllImport("kernel32.dll")] static extern UIntPtr GlobalSize(IntPtr memory);
+  static IntPtr ClipboardMemory(byte[] data) {
+    IntPtr memory=GlobalAlloc(0x42,new UIntPtr((uint)data.Length));
+    if(memory==IntPtr.Zero)throw new InvalidOperationException("Unable to allocate clipboard data.");
+    IntPtr pointer=GlobalLock(memory);
+    if(pointer==IntPtr.Zero){GlobalFree(memory);throw new InvalidOperationException("Unable to lock clipboard data.");}
+    try{Marshal.Copy(data,0,pointer,data.Length);}finally{GlobalUnlock(memory);}
+    return memory;
+  }
+  static void WriteClipboard(uint format,byte[] bytes,bool files) {
+    IntPtr memory=ClipboardMemory(bytes),effect=IntPtr.Zero,owner=IntPtr.Zero;bool opened=false;
+    try {
+      uint effectFormat=0;
+      if(files){effectFormat=RegisterClipboardFormat("Preferred DropEffect");if(effectFormat==0)throw new InvalidOperationException("Unable to register copy format.");effect=ClipboardMemory(BitConverter.GetBytes(1));}
+      owner=CreateWindowEx(0,"STATIC","CardBushClipboard",0,0,0,0,0,new IntPtr(-3),IntPtr.Zero,IntPtr.Zero,IntPtr.Zero);
+      if(owner==IntPtr.Zero)throw new InvalidOperationException("Unable to create a temporary clipboard owner.");
+      for(int attempt=0;attempt<4;attempt++){CheckTarget();if(OpenClipboard(owner)){opened=true;break;}Thread.Sleep(30);}
+      if(!opened)throw new InvalidOperationException("Clipboard is busy. No clipboard data was changed.");
+      CheckTarget();
+      if(!EmptyClipboard())throw new InvalidOperationException("Unable to clear clipboard before copying.");
+      if(SetClipboardData(format,memory)==IntPtr.Zero)throw new InvalidOperationException("Unable to copy clipboard data.");
+      memory=IntPtr.Zero; // Ownership transfers to Windows only on success.
+      if(files){if(SetClipboardData(effectFormat,effect)==IntPtr.Zero)throw new InvalidOperationException("Unable to set file copy mode.");effect=IntPtr.Zero;}
+      IntPtr stored=GetClipboardData(format);
+      if(stored==IntPtr.Zero || GlobalSize(stored).ToUInt64()<(ulong)bytes.Length)throw new InvalidOperationException("Clipboard verification failed. No paste was sent.");
+      IntPtr pointer=GlobalLock(stored);
+      if(pointer==IntPtr.Zero)throw new InvalidOperationException("Clipboard verification could not read the copied data.");
+      try{for(int i=0;i<bytes.Length;i++)if(Marshal.ReadByte(pointer,i)!=bytes[i])throw new InvalidOperationException("Clipboard contents changed before verification. No paste was sent.");}
+      finally{GlobalUnlock(stored);}
+    } finally {
+      if(opened)CloseClipboard();
+      if(owner!=IntPtr.Zero)DestroyWindow(owner);
+      if(memory!=IntPtr.Zero)GlobalFree(memory);
+      if(effect!=IntPtr.Zero)GlobalFree(effect);
+    }
+  }
+  public static void ClipboardText(string text) {
+    if(text==null || text.IndexOf('\0')>=0)throw new ArgumentException("Clipboard text contains NUL.");
+    WriteClipboard(13,System.Text.Encoding.Unicode.GetBytes(text+"\0"),false);
+  }
+  public static void ClipboardFiles(string[] paths) {
+    if(paths==null || paths.Length==0)throw new ArgumentException("Clipboard file list is empty.");
+    foreach(string path in paths) {
+      if(!System.IO.Path.IsPathRooted(path) || !System.IO.File.Exists(path))
+        throw new ArgumentException("Clipboard requires existing absolute file paths.");
+    }
+    byte[] names=System.Text.Encoding.Unicode.GetBytes(String.Join("\0",paths)+"\0\0");
+    byte[] bytes=new byte[20+names.Length];BitConverter.GetBytes(20).CopyTo(bytes,0);BitConverter.GetBytes(1).CopyTo(bytes,16);names.CopyTo(bytes,20);
+    WriteClipboard(15,bytes,true);
+  }
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion data; }
   [StructLayout(LayoutKind.Explicit)] public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT keyboard; [FieldOffset(0)] public MOUSEINPUT mouse; }
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int x, y; public uint data, flags, time; public UIntPtr extraInfo; }
@@ -1481,7 +1764,7 @@ public static class CardBushInput {
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int x; public int y; }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
   [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -1539,7 +1822,17 @@ public static class CardBushInput {
       CheckTarget();
     }}finally{timeEndPeriod(1);}
   }
-  public static void MovePointer(int x,int y){if(!SetCursorPos(x,y))throw new InvalidOperationException("Pointer target is outside the interactive desktop.");}
+  public static void MovePointer(int x,int y){
+    int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);
+    if(width<=0 || height<=0 || x<left || y<top || x>=left+width || y>=top+height)
+      throw new InvalidOperationException("Pointer target is outside the interactive desktop.");
+    // Pixel centers on the virtual desktop, including monitors with negative
+    // origins. Tag movement as well as buttons so our hook cannot call it human.
+    int nx=(int)(((long)(x-left)*65536+32768)/width),ny=(int)(((long)(y-top)*65536+32768)/height);
+    INPUT item=new INPUT{type=0,data=new InputUnion{mouse=new MOUSEINPUT{x=nx,y=ny,flags=0xC001,extraInfo=InputTag}}};
+    if(SendInput(1,new INPUT[]{item},Marshal.SizeOf(typeof(INPUT)))!=1)
+      throw new InvalidOperationException("Pointer input failed.");
+  }
   public static void Drag(int x,int y,int tx,int ty,int steps,int duration){CheckTarget();MovePointer(x,y);mouse_event(2,0,0,0,InputTag);try{for(int i=1;i<=steps;i++){CheckTarget();int nx=x+(tx-x)*i/steps,ny=y+(ty-y)*i/steps;if(RootWindowAt(nx,ny)!=ExpectedWindow.ToInt64())throw new InvalidOperationException("The drag path is covered by another window. Input stopped.");MovePointer(nx,ny);if(duration>0)Thread.Sleep(duration/steps);}}finally{mouse_event(4,0,0,0,InputTag);}}
 }
 '@
@@ -1552,9 +1845,9 @@ function KeyCode([string]$key) {
   if ($lower -match '^f([1-9]|1[0-2])$') { return [byte](111 + [int]$Matches[1]) }
   throw "Unsupported key: $key"
 }
-$yieldToUser = $env:CARDBUSH_YIELD_TO_USER -eq '1'
-$restorePointer = $env:CARDBUSH_RESTORE_POINTER -eq '1'
-$expectedInputTick = [uint32]$env:CARDBUSH_EXPECTED_INPUT_TICK
+$yieldToUser = $script:CARDBUSH_YIELD_TO_USER -eq '1'
+$restorePointer = $script:CARDBUSH_RESTORE_POINTER -eq '1'
+$expectedInputTick = [uint32]$script:CARDBUSH_EXPECTED_INPUT_TICK
 $wait = [Diagnostics.Stopwatch]::StartNew()
 $ready = -not $yieldToUser
 while (-not $ready -and $wait.ElapsedMilliseconds -lt 2400) {
@@ -1616,6 +1909,7 @@ $pointerRestoreSkippedForUser = $false
 $mouseAction = $p.action -eq 'click' -or $p.action -eq 'drag' -or $p.action -eq 'scroll'
 $expectedPointerX = $pointer.x
 $expectedPointerY = $pointer.y
+$inputTimer = [Diagnostics.Stopwatch]::StartNew()
 try {
   [CardBushInput]::CheckTarget()
   switch ($p.action) {
@@ -1623,9 +1917,11 @@ try {
     'scroll' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;[CardBushInput]::MovePointer($screenX,$screenY);[CardBushInput]::mouse_event(2048,0,0,([int]$p.delta)*120,[CardBushInput]::InputTag) }
     'drag' { $expectedPointerX=$screenToX;$expectedPointerY=$screenToY;$steps=if($null -ne $p.steps){[int]$p.steps}else{20};$duration=if($null -ne $p.duration_ms){[int]$p.duration_ms}else{400};[CardBushInput]::Drag($screenX,$screenY,$screenToX,$screenToY,$steps,$duration) }
     'type' { [CardBushInput]::Text([string]$p.text) }
+    'clipboard' { if ($null -ne $p.files) { [CardBushInput]::ClipboardFiles([string[]]$p.files) } else { [CardBushInput]::ClipboardText([string]$p.text) } }
     'key' { $keys=@($p.keys);if($keys.Count -eq 0 -or $null -eq $keys[0]){$keys=@($p.key)};$codes=@($keys|%{KeyCode ([string]$_)});$pressed=[System.Collections.Generic.List[byte]]::new();try{foreach($code in $codes){[CardBushInput]::Key($code,$true);$pressed.Add($code)}}finally{for($index=$pressed.Count-1;$index -ge 0;$index--){[CardBushInput]::Key($pressed[$index],$false)}} }
   }
 } finally {
+  if ($null -ne $script:CardBushTimings) { $script:CardBushTimings.input_ms += $inputTimer.ElapsedMilliseconds }
   if ($restorePointer -and $mouseAction) {
     $afterActionPointer = New-Object CardBushInput+POINT
     [void][CardBushInput]::GetCursorPos([ref]$afterActionPointer)
@@ -1637,7 +1933,9 @@ try {
     }
   }
 }
-[PSCustomObject]@{action=$p.action; input_mode='send_input'; coordinate_space=$p.coordinate_space; yielded_to_user=$false; input_wait_ms=$wait.ElapsedMilliseconds; pointer_restored=$pointerRestored; pointer_restore_skipped_for_user=$pointerRestoreSkippedForUser; foreground_hwnd=[CardBushInput]::ForegroundWindow(); last_input_tick=[CardBushInput]::LastInputTick()} | ConvertTo-Json -Compress`;
+$result=[ordered]@{action=$p.action; input_mode='send_input'; coordinate_space=$p.coordinate_space; yielded_to_user=$false; input_wait_ms=$wait.ElapsedMilliseconds; pointer_restored=$pointerRestored; pointer_restore_skipped_for_user=$pointerRestoreSkippedForUser; foreground_hwnd=[CardBushInput]::ForegroundWindow(); last_input_tick=[CardBushInput]::LastInputTick()}
+if($p.action -eq 'clipboard') { $result.input_mode='clipboard'; $result.format=if($null -ne $p.files){'files'}else{'text'}; $result.verified=$true; $result.pasted=$false; $result.clipboard_sequence=[CardBushInput]::GetClipboardSequenceNumber(); if($null -ne $p.files){$result.file_count=@($p.files).Count}else{$result.text_length=([string]$p.text).Length} }
+[PSCustomObject]$result | ConvertTo-Json -Compress`;
 
 const desktopIdleScript = String.raw`
 Add-Type -TypeDefinition @'
@@ -1650,7 +1948,7 @@ public static class CardBushUserIdle {
   public static uint IdleMilliseconds(){unchecked{return (uint)Environment.TickCount-LastInputTick();}}
 }
 '@
-$expectedInputTick = [uint32]$env:CARDBUSH_EXPECTED_INPUT_TICK
+$expectedInputTick = [uint32]$script:CARDBUSH_EXPECTED_INPUT_TICK
 $wait = [Diagnostics.Stopwatch]::StartNew()
 $ready = $false
 while (-not $ready -and $wait.ElapsedMilliseconds -lt 2400) {
@@ -1672,52 +1970,42 @@ async function yieldForUserIfNeeded(
   if (result.ready !== true) throw new ComputerUseUserActiveError();
 }
 
-class ComputerUseUserActiveError extends Error {
+class ComputerUseUserActiveError extends ComputerUseFailure {
   constructor() {
-    super('Computer Use yielded because the user is actively using the mouse or keyboard. Wait for the user to finish, then call observe before continuing.');
+    super('user_takeover', 'Computer Use yielded because the user is actively using the mouse or keyboard. Wait for the user to finish, then call observe before continuing.');
     this.name = 'ComputerUseUserActiveError';
   }
 }
 
 async function powershell(
   script: string,
-  extraEnv: Record<string, string> = {},
+  parameters: Record<string, string> = {},
   signal?: AbortSignal,
   timeoutMs = 15_000,
+  afterAction?: (acknowledgement: Record<string, unknown>) => Promise<void>,
 ): Promise<string> {
   throwIfAborted(signal);
-  const utf8Script = [
-    "$ErrorActionPreference = 'Stop'",
-    '$cardbushUtf8 = [System.Text.UTF8Encoding]::new($false)',
-    '[Console]::InputEncoding = $cardbushUtf8',
-    '[Console]::OutputEncoding = $cardbushUtf8',
-    '$OutputEncoding = $cardbushUtf8',
-    script,
-  ].join('\n');
-  const encodedCommand = Buffer.from(utf8Script, 'utf16le').toString('base64');
   try {
-    const { stdout } = await execFileAsync('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-EncodedCommand',
-      encodedCommand,
-    ], {
-      windowsHide: true,
-      timeout: timeoutMs,
+    const prepared = await prepareComputerUseNativeCode(script);
+    throwIfAborted(signal);
+    return await runComputerUsePowerShell(prepared, {
+      timeoutMs,
       signal,
-      maxBuffer: 8 * 1024 * 1024,
-      encoding: 'utf8',
       cwd: powerShellWorkingDirectory(),
-      env: { ...process.env, ...extraEnv },
+      env: process.env,
+      parameters,
+      afterAction,
     });
-    return stdout;
   } catch (error) {
     throwIfAborted(signal);
     if (isAbortError(error)) throw error;
-    throw new Error(formatComputerUseError(error));
+    throw computerUseFailure(error);
+  }
+}
+
+export async function precompileComputerUseNativeCode(directory?: string): Promise<void> {
+  for (const script of [windowObservationScript, computerInputScript, accessibilityActionScript, windowControlScript, windowListScript, desktopIdleScript]) {
+    await prepareComputerUseNativeCode(script, directory);
   }
 }
 
@@ -1749,9 +2037,19 @@ function isObservationAction(action: string): boolean {
 
 function actionFingerprint(input: Record<string, unknown>): string {
   const stableInput = Object.fromEntries(
-    Object.entries(input).filter(([key]) => key !== 'state_id'),
+    Object.entries(input).filter(([key]) => !['state_id', 'observe_after', 'include_text', 'include_screenshot', 'max_elements', 'element_query', 'element_offset', 'settle_ms', 'region', 'scale', 'grid'].includes(key)),
   );
   return JSON.stringify(canonicalValue(stableInput));
+}
+
+function actionRegion(input: Record<string, unknown>, observation: ComputerUseObservationBinding, previous?: ProgressBounds): ProgressBounds | undefined {
+  const element = observation.elements.find((item) => item.index === input.element_index);
+  if (element?.bounds) return element.bounds;
+  if (input.action === 'type' || input.action === 'key') return observation.focusedBounds ?? previous;
+  const x = optionalInteger(input.x), y = optionalInteger(input.y);
+  if (x == null || y == null || input.action === 'window') return undefined;
+  const left = Math.max(0, x - 160), top = Math.max(0, y - 60);
+  return { x: left, y: top, width: Math.min(320, observation.bounds.width - left), height: Math.min(120, observation.bounds.height - top) };
 }
 
 function canonicalValue(value: unknown): unknown {
@@ -1762,22 +2060,6 @@ function canonicalValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, item]) => [key, canonicalValue(item)]),
   );
-}
-
-function sameVisualState(left: string, right: string): boolean {
-  if (!left || !right) return false;
-  try {
-    const leftBytes = Buffer.from(left, 'base64');
-    const rightBytes = Buffer.from(right, 'base64');
-    if (leftBytes.length === 0 || leftBytes.length !== rightBytes.length) return left === right;
-    let totalDifference = 0;
-    for (let index = 0; index < leftBytes.length; index += 1) {
-      totalDifference += Math.abs(leftBytes[index] - rightBytes[index]);
-    }
-    return totalDifference / leftBytes.length <= 6;
-  } catch {
-    return left === right;
-  }
 }
 
 function hasWindowSelector(input: Record<string, unknown>): boolean {
@@ -1817,6 +2099,7 @@ function observedElements(value: unknown): ComputerUseObservedElement[] {
       : undefined;
     return [{
       index: optionalInteger(source.index) ?? fallbackIndex,
+      resultOffset: optionalInteger(source.result_offset) ?? fallbackIndex,
       runtimeId,
       name: optionalString(source.name).slice(0, 240),
       automationId: optionalString(source.automation_id).slice(0, 160),
@@ -1839,13 +2122,13 @@ function publicObservedElement(element: ComputerUseObservedElement) {
   return {
     index: element.index,
     name: element.name,
-    automation_id: element.automationId,
+    ...(element.automationId ? { automation_id: element.automationId } : {}),
     control_type: element.controlType,
-    class_name: element.className,
+    ...(element.className ? { class_name: element.className } : {}),
     enabled: element.enabled,
-    focused: element.focused,
-    offscreen: element.offscreen,
-    password: element.password,
+    ...(element.focused ? { focused: true } : {}),
+    ...(element.offscreen ? { offscreen: true } : {}),
+    ...(element.password ? { password: true } : {}),
     ...(element.bounds ? { bounds: element.bounds } : {}),
     patterns: element.patterns,
     supported_actions: supportedAccessibilityActions(element),
@@ -1853,26 +2136,6 @@ function publicObservedElement(element: ComputerUseObservedElement) {
     ...(element.state !== undefined ? { state: element.state } : {}),
     ...(element.readOnly !== undefined ? { read_only: element.readOnly } : {}),
   };
-}
-
-function accessibilityFingerprint(elements: ComputerUseObservedElement[]): string {
-  if (elements.length === 0) return '';
-  const semanticState = elements.map((element) => ({
-    runtimeId: element.runtimeId,
-    name: element.name,
-    automationId: element.automationId,
-    controlType: element.controlType,
-    enabled: element.enabled,
-    focused: element.focused,
-    offscreen: element.offscreen,
-    password: element.password,
-    bounds: element.bounds,
-    patterns: element.patterns,
-    value: element.value,
-    state: element.state,
-    readOnly: element.readOnly,
-  }));
-  return createHash('sha256').update(JSON.stringify(semanticState)).digest('base64url');
 }
 
 function windowListFingerprint(windows: Array<Record<string, unknown>>): string {

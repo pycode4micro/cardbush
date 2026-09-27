@@ -4,6 +4,7 @@ asar: true
 asarUnpack:
   - node_modules/@img/**/*
   - node_modules/sharp/**/*
+  - packages/cardbush-apps-mcp/dist/native/**/*.dll
 directories:
   output: release
   buildResources: assets
