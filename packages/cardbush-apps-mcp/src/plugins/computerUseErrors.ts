@@ -4,7 +4,7 @@ export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
 export type ComputerUseErrorCode =
   | 'user_takeover' | 'user_stopped' | 'window_changed' | 'window_unavailable'
   | 'stale_state' | 'observation_failed' | 'control_unavailable' | 'timeout'
-  | 'policy_blocked' | 'observation_required' | 'progress_unverified' | 'invalid_action' | 'computer_use_failed';
+  | 'application_control_blocked' | 'policy_blocked' | 'observation_required' | 'progress_unverified' | 'invalid_action' | 'computer_use_failed';
 export interface ComputerUseFailureInfo {
   code: ComputerUseErrorCode;
   message: string;
@@ -22,6 +22,7 @@ const recovery: Record<ComputerUseErrorCode, string> = {
   observation_failed: 'The action may already have run. Obtain a fresh observation before further input; do not repeat the action to recover its screenshot.',
   control_unavailable: 'Release conflicting control or report the unavailable native worker. Do not send input through another route to bypass control.',
   timeout: 'Observe the target to determine what completed before deciding whether to retry.',
+  application_control_blocked: 'Windows Application Control rejected a native component. Stop Computer Use for this turn and report the component and original error. The publisher must supply a trusted signed build permitted by the device policy. Do not retry another window, recompile the component, disable security, or switch execution routes to bypass the block. After the component is repaired, retry in a new turn.',
   policy_blocked: 'Desktop input is blocked for this turn. Finish and return to the user; observing another window or calling finish does not reset the block.',
   observation_required: 'Let any user interaction finish, then observe the exact target once before further input.',
   progress_unverified: 'Observe the same target once and inspect the result. One different corrective action is allowed; stop if it still produces no verified progress. Do not replay input or change APIs to evade the guard.',
@@ -46,7 +47,8 @@ export function computerUseFailure(error: unknown, execution?: ComputerUseExecut
   }
   const message = formatComputerUseError(error);
   let code: ComputerUseErrorCode = 'computer_use_failed';
-  if (/user.*(?:actively|taken over)|yielded.*user input/i.test(message)) code = 'user_takeover';
+  if (/0x8007(?:11c7|04ec|0241)\b|application\s+control\s+policy\s+has\s+blocked|blocked by group policy|应用程序控制策略.*阻止/i.test(message.replace(/\r?\n/g, ' '))) code = 'application_control_blocked';
+  else if (/user.*(?:actively|taken over)|yielded.*user input/i.test(message)) code = 'user_takeover';
   else if (/stopped for this turn|ended desktop control for this turn/i.test(message)) code = 'user_stopped';
   else if (/timed out/i.test(message)) code = 'timeout';
   else if (/no longer (?:available|exists)|empty bounds/i.test(message)) code = 'window_unavailable';

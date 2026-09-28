@@ -289,13 +289,12 @@ assert.match(
   /\.conversation-row\s*\{[\s\S]*?box-sizing:\s*border-box[\s\S]*?width:\s*100%/,
   'Conversation padding must be included in the row width so the menu stays inside the sidebar',
 );
-assert.match(
-  stylesSource,
-  /\.conversation-row\.nested\s*\{[\s\S]*?padding-right:\s*8px/,
-  'Nested titles must use the full idle row width instead of reserving hidden actions',
-);
-assert.match(stylesSource, /\.conversation-row\s*\{[\s\S]*?--conversation-title-hover-actions:\s*44px[\s\S]*?padding:\s*0 8px 0 var\(--sidebar-tree-base\)/);
-assert.match(stylesSource, /\.conversation-row\.running,[\s\S]*?--conversation-title-hover-actions:\s*16px;[\s\S]*?padding-right:\s*36px/);
+assert.match(stylesSource, /\.conversation-row\s*\{[^}]*--conversation-title-hover-actions:\s*44px[^}]*padding:\s*0 8px 0 var\(--sidebar-tree-base\)/,
+  'Idle titles reclaim the status lane until hover actions appear');
+assert.doesNotMatch(stylesSource, /\.conversation-row\.nested\s*\{[^}]*padding-right/,
+  'Nested titles inherit the same conditional status lane');
+assert.doesNotMatch(stylesSource, /sidebar-running-rhythm/,
+  'Sidebar running status uses a spinner instead of waveform bars');
 assert.match(sidebarSource, /className=\{`conversation-pin\$\{pinned \? ' is-pinned' : ''\}`\}/);
 assert.match(sidebarSource, /aria-pressed=\{pinned\}/);
 assert.match(stylesSource, /\.conversation-pin\s*\{[\s\S]*?right:\s*27px/);

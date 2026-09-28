@@ -43,7 +43,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Manage the visible task plan. action=get reads the current plan and revision. action=patch requires expected_revision and changes only supplied updates (by node ID), append_nodes, remove_ids or plan fields. action=replace (default) submits all nodes, explanation and active. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); waiting=external dependency with waitingFor; completed=finished. Keep active true while unfinished. Updates are atomic; stale revisions fail and require reading the current plan. This records reported progress, not independent verification, and does not force another response.",
+          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision. action=patch requires expected_revision and changes supplied updates (by node ID), append_nodes, remove_ids or plan fields; action=replace (default) submits the whole plan. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); waiting=external dependency with waitingFor; completed=finished. Keep active true while unfinished. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -124,7 +124,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_GOAL_TOOL,
         description:
-          "Declare the current Goal status and reason. Use complete only when the objective is complete, blocked only when it cannot continue, and active when another Turn is needed.",
+          "Declare the current Goal status and reason. In Goal mode, the parent must call this before completing the Turn; children report to the parent instead. Use complete only when the objective is achieved, blocked when it cannot continue, and active when another Turn is needed.",
         inputSchema: {
           type: "object",
           additionalProperties: false,

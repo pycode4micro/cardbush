@@ -100,7 +100,8 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
   await run("stableToolBlock.querySelector('.tool-execution-summary').click()");
   await until("stableToolBlock.querySelectorAll('[data-execution-id]').length === 6", 'tool details still expand');
   await run("updateStabilityTool('stable-tool-5', 'failed', 5)");
-  await until("stableToolBlock.querySelector('.tool-execution-status').textContent === 'Failed'", 'late tool results still update');
+  await until("stableToolBlock.querySelector('[data-execution-id=stable-tool-5] .tool-execution-row')?.getAttribute('aria-label').endsWith('Failed')", 'late results retain the real execution state');
+  assert.equal(await run("stableToolBlock.querySelector('.tool-execution-status,.tool-execution-row-status')"), null, 'late failures do not add visible status badges');
   assert.equal(await run('stableImage.isConnected && stableParagraph.isConnected'), true);
   await run("stableToolBlock.querySelector('.tool-execution-summary').click()");
   console.log('Tool update stability passed (' + theme + '): lifecycle, large media, per-frame geometry, detached reading and disclosure.');

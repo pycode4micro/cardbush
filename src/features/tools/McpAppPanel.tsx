@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, Loader2, Maximize2, Minimize2, PanelsTopLeft, RotateCw, X } from 'lucide-react';
 import { conversationRuntime, type ConversationRuntime } from '../../backend/conversationRuntime';
-import { ConversationHostContext } from '../conversationHost';
+import { ConversationHostContext, ConversationMessageTargetContext } from '../conversationHost';
 import type { AppLanguage } from '../../types';
 import { mcpAppDocument, mcpAppStyleVariables, mcpAppTheme, type McpAppView } from './mcpAppBridge';
 import './mcp-app.css';
@@ -24,6 +24,7 @@ function interfaceErrorCode(cause: unknown) {
 const staleInterface = (cause: unknown) => ['mcp_app_expired', 'mcp_app_connection_changed'].includes(interfaceErrorCode(cause));
 export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle, language, autoOpen = false, onClose, presentation = 'inline' }: { sessionId: string; turnId: string; toolCallId: string; title?: string; serverTitle?: string; language: AppLanguage; autoOpen?: boolean; onClose?: () => void; presentation?: 'inline' | 'modal' }) {
   const host = useContext(ConversationHostContext);
+  const messageTarget = useContext(ConversationMessageTargetContext) ?? host?.id;
   const command = useCallback((input: Record<string, unknown>, signal?: AbortSignal) => mcpAppCommand(input, signal, host?.runtime), [host?.runtime]);
   const [view, setView] = useState<McpAppView | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(autoOpen);
   const [errorCode, setErrorCode] = useState('');
@@ -184,7 +185,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
           const text = content.filter((item: any) => item?.type === 'text' && typeof item.text === 'string').map((item: any) => item.text).join('\n');
           if (!text.trim() || text.length > 32_000 || params.role && params.role !== 'user') throw new Error('The interface message must be user text up to 32,000 characters.');
           respond(await requestUser(text, zh ? '发送到会话' : 'Send to conversation', async () => {
-            await new Promise<void>((resolve, reject) => window.dispatchEvent(new CustomEvent('cardbush:mcp-app-message', { detail: { sessionId, hostId: host?.id, text, resolve, reject } })));
+            await new Promise<void>((resolve, reject) => window.dispatchEvent(new CustomEvent('cardbush:mcp-app-message', { detail: { sessionId, hostId: messageTarget, text, resolve, reject } })));
             return {};
           })); return;
         }
@@ -209,7 +210,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       }).catch(() => {}).finally(() => { polling = false; });
     }, 300);
     return () => { controller.abort(); clearInterval(timer); window.removeEventListener('message', listener); };
-  }, [view, sessionId, host?.id, command, handleError, setDisplayMode, scheduleViewport]);
+  }, [view, sessionId, messageTarget, command, handleError, setDisplayMode, scheduleViewport]);
   if (!sessionId || !turnId) return null;
   const displayTitle = title || view?.title || serverTitle || view?.serverTitle || (zh ? '插件界面' : 'Plugin interface');
   const prefersBorder = (view?.meta.ui?.prefersBorder ?? view?.meta['openai/widgetPrefersBorder']) !== false;

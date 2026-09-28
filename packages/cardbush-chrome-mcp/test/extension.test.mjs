@@ -18,8 +18,8 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   const runtimeMessages = event();
   const posted = [];
   const alarms = [];
-  const stored = {};
-  const sessionStored = {};
+  const stored = { cardbushConnectorEnabled: true };
+  const sessionStored = { cardbushConnectorEnabled: true };
   const attached = new Set();
   const screenshotTimers = new Set();
   const groups = new Map();
@@ -134,6 +134,8 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
 
   vm.runInNewContext(source, {
     importScripts: () => {},
+    parseConnectorPairing: () => ({ port: 12345, id: 'fixture', secret: 'fixture' }),
+    createConnectorPort: () => nativePort,
     chrome,
     URL,
     setTimeout: (callback, ms) => {
@@ -380,8 +382,9 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
   const tabs = [tab(22, 2, true, 'Restored tab', 'https://focused.example/path')];
   tabs[0].groupId = 100;
   const now = Date.now();
-  const stored = {};
+  const stored = { cardbushConnectorEnabled: true };
   const sessionStored = {
+    cardbushConnectorEnabled: true,
     cardbushManagedScopes: [{
       id: SCOPE_A.scopeId,
       title: SCOPE_A.scopeTitle,
@@ -441,6 +444,8 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
 
   vm.runInNewContext(source, {
     importScripts: () => {},
+    parseConnectorPairing: () => ({ port: 12345, id: 'fixture', secret: 'fixture' }),
+    createConnectorPort: () => nativePort,
     chrome,
     URL,
     setTimeout,

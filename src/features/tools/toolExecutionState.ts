@@ -1,35 +1,5 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
-import { asRecord, parseToolOutputJson } from './toolPayload';
-
-export function terminalExecutionNotice(execution: ChatToolExecution, language: AppLanguage) {
-  if (execution.state !== 'completed' ||
-    !['terminal_exec', 'terminal_poll', 'terminal_write', 'terminal_stop', 'shell_command'].includes(execution.name)) return undefined;
-  const result = execution.metadata.nativeResult == null
-    ? parseToolOutputJson(execution.output)
-    : asRecord(execution.metadata.nativeResult);
-  const exitCode = typeof result.exitCode === 'number' && Number.isFinite(result.exitCode) ? result.exitCode : undefined;
-  if (result.state === 'failed' || (exitCode !== undefined && exitCode !== 0)) {
-    return {
-      failed: true,
-      label: exitCode !== undefined && exitCode !== 0
-        ? language === 'zh' ? `退出码 ${exitCode}` : `Exit code ${exitCode}`
-        : language === 'zh' ? '命令失败' : 'Command failed',
-      detail: language === 'zh'
-        ? '命令未成功。请查看原始输出；重试前需确认已经完成的操作。'
-        : 'The command failed. Inspect the original output and check for partial effects before retrying.',
-    };
-  }
-  if (typeof result.stderr === 'string' && result.stderr.trim()) {
-    return {
-      failed: false,
-      label: language === 'zh' ? '有诊断输出' : 'Diagnostic output',
-      detail: language === 'zh'
-        ? '标准错误流包含诊断信息，可能是警告或未中止执行的错误。即使退出码为 0，也需核对输出和预期产物。'
-        : 'stderr contains diagnostics, possibly warnings or non-terminating errors. Check the output and expected artifacts even if the exit code is 0.',
-    };
-  }
-  return undefined;
-}
+import { asRecord } from './toolPayload';
 
 export function decodeToolExecutionState(value: unknown): ChatToolExecution['state'] {
   if (
@@ -63,8 +33,13 @@ export function runningToolLabel(
 // Titles describe an intended action; status always comes from runtime facts.
 // Never use raw arguments, shell commands or error payloads as a fallback title.
 export function toolActionTitle(execution: ChatToolExecution, language: AppLanguage): string {
+  const localized = asRecord(execution.metadata.displayTitles)[language];
+  if (typeof localized === 'string' && localized.trim()) return compactActionTitle(localized);
   const supplied = execution.metadata.displayTitle;
-  if (typeof supplied === 'string' && supplied.trim()) return Array.from(supplied.replace(/\s+/g, ' ').trim()).slice(0, 80).join('');
+  // Legacy receipts have one title only. Keep it in its own locale; otherwise
+  // use the localized tool action without inventing a translation or exposing arguments.
+  if (typeof supplied === 'string' && supplied.trim() &&
+      (/[\p{Script=Han}]/u.test(supplied) ? language === 'zh' : language === 'en')) return compactActionTitle(supplied);
   const name = execution.name.toLowerCase();
   const labels: Record<string, [string, string]> = {
     terminal_exec: ['执行命令', 'Run command'], shell_command: ['执行命令', 'Run command'],
@@ -84,6 +59,10 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
   return labels[name]?.[language === 'zh' ? 0 : 1] ?? displayToolName(execution.name);
 }
 
+function compactActionTitle(value: string) {
+  return Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, 80).join('');
+}
+
 export function selectToolActivityExecution(executions: ChatToolExecution[], preferredId?: string) {
   const preferred = executions.find(item => item.id === preferredId);
   // Keep the current parallel operation until it settles. In particular,
@@ -98,7 +77,7 @@ export function selectToolActivityExecution(executions: ChatToolExecution[], pre
 export function toolActivityStatus(execution: ChatToolExecution, language: AppLanguage, active: boolean): string {
   if (active && isToolRunning(execution)) return activeToolStatusLabel(execution, language)!;
   if (isToolRunning(execution) || execution.state === 'cancelled') return language === 'zh' ? '已中止' : 'Stopped';
-  if (execution.state === 'failed' || terminalExecutionNotice(execution, language)?.failed) return language === 'zh' ? '失败' : 'Failed';
+  if (execution.state === 'failed') return language === 'zh' ? '失败' : 'Failed';
   // A returned tool receipt can represent a submitted/running remote job.
   return language === 'zh' ? '已返回' : 'Returned';
 }
@@ -119,10 +98,6 @@ export function activeToolStatusLabel(
     return language === 'zh' ? '运行中' : 'Running';
   }
   return undefined;
-}
-
-export function isToolCancelled(execution: ChatToolExecution) {
-  return execution.state === 'cancelled';
 }
 
 export function displayToolName(value: string) {

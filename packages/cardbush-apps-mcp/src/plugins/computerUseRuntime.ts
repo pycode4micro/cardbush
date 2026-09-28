@@ -112,6 +112,16 @@ export class ComputerUseSafetyGuard {
   #activeScope = '';
   #desktopGeneration = 0;
 
+  recordApplicationControlBlock(scopeId: string, failure: ComputerUseFailure): void {
+    const state = this.#state(scopeId);
+    state.terminal = new ComputerUseFailure('application_control_blocked', failure.message,
+      'not_dispatched', { ...failure.info.details, terminal: true });
+    state.observation = undefined;
+    state.pending = undefined;
+    state.observations.clear();
+    state.lastRegion = undefined;
+  }
+
   begin(scopeId: string, input: Record<string, unknown>): () => void {
     if (!scopeId) return () => undefined;
     this.#cleanup();
@@ -550,6 +560,7 @@ async function executeComputerUseRequest(
       interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped' ? interruption : error,
       actionRecorded ? 'dispatched' : actionMayHaveDispatched ? 'unknown' : 'not_dispatched',
     );
+    if (failure.info.code === 'application_control_blocked') computerUseSafety.recordApplicationControlBlock(scopeId, failure);
     if (failure.info.code === 'user_takeover') {
       computerUseSafety.recordUserYield(scopeId);
     } else if (!isObservationAction(action) && !actionRecorded) {
@@ -569,7 +580,7 @@ async function executeComputerUseRequest(
     }
     if (failure.info.code === 'user_takeover') {
       await computerUsePresentation.pause(scopeId).catch(() => undefined);
-    } else if (['user_stopped', 'control_unavailable'].includes(failure.info.code)) {
+    } else if (['user_stopped', 'control_unavailable', 'application_control_blocked'].includes(failure.info.code)) {
       await computerUsePresentation.finish(scopeId).catch(() => undefined);
     } else {
       await computerUsePresentation.hold(scopeId).catch(() => undefined);
@@ -982,15 +993,16 @@ async function observeAfterAction(
   } catch (error) {
     if (signal?.aborted || isAbortError(error)) throw error;
     const failure = computerUseFailure(error);
+    if (failure.info.code === 'application_control_blocked') computerUseSafety.recordApplicationControlBlock(scopeId, failure);
     if (failure.info.code === 'user_takeover') await computerUsePresentation.pause(scopeId).catch(() => undefined);
-    else if (['user_stopped', 'control_unavailable'].includes(failure.info.code)) {
+    else if (['user_stopped', 'control_unavailable', 'application_control_blocked'].includes(failure.info.code)) {
       await computerUsePresentation.finish(scopeId).catch(() => undefined);
     } else await computerUsePresentation.hold(scopeId).catch(() => undefined);
     // A failed refresh never changes a dispatched action into a retryable action.
     // No state token is issued, but the input acknowledgement is retained.
     return plain({ ...output, observation: { actionable: false, error: {
       ...failure.info, execution: output.execution,
-      recovery: failure.info.code === 'user_stopped' || failure.info.code === 'user_takeover' ? failure.info.recovery
+      recovery: ['user_stopped', 'user_takeover', 'application_control_blocked'].includes(failure.info.code) ? failure.info.recovery
         : 'The input may already have taken effect. Observe before further input; do not replay the action to recover its observation.',
     } } });
   }

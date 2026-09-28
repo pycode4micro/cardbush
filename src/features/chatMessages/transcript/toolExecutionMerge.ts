@@ -34,6 +34,7 @@ export function mergeToolExecutionUpdate(
       // A call's title is immutable. History enrichment and replay must not
       // replace it with a tool name or a transient error/status string.
       ...(current.metadata.displayTitle ? { displayTitle: current.metadata.displayTitle } : {}),
+      ...(current.metadata.displayTitles ? { displayTitles: current.metadata.displayTitles } : {}),
       ...(staleEvent ? { lifecycleSequence: currentSequence } : {}),
     },
     ...(artifacts.length > 0 ? { artifacts } : {}),

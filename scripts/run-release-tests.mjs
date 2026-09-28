@@ -14,16 +14,30 @@ function run(args) {
 }
 const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', name, 'test'))
   .filter(file => file.endsWith('.test.mjs')).map(file => `packages/${name}/test/${file}`));
+run(['scripts/build-chrome-native-host.mjs', '--test']);
+if (process.platform === 'win32') {
+  run(['scripts/build-chrome-native-host.mjs', '--validation']);
+  run(['--test', 'scripts/test-chrome-connector-lifecycle.mjs', 'scripts/test-chrome-pairing.mjs']);
+  run(['scripts/test-chrome-legacy-cleanup.mjs']);
+  run(['scripts/test-chrome-native-host.mjs']);
+  run(['scripts/test-chrome-native-host-production.mjs']);
+}
 run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
+run(['--test', 'scripts/test-release-privacy.mjs']);
+run(['--test', 'scripts/test-process-host-build.mjs']);
+run(['--test', 'scripts/test-notification-sound.mjs']);
+run(['--test', 'scripts/test-appearance-preferences.mjs', 'scripts/test-conversation-styles.mjs']);
 run(['--test', 'scripts/test-app-center.mjs', 'scripts/test-local-applications.mjs', 'scripts/test-calendar-import.mjs']);
 run(['scripts/test-local-applications-native.mjs']);
 run(['scripts/test-automation-calendar.mjs']);
 run(['--test', 'scripts/test-file-preview-registry.mjs']);
+run(['--test', 'scripts/test-code-rendering.mjs', 'scripts/test-diff-syntax-contract.mjs', 'scripts/test-markdown-format.mjs']);
 run(['--test', 'scripts/test-permission-modes.mjs']);
 run(['--test', 'scripts/test-sandbox-setup.mjs']);
 run(['--test', 'scripts/test-runtime-startup-races.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
+run(['--test', '--test-timeout=45000', 'scripts/test-agent-shared-configuration.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
 for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', 'test-conversation-switching.mjs', 'test-session-read-fences.mjs', 'test-startup-runtime-contract.mjs', 'test-runtime-host-lifecycle.mjs',
@@ -35,10 +49,15 @@ for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', '
 if (!process.argv.includes('--no-ui')) {
   run(['scripts/test-runtime-host-env.cjs']);
   run(['scripts/run-settings-context-ui-test.mjs', 'sandbox']);
+  run(['scripts/run-settings-context-ui-test.mjs', 'agents']);
+  run(['scripts/run-settings-context-ui-test.mjs', 'notification-sound']);
+  run(['scripts/run-settings-context-ui-test.mjs', 'appearance']);
+  run(['scripts/run-settings-context-ui-test.mjs', 'layout']);
+  run(['scripts/run-settings-context-ui-test.mjs', 'styles']);
   run(['scripts/run-agents-ui-test.mjs']);
-  for (const script of ['run-app-views-test.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
+  for (const script of ['run-app-views-test.mjs', 'test-source-memo-ui.mjs', 'test-subagent-conversation-ui.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
-  for (const view of ['html-references', 'loop-previews', 'startup-presentation', 'composer-resize', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
+  for (const view of ['html-references', 'code-rendering', 'markdown-tables', 'status-indicators', 'loop-previews', 'startup-presentation', 'composer-resize', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
   run(['scripts/test-automations-ui.mjs']);
   run(['scripts/test-plugin-uninstall-worker.cjs']);
   run(['scripts/test-window-menu.mjs']);

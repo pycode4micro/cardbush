@@ -30,10 +30,13 @@ export function requireValidSignatures(files, entries) {
   const byPath = new Map(entries.map(entry => [entry.path.toLowerCase(), entry]));
   const failures = files.flatMap(file => {
     const entry = byPath.get(resolve(file).toLowerCase());
-    return entry?.status === 'Valid' && entry.keyAlgorithm === '1.2.840.113549.1.1.1'
-      ? [] : [`${file}: ${entry?.status ?? 'missing verification'}; ${entry?.keyAlgorithm ?? 'no RSA signing certificate'}`];
+    // Smart App Control supports trusted RSA and ECC certificates. Algorithm
+    // selection must not reject an otherwise valid supported signing identity.
+    return entry?.status === 'Valid' && ['1.2.840.113549.1.1.1', '1.2.840.10045.2.1'].includes(entry.keyAlgorithm)
+      && entry.timestamped === true && entry.selfSigned === false
+      ? [] : [`${file}: ${entry?.status ?? 'missing verification'}; ${entry?.keyAlgorithm ?? 'no signing certificate'}; timestamp=${entry?.timestamped === true}; selfSigned=${entry?.selfSigned === true}`];
   });
-  if (failures.length) throw Error(`Windows release signature check failed. Configure a trusted RSA code-signing identity in the publisher build pipeline.\n${failures.join('\n')}`);
+  if (failures.length) throw Error(`Windows release signature check failed. Configure a trusted RSA or ECC code-signing identity in the publisher build pipeline.\n${failures.join('\n')}`);
   return { verified: files.length };
 }
 
@@ -47,7 +50,7 @@ $ErrorActionPreference = 'Stop'
 $paths = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $results = @(foreach ($path in $paths) {
   $signature = Get-AuthenticodeSignature -LiteralPath $path
-  [pscustomobject]@{path=$path;status=[string]$signature.Status;keyAlgorithm=$signature.SignerCertificate.PublicKey.Oid.Value}
+  [pscustomobject]@{path=$path;status=[string]$signature.Status;keyAlgorithm=$signature.SignerCertificate.PublicKey.Oid.Value;timestamped=($null -ne $signature.TimeStamperCertificate);selfSigned=($null -ne $signature.SignerCertificate -and $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer)}
 })
 ConvertTo-Json -InputObject $results -Compress
 `;
@@ -62,7 +65,7 @@ ConvertTo-Json -InputObject $results -Compress
   if (response.error) throw response.error;
   if (response.status !== 0) throw Error(response.stderr || 'Windows signature verification failed.');
   const result = requireValidSignatures(paths, JSON.parse(response.stdout.replace(/^\uFEFF/, '')));
-  console.log(`Verified Windows-trusted RSA signatures for ${result.verified} Windows binaries.`);
+  console.log(`Verified Windows-trusted signatures for ${result.verified} Windows binaries.`);
   return result;
 }
 

@@ -156,6 +156,7 @@ export function buildChildTurnRequest(input: {
     inputMessages: [{
       messageId: input.ids.messageId,
       message: { role: "user", content: `${CHILD_AGENT_ASSIGNMENT_PREFIX}\n\n${input.prompt}` },
+      metadata: { subagentAuthor: 'parent' },
     }],
     sessionMetadata: {
       parentSessionId: input.context.sessionId,

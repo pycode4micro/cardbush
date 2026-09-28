@@ -2,6 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { computerUsePresentationNative } from './computerUsePresentationNative.js';
 import { ComputerUseFailure, computerUseFailure } from './computerUseErrors.js';
+import { prepareComputerUseNativeCode } from './computerUseNativeCode.js';
+
+export function prepareComputerUsePresentation(directory?: string): Promise<string> {
+  return prepareComputerUseNativeCode("$ErrorActionPreference='Stop'\nAdd-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing,System.Web.Extensions -TypeDefinition @'\n"
+    + computerUsePresentationNative + "\n'@\n[CardBushPresentation]::Run()", directory);
+}
 
 export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number };
 type Notice = ComputerUseNotice;
@@ -111,18 +117,23 @@ export class ComputerUsePresentation {
   async #start(): Promise<void> {
     if (this.#starting) return this.#starting;
     if (this.#child) return;
-    const script = "$ErrorActionPreference='Stop'; Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CARDBUSH_PRESENTATION_SOURCE))) -ReferencedAssemblies System.Windows.Forms,System.Drawing,System.Web.Extensions; [CardBushPresentation]::Run()";
+    this.#starting = this.#startWorker().finally(() => { this.#starting = undefined; });
+    return this.#starting;
+  }
+
+  async #startWorker(): Promise<void> {
+    const script = await prepareComputerUsePresentation();
     const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
       windowsHide: true,
       stdio: 'pipe',
-      env: { ...process.env, CARDBUSH_PRESENTATION_SOURCE: Buffer.from(computerUsePresentationNative, 'utf8').toString('base64') },
+      env: process.env,
     });
     this.#child = child;
     let stderr = '';
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-3000); });
     child.stdin.on('error', () => undefined);
-    this.#starting = new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => { reject(new Error('Computer Use presentation did not start.')); child.kill(); }, 15_000);
       const lines = createInterface({ input: child.stdout });
       lines.on('line', (line) => {
@@ -145,8 +156,7 @@ export class ComputerUsePresentation {
         this.#pending.clear();
         lines.close();
       });
-    }).finally(() => { this.#starting = undefined; });
-    return this.#starting;
+    });
   }
 
   #notice(notice: Notice): void {

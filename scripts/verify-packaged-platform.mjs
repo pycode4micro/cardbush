@@ -6,9 +6,10 @@ const run = args => {
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 };
+run(['scripts/audit-package-privacy.mjs', directory]);
 run(['scripts/run-packaged-smoke.mjs', path.join(directory, process.platform === 'win32' ? 'CardBush.exe' : 'cardbush')]);
 if (process.platform === 'win32') {
   run(['scripts/verify-windows-app-icon.mjs', path.join(directory, 'CardBush.exe')]);
-  run(['scripts/test-chrome-native-host.mjs', path.join(directory, 'resources/chrome-native-host/CardBushBrowserHost.exe')]);
+  run(['scripts/test-chrome-native-host-production.mjs', path.join(directory, 'resources/chrome-native-host/CardBushBrowserHost.exe')]);
 }
 run(['scripts/test-chrome-connector-contract.mjs', directory]);

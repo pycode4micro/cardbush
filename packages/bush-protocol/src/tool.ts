@@ -159,7 +159,12 @@ export const runtimeToolErrorSchema = z.object({
 
 export type RuntimeToolError = z.infer<typeof runtimeToolErrorSchema>;
 
-export const toolDisplaySchema = z.object({ title: z.string().min(1), summary: z.string().optional() });
+export const toolDisplaySchema = z.object({
+  title: z.string().min(1),
+  titles: z.object({ zh: z.string().min(1).optional(), en: z.string().min(1).optional() }).optional(),
+  summary: z.string().optional(),
+});
+export type ToolDisplay = z.infer<typeof toolDisplaySchema>;
 
 export const toolExecutionRecordSchema = z.object({
   protocol: z.literal(BUSH_TOOL_EXECUTION_RECORD_PROTOCOL),

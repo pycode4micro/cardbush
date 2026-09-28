@@ -14,9 +14,12 @@ const capability = { scope, model, capability: 'client_tool_search' };
 const compatibility = { scope, model, capability: 'responses_compatibility' };
 function assertDisplayProjection(parameters, native) {
   const { _display_title, ...properties } = parameters.properties;
-  assert.equal(_display_title.type, 'string');
-  assert.ok(!parameters.required?.includes('_display_title'));
-  assert.deepEqual({ ...parameters, properties }, native);
+  assert.equal(_display_title.type, 'object');
+  assert.deepEqual(_display_title.required, ['zh', 'en']);
+  assert.ok(parameters.required?.includes('_display_title'));
+  const restored = { ...parameters, properties, required: parameters.required.filter(key => key !== '_display_title') };
+  if (!native.required) delete restored.required;
+  assert.deepEqual(restored, native);
 }
 const registry = new ToolRegistry(); registerMcpDiscovery(registry);
 const request = overrides => modelRequestSchema.parse({

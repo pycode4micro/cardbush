@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -294,6 +294,15 @@ test('remote subagent HTTP bridge deduplicates uncertain acknowledgement, return
     const observations = continuedEvents.events.filter(event => ['cache_chain_observed', 'provider_input_observed'].includes(event.kind));
     assert.ok(observations.some(event => event.kind === 'provider_input_observed'));
     assert.ok(observations.every(event => !event.payload.frozenPrefixBreak), 'resuming a remote child preserves its own Runtime and provider input prefixes');
+    const human = await realCall(connection.id, 'chat.send', input(request.sessionId, 'human-child-followup', 'Check the spacing too'));
+    await until(() => realCall(connection.id, 'chat.jobs', { sessionId: request.sessionId }), jobs => jobs.find(job => job.id === human.id)?.status === 'completed');
+    const afterHuman = await realCall(connection.id, 'sessions.get', { sessionId: request.sessionId });
+    assert.equal(afterHuman.metadata.agentRole, 'child');
+    assert.equal(afterHuman.metadata.parentSessionId, 'parent');
+    assert.equal(afterHuman.turns.length, 3);
+    assert.equal(afterHuman.turns[2].messages.find(entry => entry.message.role === 'user').metadata.subagentAuthor, 'user');
+    assert.equal(afterHuman.turns[0].messages.find(entry => entry.message.role === 'user').metadata.subagentAuthor, 'parent');
+    assert.ok(f.model.calls.at(-1).input.some(message => JSON.stringify(message).includes('Continue review')), 'human follow-up keeps the child conversation history');
     await assert.rejects(runRemoteSubagent(manager, { ...request, taskId: 'test-remote-3', turnId: 'turn-test-remote-3', parentSessionId: 'someone-else' }), /another parent/);
   } finally { await manager.close(); await http.close(); await f.service.close(); }
 });
@@ -891,8 +900,69 @@ test('remote goal continuations yield to queued user work and stop with cancella
     const snapshot = await f.service.call('sessions.get', { sessionId: 'goal-queue' });
     const continuationInputs = snapshot.turns.find(turn => turn.turnId === active.turnId).messages;
     assert.match(continuationInputs.find(item => item.message.name === 'turn_runtime_context').message.content, /Time zone: Pacific\/Auckland/);
-    assert.deepEqual(continuationInputs.find(item => item.message.name === 'goal_continuation').metadata, { userTimeZone: 'Pacific/Auckland' });
+    assert.deepEqual(continuationInputs.find(item => item.message.name === 'goal_continuation').metadata, { userTimeZone: 'Pacific/Auckland', sourceEnabled: true });
     await pause(120);
     assert.equal((await f.service.call('chat.jobs')).length, 3, 'cancelled goals cannot schedule another continuation');
+  } finally { await f.service.close(); }
+});
+
+test('unified configuration is applied before chat submission; acknowledged retries do not overwrite active task settings', async t => {
+  const f = await openService(t, 'unified', 350);
+  const { packSharedConfiguration } = await import('../dist-electron/agentSharedConfiguration.mjs');
+  const source = join(f.root, 'desktop-source');
+  let proxyRequests = 0;
+  const proxy = createServer((req,res)=>{
+    proxyRequests++;
+    const upstream=httpRequest(req.url,{method:req.method,headers:{...req.headers,host:new URL(req.url).host}},response=>{res.writeHead(response.statusCode,response.headers);response.pipe(res);});
+    upstream.on('error',()=>res.writeHead(502).end());req.pipe(upstream);
+  });
+  proxy.listen(0,'127.0.0.1');await once(proxy,'listening');
+  t.after(()=>{proxy.closeAllConnections();return new Promise(resolve=>proxy.close(resolve));});
+  const snapshot = { roots: [], models: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'unified-secret', baseURL: f.model.url }] },
+    apps: { serviceEnabled: true, plugins: [] }, mcp: { servers: [] }, subagents: {}, network:{mode:'manual',httpProxy:'http://127.0.0.1:'+proxy.address().port,httpsProxy:'',noProxy:''}, instructions: 'Shared developer preference: use a patient voice.' };
+  const server = await serveAgentHttp(f.service, {token:'u'.repeat(48)});
+  const manager = new AgentConnectionManager(join(source, 'connections.json'), {encrypt:value=>value,decrypt:value=>value}, {sharedConfiguration:()=>packSharedConfiguration(snapshot,source)});
+  try {
+    const [connection] = await manager.save({name:'Unified',transport:'http',url:'http://127.0.0.1:'+server.port,token:'u'.repeat(48)});
+    await f.service.call('sessions.create',{sessionId:'unified-chat'});
+    const request = input('unified-chat','unified-request');
+    const first = await manager.call(connection.id,'chat.send',request);
+    assert.equal((await f.service.instructions.read()).content,snapshot.instructions);
+    assert.doesNotMatch(JSON.stringify(first),/unified-secret/);
+    snapshot.instructions = 'Pending changed preference';
+    const retry = await manager.call(connection.id,'chat.send',request);
+    assert.equal(retry.id,first.id);
+    assert.notEqual((await f.service.instructions.read()).content,snapshot.instructions,'an acknowledged retry is reconciliation, not a settings update');
+    await until(()=>f.service.call('chat.jobs',{sessionId:'unified-chat'}),jobs=>jobs[0]?.status==='completed');
+    assert.ok(JSON.stringify(f.model.calls).includes('Shared developer preference'));
+    assert.ok(proxyRequests>0,'cloud model requests use the shared network proxy');
+    await manager.call(connection.id,'product.command',{kind:'models.get'});
+    assert.equal((await f.service.instructions.read()).content,snapshot.instructions);
+    const delegation={taskId:'shared-child',sessionId:'delegated-shared-child',turnId:'turn-shared-child',parentSessionId:'unified-chat',parentTurnId:first.turnId,prompt:'A delegated fixture task',permissionMode:'all_free',language:'en'};
+    await manager.call(connection.id,'delegation.submit',delegation);
+    snapshot.instructions='Preference for the next task';
+    assert.equal((await manager.call(connection.id,'delegation.submit',delegation)).id,delegation.taskId);
+    assert.notEqual((await f.service.instructions.read()).content,snapshot.instructions,'acknowledged delegated tasks also keep their original configuration');
+    await until(()=>f.service.call('chat.jobs',{sessionId:delegation.sessionId}),jobs=>jobs[0]?.status==='completed');
+  } finally { await manager.close(); await server.close(); }
+});
+
+
+test('remote Source snapshots survive queueing and preserve the provider prefix across toggles', async t => {
+  const f = await openService(t, 'source', 250);
+  try {
+    await f.service.call('sessions.create', { sessionId: 'source' });
+    await f.service.call('chat.send', input('source', 'source-on'));
+    await until(() => f.model.calls.length, count => count === 1);
+    const off = { ...input('source', 'source-off'), userMessageMetadata: { sourceEnabled: false } };
+    await f.service.call('chat.send', off);
+    off.userMessageMetadata.sourceEnabled = true;
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.find(job => job.id === 'source-off')?.status === 'completed');
+    const snapshot = await f.service.call('sessions.get', { sessionId: 'source' });
+    const user = snapshot.turns[1].messages.find(item => item.message.role === 'user' && item.message.visibility !== 'internal');
+    assert.equal(user.metadata.sourceEnabled, false);
+    assert.match(snapshot.turns[1].messages.find(item => item.message.name === 'source_preference').message.content, /Source is disabled/);
+    assert.deepEqual(f.model.calls[1].input.slice(0, f.model.calls[0].input.length), f.model.calls[0].input);
+    assert.deepEqual(f.model.calls[1].tools, f.model.calls[0].tools);
   } finally { await f.service.close(); }
 });

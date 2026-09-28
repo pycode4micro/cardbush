@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CardBush Browser Connector",
-  "version": "1.0.3",
-  "minimum_chrome_version": "102",
+  "version": "1.1.0",
+  "minimum_chrome_version": "116",
   "description": "Isolate each CardBush session in a named Chrome tab group and control only tabs you explicitly add.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs2dAnhWpkeyM0XXpQBP36Ykuc319RbQ3eoPqgMu6PtFvEs7n1Gn5A/Wxjb582rHR1lxTU3qN1cegvsUDhGFrPuv7E0I1b5ujVYLDRh4Hi3OFviSKl/Ve/yPybOdthh9VJo+95NroG2wp86/DkbRGW0MqfG35mYjRN35OyO3ROVpO+ezQEnSVetvbOWWm9AE6W2Jeio6hnz5gRAhQ13OIqrS601DJGdQisH3e5uI1vCbFx35rBpm9OJ8aSDJsGNZHJ+MM7jc30FacFiIGFLSp1i4F5MqxwqP2SUylwdYllQsIdY1DWSc7cqNvA/wQAInNZ5Y4oj8QPc58reuBa7J51QIDAQAB",
   "icons": {
@@ -15,11 +15,13 @@
     "alarms",
     "debugger",
     "downloads",
-    "nativeMessaging",
     "storage",
     "tabGroups",
     "tabs"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:*"
+  },
   "background": {
     "service_worker": "background.js"
   },

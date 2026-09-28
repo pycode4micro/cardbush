@@ -188,8 +188,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("reviewTurns=undefined; showReview()");
   await run("document.querySelector('.change-review-nav-toggle').click()"); await until('navClosed()', 'large fixture collapse');
 
-  await window.webContents.insertCSS(await fs.readFile(path.join(root,'src/styles/themes/cyberpunk.css'),'utf8'));
-  for (const theme of ['theme-bright','theme-dark','theme-dark theme-cyberpunk']) {
+  await window.webContents.insertCSS(await fs.readFile(path.join(root,'src/styles/appearance.css'),'utf8'));
+  for (const theme of ['theme-bright','theme-dark']) {
     await run(`viewTheme=${JSON.stringify(theme)}; reviewWidth=420; showReview();`); await pause();
     assert.equal(await run("document.querySelector('.change-review-nav-toggle').getBoundingClientRect().right<=document.querySelector('.change-review-dialog').getBoundingClientRect().right"), true, 'restore control fits narrow review');
     await fs.writeFile(path.join(root,'tmp/review-files-collapsed-'+theme+'.png'),(await window.capturePage()).toPNG());

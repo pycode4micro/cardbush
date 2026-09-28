@@ -6,6 +6,7 @@ import {
   type ActionManifest,
   type RuntimePermissionAnswer,
   type ToolCall,
+  type ToolDisplay,
   type ToolErrorKind,
   type RuntimeToolError,
   type WorkspaceChange,
@@ -33,7 +34,7 @@ export interface ToolExecutionIdentity {
   round: number;
   ordinal: number;
   assistantMessageId?: string;
-  display?: { title: string };
+  display?: ToolDisplay;
 }
 
 export interface ToolExecutionObserver {

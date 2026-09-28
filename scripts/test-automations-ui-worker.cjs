@@ -125,7 +125,7 @@ app.whenReady().then(async () => {
     };
     const paletteBackgrounds = new Set();
     await openPicker('title');
-    for (const theme of ['bright', 'dark', 'cyberpunk', 'custom']) {
+    for (const theme of ['bright', 'dark', 'custom']) {
       await read(`pickerTheme(${JSON.stringify(theme)})`);
       const colors = await read(`(()=>{const panel=getComputedStyle(document.querySelector('.calendar-date-picker'));const cell=getComputedStyle(document.querySelector('.calendar-picker-cell[data-current=true]'));return [panel.backgroundColor,panel.color,cell.backgroundColor,cell.color]})()`);
       assert.ok(contrast(colors[0], colors[1]) >= 4.5, `${theme}: picker text remains readable`);
@@ -133,7 +133,7 @@ app.whenReady().then(async () => {
       paletteBackgrounds.add(colors[0]);
       await capture(`automations-date-picker-${theme}.png`);
     }
-    assert.equal(paletteBackgrounds.size, 4, 'live theme changes and imported palettes reach the top-layer picker');
+    assert.equal(paletteBackgrounds.size, 3, 'light, dark and imported palettes reach the top-layer picker');
     await read('document.activeElement.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))');
     await until('!document.querySelector(".calendar-date-picker").matches(":popover-open")');
     assert.equal(await read('document.activeElement.dataset.datePickerTrigger'), 'title', 'Escape restores the invoking control');

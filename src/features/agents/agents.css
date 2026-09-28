@@ -32,6 +32,8 @@
 .agents-form footer { display: flex; justify-content: flex-end; gap: 10px; }.agents-form fieldset { display: flex; flex-direction: column; gap: 13px; padding: 18px; border: 1px solid var(--border, #8883); border-radius: 12px; }
 .agents-primary, .agents-view .agents-primary { background: var(--text, #eee); color: var(--surface, #202020); }
 .agent-workspace { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.agents-config-notice { flex: none; margin: 8px 16px; padding: 8px 12px; max-height: 112px; overflow-y: auto; scrollbar-gutter: stable; border: 1px solid var(--border); border-radius: 8px; color: var(--text-soft); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.agents-config-notice p { margin: 0; }
 .agent-job { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-soft, #aaa); margin: 10px 0 20px; }.agent-job button { padding: 3px 8px; font-size: 11px; }
 .agent-tool { margin: 8px 0; font-size: 12px; color: var(--text-soft, #aaa); }.agent-tool summary { cursor: pointer; }.agent-tool pre { max-height: 250px; overflow: auto; white-space: pre-wrap; }
 .agent-interaction { border: 1px solid #819bcc66; border-radius: 12px; padding: 18px; margin: 16px 0; background: #608bcd12; font-size: 13px; }.agent-interaction button { margin: 6px 6px 0 0; }.agent-interaction li { overflow-wrap: anywhere; }

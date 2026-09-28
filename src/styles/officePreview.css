@@ -32,7 +32,7 @@ button {
   display: grid;
   place-items: center;
   color: #616975;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .office-preview-shell {
@@ -74,7 +74,7 @@ html[data-office-preview-kind='presentation'] {
   color: #fff;
   background: var(--office-preview-accent, #4f667e);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 750;
 }
 
@@ -85,7 +85,7 @@ html[data-office-preview-kind='presentation'] {
   background: #f3f4f6;
   border: 1px solid #e2e4e8;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 650;
 }
 
@@ -93,7 +93,7 @@ html[data-office-preview-kind='presentation'] {
   min-width: 0;
   overflow: hidden;
   color: #777f89;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -116,7 +116,7 @@ html[data-office-preview-kind='presentation'] {
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
 
@@ -181,13 +181,13 @@ html[data-office-preview-kind='presentation'] {
 
 .office-preview-error strong {
   display: block;
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-font-scale, 1));
 }
 
 .office-preview-error p {
   margin: 8px 0 14px;
   color: #8a4b2b;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -200,7 +200,7 @@ html[data-office-preview-kind='presentation'] {
   border: 0;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 @media (max-width: 520px) {
@@ -220,9 +220,9 @@ html[data-office-preview-kind='presentation'] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :where(html:not([data-motion-preference="off"])) *,
+  :where(html:not([data-motion-preference="off"])) *::before,
+  :where(html:not([data-motion-preference="off"])) *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }

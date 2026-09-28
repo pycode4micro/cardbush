@@ -777,7 +777,7 @@ app.whenReady().then(async()=>{
     document.querySelector('main').style.paddingTop='390px';`);
   await draft('/');await until('document.body.innerText.includes("浏览器调试技能")');
   assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-category"),el=>el.textContent)'),['快捷操作','插件','技能','插件命令']);
-  assert.equal(await read('Array.from(document.querySelectorAll(".composer-command-row strong")).some(el=>el.textContent.startsWith("/"))'),false);
+  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row strong"),el=>el.textContent).filter(text=>text.startsWith("/"))'),['/style'],'the built-in style command retains its invocation while plugin labels use their display names');
   await until(`document.querySelector('[data-command-id="/chrome:debug"] .composer-command-icon img')?.naturalWidth>0`);
   assert.ok(await read(`document.querySelector('[data-command-id="/chrome:debug"] .composer-command-icon').getBoundingClientRect().width>=18`),'long text does not squeeze the logo');
   await capture('composer-slash-categories.png');

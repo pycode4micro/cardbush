@@ -680,32 +680,7 @@ assert.equal(upgradedChange[0].toolExecutions.length, 1);
 assert.equal(upgradedChange[0].toolExecutions[0].output, 'full diff',
   'Historical Workspace Change details must upgrade the original Tool-call segment.');
 assert.equal(upgradedChange[1].toolExecutions, undefined);
-const stylesSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'styles', 'app.css'),
-  'utf8',
-);
-assert.match(bubbleSource, /AssistantChangedFilesSummary/);
-assert.match(bubbleSource, /completedAssistantChangeReport/);
-assert.match(
-  bubbleSource,
-  /className="assistant-changed-file"[\s\S]*?onOpenReview\(file\.path\)/,
-  'Changed file rows must open the selected file in the diff review',
-);
-assert.match(
-  bubbleSource,
-  /className="assistant-changed-files-more"[\s\S]*?aria-expanded=\{expanded\}/,
-  'Changed file overflow must expand progressively',
-);
-assert.match(
-  bubbleSource,
-  /className="assistant-changed-files-review"[\s\S]*?onClick=\{\(\) => onOpenReview\(\)\}/,
-  'The final change summary must expose the conversation review panel',
-);
-assert.match(
-  bubbleSource,
-  /className="assistant-changed-files-revert"[\s\S]*?await onRevert\(\)/,
-  'The final change summary must expose the same safe revert action as review',
-);
+const stylesSource = fs.readFileSync(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
 assert.match(
   bubbleSource,
   /<AssistantLoopHistoryBlock[\s\S]*?active=\{isActiveAssistantTurn\}/,
@@ -720,15 +695,6 @@ assert.match(
   bubbleSource,
   /function resolveChangedFilePath[\s\S]*?isAbsoluteLocalPath\(path\)/,
   'Relative change paths must resolve against the active workspace',
-);
-assert.match(
-  stylesSource,
-  /\.assistant-changed-files-summary[\s\S]*?border-radius:\s*12px/,
-);
-assert.match(
-  stylesSource,
-  /\.assistant-changed-files-summary\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*none;/,
-  'The final change summary must align to the full conversation track',
 );
 assert.match(
   bubbleSource,
@@ -846,7 +812,6 @@ const toolStateModule = await loadChatTranscript({ source: `export * from ${JSON
 )};` });
 const {
   activeToolStatusLabel,
-  isToolCancelled,
   isToolRunning,
   runningToolLabel,
 } = toolStateModule;
@@ -867,8 +832,8 @@ assert.equal(
   '排队中',
 );
 assert.equal(
-  isToolCancelled({ ...awaitingPermissionTool, state: 'cancelled' }),
-  true,
+  isToolRunning({ ...awaitingPermissionTool, state: 'cancelled' }),
+  false,
 );
 
 const pendingQueueSource = fs.readFileSync(
@@ -1021,8 +986,8 @@ assert.ok(
   'Tool and Runtime-maintenance rows must use the shared Tool logo renderer',
 );
 assert.match(toolLogoSource, /normalized\.startsWith\('mcp__'\)/);
-assert.match(toolLogoSource, /read_file: \{ icon: FileText/);
-assert.match(toolLogoSource, /subagent: \{ icon: GitFork/);
+assert.match(toolLogoSource, /read_file: FileText/);
+assert.match(toolLogoSource, /subagent: GitFork/);
 assert.match(
   styleSource,
   /\.assistant-thinking-model \{[\s\S]*?background: transparent;[\s\S]*?border: 0;[\s\S]*?box-shadow: none;/,

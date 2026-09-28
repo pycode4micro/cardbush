@@ -10,7 +10,7 @@ app.whenReady().then(async () => {
     webPreferences: { nodeIntegration: true, contextIsolation: false, offscreen: true, backgroundThrottling: false } });
   try {
     await window.loadURL('data:text/html,<div id="root"></div>');
-    for (const file of ['theme.css', 'app.css', 'themes/cyberpunk.css']) {
+    for (const file of ['theme.css', 'app.css', 'appearance.css']) {
       await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles', file), 'utf8'));
     }
     const code = fs.readFileSync(process.env.CARDBUSH_IMAGE_PREVIEW_MODULE, 'utf8');
@@ -198,7 +198,7 @@ app.whenReady().then(async () => {
         inApp:document.querySelector('.image-preview-backdrop').parentElement===app,
         outsideMessage:!dialog.closest('.message-list-item')};
     })()`);
-    for (const theme of ['theme-dark', 'theme-cyberpunk', 'theme-bright', '']) {
+    for (const theme of ['theme-dark', 'theme-bright', '']) {
       await run(`controls.setTheme(${JSON.stringify(theme)});controls.setOpen(true)`); await pause();
       for (const [width,height] of [[1200,800],[420,340]]) {
         window.setContentSize(width,height); await pause();
@@ -209,7 +209,7 @@ app.whenReady().then(async () => {
         assert.equal(state.width,30); assert.equal(state.height,30);
         assert.equal(state.themeColor,state.expectedColor,'button inherits current theme');
         assert.notEqual(state.background,'rgba(0, 0, 0, 0)','dialog is not transparent');
-        if(theme==='theme-dark'||theme==='theme-cyberpunk') assert.notEqual(state.themeColor,'rgb(0, 0, 0)');
+        if(theme==='theme-dark'||theme==='theme-dark') assert.notEqual(state.themeColor,'rgb(0, 0, 0)');
       }
       await run(`for(let i=0;i<20;i++) document.querySelector('[aria-label="放大图片"]').click()`); await pause();
       const state=await inspect(); assert.ok(state.inViewport&&state.reachable,'500% zoom retains close control');
@@ -220,7 +220,7 @@ app.whenReady().then(async () => {
       assert.equal(await run('Boolean(document.querySelector(".image-preview-dialog"))'),false);
       assert.equal(await run('closeCount'),before+1,'native close click executes once');
     }
-    await run('controls.setTheme("theme-cyberpunk");controls.setOpen(true)'); await pause();
+    await run('controls.setTheme("theme-dark");controls.setOpen(true)'); await pause();
     window.setContentSize(1200,800); await pause();
     fs.mkdirSync(path.join(root,'tmp'),{recursive:true});
     fs.writeFileSync(path.join(root,'tmp/image-preview-controls.png'),(await window.webContents.capturePage()).toPNG());

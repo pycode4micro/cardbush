@@ -1,0 +1,21 @@
+.conversation-style-library { display: grid; gap: 8px; min-width: 0; }
+.conversation-style-library-heading, .conversation-style-library-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.conversation-style-library-heading { margin-top: 12px; }
+.conversation-style-library-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.conversation-style-library-row > span { display: grid; gap: 4px; min-width: 0; }
+.conversation-style-library-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-style-library-row small { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-style-library-actions { display: flex; flex-shrink: 0; gap: 4px; }
+.conversation-style-library-actions button { display: grid; place-items: center; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--text-soft); }
+.conversation-style-library-actions button:hover { background: var(--surface-strong); color: var(--text); }
+.conversation-style-editor { display: grid; gap: 12px; padding-top: 12px; }
+.conversation-style-hint { color: var(--text-soft); line-height: 1.6; margin: 0; }
+.conversation-style-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.composer-style-select { max-width: min(160px, 28vw); min-width: 0; }
+.composer-style-select .settings-dropdown-trigger { min-height: 26px; max-width: 100%; padding: 3px 7px; border: 0; background: transparent; color: var(--text-soft); font-size: 12px; }
+.composer-style-select .settings-dropdown-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 600px) {
+  .conversation-style-settings > .settings-select-row { flex-wrap: wrap; }
+  .conversation-style-settings > .settings-select-row > span { flex-basis: 100%; }
+  .composer-style-select { max-width: 100px; }
+}

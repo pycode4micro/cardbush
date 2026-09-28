@@ -4,7 +4,7 @@ import type {
   RuntimePermissionRequest,
   SubagentTask,
 } from '@cardbush/bush-protocol';
-import type { ConversationStyleSettings } from '@cardbush/bush-product-agent';
+import type { ConversationStylePreferences } from './features/settings/conversationStyle';
 
 export type AppSection = 'chat' | 'plugins' | 'skills' | 'subagents' | 'team' | 'automations' | 'agents';
 export type SettingsSection =
@@ -26,13 +26,11 @@ export type SettingsSection =
   | 'models'
   | 'diagnostics'
   | 'about';
-export type ThemeMode = 'bright' | 'dark' | 'cyberpunk';
+export type ThemeMode = 'bright' | 'dark';
 export type ThemePreference =
   | 'system'
   | 'light'
-  | 'dark'
-  | 'cyberpunk'
-  | 'custom';
+  | 'dark';
 export type ImportedThemeBase = 'light' | 'dark';
 export type ImportedThemeColorKey =
   | 'background'
@@ -326,7 +324,8 @@ export type CardlingDesktopAction =
   | { type: 'miniChatSend'; text: string };
 
 export interface AppSettingsState {
-  conversationStyle: ConversationStyleSettings;
+  appearance?: import('./features/appearance/appearancePreferences').AppearancePreferences;
+  conversationStyle: ConversationStylePreferences;
   proxy: ProxySettings;
   browser: BrowserSettings;
   thinking: ThinkingUiSettings;

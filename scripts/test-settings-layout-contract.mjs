@@ -81,8 +81,9 @@ assert.match(profilePanel, /<GlobalInstructionsPanel/);
 assert.doesNotMatch(profilePanel, /UsageStatisticsPanel|theme-mode|language-mode/);
 assert.match(appearancePanel, /name="theme-mode"/);
 assert.doesNotMatch(appearancePanel, /parchment|羊皮纸|Parchment/);
-assert.match(appearancePanel, /onThemePreferenceChange\(value as ThemePreference\)/);
-assert.match(types, /ThemePreference[\s\S]*?'light'[\s\S]*?'custom'/);
+assert.match(appearancePanel, /onThemePreferenceChange\(mode\)/);
+assert.match(types, /ThemePreference[\s\S]*?'light'[\s\S]*?'dark';/);
+assert.doesNotMatch(appearancePanel, /cyberpunk|赛博朋克/);
 assert.match(app, /preference === 'light'[\s\S]*?return 'bright'/);
 assert.doesNotMatch(app, /return 'parchment'/);
 assert.doesNotMatch(appearancePanel, /name="light-style"|浅色外观|Light appearance/);
@@ -109,7 +110,7 @@ assert.match(
 assert.match(usagePanel, /className="usage-heatmap-grid"/);
 assert.match(usagePanel, /UsageHeatmapRange = 'year' \| 'month' \| 'week'/);
 assert.match(usagePanel, /className="usage-range-switcher"/);
-assert.doesNotMatch(usagePanel, /className="usage-legend"|SettingsCard/);
+assert.doesNotMatch(usagePanel, /className="usage-legend"/);
 assert.match(css, /\.usage-stat-grid\s*\{/);
 assert.match(css, /\.usage-heatmap-grid\s*\{/);
 assert.match(

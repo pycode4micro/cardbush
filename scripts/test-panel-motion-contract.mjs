@@ -92,7 +92,7 @@ assert.match(css, /body\.window-right-edge-resizing \.right-inspector,[\s\S]*?tr
 assert.match(css, /--chat-inline-gutter:\s*clamp\(18px,\s*calc\(3vw \+ 10px\),\s*46px\)/);
 assert.match(
   css,
-  /--chat-track-width:\s*780px/,
+  /--chat-track-width:\s*704px/,
   'Messages, composer, runtime cards, and welcome content must share a slightly narrower reading track',
 );
 assert.doesNotMatch(css, /--chat-track-width:\s*(787|672)px/);
@@ -111,7 +111,8 @@ assert.doesNotMatch(css, /\.scene-inspector\.collapsed\s*\{\s*display:\s*none/);
 
 assert.match(presence, /exitDurationMs\s*=\s*240/);
 assert.match(presence, /setTimeout\([\s\S]*setMounted\(false\)/);
-assert.match(presence, /prefers-reduced-motion/);
+assert.match(presence, /prefersReducedMotion\(\)/);
+assert.match(read('src', 'shared', 'motionPreference.ts'), /prefers-reduced-motion/);
 assert.match(app, /sidebarPresence\.mounted/);
 assert.match(app, /inspectorPresence\.mounted/);
 assert.match(app, /workSummaryPresence\.mounted/);
@@ -247,14 +248,8 @@ assert.doesNotMatch(app, /sidebarPreviewWidth/);
 assert.match(app, /<SidebarResizer\s+language=\{language\}\s+width=\{sidebarWidth\}/);
 assert.match(sidebar, /soft-panel-motion/);
 assert.match(summary, /soft-panel-motion/);
-assert.match(summary, /const historyTurnPageSize = 3/);
-assert.match(summary, /groupWorkSummaryHistoryByTurn\(messages\)/);
-assert.match(summary, /historyGroups\.slice\(0, visibleHistoryTurnCount\)/);
-assert.match(summary, /setVisibleHistoryTurnCount\(\(current\) => current \+ historyTurnPageSize\)/);
-assert.match(summary, /kind: 'turn-history'/);
+assert.doesNotMatch(summary, /work-summary-history-turn|historyTurnPageSize/);
 assert.match(summary, /openWorkSummaryInspector/);
-assert.match(summary, /className="work-summary-history-turn"/);
-assert.match(css, /\.work-summary-history-turn\s*\{/);
 assert.match(workSummaryInspector, /<AssistantLoopHistoryBlock/);
 assert.match(app, /<WorkSummaryInspector/);
 assert.match(css, /\.work-summary-inspector\s*\{/);
@@ -265,8 +260,8 @@ assert.match(
 );
 assert.match(
   summary,
-  /className="work-summary-section outputs"[\s\S]*?data-testid="work-summary-subagents"[\s\S]*?data-testid="work-summary-history"/,
-  'Summary hierarchy keeps outputs, subagent dispatches, and history',
+  /className="work-summary-section outputs"[\s\S]*?data-testid="work-summary-subagents"/,
+  'Summary keeps outputs and subagent dispatches; execution history belongs to the turn',
 );
 assert.doesNotMatch(summary, /work-summary-tool-list|Tool activity|executions\.length/,
   'The redundant tool list and count are removed only from the summary');
@@ -287,40 +282,13 @@ assert.doesNotMatch(
   sidebarResizer,
   /handlePointerMove[\s\S]*?onWidthChange\(nextWidth\)/,
 );
-assert.match(runtimeRail, /useSoftPanelPresence\(Boolean\(activePanel\), 180\)/);
+assert.match(runtimeRail, /useSoftPanelPresence\(queueOpen, 180\)/);
 assert.match(runtimeRail, /panelPresence\.mounted/);
 assert.match(runtimeRail, /context-visible/);
 assert.match(runtimeRail, /className="runtime-screen-viewport"/);
-assert.match(runtimeRail, /setTimeout\([\s\S]*?5000/);
-assert.match(runtimeRail, /setTimeout\([\s\S]*?420/);
-assert.match(runtimeRail, /requestAnimationFrame\(\(\) => setReelAnimating\(true\)\)/);
-assert.match(runtimeRail, /type RuntimeRailKind = RuntimeRailItem\['kind'\]/);
-assert.match(runtimeRail, /const \[screenKind, setScreenKind\] = useState<RuntimeRailKind \| null>\(null\)/);
-assert.match(runtimeRail, /railItems\.find\(\(item\) => item\.kind === screenKind\) \?\? railItems\[0\]/);
-assert.match(runtimeRail, /current && availableRailKinds\.includes\(current\)/);
-assert.match(
-  runtimeRail,
-  /\[\s*activePanel,\s*availableRailKinds,\s*priorityKind,\s*rollingToKind,\s*screenKind,?\s*\]/,
-);
-assert.doesNotMatch(
-  runtimeRail,
-  /\[activePanel, railItems, railKinds\]/,
-  'Streaming label updates must not reset the runtime-screen rotation timer',
-);
-assert.doesNotMatch(
-  runtimeRail,
-  /screenIndex|setScreenIndex/,
-  'Runtime-screen selection must survive item insertion and removal by kind, not array index',
-);
-assert.equal(
-  (runtimeRail.match(/className=\{`composer-runtime-screen/g) ?? []).length,
-  1,
-  'Runtime state must render through one unified horizontal screen',
-);
-assert.doesNotMatch(runtimeRail, /composer-runtime-tabs|runtime-context-tab/);
-assert.match(runtimeRail, /kind: 'processing' \| 'thinking' \| 'changes' \| 'queue'/);
-assert.match(runtimeRail, /queuedMessageCount > 0/);
-assert.match(runtimeRail, /renderedPanel === 'queue'/);
+assert.doesNotMatch(runtimeRail, /setTimeout|rollingToKind|screenKind|thinkingNotice|changeSummary|taskPlan|onCancelGoal/,
+  'The composer rail is only a guidance queue, with no rotation or execution state');
+assert.match(runtimeRail, /queuedMessageCount <= 0\) return null/);
 assert.match(runtimeRail, /queuedMessages\.map\(\(item, index\) =>/);
 assert.match(runtimeRail, /guideQueuedMessage\(item\.id\)/);
 assert.match(runtimeRail, /onEditQueuedMessage\?\.\(item\)/);
@@ -336,33 +304,14 @@ assert.match(runtimeRail, /useQueueReorder\(queuedMessages, onReorderQueuedMessa
 assert.match(chatHook, /reorderScopedQueue\([\s\S]*?queuedMessagesRef\.current/);
 assert.match(app, /onReorderQueuedMessage=\{chat\.reorderQueuedMessage\}/);
 assert.match(app, /onReorderQueuedMessage=\{onReorderQueuedMessage\}/);
-assert.match(runtimeRail, /previousQueuedMessageCountRef/);
-assert.match(runtimeRail, /setPriorityKind\('queue'\)/);
-assert.match(runtimeRail, /setRollingToKind\(priorityKind\)/);
-assert.match(app, /sending \|\| activeGoal \|\| queuedMessageCount > 0/);
+assert.match(app, /queuedMessageCount > 0 && \(\s*<ComposerRuntimeRail/);
 assert.match(app, /onShowQueue=\{\(\) => runtimeRailRef\.current\?\.showQueue\(\)\}/);
-assert.match(runtimeRail, /className=\{`runtime-screen-track \$\{reelAnimating \? 'rolling' : ''\}`\}/);
-assert.match(runtimeRail, /<RuntimeScreenLine[\s\S]*?<RuntimeScreenLine/);
-assert.doesNotMatch(css, /@keyframes runtime-screen-roll/);
-assert.match(
-  css,
-  /\.runtime-screen-track\.rolling[\s\S]*?translateY\(-30px\)[\s\S]*?420ms/,
-  'Runtime state changes must move through a continuous two-line reel',
-);
-assert.doesNotMatch(
-  css,
-  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.runtime-screen-track\s*\{[\s\S]*?transition:\s*none !important/,
-  'The functional status reel must not turn back into an instant content swap when Windows reduces decorative motion',
-);
-assert.match(
-  css,
-  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.runtime-screen-track\.rolling\s*\{[\s\S]*?transition-duration:\s*420ms !important/,
-  'The functional status reel must keep its hand-off duration when Windows reduces decorative motion',
-);
+assert.match(app, /<TurnRuntimeDetails/);
+assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?scrollbar-gutter:\s*stable/);
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?overflow-y:\s*auto/);
-assert.match(css, /\.runtime-queue-item-header\s*\{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\);/);
+assert.match(css, /\.runtime-queue-item\s*\{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/);
 assert.match(css, /\.runtime-screen-queue-actions\s*\{[\s\S]*?position:\s*absolute[\s\S]*?right:\s*8px/);
 assert.match(css, /\.composer-queue-actions\s*\{[\s\S]*?opacity:\s*1/);
 assert.doesNotMatch(

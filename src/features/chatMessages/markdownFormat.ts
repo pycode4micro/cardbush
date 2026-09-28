@@ -1,3 +1,5 @@
+import { codeLanguageForPath } from '../../shared/codeLanguages';
+
 const shellFenceLanguages = new Set([
   'powershell',
   'pwsh',
@@ -305,5 +307,5 @@ function isRelativeFilePath(value: string) {
   const extension = basename.includes('.')
     ? basename.split('.').pop()?.toLowerCase() ?? ''
     : '';
-  return Boolean(extension && fileLikeExtensions.has(extension));
+  return Boolean(extension && (fileLikeExtensions.has(extension) || codeLanguageForPath(basename)));
 }

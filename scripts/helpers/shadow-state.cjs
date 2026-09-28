@@ -70,7 +70,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent',{type:'mouseMoved',x:control.x-10,y:control.y});
   await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent',{type:'mouseMoved',...control});
   await until("document.querySelectorAll('.global-tooltip').length===1", 'standalone Shadow uses one shared tooltip host');
-  assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '999px');
+  assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '18px');
   await run("renderView(h(views.ShadowWindow,{context:shadowContext,embedded:true}))");
   await until("!document.querySelector('.global-tooltip')", 'embedded Shadow releases its standalone tooltip host');
   window.webContents.debugger.detach();

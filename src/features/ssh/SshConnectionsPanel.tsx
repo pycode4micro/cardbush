@@ -44,8 +44,8 @@ export function SshConnectionsPanel({language,projects=[],compact=false,onEditin
   }
   async function test(id:string) {if(!api)return;await run(()=>testConnection(id));}
   const startNew = () => { setForm({...empty}); setResult(null); setError(''); };
-  return <div className={compact ? 'ssh-settings ssh-settings-compact' : 'ssh-settings'}>
-    {!compact ? <div className="ssh-section-heading"><div><h3>{zh?'SSH 连接':'SSH connections'}</h3><p>{zh?'保存连接，在项目或输入框 @ 中选择远程环境。支持 Linux / POSIX 主机。':'Save connections for projects and @ references. Supports Linux / POSIX hosts.'}</p></div><button className="ssh-add-connection" type="button" disabled={busy||!api} onClick={startNew}><Plus size={15}/><span>{zh?'新增连接':'Add connection'}</span></button></div>
+  return <div className={compact ? 'ssh-settings ssh-settings-compact' : 'ssh-settings settings-surface'}>
+    {!compact ? <div className="ssh-section-heading"><div><h3>{zh?'已保存的连接':'Saved connections'}</h3><p>{zh?'保存连接，在项目或输入框 @ 中选择远程环境。支持 Linux / POSIX 主机。':'Save connections for projects and @ references. Supports Linux / POSIX hosts.'}</p></div><button className="ssh-add-connection" type="button" disabled={busy||!api} onClick={startNew}><Plus size={15}/><span>{zh?'新增连接':'Add connection'}</span></button></div>
       : !form && <button className="ssh-compact-add" type="button" disabled={busy||!api} onClick={startNew}><Plus size={16}/><span>{zh?'新增连接':'Add connection'}</span></button>}
     {error&&<p className="ssh-error" role="alert">{error}</p>}
     {!api&&<p>{zh?'SSH 连接需要桌面客户端。':'SSH connections require the desktop app.'}</p>}

@@ -93,8 +93,10 @@ import {
 } from './chromeConnectorBroker';
 import {
   chromeConnectorRegistrationStatus,
-  registerChromeConnectorNativeHost,
+  chromeConnectorRegistryKey,
 } from './chromeConnectorRegistration';
+import { ChromeConnectorLifecycle } from './chromeConnectorLifecycle';
+import { connectorDataRoot } from './chromeConnectorFiles';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -192,10 +194,10 @@ let runtimeHostIpc: RuntimeHostIpcRegistration | null = null;
 let unregisterDesktopControlMonitor: (() => void) | null = null;
 type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: string };
 let chromeConnectorBroker: ChromeConnectorBroker | null = null;
-let unregisterChromeConnectorStatus: (() => void) | null = null;
-let cachedChromeConnectorRegistrationStatus:
-  ReturnType<typeof chromeConnectorRegistrationStatus> | null = null;
+let chromeConnectorLifecycle: ChromeConnectorLifecycle | null = null;
+let chromeConnectorRegistrationCache: { state: string; value: ReturnType<typeof chromeConnectorRegistrationStatus> } | null = null;
 let productHostController: {
+  exportSharedConfiguration: () => Promise<{ models: Record<string, unknown>; apps: Record<string, unknown>; mcp: Record<string, unknown>; subagents: Record<string, unknown>; sandbox?: { version: 1; enabled: boolean } }>;
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
   shutdown: () => Promise<void>;
@@ -324,7 +326,7 @@ const terminalSessions = new Map<
 type CardlingDesktopState = {
   enabled: boolean;
   language: 'zh' | 'en';
-  theme: 'bright' | 'dark' | 'cyberpunk';
+  theme: 'bright' | 'dark';
   settings: {
     size: 'compact' | 'normal' | 'large';
     opacity: number;
@@ -351,7 +353,6 @@ const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
   // unavailable, disabled, or the active theme owns its complete background.
   dark: '#1a1a1a',
   bright: '#f5f3ef',
-  cyberpunk: '#050607',
 };
 
 let lastMainWindowTheme: AppThemeMode = 'dark';
@@ -683,8 +684,7 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     const number = Number(candidate);
     return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
   };
-  const theme = input.theme === 'bright' ||
-      input.theme === 'cyberpunk'
+  const theme = input.theme === 'bright'
     ? input.theme
     : 'dark';
   const requestedReasoningLevel = String(input.reasoningLevel ?? '').trim().toLowerCase();
@@ -1289,8 +1289,7 @@ function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopSt
     language: payload.language === 'en' ? 'en' : 'zh',
     theme:
       payload.theme === 'bright' ||
-      payload.theme === 'dark' ||
-      payload.theme === 'cyberpunk'
+      payload.theme === 'dark'
         ? payload.theme
         : 'dark',
     settings: {
@@ -1888,7 +1887,8 @@ function showSessionAttentionNotification(value: unknown) {
     title: payload.title,
     body: payload.body,
     icon: loadCardbushIcon(64),
-    silent: false,
+    // The renderer owns the configurable chime, including foreground replies.
+    silent: true,
     ...(process.platform === 'win32'
       ? { toastXml: sessionAttentionToastXml(payload.title, payload.body, activationArguments) }
       : {}),
@@ -1904,7 +1904,7 @@ function showSessionAttentionNotification(value: unknown) {
 }
 
 function sessionAttentionToastXml(title: string, body: string, launch: string) {
-  return `<toast activationType="foreground" launch="${escapeXmlAttribute(launch)}"><visual><binding template="ToastGeneric"><text>${escapeXmlText(title)}</text><text>${escapeXmlText(body)}</text></binding></visual></toast>`;
+  return `<toast activationType="foreground" launch="${escapeXmlAttribute(launch)}"><visual><binding template="ToastGeneric"><text>${escapeXmlText(title)}</text><text>${escapeXmlText(body)}</text></binding></visual><audio silent="true"/></toast>`;
 }
 
 function escapeXmlAttribute(value: string) {
@@ -2167,8 +2167,7 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode, optio
     return;
   }
   const normalizedTheme: AppThemeMode =
-    theme === 'bright' || theme === 'dark' ||
-      theme === 'cyberpunk'
+    theme === 'bright' || theme === 'dark'
       ? theme
       : 'dark';
   lastMainWindowMaterialPreference = options?.material === 'solid' ? 'solid' : 'auto';
@@ -2190,17 +2189,66 @@ ipcMain.handle('filesystem:locations', (event) => {
 
 ipcMain.handle('chrome-connector:status', (event) => {
   assertMainWindowSender(event.sender.id);
+  chromeConnectorRegistrationCache = null;
   return currentChromeConnectorStatus();
 });
 
-ipcMain.handle('chrome-connector:setup', (event) => {
+ipcMain.handle('chrome-connector:setup', async (event) => {
   assertMainWindowSender(event.sender.id);
-  registerChromeConnectorNativeHost({
-    userDataPath: app.getPath('userData'),
-    nativeHostPath: chromeConnectorNativeHostPath(),
-  });
-  cachedChromeConnectorRegistrationStatus = null;
+  await connectorLifecycle().setEnabled(true);
   return currentChromeConnectorStatus();
+});
+
+ipcMain.handle('chrome-connector:disable', async (event) => {
+  assertMainWindowSender(event.sender.id);
+  await connectorLifecycle().setEnabled(false);
+  return currentChromeConnectorStatus();
+});
+
+ipcMain.handle('chrome-connector:pair', (event) => {
+  assertMainWindowSender(event.sender.id);
+  const broker = chromeConnectorLifecycle?.broker;
+  if (!broker) throw new Error('Enable the connector before pairing.');
+  return broker.createPairing();
+});
+
+ipcMain.handle('chrome-connector:copy-legacy-cleanup', (event) => {
+  assertMainWindowSender(event.sender.id);
+  const script = cardbushRuntimeIsPackaged
+    ? path.join(process.resourcesPath, 'connector-maintenance', 'cleanup-legacy.ps1')
+    : path.join(app.getAppPath(), 'assets', 'connector-maintenance', 'cleanup-legacy.ps1');
+  const manifest = path.join(app.getPath('userData'), 'browser-connector', 'com.cardbush.browser_connector.json');
+  if (!fs.existsSync(manifest)) throw new Error('No legacy connector manifest was found.');
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  clipboard.writeText(`& ${quote(script)} -ManifestPath ${quote(fs.realpathSync.native(manifest))}`);
+});
+
+ipcMain.handle('chrome-connector:remove', async (event) => {
+  assertMainWindowSender(event.sender.id);
+  await connectorLifecycle().setEnabled(false, true);
+  return currentChromeConnectorStatus();
+});
+
+ipcMain.handle('chrome-connector:copy-diagnostics', (event) => {
+  assertMainWindowSender(event.sender.id);
+  chromeConnectorRegistrationCache = null;
+  const status = currentChromeConnectorStatus();
+  const directory = path.join(app.getPath('userData'), 'browser-connector');
+  const manifestPath = path.join(directory, 'com.cardbush.browser_connector.json');
+  clipboard.writeText(JSON.stringify({
+    collectedAt: new Date().toISOString(), appVersion: app.getVersion(), osVersion: os.release(),
+    storePackage: process.windowsStore === true, transport: 'loopback_websocket',
+    connectorDataDirectory: path.join(chromeConnectorDataRoot(), 'browser-connector'),
+    legacyCleanup: chromeConnectorLifecycle?.cleanupWarning ?? '',
+    registryKey: chromeConnectorRegistryKey, registryView: '64 (legacy 32-bit view checked for conflicts)',
+    manifestPath: fs.existsSync(manifestPath) ? fs.realpathSync.native(manifestPath) : manifestPath,
+    executablePath: chromeConnectorNativeHostPath(), launchPath: status.nativeHostPath,
+    allowedOrigin: `chrome-extension://${status.extensionId}/`,
+    enabled: status.connectorEnabled, state: status.lifecycleState,
+    bridgeRegistered: status.bridgeRegistered, bridgeRunning: status.bridgeRunning,
+    extensionConnected: status.extensionConnected, extensionVersion: status.extensionVersion,
+    registrationConflict: Boolean(status.registrationConflict),
+  }, null, 2));
 });
 
 ipcMain.handle('chrome-connector:open-installer', async (event) => {
@@ -2434,7 +2482,19 @@ function agentConnections() {
       return safeStorage.encryptString(value).toString('base64');
     },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-    }, { ssh: await sshConnections() });
+    }, { ssh: await sshConnections(), sharedConfiguration: async () => {
+      const controller = await ensureRuntimeServicesReady();
+      const { packSharedConfiguration } = await import('./agentSharedConfiguration.mjs');
+      const dataRoot = app.getPath('userData');
+      return packSharedConfiguration({ ...await controller.exportSharedConfiguration(), network: sharedModelProxy, instructions: (await getGlobalInstructionsStore().read()).content,
+        roots: [
+          { source: path.join(dataRoot, 'plugins'), target: 'plugins' },
+          { source: path.join(dataRoot, 'skills'), target: 'skills' },
+          { source: path.join(app.getAppPath(), 'assets', 'plugins'), target: 'bundled/plugins' },
+          { source: bundledProductSkillRoot(), target: 'bundled/skills' },
+        ],
+      }, dataRoot);
+    } });
     await manager.restore();
     return manager;
   });
@@ -3524,6 +3584,11 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  if (process.platform === 'win32' && Number(os.release().split('.')[2]) < 22000) {
+    dialog.showErrorBox('CardBush', 'CardBush requires Windows 11 or later. / CardBush 需要 Windows 11 或更高版本。');
+    app.quit();
+    return;
+  }
   void collectTemporaryCaches().then(result => { if (result.errors.length) console.warn('[cache-maintenance]', result.errors); }).catch(error => console.warn('[cache-maintenance]', error));
   await setHostApplicationMemoryProvider(applicationMemoryBytes, relievePreviewForMemoryPressure);
   // CardBush owns its complete frameless application chrome. Removing
@@ -3549,7 +3614,7 @@ app.whenReady().then(async () => {
     (sender: Electron.WebContents) =>
       (mainWindow != null && sender.id === mainWindow.webContents.id) || shadowWindows.has(sender.id));
   try {
-    await startChromeConnectorBroker();
+    if (platformFeatures(process.platform, process.arch).chromeNativeConnector) await connectorLifecycle().restore();
   } catch (error) {
     console.error('[chrome-connector] bridge failed to start', error);
   }
@@ -3933,7 +3998,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         ) : '',
         CARDBUSH_CHROME_CONNECTOR_CONFIG:
           chromeConnectorBroker?.configPath ?? path.join(
-            app.getPath('userData'),
+            chromeConnectorDataRoot(),
             'browser-connector',
             'bridge.json',
           ),
@@ -3979,6 +4044,15 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         if (operation === 'agents.delegate') {
           const { runRemoteSubagent } = await import('./remoteSubagent.mjs');
           return runRemoteSubagent(await agentConnections(), payload as import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).RemoteSubagentRequest, signal);
+        }
+        if (operation === 'agents.read-child') {
+          const input = payload as { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string };
+          const manager = await agentConnections();
+          const info = await manager.connect(input.connectionId);
+          if (input.agentId && info.id !== input.agentId) throw new Error('Remote Agent identity changed.');
+          const session = await manager.call(input.connectionId, 'sessions.get', { sessionId: input.sessionId }) as import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SessionSnapshot | undefined;
+          if (session && session.metadata?.delegationOwner !== input.parentSessionId) throw new Error('This child conversation belongs to another parent.');
+          return session;
         }
         if (operation === 'subagent.models' || operation === 'subagent.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');
@@ -4176,41 +4250,36 @@ function isChromeRuntimeTool(toolName: string): boolean {
   return toolName.startsWith('mcp__chrome_devtools__');
 }
 
-async function startChromeConnectorBroker(): Promise<void> {
-  if (!platformFeatures(process.platform, process.arch).chromeNativeConnector) return;
-  if (chromeConnectorBroker) return;
-  const broker = new ChromeConnectorBroker(app.getPath('userData'));
-  chromeConnectorBroker = broker;
-  unregisterChromeConnectorStatus = broker.onStatus((status) => {
+function connectorLifecycle(): ChromeConnectorLifecycle {
+  chromeConnectorLifecycle ??= new ChromeConnectorLifecycle({
+    userDataPath: chromeConnectorDataRoot(), legacyUserDataPath: app.getPath('userData'),
+    nativeHostPath: chromeConnectorNativeHostPath(), msixPackage: process.windowsStore === true,
+  }, () => {
+    chromeConnectorBroker = chromeConnectorLifecycle?.broker ?? null;
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
-      sendToLiveRenderer(mainWindow, 'chrome-connector:status', {
-        ...currentChromeConnectorRegistrationStatus(),
-        ...status,
-      });
+      sendToLiveRenderer(mainWindow, 'chrome-connector:status', currentChromeConnectorStatus());
     }
   });
-  try {
-    await broker.start();
-  } catch (error) {
-    unregisterChromeConnectorStatus?.();
-    unregisterChromeConnectorStatus = null;
-    chromeConnectorBroker = null;
-    throw error;
-  }
+  return chromeConnectorLifecycle;
+}
+
+let resolvedConnectorDataRoot: string | undefined;
+function chromeConnectorDataRoot(): string {
+  return resolvedConnectorDataRoot ??= connectorDataRoot(app.getPath('userData'), chromeConnectorNativeHostPath(), process.windowsStore === true);
 }
 
 function currentChromeConnectorRegistrationStatus() {
-  if (cachedChromeConnectorRegistrationStatus) {
-    return cachedChromeConnectorRegistrationStatus;
-  }
-  cachedChromeConnectorRegistrationStatus = chromeConnectorRegistrationStatus({
+  const state = chromeConnectorLifecycle?.state ?? 'disabled';
+  if (chromeConnectorRegistrationCache?.state === state) return chromeConnectorRegistrationCache.value;
+  const value = chromeConnectorRegistrationStatus({
     userDataPath: app.getPath('userData'),
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
     nativeHostPath: chromeConnectorNativeHostPath(),
     packaged: cardbushRuntimeIsPackaged,
   });
-  return cachedChromeConnectorRegistrationStatus;
+  chromeConnectorRegistrationCache = { state, value };
+  return value;
 }
 
 function chromeConnectorNativeHostPath(): string {
@@ -4220,16 +4289,24 @@ function chromeConnectorNativeHostPath(): string {
 }
 
 function currentChromeConnectorStatus():
-  ReturnType<typeof currentChromeConnectorRegistrationStatus> & ChromeConnectorStatus {
+  ReturnType<typeof currentChromeConnectorRegistrationStatus> & ChromeConnectorStatus & {
+    connectorEnabled: boolean; lifecycleState: string; cleanupWarning?: string;
+  } {
   const brokerStatus = chromeConnectorBroker?.status() ?? {
     protocol: 'cardbush.chrome_connector.v1' as const,
     bridgeRunning: false,
     extensionConnected: false,
     controlledTabCount: 0,
+    paired: false,
+    transport: 'loopback_websocket' as const,
   };
   return {
     ...currentChromeConnectorRegistrationStatus(),
     ...brokerStatus,
+    connectorEnabled: chromeConnectorLifecycle?.enabled ?? false,
+    lifecycleState: chromeConnectorLifecycle?.state ?? 'disabled',
+    cleanupWarning: chromeConnectorLifecycle?.cleanupWarning ?? '',
+    ...(chromeConnectorLifecycle?.error ? { lastError: chromeConnectorLifecycle.error } : {}),
   };
 }
 
@@ -4487,9 +4564,7 @@ app.on('before-quit', (event) => {
 app.on('will-quit', () => {
   runtimeServicesStopping = true;
   runtimeServicesAbort?.abort(new Error('CardBush Runtime is shutting down.'));
-  unregisterChromeConnectorStatus?.();
-  unregisterChromeConnectorStatus = null;
-  chromeConnectorBroker?.stop();
+  chromeConnectorLifecycle?.dispose();
   chromeConnectorBroker = null;
   disposeDesktopControlMonitor();
   runtimeHostIpc?.dispose();
@@ -4774,12 +4849,14 @@ function isAllowedAppNavigation(targetUrl: string) {
   return false;
 }
 
+let sharedModelProxy: { mode: 'none' | 'system' | 'manual'; httpProxy: string; httpsProxy: string; noProxy: string } = { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' };
 async function applyProxySettings(proxy: {
   mode: 'none' | 'system' | 'manual';
   httpProxy: string;
   httpsProxy: string;
   noProxy: string;
 }) {
+  sharedModelProxy = { ...proxy };
   (await pluginNetworking()).setModel(proxy);
   await refreshPluginUiNetwork();
   const modelSession = session.fromPartition('cardbush-model-network');

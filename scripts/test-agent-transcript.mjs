@@ -84,17 +84,19 @@ const assistants = result => result.rows.filter(row => row.role === 'assistant')
 
 test('local and remote carry the same action title through live events and receipt hydration', async () => {
   const store = new ToolExecutionStore({ now: () => now });
+  const display = { title: 'Submit video generation', titles: { zh: '提交视频生成', en: 'Submit video generation' } };
   const receipt = store.record({ protocol: 'bush.tool_call.v1', id: 'action', name: 'mcp_call', argumentsText: '{}' },
-    { requestId: 'request', sessionId, turnId, round: 1, ordinal: 0, display: { title: '提交视频生成' } },
+    { requestId: 'request', sessionId, turnId, round: 1, ordinal: 0, display },
     { kind: 'returned', result: { state: 'queued', taskId: 'job-1' }, workspaceChanges: [] });
   const events = [text(1, 'm1', 'Prepare'), ...['tool_queued', 'tool_running', 'tool_returned'].map((kind, index) =>
-    event(index + 2, kind, { assistantMessageId: 'm1', toolCallId: 'action', toolName: 'mcp_call', ordinal: 0, display: { title: '提交视频生成' } }))];
+    event(index + 2, kind, { assistantMessageId: 'm1', toolCallId: 'action', toolName: 'mcp_call', ordinal: 0, display }))];
   const local = await project(events, 'local', { records: [receipt] });
   const remote = await project(events, 'remote', { records: [receipt] });
   assert.deepEqual(remote, local);
   for (const result of [local, remote]) {
     const execution = assistants(result).flatMap(row => row.toolExecutions ?? []).find(row => row.id === 'action');
-    assert.equal(execution.metadata.displayTitle, '提交视频生成');
+    assert.equal(execution.metadata.displayTitle, display.title);
+    assert.deepEqual(execution.metadata.displayTitles, display.titles);
     assert.equal(execution.state, 'completed');
     assert.equal(execution.metadata.nativeResult.state, 'queued');
   }

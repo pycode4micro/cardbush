@@ -57,6 +57,7 @@ import {
   type ConversationScrollPosition,
 } from './conversationScrollPosition';
 import { ConversationWorkSummary } from './ConversationWorkSummary';
+import { TurnRuntimeDetails } from './TurnRuntimeDetails';
 import {
   ComposerRuntimePreTest,
   isComposerRuntimePreTestEnabled,
@@ -69,7 +70,7 @@ import {
 } from '../pre_test/runtimeStreamPreTestActivation';
 import {
   Composer,
-  LiveComposerRuntimeRail,
+  ComposerRuntimeRail,
   quickPayloadText,
   type QuickLoadPayload,
   type ComposerRuntimeRailHandle,
@@ -89,7 +90,6 @@ import type {
   AppLanguage,
   AppSettingsState,
   ChatMessage,
-  ChatToolExecution,
   ManagedModelConfig,
   PermissionMode,
   SubagentPermissionRouting,
@@ -253,6 +253,7 @@ export function ChatPanel({
   cancelEnabled,
   welcomeEnabled = true,
   workSummaryAvailable = true,
+  embedded = false,
 }: {
   browserTabs?: import('../../shared/promptReferences').BrowserPromptReference[];
   language: AppLanguage;
@@ -360,6 +361,7 @@ export function ChatPanel({
   cancelEnabled?: boolean;
   welcomeEnabled?: boolean;
   workSummaryAvailable?: boolean;
+  embedded?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const runtimeSessionId = host?.sessionId ?? activeConversationId;
@@ -388,6 +390,8 @@ export function ChatPanel({
     for (const message of renderMessages) if (message.role === 'assistant' && message.turnId) latest.set(message.turnId, message.id);
     return latest;
   }, [renderMessages]);
+  const latestMessage = renderMessages.at(-1);
+  const latestCompletedMessageId = !sending && latestMessage?.role === 'assistant' ? latestMessage.id : '';
   const completedGuidanceTurnMessages = useMemo(() => {
     const byTurn = new Map<string, ChatMessage[]>();
     for (const message of renderMessages) {
@@ -431,15 +435,6 @@ export function ChatPanel({
     () => summarizeChangeReports(currentTurnChangeReports),
     [currentTurnChangeReports],
   );
-  const currentTurnToolExecutions = useMemo(() => {
-    if (!sending || !activeTurnId) return [];
-    const byId = new Map<string, ChatToolExecution>();
-    for (const message of renderMessages) {
-      if (message.turnId !== activeTurnId) continue;
-      for (const execution of message.toolExecutions ?? []) byId.set(execution.id, execution);
-    }
-    return [...byId.values()];
-  }, [activeTurnId, renderMessages, sending]);
   const activeAssistantForRender = useMemo(() => {
     if (!sending) return null;
     const active = streamingAssistantMessage(renderMessages, activeTurnId);
@@ -461,22 +456,34 @@ export function ChatPanel({
       .reverse()
       .find((message) => message.taskPlan)?.taskPlan;
   }, [activeRuntimeAssistant]);
+  const goalMessageId = useMemo(() => {
+    if (!activeGoal) return '';
+    if (activeGoal.status === 'active') return lastAssistantMessage(renderMessages)?.message.id ?? '';
+    const assistants = renderMessages.filter(message => message.role === 'assistant');
+    const updatedAt = Date.parse(activeGoal.updatedAt);
+    const owner = [...assistants].reverse().find(message =>
+      [message, ...(message.loopHistory ?? [])].some(item =>
+        (item.toolExecutions ?? []).some(execution => goalToolUpdateFromExecution(execution)?.goalId === activeGoal.goalId)))
+      ?? [...assistants].reverse().find(message => Date.parse(message.createdAt ?? '') <= updatedAt);
+    return owner ? assistants.filter(message => message.turnId === owner.turnId).at(-1)?.id ?? owner.id : '';
+  }, [activeGoal, renderMessages]);
   const activeGoalRounds = useMemo(() => {
-    if (!activeRuntimeAssistant) return [];
+    const owner = renderMessages.find(message => message.id === goalMessageId);
+    if (!owner || !activeGoal) return [];
     const transcript = [
-      ...(activeRuntimeAssistant.loopHistory ?? []),
-      activeRuntimeAssistant,
+      ...(owner.loopHistory ?? []),
+      owner,
     ];
     const seen = new Set<string>();
     return transcript.flatMap((message) => message.toolExecutions ?? [])
       .map((execution) => ({ execution, update: goalToolUpdateFromExecution(execution) }))
       .filter(({ execution, update }) => {
-        if (!update || seen.has(execution.id)) return false;
+        if (!update || (update.goalId && update.goalId !== activeGoal.goalId) || seen.has(execution.id)) return false;
         seen.add(execution.id);
         return true;
       })
       .map(({ update }) => update!);
-  }, [activeRuntimeAssistant]);
+  }, [renderMessages, goalMessageId, activeGoal]);
   // Catalog/runtime startup is background work. Only an uncached, explicitly
   // selected conversation needs a history placeholder; keep mounted content on refresh.
   const loading = backgroundLoading && historyLoading && renderMessages.length === 0;
@@ -2535,7 +2542,7 @@ export function ChatPanel({
     <div
       className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
-      <TopBar
+      {!embedded && <TopBar
         title={title}
         language={language}
         conversationContentAvailable={renderMessages.length > 0}
@@ -2553,7 +2560,7 @@ export function ChatPanel({
             }
           : undefined}
         onToggleInspector={onToggleInspector}
-      />
+      />}
       {notice && (
         <RuntimeStatusBanner
           language={language}
@@ -2701,6 +2708,9 @@ export function ChatPanel({
                       <ExtractionSelector message={message} sessionId={runtimeSessionId} />}
                     <MessageBubble
                       message={message}
+                      keepActionsVisible={message.id === latestCompletedMessageId}
+                      activeConversationId={activeConversationId}
+                      thinkingVisible={thinkingVisible}
                       readOnlyActions={readOnlyActions}
                       guidanceAvailable={guidanceAvailable}
                       changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
@@ -2722,6 +2732,22 @@ export function ChatPanel({
                       onOpenScene={openScene}
 
                     />
+                    {(activeAssistantForRender?.message.id === message.id || goalMessageId === message.id) && (
+                      <TurnRuntimeDetails
+                        key={`progress:${activeConversationId}:${message.turnId ?? message.id}`}
+                        language={language}
+                        running={sending && activeAssistantForRender?.message.id === message.id}
+                        stopping={stopping && activeAssistantForRender?.message.id === message.id}
+                        taskPlan={activeAssistantForRender?.message.id === message.id ? activeTaskPlan : undefined}
+                        goal={goalMessageId === message.id ? activeGoal : undefined}
+                        goalRounds={activeGoalRounds}
+                        goalCancelling={goalCancelling}
+                        goalWaiting={goalWaiting}
+                        onCancelGoal={onCancelGoal}
+                        changeSummary={activeAssistantForRender?.message.id === message.id ? currentTurnChangeSummary : undefined}
+                        onOpenChangeReview={() => onOpenChangeReview(undefined, message.turnId)}
+                      />
+                    )}
                   </div>
                 ))}
                 {connectionRecovery && connectionRecovery.state !== 'recovered' && (
@@ -2776,7 +2802,7 @@ export function ChatPanel({
         {!showWelcome && !loading && !pendingInteraction && !interactionContent && (
           <div
             className={`composer-dock${
-              sending || activeGoal || queuedMessageCount > 0
+              queuedMessageCount > 0
                 ? ' runtime-attached'
                 : ''
             }`}
@@ -2785,29 +2811,14 @@ export function ChatPanel({
               '--shadow-accent': shadowAccentColor,
             } as CSSProperties}
           >
-            {(sending || activeGoal || queuedMessageCount > 0) && (
-              <LiveComposerRuntimeRail
+            {queuedMessageCount > 0 && (
+              <ComposerRuntimeRail
                 key={`runtime:${activeConversationId}`}
                 ref={runtimeRailRef}
-                activeConversationId={activeConversationId}
-                thinkingVisible={thinkingVisible}
                 language={language}
-                running={sending || (activeGoal?.status === 'active' && !goalWaiting)}
-                stopping={stopping}
-                toolExecutions={currentTurnToolExecutions}
-                activityScope={`${activeConversationId}:${activeTurnId}`}
-                taskPlan={activeTaskPlan}
-                goal={activeGoal}
-                goalRounds={activeGoalRounds}
-                goalCancelling={goalCancelling}
-                goalWaiting={goalWaiting}
-                changeReports={currentTurnChangeReports}
-                changeSummary={currentTurnChangeSummary}
                 queuedMessageCount={queuedMessageCount}
                 queuedMessagePreview={queuedMessagePreview}
                 queuedMessages={queuedMessages}
-                onCancelGoal={onCancelGoal}
-                onOpenChangeReview={openChangeReview}
                 onEditQueuedMessage={editQueuedMessage}
                 onGuideQueuedMessage={(queuedId) =>
                   onGuideQueuedMessage(queuedId, 'append_context')

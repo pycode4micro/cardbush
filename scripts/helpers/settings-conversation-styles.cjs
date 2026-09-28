@@ -1,0 +1,88 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+module.exports = async ({ run, until, click, choose, edit, pause, window: win, root }) => {
+  await run("styleFixture.saveConversationStyle({mode:'custom',customTone:'  旧风格要求。  '}); settingsProps.settings.conversationStyle = styleFixture.readConversationStyle(); renderSettings()");
+  await click('个性化');
+  await until("document.querySelector('#conversation-style-mode')?.value === 'custom-legacy'");
+  assert.equal(await run("document.querySelector('[data-style-id=custom-legacy] small').textContent"), '  旧风格要求。  ');
+  await run("document.querySelector('[aria-label=\"编辑 自定义\"]').click()");
+  await until("document.querySelector('#conversation-style-name')?.value === '自定义'");
+  await edit('#conversation-style-name', '耐心同事');
+  await edit('#conversation-style-custom', '语气温和耐心，坦诚表达判断。', true);
+  await click('保存风格');
+  await until("document.querySelector('[data-style-id=custom-legacy] strong')?.textContent === '耐心同事'");
+  await click('添加风格');
+  await until("document.querySelector('#conversation-style-name')?.value === ''");
+  await edit('#conversation-style-name', '耐心同事');
+  await edit('#conversation-style-custom', '用鼓励的口吻交流。', true);
+  await until("document.querySelector('.conversation-style-editor [role=alert]')?.textContent.includes('已存在')");
+  assert.equal(await run("Array.from(document.querySelectorAll('button')).find(b => b.textContent === '保存风格').disabled"), true);
+  await edit('#conversation-style-name', '教练'); await click('保存风格');
+  await until("settingsProps.settings.conversationStyle.styles.length === 2");
+  await run("window.coachId = settingsProps.settings.conversationStyle.styles.find(s => s.name === '教练').id");
+  await run("document.querySelector('[aria-label=\"复制 教练\"]').click()");
+  await until("settingsProps.settings.conversationStyle.styles.length === 3");
+  assert.equal(await run("settingsProps.settings.conversationStyle.styles[2].name"), '教练 副本');
+  await run("document.querySelector('[aria-label=\"删除 教练 副本\"]').click()");
+  await until("settingsProps.settings.conversationStyle.styles.length === 2");
+  await run("document.querySelector('#conversation-style-mode').scrollIntoView({block:'center'})"); await pause(80);
+  await choose('#conversation-style-mode', 'professional');
+  await until("styleFixture.readConversationStyle().defaultId === 'professional'");
+  await run("settingsProps.settings.conversationStyle=styleFixture.readConversationStyle(); renderSettings()");
+  assert.equal(await run('settingsProps.settings.conversationStyle.styles.length'), 2);
+  fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+  win.webContents.invalidate(); await pause(100);
+  fs.writeFileSync(path.join(root, 'tmp/settings-conversation-styles.png'), (await win.webContents.capturePage(undefined, {stayHidden:true})).toPNG());
+
+  await run(`window.sentStyles = []; composerSession = 'first-chat';
+    composerProps.onDraftChange = value => {composerProps.draft = value; renderComposer();};
+    composerProps.onSend = async text => sentStyles.push({text, style:styleFixture.resolveConversationStyle(composerSession)});
+    renderComposer();`);
+  await until("document.querySelector('.composer-style-select button')?.textContent.includes('默认 · 专业')");
+  await choose('.composer-style-select button', 'custom-legacy');
+  await until("styleFixture.resolveConversationStyle('first-chat').mode === 'custom'");
+  assert.equal(await run('styleFixture.readConversationStyle().defaultId'), 'professional');
+  await run("composerSession = 'second-chat'; renderComposer()");
+  await until("document.querySelector('.composer-style-select button')?.value === ''");
+  const typeCommand = async value => {
+    await run(`(() => { const input=document.querySelector('[data-composer-input]'); input.focus();
+      if(input instanceof HTMLTextAreaElement) {Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)}); input.setSelectionRange(input.value.length,input.value.length);}
+      else {input.textContent=${JSON.stringify(value)}; const range=document.createRange();range.selectNodeContents(input);range.collapse(false);getSelection().removeAllRanges();getSelection().addRange(range);}
+      input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); })()`);
+  };
+  await typeCommand('保留这段草稿 /style 教练');
+  await until("document.querySelector('.composer-command-row strong')?.textContent === '教练'");
+  await run("document.querySelector('[data-composer-input]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}))");
+  await until("composerProps.draft === '保留这段草稿 '");
+  assert.equal(await run('sentStyles.length'), 0);
+  assert.equal(await run("styleFixture.resolveConversationStyle('second-chat').customTone"), '用鼓励的口吻交流。');
+  await run("document.querySelector('.send-button').click()");
+  await until('sentStyles.length === 1');
+  assert.equal(await run('sentStyles[0].text'), '保留这段草稿');
+  await typeCommand('/style 不存在');
+  await until("!!document.querySelector('.composer-command-empty')");
+  await run("document.querySelector('.send-button').click()");
+  assert.equal(await run('sentStyles.length'), 1, 'unmatched local commands must not reach the model');
+  await typeCommand('/风格');
+  await until("document.querySelectorAll('.composer-command-row').length === 6");
+  await run("document.querySelector('[data-command-id=\"style:default\"]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))");
+  await until("document.querySelector('.composer-style-select button')?.value === ''");
+  await run("composerSession='first-chat'; renderComposer()");
+  await until("document.querySelector('.composer-style-select button')?.value === 'custom-legacy'");
+  await run("styleFixture.saveConversationStyle({...styleFixture.readConversationStyle(),styles:styleFixture.readConversationStyle().styles.filter(s=>s.id!=='custom-legacy')})");
+  await until("document.querySelector('.composer-style-select button')?.textContent.includes('默认 · 专业')");
+  await run("composerProps.language='en'; renderComposer()");
+  await until("document.querySelector('.composer-style-select button')?.textContent.includes('Default · Professional')");
+  for (const width of [700, 360]) {
+    win.setSize(width, 720); await pause(80);
+    assert.equal(await run("document.documentElement.scrollWidth <= innerWidth"), true);
+    assert.equal(await run("(() => {const a=document.querySelector('.composer-style-select').getBoundingClientRect(); const b=document.querySelector('.composer-actions').getBoundingClientRect();return a.width>25 && a.right<=b.left;})()"), true, 'style tag stays separate from send controls');
+  }
+  win.webContents.invalidate(); await pause(100);
+  fs.writeFileSync(path.join(root, 'tmp/composer-style-narrow.png'), (await win.webContents.capturePage(undefined, {stayHidden:true})).toPNG());
+  win.setSize(1200,850);
+  await run("composerHost={id:'remote:first-chat',environmentId:'remote',conversationStyleAvailable:false,plugins:[],pluginCommands:[]}; renderComposer()");
+  await until("!document.querySelector('.composer-style-select')");
+  await run("composerHost=undefined; composerProps.language='zh'; composerProps.draft=''; settingsProps.settings.conversationStyle=styleFixture.readConversationStyle()");
+};

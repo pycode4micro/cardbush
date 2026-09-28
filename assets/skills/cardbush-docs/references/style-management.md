@@ -30,10 +30,10 @@ Read [theme-contract.md](theme-contract.md) before adding a theme or changing gl
 For a new theme or global visual change, run:
 
 ```powershell
-npm run test:cyberpunk-theme
+npm run test:appearance
 npm run test:panel-motion
 npm run typecheck
 npm run build
 ```
 
-When working on a different theme, add or adapt a focused contract test rather than assuming the cyberpunk test covers it.
+When changing appearance behavior, extend the settings interaction checks to cover live updates and persistence in both light and dark modes.

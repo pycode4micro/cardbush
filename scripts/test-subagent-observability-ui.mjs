@@ -13,7 +13,6 @@ const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { ConversationWorkSummary } from '${local('src/features/chat/ConversationWorkSummary.tsx')}';
-import { WorkSummaryInspector } from '${local('src/features/chat/WorkSummaryInspector.tsx')}';
 import { fetchSubagentTask } from '${local('src/backend/api.ts')}';
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
@@ -21,6 +20,7 @@ const root = createRoot(document.getElementById('root'));
 window.taskReads = 0;
 window.turnReads = 0;
 window.sessionScans = 0;
+window.addEventListener('cardbush:open-work-summary-inspector',event=>{window.openedChild=event.detail;});
 let scenario = 0;
 window.renderScenario = async (status, language = 'zh') => {
   const id = ++scenario;
@@ -36,7 +36,7 @@ window.renderScenario = async (status, language = 'zh') => {
   // Runtime replies use its actual four-state protocol. No synthetic review
   // fields: exercise the real API projection as well as both mounted views.
   window.fixtureClient = {
-    listSubagentTasks:async () => [structuredClone(window.runtimeTask)],
+    listSubagentTasks:async () => [structuredClone(window.runtimeTask), ...(window.followupTask ? [structuredClone(window.followupTask)] : [])],
     getSubagentTask:async ({parentSessionId}) => {
       if(parentSessionId!=='parent') throw Error('Wrong parent scope');
       window.taskReads++; return structuredClone(window.runtimeTask);
@@ -56,8 +56,6 @@ window.renderScenario = async (status, language = 'zh') => {
     <div className="chat-panel work-summary-requested" style={{position:'relative',flex:'0 0 370px',minWidth:0}}><ConversationWorkSummary key={'summary-'+id} language={language} sessionId="parent"
       messages={[{id:'later-reply',role:'assistant',content:'其他任务已完成',status:'completed',turnId:'later-turn'}]}
       changeReports={[]} onOpenChangeReview={()=>{}} subagentObservabilityAvailable /></div>
-    <div style={{flex:1,minWidth:0}}><WorkSummaryInspector key={'detail-'+id} language={language} messages={[]}
-      detail={{kind:'subagent-task',sessionId:'parent',title:'子任务',task}} /></div>
   </div></React.StrictMode>);
 };
 window.finishTask = () => {

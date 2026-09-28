@@ -22,30 +22,25 @@ import {
 
 import { PluginIcon } from '../../components/PluginIcon';
 
-type ToolLogoDefinition = {
-  icon: LucideIcon;
-  tone: string;
-};
-
-const toolLogos: Record<string, ToolLogoDefinition> = {
-  read_file: { icon: FileText, tone: 'files' },
-  write_file: { icon: FilePlus2, tone: 'files' },
-  edit_file: { icon: FilePenLine, tone: 'files' },
-  search_file_content: { icon: Search, tone: 'search' },
-  terminal_exec: { icon: SquareTerminal, tone: 'terminal' },
-  search_skills: { icon: BookOpenCheck, tone: 'skills' },
-  read_archived_tool_result: { icon: FileText, tone: 'knowledge' },
-  inject_image_input: { icon: Image, tone: 'vision' },
-  schedule_task: { icon: CalendarClock, tone: 'schedule' },
-  parallel_tools: { icon: Workflow, tone: 'agents' },
-  subagent: { icon: GitFork, tone: 'agents' },
-  await_subagents: { icon: Hourglass, tone: 'agents' },
-  team_delegate: { icon: UsersRound, tone: 'agents' },
-  update_task_plan: { icon: ListChecks, tone: 'planning' },
-  update_goal: { icon: Target, tone: 'planning' },
-  request_permission: { icon: ShieldCheck, tone: 'permission' },
-  solution_selection: { icon: Lightbulb, tone: 'planning' },
-  runtime_context_compaction: { icon: Minimize2, tone: 'reasoning' },
+const toolLogos: Record<string, LucideIcon> = {
+  read_file: FileText,
+  write_file: FilePlus2,
+  edit_file: FilePenLine,
+  search_file_content: Search,
+  terminal_exec: SquareTerminal,
+  search_skills: BookOpenCheck,
+  read_archived_tool_result: FileText,
+  inject_image_input: Image,
+  schedule_task: CalendarClock,
+  parallel_tools: Workflow,
+  subagent: GitFork,
+  await_subagents: Hourglass,
+  team_delegate: UsersRound,
+  update_task_plan: ListChecks,
+  update_goal: Target,
+  request_permission: ShieldCheck,
+  solution_selection: Lightbulb,
+  runtime_context_compaction: Minimize2,
 };
 
 export function ToolLogo({
@@ -61,16 +56,15 @@ export function ToolLogo({
   if (normalized.startsWith('mcp__')) {
     return (
       <PluginIcon
-        className={`tool-logo tool-logo-mcp ${className}`.trim()}
+        className={`tool-logo ${className}`.trim()}
         size={size}
       />
     );
   }
-  const definition = toolLogos[normalized] ?? { icon: Wrench, tone: 'default' };
-  const Icon = definition.icon;
+  const Icon = toolLogos[normalized] ?? Wrench;
   return (
     <Icon
-      className={`tool-logo tool-logo-${definition.tone} ${className}`.trim()}
+      className={`tool-logo ${className}`.trim()}
       size={size}
       strokeWidth={1.8}
       aria-hidden="true"

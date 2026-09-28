@@ -251,14 +251,16 @@ export function registerComputerUsePlugin(
 }
 
 export async function computerUseMcpResult(native: ComputerUseResult, action: string) {
-  const images: Array<{ type: 'image'; data: string; mimeType: string; _meta: Record<string, string> }> = [];
+  const images: Array<{ type: 'image'; data: string; mimeType: string; annotations: { audience: ['assistant'] }; _meta: Record<string, string> }> = [];
   const failures: string[] = [];
   for (const artifact of native.artifacts.filter(item => item.type === 'image').slice(0, 2)) {
     try {
       if ((await stat(artifact.path)).size > 8 * 1024 * 1024) throw new Error('Screenshot exceeds the 8 MiB image delivery limit.');
       const bytes = await readFile(artifact.path);
       if (bytes.length > 8 * 1024 * 1024) throw new Error('Screenshot exceeds the 8 MiB image delivery limit.');
-      images.push({ type: 'image', data: bytes.toString('base64'), mimeType: artifact.media_type, _meta: { 'codex/imageDetail': 'original' } });
+      // The saved artifact supplies the UI preview; these bytes are model input only.
+      images.push({ type: 'image', data: bytes.toString('base64'), mimeType: artifact.media_type,
+        annotations: { audience: ['assistant'] }, _meta: { 'codex/imageDetail': 'original' } });
     } catch (error) { failures.push(formatComputerUseError(error)); }
   }
   const result = {

@@ -15,3 +15,7 @@
 .chrome-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chrome-connector-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .browser-settings-panel > .settings-card p { font-size: 13px; line-height: 1.6; }
+.chrome-connector-pairing { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.chrome-connector-pairing label { display: grid; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.chrome-connector-pairing input { width: 100%; min-width: 0; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.chrome-connector-pairing p { flex-basis: 100%; }

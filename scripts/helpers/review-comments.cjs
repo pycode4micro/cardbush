@@ -94,8 +94,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   }
   await run("clickLine('R',11)"); await pause();
   await run("commentInput('多主题下检查输入框和菜单的对比度')"); await pause();
-  await window.webContents.insertCSS(await fs.readFile(path.join(root,'src/styles/themes/cyberpunk.css'),'utf8'));
-  for (const theme of ['theme-bright','theme-dark','theme-dark theme-cyberpunk']) {
+  await window.webContents.insertCSS(await fs.readFile(path.join(root,'src/styles/appearance.css'),'utf8'));
+  for (const theme of ['theme-bright','theme-dark']) {
     await run(`window.viewTheme=${JSON.stringify(theme)};showComments()`); await pause();
     await run("document.querySelector('.change-review-version-picker [role=combobox]').click()"); await pause();
     const menu = await run("(()=>{const n=document.querySelector('.change-review-version-picker [role=listbox]'),r=n.getBoundingClientRect();return{open:n.matches(':popover-open'),right:r.right,bottom:r.bottom,color:getComputedStyle(n).color,bg:getComputedStyle(n).backgroundColor}})()");

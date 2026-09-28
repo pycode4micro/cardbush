@@ -26,6 +26,42 @@ internal static class CardBushBrowserHost
 
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--package-data-root")
+        {
+            try {
+                Console.OutputEncoding = new UTF8Encoding(false);
+                Console.Write(Json.Serialize(new Dictionary<string, object> { { "path", ConnectorSecurity.PackageDataRoot() } }));
+                return 0;
+            }
+            catch (Exception error) { Console.Error.WriteLine(error.Message); return 4; }
+        }
+        if (args.Length == 2 && args[0] == "--registry-read" && (args[1] == "32" || args[1] == "64"))
+        {
+            try
+            {
+                // Fixed, read-only HKCU query. UTF-8 JSON preserves non-ASCII user
+                // paths and does not depend on reg.exe's localized output.
+                using (RegistryKey user = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,
+                    args[1] == "32" ? RegistryView.Registry32 : RegistryView.Registry64))
+                using (RegistryKey key = user.OpenSubKey(@"Software\Google\Chrome\NativeMessagingHosts\com.cardbush.browser_connector"))
+                {
+                    object value = key == null ? null : key.GetValue("", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                    if (value != null && key.GetValueKind("") != RegistryValueKind.String)
+                        throw new InvalidDataException("The Chrome host registration has an unsupported value type.");
+                    Console.OutputEncoding = new UTF8Encoding(false);
+                    Console.Write(Json.Serialize(new Dictionary<string, object> {
+                        { "manifestPath", value }, { "empty", key == null || (key.ValueCount == 0 && key.SubKeyCount == 0) }
+                    }));
+                    return 0;
+                }
+            }
+            catch (Exception error) { Console.Error.WriteLine(error.Message); return 4; }
+        }
+        if (args.Length == 2 && (args[0] == "--secure-directory" || args[0] == "--secure-pipe"))
+        {
+            try { ConnectorSecurity.SecureResource(args[0], args[1]); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error.Message); return 4; }
+        }
         string origin = FindOrigin(args);
         if (!String.Equals(origin, ExtensionOrigin, StringComparison.Ordinal))
         {
@@ -43,7 +79,7 @@ internal static class CardBushBrowserHost
                 throw new InvalidDataException("The CardBush browser bridge protocol does not match.");
             }
             const string pipePrefix = @"\\.\pipe\";
-            if (!endpoint.StartsWith(pipePrefix, StringComparison.OrdinalIgnoreCase))
+            if (!endpoint.StartsWith(pipePrefix + "cardbush-browser-connector-", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException("The CardBush browser bridge is not a Windows named pipe.");
             }
@@ -151,15 +187,13 @@ internal static class CardBushBrowserHost
 
     private static Dictionary<string, object> ReadConfig()
     {
-        string configPath = Environment.GetEnvironmentVariable("CARDBUSH_CHROME_CONNECTOR_CONFIG");
-        if (String.IsNullOrWhiteSpace(configPath))
-        {
-            configPath = RegisteredConfigPath() ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "cardbush",
-                "browser-connector",
-                "bridge.json");
-        }
+        string configPath = null;
+#if CARDBUSH_CONNECTOR_TEST
+        configPath = Environment.GetEnvironmentVariable("CARDBUSH_CHROME_CONNECTOR_CONFIG");
+#endif
+        if (String.IsNullOrWhiteSpace(configPath)) configPath = RegisteredConfigPath();
+        if (String.IsNullOrWhiteSpace(configPath)) throw new InvalidDataException("Enable the Chrome connector in CardBush settings first.");
+        ConnectorSecurity.ValidateRegularFile(configPath);
         Dictionary<string, object> config =
             Json.DeserializeObject(File.ReadAllText(configPath, Encoding.UTF8)) as Dictionary<string, object>;
         if (config == null)
@@ -176,18 +210,23 @@ internal static class CardBushBrowserHost
         // directory as the native manifest that the browser discovered.
         const string keyPath = @"Software\Google\Chrome\NativeMessagingHosts\com.cardbush.browser_connector";
         string executablePath = Path.GetFullPath(typeof(CardBushBrowserHost).Assembly.Location);
-        foreach (RegistryHive hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
-        {
             foreach (RegistryView view in new[] { RegistryView.Registry32, RegistryView.Registry64 })
             {
-                using (RegistryKey registry = RegistryKey.OpenBaseKey(hive, view))
+                using (RegistryKey registry = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, view))
                 using (RegistryKey key = registry.OpenSubKey(keyPath))
                 {
                     string manifestPath = key == null ? null : key.GetValue(null) as string;
-                    if (String.IsNullOrWhiteSpace(manifestPath) || !Path.IsPathRooted(manifestPath) || !File.Exists(manifestPath)) continue;
+                    if (String.IsNullOrWhiteSpace(manifestPath)) continue;
+                    ConnectorSecurity.ValidateManifestLocation(manifestPath);
                     Dictionary<string, object> manifest = Json.DeserializeObject(
                         File.ReadAllText(manifestPath, Encoding.UTF8)) as Dictionary<string, object>;
-                    object hostPath;
+                    object hostPath, name, origins, type;
+                    if (manifest == null || !manifest.TryGetValue("name", out name) || Convert.ToString(name) != "com.cardbush.browser_connector" ||
+                        !manifest.TryGetValue("type", out type) || Convert.ToString(type) != "stdio" ||
+                        !manifest.TryGetValue("allowed_origins", out origins)) throw new InvalidDataException("Invalid CardBush host manifest.");
+                    System.Collections.IList allowed = origins as System.Collections.IList;
+                    if (allowed == null || allowed.Count != 1 || Convert.ToString(allowed[0]) != ExtensionOrigin)
+                        throw new InvalidDataException("Unexpected extension origin in host manifest.");
                     if (manifest == null || !manifest.TryGetValue("path", out hostPath) || !(hostPath is string)) continue;
                     string registeredHost = Convert.ToString(hostPath);
                     if (!Path.IsPathRooted(registeredHost)) continue;
@@ -196,10 +235,16 @@ internal static class CardBushBrowserHost
                         "Microsoft", "WindowsApps", "CardBushBrowserHost.exe");
                     if (!String.Equals(fullHostPath, executablePath, StringComparison.OrdinalIgnoreCase) &&
                         !String.Equals(fullHostPath, aliasPath, StringComparison.OrdinalIgnoreCase)) continue;
-                    return Path.Combine(Path.GetDirectoryName(manifestPath), "bridge.json");
+                    string directory = Path.GetDirectoryName(manifestPath);
+                    string preferencePath = Path.Combine(directory, "preference.json");
+                    ConnectorSecurity.ValidateRegularFile(preferencePath);
+                    Dictionary<string, object> preference = Json.DeserializeObject(File.ReadAllText(preferencePath)) as Dictionary<string, object>;
+                    object enabled;
+                    if (preference == null || !preference.TryGetValue("enabled", out enabled) || !Object.Equals(enabled, true))
+                        throw new InvalidDataException("The Chrome connector is disabled.");
+                    return Path.Combine(directory, "bridge.json");
                 }
             }
-        }
         return null;
     }
 

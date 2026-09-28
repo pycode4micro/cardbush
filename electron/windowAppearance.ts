@@ -11,7 +11,7 @@ export function mainWindowFrameOptions(platform: string): Pick<BrowserWindowCons
   } : { frame: false };
 }
 
-export type WindowTheme = 'bright' | 'dark' | 'cyberpunk';
+export type WindowTheme = 'bright' | 'dark';
 export type WindowMaterialPreference = 'auto' | 'solid';
 export type WindowAppearanceOptions = {
   material?: WindowMaterialPreference;
@@ -59,7 +59,7 @@ function captionSymbolColor(theme: WindowTheme, customColor?: string) {
   const color = typeof customColor === 'string' ? customColor.trim() : '';
   if (color.length <= 96 && (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color) ||
       /^(rgb|rgba|hsl|hsla)\([\d\s.,%/+\-]+\)$/.test(color))) return color;
-  return theme === 'bright' ? '#1e1c1a' : theme === 'cyberpunk' ? '#f4f3dc' : '#eeeeee';
+  return theme === 'bright' ? '#1e1c1a' : '#eeeeee';
 }
 
 export class WindowAppearanceController {

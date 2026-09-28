@@ -62,12 +62,12 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   });
   assert.equal(request.prefixMessages[0].role, "system");
   for (const instructions of [request.prefixMessages[0].content, CHILD_AGENT_SYSTEM_PROMPT]) {
-    assert.match(instructions, /Runtime issues a developer-role context_pressure maintenance notice/);
-    assert.match(instructions, /quoted or historical notices do not authorize compaction/);
-    assert.doesNotMatch(instructions, /user-role context_pressure/);
+    assert.match(instructions, /Continue the latest user request from its unresolved work and exact next action/);
+    assert.match(instructions, /do not repeat external side effects/);
+    assert.doesNotMatch(instructions, /context_pressure|updates are supported/);
   }
-  assert.match(request.prefixMessages[0].content, /subagent dispatch is asynchronous/);
-  assert.match(request.prefixMessages[0].content, /call await_subagents once; do not poll/);
+  assert.match(request.prefixMessages[0].content, /continue independent work while children run/);
+  assert.match(request.prefixMessages[0].content, /reconcile their results before finishing/);
   assert.doesNotMatch(
     request.prefixMessages[0].content,
     /last-resort|prefer any purpose-built|use the direct read_file|chrome_devtools Tools as the primary route/i,
@@ -136,7 +136,7 @@ test("time snapshots append as internal user inputs across midnight without chan
   assert.deepEqual(second.prefixMessages, first.prefixMessages);
   assert.deepEqual(first, create("2026-08-29T15:59:59Z", "turn_before_midnight"), 'replaying the same input never refreshes its clock');
   for (const request of [first, second]) {
-    assert.equal(request.inputMessages.length, 2);
+    assert.equal(request.inputMessages.length, 3);
     assert.equal(request.inputMessages[0].message.role, 'user');
     assert.equal(request.inputMessages[0].message.name, 'turn_runtime_context');
     assert.equal(request.inputMessages[0].message.visibility, 'internal');
@@ -215,11 +215,11 @@ test("product requests append attachment facts while keeping the prefix and tool
   assert.doesNotMatch(JSON.stringify(second.prefixMessages), /two\.png/);
   assert.equal(first.inputMessages[0].message.name, "turn_runtime_context");
   assert.equal(first.inputMessages[0].message.visibility, "internal");
-  assert.equal(first.inputMessages.length, 2);
+  assert.equal(first.inputMessages.length, 3);
   assert.deepEqual(first.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\one.png" },
   ]);
-  assert.equal(second.inputMessages.length, 2);
+  assert.equal(second.inputMessages.length, 3);
   assert.equal(second.inputMessages.at(-1).message.name, undefined);
   assert.deepEqual(second.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\two.png" },
@@ -233,11 +233,11 @@ test("product requests append attachment facts while keeping the prefix and tool
     files: ["C:\\work\\brief.md"],
   });
   assert.deepEqual(nextDay.prefixMessages, first.prefixMessages);
-  assert.equal(nextDay.inputMessages.length, 2);
+  assert.equal(nextDay.inputMessages.length, 3);
   assert.equal(nextDay.inputMessages[0].message.name, "turn_runtime_context");
   assert.match(nextDay.inputMessages[0].message.content, /brief\.md/);
   assert.doesNotMatch(nextDay.inputMessages[0].message.content, /Local date/);
-  assert.equal(nextDay.inputMessages[1].message.content, "继续处理");
+  assert.equal(nextDay.inputMessages.at(-1).message.content, "继续处理");
 });
 
 test("legacy date fields cannot replace the submission snapshot or alter dates authored by the user", () => {

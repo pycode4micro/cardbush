@@ -9,7 +9,9 @@ import { addComputerUseTimings } from './computerUseTimings.js';
 
 const execute = promisify(execFile);
 // PowerShell cannot load a DLL through Electron's virtual ASAR filesystem.
-const bundledDirectory = fileURLToPath(new URL('../native/', import.meta.url)).replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+const nativeModuleDirectory = fileURLToPath(new URL('../native/', import.meta.url));
+const packaged = /([\\/])app\.asar(?:\.unpacked)?([\\/])/.test(nativeModuleDirectory);
+const bundledDirectory = nativeModuleDirectory.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
 const pending = new Map<string, Promise<string>>();
 const exists = async (path: string) => access(path).then(() => true, () => false);
 export const quotePowerShell = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -29,6 +31,7 @@ export async function prepareComputerUseNativeCode(script: string, outputDirecto
     const bundled = join(outputDirectory ?? bundledDirectory, filename);
     let assembly = bundled;
     if (!(await exists(bundled))) {
+      if (packaged && !outputDirectory) throw new Error('The packaged Computer Use native worker is missing: ' + filename + '. Repair or reinstall CardBush; signed releases must not compile unsigned replacement libraries on the user device.');
       const cache = outputDirectory ?? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'CardBush', 'computer-use-native');
       assembly = join(cache, filename);
       if (!(await exists(assembly))) {

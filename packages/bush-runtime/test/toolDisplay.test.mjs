@@ -11,14 +11,15 @@ const call = (id, name, input) => ({ protocol: 'bush.tool_call.v1', id, name, ar
 const definition = { name: 'read_fixture', description: 'Read fixture', inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false } };
 const strictInput = input => { assert.deepEqual(Object.keys(input), ['path']); return input; };
 
-test('display schema is optional, immutable, idempotent and frozen across rounds', () => {
+test('model requires localized descriptions while native schemas stay immutable and frozen across rounds', () => {
   const registry = new ToolRegistry();
   registry.register({ definition, manifest, decodeInput: strictInput, execute: () => ({}) });
   const original = structuredClone(registry.definitions());
   const request = { ...identity, tools: registry.definitions(), metadata: {} };
   const first = modelToolDefinitions(registry, request);
-  assert.equal(first[0].inputSchema.properties._display_title.type, 'string');
-  assert.deepEqual(first[0].inputSchema.required, ['path']);
+  assert.equal(first[0].inputSchema.properties._display_title.type, 'object');
+  assert.deepEqual(first[0].inputSchema.properties._display_title.required, ['zh', 'en']);
+  assert.deepEqual(first[0].inputSchema.required, ['path', '_display_title']);
   assert.deepEqual(registry.definitions(), original, 'native schemas must stay untouched');
   assert.deepEqual(request.tools, original);
   assert.deepEqual(first.map(withToolDisplayTitle), first);
@@ -27,7 +28,9 @@ test('display schema is optional, immutable, idempotent and frozen across rounds
   assert.deepEqual(modelToolDefinitions(registry, request), first, 'no per-round schema changes to the cache prefix');
 });
 
-for (const title of ['核对产品资料', undefined, '', null, { reason: 'not a title' }, '  核对\n产品资料\u202e  ', '界'.repeat(500)]) {
+for (const title of ['核对产品资料', { zh: '核对产品资料', en: 'Check product information' },
+  { zh: '  核对\n产品资料\u202e  ', en: 'Check '.repeat(100) }, { zh: null, en: 'Check files' },
+  undefined, '', null, { reason: 'not a title' }, '  核对\n产品资料\u202e  ', '界'.repeat(500)]) {
   test(`title is presentation only, including invalid/long values: ${String(title).slice(0, 25)}`, async () => {
     const registry = new ToolRegistry(), store = new ToolExecutionStore(), eventLog = new InMemoryRuntimeEventLog();
     let executions = 0, before = 0, after = 0, authorizations = 0;
@@ -53,6 +56,10 @@ for (const title of ['核对产品资料', undefined, '', null, { reason: 'not a
     const reloaded = new ToolExecutionStore({ persistence: { load: () => [JSON.parse(JSON.stringify(record))], append() {} } });
     assert.deepEqual(reloaded.listTurnSummaries('s', 't')[0].display, expected, 'restarts and compact cloud history retain the same title');
     assert.ok(!expected || Array.from(expected.title).length <= 80);
+    if (title && typeof title === 'object' && typeof title.en === 'string') {
+      assert.equal(expected.titles.en, title.en.replace(/\s+/g, ' ').trim().slice(0, 80));
+      assert.ok(Object.values(expected.titles).every(value => Array.from(value).length <= 80));
+    }
   });
 }
 

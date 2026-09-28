@@ -80,19 +80,22 @@ module.exports = async ({ run, until, pause, window, root }) => {
       assert.ok(rows[1].includes('First, measure the audio.') && rows[1].includes('The diagnosis is ready.'));
       assert.ok(rows[2].includes('Could the plugin be the cause?'));
       assert.ok(!rows[3].includes('First, measure the audio.') && !rows[3].includes('The diagnosis is ready.'));
-      assert.equal(await run("document.querySelectorAll('.assistant-changed-files-summary').length"), 0,
+      assert.equal(await run("document.querySelectorAll('.turn-artifacts-trigger').length"), 0,
         'applied guidance must not display a terminal changed-files summary');
       await fs.writeFile(path.join(root, 'tmp/chat-guidance-' + theme + '.png'), (await window.capturePage()).toPNG());
       for (const status of ['completed', 'stopped']) {
         await run(`showGuidanceFixture('${status}');`);
-        await until("document.querySelectorAll('.assistant-changed-files-summary').length === 1", status + ' shows one turn summary');
-        assert.equal(await run("document.querySelector('.assistant-changed-files-summary').closest('[data-message-id]').dataset.messageId"), 'guide-after');
-        assert.ok(await run("document.querySelector('.assistant-changed-files-summary').textContent.includes('analysis.ps1')"),
+        await until("document.querySelectorAll('.turn-artifacts-trigger').length === 1", status + ' shows one turn summary');
+        assert.equal(await run("document.querySelector('.turn-artifacts-trigger').closest('[data-message-id]').dataset.messageId"), 'guide-after');
+        await pause(250);
+        await run("if(document.querySelector('.turn-artifacts-trigger').getAttribute('aria-expanded')!=='true') document.querySelector('.turn-artifacts-trigger').click(); void 0");
+        await until("document.querySelector('.turn-artifacts-popover')?.matches(':popover-open')", 'turn artifacts open');
+        assert.ok(await run("document.querySelector('.turn-artifacts-popover').textContent.includes('analysis.ps1')"),
           'terminal summary includes file changes made before guidance');
       }
       await run("showGuidanceFixture('failed');");
       await pause();
-      assert.equal(await run("document.querySelectorAll('.assistant-changed-files-summary').length"), 0);
+      assert.equal(await run("document.querySelectorAll('.turn-artifacts-trigger').length"), 0);
     }
   } finally {
     await run('cancelAnimationFrame(window.guidancePendingFrame); viewTheme = guidanceOriginal.theme; updateChat(guidanceOriginal.props);');

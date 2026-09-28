@@ -15,7 +15,7 @@ app.whenReady().then(async () => {
     const url = window.webContents.getURL(); let navigations=0;
     window.webContents.on('will-navigate',()=>navigations++);
     await until('Boolean(document.querySelector(".tool-execution-summary"))');
-    for (const theme of ['theme-dark','theme-cyberpunk']) {
+    for (const theme of ['theme-dark']) {
       await run(`theme=${JSON.stringify(theme)};renderFixture();`); await pause();
       if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
         await run('document.querySelector(".tool-execution-summary").click()');
@@ -47,7 +47,7 @@ app.whenReady().then(async () => {
     await until('requests.length===1');
     await run('requests[0].reject(Error("Fixture load failure"))');
     await until('document.body.textContent.includes("暂时无法读取执行详情")');
-    assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'已执行','a detail-fetch error is not an execution failure');
+    assert.equal(await run('document.querySelector(".tool-execution-row-status")'),null,'a detail-fetch error does not add an execution failure badge');
     await run('document.querySelector(".tool-execution-detail-status button").click()');
     await until('requests.length===2');
     await run('document.querySelector(".tool-execution-row").click(); requests[1].resolve([{...executions[0],output:"Recovered output",metadata:{}}]);'); await pause();
@@ -57,21 +57,21 @@ app.whenReady().then(async () => {
     assert.equal(await run('requests.length'),2,'loaded facts are reused');
     await run('messageId="failure";executions=[{...executions[0],id:"failure",state:"failed",summary:"Permission denied",metadata:{error:{message:"Permission denied"}}}];renderFixture();'); await pause();
     await run('document.querySelector(".tool-execution-summary").click()'); await pause();
-    assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'失败');
+    assert.equal(await run('document.querySelector(".tool-execution-row-status")'),null,'execution failures do not add a presentation badge');
     await run('document.querySelector(".tool-execution-row").click()'); await pause();
     assert.equal(await run('document.querySelector(".tool-execution-error").textContent'),'Permission denied');
     assert.equal(await run('document.querySelector(".tool-execution-input")'),null,'the error message is not repeated as a command');
     await run('active=true;executions=[{...executions[0],state:"awaiting_permission",summary:"访问项目文件",metadata:{}}];renderFixture();'); await pause();
     assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'等待授权');
-    assert.ok(await run('document.querySelector(".tool-execution-row").classList.contains("waiting")'));
-    for (const theme of ['theme-dark', 'theme-cyberpunk']) {
-      for (const [id, name, result, label, failed, diagnostic] of [
-        ['nonzero', 'terminal_exec', {state:'exited',exitCode:7,stdout:'partial result',stderr:'error'}, '退出码 7', true, false],
-        ['diagnostic', 'terminal_exec', {state:'exited',exitCode:0,stdout:'recovered',stderr:'non-terminating error\r\n中文😀'}, '有诊断输出', false, true],
-        ['warning', 'terminal_poll', {state:'running',exitCode:null,stdout:'',stderr:'download progress'}, '有诊断输出', false, true],
-        ['normal', 'terminal_exec', {state:'exited',exitCode:0,stdout:'done',stderr:''}, '已执行', false, false],
-        ['spawn-failure', 'terminal_exec', {state:'failed',exitCode:null,stdout:'',stderr:'',error:'Unable to start'}, '命令失败', true, false],
-        ['unrelated', 'search_file_content', {exitCode:1,output:'No matches'}, '已执行', false, false],
+    assert.ok(await run('!document.querySelector(".tool-execution-row").classList.contains("waiting")'),'permission text remains actionable without a separate color');
+    for (const theme of ['theme-dark']) {
+      for (const [id, name, result] of [
+        ['nonzero', 'terminal_exec', {state:'exited',exitCode:7,stdout:'partial result',stderr:'error'}],
+        ['diagnostic', 'terminal_exec', {state:'exited',exitCode:0,stdout:'recovered',stderr:'non-terminating error\r\n中文😀'}],
+        ['warning', 'terminal_poll', {state:'running',exitCode:null,stdout:'',stderr:'download progress'}],
+        ['normal', 'terminal_exec', {state:'exited',exitCode:0,stdout:'done',stderr:''}],
+        ['spawn-failure', 'terminal_exec', {state:'failed',exitCode:null,stdout:'',stderr:'',error:'Unable to start'}],
+        ['unrelated', 'search_file_content', {exitCode:1,output:'No matches'}],
       ]) {
         for (const nativeMetadata of [true, false]) {
           await run(`theme=${JSON.stringify(theme)};active=false;messageId=${JSON.stringify(id+theme+nativeMetadata)};
@@ -81,14 +81,12 @@ app.whenReady().then(async () => {
           if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
             await run('document.querySelector(".tool-execution-summary").click()');
           await until('Boolean(document.querySelector(".tool-execution-row"))');
-          assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),label);
-          assert.equal(await run('document.querySelector(".tool-execution-row").classList.contains("failed")'),failed);
-          assert.equal(await run('document.querySelector(".tool-execution-row").classList.contains("diagnostic")'),diagnostic);
-          assert.equal(await run('document.querySelector(".tool-execution-summary").textContent.includes("执行失败")'),failed);
+          assert.equal(await run('document.querySelector(".tool-execution-row-status,.tool-execution-row.failed,.tool-execution-row.diagnostic")'),null);
+          assert.equal(await run('document.querySelector(".tool-execution-summary").textContent.includes("执行失败")'),false);
           assert.equal(await run('/\\d+\\s*(项操作|项失败|actions|tools)/i.test(document.querySelector(".tool-execution-summary").textContent)'),false);
           await run('document.querySelector(".tool-execution-row").click()'); await pause();
           assert.equal(await run('document.querySelector(".tool-execution-output").textContent'),JSON.stringify(result));
-          if(diagnostic) assert.match(await run('document.querySelector(".tool-execution-diagnostic").textContent'),/即使退出码为 0/);
+          assert.equal(await run('document.querySelector(".tool-execution-diagnostic")'),null,'raw diagnostics are retained without generated warnings');
         }
       }
     }
@@ -114,8 +112,10 @@ app.whenReady().then(async () => {
     await run(`requests[2].resolve([{...executions[0],state:'running',summary:'stale command',output:'Exact native result',metadata:{displayTitle:'旧的标题'}}]);`);
     await until('document.querySelector(".tool-execution-output")?.textContent==="Exact native result"');
     assert.equal(await run('document.querySelector(".tool-execution-label").textContent'),'核对产品资料');
-    assert.equal(await run('document.querySelector(".tool-execution-status").textContent'),'已返回');
-    assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'已执行');
+    assert.equal(await run('document.querySelector(".tool-execution-status")'),null);
+    assert.equal(await run('document.querySelector(".tool-execution-row-status")'),null);
+    assert.equal(await run('document.querySelector(".tool-execution-row-duration")'),null);
+    assert.ok(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-label").endsWith("已返回")'));
     assert.ok(await run('labels.every(label=>label==="核对产品资料")'),'no fallback frame while lifecycle or details change');
     await run('labelObserver.disconnect()');
     await run(`fixtureSession='other-session';executions=executions.map(e=>({...e,metadata:{nativeResultDeferred:true}}));renderFixture();`); await pause();
@@ -131,6 +131,42 @@ app.whenReady().then(async () => {
     assert.equal(await run('document.querySelector(".tool-execution-label").textContent'),'核对部门制度');
     await run(`executions=executions.map(e=>({...e,state:'completed'}));renderFixture();`); await pause();
     assert.equal(await run('document.querySelector(".tool-execution-label").textContent'),'核对部门制度');
+    // Both collapsed and expanded descriptions switch language without restoring status text.
+    await run(`messageId='localized-title';active=true;executions=[{...executions[0],id:'localized',name:'terminal_exec',state:'completed',
+      metadata:{displayTitle:'Check project type errors',displayTitles:{zh:'检查项目类型错误',en:'Check project type errors'}}}];renderFixture();`);
+    await pause();
+    if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
+      await run('document.querySelector(".tool-execution-summary").click()');
+    for (const [locale, title] of [['zh','检查项目类型错误'],['en','Check project type errors'],['zh','检查项目类型错误']]) {
+      await run(`language=${JSON.stringify(locale)};renderFixture();`); await pause();
+      assert.equal(await run('document.querySelector(".tool-execution-label").textContent'), title);
+      assert.equal(await run('document.querySelector(".tool-execution-row-label").textContent'), title);
+      assert.equal(await run('document.querySelector(".tool-execution-status,.tool-execution-row-status")'), null);
+    }
+    // Every tool type and result uses the same theme gray, including failed groups.
+    // Compare settled colors; a reused summary can still be transitioning from
+    // the previous theme while newly mounted detail rows already use the next.
+    const colorCheckStyles = await window.webContents.insertCSS('.tool-execution-block,.tool-execution-summary,.tool-execution-row{transition:none!important}');
+    await run('window.savedExecutions=executions;window.savedTheme=theme');
+    for (const theme of ['theme-dark', 'theme-bright', 'theme-dark has-custom-background']) {
+      for (const state of ['running', 'failed', 'completed']) {
+        await run(`theme=${JSON.stringify(theme)};active=true;messageId='neutral-tools';
+          executions=['read_file','terminal_exec','search_skills','mcp__fixture__read'].map((name,index)=>({
+            ...savedExecutions[0],id:'neutral-'+index,name,state:${JSON.stringify(state)},metadata:{}}));renderFixture();`);
+        await pause();
+        if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
+          await run('document.querySelector(".tool-execution-summary").click()');
+        await until('document.querySelectorAll(".tool-execution-row").length===4');
+        const colors = await run(`[...document.querySelectorAll('.tool-logo,.tool-execution-label,.tool-execution-row-label')]
+          .map(node=>({className:node.getAttribute('class'),color:getComputedStyle(node).color}))`);
+        assert.equal(new Set(colors.map(node => node.color)).size,1,
+          theme + ' / ' + state + ': summaries, descriptions and icons share the theme gray: ' + JSON.stringify(colors));
+        assert.equal(await run('document.querySelector(".tool-execution-block.warning,.tool-execution-block.danger,.tool-execution-status,.tool-execution-row-status")'),null);
+      }
+      await pause(); writeFileSync(resolve('tmp/tool-rows-neutral-'+theme.split(' ')[0]+'.png'),(await window.webContents.capturePage()).toPNG());
+    }
+    await window.webContents.removeInsertedCSS(colorCheckStyles);
+    await run('theme=savedTheme;executions=savedExecutions;renderFixture()'); await pause();
     // Narrow layouts retain a single line and fixed-size icons even for long titles.
     await run(`executions=executions.map(e=>({...e,metadata:{displayTitle:'核对'.repeat(80)}}));document.querySelector('.message-list').style.width='220px';renderFixture();`); await pause();
     assert.ok(await run('document.querySelector(".tool-execution-summary").getBoundingClientRect().width<=220'));

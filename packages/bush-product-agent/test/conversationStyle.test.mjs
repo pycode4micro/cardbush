@@ -40,10 +40,34 @@ test("inactive custom text stays out of model context, and custom text is quoted
   }
   const custom = context({ mode: "custom", customTone });
   assert.ok(custom.includes(JSON.stringify(customTone)));
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /only to user-facing wording, tone and level of explanation/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /only to user-facing wording, tone and conversational persona/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /user's explicit request takes precedence/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /does not change task scope, tool use, permissions/);
   assert.equal(context({ mode: "custom", customTone: "  " }).includes("Custom tone preference"), false);
+});
+
+test("all tones keep content-focused concision without length limits and readable Markdown, including legacy concise settings", () => {
+  for (const mode of [undefined, "natural", "professional", "concise", "custom"]) {
+    const request = createProductAgentTurnRequest({ ...input,
+      conversationStyle: mode ? { mode, customTone: "Act like a patient colleague; write long reports." } : undefined });
+    const instructions = request.prefixMessages[0].content;
+    assert.match(instructions, /Keep the final user-facing response concise in every conversation style/);
+    assert.match(instructions, /remove redundancy, not necessary substance/);
+    assert.match(instructions, /Do not impose word, sentence, paragraph or bullet counts/);
+    assert.match(instructions, /preserve necessary explanations, evidence, verification, failures, unfinished work/);
+    assert.doesNotMatch(instructions, /one to three|up to three|\d+ (?:words|sentences|bullets)/);
+    assert.match(instructions, /custom tone text do not control response length, detail level or information coverage/);
+    assert.match(instructions, /readable Markdown by default, without announcing or explaining the formatting/);
+    assert.match(instructions, /Respect explicit plain-text or strict-format requests/);
+    assert.doesNotMatch(instructions, /unless the user's conversation-style preference|systematically and thoroughly/);
+    if (mode === "professional" || mode === "concise") {
+      const preference = request.inputMessages.find(item => item.message.name === "conversation_preferences").message.content;
+      assert.match(preference, /Conversation style preference \(until updated\)/);
+      assert.doesNotMatch(preference, /permissions|response length|detail level/, 'the stable system policy owns preference scope');
+      assert.doesNotMatch(preference, /thoroughly|as brief as possible|long reports/);
+      if (mode === "concise") assert.match(preference, /direct, candid and matter-of-fact voice/);
+    }
+  }
 });
 
 test("normalization recovers absent or invalid settings and preserves a custom draft verbatim", () => {

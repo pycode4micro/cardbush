@@ -19,6 +19,7 @@ import type { ToolRegistry } from "./toolRegistry.js";
 import { assertParentAgent, childAgentToolDenial } from './childAgentPolicy.js';
 import { CLEAN_AGENT_SETTINGS_SCHEMA, decodeCleanAgentSettings, decodeToolOrSkillNames, type CleanAgentSettings, type SubagentModelCatalog } from './cleanAgentSettings.js';
 import { pluginAgentTools, validateAgentSkills, type PluginAgent } from './pluginExtensions.js';
+import { childConversationPage, type ChildConversationSource } from './subagentConversation.js';
 
 export const SUBAGENT_TOOL = "subagent" as const;
 export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
@@ -26,6 +27,7 @@ export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
 export interface RemoteSubagentBridge {
   list(signal?: AbortSignal): Promise<Array<{ id: string; name: string; agentId?: string }>>;
   run(input: RemoteSubagentRequest, signal?: AbortSignal): Promise<RemoteSubagentResult>;
+  read?(input: { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string }, signal?: AbortSignal): Promise<SessionSnapshot | undefined>;
 }
 
 interface SubagentInput {
@@ -84,8 +86,35 @@ export function registerSubagentTool(
     runBackground?: <T>(session: string, turn: string, taskId: string, run: (signal: AbortSignal) => Promise<T>) => Promise<T>;
     saveChildRequest?: (request: Parameters<SubagentChildRunner>[0]) => Promise<void>;
     loadChildRequest?: (sessionId: string) => Promise<Parameters<SubagentChildRunner>[0] | undefined>;
+    readChildConversation?: (sessionId: string) => ChildConversationSource | undefined;
   } = {},
 ): void {
+  if (options.readChildConversation && !registry.resolve('read_subagent_conversation')) registry.register<{ taskId: string; cursor?: string }>({
+    definition: { name: 'read_subagent_conversation',
+      description: 'Read the ordered inputs and final answers of a child dispatched by this parent: parent assignments, direct user messages or guidance, and one final answer per completed turn. Intermediate loop messages, reasoning and tool activity are excluded. Use nextCursor until null for remaining content; a completed dispatch may have later human follow-ups. This reads conversation history, not a status polling loop.',
+      inputSchema: { type: 'object', additionalProperties: false, required: ['task_id'], properties: {
+        task_id: { type: 'string', minLength: 1 }, cursor: { type: 'string', pattern: '^\\d+:\\d+$' },
+      } } },
+    manifest: { effect_kind: 'observation', operation: 'agent.read_conversation', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
+    visibleToChild: false,
+    decodeInput: value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Provide a task_id and optional conversation cursor.');
+      const input = value as Record<string, unknown>;
+      if (Object.keys(input).some(key => !['task_id', 'cursor'].includes(key)) || typeof input.task_id !== 'string' || !input.task_id.trim() ||
+        (input.cursor !== undefined && (typeof input.cursor !== 'string' || !/^\d+:\d+$/.test(input.cursor)))) throw new Error('Provide a task_id and optional conversation cursor.');
+      return { taskId: input.task_id, cursor: input.cursor as string | undefined };
+    },
+    execute: async context => {
+      assertParentAgent(context.turn?.request);
+      const task = tasks.get(context.sessionId, context.input.taskId);
+      if (!task) throw new Error('This child task does not belong to the current parent conversation.');
+      const session = task.remote
+        ? await options.remoteAgents?.read?.({ ...task.remote, parentSessionId: context.sessionId, sessionId: task.childSessionId }, context.signal)
+        : options.readChildConversation!(task.childSessionId);
+      if (!session) throw new Error('The child conversation is not available yet.');
+      return { taskId: task.taskId, status: task.status, ...childConversationPage(session, context.input.cursor) };
+    },
+  });
   if (options.loadPluginAgents && !registry.resolve('list_plugin_agents')) registry.register({
     definition: { name: 'list_plugin_agents', description: 'List enabled plugin Agent roles. Use the exact id as subagent.agent_type to apply its instructions and tool restrictions.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     manifest: { effect_kind: 'observation', operation: 'agent.list_profiles', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
@@ -142,16 +171,16 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Asynchronously dispatch useful parallel work. Normally use fork (default): inherit the complete pre-dispatch conversation and shared system/tool prefix, then guide the child with prompt as a new user message. Use clean only when the user explicitly requests independent configuration; do not choose clean merely because a task looks self-contained. For clean, inspect list_subagent_options and configure the child yourself: write system_prompt and the user-role prompt, select applicable settings, allowed_tools, optional agent_type and background execution. No parent conversation or inherited system prompt is copied. Include the user's communication language, necessary facts and expected output. In either mode explain the child's work, your concurrent next steps and pending handoffs. The call returns a task ID: continue useful parent work and reconcile the result. Background work may outlive this Turn; manage_plugin_agents lists, waits for or stops it. Host permissions and child-state restrictions remain enforced; children cannot dispatch again.",
+        "Dispatch useful parallel work asynchronously and return a task ID. Continue independent parent work, then reconcile the delivered subagent_result; use await_subagents when only child results remain instead of polling. Background tasks may outlive this Turn and are managed by manage_plugin_agents. Host permissions and child-state restrictions remain enforced.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["prompt"],
         properties: {
-          prompt: { type: "string", minLength: 1, description: "Describe the child's assignment, your concurrent next steps, expected dependencies and how the results will be reconciled. Distinguish pending inputs from established facts." },
+          prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Delegate to a saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only. It uses its own server workspace, model, tools and instructions; no parent history, credentials or local paths are copied. Results participate in await_subagents. Resume with resume_task_id.' } } : {}),
           ...(options.loadChildRequest ? { resume_task_id: { type: 'string', minLength: 1, description: 'Continue a finished subagent task from this parent conversation in its original child session, with its own history and identity. Supply only this ID and a new prompt. A running child cannot be resumed concurrently.' } } : {}),
-          mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'Normally use fork and append prompt to the inherited conversation. Use clean only at the user’s explicit request for independent configuration, then choose its settings yourself.' },
+          mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork inherits the complete pre-dispatch conversation and system/tool prefix. Use clean only when the user explicitly requests independent configuration, not merely for a self-contained task. For clean, inspect list_subagent_options and choose system_prompt, settings and tool/Skill scope; parent history and system prompt are not copied.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required in clean mode; unavailable in fork mode. Sets the actual system message for the child. Define its role, behavior, communication language and output requirements. Host permissions cannot be overridden.' },
           allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
           settings: CLEAN_AGENT_SETTINGS_SCHEMA,
@@ -314,7 +343,7 @@ function registerAwaitSubagentsTool(
     definition: {
       name: AWAIT_SUBAGENTS_TOOL,
       description:
-        "Wait for selected Subagent tasks, or outstanding tasks from this parent Turn when task_ids is omitted. mode=any (default) returns as soon as one selected task finishes; mode=all joins every selected task. Other tasks keep running. Use this when progress depends on a selected result or no useful independent work remains. Completed results are returned for reconciliation without polling.",
+        "Wait without polling when progress depends on child results or no independent work remains. Returns completed results for reconciliation. Omit task_ids to select outstanding tasks from this parent Turn.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -370,7 +399,7 @@ export function asyncResultMessage(
   return {
     role: "user",
     name: "subagent_result",
-    content: `<subagent_result task_id="${task.taskId}" status="${task.status}">\n${body}\n</subagent_result>`,
+    content: `<subagent_result task_id="${task.taskId}" status="${task.status}">\n${body}\nRead read_subagent_conversation with this task_id for the ordered child conversation, including direct user interventions and later replies.\n</subagent_result>`,
   };
 }
 

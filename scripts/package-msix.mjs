@@ -47,35 +47,25 @@ function xml(value) {
 
 export function createManifest(identity) {
   const value = Object.fromEntries(Object.entries(validateIdentity(identity)).map(([key, text]) => [key, xml(text)]));
-  // Windows 11 honors the specific excluded key. Windows 10 uses desktop6's
-  // registry-only opt-out instead. Keep filesystem virtualization enabled.
+  // The paired loopback connector needs neither external registry writes nor
+  // an execution alias. Keep Windows' default package virtualization intact.
   return `<?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
-  xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
-  IgnorableNamespaces="uap uap5 desktop4 rescap desktop6 virtualization">
+  IgnorableNamespaces="uap desktop4 rescap">
   <Identity Name="${value.identityName}" Publisher="${value.publisher}" Version="${value.version}" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>${value.displayName}</DisplayName>
     <PublisherDisplayName>${value.publisherDisplayName}</PublisherDisplayName>
     <Description>CardBush desktop AI workspace</Description>
     <Logo>assets\\StoreLogo.png</Logo>
-    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
-    <virtualization:RegistryWriteVirtualization>
-      <virtualization:ExcludedKeys>
-        <virtualization:ExcludedKey>HKEY_CURRENT_USER\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.cardbush.browser_connector</virtualization:ExcludedKey>
-      </virtualization:ExcludedKeys>
-    </virtualization:RegistryWriteVirtualization>
   </Properties>
   <Resources><Resource Language="zh-CN" /><Resource Language="en-US" /></Resources>
-  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.19041.0" /></Dependencies>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
   <Applications>
     <Application Id="CardBush" Executable="app\\CardBush.exe" EntryPoint="Windows.FullTrustApplication" desktop4:SupportsMultipleInstances="true">
@@ -83,13 +73,6 @@ export function createManifest(identity) {
         BackgroundColor="transparent" Square150x150Logo="assets\\Square150x150Logo.png" Square44x44Logo="assets\\Square44x44Logo.png">
         <uap:DefaultTile Wide310x150Logo="assets\\Wide310x150Logo.png" />
       </uap:VisualElements>
-      <Extensions>
-        <uap5:Extension Category="windows.appExecutionAlias" Executable="app\\resources\\chrome-native-host\\CardBushBrowserHost.exe" EntryPoint="Windows.FullTrustApplication">
-          <uap5:AppExecutionAlias desktop4:Subsystem="console">
-            <uap5:ExecutionAlias Alias="CardBushBrowserHost.exe" />
-          </uap5:AppExecutionAlias>
-        </uap5:Extension>
-      </Extensions>
     </Application>
   </Applications>
 </Package>
@@ -114,6 +97,8 @@ export async function verifyMsix(file, expectedManifest) {
   const required = ['AppxBlockMap.xml', '[Content_Types].xml', 'app/CardBush.exe',
     'app/resources/app.asar', 'app/resources/process-guard/current.json',
     'app/resources/chrome-native-host/CardBushBrowserHost.exe',
+    'app/resources/chrome-extension/connector-transport.js',
+    'app/resources/connector-maintenance/cleanup-legacy.ps1',
     'app/resources/runtime-tools/ripgrep/win32-x64/rg.exe',
     'assets/StoreLogo.png', 'assets/Square150x150Logo.png',
     'assets/Square44x44Logo.png', 'assets/Wide310x150Logo.png'];
@@ -154,9 +139,11 @@ async function main() {
   const { values } = parseArgs({ options: {
     identity: { type: 'string', default: 'packaging/msix/identity.local.json' },
     check: { type: 'boolean' }, test: { type: 'boolean' }, help: { type: 'boolean' },
+    'stage-only': { type: 'boolean' },
   } });
   if (values.help) {
-    console.log('npm run package:msix -- [--identity path/to/identity.json] [--check]\n'
+    console.log('npm run package:msix -- [--identity path/to/identity.json] [--check] [--stage-only]\n'
+      + '--stage-only prepares an unsigned Store submission; runtime/installed-package validation stays pending.\n'
       + 'npm run package:msix -- --test  (test identity only; NEVER upload this package)');
     return;
   }
@@ -222,19 +209,35 @@ async function main() {
   await writeFile(path.join(output, 'SHA256SUMS.txt'), `${verification.sha256}  ${artifactName}\n`);
   const extracted = path.join(output, 'extracted-msix');
   run(sdk.executable, ['unpack', '/p', file, '/d', extracted]);
-  run(process.execPath, ['scripts/verify-packaged-platform.mjs', path.join(extracted, 'app')], {
-    ...process.env, CARDBUSH_SMOKE_REPORT: path.join(output, 'packaged-smoke-report.json'),
-  });
+  run(process.execPath, ['scripts/audit-package-privacy.mjs', path.join(extracted, 'app')]);
+  let runtimeValidation = 'not_run';
+  let runtimeError;
+  if (!values['stage-only']) {
+    try {
+      run(process.execPath, ['scripts/verify-packaged-platform.mjs', path.join(extracted, 'app')], {
+        ...process.env, CARDBUSH_SMOKE_REPORT: path.join(output, 'packaged-smoke-report.json'),
+      });
+      runtimeValidation = 'passed';
+    } catch (error) { runtimeValidation = 'failed'; runtimeError = error; }
+  }
   await writeFile(path.join(output, 'msix-build-report.json'), JSON.stringify({
-    testOnly: Boolean(values.test), artifact: file, identity, ...verification,
+    testOnly: Boolean(values.test), storeSubmissionOnly: true, signed: false, releaseReady: false,
+    runtimeValidation, ...(runtimeError ? { runtimeError: runtimeError.message } : {}),
+    artifact: artifactName, identity, ...verification,
     startedAt, completedAt: new Date().toISOString(),
     source: { commit, modifiedWorkingTree: Boolean(workingTree), appVersion: JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version },
     sdk: { version: sdk.version, archiveSha256: sdk.archiveSha256, archiveUrl: sdk.archiveUrl },
-    verified: ['TypeScript and production build', 'MakeAppx validation', 'package contents and identity',
-      'MakeAppx extraction', 'extracted application smoke', 'native Windows icons', 'Chrome native host protocol'],
-    pending: ['installed MSIX launch and tools', 'Chrome native messaging registration',
+    verified: ['TypeScript and production build', 'production dependency inventory', 'MakeAppx validation', 'package contents and identity',
+      'MakeAppx extraction', 'private keys and local data exclusion',
+      ...(runtimeValidation === 'passed' ? ['extracted application smoke', 'native Windows icons', 'Chrome production host boundary and ACL smoke'] : [])],
+    pending: [...(runtimeValidation === 'passed' ? [] : ['extracted application runtime validation']),
+      'Store package signature', 'installed MSIX launch and tools with Smart App Control enabled', 'package LocalState ownership and legacy registration migration',
+      'installed Chrome round-trip and connector disable/remove/restart', 'upgrade and multi-account isolation',
+      'direct uninstall, running-app uninstall and crash-before-uninstall residue inspection',
       'notifications and taskbar identity', 'Windows App Certification Kit', 'Store certification'],
   }, null, 2) + '\n');
+  await writeFile(path.join(output, 'README.txt'), '此 MSIX 仅用于 Microsoft Store 上传，尚未由商店签名，不是可直接分发安装的正式版本。\n请在 Partner Center 核对应用身份与版本号，完成认证后，从商店安装并验证 Computer Use、浏览器连接和多 Windows 用户数据隔离。\n详细检查结果见 msix-build-report.json。\n');
+  if (runtimeError) throw runtimeError;
   console.log(`${values.test ? 'TEST ONLY — DO NOT UPLOAD: ' : 'Store upload package: '}${file}`);
   console.log('The package was not installed, signed locally, uploaded, or submitted. Installed-MSIX validation remains required.');
 }

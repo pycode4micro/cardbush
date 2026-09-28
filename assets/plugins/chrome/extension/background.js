@@ -1,5 +1,5 @@
-importScripts('downloads.js');
-const NATIVE_HOST = 'com.cardbush.browser_connector';
+importScripts('downloads.js', 'connector-transport.js');
+const PAIRING_KEY = 'cardbushConnectorPairingV2';
 const CONNECTOR_PROTOCOL = 'cardbush.chrome_connector.v1';
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const CONTROL_IDLE_TIMEOUT_MS = 60_000;
@@ -7,6 +7,12 @@ const CONTROL_IDLE_TIMEOUT_MS = 60_000;
 const SCREENSHOT_TIMEOUT_MS = 25_000;
 const RECONNECT_ALARM = 'cardbush-native-reconnect';
 const RECONNECT_DELAY_MINUTES = 0.5;
+const RECONNECT_STATE_KEY = 'cardbushNativeReconnect';
+const CONNECTOR_ENABLED_KEY = 'cardbushConnectorEnabled';
+let connectorEnabled = false;
+let connectionEpoch = 0;
+let connectorPreferenceQueue = Promise.resolve();
+const MAX_CONNECTION_FAILURES = 3;
 const MANAGED_SCOPES_STORAGE_KEY = 'cardbushManagedScopes';
 const ACTIVE_SCOPE_STORAGE_KEY = 'cardbushActiveScope';
 const SESSION_GRANTS_STORAGE_KEY = 'cardbushSessionGrants';
@@ -19,6 +25,8 @@ const GROUP_TITLE_PREFIX = 'CardBush · ';
 let nativePort = null;
 let nativeReady = false;
 let lastError = '';
+let connectionFailures = 0;
+let reconnectPaused = false;
 let activeScope = null;
 const attachedTabs = new Map();
 const viewportTabs = new Set();
@@ -31,12 +39,13 @@ const managedScopes = new Map();
 const controlIdleTimers = new Map();
 const groupCreations = new Map();
 const managedScopesReady = restoreManagedState();
+const reconnectReady = restoreReconnectState();
 
-connectNative();
-chrome.runtime.onInstalled.addListener(connectNative);
-chrome.runtime.onStartup.addListener(connectNative);
+void reconnectReady.then(() => connectNative());
+chrome.runtime.onInstalled.addListener(() => { void reconnectReady.then(() => connectNative()); });
+chrome.runtime.onStartup.addListener(() => { void reconnectReady.then(() => connectNative()); });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === RECONNECT_ALARM) connectNative();
+  if (alarm.name === RECONNECT_ALARM) void reconnectReady.then(() => connectNative());
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -71,18 +80,33 @@ chrome.tabGroups.onRemoved.addListener((group) => {
   });
 });
 
-function connectNative() {
+async function connectNative(manual = false) {
+  if (manual) {
+    await reconnectReady;
+    const epoch = ++connectionEpoch;
+    await persistConnectorPreference(true);
+    if (epoch !== connectionEpoch) return;
+    connectorEnabled = true;
+    connectionFailures = 0;
+    reconnectPaused = false;
+    void persistReconnectState();
+  }
+  if (!connectorEnabled || reconnectPaused) return;
   if (nativePort) return;
+  const epoch = connectionEpoch;
   void chrome.alarms.clear(RECONNECT_ALARM);
   try {
-    const port = chrome.runtime.connectNative(NATIVE_HOST);
+    const saved = await chrome.storage.local.get([PAIRING_KEY]);
+    if (epoch !== connectionEpoch || !connectorEnabled || nativePort || reconnectPaused) return;
+    const pairing = parseConnectorPairing(saved[PAIRING_KEY]);
+    const port = createConnectorPort(pairing);
     nativePort = port;
     nativeReady = false;
     lastError = '';
     let connectionError = '';
     const handshakeTimer = setTimeout(() => {
       if (nativePort !== port || nativeReady) return;
-      lastError = 'CardBush 本地桥握手超时，请更新应用和浏览器扩展并重新配置本地桥。';
+      lastError = 'CardBush 配对握手超时，请确认连接器已开启，或重新生成配对码。';
       nativePort = null;
       port.disconnect();
       void releaseAll();
@@ -94,6 +118,9 @@ function connectNative() {
         clearTimeout(handshakeTimer);
         nativeReady = true;
         lastError = '';
+        connectionFailures = 0;
+        reconnectPaused = false;
+        void persistReconnectState();
         void publishStatus();
         return;
       }
@@ -111,6 +138,10 @@ function connectNative() {
         return;
       }
       if (!nativeReady) return;
+      if (message?.type === 'control' && message.method === 'connector.disable') {
+        void disableConnector().catch(error => { lastError = errorMessage(error); });
+        return;
+      }
       if (message?.type === 'control' && message.method === 'debugger.detachAll') {
         void releaseAll();
         return;
@@ -140,12 +171,72 @@ function connectNative() {
 }
 
 function scheduleReconnect() {
+  if (!connectorEnabled) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
+  connectionFailures++;
+  reconnectPaused = connectionFailures >= MAX_CONNECTION_FAILURES;
+  void persistReconnectState();
+  if (reconnectPaused) {
+    void chrome.alarms.clear(RECONNECT_ALARM);
+    return;
+  }
   void chrome.alarms.create(RECONNECT_ALARM, {
-    delayInMinutes: RECONNECT_DELAY_MINUTES,
+    delayInMinutes: RECONNECT_DELAY_MINUTES * 2 ** (connectionFailures - 1),
   });
 }
 
+async function restoreReconnectState() {
+  const preference = await chrome.storage.local.get([CONNECTOR_ENABLED_KEY]);
+  const saved = await chrome.storage.session.get([RECONNECT_STATE_KEY, CONNECTOR_ENABLED_KEY]);
+  // A fresh browser session requires an explicit Connect click. Worker restarts
+  // within that browser session may recover an already enabled connection.
+  connectorEnabled = preference[CONNECTOR_ENABLED_KEY] === true && saved[CONNECTOR_ENABLED_KEY] === true;
+  if (!connectorEnabled) { await chrome.alarms.clear(RECONNECT_ALARM); return; }
+  const state = saved[RECONNECT_STATE_KEY];
+  if (!state || !Number.isInteger(state.failures) || state.failures < 0) return;
+  connectionFailures = Math.min(MAX_CONNECTION_FAILURES, state.failures);
+  reconnectPaused = connectionFailures >= MAX_CONNECTION_FAILURES;
+  if (reconnectPaused) {
+    lastError = typeof state.lastError === 'string' ? state.lastError : '';
+    await chrome.alarms.clear(RECONNECT_ALARM);
+  }
+}
+
+async function disableConnector() {
+  await reconnectReady;
+  connectorEnabled = false;
+  connectionEpoch++;
+  nativeReady = false;
+  const port = nativePort;
+  nativePort = null;
+  await persistConnectorPreference(false, async () => {
+    await chrome.alarms.clear(RECONNECT_ALARM);
+    port?.disconnect();
+    await releaseAll();
+  });
+}
+
+function persistConnectorPreference(enabled, cleanup) {
+  // Preserve click order across asynchronous storage writes and release the old
+  // debugger sessions before a later explicit Connect can open a new port.
+  const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
+    try {
+      await chrome.storage.local.set({ [CONNECTOR_ENABLED_KEY]: enabled });
+      await chrome.storage.session.set({ [CONNECTOR_ENABLED_KEY]: enabled });
+    } finally { await cleanup?.(); }
+  });
+  connectorPreferenceQueue = operation;
+  return operation;
+}
+
+function persistReconnectState() {
+  return chrome.storage.session.set({ [RECONNECT_STATE_KEY]: {
+    failures: connectionFailures, lastError: lastError.slice(0, 1600),
+  } });
+}
+
 async function handleNativeRequest(message) {
+  if (!connectorEnabled || !nativeReady) return;
+  const epoch = connectionEpoch;
   const port = nativePort;
   const progress = (stage) => {
     try { port?.postMessage({ type: 'progress', id: message.id, clientId: message.clientId, stage }); } catch { /* Disconnected. */ }
@@ -161,6 +252,7 @@ async function handleNativeRequest(message) {
   } catch (error) {
     response.error = normalizedError(error);
   }
+  if (epoch !== connectionEpoch || port !== nativePort || !connectorEnabled) { await releaseAll(); return; }
   try { port?.postMessage(response); } catch { /* Do not send a previous connection's response to a new peer. */ }
   await publishStatus();
 }
@@ -268,11 +360,24 @@ async function dispatch(method, params, progress = () => {}) {
 
 async function handlePopupMessage(message) {
   await managedScopesReady;
+  await reconnectReady;
   const action = String(message?.action || 'status');
   if (action === 'status') return { ok: true, ...(await popupState(message?.scopeId)) };
+  if (action === 'pair') {
+    const code = String(message?.code || '').trim();
+    parseConnectorPairing(code);
+    await disableConnector();
+    await chrome.storage.local.set({ [PAIRING_KEY]: code });
+    await connectNative(true);
+    return { ok: true, ...(await popupState()) };
+  }
   if (action === 'reconnect') {
-    connectNative();
+    await connectNative(true);
     return { ok: true, ...(await popupState(message?.scopeId)) };
+  }
+  if (action === 'disable_connector') {
+    await disableConnector();
+    return { ok: true, ...(await popupState()) };
   }
   if (action === 'disconnect') {
     const scope = await popupAuthorizationScope(message?.scopeId);
@@ -749,7 +854,9 @@ async function popupState(preferredScopeId = '') {
     : null;
   const managedTab = selectedScope && tab ? await isTabManaged(selectedScope, tab) : false;
   return {
+    connectorEnabled,
     nativeConnected: nativePort != null && nativeReady,
+    reconnectPaused,
     nativeConnecting: nativePort != null && !nativeReady && !lastError,
     controlledTabCount: attachedTabs.size,
     activeScope: selectedScope ? {

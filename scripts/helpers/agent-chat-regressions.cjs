@@ -107,12 +107,10 @@ module.exports = async ({ run, until, pause, win, root }) => {
   await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Overview').click()");
   await until("!!document.querySelector('.agents-overview')", 'leave the image conversation');
   await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select A').click()");
-  await until("!!document.querySelector('.agent-chat [data-work-summary-toggle]')", 'reopen cloud history');
-  await run("document.querySelector('.agent-chat [data-work-summary-toggle]').click()");
-  await until("!!document.querySelector('.work-summary-history-turn')", 'history details are available');
-  await run("document.querySelector('.work-summary-history-turn').click()");
+  await until("!!document.querySelector('.agent-chat .assistant-completed-summary')", 'cloud history is available in the conversation');
+  await run("document.querySelector('.agent-chat .assistant-completed-summary').click()");
   await until("document.querySelector('.loop-image-previews img')?.naturalWidth===64", 'cloud tool image survives history reload');
-  await run("document.querySelector('[aria-label=关闭审查]').click()");
+  await run("document.querySelector('.agent-chat .assistant-completed-summary').click()");
   await run("document.querySelector('.message-actions button[title=编辑并重跑]').click()");
   await until("!!document.querySelector('.user-edit-card textarea')", 'edit existing remote message');
   await run("var field=document.querySelector('.user-edit-card textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'请重新描述这张图');field.dispatchEvent(new Event('input',{bubbles:true}));undefined;");

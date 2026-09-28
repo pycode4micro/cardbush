@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "Chrome",
     "shortDescription": "通过连接器操作当前 Chrome 与登录状态",
-    "longDescription": "默认通过 CardBush Browser Connector 和 Native Messaging 复用当前 Chrome 的 Cookie 与登录状态。每个 CardBush 会话使用独立命名标签组，模型只能看到和控制本会话组内的标签；现有个人标签必须由用户在扩展中明确复制进组。官方 Chrome DevTools MCP 仅保留为高级远程调试兼容模式，不会创建临时浏览器资料。",
+    "longDescription": "默认通过 CardBush Browser Connector 和主动配对的本机连接 复用当前 Chrome 的 Cookie 与登录状态。每个 CardBush 会话使用独立命名标签组，模型只能看到和控制本会话组内的标签；现有个人标签必须由用户在扩展中明确复制进组。官方 Chrome DevTools MCP 仅保留为高级远程调试兼容模式，不会创建临时浏览器资料。",
     "developerName": "CardBush / Google ChromeDevTools",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],

@@ -1,3 +1,6 @@
+import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
+import { adoptDraftConversationStyle } from '../features/settings/conversationStyle';
+import { useConversationViewState } from '../shared/conversationViewState';
 import { localConversationBackend, type ConversationBackend } from '../backend/conversationBackend';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -47,6 +50,10 @@ import type {
 } from '../types';
 import { keepFirstPendingInteraction } from '../features/interactions/pendingInteractionQueue';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
+
+// Reopened child views may observe the same terminal event. Only one observer
+// may advance their shared local queue after that turn.
+const continuedLocalQueueTurns = new Set<string>();
 import {
   assistantTurnTimingFingerprint,
   persistAssistantTurnTiming,
@@ -57,6 +64,7 @@ import {
   persistSessionAttentionState,
   readSessionAttentionState,
 } from '../features/sessionAttention';
+import { notifyAttentionSound } from '../features/notificationSound';
 import {
   basename,
   isAudioPath,
@@ -155,6 +163,7 @@ export {
 } from '../features/chatMessages/transcript/messageProjection';
 
 export type QueuedChatMessage = {
+  sourceEnabled?: boolean;
   id: string;
   text: string;
   conversation?: ConversationSummary;
@@ -309,13 +318,17 @@ export function useCardbushChat(
   attentionByConversationRef.current = attentionByConversation;
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const workspaceSwitchesRef = useRef(new Map<string, Promise<void>>());
-  const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
+  const queueInstance = useRef(crypto.randomUUID());
+  const [queuedMessages, setQueuedMessages, getQueuedMessages] = useConversationViewState<QueuedChatMessage[]>(
+    `chat-queue:${backend.keepRunningOnUnmount ? backend.scope : queueInstance.current}`, () => [],
+    value => Boolean(backend.keepRunningOnUnmount && value.length));
+  const queuedMessagesRef = useMemo(() => ({ get current() { return getQueuedMessages(); },
+    set current(value: QueuedChatMessage[]) { setQueuedMessages(value); } }), [getQueuedMessages, setQueuedMessages]);
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
   const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
   const sendMessageRef = useRef<
-    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string) => Promise<void>
+    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean) => Promise<void>
   >(async () => undefined);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const activeConversationIdForState = activeConversationId.trim();
   const messagesLoading = Boolean(
     activeConversationIdForState &&
@@ -416,9 +429,11 @@ export function useCardbushChat(
     kind: SessionAttentionKind,
     body: string,
     turnId = '',
+    notificationId?: string,
   ) => {
     const normalized = sessionId.trim();
     if (!normalized) return;
+    notifyAttentionSound({ sessionId: normalized, scope: backend.scope, kind, turnId, notificationId });
     if (
       kind === 'completed' &&
       viewActiveRef.current &&
@@ -492,12 +507,14 @@ export function useCardbushChat(
   }, [activeConversationId, requestContext.viewActive, clearSessionAttention]);
 
   useEffect(() => () => {
-    if (backend.scope) for (const controller of Object.values(controllersRef.current)) controller.abort();
-    for (const { controller } of Object.values(goalTurnControllersRef.current)) {
+    if (backend.scope && !backend.keepRunningOnUnmount) for (const controller of Object.values(controllersRef.current)) controller.abort();
+    for (const [sessionId, { controller }] of Object.entries(goalTurnControllersRef.current)) {
+      // Keep an observer long enough to deliver accepted queued child input.
+      if (backend.keepRunningOnUnmount && queuedMessagesRef.current.some(item => queuedMessageConversationId(item) === sessionId)) continue;
       controller.abort();
+      delete goalTurnControllersRef.current[sessionId];
+      delete goalStreamCheckpointsRef.current[sessionId];
     }
-    goalTurnControllersRef.current = {};
-    goalStreamCheckpointsRef.current = {};
   }, []);
 
   const applyConnectionRecoveryUpdate = useCallback((
@@ -556,14 +573,20 @@ export function useCardbushChat(
     setQueuedMessages(reordered);
   }, []);
 
-  const dequeueMessageForConversation = useCallback((conversationId: string) => {
+  const dequeueMessageForConversation = useCallback((conversationId: string, completedTurnId?: string) => {
     if (backend.queue) return undefined;
     const normalized = conversationId.trim();
+    const terminalKey = backend.keepRunningOnUnmount && completedTurnId ? JSON.stringify([backend.scope, normalized, completedTurnId]) : '';
+    if (terminalKey && continuedLocalQueueTurns.has(terminalKey)) return undefined;
     const index = queuedMessagesRef.current.findIndex(
       (item) => queuedMessageConversationId(item) === normalized,
     );
     if (index < 0) {
       return undefined;
+    }
+    if (terminalKey) {
+      continuedLocalQueueTurns.add(terminalKey);
+      if (continuedLocalQueueTurns.size > 512) continuedLocalQueueTurns.delete(continuedLocalQueueTurns.values().next().value!);
     }
     const next = queuedMessagesRef.current[index];
     const rest = [
@@ -826,7 +849,10 @@ export function useCardbushChat(
       // The supplement may only enrich this exact snapshot, never a newer stream.
       let applied: ChatMessage[] | undefined;
       setMessagesByConversation(current => {
-        if (!isHistoryReadCurrent(read, current)) return current;
+        // The request was accepted above. React may process this queued update
+        // after streaming has started; later stream updates must follow it,
+        // rather than retroactively discarding this session's initial history.
+        if (current[sessionId] !== read.baseline) return current;
         applied = mergeLoadedMessagesPreservingLocalState(current[sessionId] ?? [], result.messages);
         return { ...current, [sessionId]: applied };
       });
@@ -979,15 +1005,17 @@ export function useCardbushChat(
     [],
   );
 
-  const markSessionRunning = useCallback((sessionId: string, turnId = '') => {
+  const markSessionRunning = useCallback((sessionId: string, turnId = '', ownsTranscript = true) => {
     const normalized = sessionId.trim();
     if (!normalized) {
       return;
     }
     clearSessionAttention(normalized);
-    contextUsageReadsRef.current.invalidate(normalized);
-    historyReadsRef.current.invalidate(normalized);
-    liveTranscriptSessionsRef.current.add(normalized);
+    if (ownsTranscript) {
+      contextUsageReadsRef.current.invalidate(normalized);
+      historyReadsRef.current.invalidate(normalized);
+      liveTranscriptSessionsRef.current.add(normalized);
+    }
     sendingSessionsRef.current.add(normalized);
     if (turnId.trim()) {
       activeTurnIdsRef.current[normalized] = turnId.trim();
@@ -1319,6 +1347,7 @@ export function useCardbushChat(
           'waiting',
           localize('目标需要你的确认，点击继续处理。', 'The goal needs your input. Click to continue.'),
           interaction.turnId ?? normalizedTurnId,
+          interaction.id,
         );
       },
       onFinalAssistantText: (text, chunk) => {
@@ -1376,7 +1405,7 @@ export function useCardbushChat(
       onThinking: (event) => {
         if (requestContext.reasoningTraceVisible !== true) return;
         window.dispatchEvent(new CustomEvent('cardbush:thinking', {
-          detail: { ...event, sessionId: backend.scope ? `${backend.scope}:${normalizedSessionId}` : normalizedSessionId },
+          detail: { ...event, sessionId: backend.scope && !backend.keepRunningOnUnmount ? `${backend.scope}:${normalizedSessionId}` : normalizedSessionId },
         }));
       },
       onConnectionState: (update) =>
@@ -1445,12 +1474,17 @@ export function useCardbushChat(
             normalizedTurnId,
           );
         }
+        if (backend.keepRunningOnUnmount && terminalTurnIdsRef.current.has(normalizedTurnId) && !controllersRef.current[normalizedSessionId]) {
+          const next = dequeueMessageForConversation(normalizedSessionId, normalizedTurnId);
+          if (next) window.setTimeout(() => { void sendMessageRef.current(next.text, next.conversation, next.teamId, next.teamName, next.sourceEnabled); }, 0);
+        }
       });
   }, [
     applyConnectionRecoveryUpdate,
     applyGoalExecution,
     clearConnectionRecovery,
     clearSessionRunning,
+    dequeueMessageForConversation,
     localize,
     markSessionAttention,
     markSessionDone,
@@ -1519,8 +1553,18 @@ export function useCardbushChat(
       if (!alive) return;
       // Idle/completed sessions may never change revision or emit another event.
       clearWatchFailure();
-      queuedMessagesRef.current = state.queued;
-      setQueuedMessages(current => JSON.stringify(current) === JSON.stringify(state.queued) ? current : state.queued);
+      // Host-owned work is already running while its history is being loaded.
+      // Reflect that immediately so Stop and queue/guidance remain available.
+      if (state.activeTurnId && !terminalTurnIdsRef.current.has(state.activeTurnId)
+        && (activeTurnIdsRef.current[sessionId] !== state.activeTurnId || !sendingSessionsRef.current.has(sessionId))) {
+        // Status alone does not own the transcript: load its existing history
+        // before the event subscriber takes over snapshot protection.
+        markSessionRunning(sessionId, state.activeTurnId, false);
+      }
+      if (backend.queue) {
+        queuedMessagesRef.current = state.queued;
+        setQueuedMessages(current => JSON.stringify(current) === JSON.stringify(state.queued) ? current : state.queued);
+      }
       if (reading) return;
       const changed = revision !== state.revision;
       const attach = state.activeTurnId && !controllersRef.current[sessionId] &&
@@ -1543,7 +1587,7 @@ export function useCardbushChat(
       setConnectionRecoveryByConversation(current => ({ ...current, [sessionId]: failure }));
     });
     return () => { alive = false; stop(); clearWatchFailure(); };
-  }, [backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, refreshActiveSession, subscribeGoalTurn]);
+  }, [backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, refreshActiveSession, subscribeGoalTurn, markSessionRunning]);
 
   // Notifications can arrive while the previous read is in flight, or after a
   // short turn has already finished. Preserve both updates and committed history.
@@ -1780,10 +1824,12 @@ export function useCardbushChat(
     }));
     setMessageHistoryLoading(draft.id, false);
     navigationRevisionRef.current++;
+    if (!backend.scope && !activeConversationIdRef.current) adoptDraftConversationStyle(draft.id);
+    if (!activeConversationIdRef.current) adoptDraftConversationSource(draft.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
     setActiveConversationId(draft.id);
     setError(null);
     return draft;
-  }, [setMessageHistoryLoading]);
+  }, [backend.scope, setMessageHistoryLoading]);
 
   const persistPreparedConversation = useCallback(async (
     conversation: ConversationSummary,
@@ -2221,7 +2267,8 @@ export function useCardbushChat(
   }, [reloadConversations, beginHistoryRead, isHistoryReadCurrent, applyHistoryRead]);
 
   const sendMessage = useCallback(
-    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string) => {
+    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean) => {
+      const sourceEnabled = sourceSnapshot ?? resolveConversationSource(queuedConversation?.id ?? activeConversation?.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const trimmed = text.trim();
       if (!trimmed) {
         return;
@@ -2266,7 +2313,7 @@ export function useCardbushChat(
           try {
             await backend.queue.enqueue({ sessionId, userInput: outbound.userInput, model: selectedModel,
               modelConfig: modelConfigFor(managedModelConfigs, selectedModel), uiLanguage: languageRef.current,
-              permissionMode, subagentPermissionRouting, reasoningLevel, referencePlanMode,
+              permissionMode, subagentPermissionRouting, reasoningLevel, referencePlanMode, sourceEnabled,
               files: attachments.files, images: attachments.images, attachments: optimisticAttachments,
               standardImageInputEnabled: requestContext.standardImageInputEnabled,
               disabledSkills: [...(requestContext.disabledSkillNames ?? [])] });
@@ -2277,6 +2324,7 @@ export function useCardbushChat(
         enqueueMessage({
           id: `queued-${crypto.randomUUID()}`,
           text: trimmed,
+          sourceEnabled,
           conversation: candidate,
           createdAt: new Date().toISOString(),
           teamId: turnTeamId,
@@ -2303,6 +2351,7 @@ export function useCardbushChat(
         status: 'pending',
         metadata: {
           message_delivery: 'pending',
+          sourceEnabled,
           ...(turnTeamId ? { team_id: turnTeamId, team_name: turnTeamName ?? turnTeamId } : {}),
         },
       };
@@ -2360,6 +2409,7 @@ export function useCardbushChat(
         await streamChat({
           sessionId,
           userInput: outbound.userInput,
+          sourceEnabled,
           submittedAt,
           model: selectedModelName(managedModelConfigs, selectedModel),
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
@@ -2480,6 +2530,7 @@ export function useCardbushChat(
               'waiting',
               localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.'),
               interaction.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
+              interaction.id,
             );
           },
           onFinalAssistantText: (text, chunk) => {
@@ -2555,7 +2606,7 @@ export function useCardbushChat(
           onThinking: (event) => {
             if (requestContext.reasoningTraceVisible !== true) return;
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
-              detail: { ...event, sessionId: backend.scope ? `${backend.scope}:${sessionId}` : sessionId },
+              detail: { ...event, sessionId: backend.scope && !backend.keepRunningOnUnmount ? `${backend.scope}:${sessionId}` : sessionId },
             }));
           },
           onConnectionState: (update) => {
@@ -2686,7 +2737,7 @@ export function useCardbushChat(
           clearSessionRunning(sessionId);
         }
         if (terminalTurnId) terminalTurnIdsRef.current.delete(terminalTurnId);
-        const nextQueued = dequeueMessageForConversation(sessionId);
+        const nextQueued = dequeueMessageForConversation(sessionId, terminalTurnId);
         if (nextQueued) {
           window.setTimeout(() => {
             void sendMessageRef.current(
@@ -2694,6 +2745,7 @@ export function useCardbushChat(
               nextQueued.conversation,
               nextQueued.teamId,
               nextQueued.teamName,
+              nextQueued.sourceEnabled,
             );
           }, 0);
         }
@@ -2778,7 +2830,7 @@ export function useCardbushChat(
           (candidate) => candidate.id !== message.id,
         ),
       }));
-      await sendMessage(retryText, conversation);
+      await sendMessage(retryText, conversation, undefined, undefined, message.metadata?.sourceEnabled !== false);
     },
     [
       activeConversation,
@@ -2996,6 +3048,7 @@ export function useCardbushChat(
               'waiting',
               localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.'),
               interaction.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
+              interaction.id,
             );
           },
           onFinalAssistantText: (text, chunk) => {
@@ -3072,7 +3125,7 @@ export function useCardbushChat(
           onThinking: (event) => {
             if (requestContext.reasoningTraceVisible !== true) return;
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
-              detail: { ...event, sessionId: backend.scope ? `${backend.scope}:${sessionId}` : sessionId },
+              detail: { ...event, sessionId: backend.scope && !backend.keepRunningOnUnmount ? `${backend.scope}:${sessionId}` : sessionId },
             }));
           },
           onConnectionState: (update) => {
@@ -3332,6 +3385,7 @@ export function useCardbushChat(
             images: replayAttachments.images,
             files: replayAttachments.files,
             attachments: sourceUserMessage.attachments,
+            sourceEnabled: sourceUserMessage.metadata?.sourceEnabled !== false,
             signal: controller.signal,
             ...handlers,
           }),
@@ -3503,6 +3557,7 @@ export function useCardbushChat(
             teamId: controlTeamId,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
+            sourceEnabled: editSourceMessage.metadata?.sourceEnabled !== false,
             images: editedStreamAttachments.images,
             files: editedStreamAttachments.files,
             attachments: editedAttachments,
@@ -3548,6 +3603,7 @@ export function useCardbushChat(
       guidance: string,
       mode: 'append_context' | 'interrupt_and_continue',
     ) => {
+      const sourceEnabled = resolveConversationSource(message.conversationId || activeConversationId, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const text = guidance.trim();
       if (!text) {
         return;
@@ -3573,6 +3629,7 @@ export function useCardbushChat(
         content: text,
         mode,
       });
+      optimisticMessage.metadata = { ...optimisticMessage.metadata, sourceEnabled };
       setMessagesByConversation((current) => ({
         ...current,
         [conversationId]: [...(current[conversationId] ?? []), optimisticMessage],
@@ -3584,6 +3641,7 @@ export function useCardbushChat(
           sessionId: conversationId,
           turnId,
           guidance: text,
+          sourceEnabled,
           clientMessageId,
           createdAt: optimisticMessage.createdAt,
           mode,
@@ -3612,7 +3670,7 @@ export function useCardbushChat(
             conversations.find((item) => item.id === conversationId) ?? activeConversation;
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            await sendMessageRef.current(text, conversation);
+            await sendMessageRef.current(text, conversation, undefined, undefined, sourceEnabled);
           }
           setError(null);
           return;
@@ -3671,6 +3729,7 @@ export function useCardbushChat(
         content: text,
         mode,
       });
+      optimisticMessage.metadata = { ...optimisticMessage.metadata, sourceEnabled: queued.sourceEnabled !== false };
       setMessagesByConversation((current) => ({
         ...current,
         [conversationId]: [...(current[conversationId] ?? []), optimisticMessage],
@@ -3683,6 +3742,7 @@ export function useCardbushChat(
           sessionId: conversationId,
           turnId: active,
           guidance: text,
+          sourceEnabled: queued.sourceEnabled,
           clientMessageId,
           createdAt: optimisticMessage.createdAt,
           mode,
@@ -3709,7 +3769,7 @@ export function useCardbushChat(
           );
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            await sendMessageRef.current(text, queued.conversation, queued.teamId, queued.teamName);
+            await sendMessageRef.current(text, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled);
           }
           setError(null);
           return;
@@ -3771,6 +3831,7 @@ export function useCardbushChat(
           sessionId: conversationId,
           turnId,
           guidance: text,
+          sourceEnabled: typeof message.metadata?.sourceEnabled === 'boolean' ? message.metadata.sourceEnabled : undefined,
           clientMessageId,
           createdAt: message.createdAt,
           mode,
@@ -3801,7 +3862,7 @@ export function useCardbushChat(
             guidanceFallbackIdsRef.current.add(clientMessageId);
             const conversation =
               conversations.find((item) => item.id === conversationId) ?? activeConversation;
-            await sendMessageRef.current(text, conversation);
+            await sendMessageRef.current(text, conversation, undefined, undefined, message.metadata?.sourceEnabled !== false);
           }
           setError(null);
           return;

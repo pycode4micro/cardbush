@@ -46,7 +46,7 @@ test('ordinary dispatch defaults to fork and retains the exact parent prefix and
   const f = fixture(), definition = f.registry.resolve('subagent').definition;
   assert.equal(definition.inputSchema.properties.mode.default, 'fork');
   assert.equal(definition.inputSchema.properties.inherit_context, undefined);
-  assert.match(definition.description, /clean only when the user explicitly requests/);
+  assert.match(definition.inputSchema.properties.mode.description, /clean only when the user explicitly requests/);
   const outcome = await invoke(f.registry, f.request, 'subagent', { prompt: '我继续实现，你先核实接口。' });
   assert.equal(outcome.kind, 'returned');
   assert.equal(outcome.result.mode, 'fork');

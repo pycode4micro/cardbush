@@ -41,6 +41,7 @@ import {
 
 export interface OpenAIResponsesProviderConfig {
   apiKey: string;
+  fetch?: typeof fetch;
   baseURL?: string;
   defaultHeaders?: Record<string, string>;
   timeoutMs?: number;
@@ -404,6 +405,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
       apiKey: config.apiKey,
       baseURL: config.baseURL,
       defaultHeaders: config.defaultHeaders,
+      fetch: config.fetch,
       timeout: config.timeoutMs,
       maxRetries: 0,
     });

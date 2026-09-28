@@ -14,9 +14,11 @@ test('native backdrop requires OS, compositor, theme and accessibility support',
   for (const patch of [
     { platform: 'linux' }, { platform: 'darwin' }, { release: '10.0.22000' },
     { release: 'unknown' }, { preference: 'solid' }, { customTheme: true },
-    { theme: 'cyberpunk' }, { reducedTransparency: true },
+    { reducedTransparency: true },
     { highContrast: true }, { gpuCompositing: 'disabled_software' },
-  ]) assert.equal(resolveWindowAppearance({ ...input, ...patch }).material, 'none', JSON.stringify(patch));
+  ]) for (const theme of ['dark', 'bright']) {
+    assert.equal(resolveWindowAppearance({ ...input, theme, ...patch }).material, 'none', theme + JSON.stringify(patch));
+  }
 });
 
 function fixture({ fails = false } = {}) {
@@ -76,7 +78,5 @@ test('native captions follow themes and palette edits without recreating the bac
   assert.equal(captions.at(-1).symbolColor, '#eeeeee', 'invalid native colors use the readable base palette');
   controller.apply(resolveWindowAppearance({ ...input, theme: 'bright' }), '#f5f3ef');
   assert.equal(captions.at(-1).symbolColor, '#1e1c1a');
-  controller.apply(resolveWindowAppearance({ ...input, theme: 'cyberpunk' }), '#050607');
-  assert.equal(captions.at(-1).symbolColor, '#f4f3dc');
   assert.ok(captions.every(caption => caption.color === '#00000000'), 'native captions retain the themed backdrop');
 });

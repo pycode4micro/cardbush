@@ -20,7 +20,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       ['dark', 'dark', false, null, 'dark', 'rgb(26, 26, 26)', 'rgb(240, 237, 231)'],
       ['system-light', 'system', false, null, 'bright', 'rgb(245, 243, 239)', 'rgb(30, 28, 26)'],
       ['system-dark', 'system', true, null, 'dark', 'rgb(26, 26, 26)', 'rgb(240, 237, 231)'],
-      ['cyberpunk', 'cyberpunk', false, null, 'cyberpunk', 'rgb(5, 6, 7)', 'rgb(244, 243, 220)'],
+      ['retired-cyberpunk', 'cyberpunk', false, null, 'dark', 'rgb(26, 26, 26)', 'rgb(240, 237, 231)'],
       ['custom', 'custom', false, style, 'bright', 'rgb(228, 238, 247)', 'rgb(20, 41, 66)'],
     ]) {
       const seed = `<script>localStorage.clear();localStorage.setItem('cardbush_theme_mode',${JSON.stringify(preference)});localStorage.setItem('cardbush_imported_theme_style',${JSON.stringify(JSON.stringify(custom))});const nativeMatchMedia=window.matchMedia;window.matchMedia=query=>query==='(prefers-color-scheme: dark)'?{matches:${systemDark}}:nativeMatchMedia(query);</script>`;
@@ -32,7 +32,34 @@ module.exports = async ({ run, until, pause, window, root }) => {
       fs.writeFileSync(path.join(root, 'tmp', `startup-${name}.png`), (await boot.webContents.capturePage()).toPNG());
     }
 
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8'));
+    const wave = await boot.webContents.executeJavaScript(`(() => {
+      const rhythm = document.querySelector('.cardbush-startup-rhythm'), bars = [...rhythm.children];
+      const animations = bars.map(bar => bar.getAnimations()[0]);
+      animations.forEach(animation => animation.pause());
+      return [0, 120, 450, 960].map(time => {
+        animations.forEach(animation => { animation.currentTime = time; });
+        const bounds = rhythm.getBoundingClientRect();
+        return bars.map((bar, index) => { const box = bar.getBoundingClientRect(); return {
+          height: bar.offsetHeight, top: bounds.top, visibleHeight: box.height,
+          inside: box.top >= bounds.top && box.bottom <= bounds.bottom,
+          delay: animations[index].effect.getTiming().delay,
+          layoutAnimation: animations[index].effect.getKeyframes().some(frame => 'height' in frame || 'width' in frame),
+        }; });
+      });
+    })()`);
+    for (const frame of wave) for (const bar of frame) {
+      assert.equal(bar.height, 22, 'startup wave has fixed layout dimensions');
+      assert.ok(bar.inside && bar.delay <= 0 && !bar.layoutAnimation);
+    }
+    assert.equal(new Set(wave.map(frame => frame[0].top)).size, 1);
+    assert.ok(new Set(wave.map(frame => Math.round(frame[0].visibleHeight))).size > 1);
+    boot.webContents.debugger.attach('1.3');
+    await boot.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await pause(50);
+    assert.equal(await boot.webContents.executeJavaScript("document.querySelector('.cardbush-startup-rhythm').getAnimations({subtree:true}).length"), 0);
+    boot.webContents.debugger.detach();
+
+    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8'));
     await run(`
       window.startupPresence=[];
       const {useState,useLayoutEffect}=require(${JSON.stringify(require.resolve('react'))});
@@ -52,7 +79,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const commits = await run('startupPresence');
     if (commits.some(commit => !commit.mounted || !commit.visible)) failures.push({ name: 'sidebar-first-mount', commits });
     const first = await run("document.querySelector('.main-stage').getBoundingClientRect().left");
-    for (const theme of ['theme-bright', 'theme-dark', 'theme-dark theme-cyberpunk']) {
+    for (const theme of ['theme-bright', 'theme-dark']) {
       await run(`window.viewTheme=${JSON.stringify(theme)};showStartupSurface()`);
       await pause(50);
       assert.equal(await run("document.querySelector('.main-stage').getBoundingClientRect().left"), first, 'theme changes do not move the sidebar or reading surface');
@@ -64,7 +91,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await pause(260);
     assert.equal(await run("document.querySelector('.main-stage').getBoundingClientRect().left"), first, 'reopened sidebar preserves its width');
     assert.deepEqual(failures, [], 'startup must preserve saved theme colors and the initially expanded sidebar');
-    console.log('Startup presentation passed: light/dark/system/cyberpunk/custom palettes, first mount without collapse, theme layout stability and subsequent sidebar motion.');
+    console.log('Startup presentation passed: light/dark/system/custom and retired-theme migration palettes, first mount without collapse, theme layout stability and subsequent sidebar motion.');
   } finally {
     boot.destroy();
     assert.ok(directory.startsWith(path.join(root, 'tmp', 'startup-presentation-')));

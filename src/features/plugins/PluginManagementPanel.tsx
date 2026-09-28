@@ -46,6 +46,7 @@ import { PluginIcon } from '../../components/PluginIcon';
 import { PluginMarketplacePanel } from './PluginMarketplacePanel';
 import { usePluginNavigation, type PluginPage as Page, type ManageTab } from './usePluginNavigation';
 import './plugin-management.css';
+import { SettingsCard } from '../settings/SettingsControls';
 
 export function PluginManagementPanel({
   language,
@@ -405,11 +406,12 @@ export function PluginManagementPanel({
     {onOpenNetwork && presentation !== 'network' ? <button type="button" className="settings-link-row" onClick={onOpenNetwork}>
       <span><strong>{language === 'zh' ? '网络代理' : 'Network proxy'}</strong><small>{language === 'zh' ? '管理插件市场、插件与 MCP 的代理。' : 'Manage proxies for the marketplace, plugins, and MCP.'}</small></span><ChevronRight size={17} />
     </button> : <>
-    <header className="plugin-catalog-heading"><h3>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h3>
-      <p>{language === 'zh' ? '全局代理用于插件市场、插件和 MCP。选择后自动保存；手动代理填写完成后保存。点击“一键应用”可将当前设置应用到全部，之后仍可单独修改。' : 'The global proxy covers the marketplace, plugins and MCP. Choices save automatically; save manual addresses when ready. Apply to all to use the current settings everywhere, then adjust exceptions below.'}</p></header>
+    <SettingsCard title={language === 'zh' ? '插件代理' : 'Plugin proxy'}
+      subtitle={language === 'zh' ? '全局代理用于插件市场、插件和 MCP。选择后自动保存；手动代理填写完成后保存。点击“一键应用”可将当前设置应用到全部，之后仍可单独修改。' : 'The global proxy covers the marketplace, plugins and MCP. Choices save automatically; save manual addresses when ready. Apply to all to use the current settings everywhere, then adjust exceptions below.'}>
     {configuration && <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
       onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())}
       applyToAll={{ formId: 'plugin-proxy-global', save: proxy => saveGlobalProxy(proxy, true) }} />}
+    </SettingsCard>
     <section className="plugin-proxy-list"><div className="plugin-section-title"><h3>{language === 'zh' ? '插件与 MCP' : 'Plugins and MCP'}</h3><span>{plugins.filter(item => item.installed).length + (mcpOverview?.servers.length ?? 0)}</span>
       <button type="submit" form="plugin-proxy-global" className="plugin-proxy-reset" disabled={Boolean(busy) || !configuration}>{language === 'zh' ? '一键应用' : 'Apply to all'}</button></div>
       <label className="plugin-search"><Search size={17}/><input aria-label={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} placeholder={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} value={proxyQuery} onChange={event => setProxyQuery(event.target.value)}/></label>

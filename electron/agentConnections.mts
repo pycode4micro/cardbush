@@ -1,3 +1,4 @@
+import { sendSharedConfiguration, type SharedConfigurationArchive } from './agentSharedConfiguration.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -27,8 +28,11 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   #errors = new Map<string, string>();
   #writes: Promise<unknown> = Promise.resolve();
   #closing = false;
+  #configuration = new Map<string, Promise<void>>();
+  #configurationErrors = new Map<string, string>();
+  #configurationWarnings = new Map<string, string[]>();
   constructor(readonly path: string, readonly cipher: { encrypt(value: string): string; decrypt(value: string): string },
-    readonly options: { ssh?: Pick<SshConnectionManager, 'list' | 'tunnel'>; reconnectDelayMs?: number; healthIntervalMs?: number } = {}) {}
+    readonly options: { sharedConfiguration?: () => Promise<SharedConfigurationArchive>; ssh?: Pick<SshConnectionManager, 'list' | 'tunnel'>; reconnectDelayMs?: number; healthIntervalMs?: number } = {}) {}
   /** Restore saved managed tunnels without delaying desktop startup. */
   async restore() {
     if (this.#closing) return;
@@ -57,7 +61,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   }
   async list(): Promise<AgentConnection[]> {
     return (await this.#read()).map(item => ({ id: item.id, name: item.name, transport: 'http', url: item.url,
-      sshTunnel: item.sshTunnel, agentId: item.agentId, migrationIssue: item.migrationIssue, hasToken: Boolean(item.token),
+      sshTunnel: item.sshTunnel, agentId: item.agentId, migrationIssue: item.migrationIssue, hasToken: Boolean(item.token), configurationError: this.#configurationErrors.get(item.id), configurationWarnings: this.#configurationWarnings.get(item.id),
       connected: this.#live.has(item.id), info: this.#live.get(item.id)?.info,
       connectionState: this.#live.has(item.id) ? 'connected' : this.#desired.has(item.id) && this.#managed.has(item.id) && this.#errors.has(item.id)
         ? 'reconnecting' : this.#clients.has(item.id) ? 'connecting' : 'disconnected', connectionError: this.#errors.get(item.id) }));
@@ -161,9 +165,25 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   }
   async call(id: string, operation: AgentOperation, input: Record<string, unknown> = {}) {
     this.#desired.add(id);
-    const { client } = await this.#connection(id);
-    // Never replay a failed mutation. chat.send is explicitly deduplicated by requestId.
-    try { return await client.call(operation, input); }
+    const { client, info } = await this.#connection(id);
+    try {
+      const acknowledged = this.options.sharedConfiguration && (operation === 'chat.send' || operation === 'delegation.submit')
+        ? (await client.call('chat.jobs', { sessionId: input.sessionId }) as Array<{ id: string }>).some(job => job.id === (operation === 'chat.send' ? input.requestId : input.taskId)) : false;
+      if (!acknowledged && this.options.sharedConfiguration && (operation === 'chat.send' || operation === 'delegation.submit' || operation === 'conversation.catalog' ||
+          operation === 'product.command' && input.kind === 'models.get')) {
+        const previous = this.#configuration.get(id) ?? Promise.resolve();
+        const task = previous.catch(() => undefined).then(async () => {
+          if (!info.capabilities.sharedConfiguration) throw new Error('请更新云端 Agent 服务以使用统一配置。Update the Agent service to support shared configuration.');
+          const snapshot = await this.options.sharedConfiguration!();
+          const receipt = await sendSharedConfiguration(input => client.call('configuration.sync', input), snapshot);
+          this.#configurationWarnings.set(id, receipt.warnings); this.#configurationErrors.delete(id);
+        }).catch(error => { this.#configurationErrors.set(id, error instanceof Error ? error.message : 'Configuration sync failed.'); throw error; });
+        this.#configuration.set(id, task);
+        try { await task; } finally { if (this.#configuration.get(id) === task) this.#configuration.delete(id); }
+      }
+      // Never replay a failed mutation. Task submissions have their own durable identity.
+      return await client.call(operation, input);
+    }
     catch (error) { const entry = this.#clients.get(id); if (error instanceof AgentNetworkError && entry?.client === client) this.#failed(id, entry, error); throw error; }
   }
   async *events(id: string, input: AgentEventRequest, signal: AbortSignal, format: 'sse' | 'ndjson' = 'sse') {

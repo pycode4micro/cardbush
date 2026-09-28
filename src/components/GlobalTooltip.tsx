@@ -35,7 +35,15 @@ export function GlobalTooltip() {
       dismissed = target;
       target.setAttribute('data-global-tooltip-dismissed', '');
     }
+    function isTextEditor(element: EventTarget | null) {
+      return element instanceof HTMLTextAreaElement
+        || (element instanceof HTMLInputElement && /^(text|url|search|email|tel|password|number)$/.test(element.type))
+        || (element instanceof HTMLElement && element.isContentEditable);
+    }
     function content(target: Element) {
+      // Editing already explains the field; hover and caret navigation must not
+      // reopen help on its enclosing form or cover the text being entered.
+      if (isTextEditor(document.activeElement) && target.contains(document.activeElement)) return null;
       // The open interactive popup owns its trigger's explanation until it closes.
       if (target.closest('[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]')) return null;
       const text = target.getAttribute('data-tooltip') || target.getAttribute('data-global-tooltip-title') || target.getAttribute('aria-label'); if (!text) return null;
@@ -74,6 +82,7 @@ export function GlobalTooltip() {
       if (event.type === 'pointerout' && dismissed && event.target instanceof Node && dismissed.contains(event.target) && !dismissed.contains(related)) releaseDismissed();
     }
     const keydown = (event: KeyboardEvent) => { if (['Escape', 'Enter', ' '].includes(event.key)) dismiss(event); };
+    const focusEditor = (event: FocusEvent) => { if (isTextEditor(event.target)) clear(); };
     const stopInteraction = observeExplicitInteraction({
       pointerMove: event => { if (!event.buttons) show(event.target); }, pointerDown: dismiss,
       reset: () => { clear(); releaseDismissed(); },
@@ -85,11 +94,13 @@ export function GlobalTooltip() {
       },
     });
     document.addEventListener('pointerout', leave, true); document.addEventListener('focusout', leave, true);
+    document.addEventListener('focusin', focusEditor, true);
     document.addEventListener('keydown', keydown, true); document.addEventListener('click', dismiss, true);
     window.addEventListener('scroll', clear, true); window.addEventListener('resize', clear);
     return () => { stopInteraction(); clear(); releaseDismissed();
       stopTitles();
       document.removeEventListener('pointerout', leave, true); document.removeEventListener('focusout', leave, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', dismiss, true);
+      document.removeEventListener('focusin', focusEditor, true);
       window.removeEventListener('scroll', clear, true); window.removeEventListener('resize', clear); };
   }, [shortcuts, id]);
   useLayoutEffect(() => {

@@ -26,7 +26,7 @@ module.exports = async ({ run, until, pause }) => {
       messages: batchState['batch-session'], sending: true, stopping: false, pendingInteraction: null,
       loading: false, historyLoading: false, goalWaiting: false, error: null }));
     window.batchLabel = () => document.querySelector('.tool-execution-label')?.textContent;
-    window.batchStatus = () => document.querySelector('.tool-execution-status')?.textContent;
+    window.batchStatus = () => document.querySelector('.tool-execution-summary')?.getAttribute('aria-label')?.split(' · ').at(-1);
     window.batchObservations = [];
     window.batchObserver = new MutationObserver(() => {
       const label = batchLabel();
@@ -37,8 +37,8 @@ module.exports = async ({ run, until, pause }) => {
   `);
   try {
     await until("batchLabel() === 'Inspect history'", 'initial tool package');
-    await until("document.querySelector('.runtime-screen-line.processing small')?.textContent === 'Inspect history'", 'composer shares the action title');
-    await run("window.batchRailNode=document.querySelector('.runtime-screen-line.processing');window.batchTitleNode=document.querySelector('.tool-execution-label');void 0");
+    assert.equal(await run("document.querySelector('.runtime-screen-line.processing')"), null, 'execution state stays outside the queue rail');
+    await run("window.batchTitleNode=document.querySelector('.tool-execution-label');void 0");
     await run('batchObservations = []; window.batchStartedAt = performance.now(); batchTool("burst", "queued")');
     await pause(45);
     await run('batchTool("burst", "running")');
@@ -47,8 +47,8 @@ module.exports = async ({ run, until, pause }) => {
     assert.equal(await run('batchLabel()'), 'Inspect history', 'a short burst keeps the previous complete frame');
     await until("batchLabel() === 'Inspect burst'", 'latest burst state displayed');
     assert.deepEqual(await run('batchObservations.map(item => [item.label,item.status])'), [['Inspect burst','Returned']], 'queued/running transients never flash between completed frames');
-    assert.ok(await run("batchRailNode === document.querySelector('.runtime-screen-line.processing') && batchTitleNode === document.querySelector('.tool-execution-label')"), 'a title update cannot remount either display');
-    assert.equal(await run("document.querySelector('.runtime-screen-line.processing small').textContent"), 'Inspect burst');
+    assert.ok(await run("batchTitleNode === document.querySelector('.tool-execution-label')"), 'a title update cannot remount its display');
+    assert.equal(await run("document.querySelector('.tool-execution-status')"), null, 'normal tool statuses remain visually hidden');
 
     await run('batchObservations = []; batchStartedAt = performance.now()');
     for (let i = 0; i < 12; i++) {

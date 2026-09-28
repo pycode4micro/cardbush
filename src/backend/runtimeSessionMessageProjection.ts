@@ -183,6 +183,8 @@ export function projectRuntimeSessionMessage(
   }
   const attachments = runtimeMessageAttachments(message.metadata);
   if (role === 'user' && message.metadata?.automationReminder) metadata.automationReminder = message.metadata.automationReminder;
+  if (role === 'user' && typeof message.metadata?.sourceEnabled === 'boolean') metadata.sourceEnabled = message.metadata.sourceEnabled;
+  if (role === 'user' && message.metadata?.subagentAuthor) metadata.subagent_author = message.metadata.subagentAuthor;
   return {
     id: message.messageId,
     messageId: message.messageId,

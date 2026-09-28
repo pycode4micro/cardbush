@@ -57,6 +57,7 @@ function fixture(timeout = 2000) {
     console: { warn() {}, error() {} }, path, pathToFileURL, __dirname: '/fixture',
     process: { env: {}, platform: 'win32', arch: 'x64', resourcesPath: '/resources' },
     app: { getPath: () => '/profile', getAppPath: () => '/app', commandLine: { getSwitchValue: () => '' } },
+    chromeConnectorDataRoot: () => '/connector-profile',
     cardbushRuntimeIsPackaged: false, runtimeServicesStartupTimeoutMs: timeout,
     runtimeServicesInitialization: null, runtimeServicesAbort: null, runtimeServicesStopping: false,
     runtimeStartupStatus: { phase: 'initializing', attempt: 0 }, runtimeHostController: null,

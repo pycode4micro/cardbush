@@ -3,177 +3,47 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
 import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
 
-const executable = path.resolve(process.argv[2] || 'dist-native/chrome-connector/CardBushBrowserHost.exe');
+// Legacy stdio callers must not bypass the new explicit pairing boundary.
+const executable = path.resolve(process.argv[2] || 'dist-native/chrome-connector-test/CardBushBrowserHost.exe');
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-native-host-'));
-const broker = new ChromeConnectorBroker(root);
-let child;
+const broker = new ChromeConnectorBroker(root, { nativeHostPath: executable });
+async function nativeAttempt(origin, config) {
+  const child = spawn(executable, [origin], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, CARDBUSH_CHROME_CONNECTOR_CONFIG: config } });
+  const chunks = []; let stderr = '';
+  child.stdout.on('data', chunk => chunks.push(chunk));
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const timer = setTimeout(() => child.kill(), 5000);
+  try {
+    const result = await new Promise((resolve, reject) => {
+      child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    assert.equal(result.signal, null, stderr);
+    const output = Buffer.concat(chunks), messages = [];
+    for (let offset = 0; offset < output.length;) {
+      const length = output.readUInt32LE(offset); offset += 4;
+      assert.ok(offset + length <= output.length);
+      messages.push(JSON.parse(output.subarray(offset, offset + length).toString('utf8'))); offset += length;
+    }
+    assert.ok(!messages.some(message => message.type === 'connector_ready'), 'legacy native transport cannot authorize a browser');
+    return { ...result, messages };
+  } finally { clearTimeout(timer); if(child.exitCode == null)child.kill(); }
+}
 try {
   await broker.start();
-  const environment = { ...process.env };
-  delete environment.ELECTRON_RUN_AS_NODE;
-  delete environment.NODE_OPTIONS;
-  environment.CARDBUSH_CHROME_CONNECTOR_CONFIG = broker.configPath;
-  child = spawn(executable, [
-    'chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/',
-  ], {
-    env: environment,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  let stderr = '';
-  let exited = '';
-  child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-10_000); });
-  child.once('exit', (code, signal) => { exited = `exit=${code} signal=${signal}`; });
-  const output = nativeMessages(child.stdout);
-  await eventually(
-    () => broker.status().extensionConnected,
-    () => `${stderr} ${exited} native=${JSON.stringify(output.seen)}`,
-  );
-  const ready = await withTimeout(output.next(), 5_000, () => stderr);
-  assert.deepEqual(ready.value, {
-    type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1',
-  });
-
-  child.stdin.write(nativeFrame({
-    type: 'status',
-    version: 'packaged-host-test',
-    activeTabId: 73,
-    activeTabTitle: 'Native host test',
-    activeTabUrl: 'https://example.test/',
-    controlledTabCount: 1,
-  }));
-  await eventually(() => broker.status().activeTabId === 73, () => stderr);
-  assert.equal(broker.status().extensionVersion, 'packaged-host-test');
-
-  broker.releaseAll('packaged_native_host_test');
-  const message = await withTimeout(output.next(), 5_000, () => stderr);
-  assert.deepEqual(
-    { type: message.value.type, method: message.value.method, reason: message.value.reason },
-    {
-      type: 'control',
-      method: 'debugger.detachAll',
-      reason: 'packaged_native_host_test',
-    },
-  );
-  child.stdin.end();
-  const exit = await withTimeout(new Promise((resolve) => {
-    child.once('exit', (code, signal) => resolve({ code, signal }));
-  }), 5_000, () => stderr);
-  assert.equal(exit.signal, null);
-  assert.equal(exit.code, 0);
-  await eventually(() => !broker.status().extensionConnected, () => stderr);
-
-  // A CardBush crash/restart closes the broker while Chrome keeps its native
-  // stdin open. The dedicated host must still exit so the MV3 extension gets
-  // onDisconnect and can reconnect to the new app process.
-  child = spawn(executable, [
-    'chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/',
-  ], {
-    env: environment,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  let restartStderr = '';
-  child.stderr.on('data', (chunk) => { restartStderr = `${restartStderr}${chunk}`.slice(-10_000); });
-  await eventually(
-    () => broker.status().extensionConnected,
-    () => restartStderr,
-  );
-  const brokerClosedExit = new Promise((resolve) => {
-    child.once('exit', (code, signal) => resolve({ code, signal }));
-  });
-  broker.stop();
-  const restartedExit = await withTimeout(brokerClosedExit, 5_000, () => restartStderr);
-  assert.equal(restartedExit.signal, null);
-  assert.equal(restartedExit.code, 0);
-
-  child = spawn(executable, ['chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/'], {
-    env: { ...environment, CARDBUSH_CHROME_CONNECTOR_CONFIG: path.join(root, 'missing-config.json') },
-    stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-  });
-  const unavailableOutput = nativeMessages(child.stdout);
-  const unavailableExit = new Promise(resolve => child.once('exit', code => resolve(code)));
-  const unavailable = await withTimeout(unavailableOutput.next(), 5_000, () => 'no bridge error');
-  assert.equal(unavailable.value.type, 'connector_error');
-  assert.equal(unavailable.value.code, 'cardbush_bridge_unavailable');
-  assert.equal(await withTimeout(unavailableExit, 5_000, () => 'missing config did not exit'), 3);
-  assert.ok(!unavailableOutput.seen.some(message => message.type === 'connector_ready'));
-
-  child = spawn(executable, ['chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'], {
-    env: environment,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  const rejectedOutput = nativeMessages(child.stdout);
-  const rejectedExitPromise = new Promise((resolve) => {
-    child.once('exit', (code, signal) => resolve({ code, signal }));
-  });
-  const rejectedMessage = await withTimeout(rejectedOutput.next(), 5_000, () => 'no rejection frame');
-  assert.equal(rejectedMessage.value.code, 'extension_origin_rejected');
-  const rejectedExit = await withTimeout(rejectedExitPromise, 5_000, () => 'origin rejection did not exit');
-  assert.equal(rejectedExit.signal, null);
-  assert.equal(rejectedExit.code, 2);
-  console.log('CardBush Native Messaging host round-trip, restart recovery, and origin rejection passed');
+  await nativeAttempt('chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/', broker.configPath);
+  assert.equal(broker.status().extensionConnected, false);
+  const unavailable = await nativeAttempt('chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/', path.join(root, 'missing.json'));
+  assert.equal(unavailable.code, 3);
+  assert.equal(unavailable.messages[0].code, 'cardbush_bridge_unavailable');
+  const rejected = await nativeAttempt('chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/', broker.configPath);
+  assert.equal(rejected.code, 2); assert.equal(rejected.messages[0].code, 'extension_origin_rejected');
+  console.log('Legacy Native Messaging cannot bypass pairing; missing config and foreign origin fail closed.');
 } finally {
-  if (child && child.exitCode == null) child.kill();
   broker.stop();
+  assert.equal(path.dirname(root), path.resolve(tmpdir()));
+  assert.ok(path.basename(root).startsWith('cardbush-native-host-'));
   await rm(root, { recursive: true, force: true });
-}
-
-function nativeFrame(value) {
-  const body = Buffer.from(JSON.stringify(value), 'utf8');
-  const header = Buffer.allocUnsafe(4);
-  header.writeUInt32LE(body.length, 0);
-  return Buffer.concat([header, body]);
-}
-
-function nativeMessages(stream) {
-  let buffer = Buffer.alloc(0);
-  const queued = [];
-  const waiters = [];
-  const seen = [];
-  stream.on('data', (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (buffer.length >= 4) {
-      const length = buffer.readUInt32LE(0);
-      if (buffer.length < length + 4) break;
-      const value = JSON.parse(buffer.subarray(4, length + 4).toString('utf8'));
-      seen.push(value);
-      buffer = buffer.subarray(length + 4);
-      const waiter = waiters.shift();
-      if (waiter) waiter({ value, done: false });
-      else queued.push(value);
-    }
-  });
-  return {
-    seen,
-    next() {
-      const value = queued.shift();
-      return value
-        ? Promise.resolve({ value, done: false })
-        : new Promise((resolve) => waiters.push(resolve));
-    },
-  };
-}
-
-async function eventually(predicate, diagnostic) {
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  assert.fail(`Timed out waiting for packaged native host. ${diagnostic()}`);
-}
-
-function withTimeout(promise, timeoutMs, diagnostic) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(
-      () => reject(new Error(`Packaged native host timed out. ${diagnostic()}`)),
-      timeoutMs,
-    )),
-  ]);
 }

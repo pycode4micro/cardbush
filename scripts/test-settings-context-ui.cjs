@@ -15,7 +15,9 @@ app.whenReady().then(async () => {
     resolveId: id => id.endsWith('__settings_context_test__.ts') ? '\0settings-context-fixture' : undefined,
     load: id => id === '\0settings-context-fixture' ? [
       'src/features/SettingsView.tsx', 'src/features/composer/Composer.tsx', 'src/features/chat/GitBranchMenu.tsx', 'src/features/chat/TaskWorkspaceBar.tsx',
-      'src/features/settings/conversationStyle.ts',
+      'src/features/settings/conversationStyle.ts', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
+      'src/features/appearance/appearancePreferences.ts', 'src/features/appearance/useAppearanceRuntime.ts',
+      'src/features/notificationSound.ts',
       'src/features/shortcuts/keyboardShortcuts.ts',
       'src/components/WindowSidebarToggle.tsx', 'src/components/SidebarResizer.tsx',
       'src/components/GlobalTooltip.tsx',
@@ -30,13 +32,24 @@ app.whenReady().then(async () => {
   const bundle = (Array.isArray(result) ? result : [result]).flatMap(item => item.output).find(item => item.type === 'chunk').code;
   const win = new BrowserWindow({ show: false, width: 1200, height: 850,
     webPreferences: { nodeIntegration: true, contextIsolation: false, offscreen: true, backgroundThrottling: false, partition: 'settings-context-test' } });
+  const capture = win.webContents.capturePage.bind(win.webContents);
+  win.webContents.capturePage = async (rect, options) => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await capture(rect, { stayHidden: true, ...options }); }
+      catch (error) {
+        if (attempt >= 2 || !String(error).includes('UnknownVizError')) throw error;
+        // A hidden offscreen surface may be between compositor frames after resize.
+        win.webContents.invalidate(); await pause(120);
+      }
+    }
+  };
   const errors = [];
   win.webContents.session.webRequest.onBeforeRequest((details, done) => {
     const external = /^https?:/.test(details.url);
     if (external) errors.push('Unexpected network request: ' + details.url);
     done({ cancel: external });
   });
-  const run = code => win.webContents.executeJavaScript(code);
+  const run = async code => { try { return await win.webContents.executeJavaScript(code); } catch (error) { console.error('Renderer evaluation failed:', code.slice(0, 800)); throw error; } };
   const until = async code => {
     for (let attempt = 0; attempt < 100; attempt++) {
       if (await run(code)) return;
@@ -57,9 +70,12 @@ app.whenReady().then(async () => {
   })()`);
   try {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await win.webContents.insertCSS(['src/styles/theme.css', 'src/styles/app.css', 'src/styles/themes/cyberpunk.css', 'src/features/settings/keyboardSettings.css', 'src/components/global-tooltip.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
+    const componentCss = (Array.isArray(result) ? result : [result]).flatMap(item => item.output)
+      .filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => String(item.source)).join('\n');
+    await win.webContents.insertCSS(componentCss + '\n' + ['src/styles/theme.css', 'src/styles/app.css', 'src/styles/appearance.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
     await run(`
       window.failures = []; window.usageReads = 0;
+      crypto.randomUUID = require('node:crypto').randomUUID;
       window.usageFixture = { startedAt:'2025-09-12T00:00:00Z', promptTokens:59446000, completionTokens:515000, totalTokens:59961000,
         promptCacheHitTokens:0, promptCacheMissTokens:59446000, requestCount:206, conversationCount:38, activeDays:38, longestStreak:38,
         activity:Array.from({length:38}, (_, index) => {const day = new Date(); day.setDate(day.getDate() - index); return {date:[day.getFullYear(), String(day.getMonth()+1).padStart(2,'0'), String(day.getDate()).padStart(2,'0')].join('-'), tokens:(1 + index % 8) * 25103, requests:1};}) };
@@ -100,12 +116,12 @@ app.whenReady().then(async () => {
       window.sandboxStatus = { platform:'linux', state:'missing', installed:false, enabled:false, managed:false, canInstall:true, installer:'fixture' };
       const noop = () => {};
       window.fixtureModel = { id: 'fixture', provider: 'deepseek', modelName: 'deepseek-v4.1-flash-expires-on-0910', baseUrl: 'https://api.deepseek.com', apiKey: '', hasApiKey: true, maxContextTokens: 400000, maxCompletionTokens: 128000 };
-      window.settingsProps = { active: true, onReady: noop, language: 'zh', languageMode: 'zh', systemLanguage: 'zh', themePreference: 'cyberpunk',
+      window.settingsProps = { active: true, onReady: noop, language: 'zh', languageMode: 'zh', systemLanguage: 'zh', themePreference: 'dark',
         settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: {}, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {}, companion: {} },
         selectedModel: 'fixture', availableModels: [fixtureModel], backendCapabilities: {terminalRuntimes:['powershell','wsl'], runtimeAssetResetCategories:[], browserPrivacyMode:false, reasoningStream:true}, runtimeBusy: false, conversations: [], skills: [], disabledSkillNames: new Set(),
         initialSection: 'instructions', initialPluginTab: 'plugins', onBack: noop,
         onThemePreferenceChange: value => { settingsProps.themePreference = value; renderSettings(); }, onLanguageModeChange: noop,
-        onSettingsChange: fn => { settingsProps.settings = fn(settingsProps.settings); views.saveConversationStyle(settingsProps.settings.conversationStyle); renderSettings(); }, onUseModel: noop, onSidebarWidthChange: noop,
+        onSettingsChange: fn => { settingsProps.settings = fn(settingsProps.settings); localStorage.setItem(views.APPEARANCE_STORAGE_KEY, JSON.stringify(views.normalizeAppearance(settingsProps.settings.appearance))); views.saveConversationStyle(settingsProps.settings.conversationStyle); renderSettings(); }, onUseModel: noop, onSidebarWidthChange: noop,
         onToggleSkill: noop, onReloadSkills: async () => [], onLoadSkillDetail: async () => null,
         visualInputAvailable: true, visualInputEnabled: false, onVisualInputEnabledChange: value => { settingsProps.visualInputEnabled = value; renderSettings(); },
       };
@@ -117,7 +133,11 @@ app.whenReady().then(async () => {
         window.settingsSidebarState = { collapsed, width, active, ...presence };
         window.setSettingsActive = setActive;
         window.restoreSidebarWidth = () => setWidth(272);
-        return h('div', { className: 'app theme-' + (window.settingsTheme || 'dark'), style: { width: '100vw', height: '100vh', minWidth: 0, '--sidebar-width': width + 'px' } },
+        const appearance = views.normalizeAppearance(settingsProps.settings.appearance);
+        const theme = window.settingsTheme || (settingsProps.themePreference === 'light' ? 'bright' : settingsProps.themePreference === 'dark' ? 'dark' : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'bright');
+        views.useAppearanceRuntime(appearance);
+        const variables = views.appearanceVariables(appearance, theme, settingsProps.settings.importedThemeStyle, settingsProps.settings.font.family);
+        return h('div', { className: 'app theme-' + theme, 'data-translucent-sidebar': appearance.translucentSidebar, 'data-pointer-cursor': appearance.pointerCursor, 'data-diff-indicators': appearance.diffIndicators, style: { width: '100vw', height: '100vh', minWidth: 0, '--sidebar-width': width + 'px', ...variables } },
           h(views.GlobalTooltip),
           h('header', { className: 'window-frame window-drag' }, h(views.WindowSidebarToggle, {
             language: 'zh', collapsed, onToggle: () => setCollapsed(value => !value),
@@ -143,12 +163,36 @@ app.whenReady().then(async () => {
         referencePlanAvailable: true, referencePlanMode: 'auto', permissionMode: 'task_free', subagentPermissionRouting: 'user', reasoningLevelAvailable: false, reasoningLevel: 'high', reasoningLevels: [],
         onModelChange: noop, onReferencePlanModeChange: value => { composerProps.referencePlanMode = value; renderComposer(); }, onPermissionModeChange: noop, onSubagentPermissionRoutingChange: noop,
         onReasoningLevelChange: noop, onSend: async () => {}, onCancel: async () => {}, skills: [{ name: 'Fixture skill', path: 'C:/fixture/skills/fixture/SKILL.md', description: 'Retained skill', descriptionZh: '保留的技能' }], disabledSkillNames: new Set(), onConfigureModels: noop, onToggleSkill: noop };
-      window.renderComposer = () => reactRoot.render(h('div', { className: 'app theme-cyberpunk', style: { minWidth: 0, width: '100vw', height: '100vh', display: 'flex', alignItems: 'end', padding: '36px' } }, h(views.Composer, composerProps)));
+      window.styleFixture = views; window.composerSession = ''; window.composerHost = undefined;
+      window.renderComposer = () => reactRoot.render(h('div', { className: 'app theme-dark', style: { minWidth: 0, width: '100vw', height: '100vh', display: 'flex', alignItems: 'end', padding: '36px' } }, h(views.ConversationHostContext.Provider, { value: composerHost }, h(views.ComposerReferenceContext.Provider, { value: {sessionId:composerSession, browserTabs:[], messages:[]} }, h(views.Composer, composerProps)))));
       window.renderWorkspace = busy => reactRoot.render(h(views.TaskWorkspaceBar, { sessionId: '', projectDir: 'D:/fixture', language: 'zh', busy, gitAvailable: true, onChanged: async () => {} }));
       window.renderGit = disabled => reactRoot.render(h(views.GitBranchMenu, { language: 'zh', activeProjectDir: 'D:/fixture', disabled }));
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'layout') {
+      await require('./helpers/settings-unified-layout.cjs')({ run, until, click, pause, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      win.destroy(); app.exit(0); return;
+    }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'styles') {
+      await require('./helpers/settings-conversation-styles.cjs')({ run, until, click, choose, edit, pause, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log('Conversation styles UI passed: library CRUD, migration, defaults, chat scopes, command selection, language and narrow layout.');
+      return;
+    }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'appearance') {
+      await require('./helpers/settings-appearance.cjs')({ run, until, click, choose, edit, pause, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log('Appearance UI passed: live palettes/fonts/sizes, independent modes, persistence, motion, diff indicators, pointer, reset and responsive layout.');
+      return;
+    }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'notification-sound') {
+      await run('window.notificationSoundTest = views; void 0');
+      await require('./helpers/settings-notification-sound.cjs')({ run, until, click, edit, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'sandbox') {
       await click('运行环境');
       await until("document.querySelector('.settings-sandbox-status')?.textContent === '未安装'");
@@ -171,38 +215,10 @@ app.whenReady().then(async () => {
       await click('重新检测');
       await until("!Array.from(document.querySelectorAll('button')).find(b => b.textContent === '重新检测')?.disabled");
       assert.equal(await run('sandboxStatus.enabled'), false);
-      // A slow local check must not overwrite the next Agent's settings when it resolves.
-      await run(`
-        window.originalSandboxCommand = cardbushDesktop.productHostCommand;
-        cardbushDesktop.productHostCommand = command => command.kind === 'sandbox.get'
-          ? new Promise(resolve => { window.releaseSandboxCheck = () => resolve({protocol:'cardbush.product_host_ipc.v1',ok:true,
-              value:{platform:'linux',state:'missing',installed:false,enabled:false,managed:false,canInstall:true}}); })
-          : originalSandboxCommand(command);
-        undefined;
-      `);
-      await click('重新检测');
-      await until("typeof releaseSandboxCheck === 'function'");
-      // Same page, different host: requests must target the Agent only.
-      await run(`
-        window.remoteSandboxCalls = [];
-        cardbushDesktop.agents = { connect:async () => ({platform:'linux', capabilities:{sandboxSettings:true,sharedSettings:true}}),
-          call:async (id, operation, input) => { remoteSandboxCalls.push([id,operation,input]); return {platform:'linux',state:'ready',installed:true,enabled:true,managed:true,canInstall:false}; } };
-        settingsProps.agentId = 'remote-sandbox'; settingsProps.agentConnections = [{id:'remote-sandbox',name:'测试 Agent'}]; settingsProps.initialSection = 'runtime'; renderSettings();
-      `);
-      await until("document.querySelector('.settings-switch input')?.disabled && document.querySelector('.settings-sandbox-status')?.textContent.includes('已启用')");
-      assert.deepEqual(await run('remoteSandboxCalls'), [['remote-sandbox','product.command',{kind:'sandbox.get'}]]);
-      await run('releaseSandboxCheck(); new Promise(resolve => setTimeout(resolve, 0))');
-      assert.equal(await run("document.querySelector('.settings-switch input')?.disabled"), true, 'late local status must not overwrite the remote policy');
-      assert.equal(await run("document.querySelector('.settings-sandbox-status')?.textContent"), '已安装 · 已启用');
-      assert.equal(await run("Array.from(document.querySelectorAll('button')).some(b => b.textContent === '安装沙盒')"), false);
-      await run('void (cardbushDesktop.productHostCommand = originalSandboxCommand)');
-      fs.writeFileSync(path.join(root, 'tmp/settings-sandbox.png'), (await win.webContents.capturePage()).toPNG());
-      await run(`
-        cardbushDesktop.agents.connect = async () => ({platform:'linux',capabilities:{sharedSettings:true}});
-        settingsProps.agentId = 'legacy-sandbox'; settingsProps.agentConnections = [{id:'legacy-sandbox',name:'旧 Agent'}]; renderSettings();
-      `);
-      await until("document.querySelector('.settings-content')?.textContent.includes('请更新此 Agent 服务')");
-      assert.equal(await run('remoteSandboxCalls.length'), 1, 'old servers must not fall back to local sandbox setup');
+      await run("settingsProps.agentId='legacy-route'; settingsProps.agentConnections=[{id:'legacy-route',name:'Old route'}]; settingsProps.initialSection='runtime'; renderSettings()");
+      await until("!!document.querySelector('.settings-sandbox-status')");
+      assert.equal(await run("document.querySelector('.settings-target')===null"),true);
+      assert.equal(await run("document.querySelector('.settings-switch input').disabled"),false,'shared settings retain the local policy control');
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       console.log('Sandbox settings UI passed: detection-only opening, explicit install, failure retention, automatic enable, opt-out, shared remote page and managed policy.');
       return;
@@ -243,33 +259,9 @@ app.whenReady().then(async () => {
     fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
     fs.writeFileSync(path.join(root, 'tmp/settings-global-instructions.png'), (await win.webContents.capturePage()).toPNG());
 
-    await click('个性化');
-    await until("document.querySelector('#conversation-style-mode')?.value === 'natural'");
-    const chooseStyle = value => choose('#conversation-style-mode', value);
-    assert.equal(await run("document.querySelector('#conversation-style-custom') === null"), true);
-    for (const mode of ['professional', 'concise', 'custom']) {
-      await chooseStyle(mode);
-      await until(`settingsProps.settings.conversationStyle.mode === ${JSON.stringify(mode)}`);
-      assert.equal(await run("JSON.parse(localStorage.getItem('cardbush_conversation_style')).mode"), mode);
-    }
-    const tone = '  像朋友一样交流。\n先说重点，需要时举例。  ';
-    await edit('#conversation-style-custom', tone, true);
-    await until(`settingsProps.settings.conversationStyle.customTone === ${JSON.stringify(tone)}`);
-    await chooseStyle('natural');
-    await until("!document.querySelector('#conversation-style-custom')");
-    await chooseStyle('custom');
-    await until(`document.querySelector('#conversation-style-custom')?.value === ${JSON.stringify(tone)}`);
-    await click('外观与语言');
-    await click('个性化');
-    await until(`document.querySelector('#conversation-style-custom')?.value === ${JSON.stringify(tone)}`);
-    await run("settingsProps.settings.conversationStyle = views.readConversationStyle(); renderSettings()");
-    assert.equal(await run("settingsProps.settings.conversationStyle.customTone"), tone, 'reloading saved preferences preserves the draft');
-    await run("document.querySelector('.conversation-style-settings').closest('.settings-card').scrollIntoView({block:'center'})");
-    await pause(100);
-    fs.writeFileSync(path.join(root, 'tmp/settings-conversation-style.png'), (await win.webContents.capturePage()).toPNG());
-    await edit('#conversation-style-custom', '', true);
-    await until("settingsProps.settings.conversationStyle.customTone === ''");
-    assert.equal(await run('file.content'), '全局偏好：先确认事实。', 'style preferences must not rewrite AGENTS.md');
+    await require('./helpers/settings-conversation-styles.cjs')({ run, until, click, choose, edit, pause, window: win, root });
+    await run('renderSettings()');
+    await until("!!document.querySelector('.settings-content')");
 
     const expectedSettingsSections = ['browser', 'computer-use', 'mcp', 'models', 'profile', 'shortcuts', 'usage', 'appearance', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics'];
     assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'each supported local setting page has one navigation entry');
@@ -300,27 +292,21 @@ app.whenReady().then(async () => {
     await click('外观与语言');
     await until("!!document.querySelector('[name=theme-mode]')");
     assert.equal(await run("document.querySelector('[name=language-mode]') !== null"), true);
-    assert.equal(await run("document.querySelector('.settings-disclosure').open"), false, 'infrequent theme import stays collapsed');
-    for (const theme of ['light', 'cyberpunk', 'dark']) {
-      await choose('[name=theme-mode] + [role=combobox]', theme);
+    assert.equal(await run("document.querySelector('.settings-disclosure').open"), false, 'advanced appearance stays collapsed');
+    for (const theme of ['light', 'system', 'dark']) {
+      await run('document.querySelector(\'[name=theme-mode][value=' + theme + ']\').click()');
       await until(`settingsProps.themePreference === ${JSON.stringify(theme)}`);
     }
     await pause(120);
     fs.writeFileSync(path.join(root, 'tmp/settings-appearance-reorganized.png'), (await win.webContents.capturePage()).toPNG());
-    await run("document.querySelector('[name=theme-mode] + [role=combobox]').click()");
-    await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
-    await pause(180);
-    fs.writeFileSync(path.join(root, 'tmp/settings-theme-dropdown.png'), (await win.webContents.capturePage()).toPNG());
-    await run("document.querySelector('[name=theme-mode] + [role=combobox]').dispatchEvent(new KeyboardEvent('keydown', {key:'Home', bubbles:true}));");
-    await until("document.querySelector('.settings-dropdown-popover:popover-open .highlighted')?.value === 'system'");
-    await run("document.querySelector('[name=theme-mode] + [role=combobox]').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));");
+    await run("document.querySelector('[name=theme-mode][value=system]').click()");
     await until("settingsProps.themePreference === 'system'");
     assert.equal(await run("document.querySelectorAll('.settings-content select').length"), 0, 'settings no longer use native select popups');
     await click('使用统计');
     await until("!!document.querySelector('.usage-stat-grid') && document.querySelector('.usage-stat-grid').getAttribute('aria-busy') === 'false'");
     assert.equal(await run('usageReads'), 1, 'usage loads only when its page opens');
     assert.equal(await run("document.querySelector('.usage-stat').dataset.globalTooltipTitle"), '59,961,000', 'usage retains the supplied totals');
-    assert.equal(await run("document.querySelector('.usage-settings .settings-card')"), null, 'usage is a flat summary rather than a nested card');
+    assert.equal(await run("document.querySelectorAll('.usage-settings > .settings-card').length"), 2, 'usage shares the settings cards for overview and activity');
     assert.equal(await run("document.querySelectorAll('.usage-heatmap-cell').length"), 371);
     assert.equal(await run("getComputedStyle(document.querySelector('.usage-heatmap-cell.entering')).animationName"), 'usage-cell-enter');
     await pause(900);

@@ -135,7 +135,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('list_pages', toolDefinition(
     'List Chrome pages',
-    'List only tabs isolated in the current CardBush session group. Personal Chrome tabs and other CardBush sessions are hidden.',
+    'List tabs in the current CardBush session group; use only returned pages or new_page. Personal tabs and other sessions are hidden. To use a personal tab, the user must copy it into this group from the extension popup. If the connector is unavailable, use the integrated browser where practical or explain the required setup/grant. Remote debugging is an explicitly selected compatibility mode, not an automatic fallback.',
     z.object({}),
     true,
   ), async (_input, context) => withToolResult(async () => {

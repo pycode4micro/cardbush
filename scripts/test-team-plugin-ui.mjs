@@ -17,7 +17,7 @@ import { teamWorkspaceActions, useTeamWorkspaceState } from '${local('packages/c
 import { defaultTeamConfiguration } from '@cardbush/team-plugin/configuration';
 import '${local('src/styles/app.css')}';
 import '${local('src/styles/theme.css')}';
-import '${local('src/styles/themes/cyberpunk.css')}';
+import '${local('src/styles/appearance.css')}';
 window.receipt = { path: 'C:/Fixture/teams.json', contentHash: '1', configuration: defaultTeamConfiguration() };
 window.saves = []; window.exports = []; window.reveals = 0;
 window.cardbushDesktop = { teamConfiguration: async input => {
@@ -28,7 +28,7 @@ window.cardbushDesktop = { teamConfiguration: async input => {
 window.actions = teamWorkspaceActions;
 function Fixture() {
   window.teamState = useTeamWorkspaceState();
-  return <div className="app theme-cyberpunk" style={{height:'100vh', display:'flex', padding:12, boxSizing:'border-box'}}><TeamPluginWorkspace language="zh"/></div>;
+  return <div className="app theme-dark" style={{height:'100vh', display:'flex', padding:12, boxSizing:'border-box'}}><TeamPluginWorkspace language="zh"/></div>;
 }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;

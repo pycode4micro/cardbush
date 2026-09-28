@@ -11,23 +11,26 @@ export const thinkingEventName = 'cardbush:thinking';
 
 export function useLiveThinkingNotice({
   activeConversationId,
+  activeTurnId,
   enabled,
   running,
 }: {
   activeConversationId: string;
+  activeTurnId: string;
   enabled: boolean;
   running: boolean;
 }) {
   const [notice, setNotice] = useState<ThinkingNotice | null>(null);
-  const contextRef = useRef({ activeConversationId, enabled, running });
+  const contextRef = useRef({ activeConversationId, activeTurnId, enabled, running });
   const projectionRef = useRef<ReturnType<typeof createThinkingNoticeProjection> | null>(null);
 
   useEffect(() => {
-    contextRef.current = { activeConversationId, enabled, running };
-    if (!enabled || !running) {
+    const previous = contextRef.current;
+    contextRef.current = { activeConversationId, activeTurnId, enabled, running };
+    if (!enabled || !running || previous.activeConversationId !== activeConversationId || previous.activeTurnId !== activeTurnId) {
       projectionRef.current?.clear();
     }
-  }, [activeConversationId, enabled, running]);
+  }, [activeConversationId, activeTurnId, enabled, running]);
 
   useEffect(() => {
     const projection = createThinkingNoticeProjection(setNotice, {
@@ -44,6 +47,7 @@ export function useLiveThinkingNotice({
       if (!context.enabled || !context.running) return;
       const detail = thinkingEventDetail(event);
       if (!detail) return;
+      if (context.activeTurnId && detail.event.turnId !== context.activeTurnId) return;
       const sourceSessionId = detail.sessionId;
       if (
         sourceSessionId &&

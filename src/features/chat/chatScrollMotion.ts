@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from '../../shared/motionPreference';
 import { suspendScrollAnchoring } from '../scrollAnchoring';
 
 type MotionKind = 'follow' | 'submission' | 'jump';
@@ -91,7 +92,7 @@ export function createChatScrollMotion() {
         lastFrameAt: now, duration: kind === 'jump' ? Math.min(360, 180 + Math.sqrt(Math.abs(destination - start)) * 3)
           : kind === 'submission' ? 500 : 260,
         complete };
-      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || Math.abs(destination - start) < 0.75) {
+      if (prefersReducedMotion() || Math.abs(destination - start) < 0.75) {
         scroller.scrollTo({ top: targetTop(item), behavior: 'instant' });
         complete?.();
         return;

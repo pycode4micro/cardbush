@@ -1,0 +1,45 @@
+import { build } from 'vite';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import assert from 'node:assert/strict';
+const directory = resolve('tmp/source-memo-ui');
+await mkdir(directory, { recursive: true });
+const local = path => resolve(path).replaceAll('\\', '/');
+const source = `
+import React from 'react'; import {createRoot} from 'react-dom/client';
+import {MarkdownContent} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
+import {SourceMemoReference} from '${local('src/features/chatMessages/SourceMemoReference.tsx')}';
+import {ConversationHostContext} from '${local('src/features/conversationHost.ts')}';
+import {resolveConversationSource,setConversationSource,adoptDraftConversationSource} from '${local('src/features/settings/conversationSource.ts')}';
+import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}';
+window.lookups=[]; window.opens=[];
+window.sourceSettings={resolveConversationSource,setConversationSource,adoptDraftConversationSource};
+window.addEventListener('cardbush:open-inspector',event=>window.opens.push(event.detail.target));
+const memo={protocol:'bush.source_memo.v1',reference:'cardbush-source:1-0123456789abcdef',markdown:'[1](cardbush-source:1-0123456789abcdef)',createdAt:new Date().toISOString(),
+  explanation:'保留已完成的读取结果，并提供有次数上限的恢复，避免把仅有思考的截断直接判为失败。',
+  sources:[{kind:'file',target:'C:/workspace/runtime.ts',label:'runtime.ts',locator:{line:2375},version:{size:42,mtimeMs:1},excerpt:'if (outputTruncated) {\\n  return resumeWithBudget();\\n}'},
+    {kind:'url',target:'https://example.org/spec',label:'协议说明'},
+    {kind:'file',target:'C:/workspace/archived/removed.ts',label:'removed.ts',excerpt:Array.from({length:60},(_,i)=>'// recorded line '+(i+1)).join('\\n')}]};
+const runtime={client:{command:async(command,decode)=>{window.lookups.push(command.kind); if(command.kind==='runtime.resolve_source_memo')return decode({status:'resolved',memo,evidenceStatus:['changed','link','unavailable']});
+  if(command.kind==='runtime.resolve_file_memo')return decode({status:'available',memo:{protocol:'bush.file_memo.v1',id:'file_1',reference:'cardbush-memo:2',file:{path:'C:/workspace/report.md',name:'report.md',size:1,mtimeMs:1},note:{purpose:'审查报告',points:[]}}});
+  throw Error('Unexpected request '+command.kind);}},dispose(){}};
+const host={id:'fixture',environmentId:'test',runtime,plugins:[],pluginCommands:[],openFile:path=>window.opens.push(path),uploadFiles:async()=>[],toolDetails:async()=>[]};
+const content='现在会保留读取结果，并在输出截断时有限恢复。[1](cardbush-source:1-0123456789abcdef)\\n\\n[报告](cardbush-memo:2) · [普通网页](https://example.org/ordinary) · [普通文件](C:/workspace/plain.cs)';
+const root=createRoot(document.getElementById('root'));
+window.show=(theme='dark',language='zh')=>root.render(<div className={'app theme-'+theme} style={{height:'100vh',padding:32}}><ConversationHostContext.Provider value={host}><div className="message-row assistant" style={{marginTop:240,maxWidth:740}}><MarkdownContent content={content} language={language}/></div></ConversationHostContext.Provider></div>);
+window.menuRequests=[];window.localLoads=0;
+const loadLocal=async()=>{window.localLoads++;return {status:'resolved',memo,evidenceStatus:['changed','link','unavailable']};};
+window.showLocal=(theme='dark',language='zh')=>{
+  window.cardbushDesktop={showFileContextMenu:async(path,options)=>{window.menuRequests.push({path,options});return '';}};
+  root.render(<div className={'app theme-'+theme} style={{height:'100vh',padding:32}}><div style={{marginTop:240,marginLeft:310}}><SourceMemoReference reference={memo.reference} language={language} load={loadLocal}/></div></div>);
+};
+window.show();
+`;
+const result = await build({ configFile:false,logLevel:'warn',esbuild:{jsx:'automatic'},define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'source-fixture',resolveId(id){if(id.endsWith('__source_fixture__.tsx'))return '\0source-fixture.tsx';},load(id){if(id==='\0source-fixture.tsx')return source;}}],build:{outDir:directory,emptyOutDir:false,minify:false,lib:{entry:resolve('__source_fixture__.tsx'),formats:['es'],fileName:()=> 'fixture.js'}}});
+const outputs=(Array.isArray(result)?result:[result]).flatMap(item=>item.output);
+await writeFile(join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8">${outputs.filter(item=>item.type==='asset'&&item.fileName.endsWith('.css')).map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="fixture.js"></script></body></html>`);
+const require=createRequire(import.meta.url),env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
+const run=spawnSync(require('electron'),['scripts/test-source-memo-ui-worker.cjs',directory],{env,windowsHide:true,stdio:'inherit',timeout:60000});
+assert.equal(run.status,0,String(run.error??'Source UI failed'));

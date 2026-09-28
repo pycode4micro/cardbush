@@ -1392,6 +1392,7 @@ function ConversationRow({
   return (
     <div
       className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}${quickActionsAvailable ? '' : ' without-quick-actions'}`}
+      title={running ? language === 'zh' ? '会话运行中' : 'Session running' : attention ? sessionAttentionLabel(attention, language) : undefined}
       draggable={!remote && !editingTitle}
       onDragStart={event => { event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
       role="button"
@@ -1491,10 +1492,7 @@ function ConversationRow({
           aria-label={language === 'zh' ? '会话运行中' : 'Session running'}
           title={language === 'zh' ? '会话运行中' : 'Session running'}
         >
-          <span />
-          <span />
-          <span />
-          <span />
+          <LoaderCircle size={14} aria-hidden="true" />
         </span>
       )}
       {!editingTitle && !running && attention && (

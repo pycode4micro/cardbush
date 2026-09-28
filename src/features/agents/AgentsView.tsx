@@ -4,7 +4,6 @@ import { Folder, LoaderCircle, Plus, RefreshCw, Server, Settings } from 'lucide-
 import type { AgentConnection, AgentInfo, AgentOperation, AgentProject } from '../../../electron/agentTypes';
 import type { AppLanguage, ManagedModelConfig, SettingsSection, ThemeMode } from '../../types';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
-import { useAgentChatPreferences } from './agentChatPreferences';
 import './agents.css';
 import { AgentConnectionForm } from './AgentConnectionForm';
 import { AgentConnectionStatus } from './AgentConnectionStatus';
@@ -35,7 +34,7 @@ type Models = { defaultModelId: string; models: ManagedModelConfig[] };
 type Projects = { projects: AgentProject[]; defaultProjectId: string | null };
 const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw new Error('Agent connections are unavailable.'); return value; };
 
-type AgentChatAppearance = { visualInputEnabled?: boolean; onOpenSettings?: (id: string, section: SettingsSection) => void; theme?: ThemeMode; sidebarCollapsed?: boolean; windowMaximized?: boolean; thinkingVisible?: boolean; guidanceDeliveryMode?: 'queue' | 'immediate' };
+type AgentChatAppearance = { visualInputEnabled?: boolean; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onOpenSettings?: (section: SettingsSection) => void; theme?: ThemeMode; sidebarCollapsed?: boolean; windowMaximized?: boolean; thinkingVisible?: boolean; guidanceDeliveryMode?: 'queue' | 'immediate' };
 
 const emptyStates = new Map<string, boolean>();
 
@@ -75,7 +74,7 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
   return <div className="agents-view" hidden={!active} style={!active ? { display: 'none' } : undefined}>
     {(!selected || !info) && <TopBar title={selected?.name || 'Agents'} language={language} inspectorOpen={false}
       workspaceControl={<button className="agents-add" onClick={() => setAdding(true)}><Plus size={16}/>{zh ? '添加 Agent' : 'Add Agent'}</button>}/>}
-    {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。项目、模型、插件和历史记录由各个 Agent 分别管理。' : 'Chat directly after connecting. Each Agent owns its projects, models, plugins and history.'}</p>
+    {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。本机与云端共用配置，使用云端时自动同步。项目和历史记录保存在执行任务的 Agent 上。' : 'Chat directly after connecting. Settings are shared and synchronized before cloud use. Projects and history stay on the Agent running the work.'}</p>
       <div className="agents-cards">{connections.map(item => <button key={item.id} className="agents-card" onClick={() => onSelect(item.id)}><Server size={24}/><strong>{item.name}</strong><span>{item.migrationIssue || (item.sshTunnel ? `${zh ? 'SSH 直连 · 服务器端口' : 'SSH direct · Server port'} ${item.sshTunnel.remotePort}` : item.url)}</span></button>)}
       <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{zh ? '添加连接' : 'Add connection'}</strong><span>SSH / HTTP / HTTPS</span></button></div></div>}
     {connecting && !info && selected?.connectionState !== 'reconnecting' && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
@@ -100,7 +99,6 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   const sessionId = agents.selectedSessions[connection.id] ?? '';
   const sessions = agents.sessionsByAgent[connection.id]?.sessions ?? [];
   const [models, setModels] = useState<Models>({ defaultModelId: '', models: [] });
-  const chatPreferences = useAgentChatPreferences(connection.id, models.defaultModelId);
   // The shared-conversation protocol added visionEnabled to chat.send.
   const visualInputAvailable = info.capabilities.sharedConversation === true;
   const [projects, setProjects] = useState<Projects>({ projects: [], defaultProjectId: null });
@@ -118,47 +116,62 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   const creating = agents.sessionsByAgent[connection.id]?.creating;
   const refresh = useCallback(async () => {
     await Promise.all([
-      call<Models>('product.command', { kind: 'models.get' }).then(setModels),
+      call<Models>('product.command', { kind: 'models.get' }).then(value => { setModels(value); window.dispatchEvent(new CustomEvent('cardbush:agent-configuration-synced', {detail:connection.id})); }),
       call<Projects>('projects.list').then(setProjects), refreshSessions(connection.id),
     ]);
     setError('');
   }, [call, connection.id, refreshSessions]);
   const refreshConversationList = useCallback(() => refreshSessions(connection.id), [connection.id, refreshSessions]);
-  useEffect(() => { let alive = true; void refresh().catch(error => { if (alive) setError(errorText(error)); }); return () => { alive = false; }; }, [refresh, recoveryRevision]);
+  const [settingsRevision, setSettingsRevision] = useState(0);
+  const needsRefresh = useRef(true);
+  useEffect(() => { needsRefresh.current = true; }, [refresh, recoveryRevision, settingsRevision]);
+  useEffect(() => {
+    let alive = true;
+    if (active && needsRefresh.current) {
+      needsRefresh.current = false;
+      void refresh().catch(error => { needsRefresh.current = true; if (alive) setError(errorText(error)); });
+    }
+    return () => { alive = false; };
+  }, [active, refresh, recoveryRevision, settingsRevision]);
+  useEffect(() => {
+    const changed = () => setSettingsRevision(value => value + 1);
+    window.addEventListener('cardbush:shared-configuration-updated', changed);
+    return () => window.removeEventListener('cardbush:shared-configuration-updated', changed);
+  }, []);
   useEffect(() => {
     const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === connection.id) void refresh().catch(error => setError(errorText(error))); };
     window.addEventListener('cardbush:agent-settings-updated', updated);
     return () => window.removeEventListener('cardbush:agent-settings-updated', updated);
   }, [connection.id, refresh]);
   const create = () => agents.createSession(connection.id, zh ? '新对话' : 'New conversation');
-  const manage = () => appearance.onOpenSettings?.(connection.id, 'models');
+  const manage = () => appearance.onOpenSettings?.('models');
   const title = String(sessions.find(item => item.sessionId === sessionId)?.metadata?.title || connection.name);
   const headerActions = <div className="agent-header-actions">
       <button className="topbar-inspector-action" onClick={onEdit}>{zh ? '连接设置' : 'Connection settings'}</button>
       <button className="topbar-inspector-action icon-only" title={zh ? '刷新连接' : 'Refresh connection'} aria-label={zh ? '刷新连接' : 'Refresh connection'} onClick={onReconnect}><RefreshCw size={15}/></button>
       <button className="topbar-inspector-action icon-only" title={zh ? '新建会话' : 'New chat'} aria-label={zh ? '新建会话' : 'New chat'} disabled={creating} onClick={() => void create()}><Plus size={16}/></button>
-      <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '管理此 Agent' : 'Manage Agent'} aria-label={zh ? '管理此 Agent' : 'Manage Agent'} onClick={manage}><Settings size={15}/></button>
+      <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '设置' : 'Settings'} aria-label={zh ? '设置' : 'Settings'} onClick={manage}><Settings size={15}/></button>
     </div>;
   return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
+    {active && connection.configurationWarnings?.length ? <div className="agents-config-notice" role="status">{connection.configurationWarnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
     {active && error && connection.connectionState !== 'reconnecting' && <div className="agents-error" role="alert">{error}</div>}
-    <AgentChat {...appearance} active={active && Boolean(sessionId)} title={title} headerActions={headerActions} onCreate={() => void create()} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} chatPreferences={chatPreferences} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.(connection.id, 'models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>
+    <AgentChat {...appearance} active={active && Boolean(sessionId)} title={title} headerActions={headerActions} onCreate={() => void create()} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.('models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>
     {active && !sessionId && <div className="agents-empty"><h2>{zh ? '有什么可以帮你？' : 'How can I help?'}</h2><p>{zh ? `与 ${connection.name} 开始新对话，或从左侧选择会话。` : `Start a chat with ${connection.name}, or select one in the sidebar.`}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{zh ? '开始对话' : 'Start chat'}</button></div>}
   </div>;
 }
 
-function AgentChat({ active, call, sharedSettings, enhanced, management, visualInputAvailable, chatPreferences, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, onForkSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false }: { active: boolean; call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; chatPreferences: ReturnType<typeof useAgentChatPreferences>; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; onForkSession: (id: string) => Promise<void>; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
+function AgentChat({ active, call, sharedSettings, enhanced, management, visualInputAvailable, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, onForkSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false, disabledSkillNames, onToggleSkill }: { active: boolean; call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; onForkSession: (id: string) => Promise<void>; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
   const zh = language === 'zh'; const storageKey = `cardbush-agent-draft:${connectionId}:${sessionId}`;
   const viewKey = (field: string) => conversationViewKey(connectionId, sessionId, field);
   const submittedRef = useRef<(sessionId: string) => void>(() => {});
   const connection = useMemo(() => createAgentConversationBackend(call, connectionId,
     (request, listener) => api().watchEvents(connectionId, request, listener), { enhanced, sharedSettings, visualInputAvailable, onSubmitted: id => submittedRef.current(id) }), [call, connectionId, enhanced, visualInputAvailable, sharedSettings]);
-  const [preferences, setPreferences] = chatPreferences;
-  const disabledSkills = useMemo(() => new Set(preferences.disabledSkills), [preferences.disabledSkills]);
+  const disabledSkills = useMemo(() => disabledSkillNames ?? new Set<string>(), [disabledSkillNames]);
   const availableModels = useMemo(() => [...models.models].sort((a, b) => Number(b.id === models.defaultModelId) - Number(a.id === models.defaultModelId)), [models]);
   const chat = useCardbushChat(availableModels, models.models, { runtimeReady: true,
     activeConversationId: sessionId, viewActive: active,
-    language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputAvailable && (preferences.visionEnabled ?? visualInputEnabled), disabledSkillNames: disabledSkills,
+    language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputAvailable && visualInputEnabled, disabledSkillNames: disabledSkills,
     interactiveRequestsAvailable: enhanced, contextWindowUsageAvailable: true, workspaceChangesAvailable: true,
   }, connection.backend);
   const { host: baseHost, skills, error: hostError, preview, closePreview } = useAgentConversationHost(call, connectionId, sessionId, enhanced, management);
@@ -171,7 +184,7 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
     setSummary({ ...detail, sessionId: detail.sessionId || sessionId });
     inspectorRef.current?.open(summaryId, detail.title || (language === 'zh' ? '执行详情' : 'Execution details'));
   }, [sessionId, summaryId, language, setSummary]);
-  const host = useMemo(() => ({ ...baseHost, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sessionId, connection, openWorkSummary]);
+  const host = useMemo(() => ({ ...baseHost, conversationStyleAvailable: sharedSettings, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sharedSettings, sessionId, connection, openWorkSummary]);
   useEffect(() => { if (active && preview) inspectorRef.current?.open(previewId, preview.name); }, [active, preview, previewId]);
   useEffect(() => () => {
     if (!active) return;
@@ -287,7 +300,7 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
         permissionMode={chat.permissionMode} onPermissionModeChange={chat.setPermissionMode} subagentPermissionRouting={chat.subagentPermissionRouting} onSubagentPermissionRoutingChange={chat.setSubagentPermissionRouting}
         referencePlanAvailable={enhanced} referencePlanMode={chat.referencePlanMode} onReferencePlanModeChange={chat.setReferencePlanMode}
         reasoningLevelAvailable={enhanced} reasoningLevel={chat.reasoningLevel} reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']} onReasoningLevelChange={chat.setReasoningLevel}
-        skills={skills} disabledSkillNames={disabledSkills} onToggleSkill={(name, enabled) => setPreferences(current => ({ ...current, disabledSkills: enabled ? current.disabledSkills.filter(item => item !== name) : [...new Set([...current.disabledSkills, name])] }))}
+        skills={skills} disabledSkillNames={disabledSkills} onToggleSkill={(name, enabled) => onToggleSkill?.(name, enabled)}
         onSend={sendComposerMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={onCreate} onOpenConversation={onOpenSession}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
@@ -302,7 +315,8 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
           requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.agent-chat [data-composer-input]')?.focus({ preventScroll: true }));
         }} notice={error} revertingChangeId={reverting} revertedChangeIds={new Set(reports.filter(report => report.reverted).map(report => report.id))}
         revertAvailable={!busy} onClose={() => inspector?.close(reviewId)} onRevert={revert}/>, reviewOutlet)}
-      {summary && inspector?.outlets.get(summaryId) && createPortal(<WorkSummaryInspector detail={summary} messages={chat.activeMessages} language={language}/>, inspector.outlets.get(summaryId)!)}
+      {summary && inspector?.outlets.get(summaryId) && createPortal(<WorkSummaryInspector detail={summary} messages={chat.activeMessages} language={language} conversationOptions={{ theme, thinkingVisible, guidanceDeliveryMode,
+        visualInputEnabled: visualInputAvailable && visualInputEnabled, disabledSkillNames: disabledSkills, onToggleSkill, onConfigureModels: onConfigure }}/>, inspector.outlets.get(summaryId)!)}
       {preview && inspector?.outlets.get(previewId) && createPortal(<ConversationHostPreview key={preview.path} path={preview.path} language={language}/>, inspector.outlets.get(previewId)!)}
     </section>
     </WorkspaceChangeStateContext.Provider></ConversationExtractionProvider></ConversationHostContext.Provider>;

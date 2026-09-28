@@ -15,5 +15,8 @@ __pycache__/
 .codex-video-frames-*/
 .codex-video-sheet-*.png
 packaging/msix/identity.local.json
+packaging/windows/signing.local.json
+*.pfx
+*.p12
 
 dist-cjs/

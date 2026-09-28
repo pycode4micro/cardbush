@@ -51,6 +51,7 @@ export function toolLifecycle(
     metadata: {
       lifecycleSequence: event.sequence,
       ...(event.payload.display?.title ? { displayTitle: event.payload.display.title } : {}),
+      ...(event.payload.display?.titles ? { displayTitles: event.payload.display.titles } : {}),
       ...('error' in event.payload ? { error: event.payload.error } : {}),
     },
   };

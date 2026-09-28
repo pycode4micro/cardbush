@@ -1,3 +1,5 @@
+import { APPEARANCE_STORAGE_KEY, appearanceVariables, appearanceHasCustomPalette, normalizeAppearance, readAppearance } from './features/appearance/appearancePreferences';
+import { useAppearanceRuntime } from './features/appearance/useAppearanceRuntime';
 import { pickWorkspace } from './features/ssh/WorkspaceLocationPicker';
 import { useAgentConnections } from './features/agents/useAgentConnections';
 import './features/agents/agents.css';
@@ -13,8 +15,8 @@ import { requestPluginApplication } from './features/plugins/pluginNavigationReq
 import { PageNavigationContext, PageNavigationScope, usePageNavigation } from './features/navigation/PageNavigation';
 import type { AppPage } from './features/navigation/appPage';
 import { GlobalTooltip } from './components/GlobalTooltip';
-import { DEFAULT_MAX_CONTEXT_TOKENS, normalizeConversationStyle } from '@cardbush/bush-product-agent';
-import { readConversationStyle, saveConversationStyle } from './features/settings/conversationStyle';
+import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
+import { readConversationStyle, saveConversationStyle, normalizeConversationStylePreferences } from './features/settings/conversationStyle';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
@@ -116,8 +118,6 @@ import { ConversationSearchDialog } from './features/search/ConversationSearchDi
 import { useConversationSearch } from './features/search/useConversationSearch';
 import { usePreviousConversationShortcut } from './features/shortcuts/usePreviousConversationShortcut';
 import {
-  importedThemeBaseMode,
-  importedThemeStyleVariables,
   normalizeImportedThemeStyle,
 } from './features/appearance/importedThemeStyle';
 import {
@@ -285,7 +285,7 @@ const maxSidebarWidth = 420;
 const importedThemeStyleStorageKey = 'cardbush_imported_theme_style';
 
 const defaultAppSettings: AppSettingsState = {
-  conversationStyle: normalizeConversationStyle(undefined),
+  conversationStyle: normalizeConversationStylePreferences(undefined),
   proxy: {
     mode: 'none',
     httpProxy: '',
@@ -370,7 +370,6 @@ function CardbushApp() {
   const [conversationPromptFocus, setConversationPromptFocus] = useState(0);
   const [settingsMounted, setSettingsMounted] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
-  const [settingsAgentId, setSettingsAgentId] = useState('');
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>('profile');
   const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
@@ -430,22 +429,26 @@ function CardbushApp() {
   const [backendDefaultModelName, setBackendDefaultModelName] = useState('');
   const lastSavedModelConfigSignatureRef = useRef('');
   const projectItemsRef = useRef(projectItems);
-  const theme = resolveTheme(
-    themePreference,
-    systemDark,
-    appSettings.importedThemeStyle,
-  );
+  const theme = resolveTheme(themePreference, systemDark);
+  const appearance = useMemo(() => normalizeAppearance(appSettings.appearance), [appSettings.appearance]);
+  useAppearanceRuntime(appearance);
+  useEffect(() => {
+    // Also persist migration from retired themes and the former global font.
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(appearance));
+    localStorage.setItem('cardbush_theme_mode', themePreference);
+  }, [appearance, themePreference]);
   const language = resolveAppLanguage(languageMode, systemLanguage);
   const importedThemeVariables = useMemo(
-    () => themePreference === 'custom'
-      ? importedThemeStyleVariables(appSettings.importedThemeStyle)
-      : {},
-    [appSettings.importedThemeStyle, themePreference],
+    () => appearanceVariables(appearance, theme, appSettings.importedThemeStyle, appSettings.font.family),
+    [appearance, theme, appSettings.importedThemeStyle, appSettings.font.family],
   );
   const shadowAccentColor =
-    importedThemeVariables['--accent'] ?? themeAccentColor(theme);
+    String(importedThemeVariables['--accent'] ?? themeAccentColor(theme));
 
-  useWindowAppearance(theme, themePreference, windowMaterial, importedThemeVariables['--text']);
+  useWindowAppearance(theme, themePreference, windowMaterial,
+    importedThemeVariables['--text'] as string | undefined,
+    appearanceHasCustomPalette(appearance, theme, appSettings.importedThemeStyle),
+    importedThemeVariables['--bg'] as string | undefined);
   useVisualThemeContext(theme, themePreference);
 
   useEffect(() => {
@@ -1434,21 +1437,16 @@ function CardbushApp() {
     void window.cardbushDesktop?.setProxy?.(appSettings.proxy).catch(() => undefined);
   }, [appSettings.proxy]);
 
-  const appFontStyle = appSettings.font.family.trim()
-    ? ({ fontFamily: `"${appSettings.font.family}", var(--app-font-family)` } as CSSProperties)
-    : undefined;
 
   const mergedAppStyle = wallpaperAccent
     ? ({
         '--wallpaper-accent-rgb': `${wallpaperAccent.r} ${wallpaperAccent.g} ${wallpaperAccent.b}`,
         '--wallpaper-accent-hex': wallpaperAccent.hex,
         '--sidebar-width': `${sidebarWidth}px`,
-        ...appFontStyle,
         ...importedThemeVariables,
       } as CSSProperties)
     : ({
         '--sidebar-width': `${sidebarWidth}px`,
-        ...appFontStyle,
         ...importedThemeVariables,
       } as CSSProperties);
 
@@ -2011,9 +2009,7 @@ function CardbushApp() {
   const openSettings = useCallback((
     targetSection: SettingsSection = 'profile',
     pluginTab: 'plugins' | 'skills' = 'plugins',
-    agentId = '',
   ) => {
-    setSettingsAgentId(agentId);
     setSettingsInitialSection(targetSection);
     setSettingsPluginTab(pluginTab);
     setSettingsMounted(true);
@@ -2060,7 +2056,7 @@ function CardbushApp() {
     if (nextSection === 'agents') closeInspector();
   }, [closeInspector]);
   const handleAgentSelect = useCallback((id: string, sessionId?: string, view?: 'chat' | 'settings') => {
-    if (view === 'settings') { openSettings('models', 'plugins', id); return; }
+    if (view === 'settings') { openSettings('models', 'plugins'); return; }
     agents.select(id, sessionId, view); setSection('agents'); closeInspector(); if (compactLayout && (sessionId !== undefined || !id)) collapseSidebar();
   }, [agents.select, compactLayout, collapseSidebar, closeInspector, openSettings]);
   useEffect(() => {
@@ -2092,7 +2088,7 @@ function CardbushApp() {
     if (compactLayout) collapseSidebar();
   }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
   const handleSidebarOpenSettings = useCallback(() => {
-    openSettings('profile', 'plugins', section === 'agents' ? agents.selectedId : '');
+    openSettings('profile', 'plugins');
   }, [openSettings, section, agents.selectedId]);
   const handleSearchOpenConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
@@ -2112,12 +2108,12 @@ function CardbushApp() {
     onOpenConversation: handlePreviousConversation,
   });
   const currentPage: AppPage = settingsOpen
-    ? { section: 'settings', agentId: settingsAgentId, settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
+    ? { section: 'settings', agentId: '', settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
     : section === 'chat' ? { section, conversationId: chat.activeConversationId }
     : section === 'agents' ? { section, agentId: agents.selectedId, sessionId: agents.selectedSessions[agents.selectedId] ?? '', view: agents.views[agents.selectedId] ?? 'chat' }
     : { section };
   const pageNavigation = usePageNavigation(currentPage, page => {
-    if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab, page.agentId); return; }
+    if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab); return; }
     setSettingsOpen(false); setSection(page.section);
     if (page.section === 'chat') {
       if (page.conversationId) chat.openConversation(page.conversationId); else chat.clearConversationSelection();
@@ -2197,10 +2193,13 @@ function CardbushApp() {
       className={`app ${themeClassNames(theme)}`}
       lang={language}
       style={appStyle}
+      data-translucent-sidebar={appearance.translucentSidebar}
+      data-pointer-cursor={appearance.pointerCursor}
+      data-diff-indicators={appearance.diffIndicators}
     >
       <AppCenterProvider language={language} onNavigate={(application, environmentId) => {
-        if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins', environmentId); return; }
-        if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings('profile', 'plugins', environmentId); return; }
+        if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
+        if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings('profile', 'plugins'); return; }
         if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
@@ -2229,10 +2228,10 @@ function CardbushApp() {
         onOpenFiles={window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined}
       />}
       {settingsMounted && (
-        <PageNavigationScope.Provider value={`settings:${settingsAgentId || 'local'}`}>
+        <PageNavigationScope.Provider value="settings:shared">
         <Suspense fallback={null}>
           <LazySettingsView
-            agentConnections={agents.connections} agentId={settingsAgentId} onAgentChange={setSettingsAgentId}
+            agentConnections={agents.connections}
             onOpenPluginPrompt={openPluginPrompt}
             active={settingsVisible}
             onReady={markSettingsReady}
@@ -2338,7 +2337,7 @@ function CardbushApp() {
             </>
           )}
           <section className="main-stage" inert={compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
-            {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} onOpenSettings={(id, section) => openSettings(section, 'plugins', id)} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
+            {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
             {section === 'agents' ? null : section === 'chat' ? (
               <ChatPanel
                 browserTabs={composerBrowserTabs}
@@ -2756,7 +2755,7 @@ function CardbushApp() {
                   {isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType) ? (
                     <form
                       className="right-inspector-address editable"
-                      title={activeInspectorAddress}
+                      title={language === 'zh' ? '编辑网址' : 'Edit address'}
                       data-shortcut="focusBrowserAddress"
                       onSubmit={(event) => {
                         event.preventDefault();
@@ -2828,6 +2827,8 @@ function CardbushApp() {
                               messages={chat.messagesByConversation[tab.detail.sessionId] ?? []}
                               language={language}
                               active={active && inspectorPresence.visible}
+                              conversationOptions={{ theme, thinkingVisible: appSettings.thinking.visible, guidanceDeliveryMode: appSettings.guidance.deliveryMode,
+                                visualInputEnabled, disabledSkillNames, onToggleSkill: toggleSkillEnabled, onConfigureModels: () => openSettings('models') }}
                             />
                           ) : displayedReviewConversation ? (
                             <ConversationChangeDialog
@@ -3112,18 +3113,18 @@ function readInitialThemePreference(): ThemePreference {
   if (
     stored === 'system' ||
     stored === 'light' ||
-    stored === 'dark' ||
-    stored === 'cyberpunk'
+    stored === 'dark'
   ) {
     return stored;
   }
+  if (stored === 'cyberpunk') return 'dark';
   if (stored === 'custom' && readImportedThemeStyle()) {
-    return 'custom';
+    return readImportedThemeStyle()!.base;
   }
   // Retired or invalid selections fall back without reviving a stale legacy value.
   if (stored) return 'system';
   const legacy = window.localStorage.getItem('cardbush.theme');
-  if (legacy === 'dark') {
+  if (legacy === 'dark' || legacy === 'cyberpunk') {
     return 'dark';
   }
   if (legacy === 'bright') {
@@ -3296,14 +3297,7 @@ function readSystemLanguage(): AppLanguage {
 function resolveTheme(
   preference: ThemePreference,
   prefersDark: boolean,
-  importedThemeStyle: ImportedThemeStyle | null,
 ): ThemeMode {
-  if (preference === 'custom' && importedThemeStyle) {
-    return importedThemeBaseMode(importedThemeStyle.base);
-  }
-  if (preference === 'cyberpunk') {
-    return 'cyberpunk';
-  }
   if (preference === 'dark') {
     return 'dark';
   }
@@ -3319,6 +3313,7 @@ function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) 
 
 function readInitialAppSettings(): AppSettingsState {
   return normalizeAppSettings({
+    appearance: readAppearance(),
     conversationStyle: readConversationStyle(),
     proxy: {
       mode: proxyModeFromStorage(
@@ -3433,7 +3428,8 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
   const httpProxy = settings.proxy.httpProxy.trim();
   const httpsProxy = settings.proxy.httpsProxy.trim();
   return {
-    conversationStyle: normalizeConversationStyle(settings.conversationStyle),
+    appearance: normalizeAppearance(settings.appearance),
+    conversationStyle: normalizeConversationStylePreferences(settings.conversationStyle),
     proxy: {
       mode: normalizeProxyMode(settings.proxy.mode),
       httpProxy,
@@ -3511,6 +3507,7 @@ function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
 }
 
 function persistAppSettings(settings: AppSettingsState) {
+  window.localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(normalizeAppearance(settings.appearance)));
   saveConversationStyle(settings.conversationStyle);
   window.localStorage.setItem('cardbush_proxy_mode', settings.proxy.mode);
   window.localStorage.setItem('cardbush_proxy_http', settings.proxy.httpProxy);

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'vite';
+import { decodeRuntimeIpcInboundMessage } from '@cardbush/bush-protocol';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const fixturePath = path.join(
@@ -49,6 +50,23 @@ try {
   assert.equal(capabilities.eventProtocol, 'bush.runtime_event.v1');
   assert.ok(capabilities.features.includes('reasoning_segments'));
   assert.ok(capabilities.features.includes('assistant_segments'));
+
+  const cursorRequests = [], cursorListeners = new Set();
+  const cursorSession = new runtimeClientModule.ElectronRuntimeSession({
+    command: async () => { throw new Error('No commands expected'); },
+    onStreamFrame: listener => { cursorListeners.add(listener); return () => cursorListeners.delete(listener); },
+    stopStream: async () => {}, cancelOperation: async () => {},
+    startStream: async message => {
+      const decoded = decodeRuntimeIpcInboundMessage(message);
+      cursorRequests.push(decoded.request.cursor);
+      for (const listener of cursorListeners) listener({ protocol: 'bush.runtime_ipc.v1', type: 'stream_frame', subscriptionId: message.subscriptionId, frame: { kind: 'end' } });
+    },
+  });
+  for (const cursor of [undefined, { afterSequence: 0, lastEventId: '' }, { afterSequence: 0, lastEventId: '  ' }, { afterSequence: 12, lastEventId: 'event-12' }]) {
+    for await (const _event of cursorSession.client.events({ sessionId: 'child-cursor', turnId: 'child-turn', cursor })) assert.fail('No events expected');
+  }
+  assert.deepEqual(cursorRequests, [undefined, { afterSequence: 0 }, { afterSequence: 0 }, { afterSequence: 12, lastEventId: 'event-12' }]);
+  cursorSession.dispose();
 
   const typedSessionClient = new runtimeClientModule.ProtocolRuntimeClient(
     createSessionCommandTransport(),

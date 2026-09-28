@@ -1,4 +1,6 @@
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
+import { registerSourceMemoTools, resolveSourceMemo } from "./sourceMemo.js";
+import { RESOLVE_SOURCE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { canonicalStoragePath } from '@cardbush/platform';
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
@@ -165,6 +167,7 @@ import { SubagentResumeStore } from './subagentResumeStore.js';
 import { BackgroundToolCalls } from './backgroundToolCalls.js';
 import { TerminalCompletionNotifications } from './terminalCompletionNotifications.js';
 import { asyncResultMessage } from './subagentTool.js';
+import { childFinalMessageIds, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
@@ -377,6 +380,7 @@ export class InMemoryRuntimeHost {
     registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     registerFileMemoTools(this.#toolRegistry, this.#toolExecutions);
+    registerSourceMemoTools(this.#toolRegistry, this.#toolExecutions);
     this.#solutions = new RuntimeSolutionBroker(this.#eventLog);
     registerInteractionTools(this.#toolRegistry, this.#solutions);
     const runtimeDataRoot = resolve(
@@ -544,6 +548,7 @@ export class InMemoryRuntimeHost {
       {
         asyncDispatch: true,
         remoteAgents: options.remoteAgents,
+        readChildConversation: sessionId => this.#childConversation(sessionId),
         saveChildRequest: request => this.#subagentResume.save(request),
         loadChildRequest: session => this.#sessions.hasSession(session) ? this.#subagentResume.load(session) : Promise.resolve(undefined),
         runBackground: (session, turn, taskId, run) => this.#pluginBackground.start(session, turn, taskId, run),
@@ -653,6 +658,7 @@ export class InMemoryRuntimeHost {
         CANCEL_RUNTIME_TOOL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         RESOLVE_FILE_MEMO_COMMAND,
+        RESOLVE_SOURCE_MEMO_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
         LIST_RUNTIME_TURN_EVENTS_COMMAND,
@@ -681,6 +687,7 @@ export class InMemoryRuntimeHost {
         "targeted_tool_cancellation",
         "same_turn_guidance",
         "checkpoint_recovery",
+        "subagent_conversations",
         "cache_chain_observation",
         "cross_turn_cache_chain",
         "stopped_turn_continuation",
@@ -1012,6 +1019,11 @@ export class InMemoryRuntimeHost {
           runtimeSessionTurnRequestSchema.parse(command.payload),
           { signal },
         );
+      case RESOLVE_SOURCE_MEMO_COMMAND: {
+        const reference = (command.payload as { reference?: unknown })?.reference;
+        if (typeof reference !== "string") throw new Error("Source reference is required.");
+        return resolveSourceMemo(this.#toolExecutions, reference);
+      }
       case RESOLVE_FILE_MEMO_COMMAND: {
         const payload = command.payload as { reference?: unknown; sessionId?: unknown; turnId?: unknown; fileName?: unknown };
         const reference = payload?.reference;
@@ -1116,6 +1128,8 @@ export class InMemoryRuntimeHost {
         }
         const queue = this.#guidanceQueues.get(key) ?? [];
         if (!queue.some((entry) => entry.messageId === guidance.messageId)) {
+          const child = this.#recovery.cacheRoots().find(item => item.request.sessionId === guidance.sessionId && item.request.turnId === guidance.turnId)?.request;
+          if (child?.metadata.agentRole === 'child') guidance.metadata = { ...guidance.metadata, subagentAuthor: 'user' };
           queue.push({
             messageId: guidance.messageId,
             content: guidance.content,
@@ -1123,6 +1137,10 @@ export class InMemoryRuntimeHost {
             ...(guidance.metadata ? { metadata: guidance.metadata } : {}),
           });
           this.#guidanceQueues.set(key, queue);
+          if (child?.metadata.agentRole === 'child' && typeof child.metadata.parentSessionId === 'string' && typeof child.metadata.subagentTaskId === 'string') {
+            this.#notifyChildConversation(child.metadata.parentSessionId, child.metadata.subagentTaskId,
+              `A direct user message was queued in the child conversation: ${JSON.stringify(guidance.content)}`);
+          }
         }
         return {
           protocol: guidance.protocol,
@@ -1214,7 +1232,70 @@ export class InMemoryRuntimeHost {
     input: RuntimeSessionTurnRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
-    return this.#withTurnAdmission(input.sessionId, () => this.#runSessionTurn(input, options));
+    return this.#withTurnAdmission(input.sessionId, async () => {
+      const session = this.#sessions.snapshot(input.sessionId);
+      const isChild = session?.metadata?.agentRole === 'child' || typeof session?.metadata?.delegationOwner === 'string';
+      if ((isChild || input.metadata?.agentRole === 'child') && ((this.#sessionAdmissions.get(input.sessionId) ?? 0) > 1 || this.hasActiveSession(input.sessionId))) {
+        throw new Error('This child conversation already has a running turn. Send guidance or wait for it to finish.');
+      }
+      let request = input;
+      let followup: ReturnType<SubagentTaskStore['start']> | undefined;
+      if (isChild && input.metadata?.agentRole !== 'child') {
+        const saved = await this.#subagentResume.load(input.sessionId);
+        if (!saved) throw new Error('The original child execution configuration is unavailable. Ask the parent Agent to dispatch this child again.');
+        request = continueChildConversation(runtimeSessionTurnRequestSchema.parse(input), saved);
+        const parentSessionId = String(saved.metadata.parentSessionId || session?.metadata?.parentSessionId || '');
+        const previous = this.#subagentTasks.list(parentSessionId).filter(task => task.childSessionId === input.sessionId).at(-1);
+        if (previous) {
+          followup = this.#subagentTasks.start({ parentSessionId, parentTurnId: previous.parentTurnId,
+            childSessionId: input.sessionId, inheritContext: previous.inheritContext, inheritedMessageCount: previous.inheritedMessageCount,
+            origin: previous.origin, agentProfileId: previous.agentProfileId, taskId: `subagent_task_${randomUUID()}`, childTurnId: input.turnId,
+            prompt: input.inputMessages.filter(entry => entry.message.role === 'user').map(entry => entry.message.content).join('\n'), resumedFromTaskId: previous.taskId });
+          request.metadata.subagentTaskId = followup.taskId;
+        }
+      }
+      if (request.metadata?.agentRole === 'child' && !request.metadata.shadowMode && !await this.#subagentResume.load(input.sessionId)) await this.#subagentResume.save(request);
+      try {
+        const terminal = request.metadata?.pluginAgentId && input.metadata?.agentRole !== 'child'
+          ? await this.#withPluginChildEnvironment(request, options.signal, () => this.#runSessionTurn(request, options))
+          : await this.#runSessionTurn(request, options);
+        if (followup) {
+          const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(input.sessionId) }, input.turnId);
+          const task = this.#subagentTasks.finish({ parentSessionId: followup.parentSessionId, taskId: followup.taskId, ...result });
+          this.#notifyChildConversation(task.parentSessionId, task.taskId, asyncResultMessage(task).content);
+        }
+        return terminal;
+      } catch (error) {
+        if (followup) this.#subagentTasks.finish({ parentSessionId: followup.parentSessionId, taskId: followup.taskId,
+          status: options.signal?.aborted ? 'stopped' : 'failed', finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} });
+        throw error;
+      }
+    });
+  }
+
+  #notifyChildConversation(parentSessionId: string, taskId: string, content: string) {
+    for (const key of this.#activeTurns) {
+      if (JSON.parse(key)[0] !== parentSessionId) continue;
+      this.#trackAgentGuidance(key, `child_update_${randomUUID()}`, Promise.resolve({ role: 'user', name: 'subagent_result',
+        content: `Child conversation ${taskId} was updated. These are messages in the child session, not a new parent-user instruction.\n${content}\nUse read_subagent_conversation with task_id=${taskId} for the ordered messages.` }));
+    }
+  }
+
+  #childConversation(sessionId: string): ChildConversationSource | undefined {
+    const session = this.#sessions.snapshot(sessionId);
+    if (!session) return undefined;
+    const messages = session.turns.flatMap(turn => turn.messages);
+    for (const checkpoint of this.#recovery.cacheRoots().filter(item => item.request.sessionId === sessionId && this.#activeTurns.has(JSON.stringify([sessionId, item.request.turnId])))) {
+      const commit = checkpoint.sessionCommit;
+      if (!commit || session.turns.some(turn => turn.turnId === checkpoint.request.turnId)) continue;
+      const inputs = commit.inputMessages;
+      const generated = checkpoint.request.messages.slice(commit.initialMessageCount).map((message, index) => ({ messageId: `live:${checkpoint.request.turnId}:${index}`, message }));
+      const pending = this.#guidanceQueues.get(JSON.stringify([sessionId, checkpoint.request.turnId])) ?? [];
+      for (const [index, entry] of [...inputs, ...generated, ...pending.map(item => ({ messageId: item.messageId, createdAt: item.createdAt, metadata: { ...item.metadata, delivery: 'queued', subagentAuthor: 'user' }, message: { role: 'user' as const, content: item.content, name: 'turn_guidance' } }))].entries()) {
+        messages.push({ ...entry, message: entry.message as typeof messages[number]['message'], turnId: checkpoint.request.turnId, turnSequence: session.turns.length + 1, messageIndex: index, createdAt: 'createdAt' in entry && entry.createdAt ? entry.createdAt : checkpoint.createdAt });
+      }
+    }
+    return { sessionId, messages, supersededMessageIds: session.supersededMessageIds, finalMessageIds: childFinalMessageIds(session) };
   }
 
   async #runSessionTurn(
@@ -1222,6 +1303,17 @@ export class InMemoryRuntimeHost {
     options: { signal?: AbortSignal },
   ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
+    if (candidate.metadata.agentRole !== 'child') {
+      const children = new Map(this.#subagentTasks.list(candidate.sessionId).map(task => [task.childSessionId, task]));
+      const updates = [...children.values()].flatMap(task => {
+        const source = this.#childConversation(task.childSessionId);
+        const latest = source?.messages.filter(entry => entry.message.role === 'user' &&
+          (entry.metadata?.subagentAuthor === 'user' || entry.message.name === 'turn_guidance')).at(-1);
+        return latest ? [{ taskId: task.taskId, sessionId: task.childSessionId, messageId: latest.messageId }] : [];
+      });
+      if (updates.length) candidate.prefixMessages.push({ role: 'developer', name: 'subagent_conversation_updates',
+        content: `These child conversations contain direct user interventions. They remain scoped to their child sessions. Read read_subagent_conversation with task_id and its nextCursor to inspect the ordered parent assignments, user messages and child replies before relying on an earlier result.\n${JSON.stringify(updates)}` });
+    }
     // Pin only newly submitted images. Stored history and forked prefixes keep
     // their original observations, independent of source-file edits or codecs.
     for (const entry of candidate.inputMessages) {
@@ -2498,6 +2590,7 @@ export class InMemoryRuntimeHost {
             contextCompactionFailures = 0;
             inputTokenUsage = undefined;
             const preference = latestConversationPreference(messages);
+            const sourcePreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference');
             messages = this.#rebuildCompactedMessages(
               request.sessionId,
               request.turnId,
@@ -2510,6 +2603,11 @@ export class InMemoryRuntimeHost {
               messages.push(message);
               generatedMessages.push({ messageId: `msg_preferences_${request.turnId}_${round}`,
                 createdAt: this.#sessionNow(), message });
+            }
+            if (sourcePreference && [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference')?.content !== sourcePreference.content) {
+              const message = structuredClone(sourcePreference);
+              messages.push(message);
+              generatedMessages.push({ messageId: `msg_source_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
             }
             const postCompact = await runHook('PostCompact', { signal: input.signal, trigger: 'auto' });
             if (postCompact.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: postCompact.stopTurn } });
@@ -3013,10 +3111,14 @@ export class InMemoryRuntimeHost {
   }
 
   async #runPluginChild(request: RuntimeSessionTurnRequest, signal?: AbortSignal): Promise<RuntimeEvent> {
+    return this.#withPluginChildEnvironment(request, signal, () => this.runSessionTurn(request, { signal }));
+  }
+
+  async #withPluginChildEnvironment(request: RuntimeSessionTurnRequest, signal: AbortSignal | undefined, run: () => Promise<RuntimeEvent>): Promise<RuntimeEvent> {
     const profile = request.metadata.pluginAgentId ? (await this.#loadPluginExtensions?.())?.agents.find(agent => agent.id === request.metadata.pluginAgentId) : undefined;
     if (request.metadata.pluginAgentId && !profile) throw new Error('The requested plugin Agent is no longer enabled.');
     const lease = profile ? await this.#pluginAgentEnvironment.acquire(request, profile, signal) : undefined;
-    try { return await this.runSessionTurn(request, { signal }); }
+    try { return await run(); }
     finally {
       try { await this.#pluginHooks.closeSession(request.sessionId); await this.#pluginHookScopes.remove(request.sessionId); }
       finally { await lease?.release(); }

@@ -1,7 +1,7 @@
 ---
 name: cardbush-agent-deploy
 description: 将 CardBush 独立 Agent 服务部署到指定 SSH 主机或本机服务器，完成构建、进程托管、HTTP 接入、验证、更新与回滚，并按部署方式配置 HTTPS、访问令牌和网络防护。用于部署或维护 CardBush Agent 服务，不用于普通 SSH 项目连接或其他应用部署。
-license: Proprietary
+license: Apache-2.0
 ---
 
 # CardBush Agent 服务部署

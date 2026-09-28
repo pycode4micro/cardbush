@@ -78,33 +78,22 @@ In particular verify:
   browser, update and uninstall behavior under the MSIX package identity.
 - Notifications, taskbar identity and shortcut handling, which currently use the
   desktop application's AppUserModelID.
-- Chrome native messaging: the manifest requests `unvirtualizedResources` so
-  browsers can read `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.cardbush.browser_connector`.
-  Windows 11 excludes only this key from virtualization; Windows 10 uses the
-  older registry-wide opt-out. File virtualization remains enabled. Setup
-  registers the manifest's physical path, and the native host finds `bridge.json`
-  beside that manifest. MSIX registers the console `CardBushBrowserHost.exe`
-  app execution alias under the user's `Microsoft\WindowsApps` directory as
-  the native manifest's launch path. Do not resolve this alias to a protected
-  package executable: an unpackaged browser must be able to activate the host
-  and preserve its stdin/stdout pipes. The console alias requires
-  `desktop4:SupportsMultipleInstances="true"` on its Application declaration.
-  The extension waits for an authenticated broker handshake
-  before reporting connected. Verify the installed package and real browser in
-  the same Windows account. External registry entries survive uninstall, so
-  account for a stale registration when testing uninstall/reinstall.
-  Checking the registry or loading the host assembly alone is insufficient:
-  launch the registered alias from a standard unpackaged process and verify
-  native-message framing, then verify a round trip through the real extension.
-- `runFullTrust` certification notes explaining the AI workspace's file, terminal
-  and plugin operations. The manifest declares this capability for Electron; it
-  does not grant administrator privileges.
-- `unvirtualizedResources` certification notes: CardBush registers its local
-  Native Messaging host so the user's browser extension can communicate with
-  the running desktop application. Windows 11 registration is scoped to the
-  single key above. No file-system virtualization exclusion is requested.
-- The Store version currently targets Windows 10 build 19041 or newer, x64, with
-  Simplified Chinese and English resources.
+- Chrome connector: pair the real Chrome 116+ extension with the Broker over
+  authenticated loopback WebSocket. Configuration belongs to the current
+  package's LocalState/browser-connector directory. No Native Messaging
+  registration, execution alias or virtualization exclusion is declared.
+- Test explicit disable, credential revocation, app/browser restarts, occupied
+  ports, upgrade and migration of any old external registration. The bundled
+  cleanup command must run outside package identity after exiting CardBush.
+- Test normal, running and post-crash system uninstall. Verify package data
+  cleanup separately from old-installation migration; preserve user workspaces
+  and the independently installed Chrome extension.
+- runFullTrust certification notes explaining user-directed file, terminal and
+  plugin operations. It does not grant administrator privileges.
+- Windows 11 build 22000 or newer, x64, Simplified Chinese and English.
+
+See [the implementation and evidence record](MSIX_CONNECTOR_REMEDIATION_PLAN_2026-09-28.md)
+and [the revised submission draft](../packaging/msix/store-submission.zh-CN.md).
 
 For privacy text, review actual MSIX data-retention behavior before reusing the
 NSIS statement that uninstall preserves user data. Packaging can change storage

@@ -5,7 +5,7 @@ const path = require('node:path');
 
 module.exports = async function testSidebarTitleLayout({ run, until, pause, window, root }) {
   window.setSize(1200, 800);
-  await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8'));
+  await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8'));
   await run(`
     localStorage.setItem('cardbush_pinned_conversation_ids', JSON.stringify(['sidebar-short']));
     const sidebarNoop = () => {};
@@ -16,7 +16,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
       'very-long-unbroken-conversation-title-for-layout-regression',
     ];
     const sidebarIds = ['sidebar-active', 'sidebar-running', 'sidebar-waiting', 'sidebar-short', 'sidebar-long'];
-    renderView(h(views.ChatSidebar, {
+    window.sidebarFixtureProps = {
       language: 'zh', section: 'chat', activeConversationId: 'sidebar-active',
       runningConversationIds: new Set(['sidebar-running']),
       attentionByConversation: { 'sidebar-waiting': { sessionId: 'sidebar-waiting', kind: 'waiting', updatedAt: '2026-09-05T00:00:00Z' } },
@@ -30,7 +30,12 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
       onCreateConversation: sidebarNoop, onAddProject: sidebarNoop, onProjectAction: sidebarNoop,
       onDeleteConversation: sidebarNoop, onRenameConversation: async () => true,
       onOpenConversationChanges: sidebarNoop, onOpenSettings: sidebarNoop,
-    }));
+    };
+    window.showSidebarFixture = patch => {
+      Object.assign(sidebarFixtureProps, patch);
+      renderView(h(views.ChatSidebar, sidebarFixtureProps));
+    };
+    showSidebarFixture({});
     window.sidebarRow = index => [...document.querySelectorAll('.conversation-row')]
       .find(row => row.querySelector('.conversation-title')?.getAttribute('aria-label') === sidebarTitles[index]);
     window.sidebarGeometry = index => {
@@ -67,7 +72,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     await until(`getComputedStyle(sidebarRow(${index}).querySelector('.conversation-pin')).opacity === '1'`, 'hover actions settle');
     return point;
   };
-  for (const theme of ['theme-dark', 'theme-light', 'theme-cyberpunk']) {
+  for (const theme of ['theme-dark', 'theme-light']) {
     for (const width of [220, 256, 320]) {
       await moveAway();
       await run(`document.querySelector('.app').className = 'app ${theme}'; document.querySelector('.app').style.setProperty('--sidebar-width', '${width}px'); undefined;`);
@@ -76,8 +81,9 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
         await moveAway();
         const rest = await run(`sidebarGeometry(${index})`);
         assert.equal(rest.pinOpacity, '0', 'idle rows hide actions');
-        assert.ok(Math.abs(rest.titleRect.right - (rest.rowRect.right - ([1, 2].includes(index) ? 36 : 8))) <= 1,
-          'idle titles must use all available space, including the former 24px width-cap loss');
+        const rightInset = index === 1 || index === 2 ? 36 : 8;
+        assert.ok(Math.abs(rest.titleRect.right - (rest.rowRect.right - rightInset)) <= 1,
+          'only visible status indicators reserve space beside the title');
         await hover(index);
         const geometry = await run(`sidebarGeometry(${index})`);
         assert.equal(geometry.pinOpacity, '1');
@@ -92,9 +98,6 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
           const end = await run(`sidebarGeometry(${index})`);
           assert.ok(Math.abs(end.textRight - end.fullyVisibleEnd) <= 2.5,
             'last glyph must stop outside the fade without extra blank space: ' + JSON.stringify(end));
-        }
-        if (theme === 'theme-cyberpunk' && index === 0) {
-          assert.equal(geometry.actionColor, geometry.titleColor, 'selected yellow rows need dark actions');
         }
       }
     }
@@ -132,6 +135,78 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     'status must not overlap focused actions');
   await run("document.activeElement.blur()");
   window.webContents.debugger.detach();
+  await moveAway();
+  for (const theme of ['theme-dark', 'theme-bright']) {
+    await run(`viewTheme = ${JSON.stringify(theme)}; showSidebarFixture({ runningConversationIds: new Set(), attentionByConversation: {} })`);
+    await pause(160);
+    // Earlier geometry cases set this class directly, outside React's props.
+    await run(`document.querySelector('.app').className = 'app ' + ${JSON.stringify(theme)}`);
+    const baseline = await run('[sidebarGeometry(0), sidebarGeometry(1)]');
+    await run("showSidebarFixture({ runningConversationIds: new Set(['sidebar-active', 'sidebar-running']) })");
+    await until("document.querySelectorAll('.conversation-running-indicator svg').length === 2", 'running spinners');
+    for (const index of [0, 1]) {
+      const state = await run(`sidebarGeometry(${index})`);
+      assert.equal(state.titleColor, baseline[index].titleColor, `${theme} running preserves normal title color`);
+      assert.equal(state.titleRect.width, baseline[index].titleRect.width - 28, 'running reserves space for its visible spinner');
+      assert.equal(state.titleRect.x, baseline[index].titleRect.x);
+      assert.equal(await run(`sidebarRow(${index}).querySelector('.conversation-running-indicator svg').getAnimations().filter(animation => animation.animationName === 'cardbush-spin' && animation.playState === 'running').length`), 1,
+        'running marker has one rotating spinner');
+      const indicator = await run(`(() => {
+        const element = sidebarRow(${index}).querySelector('.conversation-running-indicator');
+        const rect = element.getBoundingClientRect();
+        return { opacity: getComputedStyle(element).opacity, rect: rect.toJSON() };
+      })()`);
+      assert.equal(indicator.opacity, '1', 'running spinner stays visible outside hover');
+      assert.ok(indicator.rect.width > 0 && indicator.rect.right <= state.rowRect.right);
+      assert.ok(state.titleRect.right < indicator.rect.left, 'title must not overlap the visible spinner');
+      assert.ok(Math.abs(indicator.rect.y + indicator.rect.height / 2 - state.rowRect.y - state.rowRect.height / 2) < 1,
+        'rotation keeps the status centered in its row');
+      assert.equal(await run(`sidebarRow(${index}).getAttribute('title')`), '会话运行中');
+    }
+    if (theme === 'theme-dark') {
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      window.webContents.invalidate();
+      await pause(150);
+      fs.writeFileSync(path.join(root, 'tmp', 'sidebar-running-spinner.png'), (await window.webContents.capturePage()).toPNG());
+    }
+    await run(`showSidebarFixture({ runningConversationIds: new Set(), attentionByConversation: {
+      'sidebar-running': { sessionId: 'sidebar-running', kind: 'completed', updatedAt: '2026-09-05T00:00:00Z' },
+    } })`);
+    await until("!document.querySelector('.conversation-running-indicator')", 'completed task clears running marker');
+    assert.equal(await run("document.getAnimations().filter(animation => animation.animationName === 'cardbush-spin').length"), 0,
+      'completion leaves no running spinner animation');
+    for (const index of [0, 1]) {
+      const state = await run(`sidebarGeometry(${index})`);
+      if (index === 0) assert.equal(state.titleColor, baseline[index].titleColor, `${theme} completion restores normal text color`);
+      else assert.equal(await run("sidebarRow(1).classList.contains('running')"), false, 'unread completion uses normal attention styling');
+      assert.equal(state.titleRect.width, baseline[index].titleRect.width - (index === 1 ? 28 : 0),
+        'completion without an attention marker returns the space to the title');
+    }
+    assert.ok(await run("!!sidebarRow(1).querySelector('.conversation-attention-indicator.completed svg')"));
+    for (const kind of ['waiting', 'error']) {
+      await run(`showSidebarFixture({ attentionByConversation: { 'sidebar-running': {
+        sessionId: 'sidebar-running', kind: '${kind}', updatedAt: '2026-09-05T00:00:00Z' } } })`);
+      await until(`!!sidebarRow(1).querySelector('.conversation-attention-indicator.${kind}')`, kind + ' status marker');
+      assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width - 28, kind + ' keeps status lane');
+    }
+    await run('showSidebarFixture({ attentionByConversation: {} })');
+    await until("!sidebarRow(1).querySelector('.conversation-attention-indicator')", 'attention clears');
+    assert.equal((await run('sidebarGeometry(1)')).titleColor, baseline[1].titleColor, 'viewed completion restores background title color');
+    assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width,
+      'clearing attention returns the status lane to the title');
+  }
+  await run("showSidebarFixture({ language: 'en', attentionByConversation: {}, runningConversationIds: new Set(['sidebar-active']) })");
+  await until("sidebarRow(0).getAttribute('title') === 'Session running'", 'running tooltip follows UI language');
+  window.webContents.debugger.attach('1.3');
+  try {
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await pause(50);
+    assert.equal(await run("document.querySelector('.conversation-running-indicator').getAnimations({ subtree: true }).length"), 0,
+      'reduced motion retains the status icon without rotation');
+  } finally {
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    window.webContents.debugger.detach();
+  }
   if (process.env.CARDBUSH_SIDEBAR_SCREENSHOT) {
     await run("document.querySelector('.app').style.setProperty('--sidebar-width', '256px')");
     await pause(320);

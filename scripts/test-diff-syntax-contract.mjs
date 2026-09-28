@@ -1,30 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
-import ts from 'typescript';
-
-const source = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'features', 'tools', 'diffSyntax.ts'),
-  'utf8',
-);
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
+const { diffLanguageForPath, diffLineNumbers, diffLinePrefix, diffLineSource } = await loadChatTranscript({
+  source: `export * from ${JSON.stringify(path.resolve('src/features/tools/diffSyntax.ts'))};`,
 });
-const loaded = { exports: {} };
-vm.runInNewContext(transpiled.outputText, {
-  module: loaded,
-  exports: loaded.exports,
-  Object,
-  RegExp,
-  String,
-});
-
-const { diffLanguageForPath, diffLineNumbers, diffLinePrefix, diffLineSource } = loaded.exports;
 
 assert.equal(diffLanguageForPath('src/App.tsx'), 'tsx');
 assert.equal(diffLanguageForPath('backend/models.py'), 'python');

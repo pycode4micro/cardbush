@@ -1,8 +1,12 @@
+import { sourcePreferenceText } from '@cardbush/bush-product-agent';
+import { AgentSharedConfiguration, recoverSharedConfiguration } from './agentSharedConfiguration.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
-import { runtimeSessionReadRequestSchema } from '@cardbush/bush-protocol';
+import { runtimeSessionReadRequestSchema, networkProxySchema } from '@cardbush/bush-protocol';
+import { PluginNetwork } from './pluginNetwork.mjs';
+import { createHeadlessProxySession } from './headlessProxySession.mjs';
 import { createProductAgentTurnRequest, GOAL_CONTINUATION_PROMPT } from '@cardbush/bush-product-agent';
 import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, sessionSupersessionSchema, reasoningEffortSchema, decodeSessionSnapshot, type SessionSnapshot, type RuntimeEvent, type RuntimeProviderBindingRef, type ConversationExtractSource, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AgentRuntimeHost } from './agentRuntimeHost.mjs';
@@ -21,6 +25,7 @@ const id = z.string().min(1).max(160);
 const sendSchema = z.object({
   userMessageMetadata: z.record(z.string(), z.unknown()).optional(),
   visionEnabled: z.boolean().optional(),
+  sourceEnabled: z.boolean().optional(),
   conversationStyle: z.object({ mode: z.enum(['natural', 'professional', 'concise', 'custom']), customTone: z.string().max(100_000) }).strict().optional(),
   turnId: id.optional(), supersession: sessionSupersessionSchema.extend({ expectedRevision: z.number().int().nonnegative() }).optional(), files: z.array(z.string()).optional(), images: z.array(z.string()).optional(), goalObjective: z.string().trim().min(1).optional(),
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
@@ -39,6 +44,8 @@ export class AgentService {
   readonly product: ElectronProductHostController;
   readonly instructions: GlobalInstructionsStore;
   readonly #marketplaces: AgentPluginMarketplaces;
+  readonly #sharedConfiguration: AgentSharedConfiguration;
+  readonly #network: PluginNetwork;
   #state: AgentState;
   #writes: Promise<unknown> = Promise.resolve();
   #mutations: Promise<unknown> = Promise.resolve();
@@ -72,8 +79,15 @@ export class AgentService {
       CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify([{ path: join(bundled, 'plugins'), source: 'bundled' }, { path: join(root, 'plugins'), source: 'user' }]),
     });
     for (const key of ['CARDBUSH_APPS_MCP_ENTRY', 'CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY', 'CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY', 'CARDBUSH_MCP_DESKTOP_BRIDGE', 'CARDBUSH_RESOURCE_COORDINATION']) delete env[key];
+    this.#network = new PluginNetwork(join(root, 'config', 'apps.json'), () => createHeadlessProxySession(env));
     this.runtime = new AgentRuntimeHost(env, async (operation, payload) => {
       const data = payload as Record<string, unknown>;
+      if (operation === 'network.configuration') {
+        const model = networkProxySchema.parse(await readFile(join(root, 'config', 'network.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
+        this.#network.setModel(model);
+        return data.model === true ? model : this.#network.configuration();
+      }
+      if (operation === 'network.route') return this.#network.endpoint(payload);
       if (operation === 'subagent.models') return this.product.subagentModels();
       if (operation === 'subagent.prepare-model') return this.product.resolveSubagentModel(String(data.modelId));
       if (operation === 'automation.prepare-model') return this.product.resolveAutomationModel(String(data.modelId));
@@ -88,6 +102,7 @@ export class AgentService {
       bundledPluginRoot: join(bundled, 'plugins'), userPluginRoot: join(root, 'plugins'),
       clearApplicationCaches: () => this.#marketplaces.collectCache(),
     });
+    this.#sharedConfiguration = new AgentSharedConfiguration(root, bundled, () => this.#idle(), () => this.product.refreshMcp());
     this.#marketplaces = new AgentPluginMarketplaces(root, bundled, (pluginId, replace) => this.product.replacePlugin(pluginId, replace), env);
   }
 
@@ -119,6 +134,7 @@ export class AgentService {
       if (state.version !== 1 || !state.id || !Array.isArray(state.jobs) || !Array.isArray(state.projects)) throw new Error('Unsupported or corrupt Agent data.');
       const sandbox = new SandboxSetup({ path: join(root, 'config', 'sandbox.json'), env: options.env });
       await sandbox.get().catch(error => console.warn('[sandbox-check]', error));
+      await recoverSharedConfiguration(root);
       service = new AgentService(root, state, release, options, sandbox);
       await service.runtime.ready;
       await service.#write(next => {
@@ -131,11 +147,11 @@ export class AgentService {
       await service.runtime.transport.sendCommand({ kind: 'runtime.automation_start', payload: {} });
       service.#pump();
       return service;
-    } catch (error) { if (service) await service.runtime.close(); await release(); throw error; }
+    } catch (error) { if (service) { await service.runtime.close(); await service.#network.close(); } await release(); throw error; }
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
-    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sandboxSettings: true, pluginMarketplace: true } }; }
+    capabilities: { desktop: false, computerUse: false, browserUi: false, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: true, delegation: true, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: true, sandboxSettings: true, pluginMarketplace: true } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -171,7 +187,7 @@ export class AgentService {
   #idle(sessionId?: string) { if (sessionId ? this.#active(sessionId) : this.#state.jobs.some(job => ['queued', 'running'].includes(job.status))) throw new Error('Wait for this Agent’s tasks to finish or stop them first.'); }
 
   call(operation: AgentOperation, input: unknown = {}, readSignal?: AbortSignal): Promise<unknown> {
-    const serialized = ['files.upload', 'delegation.submit', 'chat.send', 'chat.queue', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
+    const serialized = ['configuration.sync', 'product.command', 'conversation.catalog', 'instructions.get', 'instructions.save', 'plugins.install', 'plugins.uninstall', 'plugins.connections.save', 'plugins.configure', 'mcp.configure', 'mcp.remove', 'mcp.reconnect', 'files.upload', 'delegation.submit', 'chat.send', 'chat.queue', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
     const workspaceMutation = operation === 'runtime.command' && /(?:revert|restore|update)_workspace|delete_session|clear_sessions|switch_workspace/.test(String((input as { kind?: string })?.kind));
     if (!serialized.includes(operation) && !workspaceMutation) return this.#call(operation, input, readSignal);
     const result = this.#mutations.then(() => this.#call(operation, input));
@@ -297,7 +313,7 @@ export class AgentService {
           const path = project?.path ?? join(this.root, 'workspaces', randomUUID());
           await mkdir(path, { recursive: true });
           await this.#command('runtime.create_session', { sessionId: value.sessionId,
-            metadata: { title: value.prompt.slice(0, 60), agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null, delegationOwner: value.parentSessionId },
+            metadata: { title: value.prompt.slice(0, 60), agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null, delegationOwner: value.parentSessionId, agentRole: 'child', parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId },
             workspace: { mode: 'direct', sourceDir: path } });
         } else if (decodeSessionSnapshot(snapshot).metadata?.delegationOwner !== value.parentSessionId) throw new Error('This remote conversation belongs to another parent.');
         await this.#write(state => state.jobs.push({ id: value.taskId, sessionId: value.sessionId, turnId: value.turnId,
@@ -344,8 +360,8 @@ export class AgentService {
           const reserved = this.#state.jobs.find(item => item.id === job.id)!;
           try {
             await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1', sessionId: job.sessionId,
-              turnId: reserved.guidance!.turnId, messageId: reserved.guidance!.messageId, createdAt: reserved.guidance!.createdAt, content: job.input.text,
-              ...(job.input.userMessageMetadata ? { metadata: job.input.userMessageMetadata } : {}) });
+              turnId: reserved.guidance!.turnId, messageId: reserved.guidance!.messageId, createdAt: reserved.guidance!.createdAt, content: `${job.input.text}\n\n${sourcePreferenceText(job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false))}`,
+              metadata: { ...job.input.userMessageMetadata, sourceEnabled: job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false), composerReferenceContent: job.input.userMessageMetadata?.composerReferenceContent ?? job.input.text } });
           } catch (error) {
             // These Runtime rejections occur only after durable duplicate lookup.
             // A definitively unaccepted append can safely return to the queue.
@@ -411,6 +427,7 @@ export class AgentService {
       case 'mcp.configure': return this.product.configureMcpServer(data as Parameters<ElectronProductHostController['configureMcpServer']>[0]);
       case 'mcp.remove': return this.product.removeMcpServer(id.parse(data.id));
       case 'mcp.reconnect': return this.product.reconnectMcpServer(id.parse(data.id));
+      case 'configuration.sync': return this.#sharedConfiguration.call(input);
       case 'instructions.get': return this.instructions.read();
       case 'instructions.save': return this.instructions.save(z.string().parse(data.content), z.string().parse(data.revision));
     }
@@ -457,7 +474,7 @@ export class AgentService {
       const request = createProductAgentTurnRequest({
         requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, messageId: `message-${job.id}`, createdAt: job.createdAt,
         userText: job.input.text, userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
-        conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
+        sourceEnabled: job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false), conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
         maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens,
         tools: catalog.filter(tool => tool.name !== 'update_goal' || activeGoal?.status === 'active'), projectDir, workspaceDir,
         instructionDocuments: await readAgentInstructionDocuments(this.instructions, projectDir ?? workspaceDir, workspaceDir),
@@ -467,8 +484,12 @@ export class AgentService {
         sessionTitle: String(snapshot.metadata?.title ?? ''),
       });
       if (job.input.supersession) request.supersession = job.input.supersession;
-      if (job.delegation) request.metadata = { ...request.metadata, agentRole: 'child', disabledTools: [...DEFAULT_CHILD_AGENT_DISABLED_TOOLS],
-        remoteDelegation: job.delegation };
+      if (job.delegation) {
+        request.metadata = { ...request.metadata, agentRole: 'child', disabledTools: [...DEFAULT_CHILD_AGENT_DISABLED_TOOLS],
+          parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId, remoteDelegation: job.delegation };
+        request.sessionMetadata = { ...request.sessionMetadata, agentRole: 'child', parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId };
+        request.inputMessages = request.inputMessages.map(entry => entry.message.role === 'user' ? { ...entry, metadata: { ...entry.metadata, subagentAuthor: 'parent' } } : entry);
+      }
       signal.throwIfAborted();
       // Wait for the Runtime's actual terminal result before dequeuing another
       // message. Cancelling the RPC promise itself would release this queue early.
@@ -550,6 +571,7 @@ export class AgentService {
     await this.#marketplaces.close();
     for (const abort of this.#busy.values()) abort.abort();
     await this.runtime.close();
+    await this.#network.close();
     if (this.#extracts) (await this.#extracts).close();
     while (this.#busy.size) await new Promise(resolve => setTimeout(resolve, 10));
     await this.#writes; await this.#releaseLock();

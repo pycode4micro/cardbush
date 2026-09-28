@@ -124,7 +124,8 @@ const workSummaryInspectorSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chat', 'WorkSummaryInspector.tsx'),
   'utf8',
 );
-assert.match(summarySource, /data-testid="work-summary-history"/);
+assert.doesNotMatch(summarySource, /data-testid="work-summary-history"/);
+assert.match(bubbleSource, /completedHistory\.length > 0 \|\| taskPlan[\s\S]*?<AssistantCompletedDisclosure/);
 assert.match(summarySource, /openWorkSummaryInspector/);
 assert.match(workSummaryInspectorSource, /<AssistantLoopHistoryBlock/);
 

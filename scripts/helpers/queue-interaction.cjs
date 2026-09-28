@@ -29,12 +29,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const row = document.querySelector('[data-queue-item-id="' + id + '"]');
       const target = handle ? row.querySelector('.runtime-queue-drag-handle') : row;
       const r = target.getBoundingClientRect();
-      return { x: Math.round(r.left + (handle ? r.width / 2 : 20)), y: Math.round(r.top + r.height * fraction) };
+      return { x: Math.round(r.left + (handle ? r.width / 2 : 60)), y: Math.round(r.top + r.height * fraction) };
     };
     void 0;
   `);
   await until("!!document.querySelector('.composer-queue-button')", 'queue shortcut appears');
-  assert.equal(await run("document.querySelector('.permission-center-button').nextElementSibling.className"), 'composer-queue-button');
+  assert.equal(await run("document.querySelector('.composer-queue-button').closest('.composer-tools') === document.querySelector('.permission-center-button').closest('.composer-tools')"), true, 'queue access shares the composer toolbar with permissions and style');
   assert.equal(await run("document.querySelector('.composer-queue-button').textContent"), '3');
   assert.equal(await run("document.querySelectorAll('.composer-queue-row').length"), 0, 'no duplicate queue summary above input');
   await run("document.querySelector('.composer-queue-button').click()");
@@ -46,8 +46,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     return { text: p.textContent, whiteSpace: style.whiteSpace, lines: p.clientHeight / parseFloat(style.lineHeight), clamp: style.webkitLineClamp };
   })()`);
   assert.equal(prompt.text, await run('queueFixture[0].text'));
-  assert.equal(prompt.whiteSpace, 'pre-wrap');
-  assert.ok(prompt.lines >= 3 && prompt.clamp === 'none', 'the full multiline prompt is visible');
+  assert.equal(prompt.whiteSpace, 'nowrap');
+  assert.ok(prompt.lines <= 1.05 && prompt.clamp === 'none', 'queue preview occupies a single line while retaining the original text');
   assert.equal(await run("document.querySelector('.runtime-queue-position')"), null, 'order labels do not duplicate the visible sequence');
   const rowRect = id => run(`(() => { const r = document.querySelector('[data-queue-item-id="${id}"]').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`);
   const previewRect = () => run(`(() => { const r = document.querySelector('.runtime-queue-drag-preview').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`);
@@ -129,6 +129,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('queueOrders.length'), 3, 'autoscroll alone does not reorder');
   await run("document.querySelector('.runtime-queue-list').scrollTop = 0; setQueueFixture(queueFixture.slice(0, 3))");
   await pause(200);
+  window.webContents.invalidate(); await pause(100);
   const screenshot = await window.webContents.capturePage();
   fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
   fs.writeFileSync(path.join(root, 'tmp', 'composer-queue.png'), screenshot.toPNG());
@@ -145,7 +146,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
       return { inside: panel.left >= body.left && panel.right <= body.right + 1 && panel.top >= body.top,
         iconRight: icon.left >= permission.right - 1,
         iconReachable: hit === iconNode || iconNode.contains(hit),
-        textFits: [...document.querySelectorAll('.runtime-queue-prompt')].every(p => p.scrollWidth <= p.clientWidth + 1) };
+        textFits: [...document.querySelectorAll('.runtime-queue-item')].every(row => {
+          const text = row.querySelector('.runtime-queue-prompt').getBoundingClientRect();
+          const handle = row.querySelector('.runtime-queue-drag-handle').getBoundingClientRect();
+          const actions = row.querySelector('.runtime-queue-actions').getBoundingClientRect();
+          return row.scrollWidth <= row.clientWidth + 1 && text.width > 20 && text.left >= handle.right && text.right <= actions.left
+            && Math.abs(text.top + text.height / 2 - actions.top - actions.height / 2) < 1;
+        }) };
     })()`);
     assert.deepEqual(layout, { inside: true, iconRight: true, iconReachable: true, textFits: true }, width + 'px queue layout');
   }

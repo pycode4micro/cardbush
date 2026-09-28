@@ -1,10 +1,18 @@
 appId: com.cardbush.desktop
 productName: CardBush
 asar: true
+# Our hook still rebuilds required native modules; the default also rebuilds
+# SSH's optional accelerators and fails on machines without a C++ toolchain.
+npmRebuild: false
+beforePack: scripts/rebuild-native-dependencies.cjs
+afterPack: scripts/package-privacy-check.cjs
 asarUnpack:
   - node_modules/@img/**/*
   - node_modules/sharp/**/*
   - packages/cardbush-apps-mcp/dist/native/**/*.dll
+  - '**/*.exe'
+  - '**/*.dll'
+  - '**/*.node'
 directories:
   output: release
   buildResources: assets
@@ -29,8 +37,20 @@ files:
   - '!packages/cardbush-team-plugin/**/*'
   - '!node_modules/@cardbush/team-plugin/**/*'
   - '!node_modules/.cache/**/*'
+  - '!node_modules/cpu-features/**/*'
+  - '!node_modules/ssh2/lib/protocol/crypto/build/**/*'
   - '!**/*.map'
+  - '!**/*.pfx'
+  - '!**/*.p12'
+  - '!**/*.key'
+  - '!**/.env'
+  - '!**/.env.*'
+  - '!**/identity.local.json'
+  - '!**/signing.local.json'
 extraResources:
+  - from: assets/connector-maintenance
+    to: connector-maintenance
+    filter: ['*.ps1']
   - from: assets/plugins/chrome/extension
     to: chrome-extension
     filter:

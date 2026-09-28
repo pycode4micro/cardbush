@@ -79,15 +79,17 @@ test('screenshot failure feedback is scoped, preserves native images, and resets
   assert.equal(submitted, 7, 'feedback never silently retries or hard-blocks tool calls');
 });
 
-test('ships a stable MV3 extension using debugger and native messaging', async () => {
+test('ships a stable MV3 extension using debugger and paired loopback WebSocket', async () => {
   const extensionPath = path.resolve(import.meta.dirname, '../../../assets/plugins/chrome/extension');
   const manifestPath = path.join(extensionPath, 'manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.minimum_chrome_version, '102');
+  assert.equal(manifest.minimum_chrome_version, '116');
   assert.deepEqual(manifest.background, { service_worker: 'background.js' });
   assert.ok(manifest.permissions.includes('debugger'));
-  assert.ok(manifest.permissions.includes('nativeMessaging'));
+  assert.ok(!manifest.permissions.includes('nativeMessaging'));
+  assert.match(manifest.content_security_policy.extension_pages, /connect-src ws:\/\/127\.0\.0\.1:\*/);
+  assert.ok(!manifest.host_permissions?.length);
   assert.ok(manifest.permissions.includes('tabGroups'));
   assert.ok(!manifest.permissions.includes('activeTab'));
   assert.ok(manifest.key);

@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from '../../shared/motionPreference';
 import { useContext } from 'react';
 import { ConversationHostContext } from '../conversationHost';
 import { ArrowUpRight, Check, Copy, X } from 'lucide-react';
@@ -278,7 +279,7 @@ export function QuickContextRail({
     window.requestAnimationFrame(() => {
       scroller.scrollTo({
         top: targetTop,
-        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        behavior: prefersReducedMotion()
           ? 'auto'
           : 'smooth',
       });

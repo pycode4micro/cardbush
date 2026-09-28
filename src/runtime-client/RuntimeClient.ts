@@ -42,7 +42,14 @@ export class RuntimeClient<TEvent> {
   }
 
   async *events(request: RuntimeStreamRequest): AsyncIterable<TEvent> {
-    for await (const rawEvent of this.#transport.openEventStream(request)) {
+    // A fresh subscription has no event ID. UI checkpoints may represent that
+    // as an empty string, while the wire protocol accepts only nonempty IDs.
+    const lastEventId = request.cursor?.lastEventId?.trim();
+    const cursor = request.cursor ? {
+      ...(request.cursor.afterSequence != null ? { afterSequence: request.cursor.afterSequence } : {}),
+      ...(lastEventId ? { lastEventId } : {}),
+    } : undefined;
+    for await (const rawEvent of this.#transport.openEventStream({ ...request, cursor })) {
       if (request.signal?.aborted) {
         return;
       }

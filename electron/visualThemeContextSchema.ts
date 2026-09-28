@@ -5,8 +5,8 @@ export const visualThemeTokens = [
 ] as const;
 
 export interface VisualThemeContext {
-  theme: 'bright' | 'dark' | 'cyberpunk';
-  preference: 'light' | 'dark' | 'cyberpunk' | 'system' | 'custom';
+  theme: 'bright' | 'dark';
+  preference: 'light' | 'dark' | 'system' | 'custom';
   colorScheme: 'light' | 'dark';
   background: string;
   fontFamily: string;

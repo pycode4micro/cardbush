@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import type { AppLanguage } from '../../types';
+import { SettingsCard } from './SettingsControls';
 import { loadCumulativeUsageStatistics, type CumulativeUsageStatistics } from './usageActivity';
 
 export function UsageStatisticsPanel({ language, active = true }: { language: AppLanguage; active?: boolean }) {
@@ -46,13 +47,14 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
   };
 
   return <div className="usage-settings">
+    <SettingsCard title={zh ? '用量概览' : 'Usage overview'}>
     <div className="usage-stat-grid" aria-busy={loading}>
       {statItems.map(item => <div className="usage-stat" key={item.label} title={item.value?.toLocaleString(locale)}>
         <strong>{item.value === undefined ? '—' : formatUsageNumber(item.value, locale)}</strong><span>{item.label}</span>
       </div>)}
     </div>
-    <div className="usage-activity-header">
-      <strong>{zh ? 'Token 活动' : 'Token activity'}</strong>
+    </SettingsCard>
+    <SettingsCard className="usage-activity-card" title={zh ? 'Token 活动' : 'Token activity'} headerAction={
       <div className="usage-activity-actions">
         <div className="usage-range-switcher" role="group" aria-label={zh ? '活跃度日期跨度' : 'Activity date range'}>
           {(['year', 'month', 'week'] as const).map(range => <button type="button" className={activityRange === range ? 'active' : ''}
@@ -62,7 +64,7 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
         </div>
         {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
       </div>
-    </div>
+    }>
     <div className="usage-heatmap-scroll">
       <div className={`usage-heatmap-frame range-${activityRange}`} style={{ '--usage-heatmap-columns': heatmap.weekCount } as CSSProperties}>
         <div className="usage-heatmap-grid" key={`${activityRange}-${Boolean(statistics)}-${active}`} aria-label={zh ? 'Token 使用活动' : 'Token usage activity'}>
@@ -90,6 +92,7 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
       <span>{zh ? `${statistics.requestCount.toLocaleString(locale)} 次模型请求` : `${statistics.requestCount.toLocaleString(locale)} model requests`}</span>
       <span>{zh ? `最长连续 ${statistics.longestStreak} 天` : `${statistics.longestStreak}-day longest streak`}</span>
     </div>}
+    </SettingsCard>
     {error && <p className="usage-load-error" role="alert">{zh ? '无法读取用量记录。' : 'Unable to read usage records.'}
       <button className="secondary-button" type="button" onClick={() => setRetry(value => value + 1)}><RefreshCw size={13} />{zh ? '重试' : 'Retry'}</button>
     </p>}

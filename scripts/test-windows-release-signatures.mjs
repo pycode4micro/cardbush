@@ -17,11 +17,12 @@ test('release inventory includes nested helpers, DLLs and native modules, but no
   assert.deepEqual(await collectWindowsBinaries(root), names.map(name => join(root, name)).sort());
 });
 
-test('unsigned, damaged, missing and non-RSA signatures block release instead of silently passing', () => {
+test('trusted RSA and ECC are accepted, while invalid or incomplete signature evidence blocks release', () => {
   const file = resolve('helper.exe');
-  const valid = { path: file, status: 'Valid', keyAlgorithm: '1.2.840.113549.1.1.1' };
+  const valid = { path: file, status: 'Valid', keyAlgorithm: '1.2.840.113549.1.1.1', timestamped: true, selfSigned: false };
   assert.deepEqual(requireValidSignatures([file], [valid]), { verified: 1 });
-  for (const entry of [{ ...valid, status: 'NotSigned' }, { ...valid, status: 'HashMismatch' }, { ...valid, keyAlgorithm: '1.2.840.10045.2.1' }]) {
+  assert.deepEqual(requireValidSignatures([file], [{ ...valid, keyAlgorithm: '1.2.840.10045.2.1' }]), { verified: 1 });
+  for (const entry of [{ ...valid, status: 'NotSigned' }, { ...valid, status: 'HashMismatch' }, { ...valid, keyAlgorithm: 'unknown' }, { ...valid, timestamped: false }, { ...valid, selfSigned: true }, { ...valid, selfSigned: undefined }]) {
     assert.throws(() => requireValidSignatures([file], [entry]), /signature check failed/);
   }
   assert.throws(() => requireValidSignatures([file], []), /missing verification/);

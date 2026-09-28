@@ -19,8 +19,34 @@ export function toolArtifactsFromPayload(
   const artifacts: ChatToolArtifact[] = [];
   collectDeclaredArtifacts(result.artifacts, artifacts);
   collectDeclaredArtifacts(structured.artifacts, artifacts);
-  collectMcpContent(result.content, artifacts);
+  collectMcpContent(legacyComputerUseContent(native, result, structured), artifacts);
   return dedupeArtifacts(artifacts);
+}
+
+// Older Computer Use results omitted the assistant-only audience on the same
+// screenshot bytes. Normalize that explicit one-image contract on history reads;
+// unrelated MCP images (including results with uncertain delivery) stay visible.
+function legacyComputerUseContent(
+  native: Record<string, unknown>,
+  result: Record<string, unknown>,
+  structured: Record<string, unknown>,
+) {
+  const content = result.content;
+  if (asRecord(native.mcp).name !== 'mcp__cardbush_apps__computer_use' || !Array.isArray(content)) return content;
+  const delivery = asRecord(structured.image_delivery);
+  if (delivery.status !== 'attached' || delivery.count !== 1) return content;
+  const images = content.filter(item => asRecord(item).type === 'image');
+  const declared = Array.isArray(structured.artifacts) ? structured.artifacts.map(asRecord) : [];
+  const imageArtifacts = declared.filter(item => item.type === 'image');
+  if (images.length !== 1 || imageArtifacts.length !== 1) return content;
+  const artifact = imageArtifacts[0];
+  const metadata = asRecord(artifact.metadata);
+  const output = asRecord(structured.output);
+  const path = stringValue(artifact.path);
+  if (asRecord(images[0]).annotations != null || metadata.source !== 'cardbush_apps' || metadata.model_input !== false ||
+      !isRenderableSource(path) || !Array.isArray(structured.paths) || !structured.paths.includes(path) ||
+      (output.path ?? asRecord(output.observation).path) !== path) return content;
+  return content.filter(item => item !== images[0]);
 }
 
 export function mergeToolArtifacts(

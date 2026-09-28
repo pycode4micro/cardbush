@@ -7,7 +7,7 @@ import type { TerminalRuntime } from '@cardbush/platform' with { 'resolution-mod
 type CardlingDesktopState = {
   enabled: boolean;
   language: 'zh' | 'en';
-  theme: 'bright' | 'dark' | 'cyberpunk';
+  theme: 'bright' | 'dark';
   settings: {
     size: 'compact' | 'normal' | 'large';
     opacity: number;
@@ -51,6 +51,12 @@ type RuntimeStartupStatus = {
 };
 
 type ChromeConnectorStatus = {
+  paired: boolean;
+  transport: 'loopback_websocket';
+  cleanupWarning?: string;
+  connectorEnabled: boolean;
+  lifecycleState: string;
+  registrationConflict?: string;
   protocol: 'cardbush.chrome_connector.v1';
   platformSupported: boolean;
   packagedApplication: boolean;
@@ -78,7 +84,7 @@ type ShadowWindowPayload = {
   sourceTurnId: string;
   title: string;
   language: 'zh' | 'en';
-  theme: 'bright' | 'dark' | 'cyberpunk';
+  theme: 'bright' | 'dark';
   accentColor: string;
   themeVariables?: Record<string, string>;
   modelConfig: Record<string, unknown>;
@@ -169,6 +175,11 @@ const desktopApi = {
     ipcRenderer.invoke('chrome-connector:status') as Promise<ChromeConnectorStatus>,
   setupChromeConnector: () =>
     ipcRenderer.invoke('chrome-connector:setup') as Promise<ChromeConnectorStatus>,
+  pairChromeConnector: () => ipcRenderer.invoke('chrome-connector:pair') as Promise<{ code: string; expiresAt: string }>,
+  copyLegacyChromeConnectorCleanup: () => ipcRenderer.invoke('chrome-connector:copy-legacy-cleanup') as Promise<void>,
+  disableChromeConnector: () => ipcRenderer.invoke('chrome-connector:disable') as Promise<ChromeConnectorStatus>,
+  removeChromeConnector: () => ipcRenderer.invoke('chrome-connector:remove') as Promise<ChromeConnectorStatus>,
+  copyChromeConnectorDiagnostics: () => ipcRenderer.invoke('chrome-connector:copy-diagnostics') as Promise<void>,
   openChromeConnectorInstaller: () =>
     ipcRenderer.invoke('chrome-connector:open-installer') as Promise<{
       opened: boolean;
@@ -252,7 +263,7 @@ const desktopApi = {
       hex: string;
       source: 'wallpaper' | 'fallback';
     }>,
-  setWindowTheme: (theme: 'bright' | 'dark' | 'cyberpunk', options?: import('./windowAppearance').WindowAppearanceOptions) =>
+  setWindowTheme: (theme: 'bright' | 'dark', options?: import('./windowAppearance').WindowAppearanceOptions) =>
     ipcRenderer.invoke('appearance:set-window-theme', theme, options) as Promise<import('./windowAppearance').WindowAppearanceState | undefined>,
   publishVisualTheme: (context: import('./visualThemeContextSchema').VisualThemeContext) =>
     ipcRenderer.invoke('appearance:publish-visual-theme', context) as Promise<void>,

@@ -104,6 +104,12 @@ if (process.env.CARDBUSH_RESOURCE_COORDINATION === 'desktop') {
   });
 }
 const pluginFetches = new ProxyFetchPool();
+const hostNetworkAvailable = process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' || Boolean(process.env.CARDBUSH_SERVICE_ID);
+const agentModelFetch: typeof fetch = async (input, init) => {
+  const config = await mcpHost.request<NetworkProxySettings>('network.configuration', { model: true }, init?.signal ?? undefined);
+  const endpoint = await mcpHost.request<string>('network.route', config, init?.signal ?? undefined);
+  return pluginFetches.forEndpoint(endpoint)(input, init);
+};
 async function pluginNetwork(server: Pick<McpServerSnapshot, 'networkProxy' | 'pluginId'> & { id?: string }, signal?: AbortSignal) {
   let config = server.networkProxy;
   if (!config) {
@@ -261,6 +267,7 @@ function createEnvironmentProvider(
   };
   return new OpenAIResponsesProvider({
     ...config,
+    ...(process.env.CARDBUSH_SERVICE_ID ? { fetch: agentModelFetch } : {}),
     capabilityStore,
     capabilityScope: openAIResponsesCapabilityScope(config),
   });
@@ -328,7 +335,7 @@ async function executeRuntimeCommand(
         throw new Error('Plugin is still enabled. Refresh before replacing or uninstalling it.');
       }
       if (suspendedPluginId) await host.preparePluginUninstall(suspendedPluginId);
-      if (process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1') {
+      if (hostNetworkAvailable) {
         const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
         combined.servers = combined.servers.map(server => ({
           ...server, networkProxy: server.id === 'cardbush_management' ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' } : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default,
@@ -704,6 +711,7 @@ const providerCapabilityStore = runtimeStateRoot
   : new InMemoryProviderCapabilityStore();
 providers = new OpenAIResponsesProviderRegistry({
   fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
+  ...(process.env.CARDBUSH_SERVICE_ID ? { createProvider: config => new OpenAIResponsesProvider({ ...config, fetch: agentModelFetch }) } : {}),
   capabilityStore: providerCapabilityStore,
 });
 const usageLedgerPath = process.env.CARDBUSH_USAGE_LEDGER_PATH?.trim();
@@ -794,7 +802,7 @@ host = new InMemoryRuntimeHost({
   loadCommandSandbox: () => loadCommandSandboxConfiguration(process.env, process.env.CARDBUSH_SANDBOX_SETTINGS_PATH),
   remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },
   loadSearchResultLimit,
-  ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
+  ...(hostNetworkAvailable ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,
   provider: usageLedger ? usageRecordingProvider(providers, usage => usageLedger.record(usage)) : providers,
   toolRegistry,
@@ -820,6 +828,7 @@ host = new InMemoryRuntimeHost({
   remoteAgents: process.env.CARDBUSH_SERVICE_ID ? undefined : {
     list: signal => mcpHost.request('agents.list', {}, signal),
     run: (input, signal) => mcpHost.request('agents.delegate', input, signal, true),
+    read: (input, signal) => mcpHost.request('agents.read-child', input, signal),
   },
   subagentModels: {
     list: signal => mcpHost.request<import('@cardbush/bush-runtime').SubagentModelOption[]>('subagent.models', {}, signal),
@@ -864,8 +873,8 @@ host = new InMemoryRuntimeHost({
   },
 });
 mcp = new McpClientManager({
+  ...(hostNetworkAvailable ? { network: pluginNetwork } : {}),
   ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? {
-    network: pluginNetwork,
     oauth: mcpOAuth,
     openai: {
       getToken: input => mcpHost.request('openai.access-token', { rejectedToken: input.rejectedToken }, input.signal),

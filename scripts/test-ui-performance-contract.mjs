@@ -134,8 +134,13 @@ assert.doesNotMatch(
 );
 assert.match(
   appSource,
-  /<LiveComposerRuntimeRail[\s\S]*?activeConversationId=\{activeConversationId\}/,
-  'live reasoning should be owned by the isolated runtime rail',
+  /<MessageBubble[\s\S]*?activeConversationId=\{activeConversationId\}[\s\S]*?thinkingVisible=\{thinkingVisible\}/,
+  'live reasoning should be scoped to the current transcript',
+);
+assert.match(
+  fs.readFileSync(path.join(process.cwd(), 'src/features/chatMessages/AssistantThinkingProcessLine.tsx'), 'utf8'),
+  /function AssistantThinkingProcessLine[\s\S]*?useLiveThinkingNotice\(scope\)/,
+  'reasoning deltas should update only the isolated transcript tail',
 );
 assert.equal(
   (hookSource.match(/if \(requestContext\.reasoningTraceVisible !== true\) return;/g) ?? []).length,

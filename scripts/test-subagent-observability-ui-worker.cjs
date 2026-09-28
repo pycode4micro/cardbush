@@ -32,13 +32,15 @@ app.whenReady().then(async () => {
     ['failed', 'failed', '执行失败', 'Failed'],
     ['stopped', 'stopped', '已停止', 'Stopped'],
   ];
-  const labelsMatch = label => `document.querySelector('.work-summary-subagent-status')?.textContent === ${JSON.stringify(label)} && document.querySelector('.subagent-task-inspector header small')?.textContent === ${JSON.stringify(label)}`;
+  const labelsMatch = label => `document.querySelector('.work-summary-subagent-status')?.textContent === ${JSON.stringify(label)}`;
   try {
     await window.loadFile(join(directory, 'index.html'));
     await until(labelsMatch('已完成'));
     assert.equal(await read(`document.querySelector('.work-summary-subagent-status').getBoundingClientRect().width > 0`), true);
-    assert.match(await read('document.body.innerText'), /接收端文件已生成，联调仍需父任务继续/,
-      'completed execution must preserve the actual result, even when it reports remaining parent work');
+    await read(`document.querySelector('.work-summary-subagent-task').click()`);
+    assert.equal(await read('window.openedChild.task.childSessionId'), 'child');
+    assert.equal(await read('window.openedChild.sessionId'), 'parent');
+    assert.match(await read('window.openedChild.task.responsePrompt'), /接收端文件已生成，联调仍需父任务继续/);
     assert.equal(await read('document.querySelectorAll(".work-summary-subagent-task .spin").length'), 0);
     assert.doesNotMatch(await read('document.body.innerText'), /待父级审查|父级已接受|审查状态|契约状态/);
     writeFileSync(resolve('tmp/subagent-completed.png'), (await window.webContents.capturePage()).toPNG());
@@ -48,41 +50,32 @@ app.whenReady().then(async () => {
         await read(`window.renderScenario(${JSON.stringify(status)},${JSON.stringify(language)}); void 0`);
         await until(labelsMatch(label));
         assert.equal(await read(`document.querySelector('.work-summary-subagent-state').classList.contains('${tone}')`), true);
-        assert.equal(await read(`document.querySelector('.subagent-inspector-state').classList.contains('${tone}')`), true);
         assert.equal(await read(`!!document.querySelector('.work-summary-subagent-task .spin')`), status === 'running',
           'a completed parent Turn must not complete a genuinely running child');
         assert.doesNotMatch(await read('document.body.innerText'), /待父级审查|父级已接受|Awaiting parent review|Accepted by parent/);
-        if (status === 'failed') assert.match(await read('document.body.innerText'), /连接失败/);
-        if (status === 'stopped') {
-          assert.equal(await read("document.querySelectorAll('.subagent-inspector-section.failed').length"), 0);
-          assert.match(await read("document.querySelector('.subagent-inspector-section:last-of-type').textContent"), /停止请求|stop request/);
-        }
-        assert.equal(await read("document.querySelectorAll('.subagent-inspector-error').length"), 0);
+        await read(`document.querySelector('.work-summary-subagent-task').click()`);
+        assert.equal(await read('window.openedChild.task.status'), status);
+        if (status === 'failed') assert.equal(await read('window.openedChild.task.errorMessage'), '连接失败');
       }
     }
     await read(`window.renderScenario('running'); void 0`);
     await until(labelsMatch('运行中'));
     const turnReads = await read('window.turnReads');
-    await until("!document.querySelector('.subagent-task-inspector header button').disabled");
-    await read("document.querySelector('.subagent-task-inspector header button').click()");
-    await until("!document.querySelector('.subagent-task-inspector header button').disabled");
+    await read("window.dispatchEvent(new Event('focus'))");
     assert.equal(await read('window.turnReads'), turnReads, 'active status comes from the task, not a nonexistent committed Turn');
     await read('window.finishTask(); void 0');
     await until(labelsMatch('已完成'));
-    assert.match(await read('document.body.innerText'), /实时任务已完成/,
-      'normal active-task refresh must settle both mounted views without reopening');
-    await until("document.querySelector('.subagent-inspector-raw pre').textContent.includes('committed-child-transcript')");
-    await read("window.failTurnRead = true; document.querySelector('.subagent-task-inspector header button').click()");
-    await until("document.querySelector('.subagent-inspector-raw').textContent.includes('Transcript transport unavailable')");
-    assert.equal(await read(labelsMatch('已完成')), true, 'detail read failure must not replace task execution status');
-    assert.equal(await read("document.querySelectorAll('.subagent-inspector-error').length"), 0);
-    await read("window.failTurnRead = false; window.missingTurn = true; document.querySelector('.subagent-task-inspector header button').click()");
-    await until("!document.querySelector('.subagent-task-inspector header button').disabled");
-    assert.equal(await read("document.querySelectorAll('.subagent-inspector-error').length"), 0, 'late transcript commits are not task failures');
+    await read(`document.querySelector('.work-summary-subagent-task').click()`);
+    assert.match(await read('window.openedChild.task.responsePrompt'), /实时任务已完成/);
+    await read(`window.followupTask={...window.runtimeTask,taskId:'human-followup',childTurnId:'human-turn',prompt:'用户补充',status:'running',revision:1,createdAt:'2026-09-11T14:36:00Z',updatedAt:'2026-09-11T14:36:00Z'};window.dispatchEvent(new Event('focus'));`);
+    await until(labelsMatch('运行中'));
+    assert.equal(await read("document.querySelectorAll('.work-summary-subagent-task').length"),1,'human continuation remains one child conversation');
+    await read(`document.querySelector('.work-summary-subagent-task').click()`);
+    assert.equal(await read('window.openedChild.task.requestPrompt'),'实现接收端网页','keep original assignment as conversation identity');
     assert.equal(await read('window.sessionScans'), 0, 'polling must remain scoped to this task');
     await read('window.unmountFixture(); void 0');
     assert.deepEqual(errors, []);
-    console.log('Subagent observability UI passed: persisted and live Runtime facts, later parent Turns, four states, both views and languages.');
+    console.log('Subagent summary UI passed: live Runtime facts, later parent Turns, four states, child-conversation routing and both languages.');
     clearTimeout(deadline);
     window.destroy();
     app.exit(0);

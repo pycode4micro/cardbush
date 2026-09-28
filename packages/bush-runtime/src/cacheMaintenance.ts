@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import { sourceMemoReference } from './sourceMemo.js';
 
 /** Owners describe their disposable data; this collector never guesses directories. */
 export interface CacheEntry {
@@ -112,7 +113,7 @@ export function temporaryCacheEntries(root: string) {
 }
 
 /** Mark all references first, then sweep. Failure to read any retained source aborts the sweep. */
-export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string }> = [], signal?: AbortSignal): Promise<CacheMaintenanceResult> {
+export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string; turnId?: string; toolCallId?: string }> = [], signal?: AbortSignal): Promise<CacheMaintenanceResult> {
   signal?.throwIfAborted();
   const byKey = new Map<string, Set<CacheEntry>>();
   const add = (key: string, entry: CacheEntry) => { let values = byKey.get(key); if (!values) byKey.set(key, values = new Set()); values.add(entry); };
@@ -120,7 +121,10 @@ export async function collectUnreferencedCache(entries: CacheEntry[], roots: unk
     for (const key of entry.keys) add(key, entry);
     if (entry.owner) add(sessionCacheKey(entry.owner), entry);
   }
-  for (const locator of locators) for (const entry of byKey.get(locator.sessionId) ?? []) add(`cardbush-memo:${locator.number}`, entry);
+  for (const locator of locators) for (const entry of byKey.get(locator.sessionId) ?? []) {
+    add(`cardbush-memo:${locator.number}`, entry);
+    if (locator.turnId && locator.toolCallId) add(sourceMemoReference({ ...locator, turnId: locator.turnId, toolCallId: locator.toolCallId }), entry);
+  }
   const keys = [...byKey.keys()];
   const width = keys.reduce((max, key) => Math.max(max, key.length), 1);
   const retained = new Set<CacheEntry>(), pending: CacheEntry[] = [];

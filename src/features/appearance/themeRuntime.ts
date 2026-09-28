@@ -3,24 +3,15 @@ import type { ThemeMode } from '../../types';
 export const THEME_BACKGROUNDS: Readonly<Record<ThemeMode, string>> = {
   bright: '#f5f3ef',
   dark: '#1a1a1a',
-  cyberpunk: '#050607',
 };
 
 export const THEME_ACCENTS: Readonly<Record<ThemeMode, string>> = {
   bright: '#175fb5',
   dark: '#83baff',
-  cyberpunk: '#00e7f0',
 };
 
-/**
- * Cyberpunk is a dark-theme specialization. Keeping the dark compatibility
- * class lets mature component-specific dark styles remain available while the
- * later cyberpunk stylesheet replaces their visual tokens and key surfaces.
- */
 export function themeClassNames(theme: ThemeMode) {
-  return theme === 'cyberpunk'
-    ? 'theme-dark theme-cyberpunk'
-    : `theme-${theme}`;
+  return 'theme-' + theme;
 }
 
 export function themeBackgroundColor(theme: ThemeMode) {

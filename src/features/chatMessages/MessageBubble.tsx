@@ -24,8 +24,6 @@ import {
   Target,
   ThumbsDown,
   ThumbsUp,
-  Undo2,
-  Redo2,
   UsersRound,
   WrapText,
   X,
@@ -39,7 +37,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -67,7 +64,7 @@ import type {
 import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
 import { WorkspaceChangeStateContext, workspaceChangeReverted } from '../tools/WorkspaceChangeStateContext';
-import { modelLogoFor } from '../composer/modelLogos';
+import { AssistantThinkingProcessLine, AssistantThinkingScope } from './AssistantThinkingProcessLine';
 import {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
@@ -98,11 +95,12 @@ import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
 import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
 import { parsePromptReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
+import { SourceMemoReference } from './SourceMemoReference';
+import { parseSourceMemoReference } from '@cardbush/bush-protocol';
 import { FileMemoReference } from './FileMemoReference';
 import { ConversationFileReference } from './ConversationFileReference';
 import { FileMemoScope } from './FileMemoScope';
 import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
-import { activeToolStatusLabel } from '../tools/toolExecutionState';
 import { parseFileMemoReference } from '@cardbush/bush-protocol';
 import {
   copyText,
@@ -110,6 +108,8 @@ import {
   recordAssistantFeedback,
   type AssistantFeedbackRating,
 } from '../messageFeedback';
+import { codeLanguageForFence, codeLanguageLabel } from '../../shared/codeLanguages';
+import { shouldVirtualizeSource } from '../tools/sourcePreviewBlocks';
 import { splitMessageMedia, splitMessageMediaBlocks } from '../messageImages';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import {
@@ -134,6 +134,7 @@ import { formatCompactDuration } from './assistantTurnTiming';
 import { turnActivityExecutions } from './assistantRunActivity';
 import { mcpActivations } from './mcpActivation';
 import { McpActivationStatus } from './McpActivationStatus';
+import { TurnArtifactsMenu, type TurnArtifactEntry } from './TurnArtifactsMenu';
 import { coalesceAssistantTranscript } from './assistantTranscriptPresentation';
 
 type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
@@ -378,6 +379,8 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         : <span>{children}</span>;
       const contextReference = href && parsePromptReference(href);
       if (contextReference) return <PromptReferenceLink reference={contextReference} />;
+      if (href && parseSourceMemoReference(href)) return richFileReferences
+        ? <SourceMemoReference reference={href} language={language} /> : <span>{children}</span>;
       if (href && parseFileMemoReference(href)) return richFileReferences
         ? <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>
         : <span>{children || href}</span>;
@@ -540,6 +543,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     const urlTransform = useCallback((url: string) => {
       if (url.startsWith(MCP_APP_REFERENCE_SCHEME)) return parseMcpAppReference(url) ? url : '';
       if (parsePromptReference(url)) return url;
+      if (parseSourceMemoReference(url)) return url;
       if (parseFileMemoReference(url)) return url;
       if (referenceMode === 'remote') return /^(https?:\/\/|#)/i.test(url) ? defaultUrlTransform(url) : remoteMarkdownPath(url, workspaceRoot) ? url : '';
       const reference = markdownLocalFileReference(url, workspaceRoot);
@@ -585,6 +589,12 @@ export function MessageFileReferenceScope({
   );
 }
 
+const MarkdownSyntaxCode = recoverableLazy(
+  'markdown-syntax',
+  () => import('./MarkdownSyntaxCode'),
+  ({ content, grammar }) => <code className={`language-${grammar}`}>{content}</code>,
+);
+
 function MarkdownCodeBlock({
   children,
   language,
@@ -592,7 +602,12 @@ function MarkdownCodeBlock({
 }: HTMLAttributes<HTMLPreElement> & { language: AppLanguage }) {
   const [wrapped, setWrapped] = useState(false);
   const text = reactNodeText(children);
-  const codeLanguage = markdownCodeLanguage(children, language);
+  const languageToken = markdownCodeLanguage(children);
+  const codeLanguage = codeLanguageLabel(languageToken, language);
+  const grammar = codeLanguageForFence(languageToken)?.grammar;
+  const highlight = grammar && grammar !== 'plain' && !shouldVirtualizeSource(text);
+  // Fenced code must never run through the inline file-reference renderer.
+  const plainCode = <code className={languageToken ? `language-${languageToken}` : undefined}>{text}</code>;
   if (!text.trim()) {
     return null;
   }
@@ -626,24 +641,23 @@ function MarkdownCodeBlock({
           <span>{language === 'zh' ? '复制' : 'Copy'}</span>
         </button>
       </div>
-      <pre {...props}>{children}</pre>
+      <pre {...props}>{highlight
+        ? <Suspense fallback={plainCode}><MarkdownSyntaxCode content={text} grammar={grammar} /></Suspense>
+        : plainCode}</pre>
     </div>
   );
 }
 
-function markdownCodeLanguage(node: ReactNode, language: AppLanguage): string {
+function markdownCodeLanguage(node: ReactNode): string {
   const nodes = Array.isArray(node) ? node : [node];
   for (const candidate of nodes) {
     if (!candidate || typeof candidate !== 'object' || !('props' in candidate)) continue;
     const props = candidate.props as { className?: string };
     const token = props.className?.match(/(?:^|\s)language-([^\s]+)/)?.[1]?.trim();
     if (!token) continue;
-    if (/^(?:text|txt|plaintext)$/i.test(token)) {
-      return language === 'zh' ? '纯文本' : 'Plain text';
-    }
-    return token.toUpperCase();
+    return token;
   }
-  return language === 'zh' ? '纯文本' : 'Plain text';
+  return '';
 }
 
 function reactNodeText(node: ReactNode): string {
@@ -667,6 +681,7 @@ function MessageBubbleView({
   sending,
   activeTurnId,
   activeAssistantMessageId,
+  keepActionsVisible = false,
   selectedModel = '',
   readOnlyActions = false,
   guidanceAvailable = !readOnlyActions,
@@ -677,7 +692,6 @@ function MessageBubbleView({
   onRetryMessage = async () => undefined,
   onRetryGuidance,
   onRevertChangeReport,
-  onOpenChangeReview,
   onOpenScene,
 }: {
   message: ChatMessage;
@@ -686,6 +700,9 @@ function MessageBubbleView({
   sending: boolean;
   activeTurnId: string;
   activeAssistantMessageId: string;
+  activeConversationId?: string;
+  thinkingVisible?: boolean;
+  keepActionsVisible?: boolean;
   selectedModel?: string;
   readOnlyActions?: boolean;
   guidanceAvailable?: boolean;
@@ -948,6 +965,9 @@ function MessageBubbleView({
     return (
       <div className="message-row user">
         <div className="user-bubble">
+          {Boolean(message.metadata?.subagent_author) && <div className="subagent-message-author">
+            {message.metadata?.subagent_author === 'parent' ? (language === 'zh' ? '主 Agent' : 'Parent Agent') : (language === 'zh' ? '你' : 'You')}
+          </div>}
           <MessageImageStrip paths={imagePaths} language={language} />
           <MessageMediaStrip
             videoPaths={videoPaths}
@@ -1092,7 +1112,9 @@ function MessageBubbleView({
     message.role === 'assistant' && !isActiveAssistantTurn
       ? assistantTurnCompletedAt(message, assistantProgressExecutions)
       : undefined;
-  const taskPlan = message.role === 'assistant' ? message.taskPlan : undefined;
+  const taskPlan = message.role === 'assistant'
+    ? message.taskPlan ?? [...loopHistory].reverse().find(item => item.taskPlan)?.taskPlan
+    : undefined;
   const archiveTaskPlanInHistory = Boolean(
     taskPlan && !taskPlan.active && visibleLoopHistory.length > 0,
   );
@@ -1100,12 +1122,24 @@ function MessageBubbleView({
     !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
   const showFinalAnswer = finalAssistantRound &&
     !guidanceBoundaryRound && !stoppedAssistantRound && !failedAssistantRound;
-  // Guidance completes a segment, not the Turn. Only normal completion and
-  // an explicit Stop expose the changed-files summary and its actions.
+  const showAssistantActions = !isActiveAssistantTurn && !guidanceBoundaryRound &&
+    !(sending && activeMessageTurn && activeMessageTurn === activeTurn) &&
+    (finalAssistantRound || stoppedAssistantRound || failedAssistantRound);
+  const historyToolIds = new Set(visibleLoopHistory.flatMap(item => (item.toolExecutions ?? []).map(tool => tool.id)));
+  const trailingHistoryTools = allToolExecutions.filter(tool => !historyToolIds.has(tool.id));
+  const completedHistory = trailingHistoryTools.length > 0
+    ? [...visibleLoopHistory, { ...message, content: '', loopHistory: undefined, toolExecutions: trailingHistoryTools }]
+    : visibleLoopHistory;
+  // Guidance completes a segment, not the Turn. Publish artifacts once the
+  // Turn completes or is explicitly stopped, next to its completion time.
   const completedChangeReport = !isActiveAssistantTurn && !guidanceBoundaryRound &&
     (stoppedAssistantRound || (finalAssistantRound && !failedAssistantRound))
     ? completedAssistantChangeReport(message, changeSummaryMessages)
     : null;
+  const completedArtifacts = !isActiveAssistantTurn && !guidanceBoundaryRound &&
+    (stoppedAssistantRound || (finalAssistantRound && !failedAssistantRound))
+    ? completedTurnExecutions(message, changeSummaryMessages).flatMap(execution => execution.artifacts ?? [])
+    : [];
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const failurePresentation = assistantFailurePresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
@@ -1249,7 +1283,21 @@ function MessageBubbleView({
             </>
           ) : showFinalAnswer ? (
             <>
-              {showAssistantProgress && (
+              {completedHistory.length > 0 || taskPlan ? (
+                <AssistantCompletedDisclosure
+                  message={message}
+                  executions={assistantProgressExecutions}
+                  language={language}
+                >
+                  {completedHistory.length > 0 ? <AssistantLoopHistoryBlock
+                    history={completedHistory}
+                    archivedPlan={taskPlan}
+                    language={language}
+                    onRevertChangeReport={onRevertChangeReport}
+                    onOpenScene={onOpenScene}
+                  /> : taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
+                </AssistantCompletedDisclosure>
+              ) : showAssistantProgress && (
                 <AssistantRunHeader
                   executions={assistantProgressExecutions}
                   isActive={false}
@@ -1260,15 +1308,15 @@ function MessageBubbleView({
             </>
           ) : (
             <AssistantCompletedDisclosure
-              executions={assistantProgressExecutions}
               message={message}
+              executions={assistantProgressExecutions}
               language={language}
             >
               {assistantBody}
             </AssistantCompletedDisclosure>
           )}
-          <MessageToolOutputs key="tool-outputs"
-            artifacts={outputPresentation.artifacts.filter(artifact => !['image', 'video', 'audio'].includes(artifact.type))} language={language} />
+          {completedArtifacts.length === 0 && <MessageToolOutputs key="tool-outputs"
+            artifacts={outputPresentation.artifacts.filter(artifact => !['image', 'video', 'audio'].includes(artifact.type))} language={language} />}
           {showFinalAnswer && finalAnswerBody}
           {timeoutPresentation && (
             <div
@@ -1301,26 +1349,8 @@ function MessageBubbleView({
               </div>
             </div>
           )}
-          {completedChangeReport && (
-            <AssistantChangedFilesSummary
-              message={message}
-              report={completedChangeReport}
-              language={language}
-              onOpenReview={onOpenChangeReview}
-              onRevert={readOnlyActions || !canRevertWorkspace ? undefined : () => onRevertChangeReport(
-                {
-                  ...completedChangeReport,
-                  id: `${message.id}:completed-change-summary`,
-                  messageId: message.id,
-                  turnId: message.turnId,
-                  createdAt: message.createdAt,
-                },
-                message,
-              )}
-            />
-          )}
         </div>
-        <div className="message-actions">
+        {showAssistantActions && <div className={`message-actions${keepActionsVisible ? ' latest' : ''}`}>
             <button
               type="button"
               title={language === 'zh' ? '复制' : 'Copy'}
@@ -1333,7 +1363,6 @@ function MessageBubbleView({
                 feedbackPulse === 'up' ? 'feedback-pop' : ''
               }`}
               type="button"
-              disabled={isActiveAssistantTurn}
               aria-pressed={assistantFeedback === 'up'}
               title={language === 'zh' ? '有帮助' : 'Helpful'}
               onClick={() => toggleAssistantFeedback('up')}
@@ -1345,7 +1374,6 @@ function MessageBubbleView({
                 feedbackPulse === 'down' ? 'feedback-pop' : ''
               }`}
               type="button"
-              disabled={isActiveAssistantTurn}
               aria-pressed={assistantFeedback === 'down'}
               title={language === 'zh' ? '不理想' : 'Needs improvement'}
               onClick={() => toggleAssistantFeedback('down')}
@@ -1372,7 +1400,14 @@ function MessageBubbleView({
               {formatAssistantCompletedAt(assistantCompletedAt, language)}
             </time>
           )}
-        </div>
+          {(completedChangeReport || completedArtifacts.length > 0) && <AssistantTurnArtifacts
+            key={`${message.conversationId ?? ''}:${message.turnId ?? message.id}`}
+            message={message} report={completedChangeReport} artifacts={completedArtifacts} language={language}
+            onRevert={readOnlyActions || !canRevertWorkspace || !completedChangeReport ? undefined : () => onRevertChangeReport({
+              ...completedChangeReport, id: `${message.id}:turn-artifacts`, messageId: message.id,
+              turnId: message.turnId, createdAt: message.createdAt,
+            }, message)} />}
+        </div>}
       </div>
     </McpAppReferencesContext.Provider>
     </ToolMediaContext.Provider>
@@ -1382,170 +1417,81 @@ function MessageBubbleView({
 
 const completedAssistantChangeReportCache = new WeakMap<
   ChatMessage | ChatMessage[],
-  ReturnType<typeof toolChangeReportFromExecutions>
+  Map<string, ReturnType<typeof toolChangeReportFromExecutions>>
 >();
 
 function completedAssistantChangeReport(message: ChatMessage, turnMessages?: ChatMessage[]) {
   const source = turnMessages ?? message;
-  if (completedAssistantChangeReportCache.has(source)) {
-    return completedAssistantChangeReportCache.get(source) ?? null;
-  }
+  const identity = JSON.stringify([message.conversationId, message.turnId ?? message.id]);
+  const cached = completedAssistantChangeReportCache.get(source);
+  if (cached?.has(identity)) return cached.get(identity) ?? null;
+  const report = toolChangeReportFromExecutions(completedTurnExecutions(message, turnMessages));
+  const visibleReport = report?.files.length ? report : null;
+  const reports = cached ?? new Map();
+  reports.set(identity, visibleReport);
+  completedAssistantChangeReportCache.set(source, reports);
+  return visibleReport;
+}
+
+function completedTurnExecutions(message: ChatMessage, turnMessages?: ChatMessage[]) {
   const executions = new Map<string, ChatToolExecution>();
   const collect = (candidate: ChatMessage) => {
-    for (const nested of candidate.loopHistory ?? []) {
-      collect(nested);
-    }
+    if (message.turnId && candidate.turnId && candidate.turnId !== message.turnId) return;
+    if (message.conversationId && candidate.conversationId && candidate.conversationId !== message.conversationId) return;
+    for (const nested of candidate.loopHistory ?? []) collect(nested);
     for (const execution of candidate.toolExecutions ?? []) {
+      if (message.turnId && execution.turnId && execution.turnId !== message.turnId) continue;
       executions.set(execution.id, execution);
     }
   };
   for (const candidate of turnMessages ?? [message]) collect(candidate);
-  const report = toolChangeReportFromExecutions(Array.from(executions.values()));
-  const visibleReport = report?.files.length ? report : null;
-  completedAssistantChangeReportCache.set(source, visibleReport);
-  return visibleReport;
+  return Array.from(executions.values());
 }
 
-function AssistantChangedFilesSummary({
-  message,
-  report,
-  language,
-  onOpenReview,
-  onRevert,
-}: {
+function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert }: {
   message: ChatMessage;
-  report: ToolChangeReport;
+  report: ToolChangeReport | null;
+  artifacts: ChatToolArtifact[];
   language: AppLanguage;
-  onOpenReview?: (filePath?: string) => void;
   onRevert?: () => Promise<void>;
 }) {
   const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
-  const [expanded, setExpanded] = useState(false);
-  const [reverting, setReverting] = useState(false);
   const changeState = useContext(WorkspaceChangeStateContext);
   const reverted = workspaceChangeReverted(changeState.states, message.conversationId ?? '', {
-    messageId: message.id, turnId: message.turnId, reverted: report.reverted,
+    messageId: message.id, turnId: message.turnId, reverted: report?.reverted,
   });
-  const sectionRef = useRef<HTMLElement | null>(null);
-  const listId = useId();
-  const collapsedCount = 3;
-  const visibleFiles = expanded ? report.files : report.files.slice(0, collapsedCount);
-  const remaining = Math.max(0, report.files.length - collapsedCount);
-
-  function toggleExpanded() {
-    preserveScrollPositionForToggle(sectionRef.current, () => {
-      setExpanded((current) => !current);
-    });
+  const entries = new Map<string, TurnArtifactEntry>();
+  const resolve = (value: string) => remapProjectPath(resolveChangedFilePath(value, workspaceRoot), pathAliases);
+  const key = (value: string) => /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\')
+    ? value.replaceAll('\\', '/').toLowerCase() : value;
+  for (const file of report?.files ?? []) {
+    const path = resolve(file.path);
+    entries.set(key(path), { path, name: basename(file.path), additions: file.additions, deletions: file.deletions });
   }
-
-  return (
-    <section ref={sectionRef} className="assistant-changed-files-summary">
-      <header>
-        <span className="assistant-changed-files-title">
-          <strong>
-            {language === 'zh'
-              ? `${reverted ? '已撤回' : '已编辑'} ${report.files.length} 个文件`
-              : `${reverted ? 'Reverted' : 'Edited'} ${report.files.length} file${report.files.length === 1 ? '' : 's'}`}
-          </strong>
-        </span>
-        <span className="assistant-changed-files-actions">
-          <span className="assistant-changed-files-totals">
-            {report.additions > 0 && <em className="additions">+{report.additions}</em>}
-            {report.deletions > 0 && <em className="deletions">-{report.deletions}</em>}
-          </span>
-          {onRevert && (
-            <button
-              className="assistant-changed-files-revert"
-              type="button"
-              disabled={reverting || changeState.busy}
-              onClick={async () => {
-                setReverting(true);
-                try {
-                  await onRevert();
-                } finally {
-                  setReverting(false);
-                }
-              }}
-            >
-              {reverting ? <LoaderCircle size={12} /> : reverted ? <Redo2 size={12} /> : <Undo2 size={12} />}
-              {reverted ? (language === 'zh' ? '取消撤回' : 'Undo revert') : (language === 'zh' ? '撤回' : 'Revert')}
-            </button>
-          )}
-          {onOpenReview && (
-            <button
-              className="assistant-changed-files-review"
-              type="button"
-              onClick={() => onOpenReview()}
-            >
-              {language === 'zh' ? '审查' : 'Review'}
-            </button>
-          )}
-        </span>
-      </header>
-      <div className="assistant-changed-files-list" id={listId}>
-        {visibleFiles.map((file) => (
-          <button
-            key={file.path}
-            className="assistant-changed-file"
-            type="button"
-            title={
-              language === 'zh'
-                ? `在右侧打开：${file.path}`
-                : `Open in inspector: ${file.path}`
-            }
-            onContextMenu={host ? undefined : event => openFileContextMenu(event, remapProjectPath(
-              resolveChangedFilePath(file.path, workspaceRoot), pathAliases,
-            ), { language })}
-            onClick={() => {
-              if (onOpenReview) {
-                onOpenReview(file.path);
-                return;
-              }
-              const target = remapProjectPath(
-                resolveChangedFilePath(file.path, workspaceRoot),
-                pathAliases,
-              );
-              if (host) host.openFile(target); else openInspector(target, basename(file.path));
-            }}
-          >
-            <span className="assistant-changed-file-name">
-              <span>{basename(file.path)}</span>
-            </span>
-            <small>
-              {file.additions > 0 && <em className="additions">+{file.additions}</em>}
-              {file.deletions > 0 && <em className="deletions">-{file.deletions}</em>}
-            </small>
-          </button>
-        ))}
-        {remaining > 0 && (
-          <button
-            className="assistant-changed-files-more"
-            type="button"
-            aria-expanded={expanded}
-            aria-controls={listId}
-            onClick={toggleExpanded}
-          >
-            <span>
-              {expanded
-                ? language === 'zh' ? '收起文件列表' : 'Show fewer files'
-                : language === 'zh'
-                  ? `展开其余 ${remaining} 个文件`
-                  : `Show ${remaining} more file${remaining === 1 ? '' : 's'}`}
-            </span>
-            <ChevronDown className={expanded ? 'expanded' : ''} size={13} />
-          </button>
-        )}
-      </div>
-    </section>
-  );
+  for (const artifact of artifacts) {
+    if (!artifact.path || /^data:/i.test(artifact.path)) continue;
+    const path = resolve(artifact.path);
+    if (entries.has(key(path))) continue;
+    entries.set(key(path), { path, name: artifact.name || basename(path),
+      mediaType: artifact.type === 'image' || artifact.type === 'video' || artifact.type === 'audio' ? artifact.type : undefined });
+  }
+  if (!entries.size) return null;
+  return <TurnArtifactsMenu items={[...entries.values()]} language={language} reverted={reverted}
+    busy={changeState.busy} onRevert={onRevert}
+    onContextMenu={host ? undefined : (event, item) => openFileContextMenu(event, item.path, { language })}
+    onOpen={item => {
+      if (/^https?:\/\//i.test(item.path)) window.open(item.path, '_blank', 'noopener,noreferrer');
+      else if (host) host.openFile(item.path);
+      else openInspector(item.path, item.name);
+    }} />;
 }
 
 function resolveChangedFilePath(pathValue: string, workspaceRoot: string) {
   const path = stripWrappingQuotes(pathValue.trim());
   const root = stripWrappingQuotes(workspaceRoot.trim());
-  if (!path || !root || isAbsoluteLocalPath(path)) {
+  if (!path || !root || isAbsoluteLocalPath(path) || /^(?:https?|file):/i.test(path)) {
     return path;
   }
   const separator = root.includes('\\') ? '\\' : '/';
@@ -1791,36 +1737,6 @@ function assistantTextWithoutToolNarration(
     : normalizeExecutionNarrationForDisplay(content, executions.length);
 }
 
-function AssistantThinkingProcessLine({
-  language,
-  model,
-  execution,
-}: {
-  language: AppLanguage;
-  model: string;
-  execution?: ChatToolExecution;
-}) {
-  const logo = modelLogoFor(model);
-  return (
-    <div className="assistant-thinking-process">
-      {logo ? (
-        <span
-          className={`assistant-thinking-model model-${logo.id}`}
-          title={logo.label}
-          aria-hidden="true"
-        >
-          <img src={logo.src} alt="" />
-        </span>
-      ) : (
-        <span className="assistant-thinking-model fallback" aria-hidden="true">
-          <LoaderCircle size={11} />
-        </span>
-      )}
-      <span>{execution ? activeToolStatusLabel(execution, language) : language === 'zh' ? '正在思考' : 'Thinking'}</span>
-    </div>
-  );
-}
-
 function AgentHookSummaryBadge({
   message,
   language,
@@ -2036,13 +1952,13 @@ const AssistantRunHeader = memo(function AssistantRunHeader({
 });
 
 function AssistantCompletedDisclosure({
-  executions,
   message,
+  executions,
   language,
   children,
 }: {
-  executions: ChatToolExecution[];
   message: ChatMessage;
+  executions: ChatToolExecution[];
   language: AppLanguage;
   children: ReactNode;
 }) {
@@ -2055,9 +1971,9 @@ function AssistantCompletedDisclosure({
   );
   const blockRef = useRef<HTMLDivElement>(null);
   const label = assistantProgressLabel({
+    message,
     executions,
     isActive: false,
-    message,
     now: Date.now(),
     language,
   });
@@ -2506,14 +2422,12 @@ function AssistantLoopHistoryItem({
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const executions = message.toolExecutions ?? [];
-  const timestamp = formatLoopHistoryTimestamp(message, language);
 
   return (
     <section
       className="assistant-loop-history-item"
       data-testid="assistant-loop-history-item"
     >
-      {timestamp && <header className="assistant-loop-history-timestamp"><span>{timestamp}</span></header>}
       {executions.length > 0 ? (
         <AssistantMessageContent
           content={message.content}
@@ -2537,38 +2451,6 @@ function hasVisibleLoopHistoryMessage(message: ChatMessage) {
       (message.attachments?.length ?? 0) > 0 ||
       (message.toolExecutions?.length ?? 0) > 0,
   );
-}
-
-function formatLoopHistoryTimestamp(message: ChatMessage, language: AppLanguage) {
-  const value = loopHistoryTimestamp(message);
-  if (value == null) {
-    return '';
-  }
-  const date = new Date(value);
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(date);
-}
-
-function loopHistoryTimestamp(message: ChatMessage) {
-  const metadata = message.metadata ?? {};
-  const executionTimestamps = (message.toolExecutions ?? []).flatMap((execution) => [
-    execution.createdAt,
-    toolExecutionFinishedAt(execution),
-  ]);
-  return latestTimestamp([
-    metadata.cardbush_turn_completed_at,
-    metadata.completed_at,
-    metadata.done_at,
-    metadata.finished_at,
-    ...executionTimestamps,
-    metadata.cardbush_turn_started_at,
-    metadata.turn_started_at,
-    metadata.started_at,
-    message.createdAt,
-  ]);
 }
 
 function agentHookSummaryFromMessage(message: ChatMessage) {
@@ -3084,6 +2966,9 @@ function sameMessageBubbleProps(
     previous.message !== next.message ||
     previous.language !== next.language ||
     previous.sending !== next.sending ||
+    previous.activeConversationId !== next.activeConversationId ||
+    previous.thinkingVisible !== next.thinkingVisible ||
+    previous.keepActionsVisible !== next.keepActionsVisible ||
     previous.selectedModel !== next.selectedModel ||
     previous.readOnlyActions !== next.readOnlyActions ||
     previous.guidanceAvailable !== next.guidanceAvailable ||
@@ -3118,9 +3003,17 @@ function isActiveMessageBubble(props: MessageBubbleViewProps) {
 }
 
 export const MessageBubble = memo(function MessageBubble(props: MessageBubbleViewProps) {
+  const activeConversationId = props.activeConversationId ?? props.message.conversationId ?? '';
+  const activeTurnId = props.activeTurnId || props.message.turnId || '';
+  const enabled = props.thinkingVisible === true;
+  const running = isActiveMessageBubble(props);
+  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running }),
+    [activeConversationId, activeTurnId, enabled, running]);
   return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId}>
     <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
-      <MessageBubbleView {...props} />
+      <AssistantThinkingScope.Provider value={thinkingScope}>
+        <MessageBubbleView {...props} />
+      </AssistantThinkingScope.Provider>
     </WorkspaceRevertAvailability.Provider>
   </FileMemoScope>;
 }, sameMessageBubbleProps);

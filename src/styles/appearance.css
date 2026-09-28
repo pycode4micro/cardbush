@@ -1,0 +1,37 @@
+/* Preferences affect typography and interaction without scaling window geometry. */
+.app {
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: var(--ui-font-weight, 400);
+  font-style: var(--ui-font-style, normal);
+}
+.app .markdown-content, .app .composer-input, .app .composer textarea {
+  font-family: var(--content-font-family, var(--app-font-family));
+  font-weight: var(--content-font-weight, 400);
+  font-style: var(--content-font-style, normal);
+}
+.app :is(.markdown-code-block pre, .markdown-code-block pre code, .diff-line code, .source-code-lines, .source-code-lines code, .source-plain-text, .source-virtual-code, .source-code-line, .diff-prefix) {
+  font-family: var(--mono-font-family, ui-monospace, Consolas, monospace);
+  font-size: var(--code-font-size, 12px);
+  font-weight: var(--code-font-weight, 400);
+  font-style: var(--code-font-style, normal);
+}
+.app .markdown-content :not(pre) > code { font-family: var(--mono-font-family, ui-monospace, Consolas, monospace); }
+html .app[data-translucent-sidebar="false"] :is(.sidebar, .settings-sidebar) {
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.app[data-pointer-cursor="false"] :is(button, a, summary, [role="button"], [role="combobox"], [role="option"], [role="tab"], input[type="checkbox"], input[type="radio"], input[type="color"], select, label) { cursor: default; }
+.app[data-pointer-cursor="true"] :is(button, a, summary, [role="button"], [role="combobox"], [role="option"], [role="tab"], input[type="checkbox"], input[type="radio"], input[type="color"], select):not(:disabled):not([aria-disabled="true"]) { cursor: pointer; }
+.app[data-diff-indicators="symbols"] .diff-line:is(.addition, .deletion) { background: transparent; color: var(--text-mid); }
+.app[data-diff-indicators="symbols"] .diff-line:is(.addition, .deletion) .diff-marker { background: transparent; }
+.app[data-diff-indicators="symbols"] .diff-line .diff-prefix { display: block; color: var(--text); font-weight: 600; }
+.app[data-diff-indicators="symbols"] .change-review-diff-pane .diff-line { grid-template-columns: 3px 40px 18px max-content; }
+.app[data-diff-indicators="color"] .diff-prefix { visibility: hidden; }
+html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, html[data-reduce-motion="true"] *::after {
+  animation-duration: .01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  scroll-behavior: auto !important;
+}

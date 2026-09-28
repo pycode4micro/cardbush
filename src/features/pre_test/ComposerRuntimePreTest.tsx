@@ -12,9 +12,11 @@ import {
   type ThinkingNotice,
   type ComposerRuntimeRailHandle,
 } from '../composer';
+import { TurnRuntimeDetails } from '../chat/TurnRuntimeDetails';
+import { AssistantThinkingDetail } from '../chatMessages/AssistantThinkingProcessLine';
 import { reorderScopedQueue } from '../composer/queueOrdering';
 import { PermissionRequestCard } from '../interactions/PermissionRequestCard';
-import type { ConversationChangeReport, ConversationChangeSummary } from '../tools';
+import type { ConversationChangeSummary } from '../tools';
 
 type RuntimeFixture = 'processing' | 'thinking' | 'changes' | 'shadow' | 'combined' | 'queue' | 'permission';
 
@@ -23,7 +25,7 @@ const thinkingFixture: ThinkingNotice = {
   turnId: 'pre-test-turn',
   preview: '正在比较现有布局与输入框边界，定位状态区的挂载层级。',
   content:
-    '正在检查输入框、运行状态和排队区域的层级关系。\n\n目标是让运行信息保持可见，但不进入主消息流；只有用户主动展开时才显示完整内容。',
+    '正在检查输入框、运行状态和排队区域的层级关系。\n\n思考入口留在会话末尾，只有用户主动展开时才显示完整内容。',
   createdAt: new Date().toISOString(),
 };
 
@@ -33,20 +35,6 @@ const shadowFixture: ShadowChatEntry = {
   content: '验证节点可以提前并行，但会多一次上下文同步。是否采用并行方案？',
   createdAt: new Date().toISOString(),
 };
-
-const changeReportsFixture: ConversationChangeReport[] = [{
-  id: 'pre-test-change-report',
-  messageId: 'pre-test-assistant',
-  turnId: 'pre-test-turn',
-  files: [
-    { path: 'src/App.tsx', additions: 18, deletions: 6, diff: '', lines: [] },
-    { path: 'src/styles/app.css', additions: 34, deletions: 12, diff: '', lines: [] },
-    { path: 'src/features/composer/ComposerRuntimeRail.tsx', additions: 47, deletions: 9, diff: '', lines: [] },
-  ],
-  additions: 99,
-  deletions: 27,
-  fileCount: 3,
-}];
 
 const changeSummaryFixture: ConversationChangeSummary = {
   fileCount: 3,
@@ -128,7 +116,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
   const [draft, setDraft] = useState('');
   const [shadowDraft, setShadowDraft] = useState('');
   const [shadowEntries, setShadowEntries] = useState<ShadowChatEntry[]>([]);
-  const [thinkingOpen, setThinkingOpen] = useState(false);
   const [shadowOpen, setShadowOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState([
     { id: 'pre-test-queue-1', text: '补充移动端状态条的窄屏验收。', createdAt: '2026-01-01T00:00:00.000Z' },
@@ -171,7 +158,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
               type="button"
               onClick={() => {
                 setFixture(option.id);
-                setThinkingOpen(false);
                 setShadowOpen(false);
               }}
             >
@@ -183,8 +169,8 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
       <main className="composer-runtime-pre-test-stage">
         <div className="composer-runtime-pre-test-copy">
           <small>{language === 'zh' ? '运行中的会话' : 'Active conversation'}</small>
-          <h2>{language === 'zh' ? '运行状态贴近输入区，Shadow 使用临时聊天。' : 'Runtime state stays near the composer; Shadow uses temporary chat.'}</h2>
-          <p>{language === 'zh' ? 'Thinking 不进入消息流；打开 Shadow 后，原输入框切换为临时对话。' : 'Thinking stays outside the transcript; opening Shadow turns the existing composer into a temporary chat.'}</p>
+          <h2>{language === 'zh' ? '运行状态归入会话，输入区只保留引导队列。' : 'Runtime progress stays in the conversation; the composer shows queued guidance.'}</h2>
+          <p>{language === 'zh' ? '思考、计划和目标跟随当前回合；排队消息单独管理。' : 'Thinking, plans and goals stay with the current turn; queued messages are managed separately.'}</p>
         </div>
         <div className="composer-runtime-pre-test-dock runtime-attached">
           {fixture === 'permission' ? (
@@ -199,8 +185,8 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
             </div>
           ) : (
             <>
-              <ComposerRuntimeRail
-                ref={runtimeRailRef}
+              {showThinking && <AssistantThinkingDetail language={language} model="" notice={thinkingFixture} />}
+              <TurnRuntimeDetails
                 language={language}
                 running={fixture !== 'queue'}
                 taskPlan={showProcessing ? taskPlanFixture : undefined}
@@ -214,19 +200,15 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                     reason: '仍需验证第二轮工具返回后的文本是否保留。',
                   },
                 ] : []}
-                thinkingNotice={showThinking ? thinkingFixture : null}
-                thinkingOpen={thinkingOpen}
-                changeReports={showChanges ? changeReportsFixture : []}
                 changeSummary={showChanges ? changeSummaryFixture : null}
+                onOpenChangeReview={() => undefined}
+              />
+              <ComposerRuntimeRail
+                ref={runtimeRailRef}
+                language={language}
                 queuedMessageCount={showQueue ? queuedMessages.length : 0}
                 queuedMessagePreview={showQueue ? queuedMessages[0]?.text ?? '' : ''}
                 queuedMessages={showQueue ? queuedMessages : []}
-                onToggleThinking={() => {
-                  setShadowOpen(false);
-                  setThinkingOpen((current) => !current);
-                }}
-                onCloseThinking={() => setThinkingOpen(false)}
-                onOpenChangeReview={() => undefined}
                 onEditQueuedMessage={(item) => {
                   setDraft(item.text);
                   setQueuedMessages((current) => current.filter((queued) => queued.id !== item.id));
@@ -315,7 +297,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 shadowAvailable
                 shadowAgentName="Shadow Agent"
                 onToggleShadow={() => {
-                  setThinkingOpen(false);
                   setShadowOpen((current) => {
                     const next = !current;
                     if (next && shadowEntries.length === 0) {

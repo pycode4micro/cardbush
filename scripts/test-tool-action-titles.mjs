@@ -53,6 +53,31 @@ test('fallbacks avoid raw command/error text and never describe tool counts', ()
   assert.equal(api.toolActionTitle(row, 'en'), 'Run command');
 });
 
+test('specific descriptions follow the UI language through live updates and archived receipts', () => {
+  const titles = { zh: '检查项目类型错误', en: 'Check project type errors' };
+  const display = { title: titles.en, titles };
+  const queued = event(1, 'tool_queued'); queued.payload.display = display;
+  const live = api.toolLifecycle(queued);
+  const history = api.runtimeHistoryToolExecution({ ...record, display });
+  const detail = api.runtimeHistoryToolExecution({ ...record, display, protocol: 'bush.tool_execution_record.v1', result: { state: 'exited' } });
+  const late = event(2, 'tool_returned'); late.payload.display = { title: 'stale', titles: { zh: '旧标题', en: 'Old title' } };
+  const merged = api.mergeToolExecutionUpdate(live, api.toolLifecycle(late));
+  const attached = api.attachHistoryToolExecutions([{ id: 'a', role: 'assistant', turnId: 't', toolExecutions: [live] }],
+    [{ ...detail, assistantMessageId: 'a', metadata: { displayTitle: 'stale', displayTitles: { zh: '旧标题', en: 'Old title' } } }]);
+  for (const row of [live, history, detail, merged, attached[0].toolExecutions[0]]) {
+    for (const language of ['zh', 'en', 'zh']) assert.equal(api.toolActionTitle(row, language), titles[language]);
+  }
+});
+
+test('legacy descriptions remain available in their language with localized fallback in the other', () => {
+  const row = api.runtimeHistoryToolExecution({ ...record, toolCall: { ...record.toolCall, name: 'terminal_exec' } });
+  assert.equal(api.toolActionTitle(row, 'zh'), '核对产品资料');
+  assert.equal(api.toolActionTitle(row, 'en'), 'Run command');
+  row.metadata.displayTitle = 'Check product information';
+  assert.equal(api.toolActionTitle(row, 'en'), 'Check product information');
+  assert.equal(api.toolActionTitle(row, 'zh'), '执行命令');
+});
+
 test('parallel selection is sticky and permission requests remain visible', () => {
   const first = { ...api.toolLifecycle(event(1, 'tool_running', '第一项工作')), id: 'first' };
   const second = { ...api.toolLifecycle(event(2, 'tool_running', '第二项工作')), id: 'second' };

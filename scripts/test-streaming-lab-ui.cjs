@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
     await until(`document.querySelector('${lane('frame')} .message-list').textContent.includes('流式探针')`);
     assert.equal(await read(`document.querySelector('${lane('baseline')} .message-list').textContent.includes('流式探针')`), false,
       'the lab uses real ChatPanel: experimental text paints while baseline still waits for segment completion');
-    assert.equal(await read(`document.querySelectorAll('${lane('frame')} .assistant-changed-files-summary').length`), 0);
+    assert.equal(await read(`document.querySelectorAll('${lane('frame')} .turn-artifacts-trigger').length`), 0);
     await pause(400);
     assert.equal(await read(`(() => {
       const list=document.querySelector('${lane('frame')} .message-list');
@@ -49,8 +49,9 @@ app.whenReady().then(async () => {
       if (scenario === 'guidance') {
         await read(`while(window.streamingLab.state().nextEvent !== 'terminal') window.streamingLab.step(); void 0`);
         await until(`document.querySelectorAll('${lane('frame')} .loop-subagent-preview').length === 1`);
-        assert.equal(await read(`document.querySelectorAll('${lane('frame')} .loop-image-preview').length`), 1);
-        assert.equal(await read(`document.querySelectorAll('${lane('frame')} .assistant-changed-files-summary').length`), 0,
+        assert.equal(await read(`document.querySelectorAll('${lane('frame')} .loop-image-status').length`), 1,
+          'the image tool without an attached artifact keeps its no-preview status');
+        assert.equal(await read(`document.querySelectorAll('${lane('frame')} .turn-artifacts-trigger').length`), 0,
           'guidance plus active text must not expose a changed-files summary');
         await pause(300);
         writeFileSync(resolve('tmp/streaming-lab-previews.png'), (await window.webContents.capturePage()).toPNG());
@@ -84,7 +85,7 @@ app.whenReady().then(async () => {
         writeFileSync(resolve('tmp/streaming-lab-completed.png'), (await window.webContents.capturePage()).toPNG());
       }
       if (scenario === 'complete' || scenario === 'stop') {
-        await until(`document.querySelectorAll('${lane('frame')} .assistant-changed-files-summary').length > 0`);
+        await until(`document.querySelectorAll('${lane('frame')} .turn-artifacts-trigger').length > 0`);
       }
       if (scenario === 'long') {
         await until(`document.querySelector('${lane('frame')} .message-list').scrollHeight > 3000`);
@@ -119,7 +120,7 @@ app.whenReady().then(async () => {
         await until(`window.streamingLab.state().scenario === ${JSON.stringify(fixture.id)} && window.streamingLab.state().index === 0`);
         await read('window.streamingLab.finish(true).then(() => undefined)');
         await pause(200);
-        assert.equal(await read(`document.querySelectorAll('${lane('frame')} .assistant-changed-files-summary').length`), 0,
+        assert.equal(await read(`document.querySelectorAll('${lane('frame')} .turn-artifacts-trigger').length`), 0,
           'real history must not render a terminal change summary before the terminal event');
         if (fixture.source.subagents) {
           await until(`document.querySelectorAll('${lane('frame')} .loop-subagent-preview').length > 0`);

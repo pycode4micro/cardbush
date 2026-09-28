@@ -78,7 +78,7 @@ test('observation schema permits text-only evidence but never an empty observati
 });
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==', 'base64');
-test('observations include standard MCP image bytes and keep UI artifacts without double model injection', async t => {
+test('observations deliver model-only MCP image bytes and one saved UI artifact', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-image-delivery-'));
   t.after(async () => {
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-image-delivery-'));
@@ -92,6 +92,10 @@ test('observations include standard MCP image bytes and keep UI artifacts withou
   assert.equal(result.content[1].type, 'image');
   assert.deepEqual(Buffer.from(result.content[1].data, 'base64'), png);
   assert.equal(result.content[1]._meta['codex/imageDetail'], 'original');
+  assert.deepEqual(result.content[1].annotations.audience, ['assistant']);
+  assert.equal(result.content.filter(item => item.type === 'image').length, 1);
+  assert.equal(result.structuredContent.artifacts.length, 1);
+  assert.equal(result.structuredContent.artifacts[0].path, path);
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
   assert.equal(result.structuredContent.artifacts[0].metadata.model_input, false);
   assert.deepEqual(native, original);

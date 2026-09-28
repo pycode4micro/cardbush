@@ -9,7 +9,7 @@ const { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceControl
 const root = path.resolve(__dirname, '..');
 const preview = process.argv.includes('--preview');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const backgrounds = { dark: '#1a1a1a', bright: '#f5f3ef', cyberpunk: '#050607' };
+const backgrounds = { dark: '#1a1a1a', bright: '#f5f3ef' };
 
 async function bundleViews() {
   const { build } = await import('vite');
@@ -75,7 +75,10 @@ app.whenReady().then(async () => {
     if (action === 'maximize') win.isMaximized() ? win.unmaximize() : win.maximize();
   });
   nativeTheme.on('updated', refresh);
-  const run = source => win.webContents.executeJavaScript(source);
+  const run = async source => {
+    try { return await win.webContents.executeJavaScript(source); }
+    catch (error) { throw new Error(`${error.message}\nExecuting: ${source}\nRenderer: ${JSON.stringify(await win.webContents.executeJavaScript('window.failures ?? []'))}`); }
+  };
   const until = async (condition, label) => {
     for (let i = 0; i < 100; i++) { if (await run(condition)) return; await pause(30); }
     throw Error(`Timed out: ${label}`);
@@ -85,7 +88,7 @@ app.whenReady().then(async () => {
     done({ cancel: /^https?:/.test(details.url) });
   });
   await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-  const css = ['theme.css', 'app.css', 'windowMaterial.css', 'themes/cyberpunk.css']
+  const css = ['theme.css', 'app.css', 'windowMaterial.css', 'appearance.css']
     .map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n');
   await win.webContents.insertCSS(css);
   await run(`
@@ -126,8 +129,8 @@ app.whenReady().then(async () => {
       window.changeAppearance = (nextTheme, nextMaterial = 'auto', nextPreference = nextTheme === 'bright' ? 'light' : nextTheme) => {
         setTheme(nextTheme); setMaterial(nextMaterial); setThemePreference(nextPreference);
       };
-      views.useWindowAppearance(theme, themePreference, material);
-      return h('div', { className: 'app ' + (theme === 'cyberpunk' ? 'theme-dark theme-cyberpunk' : 'theme-' + theme), style: { '--sidebar-width':'252px' } },
+      views.useWindowAppearance(theme, themePreference === 'custom' ? 'dark' : themePreference, material, undefined, themePreference === 'custom');
+      return h('div', { className: 'app ' + ('theme-' + theme), style: { '--sidebar-width':'252px' } },
         h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed, onToggleSidebar:() => setCollapsed(!collapsed),
           onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
@@ -197,10 +200,7 @@ app.whenReady().then(async () => {
     await until("document.documentElement.dataset.windowMaterial === 'mica'", 'OS restored');
     await run("changeAppearance('dark','auto','custom')");
     await until("document.documentElement.dataset.windowMaterial === 'none'", 'custom palette owns backdrop');
-    await run("changeAppearance('cyberpunk')");
-    await until("document.documentElement.dataset.startTheme === 'cyberpunk'", 'special theme');
-    assert.equal(await run('document.documentElement.dataset.windowMaterial'), 'none');
-    await run("changeAppearance('dark')");
+    await run("changeAppearance(\'dark\')");
     await until("document.documentElement.dataset.windowMaterial === 'mica'", 'preview ready');
   }
   for (const theme of ['dark', 'bright']) {

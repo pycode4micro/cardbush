@@ -1,4 +1,4 @@
-import { readConversationStyle } from '../settings/conversationStyle';
+import { resolveConversationStyle } from '../settings/conversationStyle';
 import type { RuntimeEvent, SessionSnapshot, ConversationExtractDesktopApi } from '@cardbush/bush-protocol';
 import type { AgentDesktopApi, AgentJob, AgentSendInput, AgentOperation } from '../../../electron/agentTypes';
 import * as shared from '../../backend/api';
@@ -137,7 +137,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
       subagentPermissionRouting: request.subagentPermissionRouting }),
     ...(request.files?.length ? { files: request.files } : {}), ...(request.images?.length ? { images: request.images.map(image => image.path) } : {}),
     ...(hostOptions.visualInputAvailable && request.standardImageInputEnabled ? { visionEnabled: true } : {}),
-    ...(hostOptions.sharedSettings ? { conversationStyle: readConversationStyle() } : {}),
+    ...(hostOptions.sharedSettings ? { conversationStyle: resolveConversationStyle(request.sessionId, connectionId) } : {}),
     goalObjective: parseGoalCommand(request.userInput)?.objective, ...options,
   });
   const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession'] }) => {
@@ -147,7 +147,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     if (!prior) {
       const referenced = await resolvePromptReferenceContext(input.text, request.sessionId, await client.getSession(request.sessionId), request.uiLanguage,
         (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve);
-      input.text = referenced.content; input.userMessageMetadata = { ...referenced.metadata,
+      input.text = referenced.content; input.userMessageMetadata = { ...referenced.metadata, sourceEnabled: request.sourceEnabled !== false,
         userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(request.attachments?.length ? { attachments: request.attachments } : {}) };
     }

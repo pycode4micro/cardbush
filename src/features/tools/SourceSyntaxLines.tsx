@@ -1,7 +1,8 @@
 import { Highlight } from 'prism-react-renderer';
 import { memo, useCallback, useMemo } from 'react';
 
-import { cardbushSyntaxTheme } from './DiffSyntaxLines';
+import { cardbushSyntaxTheme } from '../../shared/syntaxTheme';
+import { Prism } from '../../shared/syntaxPrism';
 import { diffLanguageForPath } from './diffSyntax';
 import { VirtualSourceLines, SourcePreviewRows } from './VirtualSourceLines';
 import { shouldVirtualizeSource, type SourcePreviewBlock } from './sourcePreviewBlocks';
@@ -24,6 +25,7 @@ export default memo(function SourceSyntaxLines({
 
   return (
     <Highlight
+      prism={Prism}
       code={normalized}
       language={diffLanguageForPath(path)}
       theme={cardbushSyntaxTheme}
@@ -62,7 +64,7 @@ export default memo(function SourceSyntaxLines({
 
 const HighlightedBlock = memo(function HighlightedBlock({ block, path }: { block: SourcePreviewBlock; path: string }) {
   if (!block.highlight) return <SourcePreviewRows block={block} />;
-  return <Highlight code={block.rows.map(row => row.text).join('\n')} language={diffLanguageForPath(path)} theme={cardbushSyntaxTheme}>
+  return <Highlight prism={Prism} code={block.rows.map(row => row.text).join('\n')} language={diffLanguageForPath(path)} theme={cardbushSyntaxTheme}>
     {({ tokens, getTokenProps }) => <SourcePreviewRows block={block} renderLine={index => tokens[index]?.map((token, tokenIndex) =>
       <span {...getTokenProps({ token })} key={tokenIndex} />)} />}
   </Highlight>;

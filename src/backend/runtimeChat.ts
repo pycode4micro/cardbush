@@ -1,6 +1,6 @@
 import { conversationRuntime, conversationInteractions, type ConversationRuntime } from './conversationRuntime';
 import { readAgentInstructions } from './globalInstructions';
-import { readConversationStyle } from '../features/settings/conversationStyle';
+import { resolveConversationStyle } from '../features/settings/conversationStyle';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
 import type {
   RuntimeEvent,
@@ -156,6 +156,7 @@ export async function streamRuntimeChat(
       allowedSkills: request.allowedSkills,
       disabledSkills: request.disabledSkills,
       planEnabled: request.referencePlanMode !== 'off',
+      sourceEnabled: request.sourceEnabled,
       maxOutputTokens: configuredMaxOutputTokens,
       maxContextTokens,
       reasoningEffort: reasoningEffort(request.reasoningLevel),
@@ -169,7 +170,7 @@ export async function streamRuntimeChat(
       (turnId, messageId) => runtime.client.getUserMessage(request.sessionId, turnId, messageId, controller.signal), maxContextTokens);
     const runtimeRequest = createProductAgentTurnRequest({
       ...sharedAgentInput,
-      conversationStyle: readConversationStyle(),
+      conversationStyle: resolveConversationStyle(request.sessionId),
       requestId,
       turnId,
       messageId: userMessageId,
@@ -240,7 +241,7 @@ export async function streamRuntimeChat(
       const continuationCreatedAt = new Date().toISOString();
       currentRequest = createProductAgentTurnRequest({
         ...sharedAgentInput,
-        conversationStyle: readConversationStyle(),
+        conversationStyle: resolveConversationStyle(request.sessionId),
         requestId: `request_${crypto.randomUUID()}`,
         turnId: `turn_${crypto.randomUUID()}`,
         messageId: `message_${crypto.randomUUID()}`,
@@ -733,6 +734,7 @@ function toolRecord(
       nativeResult: record.result,
       lifecycleSequence: event.sequence,
       ...((record.display ?? event.payload.display)?.title ? { displayTitle: (record.display ?? event.payload.display)!.title } : {}),
+      ...((record.display ?? event.payload.display)?.titles ? { displayTitles: (record.display ?? event.payload.display)!.titles } : {}),
       ...(mcpServerId ? { mcpServerId } : {}),
       workspaceChanges: record.workspaceChanges,
       error: record.error,

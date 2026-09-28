@@ -40,13 +40,9 @@ import { ToolChangeBlock } from './ToolChangeBlock';
 import { ToolHookDecisionNotice, toolHookDecisionFromExecution } from './ToolHookDecisionNotice';
 import { RuntimeProfileBadge, WorkerProfileBadge, runtimeProfileInfoFromExecution } from './ToolProfileBadges';
 import {
-  activeToolStatusLabel,
-  compareToolExecutionOrder,
   displayToolName,
-  isToolCancelled,
   isToolRunning,
   isToolRunningInContext,
-  terminalExecutionNotice,
   toolActionTitle,
   toolActivityStatus,
 } from './toolExecutionState';
@@ -123,6 +119,7 @@ export function ToolExecutionBlock({
         artifacts: detail.artifacts ?? execution.artifacts,
         metadata: { ...detail.metadata, ...execution.metadata,
           displayTitle: execution.metadata.displayTitle ?? detail.metadata.displayTitle,
+          displayTitles: execution.metadata.displayTitles ?? detail.metadata.displayTitles,
           nativeResult: detail.metadata.nativeResult ?? execution.metadata.nativeResult,
           nativeResultDeferred: false,
           workspaceChangeDetailsDeferred: false,
@@ -137,10 +134,6 @@ export function ToolExecutionBlock({
     isToolRunningInContext(execution, active),
   );
   const activity = useToolActivity(renderedExecutions, disclosureId);
-  const failedCount = renderedExecutions.filter((execution) =>
-    isToolFailedInContext(execution, active),
-  ).length;
-  const tone = running ? 'neutral' : toolExecutionToneInContext(renderedExecutions, active);
   const changeReport = useMemo(
     () => toolChangeReportFromExecutions(renderedExecutions),
     [renderedExecutions],
@@ -278,7 +271,6 @@ export function ToolExecutionBlock({
       identity={{ sessionId: message.conversationId ?? '', messageId: message.id, turnId: message.turnId }}
       report={messageChangeReport}
       running={running}
-      tone={tone}
       language={language}
       toolName={executions.find((execution) =>
         ['write_file', 'edit_file'].includes(execution.name.trim().toLowerCase()),
@@ -294,9 +286,9 @@ export function ToolExecutionBlock({
   ) : null;
 
   const runSummary = activity ? toolActionTitle(activity, language) : language === 'zh' ? '执行记录' : 'Activity';
-  const status = !running && failedCount > 0
-    ? language === 'zh' ? '执行失败' : 'Failed'
-    : activity ? toolActivityStatus(activity, language, active) : '';
+  const status = activity ? toolActivityStatus(activity, language, active) : '';
+  const showStatus = active &&
+    (activity?.state === 'awaiting_permission' || activity?.state === 'awaiting_solution');
   const historySummary = historyLabel && !running
     ? language === 'zh'
       ? `历史执行记录 · ${runSummary} · ${status}`
@@ -308,18 +300,19 @@ export function ToolExecutionBlock({
   return (
     <div
       ref={blockRef}
-      className={`tool-execution-block ${expanded ? 'expanded' : ''} ${running ? 'running' : ''} ${tone}`}
+      className={`tool-execution-block ${expanded ? 'expanded' : ''} ${running ? 'running' : ''}`}
     >
       <button
         className="tool-execution-summary"
         type="button"
         aria-expanded={expanded}
-        title={historySummary}
+        aria-label={historySummary}
+        title={runSummary}
         onClick={toggleExpanded}
       >
         <ToolLogo name={logoExecution?.name ?? ''} size={16} />
         <span className="tool-execution-label">{summary}</span>
-        <span className="tool-execution-status">{status}</span>
+        {showStatus && <span className="tool-execution-status">{status}</span>}
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
       {expanded && (
@@ -374,12 +367,11 @@ function RuntimeContextCompactionBlock({
       : cancelled
         ? language === 'zh' ? '上下文压缩已中止' : 'Context compaction stopped'
         : language === 'zh' ? '已压缩上下文' : 'Context compacted';
-  const tone = failed ? 'warning' : 'neutral';
 
   return (
     <div
       ref={blockRef}
-      className={`tool-execution-block runtime-context-compaction ${expanded ? 'expanded' : ''} ${running ? 'running' : ''} ${tone}`}
+      className={`tool-execution-block runtime-context-compaction ${expanded ? 'expanded' : ''} ${running ? 'running' : ''}`}
     >
       <button
         className="tool-execution-summary"
@@ -477,7 +469,7 @@ function RuntimeContextCompactionDetail({
       {!embedded && <header>
         <ToolLogo name={execution.name} size={16} />
         <strong>{language === 'zh' ? '上下文维护' : 'Context maintenance'}</strong>
-        <span className={failed ? 'failed' : cancelled ? 'warning' : ''}>
+        <span>
           {duration ? `${status} · ${duration}` : status}
         </span>
       </header>}
@@ -525,55 +517,6 @@ function browserStorage() {
   } catch {
     return null;
   }
-}
-
-function isToolFailed(execution: ChatToolExecution) {
-  return execution.state === 'failed' || terminalExecutionNotice(execution, 'en')?.failed === true;
-}
-
-function isToolFailedInContext(execution: ChatToolExecution, active: boolean) {
-  if (!active && isToolRunning(execution)) {
-    return false;
-  }
-  return isToolFailed(execution);
-}
-
-type ToolExecutionTone = 'neutral' | 'warning' | 'danger';
-
-function toolExecutionTone(executions: ChatToolExecution[]): ToolExecutionTone {
-  const settled = executions.filter((execution) => !isToolRunning(execution));
-  if (settled.length === 0) {
-    return 'neutral';
-  }
-  const failedCount = settled.filter(isToolFailed).length;
-  if (failedCount > 1 && failedCount / settled.length > 0.5) {
-    return 'danger';
-  }
-  const latestSettled = [...settled].sort(compareToolExecutionOrder).at(-1);
-  if (latestSettled && isToolFailed(latestSettled)) {
-    return 'warning';
-  }
-  return 'neutral';
-}
-
-function toolExecutionToneInContext(
-  executions: ChatToolExecution[],
-  active: boolean,
-): ToolExecutionTone {
-  if (active) {
-    return toolExecutionTone(executions);
-  }
-  const failedCount = executions.filter((execution) =>
-    isToolFailedInContext(execution, active),
-  ).length;
-  if (failedCount > 1 && failedCount / executions.length > 0.5) {
-    return 'danger';
-  }
-  const latest = [...executions].sort(compareToolExecutionOrder).at(-1);
-  if (latest && isToolFailedInContext(latest, active)) {
-    return 'warning';
-  }
-  return 'neutral';
 }
 
 function parseToolOutputJson(value: string) {
@@ -780,30 +723,22 @@ function ToolExecutionRow({
 }) {
   const rowRef = useRef<HTMLElement>(null);
   const detailId = useId();
-  const failed = isToolFailedInContext(execution, active);
-  const terminalNotice = terminalExecutionNotice(execution, language);
-  const interrupted = !active && isToolRunning(execution);
   const waiting = active && (execution.state === 'awaiting_permission' || execution.state === 'awaiting_solution');
-  const status = active && activeToolStatusLabel(execution, language) ||
-    (isToolCancelled(execution) || interrupted
-      ? language === 'zh' ? '已中止' : 'Stopped'
-      : terminalNotice?.label ?? (failed ? language === 'zh' ? '失败' : 'Failed'
-        : language === 'zh' ? '已执行' : 'Executed'));
+  const status = toolActivityStatus(execution, language, active);
   const name = isContextCompactionPresentationExecution(execution)
     ? language === 'zh' ? '上下文压缩' : 'Context compaction'
     : displayToolName(execution.name);
   const label = toolActionTitle(execution, language);
-  const duration = formatDuration(execution.durationMs);
   return (
     <section ref={rowRef} className={`tool-execution-detail ${expanded ? 'expanded' : ''}`} data-execution-id={execution.id}>
-      <button className={`tool-execution-row ${failed ? 'failed' : waiting ? 'waiting' : terminalNotice ? 'diagnostic' : ''}`}
+      <button className="tool-execution-row"
         type="button" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined}
+        aria-label={`${label} · ${status}`}
         title={`${name}${label !== name ? `\n${label}` : ''}`}
         onClick={() => preserveScrollPositionForToggle(rowRef.current, onToggle)}>
         <ToolLogo name={execution.name} size={14} />
-        <span className="tool-execution-row-status">{status}</span>
+        {waiting && <span className="tool-execution-row-status">{status}</span>}
         <span className="tool-execution-row-label">{label}</span>
-        {duration && <span className="tool-execution-row-duration">{duration}</span>}
         <ChevronDown size={13} className={expanded ? 'expanded' : ''} />
       </button>
       {expanded && (
@@ -818,7 +753,7 @@ function ToolExecutionRow({
           ) : isContextCompactionPresentationExecution(execution) ? (
             <RuntimeContextCompactionDetail execution={execution} active={active} language={language} embedded />
           ) : (
-            <ToolExecutionDetail execution={execution} message={message} language={language} active={active} onOpenScene={onOpenScene} showImagePreviews={showImagePreviews} />
+            <ToolExecutionDetail execution={execution} message={message} language={language} onOpenScene={onOpenScene} showImagePreviews={showImagePreviews} />
           )}
         </div>
       )}
@@ -830,14 +765,12 @@ function ToolExecutionDetail({
   execution,
   message,
   language,
-  active,
   onOpenScene,
   showImagePreviews,
 }: {
   execution: ChatToolExecution;
   message: ChatMessage;
   language: AppLanguage;
-  active: boolean;
   onOpenScene: (scene: CardlingScene) => void;
   showImagePreviews: boolean;
 }) {
@@ -848,7 +781,6 @@ function ToolExecutionDetail({
   const hasSummary = summary && summary !== execution.name && summary !== displayToolName(execution.name);
   const error = asRecord(execution.metadata.error);
   const failureMessage = typeof error.message === 'string' ? error.message : '';
-  const terminalNotice = terminalExecutionNotice(execution, language);
   const goalUpdate = goalToolUpdateFromExecution(execution);
   const output = execution.output;
   const childExecutions = subagentChildToolExecutions(execution);
@@ -865,7 +797,6 @@ function ToolExecutionDetail({
     <div className="tool-execution-body">
       {hasSummary && !goalUpdate && summary !== failureMessage && <pre className="tool-execution-input">{summary}</pre>}
       {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
-      {terminalNotice && <p className={terminalNotice.failed ? 'tool-execution-error' : 'tool-execution-diagnostic'}>{terminalNotice.detail}</p>}
       {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
@@ -899,7 +830,6 @@ function ToolExecutionDetail({
       <SubagentChildTools
         executions={childExecutions}
         language={language}
-        isFailed={(child) => isToolFailedInContext(child, active)}
       />
       {showImagePreviews && <ToolImageArtifactViewer
         artifacts={execution.artifacts}

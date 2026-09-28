@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDefinition } from '@cardbush/bush-protocol';
+import type { ToolCall, ToolDefinition, ToolDisplay } from '@cardbush/bush-protocol';
 
 // Host presentation metadata. Never forward this field to a tool or MCP server.
 export const TOOL_DISPLAY_TITLE = '_display_title';
@@ -17,8 +17,17 @@ export function withToolDisplayTitle(definition: ToolDefinition): ToolDefinition
   if (!acceptsDisplayTitle(definition)) return definition;
   return { ...definition, inputSchema: { ...definition.inputSchema, properties: {
     ...(definition.inputSchema.properties as Record<string, unknown> | undefined),
-    [TOOL_DISPLAY_TITLE]: { type: 'string', description: 'Short action title for the user. Host display only.' },
-  } } };
+    [TOOL_DISPLAY_TITLE]: {
+      type: 'object',
+      description: 'Specific action purpose for the UI, independent of reply language. Omit status, reasoning, counters, secrets and success claims. Reuse for repeated checks; for batches, supply only on the outer call, never inside third-party arguments.',
+      properties: {
+        zh: { type: 'string', description: 'Simplified Chinese action description, normally 6–16 characters.' },
+        en: { type: 'string', description: 'Equivalent English action description, normally 2–8 words.' },
+      },
+      required: ['zh', 'en'],
+      additionalProperties: false,
+    },
+  }, required: [...(Array.isArray(definition.inputSchema.required) ? definition.inputSchema.required : []), TOOL_DISPLAY_TITLE] } };
 }
 
 export function normalizeToolDisplayTitle(value: unknown): string | undefined {
@@ -27,11 +36,18 @@ export function normalizeToolDisplayTitle(value: unknown): string | undefined {
   return title ? Array.from(title).slice(0, 80).join('') : undefined;
 }
 
-export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): { title: string } | undefined {
+export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): ToolDisplay | undefined {
   if (!definition || !acceptsDisplayTitle(definition)) return undefined;
   try {
     const value = JSON.parse(call.argumentsText);
-    const title = normalizeToolDisplayTitle(value?.[TOOL_DISPLAY_TITLE]);
+    const supplied = value?.[TOOL_DISPLAY_TITLE];
+    if (supplied && typeof supplied === 'object' && !Array.isArray(supplied)) {
+      const zh = normalizeToolDisplayTitle(supplied.zh);
+      const en = normalizeToolDisplayTitle(supplied.en);
+      if (zh || en) return { title: en || zh!, titles: { ...(zh ? { zh } : {}), ...(en ? { en } : {}) } };
+    }
+    // Old models and persisted calls may still supply a single-language string.
+    const title = normalizeToolDisplayTitle(supplied);
     return title ? { title } : undefined;
   } catch { return undefined; }
 }

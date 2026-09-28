@@ -9,7 +9,11 @@
   <body>
     <main>
       <header><img class="mark" src="icons/cardbush-48.png" alt="" /><div><strong>CardBush</strong><small>Browser Connector</small></div></header>
-      <div id="connection" class="connection">正在连接 CardBush…</div>
+      <div id="connection" class="connection">正在读取连接状态…</div>
+      <label class="scope-picker"><span>与 CardBush 配对</span>
+        <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 CardBush 设置中的配对码" />
+      </label>
+      <button data-action="pair">配对并连接</button>
       <div id="scope" class="scope">等待 CardBush 会话…</div>
       <label id="scope-picker" class="scope-picker" hidden>
         <span>目标会话</span>
@@ -25,9 +29,12 @@
         <button data-action="allow_all">复制并允许隔离组访问全部网站</button>
       </div>
       <footer>
+        <button class="quiet" data-action="reconnect">连接 CardBush</button>
+        <button class="quiet" data-action="disable_connector">关闭扩展连接</button>
         <button class="quiet" data-action="revoke">撤销授权</button>
         <button class="quiet" data-action="disconnect">停止控制</button>
       </footer>
+      <p class="scope">在 CardBush 设置中开启连接器并生成配对码，粘贴到此处完成配对。配对不会授予页面访问权限。重启浏览器后需点击连接；移除扩展请使用 Chrome 扩展管理页。</p>
     </main>
     <script src="popup.js"></script>
   </body>

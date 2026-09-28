@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { processHostBuildInputs, unavailableProcessHostBuild } from './lib/process-host-build.mjs';
 
 import {
   cardbushElectronEnvironment,
@@ -41,15 +43,25 @@ function oldestMtime(files) {
   );
 }
 
-function guiBuildState() {
+export function guiBuildState(projectRoot = path.resolve(import.meta.dirname, '..'), platform = process.platform) {
   const sourceExtension = /\.(?:ts|tsx|mts|mjs|js|jsx|css|scss|svg|png|ico|html)$/i;
   const sources = [
     ...filesUnder(path.join(projectRoot, 'src'), (file) => sourceExtension.test(file)),
     ...filesUnder(path.join(projectRoot, 'electron'), (file) => sourceExtension.test(file)),
   ];
   const packagesRoot = path.join(projectRoot, 'packages');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  const runtimeWorkspaces = new Set([...packageJson.scripts['build:runtime'].matchAll(
+    /--workspace(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s&]+))/g,
+  )].map(match => match[1] || match[2] || match[3]));
+  // Independent plugins have their own build command. Their old dist files (or
+  // ignored leftovers from removed packages) cannot be repaired by a GUI build.
   const packageDirectories = fs.existsSync(packagesRoot)
-    ? fs.readdirSync(packagesRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+    ? fs.readdirSync(packagesRoot, { withFileTypes: true }).filter((entry) => {
+      const manifest = path.join(packagesRoot, entry.name, 'package.json');
+      return entry.isDirectory() && fs.existsSync(manifest)
+        && runtimeWorkspaces.has(JSON.parse(fs.readFileSync(manifest, 'utf8')).name);
+    })
     : [];
   for (const entry of packageDirectories) {
     const packageRoot = path.join(packagesRoot, entry.name);
@@ -82,19 +94,18 @@ function guiBuildState() {
   const oldestOutput = oldestMtime(outputs);
   const nativeDirectory = path.join(projectRoot, 'dist-native', 'process-guard');
   const nativeOutput = path.join(nativeDirectory, 'current.json');
-  let nativeExecutablePresent = process.platform !== 'win32';
+  let nativeExecutablePresent = platform !== 'win32';
   try {
     const { fileName } = JSON.parse(fs.readFileSync(nativeOutput, 'utf8'));
     nativeExecutablePresent = /^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(fileName) && fs.existsSync(path.join(nativeDirectory, fileName));
   } catch { /* A missing/invalid asset requires a build. */ }
-  const nativeCurrent = process.platform !== 'win32' || oldestMtime([nativeOutput]) >= newestMtime([
-    path.join(projectRoot, 'native', 'process-guard', 'CardBushProcessHost.cs'),
-    path.join(projectRoot, 'scripts', 'build-process-resource-host.mjs'),
-  ]);
+  const unavailableHost = platform === 'win32' ? unavailableProcessHostBuild(projectRoot) : undefined;
+  const nativeCurrent = platform !== 'win32' || Boolean(unavailableHost)
+    || (nativeExecutablePresent && oldestMtime([nativeOutput]) >= newestMtime(processHostBuildInputs(projectRoot)));
   return {
-    current: oldestOutput >= newestSource && oldestOutput > 0 && nativeCurrent && nativeExecutablePresent,
+    current: oldestOutput >= newestSource && oldestOutput > 0 && nativeCurrent,
     missingOutput: outputs.find((file) => !fs.existsSync(file))
-      ?? (process.platform === 'win32' && !fs.existsSync(nativeOutput) ? nativeOutput : undefined),
+      ?? (platform === 'win32' && !unavailableHost && !fs.existsSync(nativeOutput) ? nativeOutput : undefined),
     newestSource,
     oldestOutput,
   };
@@ -109,7 +120,7 @@ function runBuild() {
       'build',
     ], {
       cwd: projectRoot,
-      env: process.env,
+      env: { ...process.env, CARDBUSH_DEVELOPMENT_BUILD: '1' },
       stdio: 'inherit',
       shell: false,
       windowsHide: false,
@@ -141,36 +152,39 @@ function resolveNpmCli() {
   return npmCli;
 }
 
-const buildState = guiBuildState();
-if (forceBuild || !buildState.current) {
-  const reason = forceBuild
-    ? 'forced rebuild'
-    : buildState.missingOutput
-      ? `missing ${path.relative(projectRoot, buildState.missingOutput)}`
-      : 'source files changed';
-  console.log(`[gui] ${reason}; building before launch.`);
-  await runBuild();
-} else {
-  console.log('[gui] build is current; launching immediately.');
+async function main() {
+  const buildState = guiBuildState();
+  if (forceBuild || !buildState.current) {
+    const reason = forceBuild
+      ? 'forced rebuild'
+      : buildState.missingOutput
+        ? `missing ${path.relative(projectRoot, buildState.missingOutput)}`
+        : 'source files changed';
+    console.log(`[gui] ${reason}; building before launch.`);
+    await runBuild();
+  } else {
+    console.log('[gui] build is current; launching immediately.');
+  }
+
+  const unavailableHost = process.platform === 'win32' ? unavailableProcessHostBuild(projectRoot) : undefined;
+  if (unavailableHost) {
+    console.warn(`[gui] Native process host startup is unavailable; this GUI build is not a validated release.\n${unavailableHost.detail}`);
+  }
+  if (checkBuildOnly) return;
+
+  const electronBin = resolveCardbushElectronExecutable(projectRoot);
+  const child = spawn(electronBin, ['.'], {
+    cwd: projectRoot,
+    env: cardbushElectronEnvironment({ CARDBUSH_DEVELOPMENT_RUNTIME: '1' }),
+    stdio: 'inherit', shell: false, windowsHide: false,
+  });
+  child.on('exit', (code, signal) => {
+    if (signal) { process.kill(process.pid, signal); return; }
+    process.exit(code ?? 0);
+  });
+  child.on('error', error => { console.error(`[gui] ${error.message}`); process.exitCode = 1; });
 }
 
-if (checkBuildOnly) process.exit(0);
-
-const electronBin = resolveCardbushElectronExecutable(projectRoot);
-const child = spawn(electronBin, ['.'], {
-  cwd: projectRoot,
-  env: cardbushElectronEnvironment({
-    CARDBUSH_DEVELOPMENT_RUNTIME: '1',
-  }),
-  stdio: 'inherit',
-  shell: false,
-  windowsHide: false,
-});
-
-child.on('exit', (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 0);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
+}

@@ -144,14 +144,14 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector(".change-review-file-item.active").title'),'C:/fixture/second.ts','active conversation changes must not retarget a review tab');
 
     await read('navigation.openTab({id:"subagent:a:child",kind:"subagent",title:"子任务",detail:{kind:"subagent-task",sessionId:"a",task:{taskId:"child",status:"running",raw:{}}}}); void 0');
-    await until('window.taskReads>0 && document.querySelector(".subagent-task-inspector header small")?.textContent==="运行中"');
+    await until('window.taskReads>0 && document.querySelector(".subagent-conversation-heading small")?.textContent==="运行中"');
     await select('history:a'); await pause(100);
     const reads=await read('window.taskReads');
     await read('window.runtimeTask={...runtimeTask,status:"completed",revision:2,completedAt:"2026-09-11T14:05:00Z",finalResponse:"任务完成"}; void 0');
     await pause(2700);
     assert.equal(await read('window.taskReads'),reads,'inactive child page must not poll');
     await select('subagent:a:child');
-    await until('document.querySelector(".subagent-task-inspector header small")?.textContent==="已完成"');
+    await until('document.querySelector(".subagent-conversation-heading small")?.textContent==="已完成"');
     await select('history:a');
     await read('navigation.setLanguage("en"); document.querySelector(".right-inspector").style.width="380px"; document.querySelector(".right-inspector").style.flex="0 0 380px"; document.querySelector(".right-inspector").style.setProperty("--side-panel-width","380px"); void 0');
     await pause(250);

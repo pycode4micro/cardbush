@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from '../../shared/motionPreference';
 import { useEffect, useRef } from 'react';
 
 const TAU = Math.PI * 2;
@@ -61,7 +62,7 @@ export function StarWordmark() {
           star.vy = (star.vy + forceY * step) * Math.pow(.81, step);
           star.x += star.vx * step; star.y += star.vy * step;
         }
-        const shimmer = motion.matches ? .85 : .77 + .19 * Math.sin(time * .0011 + star.phase);
+        const shimmer = prefersReducedMotion() ? .85 : .77 + .19 * Math.sin(time * .0011 + star.phase);
         context.globalAlpha = star.emphasized ? .96 : shimmer;
         context.fillStyle = star.emphasized ? emphasisColor : palette[star.color];
         context.beginPath();
@@ -91,7 +92,7 @@ export function StarWordmark() {
     function syncMotion() {
       stop();
       updatePalette();
-      if (motion.matches) {
+      if (prefersReducedMotion()) {
         pointer = undefined;
         for (const star of stars) { star.x = star.homeX; star.y = star.homeY; star.vx = 0; star.vy = 0; }
         if (!document.hidden && intersecting) draw(0, 0);
@@ -133,24 +134,27 @@ export function StarWordmark() {
       updatePalette(); draw(0, 0); syncMotion();
     }
     function move(event: PointerEvent) {
-      if (motion.matches || event.pointerType === 'touch') return;
+      if (prefersReducedMotion() || event.pointerType === 'touch') return;
       const rect = canvas!.getBoundingClientRect();
       pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top, down: pointer?.down ?? false };
     }
     function down(event: PointerEvent) {
-      if (motion.matches || event.pointerType === 'touch' || event.button !== 0) return;
+      if (prefersReducedMotion() || event.pointerType === 'touch' || event.button !== 0) return;
       move(event);
       if (pointer) { pointer.down = true; canvas!.setPointerCapture(event.pointerId); }
     }
     function up() { if (pointer) pointer.down = false; }
     function leave() { pointer = undefined; }
-    function refreshColors() { updatePalette(); if (motion.matches && !document.hidden && intersecting) draw(0, 0); }
+    function refreshColors() { updatePalette(); if (prefersReducedMotion() && !document.hidden && intersecting) draw(0, 0); }
     const resizeObserver = new ResizeObserver(resize);
     const intersectionObserver = new IntersectionObserver(entries => { intersecting = entries[0]?.isIntersecting ?? false; syncMotion(); });
-    const themeObserver = new MutationObserver(refreshColors);
+    const themeObserver = new MutationObserver(records => {
+      if (records.some(record => record.attributeName === 'data-motion-preference')) syncMotion();
+      else refreshColors();
+    });
     // Theme classes live on the app, with startup/native theme data on html.
     for (const element of [document.documentElement, canvas.closest('.app')]) {
-      if (element) themeObserver.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'data-start-theme'] });
+      if (element) themeObserver.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'data-start-theme', 'data-motion-preference'] });
     }
     resizeObserver.observe(canvas); intersectionObserver.observe(canvas);
     motion.addEventListener('change', syncMotion); document.addEventListener('visibilitychange', syncMotion);

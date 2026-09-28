@@ -61,7 +61,7 @@ assert.equal(fs.existsSync(path.join(root, 'assets', 'plugins', 'marketplace.jso
 assert.match(settings, /PluginManagementPanel/);
 assert.match(pluginPanel, /CardBush 精选/);
 assert.match(pluginPanel, /defaultPrompts/);
-assert.match(chromeSettings, /Browser Connector（推荐）/);
+assert.match(chromeSettings, /Chrome 连接器（Windows 11）/);
 assert.match(chromeExtensionPopup, /仅本次/);
 assert.match(chromeExtensionPopup, /始终允许此网站/);
 assert.match(chromeExtensionPopup, /允许隔离组访问全部网站/);

@@ -26,6 +26,10 @@ const childId = state.activeId;
 state = reduce(state, { type: 'open', tab: summaryTab({ kind: 'subagent-task', sessionId: 'a', task: { taskId: 'assigned', toolCallId: 'call' } }, 'zh') });
 assert.equal(state.activeId, childId, 'assigned task identity must not duplicate or remount an open child page');
 assert.equal(state.tabs.length, 5);
+state = reduce(state, { type: 'open', tab: summaryTab({ kind: 'subagent-task', sessionId: 'a', task: { taskId: 'assigned', childSessionId: 'child-a' } }, 'zh') });
+state = reduce(state, { type: 'open', tab: summaryTab({ kind: 'subagent-task', sessionId: 'a', task: { taskId: 'human-followup', childSessionId: 'child-a' } }, 'zh') });
+assert.equal(state.activeId, childId, 'a later turn reuses the same child conversation tab');
+assert.equal(state.tabs.length, 5);
 state = reduce(state, { type: 'open', tab: summaryTab({ kind: 'turn-history', sessionId: 'a' }, 'zh') });
 assert.equal(state.tabs.length, 5, 'single and all-turn entry points share the session history tab');
 state = reduce(state, { type: 'open', tab: summaryTab({ kind: 'turn-history', sessionId: 'b' }, 'en') });
@@ -124,10 +128,16 @@ try {
     resolveId(id) {
       if(id.endsWith('__inspector_navigation__.tsx')) return '\0inspector-navigation.tsx';
       if(id.endsWith('runtime-client/ElectronRuntimeSession')) return '\0inspector-runtime';
+      if(id.endsWith('subagents/SubagentConversation')) return '\0child-navigation-view.tsx';
     },
     load(id) {
       if(id==='\0inspector-navigation.tsx') return source;
       if(id==='\0inspector-runtime') return 'export function createDesktopRuntimeSession(){return {dispose(){},client:window.fixtureClient};}';
+      // This suite exercises tab ownership and polling. The real transcript,
+      // composer and streaming transport have their own conversation UI suite.
+      if(id==='\0child-navigation-view.tsx') return `import React from 'react';
+        import { subagentTaskPresentation } from '${local('src/features/subagents/subagentTaskPresentation.ts')}';
+        export function SubagentConversation({task,language}) {return <section className="subagent-conversation"><header className="subagent-conversation-heading"><small>{subagentTaskPresentation(task,language).label}</small></header></section>;}`;
     },
   }],build:{outDir:directory,emptyOutDir:true,minify:false,lib:{entry:resolve('__inspector_navigation__.tsx'),formats:['es']}}});
   const outputs=(Array.isArray(result)?result:[result]).flatMap(item=>item.output);

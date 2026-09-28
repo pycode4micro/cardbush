@@ -11,6 +11,12 @@ import type {
 } from '../types';
 
 interface ChromeConnectorStatus {
+  paired: boolean;
+  transport: 'loopback_websocket';
+  cleanupWarning?: string;
+  connectorEnabled: boolean;
+  lifecycleState: string;
+  registrationConflict?: string;
   protocol: 'cardbush.chrome_connector.v1';
   platformSupported: boolean;
   packagedApplication: boolean;
@@ -58,6 +64,11 @@ declare global {
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;
       chromeConnectorStatus: () => Promise<ChromeConnectorStatus>;
       setupChromeConnector: () => Promise<ChromeConnectorStatus>;
+      pairChromeConnector: () => Promise<{ code: string; expiresAt: string }>;
+      copyLegacyChromeConnectorCleanup: () => Promise<void>;
+      disableChromeConnector: () => Promise<ChromeConnectorStatus>;
+      removeChromeConnector: () => Promise<ChromeConnectorStatus>;
+      copyChromeConnectorDiagnostics: () => Promise<void>;
       openChromeConnectorInstaller: () => Promise<{
         opened: boolean;
         method: 'store' | 'unpacked';
@@ -135,7 +146,7 @@ declare global {
         hex: string;
         source: 'wallpaper' | 'fallback';
       }>;
-      setWindowTheme: (theme: 'bright' | 'dark' | 'cyberpunk', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
+      setWindowTheme: (theme: 'bright' | 'dark', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
       publishVisualTheme: (context: import('../../electron/visualThemeContextSchema').VisualThemeContext) => Promise<void>;
       onWindowAppearanceChanged: (callback: (state: import('../../electron/windowAppearance').WindowAppearanceState) => void) => () => void;
       productHostCommand: (command: unknown) => Promise<unknown>;

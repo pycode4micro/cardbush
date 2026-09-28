@@ -11,7 +11,7 @@ const source = `
 import React, {useState} from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationRunPanel} from '${local('src/features/automations/AutomationRunPanel.tsx')}';
 import {projectRuntimeTurnMessages} from '${local('src/backend/runtimeSessionMessageProjection.ts')}';
-import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
+import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/appearance.css')}';
 const now=new Date().toISOString();
 window.calls=[];window.listeners=new Set();window.observers=new Set();window.aborts=0;window.opened=[];
 window.detail={job:{id:'plan',name:'每日简报',prompt:'检查最新结果',sessionId:'source',runs:[]},run:{id:'run',turnId:'scheduled-turn',sessionId:'scheduled-session',status:'completed',queuedAt:now,finishedAt:now},sessionId:'scheduled-session',sourceSession:{id:'source',title:'来源会话'},executionSessionAvailable:true,model:'fixture-model',permissionMode:'task_free',allowedTools:['read_file'],interactiveRequests:true,vision:true};
@@ -28,7 +28,7 @@ streamChat:async request=>{window.inFlight=true;window.lastRequest=request;calls
 streamTurnEvents:async request=>{calls.push({observed:request.turnId});start(request);await new Promise((resolve,reject)=>{const done=()=>{request.onMessages?.(structuredClone(historyMessages),true);request.onDone?.({turnId:'follow-up',status:'completed'});observers.delete(done);resolve();};observers.add(done);request.signal.addEventListener('abort',()=>{observers.delete(done);reject(new Error('observer detached'));},{once:true});});},
 stopTurn:async()=>{},replyInteraction:async()=>{},cancelInteraction:async()=>{}
 };
-function Fixture(){const[open,setOpen]=useState(true);return <div className="app theme-cyberpunk" style={{height:'100vh',width:'100%',minWidth:0,display:'flex',flexDirection:'column'}}><button id="toggle" onClick={()=>setOpen(!open)}>{open?'关闭侧栏':'打开侧栏'}</button><div style={{flex:1,minHeight:0}}>{open&&<AutomationRunPanel jobId="plan" runId="run" language="zh" onOpenConversation={id=>opened.push(id)}/>}</div></div>};
+function Fixture(){const[open,setOpen]=useState(true);return <div className="app theme-dark" style={{height:'100vh',width:'100%',minWidth:0,display:'flex',flexDirection:'column'}}><button id="toggle" onClick={()=>setOpen(!open)}>{open?'关闭侧栏':'打开侧栏'}</button><div style={{flex:1,minHeight:0}}>{open&&<AutomationRunPanel jobId="plan" runId="run" language="zh" onOpenConversation={id=>opened.push(id)}/>}</div></div>};
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {

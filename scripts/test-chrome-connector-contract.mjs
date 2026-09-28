@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -10,6 +9,7 @@ import { McpClientManager } from '@cardbush/bush-mcp-client';
 import { ToolExecutionCoordinator, ToolRegistry } from '@cardbush/bush-runtime';
 import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
 import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
 const extensionRoot = path.resolve('assets', 'plugins', 'chrome', 'extension');
 const packagedRoot = process.argv[2]?.trim() ? path.resolve(process.argv[2]) : '';
@@ -23,7 +23,8 @@ assert.deepEqual(manifest.permissions.filter((permission) => [
   'storage',
   'tabGroups',
   'tabs',
-].includes(permission)).sort(), ['alarms', 'debugger', 'nativeMessaging', 'storage', 'tabGroups', 'tabs']);
+].includes(permission)).sort(), ['alarms', 'debugger', 'storage', 'tabGroups', 'tabs']);
+assert.equal(manifest.permissions.includes('nativeMessaging'), false);
 
 const background = await readFile(path.join(extensionRoot, 'background.js'), 'utf8');
 assert.match(background, /site_permission_required/);
@@ -41,7 +42,7 @@ assert.doesNotMatch(background, /DevToolsActivePort|--remote-debugging-port|laun
 
 const registration = await readFile(path.resolve('electron', 'chromeConnectorRegistration.ts'), 'utf8');
 assert.match(registration, /HKCU\\\\Software\\\\Google\\\\Chrome\\\\NativeMessagingHosts/);
-assert.match(registration, /allowed_origins: \[chromeConnectorExtensionOrigin\]/);
+assert.doesNotMatch(registration, /reg\(\['add'/);
 
 const runtimeWorker = await readFile(path.resolve('electron', 'runtimeHostWorker.mts'), 'utf8');
 assert.match(runtimeWorker, /appsConfig\.chromeConnectionMode === 'remote_debugging'/);
@@ -53,27 +54,17 @@ assert.match(electronMain, /activeChromeTools\.size === 0 && activeChromeTurns\.
 assert.match(electronMain, /chromeConnectorBroker\?\.suspendAll\('turn_terminal'\)/);
 
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-chrome-connector-'));
-const broker = new ChromeConnectorBroker(root);
+const broker = new ChromeConnectorBroker(root, { nativeHostPath: packagedRoot
+  ? path.join(packagedRoot, 'resources/chrome-native-host/CardBushBrowserHost.exe')
+  : path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') });
 let extension;
 let manager;
 try {
   await broker.start();
   const config = JSON.parse(await readFile(broker.configPath, 'utf8'));
-  extension = net.createConnection(config.endpoint);
+  extension = await pairedClient(broker.createPairing().code);
   extension.setEncoding('utf8');
   const messages = lineMessages(extension);
-  await new Promise((resolve, reject) => {
-    extension.once('connect', resolve);
-    extension.once('error', reject);
-  });
-  extension.write(`${JSON.stringify({
-    type: 'hello',
-    protocol: config.protocol,
-    role: 'extension',
-    token: config.token,
-    version: '1.0.0',
-  })}\n`);
-  assert.equal((await messages.next()).value.type, 'hello_ack');
   extension.write(`${JSON.stringify({
     type: 'status',
     version: '1.0.0',

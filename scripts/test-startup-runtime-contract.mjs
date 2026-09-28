@@ -63,7 +63,7 @@ assert.match(builder, /extraResources:/);
 assert.match(builder, /assets\/runtime-tools/);
 assert.match(main, /CARDBUSH_RG_PATH: bundledRipgrep/);
 assert.match(main, /process\.resourcesPath/);
-assert.equal(packageJson.scripts['package:win'].startsWith('npm run runtime-tools:verify'), true);
+assert.match(packageJson.scripts['package:win'], /^node scripts\/check-windows-release\.mjs --channel exe && npm run runtime-tools:verify && npm run build && /);
 assert.equal(
   packageJson.scripts['smoke:packaged'].startsWith(
     'npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke',
@@ -72,7 +72,7 @@ assert.equal(
 );
 assert.match(packageJson.scripts['smoke:packaged'], /verify-packaged-platform\.mjs/);
 const platformSmoke = read('scripts', 'verify-packaged-platform.mjs');
-assert.match(platformSmoke, /test-chrome-native-host\.mjs/);
+assert.match(platformSmoke, /test-chrome-native-host-production\.mjs/);
 assert.match(platformSmoke, /test-chrome-connector-contract\.mjs/);
 assert.match(platformSmoke, /process.platform === 'win32'/);
 assert.equal(fs.existsSync(path.join(root, 'scripts', 'run-packaged-smoke.mjs')), true);

@@ -152,3 +152,43 @@ for (const format of ['ordered', 'incremental']) for (const changed of [false, t
   assert.equal(preferences(observed.at(-1).messages).length, 1);
   assert.equal(preferences(store.snapshot('preferences').turns.at(-1).messages.map(item => item.message)).length, 0);
 });
+
+
+test('Source toggles append user facts without changing frozen prefixes, tools or previous Turns', async t => {
+  const { open, observed } = fixture(t);
+  const { host, store } = open();
+  const tracker = new CacheChainTracker();
+  let previous, prefix, tools;
+  for (const [index, enabled] of [undefined, false, false, true].entries()) {
+    const input = request(`source_${index}`, { sourceEnabled: enabled });
+    if (prefix) { assert.deepEqual(input.prefixMessages, prefix); assert.deepEqual(input.tools, tools); }
+    prefix = input.prefixMessages; tools = input.tools;
+    assert.equal(input.inputMessages.at(-1).metadata.sourceEnabled, enabled !== false);
+    const before = structuredClone(store.snapshot('preferences')?.turns ?? []);
+    assert.equal((await host.runSessionTurn(input)).payload.status, 'completed');
+    assert.deepEqual(store.snapshot('preferences').turns.slice(0, before.length), before);
+    const model = observed.at(-1);
+    const latest = model.messages.filter(message => message.name === 'source_preference').at(-1);
+    assert.equal(latest.role, 'user'); assert.equal(latest.visibility, 'internal');
+    assert.match(latest.content, enabled === false ? /Source is disabled/ : /Source is enabled/);
+    assert.match(latest.content, enabled === false ? /Ordinary citations, file links and media references remain available/ : /useful reasons or evidence beyond its summary.*Skip notes that only repeat it/);
+    assert.equal(tracker.observe(model).frozenPrefixBreak, false);
+    const wire = toResponsesCreateParams(model, { toolSearchMode: 'native', disableProviderState: true });
+    assert.equal(tracker.observeProviderInput(responsesInputFingerprint(wire, wire, model.providerBinding)).frozenPrefixBreak, false);
+    if (previous) { assert.deepEqual(wire.input.slice(0, previous.input.length), previous.input); assert.deepEqual(wire.tools, previous.tools); }
+    previous = wire;
+  }
+});
+
+for (const format of ['ordered', 'incremental']) test(`Source off survives ${format} compaction and restart`, async t => {
+  const { open, compact, observed } = fixture(t);
+  let { host } = open();
+  await host.runSessionTurn(request('source_initial'));
+  compact();
+  await host.runSessionTurn(request('source_compact', { sourceEnabled: false, ...(format === 'incremental' ? { tools: [] } : {}) }));
+  assert.match(observed.at(-1).messages.filter(message => message.name === 'source_preference').at(-1).content, /Source is disabled/);
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  ({ host } = open());
+  await host.runSessionTurn(request('source_restart', { sourceEnabled: false, ...(format === 'incremental' ? { tools: [] } : {}) }));
+  assert.match(observed.at(-1).messages.filter(message => message.name === 'source_preference').at(-1).content, /Source is disabled/);
+});

@@ -713,7 +713,7 @@ function toolIdentity(
   toolName: string;
   ordinal: number;
   assistantMessageId?: string;
-  display?: { title: string };
+  display?: ToolExecutionIdentity['display'];
 } {
   return {
     toolCallId: toolCall.id,

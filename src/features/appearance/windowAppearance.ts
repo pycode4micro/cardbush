@@ -10,8 +10,8 @@ export function readWindowMaterialPreference(): WindowMaterialPreference {
   return localStorage.getItem(WINDOW_MATERIAL_STORAGE_KEY) === 'solid' ? 'solid' : 'auto';
 }
 
-export function applyDocumentBackdrop(theme: ThemeMode, material: 'mica' | 'none' = 'none') {
-  const background = material === 'mica' ? 'transparent' : themeBackgroundColor(theme);
+export function applyDocumentBackdrop(theme: ThemeMode, material: 'mica' | 'none' = 'none', customBackground?: string) {
+  const background = material === 'mica' ? 'transparent' : customBackground || themeBackgroundColor(theme);
   const html = document.documentElement;
   html.dataset.startTheme = theme;
   html.style.colorScheme = theme === 'bright' ? 'light' : 'dark';
@@ -31,14 +31,15 @@ export function useWindowAppearance(
   themePreference: ThemePreference,
   preference: WindowMaterialPreference,
   captionColor?: string,
+  customTheme = false,
+  customBackground?: string,
 ) {
   useEffect(() => {
     let disposed = false;
     let material: 'mica' | 'none' = 'none';
     let revision = -1;
-    const customTheme = themePreference === 'custom';
     const desktop = window.cardbushDesktop;
-    const refresh = () => applyDocumentBackdrop(theme, material);
+    const refresh = () => applyDocumentBackdrop(theme, material, customBackground);
     const receive = (state: WindowAppearanceState | undefined) => {
       if (disposed || !state || state.theme !== theme ||
           state.preference !== preference || state.customTheme !== customTheme ||
@@ -55,7 +56,7 @@ export function useWindowAppearance(
       customTheme,
       captionColor,
       themeSource: themePreference === 'system' ? 'system' :
-        theme === 'dark' || theme === 'cyberpunk' ? 'dark' : 'light',
+        theme === 'dark' ? 'dark' : 'light',
     }).then(receive).catch(() => {
       if (!disposed && revision < 0) { material = 'none'; refresh(); }
     });
@@ -69,5 +70,5 @@ export function useWindowAppearance(
       window.removeEventListener('pageshow', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [theme, themePreference, preference, captionColor]);
+  }, [theme, themePreference, preference, captionColor, customTheme, customBackground]);
 }

@@ -16,7 +16,7 @@ import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts'
 import chinaCalendar from '${local('assets/calendars/china.json')}';
 import usCalendar from '${local('assets/calendars/us.json')}';
 import {importedThemeStyleVariables} from '${local('src/features/appearance/importedThemeStyle.ts')}';
-import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
+import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/appearance.css')}';
 window.listeners=new Set(); window.calls=[]; window.opened=[]; window.openedRuns=[]; window.setupRequests=0; window.failSave=false;
 window.pickerThemeTokens=[];window.pickerTheme=theme=>{const app=document.querySelector('.app');for(const token of pickerThemeTokens)app.style.removeProperty(token);app.className='app '+themeClassNames(theme==='custom'?'dark':theme);pickerThemeTokens=[];if(theme==='custom'){const tokens=importedThemeStyleVariables({protocol:'cardbush.appearance_style.v1',name:'测试导入配色',base:'dark',colors:{surface:'#201b2c',surfaceRaised:'#31273f',border:'#675679',text:'#f3eafc',textMuted:'#cec1db',accent:'#d2a9f4'}});for(const [token,value]of Object.entries(tokens))app.style.setProperty(token,value);pickerThemeTokens=Object.keys(tokens)}};
 window.addEventListener('cardbush:open-automation-run',event=>openedRuns.push(event.detail));
@@ -43,7 +43,7 @@ window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return(
  else if(command.action==='delete')state.jobs=state.jobs.filter(job=>job.id!==command.id);
  notify();return structuredClone(job);
 }};
-createRoot(document.getElementById('root')).render(<div className="app theme-cyberpunk" style={{display:'flex',flexDirection:'column',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
+createRoot(document.getElementById('root')).render(<div className="app theme-dark" style={{display:'flex',flexDirection:'column',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
 `;
 try {
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{

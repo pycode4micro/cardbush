@@ -16,7 +16,7 @@ try {
     import {ToolExecutionBlock} from ${JSON.stringify(local('src/features/tools/ToolExecutionBlock.tsx'))};
     import ${JSON.stringify(local('src/styles/theme.css'))};
     import ${JSON.stringify(local('src/styles/app.css'))};
-    import ${JSON.stringify(local('src/styles/themes/cyberpunk.css'))};
+    import ${JSON.stringify(local('src/styles/appearance.css'))};
     const root = createRoot(document.getElementById('root'));
     window.requests = []; window.copied = [];
     Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:async value=>window.copied.push(value)}});
@@ -25,11 +25,11 @@ try {
       turnId:'turn', contentOffset:0, metadata:{}, ...extra});
     window.executions = [execution('shell'), execution('search', {name:'search_file_content', summary:'查找端口与服务配置', durationMs:600,
       output:'原始结果😀\\r\\n'.repeat(200) + '最后一行'}), execution('running', {summary:'Get-NetTCPConnection -LocalPort 8090,8091 -State Listen', state:'running', output:'', durationMs:0})];
-    window.active = true; window.theme='theme-dark'; window.messageId = 'message'; window.fixtureSession = 'fixture';
+    window.active = true; window.theme='theme-dark'; window.language='zh'; window.messageId = 'message'; window.fixtureSession = 'fixture';
     window.renderFixture = () => root.render(<div className={'app ' + window.theme} style={{height:'100vh',padding:'32px',boxSizing:'border-box'}}>
       <div className="message-list" style={{width:'100%',height:'100%',overflow:'auto',display:'block',padding:0}}>
         <div data-message-id={window.messageId}><h3 style={{fontSize:15,margin:'0 0 20px'}}>检查本地服务</h3>
-          <ToolExecutionBlock executions={window.executions} active={window.active} language="zh"
+          <ToolExecutionBlock executions={window.executions} active={window.active} language={window.language}
             message={{id:window.messageId,conversationId:window.fixtureSession,turnId:'turn',createdAt:'2026-09-10T00:00:00Z',role:'assistant',content:''}}
             onOpenScene={()=>{}} onRevertChangeReport={async()=>{}} />
         </div>

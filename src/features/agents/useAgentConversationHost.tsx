@@ -22,14 +22,15 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     let revision = 0;
     const refresh = () => {
       const current = ++revision;
-      void Promise.all([call<Catalog>('conversation.catalog'), call<{ plugins: CardbushAppPlugin[] }>('product.command', { kind: 'apps.get' })])
+      void call<Catalog>('conversation.catalog').then(async catalog => [catalog, await call<{ plugins: CardbushAppPlugin[] }>('product.command', { kind: 'apps.get' })] as const)
         .then(([catalog, config]) => { if (alive && current === revision) { setError(''); setCatalog({ ...catalog, skills: catalog.skills.map(skill => ({ ...skill, logoPath: '', logoDarkPath: '' })) }); setPlugins(config.plugins.map(plugin => ({ ...plugin, logoPath: '', logoDarkPath: '' }))); } })
         .catch(error => { if (alive && current === revision) setError(String(error.message ?? error)); });
     };
     const restored = (event: Event) => { if ((event as CustomEvent<string>).detail === connectionId) refresh(); };
     refresh();
     window.addEventListener('cardbush:agent-connection-restored', restored);
-    return () => { alive = false; window.removeEventListener('cardbush:agent-connection-restored', restored); };
+    window.addEventListener('cardbush:agent-configuration-synced', restored);
+    return () => { alive = false; window.removeEventListener('cardbush:agent-connection-restored', restored); window.removeEventListener('cardbush:agent-configuration-synced', restored); };
   }, [call, connectionId, enabled]);
   const uploadFiles = useCallback(async (files: File[]) => {
     if (!enabled) throw new Error('请更新此 Agent 服务以支持附件。Update this Agent service to transfer files.');

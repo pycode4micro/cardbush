@@ -74,8 +74,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.ok((await run('htmlReadySizes')).every(size => size.height === 340), 'initial measurements do not visibly bounce');
     await run('previewObserver.disconnect()');
 
-    await window.webContents.insertCSS(await fs.readFile(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8'));
-    for (const theme of ['theme-bright', 'theme-dark', 'theme-dark theme-cyberpunk']) {
+    await window.webContents.insertCSS(await fs.readFile(path.join(root, 'src/styles/appearance.css'), 'utf8'));
+    for (const theme of ['theme-bright', 'theme-dark']) {
       await run(`viewTheme=${JSON.stringify(theme)};renderView(h(views.MessageBubble,{message:mediaMessage,language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:''}));`);
       await pause(160);
       assert.equal(await run("document.querySelector('.inline-html-viewport').clientHeight"), 340);

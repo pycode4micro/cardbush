@@ -2,6 +2,10 @@ import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import fs from 'node:fs';
 import net, { type Socket } from 'node:net';
 import path from 'node:path';
+import { createWebSocketStream, type WebSocket } from 'ws';
+import type { Duplex } from 'node:stream';
+import { ChromeConnectorWebSocket } from './chromeConnectorWebSocket';
+import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
 
 import {
   chromeConnectorConfigDirectoryName,
@@ -12,12 +16,12 @@ import {
 type PeerRole = 'extension' | 'mcp';
 
 const maximumPeerMessageCharacters = 64 * 1024 * 1024;
-const maximumNativeHostOutboundBytes = 1024 * 1024;
+const maximumCommandBytes = 1024 * 1024;
 
 type Peer = {
   id: string;
   role: PeerRole;
-  socket: Socket;
+  socket: Duplex;
   buffer: string;
 };
 
@@ -32,6 +36,8 @@ export interface ChromeConnectorStatus {
   activeTabUrl?: string;
   controlledTabCount: number;
   lastError?: string;
+  paired: boolean;
+  transport: 'loopback_websocket';
 }
 
 export class ChromeConnectorBroker {
@@ -40,6 +46,8 @@ export class ChromeConnectorBroker {
   readonly #token = randomBytes(32).toString('hex');
   readonly #server = net.createServer();
   readonly #peers = new Map<string, Peer>();
+  readonly #sockets = new Set<Duplex>();
+  readonly #webSocket: ChromeConnectorWebSocket;
   readonly #listeners = new Set<(status: ChromeConnectorStatus) => void>();
   #extension: Peer | null = null;
   #started = false;
@@ -51,8 +59,11 @@ export class ChromeConnectorBroker {
   #controlledTabCount = 0;
   #lastError = '';
 
-  constructor(readonly userDataPath: string) {
-    const identity = createHash('sha256').update(userDataPath).digest('hex').slice(0, 16);
+  constructor(readonly userDataPath: string, readonly options: {
+    nativeHostPath?: string; handshakeTimeoutMs?: number; maximumPeers?: number;
+  } = {}) {
+    this.#webSocket = new ChromeConnectorWebSocket(connectorDirectory(userDataPath), socket => this.#acceptExtension(socket), options);
+    const identity = createHash('sha256').update(userDataPath + randomUUID()).digest('hex').slice(0, 24);
     this.endpoint = process.platform === 'win32'
       ? `\\\\.\\pipe\\cardbush-browser-connector-${identity}`
       : path.join(userDataPath, chromeConnectorConfigDirectoryName, 'bridge.sock');
@@ -65,8 +76,10 @@ export class ChromeConnectorBroker {
 
   async start(): Promise<void> {
     if (this.#started) return;
-    const directory = path.dirname(this.configPath);
+    const directory = connectorDirectory(this.userDataPath);
     fs.mkdirSync(directory, { recursive: true });
+    const nativeHost = this.options.nativeHostPath ?? path.resolve('dist-native/chrome-connector/CardBushBrowserHost.exe');
+    secureConnectorResource(nativeHost, 'directory', directory);
     if (process.platform !== 'win32') {
       try {
         fs.unlinkSync(this.endpoint);
@@ -92,26 +105,47 @@ export class ChromeConnectorBroker {
       this.#server.once('listening', onListening);
       this.#server.listen(this.endpoint);
     });
-    fs.writeFileSync(this.configPath, JSON.stringify({
-      protocol: chromeConnectorProtocol,
-      endpoint: this.endpoint,
-      token: this.#token,
-      pid: process.pid,
-      updatedAt: new Date().toISOString(),
-    }, null, 2), { encoding: 'utf8', mode: 0o600 });
+    try {
+      secureConnectorResource(nativeHost, 'pipe', this.endpoint);
+      await this.#webSocket.start();
+      writeConnectorFile(this.configPath, JSON.stringify({
+        protocol: chromeConnectorProtocol,
+        endpoint: this.endpoint,
+        token: this.#token,
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+      }, null, 2));
+    } catch (error) {
+      this.#webSocket.stop();
+      for (const socket of this.#sockets) socket.destroy();
+      this.#sockets.clear();
+      this.#server.close();
+      throw error;
+    }
     this.#started = true;
     this.#publish();
   }
 
   stop(): void {
+    this.#webSocket.stop();
     if (!this.#started) return;
-    for (const peer of this.#peers.values()) peer.socket.destroy();
+    for (const socket of this.#sockets) socket.destroy();
+    this.#sockets.clear();
     this.#peers.clear();
     this.#extension = null;
+    this.#extensionVersion = '';
+    this.#connectedAt = '';
+    this.#activeTabId = undefined;
+    this.#activeTabTitle = '';
+    this.#activeTabUrl = '';
+    this.#controlledTabCount = 0;
     this.#started = false;
     this.#server.close();
     try {
-      fs.unlinkSync(this.configPath);
+      connectorDirectory(this.userDataPath);
+      assertConnectorFile(this.configPath);
+      const config = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+      if (config.token === this.#token) fs.unlinkSync(this.configPath);
     } catch (error) {
       if (!isMissing(error)) console.error('[chrome-connector] failed to remove bridge config', error);
     }
@@ -136,6 +170,8 @@ export class ChromeConnectorBroker {
       ...(this.#activeTabTitle ? { activeTabTitle: this.#activeTabTitle } : {}),
       ...(this.#activeTabUrl ? { activeTabUrl: this.#activeTabUrl } : {}),
       controlledTabCount: this.#controlledTabCount,
+      paired: this.#webSocket.paired,
+      transport: 'loopback_websocket',
       ...(this.#lastError ? { lastError: this.#lastError } : {}),
     };
   }
@@ -145,12 +181,26 @@ export class ChromeConnectorBroker {
     return () => this.#listeners.delete(listener);
   }
 
+  createPairing(): { code: string; expiresAt: string } { return this.#webSocket.createPairing(); }
+
   releaseAll(reason = 'explicit_release'): void {
     if (!this.#extension) return;
     writeLine(this.#extension.socket, {
       type: 'control',
       method: 'debugger.detachAll',
       reason,
+    });
+  }
+
+  async disableExtension(): Promise<void> {
+    const extension = this.#extension;
+    if (!extension) return;
+    // Give the extension time to persist its disabled state and release Chrome
+    // debugger sessions before closing the transport.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      extension.socket.once('close', () => { clearTimeout(timer); resolve(); });
+      writeLine(extension.socket, { type: 'control', method: 'connector.disable' });
     });
   }
 
@@ -164,6 +214,10 @@ export class ChromeConnectorBroker {
   }
 
   #accept(socket: Socket): void {
+    if (this.#sockets.size >= (this.options.maximumPeers ?? 32)) { socket.destroy(); return; }
+    this.#sockets.add(socket);
+    const handshakeTimer = setTimeout(() => socket.destroy(), this.options.handshakeTimeoutMs ?? 5000);
+    handshakeTimer.unref();
     socket.setEncoding('utf8');
     socket.setNoDelay(true);
     const temporaryId = randomUUID();
@@ -171,7 +225,7 @@ export class ChromeConnectorBroker {
     let authenticated = false;
     socket.on('data', (chunk: string) => {
       pending.buffer += chunk;
-      if (pending.buffer.length > maximumPeerMessageCharacters) {
+      if (pending.buffer.length > (authenticated ? maximumPeerMessageCharacters : 8192)) {
         socket.destroy(new Error('Chrome Connector peer exceeded the message buffer limit.'));
         return;
       }
@@ -189,7 +243,8 @@ export class ChromeConnectorBroker {
           return;
         }
         if (!authenticated) {
-          const role = message.role === 'extension' || message.role === 'mcp'
+          // The private pipe is MCP-only. Extensions must use the paired socket.
+          const role = message.role === 'mcp'
             ? message.role
             : null;
           if (
@@ -202,19 +257,10 @@ export class ChromeConnectorBroker {
             return;
           }
           authenticated = true;
+          clearTimeout(handshakeTimer);
           pending.role = role;
-          pending.id = typeof message.clientId === 'string' && message.clientId
-            ? message.clientId
-            : temporaryId;
+          pending.id = temporaryId;
           this.#peers.set(pending.id, pending);
-          if (role === 'extension') {
-            this.#extension?.socket.destroy();
-            this.#extension = pending;
-            this.#extensionVersion = string(message.version);
-            this.#connectedAt = new Date().toISOString();
-            this.#lastError = '';
-            this.#publish();
-          }
           writeLine(socket, {
             type: 'hello_ack',
             protocol: chromeConnectorProtocol,
@@ -229,6 +275,8 @@ export class ChromeConnectorBroker {
       if (authenticated) this.#lastError = error.message;
     });
     socket.on('close', () => {
+      clearTimeout(handshakeTimer);
+      this.#sockets.delete(socket);
       this.#peers.delete(pending.id);
       if (this.#extension === pending) {
         this.#extension = null;
@@ -241,6 +289,37 @@ export class ChromeConnectorBroker {
         this.#publish();
       }
     });
+  }
+
+  #acceptExtension(client: WebSocket): void {
+    this.#extension?.socket.destroy();
+    const socket = createWebSocketStream(client, { encoding: 'utf8', decodeStrings: false });
+    client.once('close', () => socket.destroy());
+    const peer: Peer = { id: randomUUID(), role: 'extension', socket, buffer: '' };
+    this.#extension = peer;
+    this.#sockets.add(socket); this.#peers.set(peer.id, peer);
+    this.#extensionVersion = ''; this.#connectedAt = new Date().toISOString(); this.#lastError = '';
+    // Application messages keep Chrome's service worker alive and detect an
+    // abandoned browser even if TCP never reports a close.
+    let heartbeat = setTimeout(() => socket.destroy(), 60_000);
+    socket.on('data', (data: string) => {
+      try {
+        const message = asRecord(JSON.parse(data));
+        clearTimeout(heartbeat); heartbeat = setTimeout(() => socket.destroy(), 60_000);
+        if (message.type === 'heartbeat') writeLine(socket, { type: 'heartbeat_ack' });
+        else this.#route(peer, message);
+      } catch { socket.destroy(); }
+    });
+    socket.on('error', () => {});
+    socket.on('close', () => {
+      clearTimeout(heartbeat); this.#sockets.delete(socket); this.#peers.delete(peer.id);
+      if (this.#extension !== peer) return;
+      this.#extension = null; this.#extensionVersion = ''; this.#connectedAt = '';
+      this.#activeTabId = undefined; this.#activeTabTitle = ''; this.#activeTabUrl = ''; this.#controlledTabCount = 0;
+      this.#publish();
+    });
+    writeLine(socket, { type: 'connector_ready', protocol: chromeConnectorProtocol });
+    this.#publish();
   }
 
   #route(peer: Peer, message: Record<string, unknown>): void {
@@ -258,13 +337,13 @@ export class ChromeConnectorBroker {
         return;
       }
       const request = { ...message, clientId: peer.id };
-      if (Buffer.byteLength(JSON.stringify(request), 'utf8') > maximumNativeHostOutboundBytes) {
+      if (Buffer.byteLength(JSON.stringify(request), 'utf8') > maximumCommandBytes) {
         writeLine(peer.socket, {
           type: 'response',
           id: message.id,
           error: {
             code: 'chrome_connector_request_too_large',
-            message: 'This Chrome command exceeds the native messaging request limit.',
+            message: 'This Chrome command exceeds the connector request limit.',
           },
         });
         return;
@@ -274,12 +353,14 @@ export class ChromeConnectorBroker {
       return;
     }
     if (message.type === 'response' || message.type === 'progress') {
+      if (this.#extension !== peer) return;
       const clientId = string(message.clientId);
       const target = this.#peers.get(clientId);
       if (target?.role === 'mcp') writeLine(target.socket, message);
       return;
     }
     if (message.type === 'status') {
+      if (this.#extension !== peer) return;
       this.#extensionVersion = string(message.version) || this.#extensionVersion;
       this.#activeTabId = finiteInteger(message.activeTabId);
       this.#activeTabTitle = string(message.activeTabTitle);
@@ -296,8 +377,10 @@ export class ChromeConnectorBroker {
   }
 }
 
-function writeLine(socket: Socket, value: unknown): void {
-  if (!socket.destroyed) socket.write(`${JSON.stringify(value)}\n`);
+function writeLine(socket: Duplex, value: unknown): void {
+  if (socket.destroyed) return;
+  if (socket.writableLength > maximumPeerMessageCharacters) { socket.destroy(); return; }
+  socket.write(`${JSON.stringify(value)}\n`);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

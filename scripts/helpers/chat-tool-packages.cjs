@@ -84,7 +84,11 @@ module.exports = async function testChatToolPackages({ run, until, pause, theme 
     appendPackageTool(103);
     renderPackages();
   `);
-  await until("firstPackage.querySelector('.tool-execution-status').textContent === 'Failed' && secondPackage.querySelector('.tool-execution-status').textContent === 'Returned'", 'late results update their original package');
+  await until("secondPackage.querySelector('.tool-execution-summary').getAttribute('aria-label').endsWith('Returned')", 'late results update their original package');
+  await run("firstPackage.querySelector('.tool-execution-summary').click()");
+  await until("firstPackage.querySelector('[data-execution-id=package-tool-1] .tool-execution-row')?.getAttribute('aria-label').endsWith('Failed')", 'late failure state is retained on the original row');
+  assert.equal(await run("firstPackage.querySelector('.tool-execution-status,.tool-execution-row-status')"), null, 'the package stays neutral without a failure badge');
+  await run("firstPackage.querySelector('.tool-execution-summary').click()");
   assert.equal(await run("firstPackage.isConnected && secondPackage.isConnected"), true);
   await run(`
     packageState = views.applyTurnTerminalSnapshot(packageState, packageSession, 'package-placeholder', {

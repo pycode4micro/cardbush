@@ -7,11 +7,9 @@ import { ToolLogo } from './ToolLogo';
 export function SubagentChildTools({
   executions,
   language,
-  isFailed,
 }: {
   executions: ChatToolExecution[];
   language: AppLanguage;
-  isFailed: (execution: ChatToolExecution) => boolean;
 }) {
   if (executions.length === 0) {
     return null;
@@ -24,7 +22,7 @@ export function SubagentChildTools({
           <div
             // eslint-disable-next-line react/no-array-index-key
             key={`${child.id}-${index}`}
-            className={`subagent-child-tool ${isFailed(child) ? 'failed' : ''}`}
+            className="subagent-child-tool"
           >
             <ToolLogo name={child.name} size={14} />
             <span>{displayToolName(child.name)}</span>

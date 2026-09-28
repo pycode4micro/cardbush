@@ -170,7 +170,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.webContents.sendInputEvent({type:'mouseMove',...launcher});
   await until("!!document.querySelector('.global-tooltip')", 'hover shortcut tooltip visible');
   assert.equal(await run("document.querySelector('.global-tooltip kbd').textContent"), 'Ctrl + Shift + A');
-  assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '999px');
+  assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '18px');
   assert.equal(await run("document.querySelector('.app-center-launcher').title"), '', 'no duplicate native tooltip');
   await run(`centerReactivate();document.querySelector('.app-center-launcher').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:${launcher.x},clientY:${launcher.y}}));document.querySelector('.app-center-launcher').dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerType:'mouse',clientX:${launcher.x},clientY:${launcher.y}}));`);
   await pause(500);

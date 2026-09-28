@@ -20,6 +20,7 @@ export const localConversationBackend = {
 /** Conversation behavior is shared; the host supplies transport and durable work ownership. */
 export type ConversationBackend = typeof localConversationBackend & {
   scope?: string;
+  keepRunningOnUnmount?: boolean;
   isSubmissionRetry?: (sessionId: string, userInput: string) => boolean;
   queue?: {
     enqueue(request: ChatStreamRequest): Promise<void>;

@@ -11,10 +11,16 @@ import {
   FileVideo,
   Hash,
   Presentation,
+  Settings2,
+  Package,
+  Box,
+  Type,
+  LockKeyhole,
   SquareTerminal,
 } from 'lucide-react';
 
 import { resourceBasename } from '../../shared/localPaths';
+import { codeLanguageForPath } from '../../shared/codeLanguages';
 
 type FileTypeDescriptor =
   | { kind: 'badge'; label: string; tone: string }
@@ -22,39 +28,73 @@ type FileTypeDescriptor =
   | { kind: 'icon'; icon: typeof FileCode2; tone: string };
 
 const badgeTypes: Record<string, { label: string; tone: string }> = {
-  ts: { label: 'TS', tone: 'typescript' },
-  js: { label: 'JS', tone: 'javascript' },
-  py: { label: 'PY', tone: 'python' },
+  typescript: { label: 'TS', tone: 'typescript' },
+  javascript: { label: 'JS', tone: 'javascript' },
+  python: { label: 'PY', tone: 'python' },
   go: { label: 'GO', tone: 'go' },
-  rs: { label: 'RS', tone: 'rust' },
-  rb: { label: 'RB', tone: 'ruby' },
+  rust: { label: 'RS', tone: 'rust' },
+  ruby: { label: 'RB', tone: 'ruby' },
   php: { label: 'PHP', tone: 'php' },
   java: { label: 'JV', tone: 'java' },
-  kt: { label: 'KT', tone: 'kotlin' },
+  kotlin: { label: 'KT', tone: 'kotlin' },
   swift: { label: 'SW', tone: 'swift' },
   vue: { label: 'V', tone: 'vue' },
   svelte: { label: 'S', tone: 'svelte' },
+  c: { label: 'C', tone: 'c' },
+  cpp: { label: 'C++', tone: 'cpp' },
+  csharp: { label: 'C#', tone: 'csharp' },
+  fsharp: { label: 'F#', tone: 'fsharp' },
+  vbnet: { label: 'VB', tone: 'vbnet' },
+  objectivec: { label: 'OC', tone: 'c' },
+  dart: { label: 'D', tone: 'dart' },
+  lua: { label: 'LUA', tone: 'lua' },
+  r: { label: 'R', tone: 'r' },
+  scala: { label: 'SC', tone: 'ruby' },
+  groovy: { label: 'GR', tone: 'go' },
+  perl: { label: 'PL', tone: 'python' },
+  clojure: { label: 'CLJ', tone: 'vue' },
+  elixir: { label: 'EX', tone: 'csharp' },
+  erlang: { label: 'ERL', tone: 'ruby' },
+  haskell: { label: 'HS', tone: 'fsharp' },
+  julia: { label: 'JL', tone: 'csharp' },
+  zig: { label: 'Z', tone: 'rust' },
+  wasm: { label: 'WA', tone: 'fsharp' },
+  graphql: { label: 'GQL', tone: 'graphql' },
+  protobuf: { label: 'PB', tone: 'go' },
+  latex: { label: 'TeX', tone: 'vue' },
 };
 
 export function fileTypeDescriptor(path: string, mediaType?: 'image' | 'video' | 'audio'): FileTypeDescriptor {
-  const extension = resourceBasename(path).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? '';
+  const filename = resourceBasename(path).toLowerCase();
+  const extension = filename.match(/\.([^.]+)$/)?.[1] ?? '';
+  const language = codeLanguageForPath(path)?.id ?? '';
   if (extension === 'tsx' || extension === 'jsx') {
     return { kind: 'react', tone: extension === 'tsx' ? 'typescript-react' : 'javascript-react' };
   }
-  const badge = badgeTypes[extension];
+  const badge = badgeTypes[language];
   if (badge) return { kind: 'badge', ...badge };
-  if (/^(?:json|jsonc)$/.test(extension)) return { kind: 'icon', icon: Braces, tone: 'json' };
-  if (/^(?:html?|xhtml|xml)$/.test(extension)) return { kind: 'icon', icon: CodeXml, tone: 'markup' };
-  if (/^(?:css|scss|sass|less)$/.test(extension)) return { kind: 'icon', icon: Hash, tone: 'styles' };
-  if (/^(?:sh|bash|zsh|fish|ps1|bat|cmd)$/.test(extension)) return { kind: 'icon', icon: SquareTerminal, tone: 'terminal' };
-  if (/^(?:sql|db|sqlite|sqlite3)$/.test(extension)) return { kind: 'icon', icon: Database, tone: 'database' };
-  if (/^(?:png|apng|avif|jpe?g|gif|webp|svg|bmp|ico)$/.test(extension)) return { kind: 'icon', icon: FileImage, tone: 'image' };
-  if (/^(?:mp4|m4v|mov|webm|ogv|mkv|avi|mpeg|mpg)$/.test(extension)) return { kind: 'icon', icon: FileVideo, tone: 'video' };
-  if (/^(?:mp3|m4a|aac|wav|ogg|oga|opus|flac|aiff?|wma)$/.test(extension)) return { kind: 'icon', icon: FileAudio, tone: 'audio' };
-  if (/^(?:xls|xlsx|xlsm|csv|tsv|ods)$/.test(extension)) return { kind: 'icon', icon: FileSpreadsheet, tone: 'sheet' };
-  if (/^(?:ppt|pptx|pps|ppsx|odp|key)$/.test(extension)) return { kind: 'icon', icon: Presentation, tone: 'slides' };
-  if (/^(?:zip|rar|7z|tar|gz|bz2|xz)$/.test(extension)) return { kind: 'icon', icon: FileArchive, tone: 'archive' };
-  if (/^(?:md|markdown|mdx|txt|rtf|pdf|doc|docx|odt)$/.test(extension)) return { kind: 'icon', icon: FileText, tone: 'document' };
+  if (/^(?:json|jsonc|json5)$/.test(language)) return { kind: 'icon', icon: Braces, tone: 'json' };
+  if (/^(?:yaml|toml|ini|hcl|nginx|cmake|makefile)$/.test(language) ||
+    /^(?:conf|config|sln|slnx|csproj|fsproj|vbproj|props|targets|lock)$/.test(extension) ||
+    /^\.(?:gitignore|gitattributes|dockerignore|prettierignore|browserslistrc|eslintrc|prettierrc)$/.test(filename)) {
+    return { kind: 'icon', icon: Settings2, tone: 'config' };
+  }
+  if (language === 'docker' || /^(?:exe|msi|msix|appx|appxbundle|msixbundle|appimage|deb|rpm|dmg|pkg|apk|aab|jar|dll|so|dylib|wasm)$/.test(extension)) return { kind: 'icon', icon: Package, tone: 'package' };
+  if (/^(?:css|scss|sass|less)$/.test(language)) return { kind: 'icon', icon: Hash, tone: 'styles' };
+  if (/^(?:bash|powershell|batch)$/.test(language) || extension === 'fish') return { kind: 'icon', icon: SquareTerminal, tone: 'terminal' };
+  if (/^(?:sql|db|sqlite|sqlite3|db3|parquet|arrow|feather)$/.test(extension)) return { kind: 'icon', icon: Database, tone: 'database' };
+  if (/^(?:png|apng|avif|jpe?g|gif|webp|svg|bmp|ico|tiff?|heic|heif|psd|ai|eps)$/.test(extension)) return { kind: 'icon', icon: FileImage, tone: 'image' };
+  if (language === 'markup') return { kind: 'icon', icon: CodeXml, tone: 'markup' };
+  if (/^(?:mp4|m4v|mov|webm|ogv|mkv|avi|mpeg|mpg|wmv|flv)$/.test(extension)) return { kind: 'icon', icon: FileVideo, tone: 'video' };
+  if (/^(?:mp3|m4a|aac|wav|ogg|oga|opus|flac|aiff?|wma|mid|midi)$/.test(extension)) return { kind: 'icon', icon: FileAudio, tone: 'audio' };
+  if (/^(?:xls|xlsx|xlsm|xlsb|xltx|csv|tsv|ods|numbers)$/.test(extension)) return { kind: 'icon', icon: FileSpreadsheet, tone: 'sheet' };
+  if (/^(?:ppt|pptx|pptm|potx|pps|ppsx|odp|key)$/.test(extension)) return { kind: 'icon', icon: Presentation, tone: 'slides' };
+  if (/^(?:zip|rar|7z|tar|gz|tgz|bz2|tbz2|xz|txz|zst|br|cab|iso)$/.test(extension)) return { kind: 'icon', icon: FileArchive, tone: 'archive' };
+  if (/^(?:ttf|otf|woff|woff2|eot)$/.test(extension)) return { kind: 'icon', icon: Type, tone: 'font' };
+  if (/^(?:pem|crt|cer|pfx|p12|key|pub)$/.test(extension)) return { kind: 'icon', icon: LockKeyhole, tone: 'certificate' };
+  if (/^(?:blend|gltf|glb|obj|fbx|stl|usd|usdz|step|stp)$/.test(extension)) return { kind: 'icon', icon: Box, tone: 'model' };
+  if (/^(?:md|markdown|mdx|txt|text|log|rtf|pdf|doc|docx|docm|odt|pages|epub|rst|adoc|ics|eml|msg)$/.test(extension) ||
+    /^(?:readme|licen[sc]e|notice|changelog|authors|copying)(?:\.|$)/.test(filename)) return { kind: 'icon', icon: FileText, tone: 'document' };
   if (mediaType === 'image') return { kind: 'icon', icon: FileImage, tone: 'image' };
   if (mediaType === 'video') return { kind: 'icon', icon: FileVideo, tone: 'video' };
   if (mediaType === 'audio') return { kind: 'icon', icon: FileAudio, tone: 'audio' };

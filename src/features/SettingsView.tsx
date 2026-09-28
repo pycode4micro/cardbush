@@ -1,5 +1,4 @@
-import type { AgentConnection } from '../../electron/agentTypes';
-import { AgentSettingsContent } from './settings/AgentSettingsContent';
+import { normalizeAppearance, updateAppearanceProfile } from './appearance/appearancePreferences';
 import { useSettingsHost } from './settings/SettingsHostContext';
 import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
 import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
@@ -10,10 +9,13 @@ import { ChromeConnectionSettings } from './browser/ChromeConnectionSettings';
 import { ComputerUseSettings, ComputerUseSettingsPanel } from './computerUse/ComputerUseSettings';
 import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
 import { ArchivedItemsPanel } from './settings/ArchivedItemsPanel';
+import { AgentDataSettings } from './settings/AgentDataSettings';
+import type { AgentConnection } from '../../electron/agentTypes';
 import { SettingsDropdown } from './settings/SettingsDropdown';
 import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
 import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
 import { SettingsCard, SettingsDivider, SettingsRadio, SettingsInput, InfoRow } from './settings/SettingsControls';
+import './settings/settingsLayout.css';
 import { settingsLabels, settingsDescriptions, settingsNavigationGroups, settingsSectionMatchesQuery, visibleSettingsSection, type VisibleSettingsSection } from './settings/settingsNavigation';
 import { usePageState } from './navigation/PageNavigation';
 import type { WindowMaterialPreference } from './appearance/windowAppearance';
@@ -120,7 +122,6 @@ const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?:
   projects: PackageOpen, runtime: Container, ssh: Network, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
 export function SettingsView({
-  agentConnections = [], agentId = '', onAgentChange,
   active,
   onReady,
   themePreference,
@@ -136,6 +137,7 @@ export function SettingsView({
   conversations,
   projects,
   onRestoreProjects,
+  agentConnections = [],
   skills,
   disabledSkillNames,
   initialSection,
@@ -162,7 +164,6 @@ export function SettingsView({
   visualInputEnabled,
   onVisualInputEnabledChange,
 }: {
-  agentConnections?: AgentConnection[]; agentId?: string; onAgentChange?: (id: string) => void;
   active: boolean;
   onReady: () => void;
   themePreference: ThemePreference;
@@ -179,6 +180,7 @@ export function SettingsView({
   conversations: ConversationSummary[];
   projects?: ProjectItem[];
   onRestoreProjects?: (ids: string[]) => void;
+  agentConnections?: AgentConnection[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   initialSection: SettingsSection;
@@ -205,6 +207,10 @@ export function SettingsView({
   visualInputEnabled: boolean;
   onVisualInputEnabledChange: (enabled: boolean) => void;
 }) {
+  useEffect(() => {
+    if (!active) return;
+    return () => { window.dispatchEvent(new Event('cardbush:shared-configuration-updated')); };
+  }, [active]);
   const [localSection, setLocalSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
   );
@@ -214,12 +220,9 @@ export function SettingsView({
   const [networkTab, setNetworkTab] = usePageState<'models' | 'plugins'>('network-tab', 'models');
   const settingsContentRef = useRef<HTMLElement>(null);
   const sectionScrollPositions = useRef<Record<string, number>>({});
-  const agent = agentConnections.find(item => item.id === agentId);
-  const remoteSections: VisibleSettingsSection[] = ['models', 'mcp', 'projects', 'profile', 'appearance', 'shortcuts', 'runtime', 'cache', 'diagnostics'];
-  const effectiveSection = agent && !remoteSections.includes(section) ? 'models' : !agent && section === 'projects' ? 'models' : section;
-  const scrollKey = `${agent?.id ?? 'local'}:${effectiveSection}`;
-  const navigation = agent ? settingsNavigationGroups.map(group => ({ ...group, sections: [...group.sections.filter(id => remoteSections.includes(id)), ...(group.label.en === 'Capabilities' ? ['projects' as const] : [])] })) : settingsNavigationGroups;
-  const filteredNavigation = navigation.map(group => ({
+  const effectiveSection = section === 'projects' ? 'models' : section;
+  const scrollKey = effectiveSection;
+  const filteredNavigation = settingsNavigationGroups.map(group => ({
     ...group, sections: group.sections.filter(id => settingsSectionMatchesQuery(id, settingsQuery)),
   })).filter(group => group.sections.length > 0);
   const [toast, setToast] = useState('');
@@ -267,6 +270,7 @@ export function SettingsView({
     const displayName = basename(filePath);
     updateSettings((current) => ({
       ...current,
+      appearance: updateAppearanceProfile(normalizeAppearance(current.appearance), themePreference === 'light' || (themePreference === 'system' && !matchMedia('(prefers-color-scheme: dark)').matches) ? 'bright' : 'dark', { font: 'imported' }),
       font: {
         family: `cardbush-imported-${stableModelConfigId('font', displayName, '', filePath)}`,
         displayName,
@@ -274,7 +278,7 @@ export function SettingsView({
       },
     }));
     notify(language === 'zh' ? '字体已导入' : 'Font imported');
-  }, [language, notify, updateSettings]);
+  }, [language, notify, updateSettings, themePreference]);
 
   const importThemeStyle = useCallback(async () => {
     const filePath = await window.cardbushDesktop?.pickAppearanceStyle?.();
@@ -290,8 +294,9 @@ export function SettingsView({
       updateSettings((current) => ({
         ...current,
         importedThemeStyle,
+        appearance: updateAppearanceProfile(normalizeAppearance(current.appearance), importedThemeStyle.base === 'light' ? 'bright' : 'dark', { theme: 'imported' }),
       }));
-      onThemePreferenceChange('custom');
+      onThemePreferenceChange(importedThemeStyle.base);
       notify(language === 'zh' ? '主题配置已导入' : 'Theme configuration imported');
     } catch {
       notify(
@@ -306,10 +311,8 @@ export function SettingsView({
     updateSettings((current) => ({
       ...current,
       importedThemeStyle: null,
+      appearance: (() => { const next = normalizeAppearance(current.appearance); for (const key of ['shared', 'light', 'dark'] as const) next[key].theme = 'default'; return next; })(),
     }));
-    if (themePreference === 'custom') {
-      onThemePreferenceChange('system');
-    }
     notify(language === 'zh' ? '已移除导入主题' : 'Imported theme removed');
   }, [language, notify, onThemePreferenceChange, themePreference, updateSettings]);
 
@@ -317,11 +320,11 @@ export function SettingsView({
     updateSettings((current) => ({
       ...current,
       font: defaultFontSettings,
+      appearance: (() => { const next = normalizeAppearance(current.appearance); for (const key of ['shared', 'light', 'dark'] as const) { if (next[key].font === 'imported') next[key].font = 'system'; if (next[key].contentFont === 'imported') next[key].contentFont = 'inherit'; } return next; })(),
     }));
   }, [updateSettings]);
 
   const content = (() => {
-    if (agent && !['appearance', 'shortcuts'].includes(effectiveSection)) return active ? <AgentSettingsContent key={agent.id} connection={agent} section={effectiveSection} language={language} settings={settings} onSettingsChange={onSettingsChange} visualInputEnabled={visualInputEnabled} onNotify={notify} initialPluginTab={initialPluginTab}/> : null;
     if (effectiveSection === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
     if (effectiveSection === 'browser') return <BrowserSettingsPanel language={language} />;
     if (effectiveSection === 'ssh') return <SshConnectionsPanel language={language} projects={projects} />;
@@ -333,6 +336,7 @@ export function SettingsView({
       themePreference={themePreference} windowMaterial={windowMaterial} onWindowMaterialChange={onWindowMaterialChange}
       language={language} languageMode={languageMode} systemLanguage={systemLanguage} settings={settings}
       onThemePreferenceChange={onThemePreferenceChange} onLanguageModeChange={onLanguageModeChange}
+      onSettingsChange={updateSettings}
       onImportFont={importFont} onResetFont={resetFont} onImportThemeStyle={importThemeStyle} onResetImportedThemeStyle={resetImportedThemeStyle} />;
     if (effectiveSection === 'runtime') {
       return (
@@ -597,6 +601,7 @@ export function SettingsView({
           runtimeBusy={runtimeBusy}
           onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
         />
+        {agentConnections.map(connection => <AgentDataSettings key={connection.id} connection={connection} language={language} onNotify={notify}/>)}
         </div>
       );
     }
@@ -675,21 +680,15 @@ export function SettingsView({
         onCollapse={onSidebarCollapse} softVisible={active && sidebarPresence.visible} />
       </>}
       <section className="settings-content" ref={settingsContentRef} inert={compactLayout && !sidebarCollapsed ? true : undefined}
-        onScroll={event => { sectionScrollPositions.current[section] = event.currentTarget.scrollTop; }}>
+        onScroll={event => { sectionScrollPositions.current[scrollKey] = event.currentTarget.scrollTop; }}>
         <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
-          {onAgentChange && <div className="settings-target"><span>{language === 'zh' ? '设置环境' : 'Settings for'}</span>
-            <SettingsDropdown label={language === 'zh' ? '设置环境' : 'Settings for'} value={agent?.id ?? ''}
-              options={[{ value: '', label: language === 'zh' ? '本机' : 'This device' }, ...agentConnections.map(item => ({ value: item.id, label: item.name }))]}
-              onChange={id => { onAgentChange(id); setSettingsQuery(''); setPluginMcpTarget(null); }}/>
-            {['appearance', 'shortcuts'].includes(effectiveSection) && <small>{language === 'zh' ? '所有环境共用' : 'Shared across environments'}</small>}
-          </div>}
           {effectiveSection !== 'mcp' && <header className="settings-page-header">
             <div>
               <h2>{settingsLabels[effectiveSection][language]}</h2>
               <p>{settingsDescriptions[effectiveSection][language]}</p>
             </div>
           </header>}
-          <div key={agent?.id ?? 'local'}>{content}</div>
+          <div>{content}</div>
         </div>
       </section>
     </main>

@@ -1,5 +1,6 @@
 import type {
   RuntimeEvent,
+  ToolDisplay,
   RuntimePermissionScope,
   RuntimePermissionTarget,
 } from '@cardbush/bush-protocol';
@@ -43,7 +44,7 @@ export interface RuntimeToolView {
   toolName: string;
   ordinal: number;
   assistantMessageId?: string;
-  display?: { title: string; summary?: string };
+  display?: ToolDisplay;
   phase: RuntimeToolPhase;
   error?: { code: string; message: string; details: Record<string, unknown> };
   reason?: string;

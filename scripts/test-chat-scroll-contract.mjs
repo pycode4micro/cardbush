@@ -250,7 +250,11 @@ assert.match(
   /\.quick-context-turn\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto/,
   'Preview content must shrink and scroll without clipping its header or footer',
 );
-assert.match(quickContextSource, /--quick-context-preview-top/);
+assert.match(
+  contextRailStyles,
+  /\.quick-context-panel\s*\{[^}]*top:\s*50%;[^}]*transform:\s*translateY\(-50%\)/,
+  'Turn previews must stay centered inside the conversation area above the composer',
+);
 assert.match(
   quickContextSource,
   /fetchSessionTurnMessages\(\{[\s\S]*?sessionId,[\s\S]*?messageId: turn\.serverMessageId/,

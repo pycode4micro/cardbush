@@ -5,7 +5,7 @@ const path = require('node:path');
 
 module.exports = async function testQuickContextLayout({ run, until, pause, window, root }) {
   await window.webContents.insertCSS(
-    fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8') + '\n' +
     fs.readFileSync(path.join(root, 'src/components/global-tooltip.css'), 'utf8') + '\n' + [
       'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; --chat-track-width: 780px; --chat-inline-gutter: clamp(18px, calc(3vw + 10px), 46px); }',
       '@media (max-width: 760px) { body[data-context-layout-test] .app { --chat-inline-gutter: 12px; } }',
@@ -131,7 +131,7 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await run("document.querySelector('.composer-surface').style.minHeight = '260px'");
   await assertFits('expanded composer');
   await run("document.querySelector('.composer-surface').style.minHeight = ''");
-  for (const theme of ['theme-light', 'theme-cyberpunk', 'theme-dark']) {
+  for (const theme of ['theme-light', 'theme-dark']) {
     await run("document.querySelector('.app').className = 'app " + theme + "'");
     await assertFits(theme);
   }

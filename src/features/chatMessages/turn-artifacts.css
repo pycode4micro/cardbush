@@ -1,0 +1,35 @@
+.turn-artifacts { display: inline-flex; align-items: center; }
+.message-actions .turn-artifacts-trigger {
+  width: auto; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px;
+  color: var(--text-soft); font-size: calc(11px * var(--ui-font-scale, 1)); white-space: nowrap;
+}
+.turn-artifacts-trigger small { font-size: inherit; font-variant-numeric: tabular-nums; }
+.message-actions:has(.turn-artifacts-popover:popover-open) { opacity: 1; pointer-events: auto; }
+.turn-artifacts-popover {
+  position: fixed; inset: auto; margin: 0; padding: 5px; box-sizing: border-box;
+  overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable;
+  background: var(--surface-strong); color: var(--text); pointer-events: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, var(--text) 12%);
+  border-radius: 14px; box-shadow: 0 8px 28px #0004, 0 1px 4px #0002;
+}
+.turn-artifacts .turn-artifacts-popover button {
+  display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 35px; height: auto;
+  padding: 8px 9px; border: 0; border-radius: 9px; text-align: left;
+  background: transparent; color: var(--text); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.turn-artifacts-popover button > span:not(.local-file-type-icon) {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.turn-artifacts-popover button > svg, .turn-artifacts-popover .local-file-type-icon { flex: 0 0 auto; }
+.turn-artifacts-popover button:hover:not(:disabled), .turn-artifacts-popover button:focus-visible {
+  background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); outline: none;
+}
+.turn-artifacts-popover button.turn-artifacts-revert:not(.is-restoring) { color: var(--danger); }
+.turn-artifacts-popover button:disabled { opacity: .45; cursor: default; }
+.turn-artifacts-popover button:active { transform: none; }
+.turn-artifacts-divider { height: 1px; margin: 5px 4px; background: var(--border); }
+.turn-artifacts-file small { display: inline-flex; gap: 6px; flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+.turn-artifacts-file em { font-style: normal; }
+.turn-artifacts-file .additions { color: var(--success); }
+.turn-artifacts-file .deletions, .turn-artifacts-error { color: var(--danger); }
+.turn-artifacts-error { padding: 5px 9px; font-size: 12px; overflow-wrap: anywhere; }

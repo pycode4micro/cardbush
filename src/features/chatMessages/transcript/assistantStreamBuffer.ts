@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from '../../../shared/motionPreference';
 // Segment-local text buffering and release timing. No React state or Runtime subscriptions.
 import type {
   AssistantStreamChunk,
@@ -73,8 +74,7 @@ export function createAssistantStreamDeltaBuffer(
       return false;
     }
     if (
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      prefersReducedMotion()
     ) {
       return false;
     }

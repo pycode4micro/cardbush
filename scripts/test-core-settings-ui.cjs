@@ -35,8 +35,19 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("Chrome 已连接")');
     assert.equal(await read('document.querySelector(".chrome-radio-setting input").checked'), true);
     assert.equal(await read('document.querySelector(".settings-field input").value'), 'https://www.google.com/');
+    await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='关闭连接器').click(); void 0");
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
+    await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='开启连接器').click(); void 0");
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("等待扩展")');
+    await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='生成配对码').click(); void 0");
+    await until('document.querySelector(".chrome-connector-pairing input")?.value === "CB2.45678.fixture-secret"');
+    assert.equal(await read('document.querySelector(".chrome-connector-pairing input").type'), 'password');
+    await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='移除连接器配置').click(); void 0");
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
+    assert.equal(await read('document.querySelector(".chrome-connector-pairing")'), null);
+    assert.deepEqual(await read('connectorActions'), ['disable', 'enable', 'pair', 'remove']);
     const palettes = [];
-    for (const theme of ['bright', 'dark', 'cyberpunk', 'custom']) {
+    for (const theme of ['bright', 'dark', 'custom']) {
       await read(`coreTheme(${JSON.stringify(theme)}); void 0`);
       await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       const state = await read(`(() => {
@@ -55,7 +66,7 @@ app.whenReady().then(async () => {
       palettes.push(state);
       await capture('browser-core-settings-' + theme + '.png');
     }
-    assert.equal(new Set(palettes.map(state=>state.background)).size, 4, 'each theme reaches the settings cards');
+    assert.equal(new Set(palettes.map(state=>state.background)).size, palettes.length, 'each theme reaches the settings cards');
     await read('coreTheme("bright"); void 0');
     await capture('browser-core-settings.png');
     await read('document.querySelectorAll(".chrome-radio-setting input")[1].click(); void 0');

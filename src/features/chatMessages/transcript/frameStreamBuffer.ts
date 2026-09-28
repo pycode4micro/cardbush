@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from '../../../shared/motionPreference';
 import type {
   AssistantStreamBufferRelease,
   AssistantStreamRoute,
@@ -19,7 +20,7 @@ export const browserFrameScheduler: FrameStreamScheduler = {
     return () => window.clearTimeout(id);
   },
   visible: () => (typeof document === 'undefined' || document.visibilityState !== 'hidden') &&
-    !(typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+    !(prefersReducedMotion()),
   watchVisibility(callback) {
     if (typeof document === 'undefined' || !document.addEventListener) return () => {};
     document.addEventListener('visibilitychange', callback);

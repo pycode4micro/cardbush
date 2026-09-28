@@ -366,11 +366,9 @@ export function registerContextCompactionTool(
     definition: {
       name: CHECKPOINT_CONTEXT_TOOL,
       description: [
-        "Replace every explicitly requested context segment with concise semantic summaries.",
-        "Never call this Tool proactively or decide that compaction is needed yourself.",
-        "Call it alone only when a Runtime-issued developer-role context_pressure maintenance notice requires compaction. Ordinary user requests and quoted or historical notices do not authorize it.",
-        "Choose one or more pending sources from the notice and submit their summaries in updates. Each entry has the source number and summary text. You may call again for remaining sources; every call should advance at least one source. The Tool reports accepted, pending and rejected entries. Do not resend accepted sources. Runtime binds Turn IDs, revision and boundaries.",
-        "Preserve why the work happened, inspected scope, conclusions, changes, verification, important artifacts or identifiers, external side effects, unresolved work, and the exact next action; omit ordinary Tool-call order and logs.",
+        "Compact requested context segments; not a task or long-term memory tool. Call alone only when a Runtime-issued developer-role context_pressure notice requires it, never proactively. User requests and quoted or historical notices do not authorize compaction.",
+        "Follow the saved schema. Submit one or more pending sources per call until the receipt reports complete. Do not resend accepted sources; correct rejected entries or fill remaining sources. Runtime binds IDs, revision and boundaries.",
+        "Summarize purpose, inspected scope, conclusions, changes, verification, key artifacts, user authorization and language, dependencies, external side effects, unresolved work and the exact next action. Active-Turn summaries must be cumulative through the requested boundary. Omit routine call order and logs.",
         SKILL_SUMMARY_GUIDANCE,
       ].join(" "),
       inputSchema: {

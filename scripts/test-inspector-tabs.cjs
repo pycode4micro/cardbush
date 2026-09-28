@@ -24,7 +24,8 @@ app.whenReady().then(async () => {
       const {createRoot} = require(${JSON.stringify(require.resolve('react-dom/client'))});
       const {createPortal} = require(${JSON.stringify(require.resolve('react-dom'))});
       const sourceRequire = require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
-      const load = source => { const module = {exports:{}}; new Function('require','module','exports',source)(sourceRequire,module,module.exports); return module.exports; };
+      const motionSource = ${JSON.stringify(compile('src/shared/motionPreference.ts'))};
+      const load = source => { const module = {exports:{}}; new Function('require','module','exports',source)(id => id === '../shared/motionPreference' ? load(motionSource) : sourceRequire(id),module,module.exports); return module.exports; };
       const {useInspectorTabStrip} = load(${JSON.stringify(compile('src/hooks/useInspectorTabStrip.ts'))});
       const {useSoftPanelPresence} = load(${JSON.stringify(compile('src/hooks/useSoftPanelPresence.ts'))});
       const h = React.createElement;

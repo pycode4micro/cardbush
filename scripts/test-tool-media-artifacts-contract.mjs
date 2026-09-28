@@ -71,6 +71,42 @@ const screenshot = toolArtifactsFromPayload({ result: { mcp: { name: 'mcp__chrom
 assert.equal(screenshot.length, 1, 'persisted screenshot is displayed once; model-only bytes are not a duplicate UI artifact');
 assert.equal(screenshot[0].path, 'C:/workspace/capture.png');
 
+const computerUseCapture = {
+  content: [{ type: 'image', data: 'computer-use-pixels', mimeType: 'image/png' }],
+  structuredContent: {
+    output: { path: 'C:/workspace/capture.png' },
+    image_delivery: { status: 'attached', count: 1 },
+    paths: ['C:/workspace/capture.png'],
+    artifacts: [{ artifact_id: 'capture', type: 'image', path: 'C:/workspace/capture.png',
+      metadata: { model_input: false, source: 'cardbush_apps' } }],
+  },
+};
+const computerUsePayload = result => ({ result: { mcp: { name: 'mcp__cardbush_apps__computer_use' }, result } });
+const historicalCapture = toolArtifactsFromPayload(computerUsePayload(computerUseCapture));
+assert.equal(historicalCapture.length, 1, 'pre-upgrade Computer Use observations display their saved image once');
+assert.equal(historicalCapture[0].path, 'C:/workspace/capture.png');
+const afterAction = structuredClone(computerUseCapture);
+afterAction.structuredContent.output = { observation: afterAction.structuredContent.output };
+assert.equal(toolArtifactsFromPayload(computerUsePayload(afterAction)).length, 1, 'post-action observations use the same history normalization');
+const annotatedCapture = structuredClone(computerUseCapture);
+annotatedCapture.content[0].annotations = { audience: ['assistant'] };
+assert.equal(toolArtifactsFromPayload(computerUsePayload(annotatedCapture)).length, 1, 'new observations respect the MCP audience');
+assert.equal(mergeToolArtifacts(historicalCapture, toolArtifactsFromPayload(computerUsePayload(annotatedCapture))).length, 1,
+  'live and history projections merge into one saved preview');
+const uncertainCapture = structuredClone(computerUseCapture);
+uncertainCapture.structuredContent.image_delivery.status = 'unavailable';
+assert.equal(toolArtifactsFromPayload(computerUsePayload(uncertainCapture)).length, 2, 'uncertain delivery cannot establish duplicate identity');
+const differentPath = structuredClone(computerUseCapture);
+differentPath.structuredContent.output.path = 'C:/workspace/other.png';
+assert.equal(toolArtifactsFromPayload(computerUsePayload(differentPath)).length, 2, 'unmatched artifacts are not suppressed');
+const extraImage = structuredClone(computerUseCapture);
+extraImage.content.push({ type: 'image', data: 'different-pixels', mimeType: 'image/png' });
+assert.equal(toolArtifactsFromPayload(computerUsePayload(extraImage)).length, 3, 'additional images remain visible');
+assert.equal(toolArtifactsFromPayload({ result: { mcp: { name: 'mcp__other__tool' }, result: computerUseCapture } }).length, 2,
+  'Computer Use history handling must not infer duplicate images for other tools');
+const imageOnly = { content: [computerUseCapture.content[0]] };
+assert.equal(toolArtifactsFromPayload(computerUsePayload(imageOnly)).length, 1, 'standalone MCP image remains visible');
+
 const undeclared = toolArtifactsFromPayload({
   metadata: {
     result: {

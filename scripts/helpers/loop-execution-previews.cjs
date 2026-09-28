@@ -127,8 +127,8 @@ module.exports = async ({run, until, pause, window, root}) => {
   await until('loopOpened.length===2', 'grouped child task opens its own inspector');
   assert.equal(await run('loopOpened[1].task.taskId'), 'child-2');
   await run("loopTask={...loopTask,status:'running'}; dispatchEvent(new Event('focus')); void 0");
-  await window.webContents.insertCSS(await fs.readFile(path.join(root,'src/styles/themes/cyberpunk.css'),'utf8'));
-  for (const theme of ['theme-dark','theme-bright','theme-dark theme-cyberpunk','theme-custom']) {
+  await window.webContents.insertCSS(await fs.readFile(path.join(root,'src/styles/appearance.css'),'utf8'));
+  for (const theme of ['theme-dark','theme-bright','theme-custom']) {
     await run(`viewTheme=${JSON.stringify(theme)}; showArchivedLoop();`);
     await pause(120);
     if (theme === 'theme-custom') await run(`

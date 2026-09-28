@@ -50,7 +50,8 @@ test('plugin Skill rules stay in a stable system prefix while real hook feedback
     const current = observed.at(-1);
     assert.ok(current.tools.some(tool => tool.name === 'run_skill'));
     assert.equal(current.messages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
-    assert.match(current.messages[0].content, /To invoke an installed plugin Skill, use run_skill/);
+    assert.match(current.tools.find(tool => tool.name === 'run_skill').description, /exact plugin:name id from search_skills/);
+    assert.doesNotMatch(current.messages[0].content, /run_skill/, 'invocation mechanics live in the tool schema');
     const hooks = current.messages.filter(message => message.name === 'plugin_hook_feedback');
     assert.deepEqual(hooks.map(message => message.content), feedback);
     assert.ok(hooks.every(message => message.role === 'developer'));

@@ -1,4 +1,5 @@
 import { isAbsolute, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { PluginMarketplaceService } from './pluginMarketplaces.js';
 import { PluginNetwork } from './pluginNetwork.mjs';
@@ -24,9 +25,11 @@ export class AgentPluginMarketplaces {
   private readonly network: PluginNetwork;
   private readonly market: PluginMarketplaceService;
   private readonly dataRoot: string;
+  private readonly networkPath: string;
   private readonly pending = new Set<Promise<unknown>>();
   constructor(root: string, bundledRoot: string, replacePlugin: ProductPluginReplacement, env: NodeJS.ProcessEnv) {
     this.dataRoot = join(root, 'plugin-marketplaces');
+    this.networkPath = join(root, 'config', 'network.json');
     this.network = new PluginNetwork(join(root, 'config', 'apps.json'), () => createHeadlessProxySession(env));
     // A headless host has no desktop model-network preference. Inherit its process proxy environment.
     this.network.setModel({ mode: 'system' });
@@ -46,6 +49,7 @@ export class AgentPluginMarketplaces {
     return task;
   }
   private async execute(input: z.infer<typeof request>) {
+    this.network.setModel(await readFile(this.networkPath, 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
     switch (input.action) {
       case 'sources': return this.market.sources();
       case 'add': return this.market.addSource(input.source);

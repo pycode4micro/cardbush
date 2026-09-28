@@ -10,14 +10,14 @@ Source version: **1.0.0-beta.4**. The installers below become available when bot
 
 | System | Download | Suitable computers |
 | --- | --- | --- |
-| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64-bit |
+| Windows 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64-bit |
 | Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-linux-x86_64.AppImage) | x86-64 desktop Linux; CI validates Ubuntu 22.04 |
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
 Both packages use the same Beta 4 source tag. This update adds independent Agent services and SSH workspaces, an App Center, shared local/remote conversations and settings, command sandboxes, and improvements to tool execution and context recovery. See the [release notes](docs/releases/1.0.0-beta.4.md). Releases include SHA-256 checksums and packaged startup reports; a successful main-branch build alone does not publish a release.
 
-Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8 and macOS packages are not part of this release. The Windows release workflow requires a publisher signing certificate; ordinary CI builds produce unsigned development installers.
+Current development targets Windows 11 only (build 22000 or later), including Store MSIX packages and the Chrome native connector. Older published downloads may have different requirements. There is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8/10 and macOS packages are not supported by the current Windows build. The Windows release workflow requires a publisher signing certificate; ordinary CI builds produce unsigned development installers.
 
 ### Install and start
 
@@ -122,4 +122,4 @@ Do not attach credentials, raw conversation stores or unredacted logs to public 
 
 ## License
 
-Original CardBush code is licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE). Bundled dependencies, skills and external plugins retain their respective licenses.
+Original CardBush code is licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) and [bundled skill licensing](docs/BUNDLED_SKILL_LICENSES.md). Bundled dependencies and external plugins retain their respective licenses.

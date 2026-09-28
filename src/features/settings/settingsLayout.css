@@ -1,0 +1,107 @@
+/* Shared by every settings page, including Appearance & language. Keep these
+   rules scoped: several controls also appear in the composer and app dialogs. */
+.settings-shell {
+  --settings-card-surface: color-mix(in srgb, var(--text) 3%, var(--surface));
+  --settings-card-radius: 16px;
+  --settings-card-inset: 18px;
+  --settings-section-gap: 18px;
+}
+.settings-shell .settings-track { width: min(100%, 900px); min-width: 0; }
+.settings-shell .settings-content { scrollbar-gutter: stable; }
+.settings-shell :is(.settings-stack, .usage-settings) { gap: var(--settings-section-gap); min-width: 0; }
+.settings-shell :is(.settings-card, .settings-surface) {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-surface);
+  box-shadow: none;
+  overflow: visible;
+}
+.settings-shell .settings-stack > .settings-card + .settings-card { padding-top: 0; }
+.settings-shell .settings-card-header { padding: 16px var(--settings-card-inset) 6px; }
+.settings-shell .settings-card-header:last-child { padding-bottom: 16px; }
+.settings-shell .settings-card-header h3 { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; }
+.settings-shell .settings-card-header p { font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
+.settings-shell .settings-card-header-action { min-width: 0; flex-wrap: wrap; gap: 8px; }
+.settings-shell .settings-card-body { padding: 0 var(--settings-card-inset) 12px; gap: 0; min-width: 0; }
+.settings-shell .settings-card-body > * { min-width: 0; }
+.settings-shell .settings-card-body > :not(:is(.settings-select-row, .settings-switch, .settings-radio, .settings-value-row, .settings-link-row, .appearance-row, .info-row, .keyboard-settings-row, .keyboard-reference-row)) { margin-block: 6px; }
+.settings-shell .settings-card-body > p { color: var(--text-soft); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.65; }
+.settings-shell .settings-card-body > :is(.settings-inline-error, .settings-form-error) { color: var(--danger); }
+.settings-shell :is(.settings-select-row, .settings-switch, .settings-radio, .settings-value-row, .settings-link-row, .appearance-row, .info-row, .keyboard-settings-row, .keyboard-reference-row) {
+  min-width: 0;
+  min-height: 54px;
+  gap: 20px;
+  padding-block: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.settings-shell :is(.settings-select-row, .settings-switch, .settings-radio, .settings-value-row, .settings-link-row, .appearance-row, .info-row, .keyboard-settings-row, .keyboard-reference-row) + :is(.settings-select-row, .settings-switch, .settings-radio, .settings-value-row, .settings-link-row, .appearance-row, .info-row, .keyboard-settings-row, .keyboard-reference-row) { border-top: 1px solid var(--border); }
+.settings-shell :is(.settings-select-row, .settings-switch, .settings-radio, .settings-value-row, .settings-link-row, .keyboard-settings-description) strong { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 550; }
+.settings-shell :is(.settings-select-row, .settings-switch, .settings-radio, .settings-value-row, .settings-link-row, .keyboard-settings-description) small { margin-top: 2px; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; color: var(--text-soft); }
+.settings-shell :is(.settings-select-row, .settings-switch, .settings-value-row) > span { flex: 1; min-width: 0; }
+.settings-shell .settings-select-row > .settings-dropdown { flex-shrink: 0; max-width: 48%; }
+.settings-shell .settings-radio { flex-direction: row-reverse; justify-content: space-between; }
+.settings-shell .settings-radio > span { flex: 1; }
+.settings-shell :is(.settings-switch, .settings-radio):hover { background: transparent; }
+.settings-shell :is(.settings-actions, .settings-action-row) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-shell .settings-action-row { margin-top: 12px; }
+.settings-shell :is(.primary-button, .secondary-button) { min-height: 32px; font-size: calc(12px * var(--ui-font-scale, 1)); border-radius: 9px; }
+.settings-shell .settings-card-body > button { justify-self: start; }
+.settings-shell .settings-field { font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 500; }
+.settings-shell :is(.settings-field input, .settings-field select, .model-form input, .model-form select) { min-width: 0; min-height: 36px; background: var(--surface); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.settings-shell :is(.settings-disclosure, .settings-agent-data) { padding: 0; border: 0; min-width: 0; }
+.settings-shell :is(.settings-disclosure, .settings-agent-data) > summary { padding: 8px 0; color: var(--text-mid); font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 550; }
+.settings-shell .settings-disclosure-body { display: grid; gap: var(--settings-section-gap); padding: 12px 0 0; }
+.settings-shell .settings-disclosure-body > .settings-card { margin-top: 0; }
+.settings-shell .settings-agent-data > .settings-stack { margin-top: 12px; }
+.settings-shell .settings-page-tabs { flex-wrap: wrap; }
+.settings-shell .conversation-style-library { padding-top: 12px; border-top: 1px solid var(--border); }
+.settings-shell .conversation-style-library-heading { margin-top: 0; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.settings-shell .conversation-style-hint { font-size: calc(12px * var(--ui-font-scale, 1)); }
+.settings-shell .keyboard-settings-help { margin: 0; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-soft); line-height: 1.6; }
+.settings-shell .keyboard-settings-row { flex-direction: row; align-items: center; }
+.settings-shell .keyboard-reference-row { font-size: calc(12px * var(--ui-font-scale, 1)); }
+.settings-shell .keyboard-binding { min-width: 130px; min-height: 32px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.settings-shell .chrome-radio-setting { margin: 0; padding: 14px 0; border: 0; border-radius: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.settings-shell .chrome-radio-setting input { grid-column: 2; grid-row: 1; margin: 0; }
+.settings-shell .chrome-radio-setting span { grid-column: 1; grid-row: 1; }
+.settings-shell .chrome-radio-setting + .chrome-radio-setting { border-top: 1px solid var(--border); }
+.settings-shell .chrome-connector-card { margin-top: 6px; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
+.settings-shell .browser-setting-note { padding: 0; background: transparent; }
+.settings-shell .usage-stat-grid { padding-block: 12px; border: 0; border-radius: 0; }
+.settings-shell .usage-activity-card .settings-card-body { gap: 14px; }
+.settings-shell .usage-activity-card .settings-card-body > * { margin-block: 0; }
+.settings-shell .ssh-settings:not(.ssh-settings-compact) { padding: var(--settings-card-inset); gap: 14px; }
+.settings-shell .ssh-section-heading h3 { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; }
+.settings-shell .ssh-section-heading p { font-size: calc(12px * var(--ui-font-scale, 1)); margin-bottom: 0; }
+.settings-shell .ssh-section-heading button { flex-shrink: 0; }
+.settings-shell .ssh-connection { padding: 14px 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.settings-shell .ssh-form { padding: 16px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.settings-shell .ssh-empty { justify-content: center; padding: 24px 0; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.settings-shell :is(.plugin-installed-section, .plugin-featured-section, .plugin-detail-section, .plugin-proxy-list) { padding: var(--settings-card-inset); margin: 0; border: 1px solid var(--border); border-radius: var(--settings-card-radius); background: var(--settings-card-surface); }
+.settings-shell :is(.plugin-catalog-page, .plugin-detail-page) { display: grid; gap: var(--settings-section-gap); }
+.settings-shell .plugin-back { justify-self: start; }
+.settings-shell .plugin-catalog-heading p { margin-bottom: 0; }
+.settings-shell .plugin-proxy-settings { max-width: none; }
+.settings-shell .plugin-section-title h3, .settings-shell .plugin-detail-section h3 { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; }
+.settings-shell .plugin-catalog-heading h2 { font-size: calc(20px * var(--ui-font-scale, 1)); }
+.settings-shell .plugin-catalog-heading p { font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
+.settings-shell .plugin-added-card { background: transparent; border-color: var(--border); }
+.settings-shell .plugin-proxy-list .plugin-section-title { flex-wrap: wrap; }
+@container settings-page (max-width: 560px) {
+  .settings-shell .settings-card-header.has-action { grid-template-columns: minmax(0, 1fr); }
+  .settings-shell .settings-card-header-action { justify-content: flex-start; }
+  .settings-shell :is(.settings-select-row, .settings-value-row, .settings-link-row, .keyboard-settings-row, .keyboard-settings-toolbar, .ssh-section-heading) { flex-wrap: wrap; gap: 12px; }
+  .settings-shell .settings-select-row > span { flex-basis: 100%; }
+  .settings-shell .settings-select-row > .settings-dropdown { max-width: 100%; }
+  .settings-shell .keyboard-settings-row { align-items: flex-start; }
+  .settings-shell .keyboard-settings-description { flex-basis: 100%; }
+  .settings-shell .settings-switch > span { flex-basis: 140px; }
+  .settings-shell .model-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .settings-shell .plugin-proxy-row { grid-template-columns: minmax(0, 1fr); }
+  .settings-shell .plugin-proxy-row .plugin-proxy-mode { grid-column: 1; grid-row: auto; }
+  .settings-shell .plugin-proxy-fields { grid-template-columns: minmax(0, 1fr); }
+  .settings-shell :is(.settings-card, .settings-surface) { --settings-card-inset: 14px; }
+}

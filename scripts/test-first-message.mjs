@@ -39,6 +39,7 @@ function fixture(scope) {
     conversationProjectRequestDir: value => value.projectDir, conversationWorkspaceRoot: value => value.workspaceDir,
     createFrameStreamBuffers: () => ({ flushAllStreaming: async () => {}, dispose() {} }),
     modelConfigFor: () => ({}), selectedModelName: () => 'fixture', normalizeDisabledToolNames: () => [],
+    resolveConversationSource: () => true,
     streamChat: async request => { streams.push(request); await completion.promise; },
     loadTeamFlow: async () => null, beginHistoryRead: () => ({}), fetchMessages: async () => [], refreshGoal: async () => null,
     markSessionAttention() {}, reloadConversations: async () => {}, truncateText: text => text,
@@ -62,6 +63,7 @@ for (const scope of [undefined, 'remote-agent']) {
   f.creation.resolve({ ...f.candidate, workspaceDir: '/persisted/workspace' }); await tick();
   assert.equal(f.streams.length, 1);
   assert.equal(f.streams[0].workspaceDir, '/persisted/workspace', 'execution uses the confirmed workspace');
+  assert.equal(f.streams[0].sourceEnabled, true);
   f.completion.resolve(); await sending;
   assert.equal(f.running.size, 0);
 

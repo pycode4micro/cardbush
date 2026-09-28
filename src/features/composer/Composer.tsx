@@ -1,3 +1,8 @@
+import { useConversationSource } from '../settings/conversationSource';
+import { useConversationStyle } from '../settings/useConversationStyle';
+import { conversationStyleName, conversationStylePresets } from '../settings/conversationStyle';
+import { SettingsDropdown } from '../settings/SettingsDropdown';
+import '../settings/conversationStyle.css';
 import { usePluginCatalog } from '../plugins/pluginCatalog';
 import { useApplications } from '../appCenter/appCenterStore';
 import { applicationReference } from '../appCenter/appCenterModel';
@@ -41,6 +46,7 @@ import {
   Lock,
   MessageSquare,
   Paperclip,
+  Quote,
   Plus,
   Presentation,
   Puzzle,
@@ -161,7 +167,7 @@ export type ContextWindowUsage = {
   measuredAt?: string;
 };
 
-type ComposerCommandMode = 'slash' | 'plugin' | 'mention';
+type ComposerCommandMode = 'slash' | 'plugin' | 'mention' | 'style';
 
 type ComposerCommandState = {
   mode: ComposerCommandMode;
@@ -424,6 +430,13 @@ export function Composer({
   const applications = useApplications(language);
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
   const referenceContext = useContext(ComposerReferenceContext);
+  const source = useConversationSource(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
+  const conversationStyle = useConversationStyle(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
+  const styleAvailable = host?.conversationStyleAvailable !== false;
+  const styleOptions = [
+    { value: '', label: (language === 'zh' ? '默认 · ' : 'Default · ') + conversationStyleName(conversationStyle.preferences.defaultId, conversationStyle.preferences, language) },
+    ...[...conversationStylePresets, ...conversationStyle.preferences.styles].map(style => ({ value: style.id, label: conversationStyleName(style.id, conversationStyle.preferences, language) })),
+  ];
   const sshConnections = useSshConnections(!host);
   const extraction = useContext(ConversationExtractionContext);
   const draftForExtraction = useRef({ draft, onDraftChange });
@@ -547,6 +560,12 @@ export function Composer({
 
   async function submit(immediate = false) {
     if (submissionPending || attachmentUploads > 0) return;
+    const styleCommand = styleAvailable ? detectComposerCommand(draft, draft.length) : null;
+    if (styleCommand?.mode === 'style') {
+      if (commandState?.mode === 'style' && commandItems.length) applyCommand(commandItems[Math.min(commandIndex, commandItems.length - 1)]);
+      else { setCommandState(styleCommand); focusComposer(); }
+      return;
+    }
     if (!runtimeReady) {
       if (runtimeStartupFailed) {
         await window.cardbushDesktop?.retryRuntimeStartup?.();
@@ -849,6 +868,7 @@ export function Composer({
     const next = `${before}${replacement}${after}`;
     onDraftChange(next);
     setCommandState(null);
+    if (replacement === '/style ') setCommandState({ mode: 'style', start: before.length, end: before.length + replacement.length, query: '' });
     focusComposer(before.length + replacement.length);
   }
 
@@ -876,6 +896,7 @@ export function Composer({
   const slashCommands = useMemo<ComposerCommandItem[]>(
     () => {
       const commands: ComposerCommandItem[] = [
+        ...(styleAvailable ? [{ id: '/style', title: '/style', subtitle: language === 'zh' ? '选择当前会话的对话风格' : 'Choose a style for this chat', searchText: 'style 风格 对话 语气', icon: <MessageSquare size={16}/>, value: '/style ' }] : []),
         ...(delegationCommand ? [{
           id: delegationCommand,
           title: language === 'zh' ? `选择 ${teamWorkspace.pluginName}` : `Select ${teamWorkspace.pluginName}`,
@@ -977,6 +998,7 @@ export function Composer({
     },
     [
       goalAvailable,
+      styleAvailable,
       teamAvailable,
       delegationCommand,
       teamWorkspace.pluginName,
@@ -994,7 +1016,12 @@ export function Composer({
     if (!commandState) {
       return [];
     }
-    const items: ComposerCommandItem[] = commandState.mode === 'mention' ? [
+    const items: ComposerCommandItem[] = commandState.mode === 'style' ? (styleAvailable ? styleOptions.map(option => ({
+      id: 'style:' + (option.value || 'default'), title: option.label,
+      subtitle: language === 'zh' ? '仅当前会话，从下一轮回复生效' : 'This chat only; applies from the next reply',
+      icon: (conversationStyle.override ?? '') === option.value ? <Check size={16}/> : <MessageSquare size={16}/>,
+      run: () => conversationStyle.select(option.value || null),
+    })) : []) : commandState.mode === 'mention' ? [
       ...applications.map(app => ({ id: `application:${app.id}`, category: 'apps' as const, title: app.title, subtitle: app.description,
         icon: <ApplicationIcon app={app} size={18}/>, value: `${promptReferenceMarkdown(applicationReference(app))} `,
         searchText: `app application 应用 ${app.title} ${app.description}` })),
@@ -1036,7 +1063,7 @@ export function Composer({
     const order = ['actions', 'apps', 'ssh', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
     return rankComposerCommandItems(host ? items.filter(item => item.category !== 'ssh') : items, commandState.query).slice(0, 50)
       .sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
-  }, [commandState, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language, sshConnections, host, applications]);
+  }, [commandState, styleAvailable, conversationStyle, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language, sshConnections, host, applications]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -1170,6 +1197,8 @@ export function Composer({
               reasoningLevels={reasoningLevels}
               referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
+              sourceEnabled={source.enabled}
+              onSourceChange={source.setEnabled}
               onToggleSkill={onToggleSkill}
               onSelectModel={selectModel}
               onSelectPermissionMode={onPermissionModeChange}
@@ -1518,6 +1547,11 @@ export function Composer({
               <span>{permissionLabel}</span>
               <ChevronDown size={13} />
             </button>
+            {styleAvailable && <div className="composer-style-select">
+              <SettingsDropdown label={language === 'zh' ? '对话风格（仅当前会话，从下一轮回复生效）' : 'Conversation style (this chat, from the next reply)'}
+                value={conversationStyle.override ?? ''} options={styleOptions} minMenuWidth={200}
+                onChange={id => conversationStyle.select(id || null)} />
+            </div>}
             <ExtractionBulbs onInsert={insertExtraction} />
             {queuedMessageCount > 0 && onShowQueue && (
               <button className="composer-queue-button" type="button"
@@ -1601,7 +1635,7 @@ function ComposerCommandPalette({
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listRef = useRef<HTMLDivElement>(null);
-  const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的应用或引用' : 'No matching apps or references') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
+  const emptyLabel = mode === 'style' ? (language === 'zh' ? '没有匹配的风格，可在设置 → 个性化中添加' : 'No matching styles. Add one in Settings → Personalization') : mode === 'mention' ? (language === 'zh' ? '没有匹配的应用或引用' : 'No matching apps or references') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   const categories = language === 'zh'
     ? { ssh: 'SSH 连接', actions: '快捷操作', apps: '应用', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
     : { ssh: 'SSH connections', actions: 'Actions', apps: 'Applications', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
@@ -1618,7 +1652,7 @@ function ComposerCommandPalette({
   return (
     <div className="composer-command-palette">
       <header>
-        <strong>{mode === 'mention' ? (language === 'zh' ? '引用' : 'Reference') : mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
+        <strong>{mode === 'style' ? (language === 'zh' ? '对话风格' : 'Conversation styles') : mode === 'mention' ? (language === 'zh' ? '引用' : 'Reference') : mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
         <span>{language === 'zh' ? '输入关键词筛选' : 'Type to filter'}</span>
       </header>
       <div className="composer-command-list" ref={listRef}>
@@ -1627,7 +1661,7 @@ function ComposerCommandPalette({
         ) : (
           items.map((item, index) => (
             <Fragment key={item.id}>
-            {(index === 0 || item.category !== items[index - 1].category) &&
+            {mode !== 'style' && (index === 0 || item.category !== items[index - 1].category) &&
               <div className="composer-command-category">{categories[item.category || 'actions']}</div>}
             <button
               className={`composer-command-row ${
@@ -1723,6 +1757,10 @@ export function detectComposerCommand(
 ): ComposerCommandState | null {
   const safeCaret = Math.max(0, Math.min(value.length, caret));
   const beforeCaret = value.slice(0, safeCaret);
+  const styleMatch = beforeCaret.match(/(^|\s)\/(?:style|风格)(?:[ \t]+([^\n/]*))?$/i);
+  if (styleMatch?.index != null) {
+    return { mode: 'style', start: styleMatch.index + styleMatch[1].length, end: safeCaret, query: styleMatch[2] ?? '' };
+  }
   const mentionMatch = beforeCaret.match(/(^|\s)@([^\s@/\\:]*)$/);
   if (mentionMatch?.index != null) {
     return { mode: 'mention', start: mentionMatch.index + mentionMatch[1].length, end: safeCaret, query: mentionMatch[2] };
@@ -1756,6 +1794,7 @@ export function composerGoalDraftPresentation(value: string) {
 }
 
 function ComposerPopover({
+  sourceEnabled, onSourceChange,
   menu,
   language,
   contextWindow,
@@ -1781,6 +1820,8 @@ function ComposerPopover({
   onClose,
   anchor,
 }: {
+  sourceEnabled: boolean;
+  onSourceChange: (enabled: boolean) => void;
   menu: Exclude<ComposerMenu, null>;
   language: AppLanguage;
   contextWindow?: ContextWindowUsage;
@@ -1854,6 +1895,14 @@ function ComposerPopover({
               <strong>{language === 'zh' ? '文件和文件夹' : 'Files and folders'}</strong>
               <small>{language === 'zh' ? '添加到当前消息' : 'Attach to this message'}</small>
             </span>
+          </button>
+          <button className="composer-add-action" type="button" role="switch" aria-checked={sourceEnabled}
+            aria-label="Source" onClick={() => onSourceChange(!sourceEnabled)}>
+            <Quote size={18} />
+            <span className="composer-add-copy"><strong>Source</strong>
+              <small>{language === 'zh' ? '为关键结论附上说明与依据，会增加少量用量' : 'Explain key claims with sources; uses additional tokens'}</small>
+            </span>
+            <span className={`composer-add-toggle${sourceEnabled ? ' on' : ''}`} aria-hidden="true" />
           </button>
           {referencePlanAvailable && (
             <button

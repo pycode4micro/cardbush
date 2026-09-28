@@ -15,7 +15,7 @@ import { McpActivationStatus } from '${resolve('src/features/chatMessages/McpAct
 import { MessageBubble } from '${resolve('src/features/chatMessages/MessageBubble.tsx').replaceAll('\\', '/')}';
 import '${resolve('src/styles/theme.css').replaceAll('\\', '/')}';
 import '${resolve('src/styles/app.css').replaceAll('\\', '/')}';
-import '${resolve('src/styles/themes/cyberpunk.css').replaceAll('\\', '/')}';
+import '${resolve('src/styles/appearance.css').replaceAll('\\', '/')}';
 const initial = {protocol:'bush.mcp_snapshot_result.v1',snapshotId:'fixture',revision:1,pendingRevision:2,applicationState:'pending',servers:[]};
 const target = {serverId:'blender',snapshotId:'fixture',revision:2,initial};
 window.checks=0; window.aborts=0;
@@ -34,7 +34,7 @@ window.renderFixture = (active, phase = 'mixed', language = 'zh') => {
   phase === 'waiting' ? [executions[1]] : phase === 'background' ? [executions[0]] :
   phase === 'settled' ? executions.map(item => ({...item,state:'completed',metadata:{}})) : executions;
  const toolExecutions = selected.map(item => ({...item,output:'',contentOffset:window.fixtureNarration.length,contentOffsetExplicit:true}));
- root.render(<div className="app theme-cyberpunk" data-phase={phase} data-language={language} style={{minWidth:0,width:'100%'}}><main style={{padding:32,width:'100%',maxWidth:760,boxSizing:'border-box'}}>
+ root.render(<div className="app theme-dark" data-phase={phase} data-language={language} style={{minWidth:0,width:'100%'}}><main style={{padding:32,width:'100%',maxWidth:760,boxSizing:'border-box'}}>
   <MessageBubble message={{id:'progress',turnId:'fixture-turn',role:'assistant',content:window.fixtureNarration,status:active?'running':'completed',
     toolExecutions,metadata:{cardbush_turn_started_at:startedAt}}}
    language={language} sending={active} activeTurnId={active?'fixture-turn':''} activeAssistantMessageId={active?'progress':''}
@@ -47,7 +47,7 @@ let failureRoot;
 window.renderFailure = language => {
  failureRoot ??= createRoot(document.getElementById('root'));
  const no = async () => {};
- failureRoot.render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
+ failureRoot.render(<div className="app theme-dark" style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
   <MessageBubble message={{id:'failure',role:'assistant',content:'',status:'failed',metadata:{stop_reason:'invalid_request_error',stop_details:{status:400,message:'400 Tool names must be unique.'}}}}
    language={language} sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
  </div>);

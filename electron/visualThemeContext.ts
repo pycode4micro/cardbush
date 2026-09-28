@@ -8,8 +8,8 @@ export class VisualThemeContextStore {
   constructor(private readonly filePath: string) {}
 
   write(input: VisualThemeContext): Promise<void> {
-    if (!input || !['bright', 'dark', 'cyberpunk'].includes(input.theme)
-      || !['light', 'dark', 'cyberpunk', 'system', 'custom'].includes(input.preference)
+    if (!input || !['bright', 'dark'].includes(input.theme)
+      || !['light', 'dark', 'system', 'custom'].includes(input.preference)
       || !['light', 'dark'].includes(input.colorScheme)) throw new Error('Invalid visual theme context.');
     const value = (raw: unknown) => {
       if (typeof raw !== 'string' || !raw.trim() || raw.length > 512 || /[{}\u0000]/.test(raw)) throw new Error('Invalid visual theme value.');

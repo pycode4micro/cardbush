@@ -9,6 +9,7 @@ import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 export interface ConversationHost {
   id: string;
   environmentId?: string;
+  conversationStyleAvailable?: boolean;
   sessionId?: string;
   runtime?: ConversationRuntime;
   openWorkSummary?(detail: WorkSummaryInspectorDetail): void;
@@ -24,3 +25,5 @@ export interface ConversationHost {
   toolDetails(sessionId: string, turnId: string): Promise<ChatToolExecution[]>;
 }
 export const ConversationHostContext = createContext<ConversationHost | undefined>(undefined);
+/** Routes UI-originated messages when several local conversations are mounted. */
+export const ConversationMessageTargetContext = createContext<string | undefined>(undefined);

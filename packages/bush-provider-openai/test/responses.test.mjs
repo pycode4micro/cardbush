@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { modelRequestSchema } from "@cardbush/bush-protocol";
+import { withToolDisplayTitle } from "@cardbush/bush-runtime";
 import { estimateResponsesInputTokens } from "../dist/responsesInputEstimate.js";
 import { imageFixture, png } from "../../bush-runtime/test/helpers/modelImages.mjs";
 
@@ -225,9 +226,7 @@ test("projects Bush messages into stateless Responses input items", () => {
     type: "function",
     name: "open_page",
     description: "Open a page",
-    parameters: { type: "object", properties: {
-      _display_title: { type: "string", description: "Short action title for the user. Host display only." },
-    } },
+    parameters: withToolDisplayTitle({ name: "open_page", inputSchema: { type: "object" } }).inputSchema,
     strict: false,
   });
   assert.deepEqual(request.input.map((item) => item.type), [

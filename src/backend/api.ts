@@ -1,3 +1,4 @@
+import { sourcePreferenceText } from '@cardbush/bush-product-agent';
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
@@ -151,6 +152,7 @@ export interface ChatStreamRequest {
   allowedSkills?: string[];
   disabledSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
+  sourceEnabled?: boolean;
   permissionMode?: PermissionMode;
   subagentPermissionRouting?: SubagentPermissionRouting;
   reasoningLevel?: ReasoningLevel;
@@ -237,6 +239,7 @@ export interface ControlStreamRequest {
   allowedSkills?: string[];
   disabledSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
+  sourceEnabled?: boolean;
   permissionMode?: PermissionMode;
   subagentPermissionRouting?: SubagentPermissionRouting;
   reasoningLevel?: ReasoningLevel;
@@ -281,6 +284,7 @@ export interface EditMessageRequest extends ControlStreamRequest {
 }
 
 export interface SendGuidanceRequest {
+  sourceEnabled?: boolean;
   createdAt?: string;
   contextWindowTokens?: number;
   sessionId: string;
@@ -1387,6 +1391,7 @@ export function runtimeHistoryToolExecution(
     metadata: {
       actionManifest: record.actionManifest,
       ...(record.display?.title ? { displayTitle: record.display.title } : {}),
+      ...(record.display?.titles ? { displayTitles: record.display.titles } : {}),
       ...(mcpServerId ? { mcpServerId } : {}),
       ...(hasNativeResult
         ? { nativeResult: record.result }
@@ -2531,12 +2536,9 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
         'The response and original user message belong to different Turns. Regeneration was cancelled; refresh and retry.',
       ));
     }
-    const supersedeFrom =
-      index > 0 &&
-      messages[index - 1]?.turnId === messages[index]?.turnId &&
-      isInternalRuntimeMessage(messages[index - 1]!)
-        ? index - 1
-        : index;
+    let supersedeFrom = index;
+    while (supersedeFrom > 0 && messages[supersedeFrom - 1]?.turnId === messages[index]?.turnId &&
+      isInternalRuntimeMessage(messages[supersedeFrom - 1]!)) supersedeFrom--;
     supersession = {
       expectedRevision: snapshot.revision,
       messageIds: messages
@@ -2587,8 +2589,9 @@ export async function sendGuidance(request: SendGuidanceRequest,
       sessionId,
       turnId,
       messageId: request.clientMessageId.trim(),
-      content: referencedInput.content,
+      content: request.sourceEnabled === undefined ? referencedInput.content : `${referencedInput.content}\n\n${sourcePreferenceText(request.sourceEnabled)}`,
       metadata: { ...referencedInput.metadata, userTimeZone,
+        ...(request.sourceEnabled === undefined ? {} : { sourceEnabled: request.sourceEnabled, composerReferenceContent: referencedInput.metadata?.composerReferenceContent ?? guidance }),
         timeContext: createTurnTimeContext({ createdAt, timeZone: userTimeZone }) },
       createdAt,
     }, request.signal);

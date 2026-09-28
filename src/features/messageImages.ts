@@ -11,8 +11,7 @@ export function splitMessageMedia(content: string) {
   const videoPaths: string[] = [];
   const audioPaths: string[] = [];
   const textLines: string[] = [];
-  for (const line of content.split(/\r?\n/)) {
-    const media = mediaPathFromMessageLine(line);
+  for (const { line, media } of messageMediaLines(content)) {
     if (!media) {
       textLines.push(line);
       continue;
@@ -48,16 +47,16 @@ export function splitMessageMediaBlocks(content: string): MessageMediaBlock[] {
   let textLines: string[] = [];
   let mediaItems: MessageMediaItem[] = [];
   const flushText = () => {
-    const value = textLines.join('\n').trim();
-    if (value) blocks.push({ kind: 'text', content: value });
+    // Remove blank boundary lines, but retain indentation inside code blocks.
+    const value = textLines.join('\n').replace(/^(?:[ \t]*\n)+|(?:\n[ \t]*)+$/g, '');
+    if (value.trim()) blocks.push({ kind: 'text', content: value });
     textLines = [];
   };
   const flushMedia = () => {
     if (mediaItems.length > 0) blocks.push({ kind: 'media', items: mediaItems });
     mediaItems = [];
   };
-  for (const line of content.split(/\r?\n/)) {
-    const media = mediaPathFromMessageLine(line);
+  for (const { line, media } of messageMediaLines(content)) {
     if (media) {
       flushText();
       mediaItems.push(media);
@@ -69,6 +68,27 @@ export function splitMessageMediaBlocks(content: string): MessageMediaBlock[] {
   flushText();
   flushMedia();
   return blocks;
+}
+
+function* messageMediaLines(content: string) {
+  let fence: { marker: string; length: number } | undefined;
+  for (const line of content.split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (marker && marker[1][0] === fence.marker && marker[1].length >= fence.length && !marker[2].trim()) {
+        fence = undefined;
+      }
+      yield { line, media: null };
+    } else if (marker) {
+      fence = { marker: marker[1][0], length: marker[1].length };
+      yield { line, media: null };
+    } else {
+      // Code paths are authored examples, not inline media. Extracting one
+      // would split a fence across independent Markdown renderers.
+      const code = /^(?: {4}|\t)/.test(line) || /^\s*`/.test(line);
+      yield { line, media: code ? null : mediaPathFromMessageLine(line) };
+    }
+  }
 }
 
 function mediaPathFromMessageLine(value: string) {

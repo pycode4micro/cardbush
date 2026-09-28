@@ -36,7 +36,7 @@ function searchRegistration(
   return {
     definition: {
       name: "search_skills",
-      description: "Search installed Skills by capability. Returns names, short descriptions, local SKILL.md paths in mainResource, and environment=local. Read the selected SKILL.md using read_file with that environment even in an SSH workspace; read task-relevant references relative to the Skill's local directory. Local means this Runtime host, not a remote desktop client. Only Plugin Skills include an invocation id: use run_skill with that exact id to apply policies, parameters and dependencies. For other Skills read the file; do not call run_skill with their name.",
+      description: "Search installed Skills by capability or name. Returns mainResource (SKILL.md), environment=local and an invocation id for plugin Skills. Read the selected file with read_file in that environment, even in an SSH workspace; local means this Runtime host. Inspect its references/ directory when present and read relevant documents even if unlinked, resolving paths relative to the Skill directory. Reuse resources already in context. To invoke a plugin Skill, pass its exact id to run_skill; other Skills are applied by reading their files.",
       inputSchema: {
         type: "object",
         properties: {

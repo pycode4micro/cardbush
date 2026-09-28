@@ -12,6 +12,8 @@ app.whenReady().then(async () => {
     name: 'agents-fixture', enforce: 'pre', resolveId: id => id.endsWith('__agents_fixture__.tsx') ? entry : undefined,
     load: id => id === entry ? `import React,{useState,useCallback} from 'react';import{createRoot}from'react-dom/client';
       import {SettingsView} from ${JSON.stringify(path.join(root, 'src/features/SettingsView.tsx'))};
+      import {localSettingsHost} from ${JSON.stringify(path.join(root, 'src/features/settings/SettingsHostContext.ts'))};
+      window.fixtureSettingsHost=localSettingsHost;
       import {AgentsView} from ${JSON.stringify(path.join(root, 'src/features/agents/AgentsView.tsx'))};
       import {useAgentConnections} from ${JSON.stringify(path.join(root, 'src/features/agents/useAgentConnections.ts'))};
       import {ChatSidebar} from ${JSON.stringify(path.join(root, 'src/features/sidebar/ChatSidebar.tsx'))};
@@ -22,21 +24,21 @@ app.whenReady().then(async () => {
       import {InspectorTabPages} from ${JSON.stringify(path.join(root,'src/features/inspector/InspectorTabPages.tsx'))};
       import {RightInspectorResizer} from ${JSON.stringify(path.join(root,'src/components/RightInspectorResizer.tsx'))};
       const noop=()=>{};
-      function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[viewActive,setViewActive]=useState(true);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:[]});
+      function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[sharedVision,setSharedVision]=useState(false);window.fixtureVision=sharedVision;const[viewActive,setViewActive]=useState(true);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:window.models.models});
         window.refreshAgentConnections=agents.refresh;
         window.openFixtureSettings=(id,section='mcp')=>setSetting({id,section});
         const open=useCallback((id,title)=>tabs.openTab({id,title,kind:'conversation'}),[tabs.openTab]);const close=useCallback(id=>tabs.closeTabs(new Set([id])),[tabs.closeTabs]);
         return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.tabs.length>0}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button><button onClick={()=>setViewActive(false)}>Local view</button><button onClick={()=>setViewActive(true)}>Agent view</button>{['a1','a2','a3'].map(id=><button key={id} onClick={()=>agents.select('a',id)}>{id}</button>)}</nav>
         <ChatSidebar language="zh" section="agents" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}} agents={agents.connections} activeAgentId={agents.selectedId} agentSessions={agents} onAgentSelect={agents.select} onSectionChange={()=>agents.select('')} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop} onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenPlugins={noop} onOpenSearch={noop}/>
-        <main className="main-stage" hidden={!!setting}><AgentsView active={viewActive} language="zh" agents={agents} onOpenSettings={(id,section)=>setSetting({id,section})}/></main>
+        <main className="main-stage" hidden={!!setting}><AgentsView active={viewActive} language="zh" agents={agents} visualInputEnabled={sharedVision} onOpenSettings={section=>setSetting({section})}/></main>
         {setting&&<SettingsView active onReady={noop} language="zh" languageMode="zh" systemLanguage="zh" themePreference="dark"
-          agentConnections={agents.connections} agentId={setting.id} onAgentChange={id=>setSetting({...setting,id})}
-          initialSection={setting.section} initialPluginTab="plugins" settings={preferences} onSettingsChange={fn=>setPreferences(fn)}
-          selectedModel="" availableModels={[]} backendCapabilities={{reasoningStream:true}} runtimeBusy={false} conversations={[]} skills={[]} disabledSkillNames={new Set()}
-          onBack={()=>setSetting(null)} onThemePreferenceChange={noop} onLanguageModeChange={noop} onUseModel={noop}
+          agentConnections={agents.connections}
+          initialSection={setting.section} initialPluginTab="plugins" settings={preferences} onSettingsChange={fn=>setPreferences(current=>{const next=fn(current);if(JSON.stringify(next.managedModelConfigs)!==JSON.stringify(current.managedModelConfigs)){window.models={defaultModelId:'model',models:next.managedModelConfigs};window.calls.push({id:'shared',operation:'product.command',input:{kind:'models.update',config:window.models}});}return next;})}
+          selectedModel={window.models.defaultModelId} availableModels={window.models.models} backendCapabilities={{reasoningStream:true,runtimeAssetResetCategories:[],terminalRuntimes:[]}} runtimeBusy={false} conversations={[]} skills={[]} disabledSkillNames={new Set()}
+          onBack={()=>setSetting(null)} onThemePreferenceChange={noop} onLanguageModeChange={noop} onUseModel={id=>{window.models={...window.models,defaultModelId:id};setPreferences(current=>({...current}));}}
           sidebarCollapsed={false} sidebarPresence={{mounted:true,visible:true}} sidebarWidth={260} onSidebarCollapse={noop} onSidebarWidthChange={noop}
           onToggleSkill={noop} onReloadSkills={async()=>[]} onLoadSkillDetail={async()=>null}
-          visualInputAvailable visualInputEnabled={false} onVisualInputEnabledChange={noop}/>}
+          visualInputAvailable visualInputEnabled={sharedVision} onVisualInputEnabledChange={setSharedVision}/>}
         {tabs.tabs.length>0&&<aside id="right-inspector" className="right-inspector soft-panel-visible" style={{'--right-inspector-width':width+'px'}}>
           <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} label="调整右侧栏"/>
           <div className="right-inspector-viewport"><div className="right-inspector-content"><header className="right-inspector-toolbar"><span>审查</span><button aria-label="关闭审查" onClick={()=>close(tabs.activeId)}>×</button></header>
@@ -54,6 +56,7 @@ app.whenReady().then(async () => {
       window.connections=[{id:'a',name:'Build Agent',transport:'http',url:'https://a.invalid',hasToken:true,connected:false},{id:'b',name:'Research Agent',transport:'http',url:'http://127.0.0.1:4780',hasToken:true,connected:false}];
       window.snapshots={a:[],b:[],c:[]};window.jobs={a:[],b:[],c:[]};window.readers=[];window.models={defaultModelId:'model',models:[{id:'model',provider:'openai',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true}]};
       window.cardbushDesktop={runtime:{command(){throw Error('Local Runtime must not be called')}},agents:{watchEvents:(id,request,listener)=>{const reader={id,request,listener,stopped:false};readers.push(reader);calls.push({id,operation:'watch',input:request});return()=>{reader.stopped=true}},list:async()=>connections,connect:async id=>{if(id==='a'&&delayA)await new Promise(r=>setTimeout(r,300));return {protocol:'cardbush.agent.v1',apiVersion:1,eventStreams:['sse','ndjson'],id:'agent-'+id,name:id.toUpperCase(),platform:'linux',capabilities:{durableQueue:true,conversationUi:true}}},disconnect:async id=>calls.push({id,operation:'disconnect'}),save:async input=>{calls.push({operation:'save',input});if(input.id){connections=connections.map(item=>item.id===input.id?{...item,...input}:item)}else connections.push({...input,id:'c'});return connections},remove:async id=>connections=connections.filter(c=>c.id!==id),call:async(id,operation,input={})=>{calls.push({id,operation,input});if(operation==='conversation.catalog')return {skills:[{name:'remote-skill',description:'Remote skill',path:'/srv/skills/test/SKILL.md'}],pluginCommands:[]};if(operation==='product.command'&&input.kind==='apps.get')return {plugins:[]};if(operation==='runtime.command'&&['runtime.list_subagent_tasks','runtime.list_turn_tool_execution_summaries','runtime.list_turn_tool_executions'].includes(input.kind))return [];if(operation==='sessions.list')return structuredClone(snapshots[id]);if(operation==='product.command'&&input.kind==='models.get')return models;if(operation==='projects.list')return {projects:[{id:'project-'+id,name:'Project '+id,path:'/srv/'+id}],defaultProjectId:'project-'+id};if(operation==='sessions.create'){const value={sessionId:'same-session',revision:1,metadata:{title:input.title||'新对话',projectId:'project-'+id},turns:[]};snapshots[id].push(value);return value}if(operation==='sessions.get')return structuredClone(snapshots[id].find(s=>s.sessionId===input.sessionId));if(operation==='chat.jobs')return structuredClone(jobs[id]);if(operation==='chat.send'){if(failSend){failSend=false;throw Error('Fixture disconnected')}const job={id:input.requestId,sessionId:input.sessionId,turnId:'turn-'+id,status:'queued',text:input.text};if(!jobs[id].some(j=>j.id===job.id))jobs[id].push(job);return job}if(operation==='sessions.rename'){snapshots[id].find(s=>s.sessionId===input.sessionId).metadata.title=input.title;return null}if(operation==='sessions.delete'){snapshots[id]=snapshots[id].filter(s=>s.sessionId!==input.sessionId);return null}if(operation==='chat.stop'){jobs[id].find(j=>j.id===input.id).status='stopped';return null}if(operation==='instructions.get')return {content:'# Rules for '+id,revision:'revision-'+id};if(operation==='instructions.save')return input;if(operation==='product.command'&&input.kind==='models.update'){models=input.config;return models}throw Error('Unexpected fixture operation '+operation)}}};undefined;`);
+    await run(`cardbushDesktop.readGlobalInstructions=async()=>({content:'# Shared rules',revision:'shared-1'});undefined;`);
     await run(`window.baseWatch=cardbushDesktop.agents.watchEvents;cardbushDesktop.agents.watchEvents=(id,request,listener)=>baseWatch(id,request,frame=>{
       if(frame.type==='event'){const event=frame.event;frame={...frame,event:{protocol:'bush.runtime_event.v1',requestId:'request-'+request.turnId,sessionId:request.sessionId,turnId:request.turnId,eventId:'event-'+event.sequence,createdAt:new Date(Date.UTC(2026,8,22,0,0,event.sequence)).toISOString(),...event,payload:{...(/^(assistant|reasoning)_segment_/.test(event.kind)?{messageId:'msg-live',ordinal:1}:{}),...(/^tool_/.test(event.kind)?{assistantMessageId:'msg-live',ordinal:0}:{}),...event.payload}}};}listener(frame);
     });window.remoteGuidance=new Map();window.failGuidance=false;window.baseConnect=cardbushDesktop.agents.connect;cardbushDesktop.agents.connect=async id=>{const info=await baseConnect(id);if(id==='c')delete info.capabilities.conversationUi;else {info.capabilities.sharedConversation=true;info.capabilities.sharedSettings=true;}if(id==='b')info.capabilities.conversationManagement=true;return info};
@@ -178,7 +181,8 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelectorAll('[data-agent-id=a] .remote-conversation').length"),0,'saved child sessions never become sidebar conversations');
     await run("document.querySelector('.agent-sidebar-row.active .row-new-chat').click()");
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'create session on A');
-    assert.equal(await run("document.querySelector('.agent-chat .permission-center-button').textContent.trim()"),'申请批准','legacy home access migrates to approval mode');
+    await until("document.querySelector('.agent-chat .permission-center-button')?.textContent.trim()==='申请批准'",'permission controls ready after session hydration');
+    assert.equal(await run("document.querySelector('.agent-chat .permission-center-button')?.textContent.trim()"),'申请批准','legacy home access migrates to approval mode');
     await run("document.querySelector('.agent-chat .permission-center-button').click()");
     await until("document.querySelectorAll('.permission-mode-row').length===2",'only two permission modes are offered');
     assert.deepEqual(await run("[...document.querySelectorAll('.permission-mode-row strong')].map(item=>item.textContent)"),['申请批准','完全访问']);
@@ -197,7 +201,7 @@ app.whenReady().then(async () => {
     const setDraft = async text => { await run(`var field=document.querySelector('.agent-chat .composer-stack textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,${JSON.stringify(text)});field.dispatchEvent(new Event('input',{bubbles:true}));undefined;`); await pause(30); };
     await run("document.querySelector('.agent-chat .model-select').click()");
     await run("[...document.querySelectorAll('.model-picker-row')].find(button=>button.textContent.includes('管理模型')).click()");
-    await until("!!document.querySelector('.settings-shell [name=agent-vision-mode] + button')",'remote model settings expose the shared vision switch');
+    await until("!!document.querySelector('.settings-shell .settings-switch input')",'remote model settings expose the shared vision switch');
     assert.equal(await run("document.querySelectorAll('.settings-shell .model-row').length"),1,'remote settings reuse the compact model list');
     assert.equal(await run("document.querySelector('.settings-shell .model-form-disclosure').getAttribute('aria-expanded')"),'false');
     assert.equal(await run("document.querySelectorAll('.settings-shell .model-form').length"),0,'model credentials and add form start collapsed');
@@ -207,10 +211,10 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.settings-shell .model-form input[aria-label=\"模型名称\"]')",'adding opens the shared settings inputs');
     assert.equal(await run("!!document.querySelector('.settings-shell .model-form input[aria-label=\"上下文上限\"]')"),false,'advanced limits are progressively disclosed');
     await run("[...document.querySelectorAll('.settings-shell .model-form button')].find(b=>b.textContent==='取消').click()");
-    assert.equal(await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').value==='on'"),false,'vision is opt-in per Agent');
-    assert.equal(await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').disabled"),false,'current services support vision');
-    await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').click();setTimeout(()=>document.querySelector('.settings-dropdown-popover:popover-open [value=on]').click(),30)");
-    await until("JSON.parse(localStorage.getItem('cardbush-agent-preferences:a'))?.visionEnabled===true",'vision is saved without submitting model credentials');
+    assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').checked===true"),false,'vision is opt-in per Agent');
+    assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').disabled"),false,'current services support vision');
+    await run("document.querySelector('.settings-shell .settings-switch input').click()");
+    await until("fixtureVision===true",'vision is saved without submitting model credentials');
     assert.equal(await run("calls.some(c=>c.operation==='product.command'&&c.input.kind==='models.update')"),false,'vision is a conversation preference');
     await pause(200);
     fs.writeFileSync(path.join(root,'tmp/agents-vision-settings.png'),(await win.webContents.capturePage()).toPNG());
@@ -230,7 +234,8 @@ app.whenReady().then(async () => {
     await until("document.querySelector('.agent-sidebar-row.active .project-title')?.textContent==='Research Agent' && !!document.querySelector('.agent-sidebar-row.active .row-new-chat')",'switch to B');
     await run("document.querySelector('.agent-sidebar-row.active .row-new-chat').click()");
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'B session');
-    assert.equal(await run("document.querySelector('.agent-chat .permission-center-button').textContent.trim()"),'完全访问','existing full access survives on another Agent');
+    await until("document.querySelector('.agent-chat .permission-center-button')?.textContent.trim()==='完全访问'",'B permission controls ready after session hydration');
+    assert.equal(await run("document.querySelector('.agent-chat .permission-center-button')?.textContent.trim()"),'完全访问','existing full access survives on another Agent');
     assert.equal(await run("document.querySelector('.agent-chat .composer-stack textarea').value"),'','same session ID cannot share drafts across Agents');
     assert.equal(await run("localStorage.getItem('b:cardbush.reasoning_level')||'medium'"),'medium','Agents keep independent reasoning preferences');
     assert.equal(await run("JSON.parse(localStorage.getItem('cardbush-agent-preferences:b'))?.visionEnabled"),undefined,'B keeps inheriting the global default instead of A’s override');
@@ -270,7 +275,7 @@ app.whenReady().then(async () => {
     await pause(35);
     await run("readers.at(-1).listener({type:'event',event:{kind:'reasoning_segment_delta',turnId:'turn-a',createdAt:new Date().toISOString(),sequence:5,payload:{segmentId:'reasoning-a',delta:'正在核对服务器环境'}}})");
     assert.equal(await run("thinkingFrames.at(-1)?.phase"),'delta','remote reasoning is forwarded after its start');
-    await until("document.querySelector('.runtime-screen-line.thinking')?.textContent.includes('正在核对服务器环境')",'remote thinking renders in the same local Runtime rail',7000);
+    await until("document.querySelector('.assistant-thinking-process')?.textContent.includes('正在核对服务器环境')",'remote thinking renders in the shared transcript thinking slot',7000);
     await run("readers.at(-1).listener({type:'event',event:{kind:'model_request_usage',turnId:'turn-a',createdAt:new Date().toISOString(),sequence:6,payload:{round:1,attempt:1,contextWindowTokens:400000,model:'Fixture Model',inputTokens:12000,outputTokens:100}}});document.querySelector('.agent-chat .model-select').click()");
     await until("document.querySelector('.model-context-progress')?.getAttribute('aria-valuenow')==='3'",'cloud context usage reaches the shared meter (12000 / 400000)');
     await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
@@ -295,7 +300,7 @@ app.whenReady().then(async () => {
     await until("calls.some(c=>c.input?.kind==='runtime.answer_solution_selection')",'custom solution sent');
     assert.equal(await run("calls.find(c=>c.input?.kind==='runtime.answer_solution_selection').input.payload.text"),'My alternative');
     await run(`readers.at(-1).listener({type:'event',event:{kind:'solution_selection_answered',sequence:10,payload:{sessionId:'same-session',turnId:'turn-a',selectionId:'selection-1',kind:'text',text:'My alternative'}}});for(let i=0;i<7;i++){readers.at(-1).listener({type:'event',event:{kind:'tool_running',sequence:11+i*2,createdAt:'2026-09-22T00:00:00Z',payload:{toolCallId:'tool-'+i,toolName:'read_file'}}});readers.at(-1).listener({type:'event',event:{kind:'tool_returned',sequence:12+i*2,createdAt:'2026-09-22T00:00:00Z',payload:{toolCallId:'tool-'+i,toolName:'read_file'}}})}undefined;`);
-    await until("document.querySelector('.tool-execution-label')?.textContent === '读取文件' && document.querySelector('.tool-execution-status')?.textContent === '已返回'",'cloud operations use the shared action title and final state');
+    await until("document.querySelector('.tool-execution-label')?.textContent === '读取文件' && document.querySelector('.tool-execution-summary')?.getAttribute('aria-label').endsWith('已返回')",'cloud operations use the shared action title and final state');
     await run("document.querySelector('.tool-execution-summary').click()");
     await until("document.querySelectorAll('.tool-execution-row').length === 7",'all cloud operations remain available in details');
     await run("document.querySelector('.tool-execution-summary').click()");
@@ -347,7 +352,7 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.settings-shell')",'Agent settings');
     assert.ok(await run("!!document.querySelector('.agent-chat')"),'opening settings preserves the mounted chat');
     await run("document.querySelector('[data-settings-section=profile]').click()");
-    await until("document.querySelector('#global-agent-instructions')?.value==='# Rules for a'",'instructions belong to A');
+    await until("document.querySelector('#global-agent-instructions')?.value==='# Shared rules'",'instructions use the common configuration');
     fs.mkdirSync(path.join(root,'tmp'),{recursive:true});fs.writeFileSync(path.join(root,'tmp/agents-settings-ui.png'),(await win.webContents.capturePage()).toPNG());
     await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
     await until("!!document.querySelector('.agent-chat .composer-stack')",'return chat');
@@ -355,9 +360,9 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelector('.model-reasoning-primary-options button:last-child').classList.contains('active')"),true,'reasoning selection survives settings and session remount');
     await run("[...document.querySelectorAll('.model-picker-row')].find(button=>button.textContent.includes('管理模型')).click()");
     await until("!!document.querySelector('.settings-shell .model-row')",'Manage models opens the remote model list directly');
-    assert.equal(await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').value==='on'"),true,'vision preference is restored after switching Agents and views');
-    await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').click();setTimeout(()=>document.querySelector('.settings-dropdown-popover:popover-open [value=off]').click(),30)");
-    await until("JSON.parse(localStorage.getItem('cardbush-agent-preferences:a'))?.visionEnabled===false",'vision can be disabled independently of saving model configuration');
+    assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').checked===true"),true,'vision preference is restored after switching Agents and views');
+    await run("document.querySelector('.settings-shell .settings-switch input').click()");
+    await until("fixtureVision===false",'vision can be disabled independently of saving model configuration');
     const setLimit = async (label, value) => { await run(`var field=document.querySelector('input[aria-label=${JSON.stringify(label)}]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,${JSON.stringify(String(value))});field.dispatchEvent(new Event('input',{bubbles:true}));undefined;`); await pause(30); };
     await run("document.querySelector('.model-row-disclosure').click()");
     await until("!!document.querySelector('.agent-model-editor')",'model details expand on request');
@@ -370,7 +375,7 @@ app.whenReady().then(async () => {
     await setLimit('最大输出 tokens',16384);
     await run("document.querySelector('.settings-shell form').requestSubmit()");
     await until("document.querySelector('.settings-shell [role=status]')?.textContent.includes('已保存')",'output limit saved on the remote Agent');
-    assert.deepEqual(await run("calls.find(c=>c.operation==='product.command'&&c.input.kind==='models.update')"),{id:'a',operation:'product.command',input:{kind:'models.update',config:{defaultModelId:'model',models:[{id:'model',provider:'openai',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true,maxContextTokens:64000,maxCompletionTokens:16384}]}}});
+    assert.deepEqual(await run("calls.find(c=>c.operation==='product.command'&&c.input.kind==='models.update')"),{id:'shared',operation:'product.command',input:{kind:'models.update',config:{defaultModelId:'model',models:[{id:'model',provider:'openai',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true,maxContextTokens:64000,maxCompletionTokens:16384}]}}});
     await until("!document.querySelector('.agent-model-editor')",'saved model details collapse');
     await setLimit('Fixture Model 最大输出 token',12000);
     await run("document.querySelector('.model-row button[aria-label=\"保存输出上限\"]').click()");
@@ -460,14 +465,29 @@ app.whenReady().then(async () => {
         {messageId:'answer-b',createdAt:'2026-09-22T01:00:12.000Z',message:{role:'assistant',content:'服务器文件已创建。',toolCalls:[]}}]}];
       snapshots.b[0].turns[0].messages.forEach((message,index)=>Object.assign(message,{turnId:'completed-b',turnSequence:1,messageIndex:index}));
       window.dispatchEvent(new CustomEvent('cardbush:agent-session-updated',{detail:{connectionId:'b',sessionId:'same-session'}}));undefined;`);
-    await until("!!document.querySelector('.assistant-completed-at')&&!!document.querySelector('.assistant-changed-files-summary')",'native completed message and changes');
-    assert.ok(await run("document.querySelector('.assistant-run-header')?.textContent.includes('12s')"),'native processing duration from server timestamps');
+    await until("!!document.querySelector('.assistant-completed-at')&&!!document.querySelector('.turn-artifacts-trigger')",'native completed message and changes');
     assert.equal(await run("document.querySelector('.assistant-completed-at').dateTime"),'2026-09-22T01:00:12.000Z');
     assert.equal(await run("document.querySelectorAll('.message-actions button[title=复制]').length"),2,'both user and assistant have copy actions');
     await run("window.copied=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{copied.push(text)}}});[...document.querySelectorAll('.message-actions button[title=复制]')].at(-1).click()");
     await until("copied.includes('服务器文件已创建。')",'native copy preserves the reply');
     await require('./helpers/agent-conversation-layout.cjs')({run,until,pause,win,root});
-    await run("document.querySelector('.assistant-changed-files-review').click()");
+    await run("document.querySelector('.turn-artifacts-trigger').click()");
+    await until("document.querySelector('.turn-artifacts-popover')?.matches(':popover-open')", 'remote turn artifact menu');
+    await run("document.querySelector('.turn-artifacts-revert').click()");
+    await until("calls.some(c=>c.input?.kind==='runtime.revert_workspace_changes')", 'artifact revert reaches B');
+    await pause(300);
+    await run("if(document.querySelector('.turn-artifacts-trigger').getAttribute('aria-expanded')!=='true') document.querySelector('.turn-artifacts-trigger').click(); void 0");
+    await until("document.querySelector('.turn-artifacts-revert')?.textContent==='撤销撤回'", 'artifact menu reflects remote revert');
+    await run("document.querySelector('.turn-artifacts-revert').click()");
+    await until("calls.some(c=>c.input?.kind==='runtime.restore_workspace_changes')", 'artifact restore reaches B');
+    await pause(300);
+    await run("if(document.querySelector('.turn-artifacts-trigger').getAttribute('aria-expanded')!=='true') document.querySelector('.turn-artifacts-trigger').click(); void 0");
+    await until("document.querySelector('.turn-artifacts-revert')?.textContent==='撤回'", 'artifact menu restores the remote turn');
+    await run("document.querySelector('.turn-artifacts-file').click()");
+    await until("document.querySelector('.conversation-host-preview')?.textContent.includes('remote file content')", 'artifact opens the remote file directly');
+    assert.ok(await run("calls.some(c=>c.id==='b'&&c.operation==='files.read'&&c.input.path==='/srv/b/note.txt')"), 'artifact preview reads only B');
+    await run("document.querySelector('[aria-label=关闭审查]').click()");
+    await run("document.querySelector('[data-inspector-toggle]').click()");
     await until("document.querySelector('.change-review-dialog')?.textContent.includes('server-only-line')",'native lazy diff reads remote execution evidence');
     assert.ok(await run("!!document.querySelector('#right-inspector .change-review-dialog.embedded') && !document.querySelector('.modal-backdrop')"),'review lives inside the shared right inspector');
     assert.ok(await run("document.querySelector('#right-inspector').getBoundingClientRect().left >= document.querySelector('.main-stage').getBoundingClientRect().right - 1"),'review does not cover the conversation');
@@ -488,7 +508,7 @@ app.whenReady().then(async () => {
     await run("document.querySelector('.review-comment-compose').click()");
     await until("document.querySelector('.agent-chat .composer-stack textarea')?.value.includes('请补充服务端校验')&&!document.querySelector('.change-review-dialog')",'review comments enter B draft without auto-sending');
     assert.ok(await run("document.querySelector('.agent-chat .composer-stack textarea').value.includes('/srv/b/note.txt')"),'comment retains server path');
-    await run("document.querySelector('.assistant-changed-files-review').click()");
+    await run("document.querySelector('[data-inspector-toggle]').click()");
     await until("!!document.querySelector('#right-inspector .change-review-dialog')",'reopen remote review');
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select A').click()");
     await until("!document.querySelector('#right-inspector') && document.querySelector('.agent-sidebar-row.active .project-title')?.textContent==='Build Agent'",'leaving the remote session closes its scoped review');
@@ -531,9 +551,10 @@ app.whenReady().then(async () => {
     await run("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['same-session']));document.querySelector('.agent-manage').click()");
     await until("!!document.querySelector('.settings-shell [data-settings-section=cache]')",'open Agent settings');
     await run("document.querySelector('.settings-shell [data-settings-section=cache]').click()");
+    await run("document.querySelector('[data-agent-data=b] > summary').click()");
     await until("document.querySelectorAll('.archive-manager-row').length===1",'settings list the archived user conversation');
     assert.equal(await run("document.querySelector('.archive-manager').textContent.includes('child')"),false,'archive settings exclude internal child sessions');
-    assert.equal(await run("document.querySelectorAll('.archive-manager-tabs button').length"),1,'remote settings only offer the supported archive type');
+    assert.equal(await run("document.querySelectorAll('[data-agent-data=b] .archive-manager-tabs button').length"),1,'remote data management only offers the supported archive type');
     await pause(100); fs.writeFileSync(path.join(root,'tmp/agent-archives-settings.png'),(await win.webContents.capturePage()).toPNG());
     await run(`window.archiveRestoreCall=cardbushDesktop.agents.call;window.failArchiveRestore=true;
       cardbushDesktop.agents.call=async(id,operation,input)=>{
@@ -571,10 +592,10 @@ app.whenReady().then(async () => {
     await until("calls.some(c=>c.id==='c'&&c.operation==='sessions.get')",'C snapshot loaded');
     await run("document.querySelector('.agent-chat .model-select').click()");
     await run("[...document.querySelectorAll('.model-picker-row')].find(button=>button.textContent.includes('管理模型')).click()");
-    await until("!!document.querySelector('.settings-shell [name=agent-vision-mode] + button')",'legacy service still shows vision setting');
-    assert.equal(await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').disabled"),true,'legacy service cannot turn vision on');
-    assert.equal(await run("document.querySelector('.settings-shell [name=agent-vision-mode] + button').value==='on'"),false,'unsupported stored preference is not shown as enabled');
-    assert.ok(await run("document.querySelector('.settings-shell .settings-select-row').textContent.includes('更新 Agent')"),'legacy capability has an actionable explanation');
+    await until("!!document.querySelector('.settings-shell .settings-switch input')",'legacy service still shows vision setting');
+    assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').disabled"),false,'global preference is independent of the currently viewed Agent');
+    assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').checked===true"),false,'unsupported stored preference is not shown as enabled');
+    assert.equal(await run("document.querySelector('.settings-target')===null"),true,'the settings source never changes with the Agent');
     await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'return to legacy service chat');
     await run("window.originalCall=cardbushDesktop.agents.call;window.rejectRefresh=true;cardbushDesktop.agents.call=async(id,operation,input)=>{if(id==='c'&&operation==='sessions.list'&&rejectRefresh){rejectRefresh=false;throw Error('Fixture list refresh failed')}return originalCall(id,operation,input)};undefined;");

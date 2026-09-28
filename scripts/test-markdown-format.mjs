@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import { fileMemoReference, parseFileMemoReference } from '@cardbush/bush-protocol';
 import remarkGfm from 'remark-gfm';
-import ts from 'typescript';
 
 const sourcePath = path.join(
   process.cwd(),
@@ -17,7 +16,7 @@ const sourcePath = path.join(
   'chatMessages',
   'markdownFormat.ts',
 );
-const source = fs.readFileSync(sourcePath, 'utf8');
+
 const messageBubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
@@ -30,24 +29,9 @@ const appStyles = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
+const { normalizeExecutionNarrationForDisplay, normalizeMarkdownContentForDisplay, remarkAutolinkBoundaries } = await loadChatTranscript({
+  source: `export * from ${JSON.stringify(sourcePath)};`,
 });
-
-const module = { exports: {} };
-vm.runInNewContext(transpiled.outputText, {
-  module,
-  exports: module.exports,
-});
-
-const {
-  normalizeExecutionNarrationForDisplay,
-  normalizeMarkdownContentForDisplay,
-  remarkAutolinkBoundaries,
-} = module.exports;
 
 const cases = [
   {
@@ -277,7 +261,7 @@ assert.match(
 );
 assert.match(
   appStyles,
-  /\.markdown-content h1\s*\{[\s\S]*?font-size:\s*19px/,
+  /\.markdown-content h1\s*\{[\s\S]*?font-size:\s*calc\(19px \* var\(--ui-font-scale, 1\)\)/,
   'assistant headings must stay compact instead of dominating the conversation',
 );
 assert.match(
@@ -287,7 +271,7 @@ assert.match(
 );
 assert.match(
   appStyles,
-  /\.markdown-content h1\.markdown-conclusion-heading\s*\{[\s\S]*?font-size:\s*15\.5px;[\s\S]*?text-wrap:\s*pretty;/,
+  /\.markdown-content h1\.markdown-conclusion-heading\s*\{[\s\S]*?font-size:\s*calc\(15\.5px \* var\(--ui-font-scale, 1\)\);[\s\S]*?text-wrap:\s*pretty;/,
   'long conclusions must avoid balanced wrapping and oversized heading typography',
 );
 assert.match(
@@ -298,7 +282,7 @@ assert.match(
 assert.match(
   messageBubbleSource,
   /className="markdown-table-scroll"/,
-  'wide Markdown tables must scroll without widening the chat track',
+  'Markdown tables retain a bounded overflow fallback for unusually dense data',
 );
 assert.match(
   messageBubbleSource,

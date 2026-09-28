@@ -17,12 +17,14 @@ export function SettingsSelect({ name, title, subtitle, value, onChange, childre
 }
 
 export function SettingsCard({
+  className,
   title,
   subtitle,
   headerAction,
   bodyHidden = false,
   children,
 }: {
+  className?: string;
   title: string;
   subtitle?: string;
   headerAction?: React.ReactNode;
@@ -30,7 +32,7 @@ export function SettingsCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="settings-card">
+    <section className={`settings-card${className ? ` ${className}` : ''}`}>
       <div className={`settings-card-header${headerAction ? ' has-action' : ''}`}>
         <div className="settings-card-heading">
           <h3>{title}</h3>

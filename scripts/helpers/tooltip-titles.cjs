@@ -18,6 +18,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
         return h('div',{title:'Parent help',style:{padding:'12px'}},
           h('button',{id:'title-control',title,disabled},h('span',null,'Action')),
           h('button',{id:'title-icon',title:'Icon action'},h('svg',{'aria-hidden':true})),
+          h('form',{id:'title-address',title:'编辑网址','data-shortcut':'focusBrowserAddress'},
+            h('input',{type:'url','aria-label':'网址',defaultValue:'https://example.test/search?q=hello'})),
           h('iframe',{id:'title-frame',title:'Document preview',style:{display:'none'}}));
       }
       titleRoot.render(h(React.StrictMode,null,h(Fixture)));
@@ -66,11 +68,37 @@ module.exports = async ({ run, until, pause, window, root }) => {
     for (const theme of ['theme-bright','theme-dark']) {
       await run(`document.querySelector('.app').className='app ${theme}'`);
       await pause(150);
-      assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '999px');
+      assert.equal(await run("getComputedStyle(document.querySelector('.global-tooltip')).borderRadius"), '18px');
       const colors = await run("(() => {const tip=getComputedStyle(document.querySelector('.global-tooltip'));return {background:tip.backgroundColor,text:tip.color}})()");
       assert.notEqual(colors.background, colors.text);
       fs.writeFileSync(path.join(root,'tmp',`tooltip-${theme}.png`),(await window.webContents.capturePage()).toPNG());
     }
+    await run("setFixtureTitle('https://example.test/search?q='+'long-query-'.repeat(160))");
+    await until("document.querySelector('.global-tooltip')?.textContent.startsWith('https://example.test/search')", 'long title refreshes');
+    for (const theme of ['theme-bright','theme-dark']) {
+      await run(`document.querySelector('.app').className='app ${theme}'`);
+      const bounds = await run(`(() => {const tip=document.querySelector('.global-tooltip'),text=tip.querySelector('span'),r=tip.getBoundingClientRect();
+        return {width:r.width,height:r.height,left:r.left,right:r.right,viewport:innerWidth,radius:parseFloat(getComputedStyle(tip).borderRadius),
+          textHeight:text.clientHeight,fullTextHeight:text.scrollHeight};})()`);
+      assert.ok(bounds.height <= 80 && bounds.width <= 360, 'long unbroken URLs cannot cover the page');
+      assert.ok(bounds.left >= 8 && bounds.right <= bounds.viewport - 8, 'help stays within the window');
+      assert.ok(bounds.fullTextHeight > bounds.textHeight, 'long help is visibly truncated');
+      assert.ok(bounds.radius < bounds.height / 2, 'multiline help keeps rounded corners instead of becoming a circle');
+      fs.writeFileSync(path.join(root,'tmp',`tooltip-long-${theme}.png`),(await window.webContents.capturePage()).toPNG());
+    }
+    await away();
+    const addressPoint = await run("(() => {const r=document.querySelector('#title-address input').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+    window.webContents.sendInputEvent({type:'mouseMove',...addressPoint});
+    await until("document.querySelector('.global-tooltip')?.textContent==='编辑网址Ctrl + L'", 'address help is a compact action and shortcut');
+    await run("document.querySelector('#title-address input').focus()");
+    await until("!document.querySelector('.global-tooltip')", 'programmatic address focus dismisses help immediately');
+    window.webContents.sendInputEvent({type:'mouseMove',x:addressPoint.x+1,y:addressPoint.y});
+    window.webContents.sendInputEvent({type:'keyDown',keyCode:'Left'});
+    window.webContents.sendInputEvent({type:'keyUp',keyCode:'Left'});
+    await pause(430);
+    assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'pointer movement and caret navigation cannot reopen help while editing');
+    await run("document.querySelector('#title-address input').blur();setFixtureTitle('After action')");
+    await away(); move(); await until(help('After action'), 'ordinary help resumes after editing');
     await run("window.titleDialog=document.createElement('dialog');titleDialog.innerHTML='<button title=\"Dialog help\" aria-label=\"Dialog action\">Dialog action</button>';document.body.append(titleDialog);titleDialog.showModal()");
     const dialogPoint = await run("(() => {const r=titleDialog.querySelector('button').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
     window.webContents.sendInputEvent({type:'mouseMove',...dialogPoint});

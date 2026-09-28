@@ -19,6 +19,10 @@ Missing any one of these can produce a white flash, a rejected IPC value, or a s
 
 The Windows main window uses native minimize/maximize/close controls. Do not add DOM caption buttons on top: Windows owns their non-client hit targets and maximize hover behavior. Reserve `env(titlebar-area-*)` space in the menu rail. Run `node scripts/run-window-appearance.mjs` after changes; its isolated HWND checks scrolling, zoom, native caption/drag regions and window commands without touching the product profile.
 
+Only light and dark base palettes remain, with a system-following mode. Retired theme selections migrate to dark. `electron/windowAppearance.ts` confirms native Mica availability before `src/styles/windowMaterial.css` makes the title bar, sidebar, and their ancestors transparent. Keep conversation and settings reading surfaces opaque. Custom palettes, unsupported systems, reduced transparency, high contrast, and the solid preference retain an opaque fallback.
+
+Appearance preferences live in `src/features/appearance/appearancePreferences.ts` and persist under `cardbush_appearance`. Themes, colors and fonts can share one profile or use separate light/dark profiles. Imported palettes apply only to the matching base mode. Interface typography scales through `--ui-font-scale`; code uses its independent `--code-font-size`. `src/styles/appearance.css` applies typography, sidebar, diff and pointer choices. `src/shared/motionPreference.ts` resolves the app's On/Off/System motion setting for JavaScript animations as well as CSS. Use `npm run test:appearance` to verify normalization, migration and live settings.
+
 ## Theme CSS Configuration
 
 Start each theme file with a single token block:

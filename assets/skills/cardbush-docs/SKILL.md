@@ -1,7 +1,7 @@
 ---
 name: cardbush-docs
 description: CardBush 使用与开发文档。用于应用中心、应用引用与快捷方式，添加或配置 MCP 服务，创建、安装、更新或卸载插件，修改应用主题与界面样式，以及定时自动化、日历导入、万年历和中国农历日期转换。CardBush apps, plugins, MCP, themes, automations and calendar conversion. 不用于其他宿主的插件配置或无关网站、文档的样式设计。
-license: Proprietary
+license: Apache-2.0
 ---
 
 # CardBush 文档

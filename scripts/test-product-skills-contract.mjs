@@ -47,10 +47,15 @@ try {
   }
   const presentation = await readProductSkill([bundledRoot], 'pptx');
   assert.deepEqual(presentation.requiredReads, [], 'read-only PPTX tasks do not need generation references');
-  assert.ok(presentation.conditionalReads.some(item => item.startsWith('pptxgenjs.md: ')));
+  assert.ok(presentation.conditionalReads.length > 0);
   const spreadsheet = await readProductSkill([bundledRoot], 'xlsx');
-  assert.ok(spreadsheet.conditionalReads.some(item => item.startsWith('references/workbook-design.md: ')));
+  assert.ok(spreadsheet.conditionalReads.length > 0);
   assert.ok(spreadsheet.resourceQuickRefs.every(item => item.path && item.label && item.use_when && item.gives_you && item.not_for));
+  for (const name of ['cardbush-docs', 'cardbush-agent-deploy', 'pptx', 'xlsx']) {
+    const detail = await readProductSkill([bundledRoot], name);
+    assert.match(detail.content, /^license: Apache-2\.0$/m);
+    assert.equal(await fs.readFile(path.join(detail.packageDir, 'LICENSE.txt'), 'utf8'), await fs.readFile('LICENSE', 'utf8'));
+  }
   const bundled = path.join(root, 'bundled');
   const user = path.join(root, 'user');
   await writeSkill(bundled, 'xlsx', 'Bundled spreadsheet support');

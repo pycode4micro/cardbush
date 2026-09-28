@@ -28,12 +28,21 @@ export function LocalFileReferenceLink({
   children,
   unavailableLabel,
   knownFileName,
+  onOpen,
+  disabled = false,
+  className = '',
+  language,
 }: {
   path: string;
   children?: ReactNode;
   unavailableLabel?: ReactNode;
   /** A caller that just resolved a native file can reuse that observation. */
   knownFileName?: string;
+  /** Resolved references can keep their owning surface's navigation behavior. */
+  onOpen?: () => void;
+  disabled?: boolean;
+  className?: string;
+  language?: 'zh' | 'en';
 }) {
   const gallery = useContext(ImageGalleryContext);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -81,6 +90,8 @@ export function LocalFileReferenceLink({
 
   function openInCardbush(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
+    if (disabled) return;
+    if (onOpen) { onOpen(); return; }
     if (directoryLike || applicationLike) {
       void window.cardbushDesktop?.openPath?.(path);
       return;
@@ -90,15 +101,16 @@ export function LocalFileReferenceLink({
   }
 
   function openContextMenu(event: MouseEvent<HTMLAnchorElement>) {
-    openFileContextMenu(event, path);
+    openFileContextMenu(event, path, { language });
   }
 
   return (
     <>
     <a
-      className={`local-file-reference${applicationLike ? ' local-application-reference' : ''}`}
+      className={`local-file-reference${applicationLike ? ' local-application-reference' : ''}${className ? ` ${className}` : ''}`}
       href={fileUrl(path)}
       title={path}
+      aria-disabled={disabled || undefined}
       onClick={openInCardbush}
       onContextMenu={openContextMenu}
     >

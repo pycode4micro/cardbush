@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from '../shared/motionPreference';
 import { useEffect, useState } from 'react';
 
 export type SoftPanelPresence = {
@@ -16,7 +17,7 @@ export function useSoftPanelPresence(
     let mountFrame = 0;
     let revealFrame = 0;
     let timer = 0;
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const reduceMotion = prefersReducedMotion();
     if (open) {
       // The initial open state is already laid out. Replaying an entrance here
       // briefly hides the startup sidebar, including under StrictMode.

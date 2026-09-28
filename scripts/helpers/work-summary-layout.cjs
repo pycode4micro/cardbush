@@ -5,7 +5,7 @@ const path = require('node:path');
 module.exports = async ({ run, until, pause, window, root }) => {
   const originalSize = window.getContentSize();
   const fixtureCss = await window.webContents.insertCSS(
-    fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8') +
+    fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8') +
     '\n.app:has(.work-summary-layout-fixture) { width: 100% !important; }',
   );
   window.setContentSize(1456, 760);
@@ -93,7 +93,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until("!!document.querySelector('[data-work-summary-toggle]')", 'summary toolbar');
     await open();
     await run("window.summaryComposer = document.querySelector('.composer-surface textarea'); window.summaryScroller = document.querySelector('.message-list'); void 0;");
-    for (const theme of ['theme-bright', 'theme-dark', 'theme-cyberpunk']) {
+    for (const theme of ['theme-bright', 'theme-dark']) {
       for (const maximized of [false, true]) {
         await run(`window.viewTheme = ${JSON.stringify(theme)}; summaryPaneWidth = 1224; renderSummaryLayout({ windowMaximized: ${maximized}, inspectorOpen: false });`);
         await assertLayout(true);
@@ -189,7 +189,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     })).toPNG());
     await run('summaryPaneWidth = 1224; renderSummaryLayout({});');
 
-    for (const theme of ['theme-bright', 'theme-dark', 'theme-cyberpunk']) {
+    for (const theme of ['theme-bright', 'theme-dark']) {
       await run(`viewTheme = ${JSON.stringify(theme)}; renderSummaryLayout({ windowMaximized: false });`);
       await open();
       fs.writeFileSync(path.join(root, 'tmp', 'work-summary-layout-' + theme + '.png'), (await window.webContents.capturePage()).toPNG());

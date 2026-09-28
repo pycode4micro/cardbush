@@ -485,7 +485,7 @@ export function registerWorkspaceTools(
     definition: {
       name: "terminal_poll",
       description: [
-        "Wait up to yield_time_ms for new output or a state change from an existing terminal session, including a sleep started by terminal_exec.",
+        "Read new output or wait up to yield_time_ms for a state change from an existing terminal session. For completion-only waits with completion_notification=true, use manage_tool_calls instead.",
         "Pass the returned terminalSessionId as session_id. If state=running, continue waiting on the same session instead of starting another command; empty output does not mean completion.",
         "Returns only output produced since the preceding terminal result.",
       ].join(" "),

@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Clock3,
   FileOutput,
   LoaderCircle,
   CircleStop,
@@ -35,13 +34,6 @@ import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { openInspector, openMediaInspector } from '../inspector/inspectorEvents';
 import type { ProjectPathAlias } from '../conversationScope';
 import { workSummaryOutputs } from './workSummaryOutputs';
-import {
-  groupWorkSummaryHistoryByTurn,
-  historyTurnLabel,
-  historyTurnTimestamp,
-} from './workSummaryHistory';
-
-const historyTurnPageSize = 3;
 const subagentTaskPageSize = 3;
 const outputPageSize = 5;
 const noPathAliases: ProjectPathAlias[] = [];
@@ -69,17 +61,10 @@ export function ConversationWorkSummary({
 }) {
   const host = useContext(ConversationHostContext);
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
-  const [visibleHistoryTurnCount, setVisibleHistoryTurnCount] = useState(historyTurnPageSize);
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
-  const subagentTasks = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
-  const historyGroups = useMemo(() => groupWorkSummaryHistoryByTurn(messages), [messages]);
-  const historyCount = useMemo(
-    () => historyGroups.reduce((total, group) => total + group.history.length, 0),
-    [historyGroups],
-  );
-  const visibleHistoryGroups = historyGroups.slice(0, visibleHistoryTurnCount);
-  const remainingHistoryTurnCount = Math.max(0, historyGroups.length - visibleHistoryGroups.length);
+  const taskFeed = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
+  const subagentTasks = useMemo(() => childConversationSummaries(taskFeed), [taskFeed]);
   const visibleSubagentTasks = subagentTasks.slice(0, visibleSubagentTaskCount);
   const remainingSubagentTaskCount = Math.max(
     0,
@@ -96,7 +81,6 @@ export function ConversationWorkSummary({
   const recentOutputs = outputsExpanded ? outputs : outputs.slice(0, outputPageSize);
 
   useEffect(() => {
-    setVisibleHistoryTurnCount(historyTurnPageSize);
     setVisibleSubagentTaskCount(subagentTaskPageSize);
     setOutputsExpanded(false);
   }, [sessionId]);
@@ -243,64 +227,7 @@ export function ConversationWorkSummary({
               </div>
             )}
 
-            {historyCount > 0 && (
-              <div className="work-summary-section work-summary-history" data-testid="work-summary-history">
-                <div className="work-summary-section-title">
-                  <Clock3 size={14} />
-                  <strong>{language === 'zh' ? '历史记录' : 'History'}</strong>
-                  <span>
-                    {historyGroups.length} {language === 'zh' ? '回合' : 'turns'}
-                  </span>
-                  <button
-                    className="work-summary-history-all"
-                    type="button"
-                    onClick={() => openSummary({
-                      kind: 'turn-history',
-                      sessionId,
-                      title: language === 'zh' ? '全部回合详情' : 'All turn details',
-                    })}
-                  >
-                    {language === 'zh' ? '全部详情' : 'All details'}
-                    <ChevronRight size={13} />
-                  </button>
-                </div>
-                <div className="work-summary-history-list">
-                  {visibleHistoryGroups.map((group) => (
-                    <button
-                      className="work-summary-history-turn"
-                      type="button"
-                      key={group.id}
-                      onClick={() => openSummary({
-                        kind: 'turn-history',
-                        sessionId,
-                        turnId: group.turnId || group.id,
-                        title: historyTurnLabel(group, language),
-                      })}
-                    >
-                      <span className="work-summary-history-turn-main">
-                        <strong title={group.prompt}>{historyTurnLabel(group, language)}</strong>
-                      </span>
-                      <span className="work-summary-history-turn-meta">
-                        <small>{historyTurnTimestamp(group.message, language)}</small>
-                      </span>
-                      <ChevronRight size={14} />
-                    </button>
-                  ))}
-                </div>
-                {remainingHistoryTurnCount > 0 && (
-                  <button
-                    className="work-summary-history-more"
-                    type="button"
-                    onClick={() => setVisibleHistoryTurnCount((current) => current + historyTurnPageSize)}
-                  >
-                    {language === 'zh'
-                      ? `显示更早的 ${Math.min(historyTurnPageSize, remainingHistoryTurnCount)} 个回合`
-                      : `Show ${Math.min(historyTurnPageSize, remainingHistoryTurnCount)} earlier turns`}
-                    <ChevronDown size={13} />
-                  </button>
-                )}
-              </div>
-            )}
+
         </section>
       </div>
     </aside>
@@ -399,6 +326,19 @@ function subagentTaskFromDispatchEvent(event: SubagentDispatchEvent): SubagentTa
     usage: {},
     raw: event.raw,
   };
+}
+
+/** A resumed child is another turn in the same conversation, not another Agent. */
+function childConversationSummaries(tasks: SubagentTaskSnapshot[]) {
+  const conversations = new Map<string, SubagentTaskSnapshot>();
+  for (const task of [...tasks].sort((a, b) => subagentTaskTime(a) - subagentTaskTime(b))) {
+    const key = task.childSessionId ? `${task.remote?.connectionId ?? ''}:${task.childSessionId}` : subagentTaskIdentity(task);
+    const original = conversations.get(key);
+    conversations.set(key, original ? { ...original, status: task.status, terminal: task.terminal,
+      responsePrompt: task.responsePrompt, errorMessage: task.errorMessage, updatedAt: task.updatedAt,
+      completedAt: task.completedAt, usage: task.usage } : task);
+  }
+  return [...conversations.values()].sort((a, b) => subagentTaskTime(b) - subagentTaskTime(a));
 }
 
 function mergeSubagentTasks(

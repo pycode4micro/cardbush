@@ -10,5 +10,8 @@ asarUnpack:
 win:
   forceCodeSigning: true
   signExts: [.exe, .dll, .node]
+  signtoolOptions:
+    signingHashAlgorithms: [sha256]
+    rfc3161TimeStampServer: http://timestamp.digicert.com
 afterSign: scripts/windows-release-signature-check.cjs
 artifactBuildCompleted: scripts/windows-release-signature-check.cjs

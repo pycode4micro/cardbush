@@ -18,9 +18,11 @@ buttons.forEach((button) => button.addEventListener('click', async () => {
   try {
     const result = await chrome.runtime.sendMessage({
       action: button.dataset.action,
+      ...(button.dataset.action === 'pair' ? { code: document.querySelector('#pairing-code').value } : {}),
       ...(selectedScopeId ? { scopeId: selectedScopeId } : {}),
     });
     if (result?.ok === false) actionError = result.error?.message || '操作失败';
+    else if (button.dataset.action === 'pair') document.querySelector('#pairing-code').value = '';
     if (result?.activeScope?.id) selectedScopeId = result.activeScope.id;
   } catch (error) {
     actionError = error instanceof Error ? error.message : String(error);
@@ -56,10 +58,14 @@ async function refresh() {
     )),
   ]);
   scopePicker.hidden = candidates.length <= 1;
-  connection.textContent = state.nativeConnected
+  connection.textContent = !state.connectorEnabled
+    ? '扩展连接已关闭。首次使用请填写配对码；已配对可点击连接 CardBush。'
+    : state.nativeConnected
     ? state.controlledTabCount > 0
       ? `正在控制 ${state.controlledTabCount} 个标签页`
       : '已连接 CardBush，等待控制'
+    : state.reconnectPaused
+      ? `自动重连已暂停。请确认 CardBush 连接器已开启，再点击连接；移除过配置则需要重新配对。${state.lastError ? `（${state.lastError}）` : ''}`
     : state.lastError
       ? `CardBush 连接失败：${state.lastError}`
       : state.nativeConnecting
@@ -76,6 +82,7 @@ async function refresh() {
   buttons.forEach((button) => {
     const permissionAction = ['allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action);
     button.disabled = permissionAction && (!state.nativeConnected || !state.activeScope || !state.origin);
+    if (button.dataset.action === 'disable_connector') button.disabled = !state.connectorEnabled;
     button.classList.toggle('active',
       (button.dataset.action === 'allow_once' && state.access === 'once') ||
       (button.dataset.action === 'allow_site' && state.access === 'site') ||

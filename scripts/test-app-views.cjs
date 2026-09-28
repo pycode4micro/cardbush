@@ -193,7 +193,8 @@ app.whenReady().then(async () => {
       await window.loadFile(host);
       fs.unlinkSync(host);
     } else await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/theme.css'), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8'));
+    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/theme.css'), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8')
+      + '\n' + fs.readFileSync(path.join(root, 'src/features/chatMessages/turn-artifacts.css'), 'utf8'));
     await run(`
       window.failures = [];
       addEventListener('error', event => failures.push(event.message));
@@ -289,6 +290,20 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews') {
       await require('./helpers/loop-execution-previews.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no loop preview renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'code-rendering') {
+      await require('./helpers/code-rendering.cjs')({ run, until, window, root });
+      assert.deepEqual(await run('failures'), [], 'no code renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'status-indicators') {
+      await require('./helpers/sidebar-title-layout.cjs')({ run, until, pause, window, root });
+      await require('./helpers/loading-rhythm.cjs')({ run, until, pause, window });
+      await require('./helpers/startup-presentation.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no status indicator renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
@@ -516,6 +531,12 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'markdown-tables') {
+      await require('./helpers/markdown-table-layout.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no table renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus') {
       await require('./helpers/delete-conversation-focus.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no deletion focus renderer errors');
@@ -561,7 +582,7 @@ app.whenReady().then(async () => {
       return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll') {
-      for (const theme of ['theme-dark', 'theme-cyberpunk']) await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme });
+      for (const theme of ['theme-dark']) await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme });
       assert.deepEqual(await run('failures'), [], 'no session scroll renderer errors');
       assert.deepEqual(errors, []);
       return;
@@ -684,6 +705,12 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'turn-layout') {
+      await require('./helpers/chat-turn-layout.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no turn layout renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     await require('./helpers/queue-interaction.cjs')({ run, until, pause, window, root });
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'queue') {
       assert.deepEqual(await run('failures'), [], 'no queue renderer errors');
@@ -729,10 +756,10 @@ app.whenReady().then(async () => {
     await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root });
     await require('./helpers/chat-tool-packages.cjs')({ run, until, pause });
     await require('./helpers/chat-session-scroll.cjs')({ run, until, pause });
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8'));
-    await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root, theme: 'theme-cyberpunk' });
-    await require('./helpers/chat-tool-packages.cjs')({ run, until, pause, theme: 'theme-cyberpunk' });
-    await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme: 'theme-cyberpunk' });
+    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8'));
+    await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root, theme: 'theme-dark' });
+    await require('./helpers/chat-tool-packages.cjs')({ run, until, pause, theme: 'theme-dark' });
+    await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme: 'theme-dark' });
     await run("window.viewTheme = 'theme-dark'; void 0;");
     await run("updateChat({ activeConversationId: 'session-b', messages: [{ id: 'user-b', role: 'user', content: 'Other session only', createdAt: '2026-09-05T00:00:02Z' }] })");
     await until("document.querySelector('.message-list')?.textContent.includes('Other session only')", 'session switch');

@@ -22,6 +22,7 @@ export * from './automation.js';
 export * from './calendar.js';
 export * from './accounts.js';
 export * from './fileMemo.js';
+export * from './sourceMemo.js';
 export * from './proxy.js';
 export * from './search.js';
 export * from './solutionSelection.js';

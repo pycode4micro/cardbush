@@ -19,13 +19,10 @@ const DiffSyntaxLines = recoverableLazy<{ lines: DiffLine[]; path: string; langu
   </>,
 );
 
-type ToolExecutionTone = 'neutral' | 'warning' | 'danger';
-
 export function ToolChangeBlock({
   identity,
   report,
   running,
-  tone,
   language,
   toolName,
   onRevert,
@@ -37,7 +34,6 @@ export function ToolChangeBlock({
   identity?: { sessionId: string; messageId: string; turnId?: string };
   report: ToolChangeReport;
   running: boolean;
-  tone: ToolExecutionTone;
   language: AppLanguage;
   toolName: string;
   onRevert?: () => Promise<void>;
@@ -76,7 +72,7 @@ export function ToolChangeBlock({
   return (
     <div
       ref={blockRef}
-      className={`tool-change-block ${expanded ? 'expanded' : ''} ${running ? 'running' : ''} ${tone}`}
+      className={`tool-change-block ${expanded ? 'expanded' : ''} ${running ? 'running' : ''}`}
     >
       <div className="tool-change-header-row">
         <button

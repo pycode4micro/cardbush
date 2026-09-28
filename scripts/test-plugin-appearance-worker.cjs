@@ -116,7 +116,7 @@ app.whenReady().then(async () => {
     await contrast('.plugin-mcp-settings input, .plugin-mcp-settings select, .plugin-mcp-primary-actions button, .plugin-hook-trust pre');
     await capture('plugin-mcp-light.png');
     await read(`const probes=document.createElement('section');probes.className='theme-contrast-probes';probes.innerHTML='<button class="primary-button">保存设置</button><a class="mcp-inline-link">配置链接</a><a class="local-file-reference">文件链接</a><span class="runtime-asset-restart-required">需要重启</span><span class="plugin-component-kind kind-skill">S</span><span class="plugin-component-kind kind-command">/</span><span class="plugin-component-kind kind-mcp">M</span><span class="plugin-component-kind kind-app">A</span>';active().prepend(probes);`);
-    for (const theme of ['theme-bright', 'theme-dark', 'theme-dark theme-cyberpunk']) {
+    for (const theme of ['theme-bright', 'theme-dark']) {
       await read(`document.querySelector('.app').className='app '+${JSON.stringify(theme)}`);
       await contrast('.theme-contrast-probes > *');
       await contrast('.plugin-mcp-settings input, .plugin-mcp-primary-actions button');
@@ -140,6 +140,6 @@ app.whenReady().then(async () => {
     await until('document.documentElement.clientWidth < 700');
     assert.equal(await read('document.querySelector(".settings-content").scrollWidth <= document.querySelector(".settings-content").clientWidth+1'), true, 'marketplace fits a narrow window');
     assert.deepEqual(errors, []);
-    console.log('Plugin appearance/navigation passed: light/dark/cyberpunk contrast, retained filters/tabs/scroll/focus, nested accounts/MCP, cancelled previews and narrow layout.');
+    console.log('Plugin appearance/navigation passed: light/dark contrast, retained filters/tabs/scroll/focus, nested accounts/MCP, cancelled previews and narrow layout.');
   } finally { win.destroy(); }
 }).then(() => { clearTimeout(deadline); app.exit(0); }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });

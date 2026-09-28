@@ -30,7 +30,7 @@ export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, lang
     };
   }
   return {
-    id: `subagent:${detail.sessionId}:${detail.task.taskId || detail.task.toolCallId || detail.task.childTurnId}`,
+    id: `subagent:${detail.sessionId}:${detail.task.remote?.connectionId ?? ''}:${detail.task.childSessionId || detail.task.taskId || detail.task.toolCallId || detail.task.childTurnId}`,
     kind: 'subagent', detail,
     title: detail.title || (language === 'zh' ? '子任务详情' : 'Subagent task'),
   };
@@ -52,7 +52,8 @@ export function inspectorTabsReducer(state: InspectorTabsState, action: Inspecto
     const next = action.tab;
     const index = state.tabs.findIndex(tab => tab.id === next.id || (
       tab.kind === 'subagent' && next.kind === 'subagent' && tab.detail.sessionId === next.detail.sessionId &&
-      (['taskId', 'toolCallId', 'childTurnId'] as const).some(key =>
+      tab.detail.task.remote?.connectionId === next.detail.task.remote?.connectionId &&
+      (['childSessionId', 'taskId', 'toolCallId', 'childTurnId'] as const).some(key =>
         Boolean(tab.detail.task[key]) && tab.detail.task[key] === next.detail.task[key])
     ));
     if (index < 0) return { tabs: [...state.tabs, action.tab], activeId: action.tab.id };
