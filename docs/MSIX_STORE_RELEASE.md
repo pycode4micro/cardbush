@@ -95,6 +95,10 @@ In particular verify:
 See [the implementation and evidence record](MSIX_CONNECTOR_REMEDIATION_PLAN_2026-09-28.md)
 and [the revised submission draft](../packaging/msix/store-submission.zh-CN.md).
 
+The [2026-09-29 installed validation](MSIX_INSTALLED_VALIDATION_2026-09-29.md)
+records actual 1.0.4.0 Chrome, upgrade/migration and uninstall results, WACK
+warnings, test-account limitations and the remaining Store-signed checks.
+
 For privacy text, review actual MSIX data-retention behavior before reusing the
 NSIS statement that uninstall preserves user data. Packaging can change storage
 and uninstall semantics.

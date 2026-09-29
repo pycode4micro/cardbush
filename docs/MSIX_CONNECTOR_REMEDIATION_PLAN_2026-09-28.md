@@ -55,4 +55,4 @@ WebSocket 检查回环地址、精确 Host/path、固定扩展 Origin、一次�
 
 最终包为 `release-msix/1.0.4.0-dq67mA/CardBush-1.0.4.0-x64.msix`，SHA-256 为 `dc7cd569ad3a6bb702a77bee78e2674d22c1ed56fd64ebce71dae20969556116`。此包包含收尾时修复的窄栏工具按钮溢出，取代此前的 `1.0.4.0-VpXEB1` 暂存构建。生产构建、MakeAppx 校验、依赖/隐私检查和包内应用/运行时/工具/连接器烟测通过；暂存应用的全部 321 个文件与实际 MSIX 解包结果逐一 SHA-256 相同。报告位于同目录 `msix-build-report.json`。
 
-该包未本地签名、安装、上传或提交；`releaseReady` 仍为 false。上述烟测不能替代包身份下的安装/升级/卸载验收。
+原始包保持未签名，未上传或提交。2026-09-29 已对独立测试签名副本完成包身份下的真实 Chrome、升级迁移及三种系统卸载验证；WACK 完整运行并保留警告。详见 [实际安装验证](MSIX_INSTALLED_VALIDATION_2026-09-29.md)，其中列明第二账号、最低版本组合和 Store 签名环境的剩余边界；`releaseReady` 仍为 false。

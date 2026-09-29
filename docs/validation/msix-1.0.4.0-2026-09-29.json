@@ -1,0 +1,506 @@
+{
+  "schema": "cardbush.installed_msix_evidence.v1",
+  "date": "2026-09-29",
+  "releaseReady": false,
+  "environment": {
+    "account": "current user with isolated package-local app data; existing test user not logged in",
+    "osBuild": "26200",
+    "chrome": "153.0.8010.54",
+    "appRunsElevated": false,
+    "windows": "Windows 11 Home",
+    "browserProfile": "fresh isolated test profile",
+    "modelRequests": 0,
+    "extension": "1.1.0"
+  },
+  "payload": {
+    "success": true,
+    "identicalPayloadEntries": 327,
+    "addedEntries": [
+      "AppxMetadata/CodeIntegrity.cat",
+      "AppxSignature.p7x"
+    ],
+    "metadataChange": "[Content_Types].xml: signature/catalog types and XML formatting only",
+    "sourceSha256": "dc7cd569ad3a6bb702a77bee78e2674d22c1ed56fd64ebce71dae20969556116",
+    "signedSha256": "06bf483e8b6f32bb34e31d1455708b2e31952b600a99c9b45b8eff288af42dfb"
+  },
+  "scenarios": [
+    {
+      "report": "installed-chrome.json",
+      "startedAt": "2026-09-29T01:10:16.517Z",
+      "completedAt": "2026-09-29T01:11:47.928Z",
+      "success": true,
+      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "checks": [
+        "default connector disabled",
+        "application paired with real Chrome extension",
+        "named pipe -> broker -> Chrome: create, list, debug, close",
+        "extension disabled: no reconnect after alarm interval",
+        "fresh Chrome session stays disconnected until explicit action",
+        "ordinary application restart preserves explicit enable and pairing",
+        "application disable revokes credentials and survives restart",
+        "old pairing rejected; fresh explicit pairing succeeds",
+        "remove clears live bridge and pairing, retains disabled marker"
+      ]
+    },
+    {
+      "report": "normal-uninstall-chrome.json",
+      "startedAt": "2026-09-29T01:17:36.517Z",
+      "completedAt": "2026-09-29T01:17:56.006Z",
+      "success": true,
+      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "checks": [
+        "default connector disabled",
+        "application paired with real Chrome extension",
+        "named pipe -> broker -> Chrome: create, list, debug, close",
+        "normal uninstall: package, connector data and registry absent"
+      ],
+      "uninstall": {
+        "mode": "normal",
+        "elevated": false,
+        "startedAt": "2026-09-29T09:17:55.1373824+08:00",
+        "completedAt": "2026-09-29T09:17:55.55363+08:00",
+        "filesBefore": [
+          {
+            "Name": "pairing.json",
+            "Length": 157
+          },
+          {
+            "Name": "preference.json",
+            "Length": 44
+          }
+        ],
+        "aclAllowPrincipals": [
+          "current user",
+          "SYSTEM"
+        ],
+        "packageRegisteredAfter": false,
+        "connectorRemains": false,
+        "packageDataRootRemains": false,
+        "nativeMessagingRegistrationRemains": false
+      }
+    },
+    {
+      "report": "running-uninstall-chrome.json",
+      "startedAt": "2026-09-29T01:17:57.006Z",
+      "completedAt": "2026-09-29T01:18:55.012Z",
+      "success": true,
+      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "checks": [
+        "default connector disabled",
+        "application paired with real Chrome extension",
+        "named pipe -> broker -> Chrome: create, list, debug, close",
+        "running uninstall: package, connector data and registry absent"
+      ],
+      "uninstall": {
+        "mode": "running",
+        "elevated": false,
+        "startedAt": "2026-09-29T09:18:00.9083868+08:00",
+        "completedAt": "2026-09-29T09:18:54.7555074+08:00",
+        "filesBefore": [
+          {
+            "Name": "bridge.json",
+            "Length": 267
+          },
+          {
+            "Name": "pairing.json",
+            "Length": 157
+          },
+          {
+            "Name": "preference.json",
+            "Length": 44
+          }
+        ],
+        "aclAllowPrincipals": [
+          "current user",
+          "SYSTEM"
+        ],
+        "packageRegisteredAfter": false,
+        "connectorRemains": false,
+        "packageDataRootRemains": false,
+        "nativeMessagingRegistrationRemains": false
+      }
+    },
+    {
+      "report": "crash-uninstall-chrome.json",
+      "startedAt": "2026-09-29T01:18:56.012Z",
+      "completedAt": "2026-09-29T01:19:01.414Z",
+      "success": true,
+      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "checks": [
+        "default connector disabled",
+        "application paired with real Chrome extension",
+        "named pipe -> broker -> Chrome: create, list, debug, close",
+        "crash uninstall: package, connector data and registry absent"
+      ],
+      "processDpiAwareness": 2,
+      "uninstall": {
+        "mode": "crash",
+        "elevated": false,
+        "startedAt": "2026-09-29T09:19:00.3187288+08:00",
+        "completedAt": "2026-09-29T09:19:00.7612474+08:00",
+        "filesBefore": [
+          {
+            "Name": "bridge.json",
+            "Length": 268
+          },
+          {
+            "Name": "pairing.json",
+            "Length": 157
+          },
+          {
+            "Name": "preference.json",
+            "Length": 44
+          }
+        ],
+        "aclAllowPrincipals": [
+          "current user",
+          "SYSTEM"
+        ],
+        "packageRegisteredAfter": false,
+        "connectorRemains": false,
+        "packageDataRootRemains": false,
+        "nativeMessagingRegistrationRemains": false
+      }
+    },
+    {
+      "report": "legacy-baseline.json",
+      "startedAt": "2026-09-29T01:21:40.199Z",
+      "completedAt": "2026-09-29T01:21:58.183Z",
+      "success": true,
+      "packageIdentity": "cardbush.cardbush_1.0.3.0_x64__4n55t5wh0acn2",
+      "checks": [
+        "legacy installed application registered its actual Native Messaging host"
+      ],
+      "processDpiAwareness": 2
+    },
+    {
+      "report": "upgraded-chrome.json",
+      "startedAt": "2026-09-29T01:23:15.475Z",
+      "completedAt": "2026-09-29T01:24:46.877Z",
+      "success": true,
+      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "checks": [
+        "upgrade reports existing external legacy registration",
+        "default connector disabled",
+        "application paired with real Chrome extension",
+        "named pipe -> broker -> Chrome: create, list, debug, close",
+        "extension disabled: no reconnect after alarm interval",
+        "fresh Chrome session stays disconnected until explicit action",
+        "ordinary application restart preserves explicit enable and pairing",
+        "application disable revokes credentials and survives restart",
+        "old pairing rejected; fresh explicit pairing succeeds",
+        "remove clears live bridge and pairing, retains disabled marker"
+      ],
+      "processDpiAwareness": 2
+    }
+  ],
+  "upgradePreservation": {
+    "oldVersion": "1.0.3.0",
+    "completedAt": "2026-09-29T09:23:15.3485241+08:00",
+    "markerPreserved": true,
+    "success": true,
+    "newVersion": "1.0.4.0",
+    "legacyManifestPreserved": true
+  },
+  "legacyMigration": {
+    "repeatSafe": true,
+    "completedAt": "2026-09-29T09:25:33.8293086+08:00",
+    "oldManifestRemoved": true,
+    "usedUnmodifiedPackagedHelper": true,
+    "chromeProfilePreserved": true,
+    "success": true,
+    "workFilePreserved": true,
+    "externalRegistryRemoved": true
+  },
+  "wack": {
+    "optionalFailure": 1,
+    "requiredFailures": 0,
+    "dpiCorroboration": {
+      "binaryManifestDpiAware": "true/pm",
+      "warningRetained": true,
+      "runtimeGetProcessDpiAwareness": 2
+    },
+    "pass": 22,
+    "overall": "WARNING",
+    "tests": [
+      {
+        "name": "安装已签名的驱动程序和可执行文件",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "用户账户控制运行级别",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "应用程序计数",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "应用清单",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "文件关联谓词",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "注册表检查",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "企业功能",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "资源包",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "禁止文件分析器",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "私有代码签名",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "应用资源",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "品牌",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "调试配置",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "特殊用途功能",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "ExclusiveTo 属性",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "类型位置",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "类型名称区分大小写",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "类型名称正确性",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "一般元数据正确性",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "属性",
+        "optional": false,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "存档文件使用",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "已阻止的可执行文件",
+        "optional": true,
+        "result": "FAIL",
+        "messages": [
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-5705b1eb7be753b9.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\CardBush.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\app.asar.unpacked\\node_modules\\@img\\sharp-win32-x64\\lib\\libvips-42.dll 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-f8ed893fc21d3109.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-8442c593c8147f95.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-b1ab6c67059faa5f.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-f6729fb0c0888af6.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-f2f4f8a2ccd7decf.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\process-guard\\CardBushProcessHost-3ee07c6f4959f8c5.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 [PACKAGE]\\app\\resources\\runtime-tools\\ripgrep\\win32-x64\\rg.exe 包含对“启动流程”相关 API kernel32.dll!CreateProcessW 的引用",
+          "文件 CardBush.exe 包含对\"CMd\"的不可执行引用。",
+          "文件 CardBush.exe 包含对\"dNx\"的不可执行引用。",
+          "文件 CardBush.exe 包含对\"cDb\"的不可执行引用。",
+          "文件 CardBush.exe 包含对\"CSI\"的不可执行引用。",
+          "文件 CardBush.exe 包含对\"rEG\"的不可执行引用。",
+          "文件 CardBush.exe 包含对\"cmd.exe\"的不可执行引用。",
+          "文件 CardBush.exe 包含对\"bash\"的不可执行引用。",
+          "文件 d3dcompiler_47.dll 包含对\"reg\"的不可执行引用。",
+          "文件 d3dcompiler_47.dll 包含对\"cmd\"的不可执行引用。",
+          "文件 dxcompiler.dll 包含对\"CDb\"的不可执行引用。",
+          "文件 dxcompiler.dll 包含对\"DNX\"的不可执行引用。",
+          "文件 dxcompiler.dll 包含对\"BasH\"的不可执行引用。",
+          "文件 dxcompiler.dll 包含对\"reg\"的不可执行引用。",
+          "文件 icudtl.dat 包含对\"Reg\"的不可执行引用。",
+          "文件 resources.pak 包含对\"cmd\"的不可执行引用。",
+          "文件 resources.pak 包含对\"CsI\"的不可执行引用。",
+          "文件 resources.pak 包含对\"CDb\"的不可执行引用。",
+          "文件 resources.pak 包含对\"dNx\"的不可执行引用。",
+          "文件 resources.pak 包含对\"Reg\"的不可执行引用。",
+          "文件 vk_swiftshader.dll 包含对\"reg\"的不可执行引用。",
+          "文件 af.pak 包含对\"reg\"的不可执行引用。",
+          "文件 sv.pak 包含对\"reg\"的不可执行引用。",
+          "文件 app.asar 包含对\"powershell\"的不可执行引用。",
+          "文件 app.asar 包含对\"cmd\"的不可执行引用。",
+          "文件 app.asar 包含对\"bash\"的不可执行引用。",
+          "文件 app.asar 包含对\"cmd.exe\"的不可执行引用。",
+          "文件 app.asar 包含对\"powershell.exe\"的不可执行引用。",
+          "文件 app.asar 包含对\"bash.exe\"的不可执行引用。",
+          "文件 app.asar 包含对\"csi\"的不可执行引用。",
+          "文件 app.asar 包含对\"reg\"的不可执行引用。",
+          "文件 app.asar 包含对\"MSBuild\"的不可执行引用。",
+          "文件 app.asar 包含对\"MSBuild.exe\"的不可执行引用。",
+          "文件 app.asar 包含对\"reg.exe\"的不可执行引用。",
+          "文件 app.asar 包含对\"CDb\"的不可执行引用。",
+          "文件 computerUseErrors.ts 包含对\"PowerShell\"的不可执行引用。",
+          "文件 computerUseNativeCode.ts 包含对\"PowerShell\"的不可执行引用。",
+          "文件 computerUsePowerShell.ts 包含对\"PowerShell\"的不可执行引用。",
+          "文件 computerUsePowerShell.ts 包含对\"powershell.exe\"的不可执行引用。",
+          "文件 computerUsePresentation.ts 包含对\"powershell.exe\"的不可执行引用。",
+          "文件 computerUseProgress.ts 包含对\"PowerShell\"的不可执行引用。",
+          "文件 computerUseRuntime.ts 包含对\"powershell\"的不可执行引用。",
+          "文件 libvips-42.dll 包含对\"reg\"的不可执行引用。",
+          "文件 cleanup-legacy.ps1 包含对\"PowerShell\"的不可执行引用。",
+          "文件 rg.exe 包含对\"Bash\"的不可执行引用。",
+          "文件 rg.exe 包含对\"PowerShell\"的不可执行引用。",
+          "文件 rg.exe 包含对\"cmd\"的不可执行引用。",
+          "文件 rg.exe 包含对\"msbuild\"的不可执行引用。",
+          "文件 rg.exe 包含对\"cmd.exe\"的不可执行引用。",
+          "文件 rg.exe 包含对\"\\cmd.exe\"的不可执行引用。",
+          "文件 plugin-contract.md 包含对\"Bash\"的不可执行引用。",
+          "文件 plugin-contract.md 包含对\"PowerShell\"的不可执行引用。",
+          "文件 plugin-contract.md 包含对\"cmd\"的不可执行引用。"
+        ]
+      },
+      {
+        "name": "平台的相应文件",
+        "optional": true,
+        "result": "PASS",
+        "messages": [
+          ""
+        ]
+      },
+      {
+        "name": "DPIAwarenessValidation",
+        "optional": false,
+        "result": "WARNING",
+        "messages": [
+          "未能处理二进制文件 [PACKAGE]\\app\\CardBush.exe。",
+          "应用 cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2 不是 DPI 感知应用。"
+        ]
+      }
+    ],
+    "version": "10.0.28000.2705",
+    "partialRun": false,
+    "warning": 1
+  },
+  "cleanup": {
+    "currentUserPackageRemoved": true,
+    "wack": "installed for future validation",
+    "currentUserPackageDataRemoved": true,
+    "testChromeProfiles": "retained: automatic approval rejected recursive cleanup",
+    "existingTestUserInteractiveValidation": false,
+    "temporaryTasksRemaining": 0,
+    "currentUserLegacyRegistrationRemoved": true,
+    "existingTestUserPackageRegistrations": [
+      "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2"
+    ],
+    "signingPrivateKeysDeleted": true,
+    "temporaryCertificateTrustRemoved": 2
+  },
+  "remaining": [
+    "Second Windows account interactive isolation and cross-account access denial",
+    "Minimum supported Windows build and Chrome version combinations",
+    "Store-signed distribution with system protection enabled",
+    "WACK DPI parsing warning remains, despite manifest and runtime DPI evidence",
+    "Old external registration requires the documented separate migration step"
+  ]
+}

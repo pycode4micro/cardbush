@@ -29,4 +29,4 @@ SHA-256：`dc7cd569ad3a6bb702a77bee78e2674d22c1ed56fd64ebce71dae20969556116`。
 
 MakeAppx 校验、解包、依赖/隐私检查、应用/运行时/工具启动、原生图标、生产主机 ACL 和包内连接器往返通过。构建目录全部 321 个文件与实际 MSIX 解包结果逐一 SHA-256 相同。详细报告和烟测日志与包同目录，均保留在本机。
 
-未签名安装、上传或提交此包，`releaseReady: false` 保持不变。仍需隔离环境验证包身份下的真实 Chrome 配对、旧版升级、多账户和各卸载路径，并运行 WACK；Store 分发签名和系统保护开启环境另行验收。完整场景见 [连接器整改记录](MSIX_CONNECTOR_REMEDIATION_PLAN_2026-09-28.md)。
+原始提交包保持未签名，未上传或提交。后续已使用独立测试签名副本完成真实安装、Chrome 配对、旧版升级/迁移及正常、运行中、崩溃后卸载；WACK 完整运行，结果 WARNING，未出现必测项 FAIL。详见 [安装验证与剩余边界](MSIX_INSTALLED_VALIDATION_2026-09-29.md)。`releaseReady: false` 保持不变，第二账号交互隔离和 Store 签名/系统保护开启环境仍需验收。
