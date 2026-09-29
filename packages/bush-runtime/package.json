@@ -17,6 +17,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./workspace-diff": {
+      "types": "./dist/workspaceDiff.d.ts",
+      "import": "./dist/workspaceDiff.js"
     }
   },
   "scripts": {

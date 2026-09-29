@@ -39,18 +39,21 @@ module.exports = async ({ run, until, click, choose, edit, pause, window: win, r
     composerProps.onDraftChange = value => {composerProps.draft = value; renderComposer();};
     composerProps.onSend = async text => sentStyles.push({text, style:styleFixture.resolveConversationStyle(composerSession)});
     renderComposer();`);
-  await until("document.querySelector('.composer-style-select button')?.textContent.includes('默认 · 专业')");
-  await choose('.composer-style-select button', 'custom-legacy');
-  await until("styleFixture.resolveConversationStyle('first-chat').mode === 'custom'");
-  assert.equal(await run('styleFixture.readConversationStyle().defaultId'), 'professional');
-  await run("composerSession = 'second-chat'; renderComposer()");
-  await until("document.querySelector('.composer-style-select button')?.value === ''");
+  await until("!!document.querySelector('[data-composer-input]')");
+  assert.equal(await run("document.querySelector('.composer-style-select')"), null, 'style selection has no persistent composer toolbar entry');
   const typeCommand = async value => {
     await run(`(() => { const input=document.querySelector('[data-composer-input]'); input.focus();
       if(input instanceof HTMLTextAreaElement) {Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)}); input.setSelectionRange(input.value.length,input.value.length);}
       else {input.textContent=${JSON.stringify(value)}; const range=document.createRange();range.selectNodeContents(input);range.collapse(false);getSelection().removeAllRanges();getSelection().addRange(range);}
       input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); })()`);
   };
+  await typeCommand('/style 耐心同事');
+  await until("document.querySelector('.composer-command-row strong')?.textContent === '耐心同事'");
+  await run("document.querySelector('[data-command-id=\"style:custom-legacy\"]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))");
+  await until("styleFixture.resolveConversationStyle('first-chat').mode === 'custom'");
+  assert.equal(await run('styleFixture.readConversationStyle().defaultId'), 'professional');
+  await run("composerSession = 'second-chat'; renderComposer()");
+  await until("styleFixture.resolveConversationStyle('second-chat').mode === 'professional'");
   await typeCommand('保留这段草稿 /style 教练');
   await until("document.querySelector('.composer-command-row strong')?.textContent === '教练'");
   await run("document.querySelector('[data-composer-input]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}))");
@@ -67,22 +70,26 @@ module.exports = async ({ run, until, click, choose, edit, pause, window: win, r
   await typeCommand('/风格');
   await until("document.querySelectorAll('.composer-command-row').length === 6");
   await run("document.querySelector('[data-command-id=\"style:default\"]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))");
-  await until("document.querySelector('.composer-style-select button')?.value === ''");
+  await until("styleFixture.readConversationStyleOverride('second-chat') === null");
   await run("composerSession='first-chat'; renderComposer()");
-  await until("document.querySelector('.composer-style-select button')?.value === 'custom-legacy'");
+  await until("styleFixture.readConversationStyleOverride('first-chat') === 'custom-legacy'");
   await run("styleFixture.saveConversationStyle({...styleFixture.readConversationStyle(),styles:styleFixture.readConversationStyle().styles.filter(s=>s.id!=='custom-legacy')})");
-  await until("document.querySelector('.composer-style-select button')?.textContent.includes('默认 · 专业')");
+  await until("styleFixture.resolveConversationStyle('first-chat').mode === 'professional'");
+  await typeCommand('/style');
+  await until("document.querySelector('[data-command-id=\"style:default\"] strong')?.textContent === '默认 · 专业'");
   await run("composerProps.language='en'; renderComposer()");
-  await until("document.querySelector('.composer-style-select button')?.textContent.includes('Default · Professional')");
+  await until("document.querySelector('[data-command-id=\"style:default\"] strong')?.textContent === 'Default · Professional'");
+  await typeCommand('');
   for (const width of [700, 360]) {
     win.setSize(width, 720); await pause(80);
     assert.equal(await run("document.documentElement.scrollWidth <= innerWidth"), true);
-    assert.equal(await run("(() => {const a=document.querySelector('.composer-style-select').getBoundingClientRect(); const b=document.querySelector('.composer-actions').getBoundingClientRect();return a.width>25 && a.right<=b.left;})()"), true, 'style tag stays separate from send controls');
+    assert.equal(await run("(() => {const a=document.querySelector('.composer-tools').getBoundingClientRect(); const b=document.querySelector('.composer-actions').getBoundingClientRect();return a.right<=b.left;})()"), true, 'composer toolbar stays separate from send controls');
   }
   win.webContents.invalidate(); await pause(100);
   fs.writeFileSync(path.join(root, 'tmp/composer-style-narrow.png'), (await win.webContents.capturePage(undefined, {stayHidden:true})).toPNG());
   win.setSize(1200,850);
   await run("composerHost={id:'remote:first-chat',environmentId:'remote',conversationStyleAvailable:false,plugins:[],pluginCommands:[]}; renderComposer()");
-  await until("!document.querySelector('.composer-style-select')");
+  await typeCommand('/style');
+  await until("!!document.querySelector('.composer-command-empty')");
   await run("composerHost=undefined; composerProps.language='zh'; composerProps.draft=''; settingsProps.settings.conversationStyle=styleFixture.readConversationStyle()");
 };

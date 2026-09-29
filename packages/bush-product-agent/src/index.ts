@@ -45,7 +45,7 @@ At task start and before a new capability or deliverable phase, find and read ap
 
 Consider useful parallel work early. Coordinate shared edits and pending dependencies, continue independent work while children run, and reconcile their results before finishing. Keep work that depends on your next result until it is ready. As a child Agent, complete and verify only the assigned work, report remaining dependencies to the parent, and do not delegate further or take over the parent's concurrent work.
 
-For local pages and development previews, use CardBush's integrated browser by default. Use chrome_devtools when the task needs the user's current Chrome cookies or signed-in state. Respect session boundaries. Never launch a managed or temporary automation profile or silently switch profiles when a connector is unavailable.
+For local pages and development previews, use CardBush's integrated browser by default. Use browser_use when the task needs the user's Chrome or Edge sign-in on Windows 11. Use list_browsers and select_browser for an explicitly requested browser/profile; otherwise use the configured default. A session stays bound to its selected connection. After disconnect or an uncertain action, reconnect and observe before retrying. Respect session boundaries. Never launch a managed or temporary automation profile or silently switch profiles when a connector is unavailable.
 
 ${LOCAL_DELIVERABLE_INSTRUCTIONS}
 

@@ -65,6 +65,10 @@ async function buildViews() {
     'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text' ? [
+      'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh-review' ? ['src/features/chat/GitBranchMenu.tsx', 'src/features/chatMessages/LocalFileReferenceLink.tsx', 'src/features/chatMessages/fileReferences.ts'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh' ? ['src/features/ssh/SshConnectionsPanel.tsx', 'src/features/ssh/WorkspaceLocationPicker.tsx'] : []),
     'src/hooks/useSoftPanelPresence.ts',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'compact-window' ? [
@@ -241,7 +245,7 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'app-center', 'page-navigation'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
+      if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation') {
       await require('./helpers/page-navigation.cjs')({ run, until, pause, window, root });
@@ -270,6 +274,11 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no HTML lifecycle renderer errors');
       assert.deepEqual(errors, []);
       return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh-review') {
+      await require('./helpers/ssh-review.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no SSH review renderer errors');
+      assert.deepEqual(errors, []); console.log('SSH references and review UI passed.'); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-preview') {
       await require('./helpers/review-preview.cjs')({ run, until, pause, window, root });
@@ -343,7 +352,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -521,6 +530,10 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text') {
+      await require('./helpers/composer-pasted-text.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no pasted text renderer errors'); assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'app-center') {
       await require('./helpers/app-center.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no app center renderer errors'); assert.deepEqual(errors, []); return;
@@ -677,6 +690,7 @@ app.whenReady().then(async () => {
       return;
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'submission-motion') {
+      await require('./helpers/chat-change-summary-transition.cjs')({ run, until, pause });
       await require('./helpers/chat-submission-motion.cjs')({ run, until, pause, window, root });
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'submission-motion') {

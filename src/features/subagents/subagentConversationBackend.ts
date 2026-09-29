@@ -42,7 +42,7 @@ export function subagentConversationBackend({ base = localConversationBackend, r
         if (!alive) return;
         const child = tasks.filter(task => task.childSessionId === id);
         const running = child.find(task => !task.terminal);
-        listener({ activeTurnId: jobs?.activeTurnId || running?.childTurnId,
+        listener({ activeTurnId: jobs?.activeTurnId || running?.childTurnId, queueState: jobs?.queueState,
           queued: jobs?.queued ?? [], revision: `${jobs?.revision ?? ''}|${child.map(task => `${task.taskId}:${task.status}:${task.updatedAt}`).join('|')}` });
       };
       const stopJobs = base.watchSession?.(id, state => { jobs = state; publish(); }, onError);

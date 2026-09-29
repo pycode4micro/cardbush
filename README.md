@@ -17,11 +17,13 @@ Source version: **1.0.0-beta.4**. The installers below become available when bot
 
 Both packages use the same Beta 4 source tag. This update adds independent Agent services and SSH workspaces, an App Center, shared local/remote conversations and settings, command sandboxes, and improvements to tool execution and context recovery. See the [release notes](docs/releases/1.0.0-beta.4.md). Releases include SHA-256 checksums and packaged startup reports; a successful main-branch build alone does not publish a release.
 
-Current development targets Windows 11 only (build 22000 or later), including Store MSIX packages and the Chrome native connector. Older published downloads may have different requirements. There is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8/10 and macOS packages are not supported by the current Windows build. The Windows release workflow requires a publisher signing certificate; ordinary CI builds produce unsigned development installers.
+Current development targets Windows 11 only (build 22000 or later), including Store MSIX packages and the Browser Use connector (Chrome / Edge). Older published downloads may have different requirements. There is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8/10 and macOS packages are not supported by the current Windows build. The Windows EXE release workflow requires a publisher signing certificate; ordinary CI builds produce unsigned development installers.
+
+Store MSIX packages use a separate four-part version and are signed by Microsoft during certification. Locally test-signed copies must not be uploaded. See the [MSIX submission preparation](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md) for the current candidate and review materials; preparing them does not mean certification has been submitted or approved.
 
 ### Install and start
 
-**Windows:** open the installer, choose an installation directory and launch CardBush. Uninstalling the application retains your local conversations and settings.
+**Windows EXE:** open the installer, choose an installation directory and launch CardBush. EXE uninstall retains local conversations and settings. MSIX installation and application data are managed by Windows; normal system uninstall removes package-owned data. Separately saved workspace files, browser profiles and manually installed extensions are preserved.
 
 **Linux:** download the AppImage, allow it to execute, then run it:
 
@@ -59,7 +61,7 @@ Team workflows are a separate installable plugin, not part of the desktop bundle
 | Bundled search | Native ripgrep | Native ripgrep |
 | Command sandbox | AppContainer | bubblewrap, when supported by the host |
 | Windows computer-use plugin | Yes | Unavailable |
-| Chrome native connector | Yes | Unavailable; integrated browser remains available |
+| Browser Use connector (Chrome / Edge) | Yes | Unavailable; integrated browser remains available |
 | Native process CPU / memory enforcement | Windows Job Objects | Not yet implemented |
 | Managed process admission and owned-process cleanup | Yes | Yes |
 

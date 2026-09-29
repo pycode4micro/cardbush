@@ -51,6 +51,8 @@ type RuntimeStartupStatus = {
 };
 
 type ChromeConnectorStatus = {
+  defaultConnectionId: string;
+  connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
   transport: 'loopback_websocket';
   cleanupWarning?: string;
@@ -95,6 +97,8 @@ type ShadowWindowPayload = {
 
 const desktopApi = {
   agents: {
+    syncCatalog: () => ipcRenderer.invoke('agents:command', 'sync-catalog'),
+    syncConfiguration: (id: string) => ipcRenderer.invoke('agents:command', 'sync-configuration', id),
     filePreview: (id: string, sessionId: string, path: string) => ipcRenderer.invoke('agents:command', 'file-preview', { id, sessionId, path }),
     releaseFilePreview: (id: string) => ipcRenderer.invoke('agents:command', 'release-file-preview', id),
     list: () => ipcRenderer.invoke('agents:command', 'list'),
@@ -175,7 +179,9 @@ const desktopApi = {
     ipcRenderer.invoke('chrome-connector:status') as Promise<ChromeConnectorStatus>,
   setupChromeConnector: () =>
     ipcRenderer.invoke('chrome-connector:setup') as Promise<ChromeConnectorStatus>,
-  pairChromeConnector: () => ipcRenderer.invoke('chrome-connector:pair') as Promise<{ code: string; expiresAt: string }>,
+  pairChromeConnector: (input?: { browser?: 'chrome' | 'edge'; label?: string }) => ipcRenderer.invoke('chrome-connector:pair', input) as Promise<{ code: string; expiresAt: string; id: string; browser: 'chrome' | 'edge' }>,
+  selectDefaultBrowserConnection: (id: string) => ipcRenderer.invoke('browser-connector:select-default', id) as Promise<ChromeConnectorStatus>,
+  revokeBrowserConnection: (id: string) => ipcRenderer.invoke('browser-connector:revoke', id) as Promise<ChromeConnectorStatus>,
   copyLegacyChromeConnectorCleanup: () => ipcRenderer.invoke('chrome-connector:copy-legacy-cleanup') as Promise<void>,
   disableChromeConnector: () => ipcRenderer.invoke('chrome-connector:disable') as Promise<ChromeConnectorStatus>,
   removeChromeConnector: () => ipcRenderer.invoke('chrome-connector:remove') as Promise<ChromeConnectorStatus>,
@@ -322,6 +328,11 @@ const desktopApi = {
     id: string;
     manifestPath: string;
   } | null>,
+  pastedTextAttachments: {
+    create: (text: string) => ipcRenderer.invoke('files:pasted-text', 'create', text),
+    retain: (ids: string[]) => ipcRenderer.invoke('files:pasted-text', 'retain', ids),
+    discard: (id: string) => ipcRenderer.invoke('files:pasted-text', 'discard', id),
+  },
   pluginCommands: () => ipcRenderer.invoke('plugins:commands'),
   uninstallPlugin: (pluginId: string) => ipcRenderer.invoke('plugins:uninstall', pluginId),
   pluginMarketSources: () => ipcRenderer.invoke('plugins:market-sources'),

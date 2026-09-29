@@ -1,11 +1,10 @@
-import { open, realpath, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { basename, isAbsolute } from 'node:path';
 import { sourceMemoInputSchema, sourceMemoSchema, parseSourceMemoReference,
   type SourceEvidence, type SourceMemoResolution } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
-import { authorizePath } from './workspaceAccessPolicy.js';
+import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
+import type { RemoteWorkspaceBridge } from './workspaceTools.js';
 import type { ToolPermissionRequest } from './toolRegistry.js';
 
 const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
@@ -13,48 +12,28 @@ export function sourceMemoReference(identity: { number: number; sessionId: strin
   const guard = createHash('sha256').update(JSON.stringify([identity.sessionId, identity.turnId, identity.toolCallId])).digest('hex').slice(0, 16);
   return `cardbush-source:${identity.number}-${guard}`;
 }
-async function snapshot(input: { target: string; label?: string; locator?: SourceEvidence['locator'] }, signal?: AbortSignal): Promise<SourceEvidence> {
+async function snapshot(input: { target: string; label?: string; locator?: SourceEvidence['locator'] }, signal?: AbortSignal, remote?: RemoteWorkspaceBridge): Promise<SourceEvidence> {
   if (/^https?:\/\//i.test(input.target)) {
     const url = new URL(input.target);
     if (url.username || url.password) throw new Error('Source URLs must not contain credentials.');
     return { ...input, target: url.href, kind: 'url', label: input.label || url.hostname };
   }
-  if (!isAbsolute(input.target)) throw new Error('A Source target must be an absolute file path or an HTTP(S) URL.');
-  signal?.throwIfAborted();
-  const target = await realpath(input.target);
-  const handle = await open(target, 'r');
-  try {
-    const before = await handle.stat();
-    if (!before.isFile()) throw new Error('Source evidence must be a file.');
-    let excerpt: string | undefined;
-    let sha256: string | undefined;
-    // Bound memory and avoid loading large media merely to annotate a conclusion.
-    if (before.size <= MAX_SNAPSHOT_BYTES) {
-      const buffer = Buffer.alloc(before.size);
-      let offset = 0;
-      while (offset < buffer.length) {
-        signal?.throwIfAborted();
-        const read = await handle.read(buffer, offset, buffer.length - offset, offset);
-        if (!read.bytesRead) break;
-        offset += read.bytesRead;
-      }
-      sha256 = createHash('sha256').update(buffer.subarray(0, offset)).digest('hex');
-      if (input.locator?.line) {
-        const content = buffer.toString('utf8');
-        if (content.includes('\0') || content.includes('\uFFFD')) throw new Error('Line locators require a UTF-8 text file.');
-        const lines = content.split(/\r?\n/);
-        if (input.locator.line > lines.length || (input.locator.endLine ?? input.locator.line) > lines.length) throw new Error('Source line is outside the file.');
-        excerpt = lines.slice(input.locator.line - 1, Math.min(input.locator.endLine ?? input.locator.line + 3, input.locator.line + 19)).join('\n').slice(0, 1600);
-      }
-    } else if (input.locator?.line) throw new Error('Use a file reference without a line locator for files larger than 2 MiB.');
-    const after = await handle.stat();
-    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error('File changed while recording Source; retry after the edit finishes.');
-    return { ...input, target, kind: 'file', label: input.label || basename(target),
-      version: { size: after.size, mtimeMs: after.mtimeMs, ...(sha256 ? { sha256 } : {}) }, ...(excerpt !== undefined ? { excerpt } : {}) };
-  } finally { await handle.close(); }
+  const file = await readMemoFile(input.target, MAX_SNAPSHOT_BYTES, remote, signal);
+  let excerpt: string | undefined;
+  if (input.locator?.line) {
+    if (!file.content) throw Error('Use a file reference without a line locator for files larger than 2 MiB.');
+    const content = file.content.toString('utf8');
+    if (content.includes('\0') || content.includes('\uFFFD')) throw Error('Line locators require a UTF-8 text file.');
+    const lines = content.split(/\r?\n/);
+    if (input.locator.line > lines.length || (input.locator.endLine ?? input.locator.line) > lines.length) throw Error('Source line is outside the file.');
+    excerpt = lines.slice(input.locator.line - 1, Math.min(input.locator.endLine ?? input.locator.line + 3, input.locator.line + 19)).join('\n').slice(0, 1600);
+  }
+  return { ...input, target: file.path, kind: 'file', label: input.label || file.name,
+    version: { size: file.size, mtimeMs: file.mtimeMs, ...(file.content ? { sha256: createHash('sha256').update(file.content).digest('hex') } : {}) },
+    ...(excerpt !== undefined ? { excerpt } : {}) };
 }
 
-export async function resolveSourceMemo(store: ToolExecutionStore, reference: string): Promise<SourceMemoResolution> {
+export async function resolveSourceMemo(store: ToolExecutionStore, reference: string, remote?: RemoteWorkspaceBridge): Promise<SourceMemoResolution> {
   const number = parseSourceMemoReference(reference);
   if (!number) return { status: 'unresolved', reason: 'invalid_reference' };
   const identity = store.getFileMemoReference(number);
@@ -65,11 +44,10 @@ export async function resolveSourceMemo(store: ToolExecutionStore, reference: st
   const evidenceStatus = await Promise.all(parsed.data.sources.map(async source => {
     if (source.kind === 'url') return 'link' as const;
     try {
-      const file = await stat(source.target);
-      if (!file.isFile()) return 'unavailable' as const;
+      const file = await readMemoFile(source.target, 0, remote);
       if (file.size !== source.version?.size || file.mtimeMs !== source.version.mtimeMs) return 'changed' as const;
       if (source.version.sha256) {
-        const current = await snapshot({ target: source.target });
+        const current = await snapshot({ target: source.target }, undefined, remote);
         if (current.version?.sha256 !== source.version.sha256) return 'changed' as const;
       }
       return 'available' as const;
@@ -78,11 +56,11 @@ export async function resolveSourceMemo(store: ToolExecutionStore, reference: st
   return { status: 'resolved', memo: parsed.data, evidenceStatus };
 }
 
-export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecutionStore): void {
+export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecutionStore, remote?: RemoteWorkspaceBridge): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'source_memo', risk: 'low' as const,
     owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
   registry.register({
-    definition: { name: 'remember_source', description: 'Prewrite a supplemental rationale for a worthwhile final-answer claim, change or review finding. Attach up to 8 actual supporting absolute file paths or HTTP(S) links; omit sources for your own design judgment (displayed as Agent explanation). These are your notes, not independently verified conclusions. Optional locator: line/endLine, page, object or normalized image region. The host captures file version and a small text excerpt for line locators; links are not fetched or verified. Use the exact returned Markdown marker beside the relevant prose; keep the final answer self-contained without copying the note into its summary. Do not replace ordinary file, image, download or web links, annotate every sentence, invent evidence, or store secrets. Each note is immutable; create a new one for a new conclusion. Use read_source_memos to retrieve previous markers. Source off means do not create or add these annotations for that turn.',
+    definition: { name: 'remember_source', description: 'Prewrite a supplemental rationale for a worthwhile final-answer claim, change or review finding. Attach up to 8 actual supporting absolute local file paths, ssh://saved-connection-id/absolute/file paths for remote evidence, or HTTP(S) links; omit sources for your own design judgment (displayed as Agent explanation). These are your notes, not independently verified conclusions. Optional locator: line/endLine, page, object or normalized image region. The host captures file version and a small text excerpt for line locators; links are not fetched or verified. Use the exact returned Markdown marker beside the relevant prose; keep the final answer self-contained without copying the note into its summary. Do not replace ordinary file, image, download or web links, annotate every sentence, invent evidence, or store secrets. Each note is immutable; create a new one for a new conclusion. Use read_source_memos to retrieve previous markers. Source off means do not create or add these annotations for that turn.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['explanation'], properties: {
         explanation: { type: 'string', minLength: 1, maxLength: 600,
           description: 'Brief natural prose explaining why the change is needed, how evidence supports the claim, or why this approach was chosen. Add a concrete cause, constraint, consequence or tradeoff beyond the final-answer summary; do not recap edits or passing tests. Distinguish necessary properties from optional implementations. State uncertainty; never invent reasons or present a design choice as uniquely necessary. Skip the annotation if it adds no information. No fixed headings or template.' },
@@ -101,8 +79,7 @@ export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecu
       let request: ToolPermissionRequest | undefined;
       for (const source of context.input.sources) {
         if (/^https?:\/\//i.test(source.target)) continue;
-        if (!isAbsolute(source.target)) throw new Error('Source file paths must be absolute.');
-        const decision = await authorizePath('read')({ ...context, input: { path: source.target } });
+        const decision = await authorizeMemoFile({ ...context, input: { path: source.target } }, remote);
         if (decision.kind === 'ask') request = request ? { ...request,
           targets: [...request.targets, ...decision.request.targets], capabilityIds: [...request.capabilityIds, ...decision.request.capabilityIds] } : decision.request;
       }
@@ -115,7 +92,7 @@ export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecu
     },
     execute: async context => {
       const sources: SourceEvidence[] = [];
-      for (const source of context.input.sources) sources.push(await snapshot(source, context.signal));
+      for (const source of context.input.sources) sources.push(await snapshot(source, context.signal, remote));
       context.signal?.throwIfAborted();
       const number = store.reserveFileMemoReference({ sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id });
       // The locator number is host-local. Guard it with the immutable execution

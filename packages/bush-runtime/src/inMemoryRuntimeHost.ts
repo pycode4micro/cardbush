@@ -379,8 +379,8 @@ export class InMemoryRuntimeHost {
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
     registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
-    registerFileMemoTools(this.#toolRegistry, this.#toolExecutions);
-    registerSourceMemoTools(this.#toolRegistry, this.#toolExecutions);
+    registerFileMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
+    registerSourceMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
     this.#solutions = new RuntimeSolutionBroker(this.#eventLog);
     registerInteractionTools(this.#toolRegistry, this.#solutions);
     const runtimeDataRoot = resolve(
@@ -1022,7 +1022,7 @@ export class InMemoryRuntimeHost {
       case RESOLVE_SOURCE_MEMO_COMMAND: {
         const reference = (command.payload as { reference?: unknown })?.reference;
         if (typeof reference !== "string") throw new Error("Source reference is required.");
-        return resolveSourceMemo(this.#toolExecutions, reference);
+        return resolveSourceMemo(this.#toolExecutions, reference, this.#remoteWorkspace);
       }
       case RESOLVE_FILE_MEMO_COMMAND: {
         const payload = command.payload as { reference?: unknown; sessionId?: unknown; turnId?: unknown; fileName?: unknown };
@@ -1032,7 +1032,7 @@ export class InMemoryRuntimeHost {
           sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : undefined,
           turnId: typeof payload.turnId === 'string' ? payload.turnId : undefined,
           fileName: typeof payload.fileName === 'string' ? payload.fileName : undefined,
-        });
+        }, this.#remoteWorkspace);
       }
       case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
         const identity = toolExecutionIdentitySchema.parse(command.payload);
@@ -2798,7 +2798,7 @@ export class InMemoryRuntimeHost {
               details: { rounds: round, recoveryAttempts: emptyStopRetries },
             });
           }
-          const fileLinks = await validateFileMemoLinks(this.#toolExecutions, completedRound.text, identity);
+          const fileLinks = await validateFileMemoLinks(this.#toolExecutions, completedRound.text, identity, this.#remoteWorkspace);
           if (fileLinks.invalid.length) {
             if (fileReferenceRetries++ < 1) {
               const correction: ModelMessage = { role: 'user', name: 'file_reference_correction', visibility: 'internal',
@@ -3607,6 +3607,10 @@ export class InMemoryRuntimeHost {
       .slice(-WORKSPACE_REVIEW_TURN_LIMIT).map(turn => turn.turnId));
     if (input.turnIds.some(turnId => !retainedTurns.has(turnId))) {
       throw Object.assign(new Error("Only the current and previous Turn can be reverted or restored."), { code: "workspace_checkpoint_expired" });
+    }
+    if (input.turnIds.some(turnId => this.#toolExecutions.listTurn(input.sessionId, turnId)
+      .some(record => record.workspaceChanges.some(change => change.metadata.revertSupported === false || parseSshWorkspace(change.path))))) {
+      throw workspaceSnapshotUnavailable("SSH changes can be reviewed, but remote undo is not available. No files were reverted.");
     }
     const managedTurns = [...new Set(input.turnIds)].filter(id => history?.checkpoints.some(checkpoint => checkpoint.turnId === id));
     const outsideChanges = managedTurns.flatMap(turnId => this.#toolExecutions.listTurn(input.sessionId, turnId)

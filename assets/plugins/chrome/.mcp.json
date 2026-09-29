@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "chrome-devtools": {
+    "browser_use": {
       "type": "stdio",
       "command": "node",
       "args": ["../../../packages/cardbush-chrome-mcp/dist/index.js"],

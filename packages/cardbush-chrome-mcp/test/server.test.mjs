@@ -11,6 +11,8 @@ import { ChromeConnectorError } from '../dist/bridgeClient.js';
 test('keeps the established Chrome DevTools tool vocabulary', () => {
   const tools = Object.keys(createCardbushChromeServer()._registeredTools);
   assert.deepEqual(tools, [
+    'list_browsers',
+    'select_browser',
     'list_pages',
     'select_page',
     'new_page',

@@ -22,7 +22,7 @@ function fixture(t) {
   return { root, create: () => { const broker = new ChromeConnectorBroker(root, { nativeHostPath }); brokers.push(broker); return broker; } };
 }
 
-test('real loopback pairing, MCP routing, restart and replacement preserve security boundaries', async t => {
+test('real loopback pairing, MCP routing, restart and per-connection revocation preserve security boundaries', async t => {
   const f = fixture(t), broker = f.create(); await broker.start();
   const firstCode = broker.createPairing().code;
   assert.equal(JSON.stringify(broker.status()).includes(firstCode.split('.').at(-1)), false);
@@ -38,8 +38,11 @@ test('real loopback pairing, MCP routing, restart and replacement preserve secur
   assert.deepEqual(await result, { tabs: [42] });
   const code = broker.createPairing().code;
   const replacement = await pairedClient(code);
+  assert.equal(extension.destroyed, false, 'adding another profile preserves existing connections');
+  assert.equal(broker.status().connections.length, 2);
+  broker.revokeConnection(firstCode.split('.')[2]);
   await until(() => extension.destroyed);
-  await assert.rejects(pairedClient(firstCode), 'a successful new pairing revokes the old credential');
+  await assert.rejects(pairedClient(firstCode), 'explicit removal revokes only the selected credential');
   broker.stop(); await until(() => replacement.destroyed);
   await assert.rejects(pairedClient(code), 'a stopped connector has no loopback listener');
   const restarted = f.create(); await restarted.start();
@@ -82,7 +85,7 @@ test('actual extension transport verifies the broker before enabling browser com
   const code = broker.createPairing().code;
   const source = fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8');
   class BrowserSocket extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin: extensionOrigin }); } }
-  const sandbox = vm.createContext({ WebSocket: BrowserSocket, crypto: webcrypto, TextEncoder, Uint8Array, setInterval, clearInterval });
+  const sandbox = vm.createContext({ WebSocket: BrowserSocket, navigator: { userAgent: 'Chrome/153.0.0.0' }, crypto: webcrypto, TextEncoder, Uint8Array, setInterval, clearInterval });
   vm.runInContext(source, sandbox);
   const open = value => vm.runInContext(`createConnectorPort(parseConnectorPairing(${JSON.stringify(value)}))`, sandbox);
   const port = open(code); t.after(() => port.disconnect());

@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import { openSshTunnel } from './sshTunnel.mjs';
 import { parseSshWorkspace, sshWorkspace, type SshConnection, type SshConnectionInput, type SshTestResult } from '@cardbush/bush-protocol';
 import { workspaceEditRecoveryError } from '@cardbush/bush-runtime/workspace-edit-recovery';
+import { createDisplayDiff } from '@cardbush/bush-runtime/workspace-diff';
 
 type Saved = Omit<SshConnection, 'hasPassword' | 'hasPassphrase' | 'status'> & { password?: string; passphrase?: string };
 type Cipher = { encrypt(value: string): string; decrypt(value: string): string };
@@ -144,10 +145,26 @@ export class SshConnectionManager {
     if (/[\0\r\n]/.test(path) || /^[A-Za-z]:[\\/]/.test(path)) throw Error('远程工具需要 POSIX 路径。');
     return posix.resolve(root, path || '.');
   }
-  async #readBytes(sftp: SFTPWrapper, path: string): Promise<Buffer> {
-    return new Promise((resolve, reject) => { const stream = sftp.createReadStream(path); const chunks: Buffer[] = []; let size = 0;
-      stream.on('data', (chunk: Buffer) => { size += chunk.length; if (size > MAX_BYTES) stream.destroy(Error('远程文件超过 8 MiB，请使用终端分段读取。')); else chunks.push(chunk); });
+  async #readBytes(sftp: SFTPWrapper, path: string, limit = MAX_BYTES, prefix = false): Promise<Buffer> {
+    return new Promise((resolve, reject) => { const stream = sftp.createReadStream(path, prefix ? { start: 0, end: limit - 1 } : {}); const chunks: Buffer[] = []; let size = 0;
+      stream.on('data', (chunk: Buffer) => { size += chunk.length; if (size > limit) stream.destroy(Error('远程文件超过读取上限，请使用终端分段读取。')); else chunks.push(chunk); });
       stream.on('error', reject); stream.on('end', () => resolve(Buffer.concat(chunks))); });
+  }
+  async snapshot(uri: string, maxBytes = 0, signal?: AbortSignal, prefix = false) {
+    const target = parseSshWorkspace(uri);
+    if (!target || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_BYTES) throw Error('Invalid SSH file snapshot request.');
+    return this.#sftp(target.connectionId, async sftp => {
+      const path = await this.#canonical(sftp, target.path);
+      const before = await call<import('ssh2').Stats>(done => sftp.stat(path, done));
+      if (!before.isFile() && !before.isDirectory()) throw Error('Unsupported remote file type.');
+      const bytes = before.isFile() && maxBytes > 0 && (prefix || before.size <= maxBytes)
+        ? await this.#readBytes(sftp, path, maxBytes, prefix) : undefined;
+      const after = await call<import('ssh2').Stats>(done => sftp.stat(path, done));
+      if (before.size !== after.size || before.mtime !== after.mtime || (bytes && bytes.length !== Math.min(before.size, maxBytes))) throw Error('远程文件在读取时发生变化，请重试。');
+      return { path: sshWorkspace(target.connectionId, path), name: posix.basename(path), kind: before.isFile() ? 'file' as const : 'folder' as const,
+        size: after.size, mtimeMs: after.mtime * 1000, truncated: Boolean(bytes && before.size > bytes.length),
+        ...(bytes ? { contentBase64: bytes.toString('base64') } : {}) };
+    }, signal);
   }
   async #ensureDirectory(sftp: SFTPWrapper, path: string): Promise<void> {
     try { const stats = await call<import('ssh2').Stats>(done => sftp.stat(path, done)); if (!stats.isDirectory()) throw Error('远程父路径不是目录。'); }
@@ -163,6 +180,7 @@ export class SshConnectionManager {
   async execute(uri: string, owner: string, name: string, input: Record<string, any>, signal?: AbortSignal): Promise<unknown> {
     const target = parseSshWorkspace(uri); if (!target) throw Error('Expected SSH workspace');
     signal?.throwIfAborted();
+    if (name === 'file_snapshot') return this.snapshot(sshWorkspace(target.connectionId, this.#path(target.connectionId, target.path, input.path)), input.maxBytes ?? 0, signal);
     if (name === 'workspace_busy') return { running: [...this.#terminals.values()].some(item => item.root === uri && item.state === 'running') };
     if (name === 'workspace_stop') { await Promise.all([...this.#terminals.values()].filter(item => item.root === uri).map(item => this.#stop(item))); return { stopped:true }; }
     if (name === 'terminal_list') return { sessions: [...this.#terminals.values()].filter(item => item.owner === owner && item.connectionId === target.connectionId).map(item => ({ terminalSessionId: item.id, state: item.state, command: item.command, cwd: item.cwd })) };
@@ -229,7 +247,14 @@ export class SshConnectionManager {
           // The ordinary SFTP rename refuses to overwrite a concurrently created file.
           await call<void>(done => before ? sftp.ext_openssh_rename(temporary,path,done) : sftp.rename(temporary,path,done));
         } catch (error) { await call<void>(done => sftp.unlink(temporary,done)).catch(() => {}); throw error; }
-        this.#observed.set(observation,sha(next)); return { path: identity, sha256: sha(next), bytes: next.length, status: before ? 'modified' : 'created' };
+        const diff = createDisplayDiff(before?.toString(input.encoding ?? 'utf8') ?? '', next.toString(input.encoding ?? 'utf8'));
+        const changeId = 'ssh-change-' + randomUUID();
+        this.#observed.set(observation, sha(next));
+        return { path: identity, sha256: sha(next), bytes: next.length, status: before ? 'modified' : 'created',
+          change_id: changeId, additions: diff.additions, deletions: diff.deletions,
+          workspaceChange: { change_id: changeId, path: identity, status: before ? 'modified' : 'added', additions: diff.additions, deletions: diff.deletions,
+            ...(before ? { before_hash: sha(before) } : {}), after_hash: sha(next),
+            metadata: { diff: diff.text, workspaceVersioned: false, revertSupported: false } } };
       } finally { this.#mutations.delete(identity); }
     }, signal);
   }
@@ -309,12 +334,13 @@ export class SshConnectionManager {
     return stdout.split('\0').filter(path => path && path.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(path => ({ name: posix.basename(path), path: sshWorkspace(target.connectionId,posix.resolve(target.path,path)), relativePath:path, kind:'file' as const }));
   }
   async git(uri: string, action: 'info'|'branches'|'checkout'|'create-branch'|'commit'|'push', value = ''): Promise<any> {
-    const git = async (...args: string[]) => (await this.#capture(uri, 'GIT_TERMINAL_PROMPT=0 git ' + args.map(quote).join(' '))).stdout;
+    const git = async (...args: string[]) => (await this.#capture(uri, 'LC_ALL=C GIT_TERMINAL_PROMPT=0 git ' + args.map(quote).join(' '))).stdout;
     if (action === 'info') {
       try { const branch = (await git('branch','--show-current')).trim(), fields = (await git('status','--porcelain=v1','-z')).split('\0'), changedFiles = [];
         for (let index = 0; index < fields.length; index++) { const entry=fields[index]; if (!entry) continue; changedFiles.push({ status:entry.slice(0,2).trim(),path:entry.slice(3) }); if (/[RC]/.test(entry.slice(0,2))) index++; }
         return { branch, root:uri, changedFiles };
-      } catch(error) { return { branch:'',root:uri,changedFiles:[],error:(error as Error).message }; }
+      } catch(error) { const message = (error as Error).message; return { branch:'', root:uri, changedFiles:[],
+        ...(/not a git repository/i.test(message) ? { missing: true } : { error: message }) }; }
     }
     if (action === 'branches') return (await git('branch','-a','--format=%(refname:short)')).split('\n').map(value=>value.trim()).filter(value=>value&&!value.endsWith('/HEAD'));
     if (this.#busy(parseSshWorkspace(uri)!.connectionId)) throw Error('请先结束远程运行任务，再操作 Git。');

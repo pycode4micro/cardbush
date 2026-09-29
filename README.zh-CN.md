@@ -10,18 +10,20 @@
 
 | 系统 | 下载 | 适用电脑 |
 | --- | --- | --- |
-| Windows 10 / 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64 位 |
+| Windows 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64 位 |
 | Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-linux-x86_64.AppImage) | x86-64 桌面 Linux；CI 使用 Ubuntu 22.04 验证 |
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
 两个平台均使用同一 Beta 4 源码标签构建。本次加入独立 Agent 服务、SSH 工作区、应用中心、本地与远端共用的对话和设置、命令沙盒，并改善工具执行与上下文恢复。详见[发布说明](docs/releases/1.0.0-beta.4.md)。SHA-256 校验文件和成品启动报告随包提供；主分支构建成功不等于已经发布发行版。
 
-Windows 10 和 11 使用同一个安装包，无需按 Intel、AMD 或显卡型号区分。本次不提供 ARM64、32 位 Windows、Windows 7/8 或 macOS 安装包。Windows 发行流程要求发布者签名证书；普通 CI 构建生成未签名的开发安装包。
+当前 Windows 开发版本面向 Windows 11 x64（build 22000 起），包括商店 MSIX 与 Browser Use（Chrome / Edge）；历史下载版本可能有不同要求。无需按 Intel、AMD 或显卡型号区分。本次不支持 ARM64、32 位 Windows、Windows 7/8/10 或 macOS 安装包。Windows EXE 发行流程要求发布者签名证书；普通 CI 构建生成未签名的开发安装包。
+
+商店 MSIX 使用独立的四段版本号，由 Microsoft 在认证过程中签名；不能把仅用于本机验证的测试签名副本上传商店。当前候选包与提交说明见 [MSIX 提交准备](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md)，本仓库提供准备材料，不代表已经通过或提交认证。
 
 ### 安装与开始使用
 
-**Windows：** 打开安装程序，选择安装位置，完成后启动 CardBush。卸载应用会保留本地对话和设置。
+**Windows EXE：** 打开安装程序，选择安装位置，完成后启动 CardBush。EXE 版卸载保留本地对话和设置。MSIX 由 Windows 管理包目录与应用数据，正常系统卸载会清理包所属数据；用户另外保存的工作区文件、浏览器配置和手动安装的扩展不会一并删除。
 
 **Linux：** 下载后赋予执行权限并启动：
 
@@ -59,7 +61,7 @@ Team 工作流作为独立插件安装，不包含在桌面安装包中，详见
 | 随包文件搜索 | Windows ripgrep | Linux ripgrep |
 | 命令沙盒 | AppContainer | bubblewrap，需宿主环境支持 |
 | Windows 电脑操控插件 | 支持 | 不可用 |
-| Chrome 原生连接器 | 支持 | 不可用，仍可使用内置浏览器 |
+| Browser Use（Chrome / Edge） | 支持 | 不可用，仍可使用内置浏览器 |
 | 进程 CPU / 内存原生限制 | Windows Job Objects | 尚未实现 |
 | 托管进程准入与所属进程清理 | 支持 | 支持 |
 

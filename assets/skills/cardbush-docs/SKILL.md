@@ -12,6 +12,7 @@ license: Apache-2.0
 |---|---|
 | 应用中心、快捷方式、@ 应用引用、独立应用链接 | [应用中心](references/app-center.md) |
 | 添加 MCP 服务、检查连接、配置插件 OAuth | [MCP 接入](references/mcp-management.md) |
+| Browser Use：Chrome / Edge 配对、连接选择、断线处理 | [浏览器连接](references/browser-use.md) |
 | 创建、安装、更新、停用或卸载 CardBush 插件包 | [插件管理](references/plugin-management.md)，再读 [插件契约](references/plugin-contract.md) |
 | 修改主题、配色、应用界面样式 | [样式管理](references/style-management.md)；新主题或全局变化再读 [主题契约](references/theme-contract.md) |
 | 导入日历、转换万年历/农历、查看每天安排 | [日历转换协议](references/calendar-protocol.md)；可用 [日期转换脚本](scripts/convert-date.mjs) |

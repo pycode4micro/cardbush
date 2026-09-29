@@ -396,24 +396,24 @@ async function handlePopupMessage(message) {
   if (!nativePort) {
     throw connectorError(
       'cardbush_not_connected',
-      'Open CardBush and start a browser task before adding an existing Chrome tab.',
+      'Open CardBush and start a browser task before adding an existing browser tab.',
     );
   }
 
   const [sourceTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (sourceTab?.id == null) throw connectorError('active_tab_missing', 'No active Chrome tab is available.');
+  if (sourceTab?.id == null) throw connectorError('active_tab_missing', 'No active browser tab is available.');
   const origin = originForTab(sourceTab);
-  if (!origin) throw connectorError('unsupported_page', 'This Chrome page cannot be controlled.');
+  if (!origin) throw connectorError('unsupported_page', 'This browser page cannot be controlled.');
   const scope = await popupAuthorizationScope(message?.scopeId, sourceTab);
   if (!scope) {
     throw connectorError(
       'browser_scope_missing',
-      'Start a browser task in CardBush, then select its session before adding an existing Chrome tab.',
+      'Start a browser task in CardBush, then select its session before adding an existing browser tab.',
     );
   }
 
   const managedTab = await copyTabIntoScope(scope, sourceTab);
-  if (managedTab.id == null) throw connectorError('active_tab_missing', 'The copied Chrome tab has no id.');
+  if (managedTab.id == null) throw connectorError('active_tab_missing', 'The copied browser tab has no id.');
   if (action === 'allow_once') {
     setSessionGrant(managedTab.id, scope.id, origin, 'copied');
   } else if (action === 'allow_site') {
@@ -437,7 +437,7 @@ async function handlePopupMessage(message) {
 async function copyTabIntoScope(scope, sourceTab) {
   if (await isTabManaged(scope, sourceTab)) return sourceTab;
   const copied = await chrome.tabs.duplicate(sourceTab.id);
-  if (copied?.id == null) throw connectorError('tab_copy_failed', 'Chrome did not return the copied tab.');
+  if (copied?.id == null) throw connectorError('tab_copy_failed', 'The browser did not return the copied tab.');
   try {
     await addTabToScope(scope, copied);
     await chrome.tabs.update(copied.id, { active: true });
@@ -491,7 +491,7 @@ async function requireTabAccess(scope, tabId, requestedOrigin = '') {
     }
   }
   if (!origin) {
-    throw connectorError('unsupported_page', 'Chrome does not permit extensions to debug this page.');
+    throw connectorError('unsupported_page', 'The browser does not permit extensions to debug this page.');
   }
   const stored = await chrome.storage.local.get(['allowedOrigins', 'allowAllSites']);
   const allowedOrigins = Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : [];
@@ -499,7 +499,7 @@ async function requireTabAccess(scope, tabId, requestedOrigin = '') {
     await rememberPendingAuthorization(scope, tab, origin);
     throw connectorError(
       'site_permission_required',
-      `Open the CardBush Browser Connector in Chrome and allow access to ${origin}.`,
+      `Open the CardBush Browser Use in the selected browser and allow access to ${origin}.`,
       { tabId, origin, scopeId: scope.id },
     );
   }
@@ -536,11 +536,11 @@ async function detachTab(tabId) {
 async function captureScreenshot(tabId, run) {
   const previous = pendingScreenshots.get(tabId);
   if (previous) throw connectorError('screenshot_in_progress',
-    'The previous screenshot is still pending in Chrome. Repeating it will not start another capture. Release the browser before reconnecting, or use another preview route.',
+    'The previous screenshot is still pending in the browser. Repeating it will not start another capture. Release the browser before reconnecting, or use another preview route.',
     { tabId, pendingMs: Date.now() - previous.startedAt });
   let cancel;
   let timer;
-  const interrupted = new Promise((_, reject) => { cancel = () => reject(connectorError('screenshot_interrupted', 'Chrome detached before the screenshot completed.', { tabId })); });
+  const interrupted = new Promise((_, reject) => { cancel = () => reject(connectorError('screenshot_interrupted', 'The browser detached before the screenshot completed.', { tabId })); });
   const pending = { startedAt: Date.now(), cancel };
   pendingScreenshots.set(tabId, pending);
   const completion = Promise.resolve().then(run).finally(() => {
@@ -550,7 +550,7 @@ async function captureScreenshot(tabId, run) {
   try {
     return await Promise.race([completion, interrupted, new Promise((_, reject) => {
       timer = setTimeout(() => reject(connectorError('screenshot_timeout',
-        'Chrome did not finish the screenshot within 25 seconds. The capture may still be pending; release the browser before reconnecting, or use another preview route.',
+        'The browser did not finish the screenshot within 25 seconds. The capture may still be pending; release the browser before reconnecting, or use another preview route.',
         { tabId, timeoutMs: SCREENSHOT_TIMEOUT_MS })), SCREENSHOT_TIMEOUT_MS);
     })]);
   } finally { clearTimeout(timer); }
@@ -620,7 +620,7 @@ function clearControlTimer(scopeId) {
 
 async function addTabToScope(scope, tab) {
   if (tab?.id == null || tab.windowId == null) {
-    throw connectorError('tab_group_failed', 'Chrome did not return enough information to isolate the tab.');
+    throw connectorError('tab_group_failed', 'The browser did not return enough information to isolate the tab.');
   }
   const groupId = await ensureManagedGroup(scope, tab.windowId, tab.id);
   if (tab.groupId !== groupId) await chrome.tabs.group({ groupId, tabIds: tab.id });
@@ -1140,7 +1140,7 @@ function groupTitle(scope) {
 function requiredTabId(value) {
   const tabId = Number(value);
   if (!Number.isSafeInteger(tabId) || tabId < 0) {
-    throw connectorError('invalid_tab_id', 'A valid Chrome tab id is required.');
+    throw connectorError('invalid_tab_id', 'A valid browser tab id is required.');
   }
   return tabId;
 }

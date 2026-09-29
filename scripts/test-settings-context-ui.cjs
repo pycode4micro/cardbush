@@ -170,6 +170,24 @@ app.whenReady().then(async () => {
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'version') {
+      const expectedVersion = process.env.VITE_CARDBUSH_APP_VERSION || require('../package.json').version;
+      await run(`Object.defineProperty(navigator, 'clipboard', { configurable:true,
+        value:{ writeText:async value => { window.copiedEnvironment=value; } } });
+        document.querySelector('[data-settings-section="diagnostics"]').click();`);
+      for (const language of ['zh', 'en']) {
+        const label = language === 'zh' ? '版本' : 'Version';
+        await run(`settingsProps.language=${JSON.stringify(language)}; window.copiedEnvironment=''; renderSettings();`);
+        const displayedVersion = `[...document.querySelectorAll('.info-row')].find(row=>row.querySelector('span')?.textContent===${JSON.stringify(label)})?.querySelector('strong')?.textContent`;
+        await until(`${displayedVersion}===${JSON.stringify(expectedVersion)}`);
+        await click(language === 'zh' ? '复制环境信息' : 'Copy environment');
+        await until('!!window.copiedEnvironment');
+        assert.equal(await run('copiedEnvironment.split("\\n")[0]'), `CARDBUSH_VERSION=${expectedVersion}`);
+      }
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log(`About version UI passed: ${expectedVersion}, Chinese/English display and copied environment.`);
+      win.destroy(); app.exit(0); return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'layout') {
       await require('./helpers/settings-unified-layout.cjs')({ run, until, click, pause, window: win, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);

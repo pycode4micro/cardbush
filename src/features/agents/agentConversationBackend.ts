@@ -140,10 +140,11 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     ...(hostOptions.sharedSettings ? { conversationStyle: resolveConversationStyle(request.sessionId, connectionId) } : {}),
     goalObjective: parseGoalCommand(request.userInput)?.objective, ...options,
   });
-  const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession'] }) => {
+  const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession']; queueOnly?: boolean }) => {
     const prior = uncertain.get(request.sessionId);
     if (prior && (prior.userMessageMetadata?.composerReferenceContent ?? prior.text) !== request.userInput) throw new Error('上一条消息尚未确认，请先重试原消息。The previous submission is unconfirmed; retry it first.');
     const input = prior ?? toInput(request, options);
+    if (!prior && options?.queueOnly) input.queueOnly = true;
     if (!prior) {
       const referenced = await resolvePromptReferenceContext(input.text, request.sessionId, await client.getSession(request.sessionId), request.uiLanguage,
         (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve);
@@ -242,18 +243,19 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     },
     deleteConversationApi: async sessionId => { await call('sessions.delete', { sessionId }); return true; },
     queue: {
-      enqueue: async request => { await submit(request); },
+      enqueue: async request => { await submit(request, { queueOnly: true }); },
       remove: async id => { await call('chat.queue', { action: 'remove', id }); },
       reorder: async (id, targetId) => { await call('chat.queue', { action: 'reorder', id, targetId }); },
-      guide: async (id, turnId) => { await call('chat.queue', { action: 'guide', id, turnId }); },
+      guide: async (id, turnId) => { await call('chat.queue', { action: 'guide', id, ...(turnId ? { turnId } : {}) }); },
+      setLocked: (sessionId, locked) => call('chat.queue', { action: 'lock', sessionId, locked }),
     },
     watchSession: (sessionId, listener, onError) => {
       let alive = true; let timer: ReturnType<typeof setTimeout>;
       const poll = async () => {
         try {
-          const jobs = await getJobs(sessionId); if (!alive) return;
+          const { jobs, locked, revision } = await call<{ jobs: Job[]; locked: boolean; revision: number }>('chat.queue', { action: 'get', sessionId }); if (!alive) return;
           const running = jobs.find(job => job.status === 'running');
-          listener({ activeTurnId: running?.turnId, revision: jobs.map(job => `${job.id}:${job.status}`).join('|'),
+          listener({ activeTurnId: running?.turnId, queueState: { locked, revision }, revision: `${locked}|${jobs.map(job => `${job.id}:${job.status}`).join('|')}`,
             queued: jobs.filter(job => job.status === 'queued' && !job.goalContinuation).map(job => ({ id: job.id, text: job.text, createdAt: job.createdAt,
               conversation: { id: sessionId, title: '', preview: '', updatedAt: job.createdAt } })) });
         } catch (error) { if (alive) onError(error); }

@@ -1,4 +1,4 @@
-import { parseSshWorkspace, sshWorkspace } from '@cardbush/bush-protocol';
+import { parseSshWorkspace, sshWorkspace, workspaceChangeSchema } from '@cardbush/bush-protocol';
 import { posix } from 'node:path';
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistration } from './toolRegistry.js';
 import type { RemoteWorkspaceBridge, TerminalSessionManager } from './workspaceTools.js';
@@ -32,7 +32,7 @@ function chosenRemote<T>(context: Context<T>): string | undefined {
 }
 
 /** A local override cannot inherit a remote path as a local cwd or permission root. */
-function localContext<T, C extends Context<T>>(context: C): C {
+export function localContext<T, C extends Context<T>>(context: C): C {
   if (!context.turn) return context;
   const metadata = { ...context.turn.request.metadata };
   if (parseSshWorkspace(defaultRoot(context))) {
@@ -169,7 +169,15 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       if (!uri) return tagged(await registration.execute(localContext(context)), undefined);
       if (!remote) throw Error('SSH execution is unavailable in this host. No local operation was performed.');
       enforceRemoteSandbox();
-      return tagged(await remote.request('execute', { uri, owner: context.sessionId, name, input: context.input }, context.signal), uri);
+      const result = await remote.request('execute', { uri, owner: context.sessionId, name, input: context.input }, context.signal);
+      if ((name === 'write_file' || name === 'edit_file') && result?.workspaceChange) {
+        const change = workspaceChangeSchema.parse(result.workspaceChange);
+        if (parseSshWorkspace(change.path)?.connectionId !== parseSshWorkspace(uri)?.connectionId) throw Error('SSH change belongs to another connection.');
+        context.recordWorkspaceChange(change);
+        const { workspaceChange: _change, ...receipt } = result;
+        return tagged(receipt, uri);
+      }
+      return tagged(result, uri);
     },
   };
 }

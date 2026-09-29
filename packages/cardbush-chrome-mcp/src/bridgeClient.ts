@@ -87,8 +87,8 @@ export async function requestChromeConnector(
     };
     const onAbort = () => finish(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
     const timer = setTimeout(() => finish(new ChromeConnectorError(
-      'chrome_connector_timeout',
-      `Chrome Connector did not respond to ${method} within ${timeoutMs}ms.`,
+      'browser_connector_timeout',
+      `Browser Use connector did not respond to ${method} within ${timeoutMs}ms.`,
     )), timeoutMs);
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) {
@@ -110,7 +110,7 @@ export async function requestChromeConnector(
       if (buffer.length > maximumBridgeResponseCharacters) {
         finish(new ChromeConnectorError(
           'bridge_response_too_large',
-          'Chrome Connector returned a response larger than the supported limit.',
+          'Browser Use connector returned a response larger than the supported limit.',
         ));
         return;
       }
@@ -141,8 +141,8 @@ export async function requestChromeConnector(
         const error = record(message.error);
         if (Object.keys(error).length > 0) {
           finish(new ChromeConnectorError(
-            string(error.code) || 'chrome_connector_failed',
-            string(error.message) || `Chrome Connector failed to execute ${method}.`,
+            string(error.code) || 'browser_connector_failed',
+            string(error.message) || `Browser Use connector failed to execute ${method}.`,
             record(error.details),
           ));
         } else {
@@ -154,12 +154,12 @@ export async function requestChromeConnector(
     });
     socket.on('error', (error) => finish(new ChromeConnectorError(
       'cardbush_bridge_unavailable',
-      `CardBush Browser Connector bridge is unavailable: ${error.message}`,
+      `CardBush Browser Use bridge is unavailable: ${error.message}`,
     )));
     socket.on('close', () => {
       if (!settled) finish(new ChromeConnectorError(
         'cardbush_bridge_closed',
-        'CardBush Browser Connector bridge closed before returning a response.',
+        'CardBush Browser Use bridge closed before returning a response.',
       ));
     });
   });
@@ -171,7 +171,7 @@ function readBridgeConfig(explicitPath?: string): BridgeConfig {
   if (!configPath) {
     throw new ChromeConnectorError(
       'bridge_config_missing',
-      'CardBush Browser Connector is not configured for this Runtime.',
+      'CardBush Browser Use is not configured for this Runtime.',
     );
   }
   let candidate: Record<string, unknown>;
@@ -180,7 +180,7 @@ function readBridgeConfig(explicitPath?: string): BridgeConfig {
   } catch (error) {
     throw new ChromeConnectorError(
       'bridge_config_unavailable',
-      `Unable to read the CardBush Browser Connector configuration: ${errorMessage(error)}`,
+      `Unable to read the CardBush Browser Use configuration: ${errorMessage(error)}`,
     );
   }
   if (
@@ -190,7 +190,7 @@ function readBridgeConfig(explicitPath?: string): BridgeConfig {
   ) {
     throw new ChromeConnectorError(
       'bridge_config_invalid',
-      'The CardBush Browser Connector configuration is invalid.',
+      'The CardBush Browser Use configuration is invalid.',
     );
   }
   return {

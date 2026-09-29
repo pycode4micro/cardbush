@@ -63,3 +63,28 @@ test('Agent judgment needs no fabricated evidence; invalid targets and locators 
   const listing = await run('read_source_memos', {}); assert.equal(listing.result.total, 1);
   assert.throws(() => registry.resolve('remember_source').decodeInput({ explanation: 'why', sources: [{ target: path, locator: { endLine: 2 } }] }));
 });
+
+
+test('SSH memo permissions use the selected canonical root and never grant a model-supplied host or symlink escape', async () => {
+  const registry = new ToolRegistry(), store = new ToolExecutionStore();
+  const calls = [];
+  const remote = { async request(action, payload) {
+    calls.push({ action, payload });
+    assert.equal(action, 'authorize');
+    return { path: payload.path.replace('/work/link/', '/private/'), root: payload.uri, inside: !payload.path.includes('/link/') };
+  } };
+  registerFileMemoTools(registry, store, remote); registerSourceMemoTools(registry, store, remote);
+  for (const tool of ['remember_file', 'remember_source']) {
+    const authorize = registry.resolve(tool).authorize;
+    const context = path => ({ input: tool === 'remember_file' ? { path } : { sources: [{ target: path }] },
+      turn: { request: { permissionMode: 'task_free', metadata: { workspaceDir: 'ssh://selected/work' } } } });
+    assert.equal((await authorize(context('ssh://selected/work/a.txt'))).kind, 'allow');
+    const escaped = await authorize(context('ssh://selected/work/link/a.txt'));
+    assert.equal(escaped.kind, 'ask');
+    assert.equal(escaped.request.targets[0].value, 'ssh://selected/private/a.txt');
+    assert.deepEqual(escaped.request.scope.roots, ['ssh://selected/work']);
+    const foreign = await authorize(context('ssh://other/work/a.txt'));
+    assert.equal(foreign.kind, 'ask'); assert.deepEqual(foreign.request.scope.roots, []);
+  }
+  assert.ok(calls.every(call => call.action === 'authorize'), 'permission checks do not fetch remote file content');
+});

@@ -1,5 +1,7 @@
 import { ArrowDown, Sparkles } from 'lucide-react';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
+import { QueueLockButton } from '../composer/QueueLockButton';
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ExtractionSelector } from './ConversationExtraction';
 import { ConversationHostContext } from '../conversationHost';
 import {
@@ -198,6 +200,9 @@ export function ChatPanel({
   queuedMessageCount,
   queuedMessagePreview,
   queuedMessages,
+  queueLocked = false,
+  queueLockPending = false,
+  onToggleQueueLock,
   pendingInteraction: suppliedPendingInteraction,
   error,
   notice,
@@ -296,6 +301,9 @@ export function ChatPanel({
   queuedMessageCount: number;
   queuedMessagePreview: string;
   queuedMessages: QueuedChatMessage[];
+  queueLocked?: boolean;
+  queueLockPending?: boolean;
+  onToggleQueueLock?: () => void;
   pendingInteraction: PendingInteraction | null;
   error: string | null;
   notice: string | null;
@@ -420,21 +428,6 @@ export function ChatPanel({
       throw caught;
     }
   }, [language, onRefreshActiveSession]);
-  const currentTurnChangeReports = useMemo(() => {
-    if (changeReports.length === 0) return [];
-    const active = activeTurnId.trim();
-    const latest = changeReports[changeReports.length - 1];
-    const targetTurn = active || latest?.turnId?.trim() || '';
-    if (!targetTurn) return latest ? [latest] : [];
-    const matching = changeReports.filter(
-      (report) => report.turnId?.trim() === targetTurn,
-    );
-    return matching.length > 0 ? matching : active ? [] : latest ? [latest] : [];
-  }, [activeTurnId, changeReports]);
-  const currentTurnChangeSummary = useMemo(
-    () => summarizeChangeReports(currentTurnChangeReports),
-    [currentTurnChangeReports],
-  );
   const activeAssistantForRender = useMemo(() => {
     if (!sending) return null;
     const active = streamingAssistantMessage(renderMessages, activeTurnId);
@@ -449,6 +442,13 @@ export function ChatPanel({
     () => activeAssistantForRender?.message ?? null,
     [activeAssistantForRender],
   );
+  const currentTurnChangeSummary = useMemo(() => {
+    const turnId = activeRuntimeAssistant?.turnId?.trim();
+    // The optimistic assistant has no turn yet. Never borrow historical edits
+    // while admission is pending or the controller and transcript are catching up.
+    if (!turnId || turnId !== activeTurnId.trim()) return null;
+    return summarizeChangeReports(changeReports.filter(report => report.turnId?.trim() === turnId));
+  }, [activeRuntimeAssistant?.turnId, activeTurnId, changeReports]);
   const activeTaskPlan = useMemo(() => {
     if (!activeRuntimeAssistant) return undefined;
     if (activeRuntimeAssistant.taskPlan) return activeRuntimeAssistant.taskPlan;
@@ -490,6 +490,18 @@ export function ChatPanel({
   const showWelcome = welcomeEnabled && !loading && renderMessages.length === 0;
   const listScrollerRef = useRef<HTMLElement | null>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
+  const keyboardShortcuts = useKeyboardShortcuts();
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !onToggleQueueLock || queueLockPending || !keyboardShortcuts.matches('toggleQueueLock', event)) return;
+      const target = event.target;
+      if (!(target instanceof Element) || !chatBodyRef.current?.contains(target) ||
+          target.closest('[inert], [data-shortcut-recorder]')) return;
+      event.preventDefault(); event.stopPropagation(); onToggleQueueLock();
+    };
+    window.addEventListener('keydown', toggle);
+    return () => window.removeEventListener('keydown', toggle);
+  }, [keyboardShortcuts, onToggleQueueLock, queueLockPending]);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const runtimeRailRef = useRef<ComposerRuntimeRailHandle>(null);
   const scrollBottomButtonRef = useRef<HTMLButtonElement>(null);
@@ -2629,6 +2641,9 @@ export function ChatPanel({
             queuedMessageCount={queuedMessageCount}
             queuedMessagePreview={queuedMessagePreview}
             queuedMessages={queuedMessages}
+            queueLocked={queueLocked}
+            queueLockPending={queueLockPending}
+            onToggleQueueLock={onToggleQueueLock}
             selectedModel={selectedModel}
             availableModels={availableModels}
             teamAvailable={teamAvailable}
@@ -2790,6 +2805,11 @@ export function ChatPanel({
             className={`composer-dock interaction-only ${pendingInteraction?.type === 'solution_selection' ? 'solution-only' : 'permission-only'}`}
             ref={composerDockRef}
           >
+            {onToggleQueueLock && (queuedMessageCount > 0 || queueLocked) && <div className="interaction-queue-lock">
+              <span>{queueLocked ? language === 'zh' ? '引导队列已锁定' : 'Guidance queue locked'
+                : language === 'zh' ? '引导队列自动发送已开启' : 'Guidance auto-send is on'}</span>
+              <QueueLockButton language={language} locked={queueLocked} pending={queueLockPending} onToggle={onToggleQueueLock} />
+            </div>}
             {interactionContent ?? (pendingInteraction && <InteractionCard
               key={pendingInteraction.id}
               language={language}
@@ -2819,6 +2839,7 @@ export function ChatPanel({
                 queuedMessageCount={queuedMessageCount}
                 queuedMessagePreview={queuedMessagePreview}
                 queuedMessages={queuedMessages}
+                queueLocked={queueLocked}
                 onEditQueuedMessage={editQueuedMessage}
                 onGuideQueuedMessage={(queuedId) =>
                   onGuideQueuedMessage(queuedId, 'append_context')
@@ -2845,6 +2866,9 @@ export function ChatPanel({
               onShowQueue={() => runtimeRailRef.current?.showQueue()}
               queuedMessagePreview=""
               queuedMessages={queuedMessages}
+              queueLocked={queueLocked}
+              queueLockPending={queueLockPending}
+              onToggleQueueLock={onToggleQueueLock}
               onGuideQueuedMessage={(queuedId) => onGuideQueuedMessage(queuedId, 'append_context')}
               selectedModel={selectedModel}
               availableModels={availableModels}

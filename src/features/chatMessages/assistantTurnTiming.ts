@@ -16,7 +16,6 @@ export function formatCompactDuration(durationMs: number | null) {
   if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
     return '';
   }
-  if (durationMs < 1000) return '<1s';
   const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);

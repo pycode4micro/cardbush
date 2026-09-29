@@ -409,6 +409,7 @@ async function decodeManifest(input: {
     capabilities: stringArray(interfaceMetadata.capabilities).slice(0, 12),
     keywords: stringArray(manifest.keywords).slice(0, 24),
     defaultPrompts: stringArray(interfaceMetadata.defaultPrompt).slice(0, 3),
+    localizations: pluginLocalizations(objectOrEmpty(manifest.cardbush).localizations),
     brandColor: string(interfaceMetadata.brandColor) || '#5f8f79',
     logoPath,
     logoDarkPath,
@@ -420,6 +421,23 @@ async function decodeManifest(input: {
     runtimeExtensions: (await resolveRuntimePluginPackage(pluginRoot, manifest)) ? [id] : [],
     components: await componentsFromManifest(resolved),
   };
+}
+
+function pluginLocalizations(value: unknown): CardbushPluginCatalogEntry['localizations'] {
+  const input = objectOrEmpty(value);
+  const result: NonNullable<CardbushPluginCatalogEntry['localizations']> = {};
+  for (const language of ['zh', 'en'] as const) {
+    const fields = objectOrEmpty(input[language]);
+    const description = string(fields.shortDescription);
+    const longDescription = string(fields.longDescription);
+    const defaultPrompts = stringArray(fields.defaultPrompt).slice(0, 3);
+    if (description || longDescription || defaultPrompts.length) result[language] = {
+      ...(description ? { description } : {}),
+      ...(longDescription ? { longDescription } : {}),
+      ...(defaultPrompts.length ? { defaultPrompts } : {}),
+    };
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 async function componentsFromManifest(

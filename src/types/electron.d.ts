@@ -11,6 +11,8 @@ import type {
 } from '../types';
 
 interface ChromeConnectorStatus {
+  defaultConnectionId: string;
+  connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
   transport: 'loopback_websocket';
   cleanupWarning?: string;
@@ -64,7 +66,9 @@ declare global {
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;
       chromeConnectorStatus: () => Promise<ChromeConnectorStatus>;
       setupChromeConnector: () => Promise<ChromeConnectorStatus>;
-      pairChromeConnector: () => Promise<{ code: string; expiresAt: string }>;
+      pairChromeConnector: (input?: { browser?: 'chrome' | 'edge'; label?: string }) => Promise<{ code: string; expiresAt: string; id: string; browser: 'chrome' | 'edge' }>;
+      selectDefaultBrowserConnection: (id: string) => Promise<ChromeConnectorStatus>;
+      revokeBrowserConnection: (id: string) => Promise<ChromeConnectorStatus>;
       copyLegacyChromeConnectorCleanup: () => Promise<void>;
       disableChromeConnector: () => Promise<ChromeConnectorStatus>;
       removeChromeConnector: () => Promise<ChromeConnectorStatus>;
@@ -346,6 +350,7 @@ declare global {
         stderr: string;
         outputTruncated?: boolean;
       }>;
+      pastedTextAttachments: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
       saveImageDataUrl: (
         dataUrl: string,
         name?: string,

@@ -72,7 +72,7 @@ export function inspectorFilePath(target: string) {
   if (/^cardbush-file:\/\//i.test(value)) {
     try {
       const parsed = new URL(value);
-      if (['text-preview', 'office-preview', 'model-preview'].includes(parsed.hostname.toLowerCase())) {
+      if (['text-preview', 'office-preview', 'model-preview', 'ssh-file'].includes(parsed.hostname.toLowerCase())) {
         return inspectorFilePath(parsed.searchParams.get('path') ?? '');
       }
       const decoded = decodeURIComponent(parsed.pathname);

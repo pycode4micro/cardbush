@@ -54,6 +54,7 @@ import { emitSubagentDispatch } from '../features/subagents/subagentObservabilit
 // Reopened child views may observe the same terminal event. Only one observer
 // may advance their shared local queue after that turn.
 const continuedLocalQueueTurns = new Set<string>();
+const dispatchingLocalQueues = new Set<string>();
 import {
   assistantTurnTimingFingerprint,
   persistAssistantTurnTiming,
@@ -319,15 +320,21 @@ export function useCardbushChat(
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const workspaceSwitchesRef = useRef(new Map<string, Promise<void>>());
   const queueInstance = useRef(crypto.randomUUID());
+  const queueScope = backend.keepRunningOnUnmount ? backend.scope : queueInstance.current;
   const [queuedMessages, setQueuedMessages, getQueuedMessages] = useConversationViewState<QueuedChatMessage[]>(
-    `chat-queue:${backend.keepRunningOnUnmount ? backend.scope : queueInstance.current}`, () => [],
+    `chat-queue:${queueScope}`, () => [],
     value => Boolean(backend.keepRunningOnUnmount && value.length));
+  const [queueLocks, setQueueLocks, getQueueLocks] = useConversationViewState<Record<string, boolean>>(
+    `chat-queue-locks:${queueScope}`, () => ({}), value => Object.values(value).some(Boolean));
+  const [queueLockPending, setQueueLockPending] = useState(false);
+  const queueLockRequests = useRef(new Set<string>());
+  const queueLockRevisions = useRef(new Map<string, number>());
   const queuedMessagesRef = useMemo(() => ({ get current() { return getQueuedMessages(); },
     set current(value: QueuedChatMessage[]) { setQueuedMessages(value); } }), [getQueuedMessages, setQueuedMessages]);
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
   const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
   const sendMessageRef = useRef<
-    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean) => Promise<void>
+    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }) => Promise<void>
   >(async () => undefined);
   const activeConversationIdForState = activeConversationId.trim();
   const messagesLoading = Boolean(
@@ -573,9 +580,10 @@ export function useCardbushChat(
     setQueuedMessages(reordered);
   }, []);
 
-  const dequeueMessageForConversation = useCallback((conversationId: string, completedTurnId?: string) => {
+  const nextAutomaticQueuedMessage = useCallback((conversationId: string, completedTurnId?: string) => {
     if (backend.queue) return undefined;
     const normalized = conversationId.trim();
+    if (getQueueLocks()[normalized]) return undefined;
     const terminalKey = backend.keepRunningOnUnmount && completedTurnId ? JSON.stringify([backend.scope, normalized, completedTurnId]) : '';
     if (terminalKey && continuedLocalQueueTurns.has(terminalKey)) return undefined;
     const index = queuedMessagesRef.current.findIndex(
@@ -588,15 +596,52 @@ export function useCardbushChat(
       continuedLocalQueueTurns.add(terminalKey);
       if (continuedLocalQueueTurns.size > 512) continuedLocalQueueTurns.delete(continuedLocalQueueTurns.values().next().value!);
     }
-    const next = queuedMessagesRef.current[index];
-    const rest = [
-      ...queuedMessagesRef.current.slice(0, index),
-      ...queuedMessagesRef.current.slice(index + 1),
-    ];
-    queuedMessagesRef.current = rest;
-    setQueuedMessages(rest);
-    return next;
+    return queuedMessagesRef.current[index];
   }, []);
+
+  const scheduleQueuedMessage = useCallback((sessionId: string, completedTurnId?: string) => {
+    if (backend.queue) return;
+    // Check the live lock inside the scheduled callback, not when the turn ends.
+    window.setTimeout(() => {
+      const key = JSON.stringify([queueScope, sessionId]);
+      if (getQueueLocks()[sessionId] || sendingSessionsRef.current.has(sessionId) || dispatchingLocalQueues.has(key)) return;
+      const next = nextAutomaticQueuedMessage(sessionId, completedTurnId);
+      if (!next) return;
+      dispatchingLocalQueues.add(key);
+      void sendMessageRef.current(next.text, next.conversation, next.teamId, next.teamName, next.sourceEnabled, { item: next, automatic: true })
+        .catch(caught => {
+          setQueuedMessages(current => current.some(item => item.id === next.id) ? current : [next, ...current]);
+          setError(errorMessage(caught));
+        }).finally(() => { dispatchingLocalQueues.delete(key); });
+    }, 0);
+  }, [nextAutomaticQueuedMessage, getQueueLocks, queueScope, setQueuedMessages]);
+
+  const applyQueueLockState = useCallback((sessionId: string, state: { locked: boolean; revision: number }) => {
+    if (state.revision < (queueLockRevisions.current.get(sessionId) ?? -1)) return;
+    queueLockRevisions.current.set(sessionId, state.revision);
+    setQueueLocks(current => current[sessionId] === state.locked ? current : { ...current, [sessionId]: state.locked });
+  }, [setQueueLocks]);
+
+  const toggleQueueLock = useCallback(async () => {
+    const sessionId = activeConversationIdRef.current.trim();
+    if (!sessionId || queueLockRequests.current.has(sessionId)) return;
+    const previous = Boolean(getQueueLocks()[sessionId]);
+    const locked = !previous;
+    // Local dispatch observes this synchronously, even before React renders.
+    setQueueLocks(current => ({ ...current, [sessionId]: locked }));
+    queueLockRequests.current.add(sessionId);
+    setQueueLockPending(true);
+    try {
+      if (backend.queue) applyQueueLockState(sessionId, await backend.queue.setLocked(sessionId, locked));
+      else if (!locked) scheduleQueuedMessage(sessionId);
+    } catch (caught) {
+      setQueueLocks(current => ({ ...current, [sessionId]: previous }));
+      setError(errorMessage(caught));
+    } finally {
+      queueLockRequests.current.delete(sessionId);
+      setQueueLockPending(queueLockRequests.current.has(activeConversationIdRef.current));
+    }
+  }, [getQueueLocks, setQueueLocks, applyQueueLockState, scheduleQueuedMessage]);
 
   const persistAutoConversationTitle = useCallback(
     (conversation: ConversationSummary, sourceText: string) => {
@@ -1475,8 +1520,7 @@ export function useCardbushChat(
           );
         }
         if (backend.keepRunningOnUnmount && terminalTurnIdsRef.current.has(normalizedTurnId) && !controllersRef.current[normalizedSessionId]) {
-          const next = dequeueMessageForConversation(normalizedSessionId, normalizedTurnId);
-          if (next) window.setTimeout(() => { void sendMessageRef.current(next.text, next.conversation, next.teamId, next.teamName, next.sourceEnabled); }, 0);
+          scheduleQueuedMessage(normalizedSessionId, normalizedTurnId);
         }
       });
   }, [
@@ -1484,7 +1528,7 @@ export function useCardbushChat(
     applyGoalExecution,
     clearConnectionRecovery,
     clearSessionRunning,
-    dequeueMessageForConversation,
+    scheduleQueuedMessage,
     localize,
     markSessionAttention,
     markSessionDone,
@@ -1562,6 +1606,7 @@ export function useCardbushChat(
         markSessionRunning(sessionId, state.activeTurnId, false);
       }
       if (backend.queue) {
+        if (state.queueState && !queueLockRequests.current.has(sessionId)) applyQueueLockState(sessionId, state.queueState);
         queuedMessagesRef.current = state.queued;
         setQueuedMessages(current => JSON.stringify(current) === JSON.stringify(state.queued) ? current : state.queued);
       }
@@ -1587,7 +1632,7 @@ export function useCardbushChat(
       setConnectionRecoveryByConversation(current => ({ ...current, [sessionId]: failure }));
     });
     return () => { alive = false; stop(); clearWatchFailure(); };
-  }, [backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, refreshActiveSession, subscribeGoalTurn, markSessionRunning]);
+  }, [backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, refreshActiveSession, subscribeGoalTurn, markSessionRunning, applyQueueLockState]);
 
   // Notifications can arrive while the previous read is in flight, or after a
   // short turn has already finished. Preserve both updates and committed history.
@@ -2267,7 +2312,7 @@ export function useCardbushChat(
   }, [reloadConversations, beginHistoryRead, isHistoryReadCurrent, applyHistoryRead]);
 
   const sendMessage = useCallback(
-    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean) => {
+    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }) => {
       const sourceEnabled = sourceSnapshot ?? resolveConversationSource(queuedConversation?.id ?? activeConversation?.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const trimmed = text.trim();
       if (!trimmed) {
@@ -2308,6 +2353,10 @@ export function useCardbushChat(
       }));
       const previousMessages = messagesByConversation[sessionId] ?? [];
       const titleSource = firstUserTitleSource(previousMessages, visibleUserInput);
+      // Keep the queue item until all async preparation finishes. A late lock,
+      // edit, removal or competing turn must not consume or duplicate it.
+      if (queuedDelivery && (!queuedMessagesRef.current.some(item => item.id === queuedDelivery.item.id) ||
+          queuedDelivery.automatic && getQueueLocks()[sessionId] || isSessionSending(sessionId))) return;
       if (isSessionSending(sessionId)) {
         if (backend.queue) {
           try {
@@ -2332,6 +2381,7 @@ export function useCardbushChat(
         });
         return;
       }
+      if (queuedDelivery) removeQueuedMessage(queuedDelivery.item.id);
       markSessionRunning(sessionId);
       const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
       const retryMessage = backend.isSubmissionRetry?.(sessionId, outbound.userInput)
@@ -2737,18 +2787,7 @@ export function useCardbushChat(
           clearSessionRunning(sessionId);
         }
         if (terminalTurnId) terminalTurnIdsRef.current.delete(terminalTurnId);
-        const nextQueued = dequeueMessageForConversation(sessionId, terminalTurnId);
-        if (nextQueued) {
-          window.setTimeout(() => {
-            void sendMessageRef.current(
-              nextQueued.text,
-              nextQueued.conversation,
-              nextQueued.teamId,
-              nextQueued.teamName,
-              nextQueued.sourceEnabled,
-            );
-          }, 0);
-        }
+        scheduleQueuedMessage(sessionId, terminalTurnId);
       }
     },
     [
@@ -2759,7 +2798,7 @@ export function useCardbushChat(
       applyConnectionRecoveryUpdate,
       clearConnectionRecovery,
       clearSessionRunning,
-      dequeueMessageForConversation,
+      scheduleQueuedMessage,
       enqueueMessage,
       isSessionSending,
       loadTeamFlow,
@@ -3712,13 +3751,22 @@ export function useCardbushChat(
         return;
       }
       const active = activeTurnIdsRef.current[conversationId]?.trim() ?? '';
-      if (!isSessionSending(conversationId) || !conversationId || !active) {
-        setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
-        return;
-      }
       if (backend.queue) {
         try { await backend.queue.guide(queuedId, active); setError(null); }
         catch (caught) { setError(errorMessage(caught)); }
+        return;
+      }
+      if (conversationId && !isSessionSending(conversationId)) {
+        // Admission owns deduplication. Do not disable all queue actions for
+        // the entire new turn: further manual guidance must remain available.
+        void sendMessageRef.current(text, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled, { item: queued, automatic: false }).catch(caught => {
+          setQueuedMessages(current => current.some(item => item.id === queued.id) ? current : [queued, ...current]);
+          setError(errorMessage(caught));
+        });
+        return;
+      }
+      if (!isSessionSending(conversationId) || !conversationId || !active) {
+        setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
         return;
       }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
@@ -4192,6 +4240,9 @@ export function useCardbushChat(
     activeGoalWaiting,
     cancelActiveGoal,
     queuedMessages: activeQueuedMessages,
+    queueLocked: Boolean(queueLocks[activeConversationIdForState]),
+    queueLockPending: queueLockPending && queueLockRequests.current.has(activeConversationIdForState),
+    toggleQueueLock,
     queuedMessageCount: activeQueuedMessages.length,
     queuedMessagePreview: activeQueuedMessages[0]?.text ?? '',
     pendingInteraction,
@@ -4512,7 +4563,7 @@ function splitStreamAttachmentMentions(content: string) {
   const files: string[] = [];
   const { text: userInput, paths } = splitExplicitAttachmentMentions(content);
   for (const mention of paths) {
-    if (isImagePath(mention)) {
+    if (!mention.startsWith('ssh://') && isImagePath(mention)) {
       images.push({ path: mention });
     } else {
       files.push(mention);
@@ -4593,9 +4644,9 @@ function streamAttachmentsFromChatAttachments(
     attachment.path?.trim() ? [attachment.path.trim()] : [],
   );
   const images = paths
-    .filter(isImagePath)
+    .filter(path => !path.startsWith('ssh://') && isImagePath(path))
     .map((path) => ({ path }));
-  const files = paths.filter((path) => !isImagePath(path));
+  const files = paths.filter((path) => path.startsWith('ssh://') || !isImagePath(path));
   return streamAttachmentsForVision(
     { displayInput: '', userInput: '', images, files },
     standardImageInputEnabled,

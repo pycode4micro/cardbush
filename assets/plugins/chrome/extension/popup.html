@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CardBush Browser Connector</title>
+    <title>CardBush Browser Use</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main>
-      <header><img class="mark" src="icons/cardbush-48.png" alt="" /><div><strong>CardBush</strong><small>Browser Connector</small></div></header>
+      <header><img class="mark" src="icons/cardbush-48.png" alt="" /><div><strong>CardBush</strong><small>Browser Use · Chrome / Edge</small></div></header>
       <div id="connection" class="connection">正在读取连接状态…</div>
       <label class="scope-picker"><span>与 CardBush 配对</span>
         <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 CardBush 设置中的配对码" />
@@ -34,7 +34,7 @@
         <button class="quiet" data-action="revoke">撤销授权</button>
         <button class="quiet" data-action="disconnect">停止控制</button>
       </footer>
-      <p class="scope">在 CardBush 设置中开启连接器并生成配对码，粘贴到此处完成配对。配对不会授予页面访问权限。重启浏览器后需点击连接；移除扩展请使用 Chrome 扩展管理页。</p>
+      <p class="scope">在 CardBush 的 Browser Use 设置中选择当前浏览器并生成配对码，粘贴到此处。配对不授予页面访问权限。重启浏览器后需点击连接；移除扩展请使用 Chrome 或 Edge 扩展管理页。</p>
     </main>
     <script src="popup.js"></script>
   </body>

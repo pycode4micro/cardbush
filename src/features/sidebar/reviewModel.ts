@@ -36,7 +36,7 @@ export function reviewExternalRoots(root: string, paths: string[]) {
   for (const path of paths) {
     if (reviewRelativePath(root, path) !== null) continue;
     const normalized = path.replaceAll('\\', '/');
-    if (!/^(?:[a-z]:\/|\/)/i.test(normalized)) continue;
+    if (!/^(?:ssh:\/\/|[a-z]:\/|\/)/i.test(normalized)) continue;
     let parent = normalized.slice(0, normalized.lastIndexOf('/')) || '/';
     if (/^[a-z]:$/i.test(parent)) parent += '/';
     parents.set(reviewPathKey(parent), parent);

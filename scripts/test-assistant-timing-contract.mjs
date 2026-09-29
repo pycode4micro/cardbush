@@ -85,7 +85,7 @@ const continuationProjection = projectionModule.exports.projectRuntimeTurnMessag
 }, 'continued');
 assert.equal(continuationProjection.length, 1, 'internal developer continuation is not a chat message');
 assert.equal(continuationProjection[0].content, 'Complete answer');
-assert.equal(formatCompactDuration(999), '<1s');
+assert.equal(formatCompactDuration(999), '1s');
 assert.equal(formatCompactDuration(59_000), '59s');
 assert.equal(formatCompactDuration(60_000), '1m');
 assert.equal(formatCompactDuration(61_000), '1m 1s');

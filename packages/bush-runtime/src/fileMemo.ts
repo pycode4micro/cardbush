@@ -1,5 +1,5 @@
-import { realpath, stat } from 'node:fs/promises';
-import { basename, isAbsolute } from 'node:path';
+import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
+import type { RemoteWorkspaceBridge } from './workspaceTools.js';
 import { FILE_MEMO_PROTOCOL, fileMemoInputSchema, fileMemoMarkdown, fileMemoReference, fileMemoSchema, parseFileMemoReference,
   type FileMemo, type FileMemoResolution, type ToolExecutionRecord } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
@@ -7,7 +7,7 @@ import type { ToolExecutionStore } from './toolExecutionStore.js';
 
 export const FILE_MEMO_WRITE_TOOL = 'remember_file';
 export interface FileMemoScope { sessionId?: string; turnId?: string; fileName?: string }
-const identityPath = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
+const identityPath = (path: string) => !path.startsWith('ssh:') && process.platform === 'win32' ? path.toLowerCase() : path;
 type MemoEntry = { record: ToolExecutionRecord; memo: FileMemo; fileNumber: number };
 
 // File IDs remain local to each conversation. Link numbers use the host's durable
@@ -46,7 +46,7 @@ function nearCallId(left: string, right: string): boolean {
   return previous[right.length]! <= 2;
 }
 
-export async function resolveFileMemo(store: ToolExecutionStore, reference: string, scope: FileMemoScope = {}): Promise<FileMemoResolution> {
+export async function resolveFileMemo(store: ToolExecutionStore, reference: string, scope: FileMemoScope = {}, remote?: RemoteWorkspaceBridge): Promise<FileMemoResolution> {
   const identity = parseFileMemoReference(reference);
   if (!identity) return { status: 'unresolved', reason: 'invalid_reference' };
   const locator = 'number' in identity ? store.getFileMemoReference(identity.number) : identity;
@@ -72,40 +72,36 @@ export async function resolveFileMemo(store: ToolExecutionStore, reference: stri
   }
   if (scope.fileName && scope.fileName !== entry.memo.file.name) return { status: 'unresolved', reason: 'reference_mismatch' };
   try {
-    const current = await stat(memo.file.path);
-    if (!current.isFile()) return { memo, ...(recovered ? { recovered } : {}), status: 'unavailable' };
+    const current = await readMemoFile(memo.file.path, 0, remote);
     return { memo, ...(recovered ? { recovered } : {}),
       currentVersion: { size: current.size, mtimeMs: current.mtimeMs },
       status: current.size === memo.file.size && current.mtimeMs === memo.file.mtimeMs ? 'available' : 'changed' };
   } catch { return { memo, status: 'unavailable' }; }
 }
 
-export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecutionStore): void {
+export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecutionStore, remote?: RemoteWorkspaceBridge): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'file_memo', risk: 'low' as const,
     owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
   registry.register({
     definition: { name: FILE_MEMO_WRITE_TOOL,
-      description: 'Record or update a concise file memo in this conversation: an existing absolute file path, one short purpose and at most 3 short observations. These are your notes, not host-verified conclusions. No execution logs, dialogue summaries or long tool output. Copy the returned markdown directly when delivering a file, or use its reference verbatim in an image. References use simple stable numbers such as cardbush-memo:1, issued by the host and valid across parent/child conversations. Never construct a link from the file ID or a tool-call ID. Each revision keeps its original note and reference; the file remains at its original path. Use read_file_memos to retrieve links again.',
+      description: 'Record or update a concise file memo in this conversation: an existing absolute local file path or ssh://saved-connection-id/absolute/file for a remote file, one short purpose and at most 3 short observations. These are your notes, not host-verified conclusions. No execution logs, dialogue summaries or long tool output. Copy the returned markdown directly when delivering a file, or use its reference verbatim in an image. References use simple stable numbers such as cardbush-memo:1, issued by the host and valid across parent/child conversations. Never construct a link from the file ID or a tool-call ID. Each revision keeps its original note and reference; the file remains at its original path. Use read_file_memos to retrieve links again.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'purpose'], properties: {
         path: { type: 'string', minLength: 1, maxLength: 32768 }, purpose: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[^\\r\\n]+$' },
         points: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 160, pattern: '^[^\\r\\n]+$' } },
       } } },
     manifest, parallelSafe: false, executionChannel: 'runtime:file_memo',
     decodeInput: value => fileMemoInputSchema.parse(value),
+    authorize: context => authorizeMemoFile(context, remote),
     execute: async context => {
-      if (!isAbsolute(context.input.path)) throw new Error('File memo path must be absolute.');
-      context.signal?.throwIfAborted();
-      const path = await realpath(context.input.path);
-      const file = await stat(path);
-      if (!file.isFile()) throw new Error('File memos reference files, not folders.');
-      context.signal?.throwIfAborted();
+      const file = await readMemoFile(context.input.path, 0, remote, context.signal);
+      const path = file.path;
       const entries = memoEntries(store, context.sessionId);
       const existing = entries.find(entry => identityPath(entry.memo.file.path) === identityPath(path));
       const fileNumber = existing?.fileNumber ?? new Set(entries.map(entry => entry.fileNumber)).size + 1;
       const reference = fileMemoReference({ number: store.reserveFileMemoReference({ sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id }) });
       return fileMemoSchema.parse({ protocol: FILE_MEMO_PROTOCOL, id: `file_${fileNumber}`, reference,
-        markdown: fileMemoMarkdown(basename(path), reference),
-        file: { path, name: basename(path), size: file.size, mtimeMs: file.mtimeMs },
+        markdown: fileMemoMarkdown(file.name, reference),
+        file: { path, name: file.name, size: file.size, mtimeMs: file.mtimeMs },
         note: { purpose: context.input.purpose, points: context.input.points },
       });
     },
@@ -131,7 +127,7 @@ export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecuti
         const matching = entries.find(entry => entry.memo.id === context.input.id || `file_${entry.fileNumber}` === context.input.id);
         const entry = matching && latest.get(matching.fileNumber);
         if (!entry) throw new Error('File memo was not found in this conversation.');
-        return resolveFileMemo(store, publicMemo(store, entry).reference, { sessionId: context.sessionId });
+        return resolveFileMemo(store, publicMemo(store, entry).reference, { sessionId: context.sessionId }, remote);
       }
       const memos = [...latest.values()].map(entry => publicMemo(store, entry));
       const end = context.input.offset + 10;
@@ -141,7 +137,7 @@ export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecuti
 }
 
 /** Check actual Markdown destinations, excluding examples in code. Does not rewrite model history. */
-export async function validateFileMemoLinks(store: ToolExecutionStore, content: string, scope: Required<Pick<FileMemoScope, 'sessionId' | 'turnId'>>) {
+export async function validateFileMemoLinks(store: ToolExecutionStore, content: string, scope: Required<Pick<FileMemoScope, 'sessionId' | 'turnId'>>, remote?: RemoteWorkspaceBridge) {
   if (!content.includes('cardbush-memo:')) return { invalid: [], links: [] };
   const prose = content.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, match => ' '.repeat(match.length))
     .replace(/(`+)[^`]*?\1/g, match => ' '.repeat(match.length));
@@ -155,7 +151,7 @@ export async function validateFileMemoLinks(store: ToolExecutionStore, content: 
     // New deliveries must be exact; the conservative legacy repair is for already-saved messages.
     const label = match[1]?.replace(/\\([\\\[\]])/g, '$1').trim();
     const fileName = label && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(label) ? label : undefined;
-    const result = await resolveFileMemo(store, reference, { sessionId: scope.sessionId, fileName });
+    const result = await resolveFileMemo(store, reference, { sessionId: scope.sessionId, fileName }, remote);
     if (result.status === 'unresolved' || result.status === 'unavailable') invalid.push({ reference, reason: result.status === 'unresolved' ? result.reason : 'file_unavailable' });
     if (invalid.length >= 10) break;
   }
@@ -164,7 +160,7 @@ export async function validateFileMemoLinks(store: ToolExecutionStore, content: 
   const availableLinks: string[] = [];
   for (const entry of [...latest.values()].slice(-10)) {
     const memo = publicMemo(store, entry);
-    const result = await resolveFileMemo(store, memo.reference);
+    const result = await resolveFileMemo(store, memo.reference, {}, remote);
     if (result.status === 'available' || result.status === 'changed') availableLinks.push(memo.markdown!);
   }
   return { invalid, links: availableLinks };

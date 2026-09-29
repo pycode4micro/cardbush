@@ -9,6 +9,7 @@ type RuntimeQueuedMessage = { id: string; text: string; createdAt: string };
 export type ComposerRuntimeRailHandle = { showQueue: () => void };
 
 export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, queuedMessagePreview = '', queuedMessages = [],
+  queueLocked = false,
   onEditQueuedMessage, onGuideQueuedMessage, onRemoveQueuedMessage, onReorderQueuedMessage,
 }: {
   ref?: Ref<ComposerRuntimeRailHandle>;
@@ -16,6 +17,7 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
   queuedMessageCount?: number;
   queuedMessagePreview?: string;
   queuedMessages?: RuntimeQueuedMessage[];
+  queueLocked?: boolean;
   onEditQueuedMessage?: (item: RuntimeQueuedMessage) => void;
   onGuideQueuedMessage?: (id: string) => Promise<void>;
   onRemoveQueuedMessage?: (id: string) => void;
@@ -37,7 +39,12 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
   }
   if (queuedMessageCount <= 0) return null;
   return (
-    <div className={`composer-runtime-rail ${panelPresence.mounted ? 'expanded' : ''} ${panelPresence.visible ? 'context-visible' : 'context-exiting'}`}>
+    <div className={`composer-runtime-rail ${panelPresence.mounted ? 'expanded' : ''} ${panelPresence.visible ? 'context-visible' : 'context-exiting'}`}
+      data-queue-locked={queueLocked} onKeyDown={event => {
+        if (!event.defaultPrevented && keyboardShortcuts.matches('guideNow', event) && firstQueuedMessage) {
+          event.preventDefault(); event.stopPropagation(); void guideQueuedMessage(firstQueuedMessage.id);
+        }
+      }}>
       {panelPresence.mounted && (
         <section
           className="runtime-context-panel queue-context-panel"
@@ -58,7 +65,9 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
           </header>
           <div className="runtime-queue-detail">
             <div className="runtime-queue-hint">
-              {language === 'zh' ? '当前回复完成后按顺序发送，按住消息拖动排序。' : 'Sends in order after the current reply. Hold and drag a message to reorder.'}
+              {queueLocked
+                ? language === 'zh' ? '已锁定：回复结束后不会自动发送，仍可手动发送单条消息。' : 'Locked: messages stay queued after the reply. You can still send individual messages manually.'
+                : language === 'zh' ? '当前回复完成后按顺序发送，按住消息拖动排序。' : 'Sends in order after the current reply. Hold and drag a message to reorder.'}
             </div>
             {queuedMessages.length > 0 ? (
               <div className="runtime-queue-list" ref={queueDrag.listRef} role="list" aria-label={language === 'zh' ? '待发送的提示词' : 'Queued prompts'}>
@@ -139,7 +148,7 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
         <span className="runtime-screen-viewport" aria-live="polite">
           <span className="runtime-screen-line queue">
             <Clock3 size={13} />
-            <strong>{language === 'zh' ? `排队 ${queuedMessageCount}` : `${queuedMessageCount} queued`}</strong>
+            <strong>{queueLocked ? language === 'zh' ? '已锁定' : 'Locked' : language === 'zh' ? `排队 ${queuedMessageCount}` : `${queuedMessageCount} queued`}</strong>
             <small>{queuePreview || (language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply')}</small>
           </span>
         </span>

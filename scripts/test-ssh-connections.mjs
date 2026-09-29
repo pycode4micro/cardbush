@@ -8,7 +8,9 @@ import { once } from 'node:events';
 import ssh2 from 'ssh2';
 import { SshConnectionManager } from '../dist-electron/sshConnections.mjs';
 import { sshWorkspace } from '@cardbush/bush-protocol';
-import { ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools } from '@cardbush/bush-runtime';
+import { ToolExecutionCoordinator, ToolRegistry, ToolExecutionStore, registerWorkspaceTools, registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from '@cardbush/bush-runtime';
+
+import { registerSourceMemoTools, resolveSourceMemo } from '../packages/bush-runtime/dist/sourceMemo.js';
 
 // A real loopback SSH transport, with deterministic remote SFTP/process fixtures.
 // This runs on Windows without requiring a Linux host or touching user SSH settings.
@@ -44,6 +46,7 @@ async function fixture(t) {
         }
         stream.stderr.write(marker+current+'\n');
         if(info.command.includes('fixture-sleep'))return;
+        if(info.command.includes('/work/child') && info.command.includes('git ')){stream.stderr.write('fatal: not a git repository (or any of the parent directories): .git');stream.exit(128);stream.end();return;}
         // Delayed multiple writes catch implementations that confuse first output with completion.
         if(info.command.includes("'rg'")){stream.write('file.txt:1:1:first\n');setTimeout(()=>{stream.write('file.txt:3:1:last\n');stream.exit(0);stream.end();},60);}
         else if(info.command.includes('branch')&&info.command.includes('--show-current')){stream.write('main\n');stream.exit(0);stream.end();}
@@ -92,23 +95,29 @@ async function fixture(t) {
 // JSON.stringify alone would silently drop undefined fields and hide this bug.
 function runtimeTools(f) {
   const registry=new ToolRegistry();
-  registerWorkspaceTools(registry,undefined,{remote:{request(action,payload,signal) {
+  const store = new ToolExecutionStore(), outcomes = [];
+  const remote = {request(action,payload,signal) {
     if(action==='terminals')return Promise.resolve(f.manager.listTerminals(payload.owner));
     if(action==='authorize')return f.manager.authorize(payload.uri,payload.path,payload.write);
     if(action==='execute')return f.manager.execute(payload.uri,payload.owner,payload.name,payload.input,signal);
     throw Error('Unexpected bridge action: '+action);
-  }}});
+  }};
+  registerWorkspaceTools(registry,undefined,{remote});
+  registerFileMemoTools(registry,store,remote); registerSourceMemoTools(registry,store,remote);
   const coordinator=new ToolExecutionCoordinator({registry,permissions:{async request(input) {
     return {protocol:'bush.runtime_permission_answer.v1',permissionId:'permission',answerId:'answer',decision:'allow_once',grantedCapabilityIds:input.capabilityIds};
   }}});
   let ordinal=0;
-  return async(name,input,workspace=f.uri)=>{
+  const execute = async(name,input,workspace=f.uri)=>{
     const identity={requestId:'request',sessionId:'runtime-test',turnId:'turn',round:1,ordinal:ordinal++};
-    const outcome=await coordinator.execute({protocol:'bush.tool_call.v1',id:'call-'+identity.ordinal,name,argumentsText:JSON.stringify(input)},identity,undefined,
+    const call = {protocol:'bush.tool_call.v1',id:'call-'+identity.ordinal,name,argumentsText:JSON.stringify(input)};
+    const outcome=await coordinator.execute(call,identity,undefined,
       {request:{protocol:'bush.model_request.v1',requestId:identity.requestId,sessionId:identity.sessionId,turnId:identity.turnId,model:'fixture',messages:[],tools:registry.definitions(),metadata:{workspaceDir:workspace}},contextMessages:[]});
+    store.record(call,identity,outcome); outcomes.push(outcome);
     assert.equal(outcome.kind,'returned',name+': '+JSON.stringify(outcome.error));
     return outcome.result;
   };
+  return Object.assign(execute, { store, remote, outcomes });
 }
 
 test('one SSH conversation reads local source, uploads it, and routes both terminal hosts by handle', { timeout: 20_000 }, async t => {
@@ -281,4 +290,48 @@ test('disconnect marks running command uncertain without replaying it',async t=>
   const result=await execute('terminal_poll',{session_id:task.terminalSessionId,yield_time_ms:1});assert.equal(result.state,'disconnected');
   assert.equal(result.exitCode,null);
   assert.equal(f.commands.filter(command=>command.includes('fixture-sleep')).length,1);
+});
+
+
+test('SSH file references, source evidence and review share canonical remote identities', { timeout: 20_000 }, async t => {
+  const f = await fixture(t); await f.trust(); const execute = runtimeTools(f);
+  const local = join(f.directory, 'source-info.json'); await writeFile(local, '{"local":true}');
+  const localMemo = await execute('remember_source', { explanation: 'Local build information', sources: [{ target: local }] });
+  assert.equal(localMemo.sources[0].target, local);
+  const target = f.uri + '/file.txt';
+  const source = await execute('remember_source', { explanation: 'Remote evidence', sources: [{ target, locator: { line: 2 } }] });
+  assert.equal(source.sources[0].target, target); assert.match(source.sources[0].excerpt, /中文/);
+  const file = await execute('remember_file', { path: target, purpose: 'Remote result' });
+  assert.equal((await resolveFileMemo(execute.store, file.reference, {}, execute.remote)).status, 'available');
+  assert.deepEqual((await resolveSourceMemo(execute.store, source.reference, execute.remote)).evidenceStatus, ['available']);
+  assert.deepEqual((await validateFileMemoLinks(execute.store, file.markdown, { sessionId:'runtime-test', turnId:'turn' }, execute.remote)).invalid, []);
+  await execute('read_file', { path: target });
+  const receipt = await execute('edit_file', { path: target, old_text: '中文', new_text: '修复后的中文' });
+  assert.equal(receipt.workspaceChange, undefined, 'internal diff is not duplicated into model result');
+  const change = execute.outcomes.at(-1).workspaceChanges[0];
+  assert.equal(change.path, target); assert.equal(change.additions, 1); assert.equal(change.deletions, 1);
+  assert.equal(change.metadata.revertSupported, false);
+  assert.match(change.metadata.diff, /-中文\n\+修复后的中文/);
+  assert.equal((await resolveFileMemo(execute.store, file.reference, {}, execute.remote)).status, 'changed');
+  assert.deepEqual((await resolveSourceMemo(execute.store, source.reference, execute.remote)).evidenceStatus, ['changed']);
+  assert.equal((await resolveFileMemo(execute.store, file.reference)).status, 'unavailable', 'no local fallback for SSH');
+  f.files.set('/work/File.txt', Buffer.from('different case'));
+  const upper = await execute('remember_file', { path: f.uri + '/File.txt', purpose: 'Case-sensitive remote file' });
+  assert.notEqual(upper.id, file.id);
+  f.files.delete('/work/file.txt');
+  assert.equal((await resolveFileMemo(execute.store, file.reference, {}, execute.remote)).status, 'unavailable');
+  assert.equal((await f.manager.git(f.uri + '/child', 'info')).missing, true);
+});
+
+test('SSH preview is bounded, preserves encoding bytes and does not read large memo targets', { timeout: 20_000 }, async t => {
+  const f = await fixture(t); await f.trust();
+  f.files.set('/work/large.txt', Buffer.alloc(3 * 1024 * 1024, 65));
+  const metadata = await f.manager.snapshot(f.uri + '/large.txt', 2 * 1024 * 1024);
+  assert.equal(metadata.contentBase64, undefined); assert.equal(metadata.size, 3 * 1024 * 1024);
+  const preview = await f.manager.snapshot(f.uri + '/large.txt', 2 * 1024 * 1024, undefined, true);
+  assert.equal(preview.truncated, true); assert.equal(Buffer.from(preview.contentBase64, 'base64').length, 2 * 1024 * 1024);
+  f.files.set('/work/empty.txt', Buffer.alloc(0));
+  assert.equal((await f.manager.snapshot(f.uri + '/empty.txt', 100)).contentBase64, '');
+  assert.equal((await f.manager.snapshot(f.uri)).kind, 'folder');
+  await assert.rejects(f.manager.snapshot(f.uri + '/file.txt', 100 * 1024 * 1024), /Invalid/);
 });

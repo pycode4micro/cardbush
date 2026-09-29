@@ -20,7 +20,7 @@ test('memos reuse durable execution facts, update by file identity, and keep imm
   const run = async (name, args, sessionId = 's') => {
     const identity = { sessionId, turnId: 't', requestId: 'r', round: ++counter, ordinal: 0 };
     const call = { protocol: 'bush.tool_call.v1', id: 'call-' + counter, name, argumentsText: JSON.stringify(args) };
-    const outcome = await coordinator.execute(call, identity); store.record(call, identity, outcome);
+    const outcome = await coordinator.execute(call, identity, undefined, { request: { tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } }, contextMessages: [] }); store.record(call, identity, outcome);
     return outcome;
   };
   const first = await run('remember_file', { path, purpose: '商品参考', points: ['来自用户上传'] });
@@ -94,7 +94,7 @@ test('a delivered memo resolves through the public runtime command after host re
   const host = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolExecutionStore: persistedStore(), toolRegistry: registry, provider });
   assert.ok(registry.resolve('remember_file')); assert.ok(registry.resolve('read_file_memos'));
   const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
-    model: 'offline-fixture', messages: [{ role: 'user', content: '记录文件' }], tools: registry.definitions() });
+    model: 'offline-fixture', messages: [{ role: 'user', content: '记录文件' }], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } });
   assert.equal(terminal.payload.status, 'completed');
   const reference = fileMemoReference({ sessionId: 's', turnId: 't', toolCallId: 'memo' });
   const restarted = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolExecutionStore: persistedStore(), provider: { async *stream() { throw Error('No model call on reference lookup'); } } });
@@ -115,7 +115,7 @@ async function memoFixture(t) {
     const path = join(root, name); await writeFile(path, name);
     const call = { protocol: 'bush.tool_call.v1', id: `call_${++calls}`, name: 'remember_file', argumentsText: JSON.stringify({ path, purpose: name }) };
     const identity = { sessionId, turnId, requestId: 'request', round: calls, ordinal: 0 };
-    const result = await coordinator.execute(call, identity); assert.equal(result.kind, 'returned'); store.record(call, identity, result);
+    const result = await coordinator.execute(call, identity, undefined, { request: { tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } }, contextMessages: [] }); assert.equal(result.kind, 'returned'); store.record(call, identity, result);
     return result.result;
   } };
 }

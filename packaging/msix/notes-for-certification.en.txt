@@ -1,0 +1,13 @@
+2026-09-29 | CardBush | 9N7XNDD5WRGS | MSIX 1.0.5.0 x64
+
+This resubmission includes code changes addressing the previous 10.6.3 finding and replaces the 1.0.3.0 reconsideration notes.
+
+The manifest declares only runFullTrust. unvirtualizedResources, virtualization exclusions and the Native Messaging execution alias have been removed. The connector creates no new native-host registration or manifest, service, driver or HKLM entry.
+
+Browser Use supports Chrome and Edge on Windows 11 x64, build 22000 or later. It is disabled by default and uses extension 1.2.0 with explicit pairing over an authenticated 127.0.0.1 WebSocket. Credentials are in package-owned LocalState/browser-connector with current-user/SYSTEM ACLs. Pairing does not authorize personal tabs; page consent remains separate.
+
+runFullTrust enables the Electron desktop app's user-directed workspace access, terminal/local agent processes and desktop/browser automation. The app uses asInvoker; this capability does not grant administrator privileges. The connector requests no elevation. Normal MSIX virtualization applies.
+
+Test: Settings > Browser > Browser Use > Enable connector > Open extension folder. Enable Developer mode at chrome://extensions or edge://extensions and load that folder. Select the matching browser in CardBush, generate a pairing code, and pair in the extension. Test each browser independently. Remove a connection to revoke it; Disable revokes all pairings. Setup/pairing needs no model account; AI tasks require a configured model service.
+
+Validation of a locally signed copy: installation, Chrome/Edge pairing and normal/running/post-crash system uninstall passed. WACK: 22 PASS, 1 DPI WARNING, 1 optional Blocked executables FAIL, 0 required FAIL. Tests used an administrator account with UAC/Smart App Control off; standard-user and protection-enabled testing remain unverified. Windows 10 and S mode are not supported.

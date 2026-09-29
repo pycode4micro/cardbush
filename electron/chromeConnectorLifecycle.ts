@@ -72,7 +72,7 @@ export class ChromeConnectorLifecycle {
   setEnabled(enabled: boolean, remove = false): Promise<void> {
     const operation = this.#queue.catch(() => {}).then(async () => {
       if (this.#disposed) throw new Error('Connector is shutting down.');
-      if (!(this.dependencies.supported ?? chromeConnectorPlatformSupported)()) throw new Error('Chrome Connector requires Windows 11.');
+      if (!(this.dependencies.supported ?? chromeConnectorPlatformSupported)()) throw new Error('Browser Use requires Windows 11.');
       this.error = '';
       this.state = enabled ? 'enabling' : 'disabling'; this.changed();
       try {
@@ -142,6 +142,10 @@ export class ChromeConnectorLifecycle {
     fs.rmSync(bridge, { force: true });
     const pairing = path.join(connectorDirectory(this.input.userDataPath), 'pairing.json');
     assertConnectorFile(pairing); fs.rmSync(pairing, { force: true });
+    if (remove) {
+      const routes = path.join(connectorDirectory(this.input.userDataPath), 'routes.json');
+      assertConnectorFile(routes); fs.rmSync(routes, { force: true });
+    }
     // preference.json is intentionally retained as an explicit disabled marker.
     // Never recursively remove this directory or unrelated files.
     this.state = 'disabled';

@@ -1,15 +1,15 @@
 # CardBush 浏览器连接器：MSIX 整改实施记录
 
-更新：2026-09-29。本次将扩展连接改为主动配对的本机 WebSocket，替代 9 月 28 日的 Native Messaging 单键排除方案。代码和开发环境测试完成；新包安装、真实 Chrome、升级、多账户及系统卸载验收待完成。
+更新：2026-09-29。扩展连接已改为主动配对的本机 WebSocket，替代 9 月 28 日的 Native Messaging 单键排除方案。旧包 1.0.4.0 的历史验证保留在本文末尾；当前 Browser Use/Edge 已生成独立的 1.0.5.0 候选包，实际安装、浏览器与 WACK 的结果和环境边界见 [本次提交准备](MSIX_SUBMISSION_PREPARATION_2026-09-29.md)。
 
 ## 当前实现
 
-- Windows 仅支持 Windows 11 build 22000 起；认证范围为 Chrome 116+，不声称其他浏览器已兼容。
-- 链路为 Electron → 本地 Broker → 已配对的 Chrome 扩展。MCP 与 Broker 保留受当前用户 ACL 保护的命名管道。
+- Windows 仅支持 Windows 11 x64 build 22000 起；Browser Use 支持 Chrome 和 Edge。扩展声明 Chromium 116 API 最低版本，不代表已验证所有最低版本组合。
+- 链路为 Electron → 本地 Broker → 已配对的 Browser Use 扩展（1.2.0）。MCP 与 Broker 保留受当前用户 ACL 保护的命名管道。
 - 删除创建 Native Messaging 注册项的代码，以及 MSIX 的 `unvirtualizedResources`、注册表虚拟化排除、execution alias。保留正常 MSIX 虚拟化和 Electron 必需的 `runFullTrust`。
-- 连接器默认关闭。明确开启后监听 `127.0.0.1` 随机端口，首次使用需复制五分钟内有效的配对码到扩展。新配对成功后撤销旧配对；配对本身不授予页面权限。
-- MSIX 的 `preference.json`、`pairing.json` 和运行中的 `bridge.json` 位于当前包 `%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalState\browser-connector`。包身份来自 Windows API，不接受 renderer 指定目录。
-- 普通退出保留配对和启用意图，关闭监听和命名管道；主动关闭/移除配置会撤销配对并保留关闭标记。浏览器新会话仍需用户点击连接，失败自动重连有上限。关闭后的旧凭据不能恢复控制。
+- 连接器默认关闭。明确开启后监听 `127.0.0.1` 本机端口，首次使用需复制五分钟内有效的配对码到对应浏览器。最多八条独立配对；新配对不撤销其他已配对连接，可单独移除。配对本身不授予页面权限。
+- MSIX 的 `preference.json`、`pairing.json`、`routes.json` 和运行中的 `bridge.json` 位于当前包 `%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalState\browser-connector`。包身份来自 Windows API，不接受 renderer 指定目录。
+- 普通退出保留配对、启用意图和会话绑定，关闭监听和命名管道；关闭连接器撤销全部配对，保留关闭标记及绑定；移除配置还会移除绑定。修改默认值不改变已绑定会话，离线不自动切换或重放动作。浏览器新会话仍需用户点击连接，失败自动重连有上限。
 - 保留页面授权、会话标签组隔离、停止控制和撤销授权行为。授权页文字、截图和操作结果可能发送至用户配置的模型服务。
 
 ## 访问控制
@@ -31,12 +31,12 @@ WebSocket 检查回环地址、精确 Host/path、固定扩展 Origin、一次�
 
 ## 本轮已验证
 
-- 实际回环 socket：双方配对、MCP 往返、重启、替换旧配对；错误 Origin/密钥、过期码、重放和未完成握手被拒绝。
+- 实际回环 socket：双方配对、MCP 往返、重启、多浏览器并存、显式切换和单独撤销；错误 Origin/密钥/浏览器身份、过期码、重放和未完成握手被拒绝。响应绑定到实际来源浏览器，调用方超时不解除尚未确认动作的切换保护。
 - 扩展实际传输脚本：验证 Broker 后才启用消息，伪 Broker 不获得浏览器操作权限；worker 默认关闭、重启、关闭后不重连和过期回调回归。
 - 生命周期：新启用无注册表写入；启停持久化、所有权、Store 旧项提示、实例租约和旧 token 拒绝。
 - 原生生产构建：无测试配置覆盖入口，真实 Windows 目录/管道 ACL 设置和读回。
 - 清理脚本：在临时脚本副本中固定替换为独立测试 HKCU 键/文件目录，实际执行 Windows 注册表 API，验证 WhatIf、其他安装拒绝、存活进程拒绝、精确删除、保留无关数据、重复执行。未修改本机真实 Chrome 注册项。
-- 设置界面：生成/显示遮蔽配对码、移除后消失，原有连接方式、主题和窄窗口回归。
+- 设置界面：浏览器选择、连接名称、遮蔽配对码、默认选择、单独移除，主题和窄窗口回归。真实 Chrome 153 / Edge 154 的隔离无界面配置验证了页面读写、截图、切换和撤销；此项不等于安装包验证。
 - MSIX 清单：Win11 最低版本、无虚拟化豁免和 execution alias，检查包内配对脚本和旧版清理脚本。
 
 ## 仍需新安装包验证
@@ -44,14 +44,14 @@ WebSocket 检查回环地址、精确 Host/path、固定扩展 Origin、一次�
 准备新包的测试签名副本，在隔离账户或 VM 记录包版本、SHA-256、系统 build、签名来源及预期/实际结果：
 
 1. 首次安装默认关闭，包身份下的 LocalState 路径和 ACL 正确。
-2. 真实 Chrome 116+ 配对、授权、读取页面、停止控制、关闭后不重连。
+2. 真实 Chrome 和 Edge 配对、授权、读取页面、截图、停止控制、双浏览器并存、明确切换、单独撤销和关闭后不重连；记录实际版本。
 3. 应用/扩展/浏览器重启、端口冲突、旧包升级、旧注册项外部迁移、多实例及第二 Windows 账户。
-4. 正常卸载、运行中卸载、崩溃后卸载；检查 LocalState、HKCU 和旧版路径，单列用户工作文件与独立 Chrome 扩展。
-5. Windows App Certification Kit；Store 签名分发包在系统保护开启环境的运行验证。
+4. 正常卸载、运行中卸载、崩溃后卸载；检查 LocalState（含 routes.json）、HKCU 和旧版路径，单列用户工作文件与独立 Chrome/Edge 扩展。
+5. Windows App Certification Kit；认证和签名完成后再验收 Store 分发包在系统保护开启环境的运行，不提前声明通过。
 
 暂存包不会自动上传，`releaseReady: false` 在验收完成前应保留。复审草稿见 [提交材料](../packaging/msix/store-submission.zh-CN.md)。
 
-## 2026-09-29 新包结果
+## 2026-09-29 历史 1.0.4.0 包结果
 
 最终包为 `release-msix/1.0.4.0-dq67mA/CardBush-1.0.4.0-x64.msix`，SHA-256 为 `dc7cd569ad3a6bb702a77bee78e2674d22c1ed56fd64ebce71dae20969556116`。此包包含收尾时修复的窄栏工具按钮溢出，取代此前的 `1.0.4.0-VpXEB1` 暂存构建。生产构建、MakeAppx 校验、依赖/隐私检查和包内应用/运行时/工具/连接器烟测通过；暂存应用的全部 321 个文件与实际 MSIX 解包结果逐一 SHA-256 相同。报告位于同目录 `msix-build-report.json`。
 

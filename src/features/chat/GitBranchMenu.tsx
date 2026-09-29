@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GitBranch, Plus } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 
@@ -18,42 +18,52 @@ export function GitBranchMenu({
   const [newBranch, setNewBranch] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
+  const [repositoryAvailable, setRepositoryAvailable] = useState(false);
+  const readSequence = useRef(0);
 
   const reload = useCallback(async () => {
+    const sequence = ++readSequence.current;
+    setRepositoryAvailable(false);
+    setBranches([]);
+    setCurrentBranch('');
     const root = activeProjectDir?.trim();
     if (!root || !window.cardbushDesktop?.gitInfo) {
-      setBranches([]);
-      setCurrentBranch('');
+      setLoading(false);
       setStatus(language === 'zh' ? '请先打开一个 Git 项目' : 'Open a Git project first');
       return;
     }
     setLoading(true);
     setStatus('');
     try {
-      const [info, loadedBranches] = await Promise.all([
-        window.cardbushDesktop.gitInfo(root),
-        window.cardbushDesktop.gitBranches?.(root) ?? Promise.resolve([]),
-      ]);
+      const info = await window.cardbushDesktop.gitInfo(root);
+      if (sequence !== readSequence.current) return;
+      if (info.missing || info.error) {
+        setStatus(info.error && !/not a git repository/i.test(info.error) ? info.error : info.missing || /not a git repository/i.test(info.error ?? '')
+          ? (language === 'zh' ? '此目录不是 Git 仓库，仍可查看文件工具记录的修改。' : 'This directory is not a Git repository. Recorded file edits are still available for review.')
+          : info.error ?? '');
+        return;
+      }
+      const loadedBranches = await window.cardbushDesktop.gitBranches?.(root) ?? [];
+      if (sequence !== readSequence.current) return;
+      setRepositoryAvailable(true);
       setCurrentBranch(info.branch);
       setBranches(loadedBranches);
-      if (info.error || info.missing) {
-        setStatus(info.error || (language === 'zh' ? '不是 Git 项目' : 'Not a Git project'));
-      }
     } catch (caught) {
-      setStatus(caught instanceof Error ? caught.message : String(caught));
+      if (sequence === readSequence.current) setStatus(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setLoading(false);
+      if (sequence === readSequence.current) setLoading(false);
     }
   }, [activeProjectDir, language]);
 
   useEffect(() => {
     void reload();
+    return () => { readSequence.current++; };
   }, [reload]);
 
   const switchBranch = useCallback(
     async (branch: string) => {
       const root = activeProjectDir?.trim();
-      if (disabled || !root || !branch.trim()) {
+      if (disabled || loading || !repositoryAvailable || !root || !branch.trim()) {
         return;
       }
       setLoading(true);
@@ -70,13 +80,13 @@ export function GitBranchMenu({
         setLoading(false);
       }
     },
-    [activeProjectDir, language, reload, disabled, onChanged],
+    [activeProjectDir, language, reload, disabled, loading, repositoryAvailable, onChanged],
   );
 
   const createBranch = useCallback(async () => {
     const root = activeProjectDir?.trim();
     const branch = newBranch.trim();
-    if (disabled || !root || !branch) {
+    if (disabled || loading || !repositoryAvailable || !root || !branch) {
       setStatus(language === 'zh' ? '请输入新分支名称' : 'Enter a new branch name');
       return;
     }
@@ -94,7 +104,7 @@ export function GitBranchMenu({
     } finally {
       setLoading(false);
     }
-  }, [activeProjectDir, language, newBranch, reload, disabled, onChanged]);
+  }, [activeProjectDir, language, newBranch, reload, disabled, loading, repositoryAvailable, onChanged]);
 
   return (
     <div className="popover-stack git-branch-menu">
@@ -108,7 +118,7 @@ export function GitBranchMenu({
       <div className="branch-create-row">
         <input
           value={newBranch}
-          disabled={disabled || loading || !activeProjectDir}
+          disabled={disabled || loading || !repositoryAvailable || !activeProjectDir}
           onChange={(event) => setNewBranch(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -118,13 +128,13 @@ export function GitBranchMenu({
           }}
           placeholder={language === 'zh' ? '新分支名称' : 'New branch name'}
         />
-        <button type="button" disabled={disabled || loading || !newBranch.trim()} onClick={() => void createBranch()}>
+        <button type="button" disabled={disabled || loading || !repositoryAvailable || !newBranch.trim()} onClick={() => void createBranch()}>
           <Plus size={14} />
           {language === 'zh' ? '创建' : 'Create'}
         </button>
       </div>
       <div className="branch-list">
-        {branches.length === 0 && (
+        {branches.length === 0 && (loading || repositoryAvailable) && (
           <span className="popover-status">
             {loading
               ? language === 'zh'
@@ -140,7 +150,7 @@ export function GitBranchMenu({
             className={`popover-row ${branch === currentBranch ? 'active' : ''}`}
             type="button"
             key={branch}
-            disabled={disabled || loading || branch === currentBranch}
+            disabled={disabled || loading || !repositoryAvailable || branch === currentBranch}
             onClick={() => void switchBranch(branch)}
           >
             <GitBranch size={16} />

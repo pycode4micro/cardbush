@@ -25,6 +25,11 @@ for (const plugin of catalog) {
   assert.ok(plugin.logoPath.endsWith('.svg'));
   assert.ok(plugin.name);
   assert.ok(plugin.version);
+  assert.doesNotMatch(plugin.description + plugin.longDescription + plugin.defaultPrompts.join(' '), /[\u3400-\u9fff]/u,
+    'bundled presentation has an English fallback');
+  assert.match(plugin.localizations?.zh?.description ?? '', /[\u3400-\u9fff]/u);
+  assert.match(plugin.localizations?.zh?.longDescription ?? '', /[\u3400-\u9fff]/u);
+  assert.equal(plugin.localizations?.zh?.defaultPrompts?.length, plugin.defaultPrompts.length);
 }
 const computerUsePlugin = catalog.find((plugin) => plugin.id === 'computer-use');
 assert.deepEqual(computerUsePlugin?.components.map((item) => item.kind), ['skill', 'mcp']);
@@ -35,17 +40,12 @@ assert.deepEqual(
 const chromePlugin = catalog.find((plugin) => plugin.id === 'chrome');
 assert.deepEqual(
   chromePlugin?.components.map((item) => item.kind),
-  ['skill', 'skill', 'skill', 'skill', 'skill', 'skill', 'mcp', 'app'],
+  ['skill', 'mcp'],
 );
 assert.deepEqual(
   chromePlugin?.components.filter((item) => item.kind === 'skill').map((item) => item.id).sort(),
   [
-    'a11y-debugging',
-    'chrome-devtools',
-    'chrome-devtools-cli',
-    'debug-optimize-lcp',
-    'memory-leak-debugging',
-    'troubleshooting',
+    'browser-use',
   ],
 );
 assert.equal(chromePlugin?.skillRoots?.length, 1);
@@ -63,7 +63,7 @@ const chromeExtension = JSON.parse(readFileSync(resolve(
 ), 'utf8'));
 assert.equal(chromeExtension.manifest_version, 3);
 assert.ok(chromeExtension.permissions.includes('debugger'));
-assert.ok(chromeExtension.permissions.includes('nativeMessaging'));
+assert.equal(chromeExtension.permissions.includes('nativeMessaging'), false);
 const chromeVendorMetadata = JSON.parse(readFileSync(resolve(
   'assets', 'plugins', 'chrome', 'vendor', 'OFFICIAL_PACKAGE.json',
 ), 'utf8'));
@@ -106,7 +106,7 @@ try {
       ...(chromePlugin?.skillRoots ?? []).map((skillRoot) => ({
         path: skillRoot,
         pluginId: 'chrome',
-        pluginName: 'Chrome',
+        pluginName: 'Browser Use',
         pluginSource: 'bundled',
       })),
     ],
@@ -127,7 +127,7 @@ try {
 
   await assert.rejects(installProductPlugin(join(bundledRoot, 'chrome'), temporary), /core capability/);
   // Old user installs with reserved names cannot shadow product-owned capabilities.
-  for (const name of ['chrome', 'computer-use', 'computer_use', 'Chrome']) {
+  for (const name of ['chrome', 'browser-use', 'Browser_Use', 'computer-use', 'computer_use', 'Chrome']) {
     const collision = join(temporary, 'source', name);
     await mkdir(join(collision, '.codex-plugin'), { recursive: true });
     await writeFile(join(collision, '.codex-plugin', 'plugin.json'), JSON.stringify({ name, version: '1.0.0' }));

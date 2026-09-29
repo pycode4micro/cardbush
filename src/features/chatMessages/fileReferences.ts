@@ -1,4 +1,9 @@
+import { parseSshWorkspace as parseSshIdentity, sshWorkspace } from '@cardbush/bush-protocol';
 import { basename, isAbsoluteLocalPath, stripWrappingQuotes } from '../../shared/localPaths';
+
+function parseSshWorkspace(value: string) {
+  try { return parseSshIdentity(value); } catch { return undefined; }
+}
 
 export const localFileReferenceScheme = 'cardbush-local-file:';
 
@@ -24,6 +29,17 @@ export function localFileReference(
 ): LocalFileReference | null {
   const cleaned = cleanFileReferenceValue(value);
   const withoutLocation = cleaned.replace(trailingLocationPattern, '');
+  const explicitRemote = parseSshWorkspace(withoutLocation);
+  if (explicitRemote) return { path: sshWorkspace(explicitRemote.connectionId, explicitRemote.path), label: basename(withoutLocation) };
+  const remoteRoot = parseSshWorkspace(workspaceRoot);
+  if (remoteRoot && !/^[a-z][a-z0-9+.-]*:/i.test(withoutLocation) && !withoutLocation.startsWith('\\\\') && looksLikeFilePath(cleaned)) {
+    const parts = (withoutLocation.startsWith('/') ? withoutLocation : `${remoteRoot.path}/${withoutLocation}`).split('/');
+    const normalized: string[] = [];
+    for (const part of parts) { if (part === '..') normalized.pop(); else if (part && part !== '.') normalized.push(part); }
+    const path = sshWorkspace(remoteRoot.connectionId, '/' + normalized.join('/'));
+    return { path, label: basename(path) };
+  }
+
   if (
     !cleaned ||
     posixPathConflictsWithWindowsWorkspace(withoutLocation, workspaceRoot) ||
@@ -53,7 +69,7 @@ export function localFileReferenceFromHref(href: string) {
   }
   try {
     const path = decodeURIComponent(href.slice(localFileReferenceScheme.length));
-    return isAbsoluteLocalPath(path) ? path : '';
+    return isAbsoluteLocalPath(path) || parseSshWorkspace(path) ? path : '';
   } catch {
     return '';
   }
@@ -66,7 +82,7 @@ export function markdownLocalFileReference(href: string | undefined, workspaceRo
   if (internalPath) return { path: internalPath, label: basename(internalPath) };
   const windowsPath = /^[a-z]:(?:[\\/]|%5c|%2f)/i.test(href);
   const fileUri = /^file:\/\//i.test(href);
-  if (!windowsPath && !fileUri && /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  if (!windowsPath && !fileUri && !parseSshWorkspace(href) && /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
   return localFileReference(href, workspaceRoot) ??
     localFileReference(`./${href}`, workspaceRoot);
 }
@@ -123,6 +139,7 @@ function markdownNativeBoundary(type: string) {
 
 function localFileMarkdownNodes(value: string, workspaceRoot: string): MarkdownNode[] | null {
   const matches = [
+    ...value.matchAll(/ssh:\/\/[^\s<>()（）\[\]【】`]+/g),
     ...value.matchAll(windowsFilePattern),
     ...value.matchAll(relativeFilePattern),
     ...value.matchAll(bareWindowsAbsolutePathPattern),
@@ -178,6 +195,7 @@ function isInsideWebUrl(value: string, index: number) {
 
 function cleanFileReferenceValue(value: string) {
   const unwrapped = stripWrappingQuotes(value.trim());
+  if (parseSshWorkspace(unwrapped)) return unwrapped;
   const localValue = /^file:\/\//i.test(unwrapped)
     ? localPathFromFileUrl(unwrapped)
     : decodeFileReference(unwrapped);

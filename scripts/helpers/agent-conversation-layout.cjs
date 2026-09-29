@@ -35,8 +35,8 @@ module.exports = async function testAgentConversationLayout({ run, until, pause,
   await pause(350);
   const bottom = await run('agentGeometry()');
   assert.ok(Math.abs(bottom.top - bottom.bottom) < 2, 'can manually reach the absolute bottom');
-  const jobsBefore = await run("calls.filter(c=>c.id==='b' && c.operation==='chat.jobs').length");
-  await until(`calls.filter(c=>c.id==='b' && c.operation==='chat.jobs').length >= ${jobsBefore + 2}`, 'two idle refreshes', 7000);
+  const jobsBefore = await run("calls.filter(c=>c.id==='b' && c.operation==='chat.queue' && c.input.action==='get').length");
+  await until(`calls.filter(c=>c.id==='b' && c.operation==='chat.queue' && c.input.action==='get').length >= ${jobsBefore + 2}`, 'two idle refreshes', 7000);
   const afterPoll = await run('agentGeometry()');
   assert.ok(Math.abs(afterPoll.top - afterPoll.bottom) < 2, 'polling cannot pull the viewport off the bottom');
   assert.equal(await run("document.querySelector('.agent-chat .message-list') === retainedAgentScroller"), true, 'polling preserves the shared scroller');
@@ -83,4 +83,7 @@ module.exports = async function testAgentConversationLayout({ run, until, pause,
   assert.equal(await run("calls.some(c=>c.operation==='local-runtime')"), false, 'remote rail must not fetch local history');
   await run("snapshots.b[0]={...layoutBaseSnapshot,revision:snapshots.b[0].revision+1};window.dispatchEvent(new CustomEvent('cardbush:agent-session-updated',{detail:{connectionId:'b',sessionId:'same-session'}}));undefined;");
   await until("document.querySelectorAll('.agent-chat .quick-context-tick').length === 1", 'restore review fixture');
+  // Let the scroll position settle after replacing a long history; opening the
+  // next popover while that programmatic scroll is still firing closes it again.
+  await pause(200);
 };

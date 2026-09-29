@@ -55,13 +55,13 @@ module.exports = async ({run,until,pause,window,root}) => {
   await run("updateChat({messages:[{id:'message',role:'user',content:'在远程检查项目'}]})");await until("!!document.querySelector('.composer-dock')",'active chat composer');
   assert.equal(await run("document.body.textContent.includes('独立工作区')"),false,'removed workspace badge');
   assert.equal(await run("!!document.querySelector('.composer-dock .workspace-location-control')"),false,'active conversation has no permanent workspace row');
-  await run("updateChat({sending:true,activeTurnId:'ssh-layout-turn'})");
-  await until("!!document.querySelector('.composer-runtime-screen')",'running remote conversation');
+  await run("updateChat({sending:true,activeTurnId:'ssh-layout-turn',queuedMessageCount:1,queuedMessages:[{id:'ssh-queued',text:'等待远程检查完成',createdAt:new Date().toISOString()}]})");
+  await until("!!document.querySelector('.composer-runtime-screen')",'queued remote conversation');
   await pause(100);
   const composerGap=await run("document.querySelector('.composer-surface').getBoundingClientRect().top-document.querySelector('.composer-runtime-screen').getBoundingClientRect().bottom");
-  assert.ok(Math.abs(composerGap)<=1,'processing rail joins the composer: '+composerGap);
+  assert.ok(Math.abs(composerGap)<=1,'queue rail joins the composer: '+composerGap);
   fs.writeFileSync(path.join(root,'tmp/ssh-active-composer.png'),(await window.capturePage()).toPNG());
-  await run("updateChat({sending:false,activeTurnId:''})");
+  await run("updateChat({sending:false,activeTurnId:'',queuedMessageCount:0,queuedMessages:[]})");
   window.setContentSize(1050,800);
   await run("updateChat({draft:'@'})");await until("!!document.querySelector('textarea[data-composer-input]')",'mention textarea');
   await run("const input=document.querySelector('textarea[data-composer-input]');input.focus();input.setSelectionRange(1,1);input.dispatchEvent(new Event('select',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keyup',{key:'@',bubbles:true}));");
@@ -111,7 +111,7 @@ module.exports = async ({run,until,pause,window,root}) => {
     assert.equal(await run("document.querySelector('.workspace-picker-fields select')?.value"),'new-server');
     assert.equal(await run("directoryCalls.at(-1)"),'ssh://new-server/home/developer/projects','loads the successfully tested host');
     await run("clickText('管理 SSH 连接');undefined;");
-    await until("!!document.querySelector('.ssh-settings-compact')",'reopen connection manager');
+    await until("!!document.querySelector('.ssh-settings-compact .ssh-connection')",'reopen connection manager with loaded connection');
     await run("clickText('测试')");
     await until("!document.querySelector('.ssh-settings-compact')&&document.querySelector('.ssh-directory-list')?.textContent.includes('service-api')",'known host also resumes browsing');
 

@@ -29,7 +29,13 @@ async function directory(t) {
 async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
   const calls = [];
   const server = createServer(async (req, res) => {
-    let raw = ''; for await (const chunk of req) raw += chunk;
+    let raw = '';
+    try { for await (const chunk of req) raw += chunk; }
+    catch (error) {
+      // Stopping during request upload intentionally closes the fixture socket.
+      if (req.aborted && error.code === 'ECONNRESET') return;
+      throw error;
+    }
     const body = JSON.parse(raw); if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 })); return; }
     calls.push(body); const n = calls.length;
     if (compatibility && n === 1) {
@@ -366,6 +372,46 @@ test('conversation files transfer in chunks, reject conflicting retries and stay
     await symlink(outside, join(session.metadata.runtimeWorkspace.workspaceDir, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
     await assert.rejects(f.service.call('files.read', { sessionId: 'files', path: 'escape/secret.txt' }), /outside/);
   } finally { await f.service.close(); }
+});
+
+test('pasted text uploads over HTTP, is read on demand and keeps sent references after restart', async t => {
+  const tool = { name: 'read_file', arguments: { path: '' } };
+  const f = await openService(t, 'pasted text', 10, tool);
+  const token = 'pasted-text-fixture-token-32-characters';
+  const http = await serveAgentHttp(f.service, { host: '127.0.0.1', port: 0, token });
+  const client = new AgentHttpClient(`http://127.0.0.1:${http.port}/`, token);
+  let restarted;
+  try {
+    await client.call('sessions.create', { sessionId: 'pasted' });
+    await client.call('sessions.create', { sessionId: 'other-paste' });
+    const id = randomUUID();
+    const body = Buffer.from('PASTED_BODY_ONLY_ON_DEMAND\r\n中文🙂\t'.repeat(20_000), 'utf8');
+    let receipt;
+    for (let offset = 0; offset < body.length; offset += 512 * 1024) {
+      const chunk = body.subarray(offset, offset + 512 * 1024);
+      receipt = await client.call('files.pasted-text', { sessionId: 'pasted', action: 'upload', id, offset, content: chunk.toString('base64'), complete: offset + chunk.length === body.length });
+      assert.equal(receipt.nextOffset, offset + chunk.length);
+    }
+    assert.deepEqual(await readFile(receipt.path), body);
+    tool.arguments.path = receipt.path;
+    await assert.rejects(client.call('files.pasted-text', { sessionId: 'other-paste', action: 'retain', ids: [id] }), /ENOENT/);
+    await client.call('files.pasted-text', { sessionId: 'pasted', action: 'retain', ids: [id] });
+    const job = await client.call('chat.send', { ...input('pasted', 'paste-request', 'Summarize the attached text'), files: [receipt.path],
+      userMessageMetadata: { attachments: [{ id, name: receipt.name, path: receipt.path, type: 'document' }] } });
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
+    assert.ok(f.model.calls.length >= 2, 'model executed the read tool');
+    assert.ok(JSON.stringify(f.model.calls[0]).includes(receipt.name), 'first prompt includes a file reference');
+    assert.ok(!JSON.stringify(f.model.calls[0]).includes('PASTED_BODY_ONLY_ON_DEMAND'), 'no eager file body injection');
+    assert.ok(JSON.stringify(f.model.calls[1]).includes('PASTED_BODY_ONLY_ON_DEMAND'), 'read_file can access the uploaded text when requested');
+    await client.call('files.pasted-text', { sessionId: 'pasted', action: 'discard', id });
+    assert.deepEqual(await readFile(receipt.path), body, 'late discard preserves sent file');
+    await f.service.close();
+    restarted = await AgentService.open({ dataRoot: f.root });
+    const preview = await restarted.call('files.read', { sessionId: 'pasted', path: receipt.path });
+    assert.equal(preview.name, receipt.name);
+    const session = await restarted.call('sessions.get', { sessionId: 'pasted' });
+    assert.ok(JSON.stringify(session).includes(receipt.name), 'history restores the file reference');
+  } finally { client.close(); await http.close(); await restarted?.close(); await f.service.close(); }
 });
 
 test('a missing local listener explains the tunnel dependency and can be retried after recovery', async t => {
@@ -792,6 +838,57 @@ test('HTTP stream parser handles split UTF-8 and rejects truncated streams', asy
   } finally { client.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
+
+test('queue lock persists across turns and restart, permits manual guidance and answers, and resumes in order', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = await openService(t, 'locked-queue', () => gate);
+  let service = f.service;
+  const call = (op, payload) => service.call(op, payload);
+  const queue = () => call('chat.queue', { action: 'get', sessionId: 'locked' });
+  const done = id => until(() => call('chat.jobs', { sessionId: 'locked' }), jobs => jobs.find(job => job.id === id)?.status === 'completed');
+  try {
+    await call('sessions.create', { sessionId: 'locked' });
+    const active = await call('chat.send', input('locked', 'active-lock'));
+    await until(() => f.model.calls.length, n => n === 1);
+    for (const id of ['first-held', 'second-held', 'manual-guide']) await call('chat.send', { ...input('locked', id), queueOnly: true });
+    await call('chat.queue', { action: 'lock', sessionId: 'locked', locked: true });
+    await call('chat.queue', { action: 'guide', id: 'manual-guide', turnId: active.turnId });
+    release();
+    await done('active-lock');
+    await pause(120);
+    assert.equal((await queue()).locked, true);
+    assert.deepEqual((await queue()).jobs.filter(job => job.status === 'queued').map(job => job.id), ['first-held', 'second-held']);
+    assert.equal((await queue()).jobs.find(job => job.id === 'manual-guide').guidance.applied, true);
+
+    await call('chat.send', input('locked', 'answer-confirmation', 'Answer the unexpected question'));
+    await done('answer-confirmation');
+    assert.equal((await queue()).jobs.find(job => job.id === 'first-held').status, 'queued', 'an explicit answer must not unlock waiting guidance');
+
+    await service.close();
+    service = await AgentService.open({ dataRoot: f.root, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
+    assert.equal((await queue()).locked, true, 'service restart preserves the lock');
+    await call('chat.send', { ...input('locked', 'third-held'), queueOnly: true });
+    await pause(120);
+    assert.equal((await queue()).jobs.find(job => job.id === 'third-held').status, 'queued', 'enqueue during idle still honors the lock');
+    await call('chat.queue', { action: 'guide', id: 'second-held' });
+    await done('second-held');
+    const callsBeforeRetry = f.model.calls.length;
+    await call('chat.queue', { action: 'guide', id: 'second-held' });
+    assert.equal(f.model.calls.length, callsBeforeRetry, 'retrying an acknowledged manual release never sends twice');
+    assert.deepEqual((await queue()).jobs.filter(job => job.status === 'queued').map(job => job.id), ['first-held', 'third-held']);
+    assert.equal((await queue()).locked, true);
+
+    await call('sessions.create', { sessionId: 'other-chat' });
+    await call('chat.send', input('other-chat', 'independent'));
+    await until(() => call('chat.jobs'), jobs => jobs.find(job => job.id === 'independent')?.status === 'completed');
+    await call('chat.queue', { action: 'lock', sessionId: 'locked', locked: false });
+    await done('third-held');
+    const jobs = (await queue()).jobs;
+    assert.equal(jobs.find(job => job.id === 'first-held').status, 'completed');
+    assert.ok(jobs.find(job => job.id === 'first-held').completedAt <= jobs.find(job => job.id === 'third-held').startedAt);
+  } finally { release(); await service.close(); }
+});
 
 test('remote queue reorders both directions, removes and atomically converts one item to guidance', async t => {
   const f = await openService(t, 'queue-controls', 1300);

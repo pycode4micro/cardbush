@@ -55,7 +55,7 @@ export function splitExplicitAttachmentMentions(content: string) {
     }
     const mention = /^ {0,3}@(.+)$/.exec(line);
     const path = mention ? stripWrappingQuotes(mention[1]) : '';
-    if (path && isAbsoluteLocalPath(path)) paths.push(path);
+    if (path && (isAbsoluteLocalPath(path) || path.startsWith('ssh://'))) paths.push(path);
     else lines.push(line);
   }
   return { text: lines.join('\n').trim(), paths };
@@ -99,6 +99,7 @@ export function compactPath(value?: string) {
 
 export function fileUrl(value: string) {
   const normalized = stripWrappingQuotes(value.trim());
+  if (normalized.startsWith('ssh://')) return `cardbush-file://ssh-file/?path=${encodeURIComponent(normalized)}`;
   if (/^file:\/\//i.test(normalized)) {
     if (!window.cardbushDesktop) {
       return normalized;

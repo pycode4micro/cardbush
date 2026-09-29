@@ -9900,7 +9900,8 @@ body.queue-reordering * {
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
-.composer-queue-button {
+.composer-queue-button,
+.composer-queue-lock {
   flex: 0 0 auto;
   height: 28px;
   display: inline-flex;
@@ -9919,9 +9920,23 @@ body.queue-reordering * {
 }
 
 .composer-queue-button:hover,
-.composer-queue-button:focus-visible {
+.composer-queue-button:focus-visible,
+.composer-queue-lock:hover,
+.composer-queue-lock:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-strong));
+}
+.composer-queue-lock[aria-pressed="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-strong));
+}
+.interaction-queue-lock {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--text-mid);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .composer-surface > .composer-prompt-editor {
@@ -10227,6 +10242,12 @@ body.queue-reordering * {
   font-variant-numeric: tabular-nums;
 }
 
+.composer-attachment-progress {
+  margin-bottom: 8px;
+  color: var(--text-soft);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
 .composer-file-remove {
   position: absolute;
   top: 5px;
@@ -10523,7 +10544,6 @@ body.queue-reordering * {
   .composer-footer { gap: 6px; }
   .composer-tools, .composer-actions { gap: 4px; }
   .composer-tools { min-width: min-content; }
-  .composer-style-select { width: 64px; flex: 0 1 64px; }
   .composer-actions .model-select { min-width: 52px; max-width: min(166px, 44cqw); padding-inline: 5px; }
 
   .permission-center-button,
@@ -10544,22 +10564,13 @@ body.queue-reordering * {
 }
 
 @container composer (max-width: 280px) {
-  .composer-style-select { width: 28px; flex: 0 0 28px; }
   .composer-queue-button {
     width: 28px;
     padding: 0;
     justify-content: center;
   }
 
-  .composer-style-select .settings-dropdown-trigger {
-    min-width: 28px;
-    padding: 0;
-    gap: 0;
-    justify-content: center;
-  }
-
-  .composer-queue-button > span,
-  .composer-style-select .settings-dropdown-trigger > span { display: none; }
+  .composer-queue-button > span { display: none; }
 
   .composer-actions .model-select {
     flex: 0 0 30px;

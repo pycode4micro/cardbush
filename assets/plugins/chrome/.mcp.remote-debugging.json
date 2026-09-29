@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "chrome-devtools": {
+    "browser_use": {
       "type": "stdio",
       "command": "node",
       "args": [

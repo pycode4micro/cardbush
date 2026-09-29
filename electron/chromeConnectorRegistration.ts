@@ -122,6 +122,6 @@ export function chromeConnectorRegistrationStatus(input: ConnectorRegistrationIn
       : path.join(input.appPath, 'assets', 'plugins', 'chrome', 'extension'),
     extensionId: chromeConnectorExtensionOrigin.slice('chrome-extension://'.length, -1),
     ...(storeUrl?.startsWith('https://') ? { storeUrl } : {}),
-    ...(!platformSupported ? { setupMessage: 'The Chrome connector requires Windows 11.' } : {}),
+    ...(!platformSupported ? { setupMessage: 'Browser Use requires Windows 11.' } : {}),
   };
 }

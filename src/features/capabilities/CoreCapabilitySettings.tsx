@@ -44,7 +44,7 @@ export function CoreCapabilitySettings({ id, language, children }: {
     {error && <p role="alert" className="settings-form-error">{error}<button type="button" className="secondary-button compact" disabled={busy} onClick={() => void load()}>{zh ? '刷新' : 'Refresh'}</button></p>}
     {notice && <p role="status">{notice}</p>}
     {plugin ? <>
-      <SettingsCard title={id === 'chrome' ? (zh ? 'Chrome 自动化' : 'Chrome automation') : 'Computer Use'}>
+      <SettingsCard title={id === 'chrome' ? 'Browser Use' : 'Computer Use'}>
         <SettingsSwitch title={zh ? '允许智能体使用' : 'Allow agent use'} checked={plugin.installed && plugin.enabled} disabled={busy}
           subtitle={zh ? 'CardBush 内置能力，由应用管理权限和会话隔离。' : 'A built-in capability with permissions and session isolation managed by CardBush.'}
           onChange={enabled => void persist({ ...plugin, installed: true, enabled }, zh ? '设置已保存' : 'Settings saved')} />

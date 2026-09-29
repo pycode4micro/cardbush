@@ -163,7 +163,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.activeElement.blur(); document.querySelector('.app').classList.remove('has-custom-background')");
   await run(`updateChat({ messages: [layoutUser, layoutAssistant, nextLayoutUser,
       { ...nextLayoutAssistant, status: 'completed', content: '检查完成。' }], sending: false, activeTurnId: '' });`);
-  await until("getComputedStyle(document.querySelector('[data-message-id=layout-next-assistant] .message-actions')).opacity === '1'",
+  await until("document.querySelector('[data-message-id=layout-next-assistant] .message-actions') && getComputedStyle(document.querySelector('[data-message-id=layout-next-assistant] .message-actions')).opacity === '1'",
     'finishing the next turn reveals its actions');
   assert.equal(await run("document.querySelectorAll('.message-row.assistant .message-actions.latest').length"), 1,
     'only the newest completed task keeps actions visible');

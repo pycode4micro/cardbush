@@ -161,7 +161,8 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         turnHistoryAvailable subagentObservabilityAvailable={false} thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
         activeGoal={chat.activeGoal} goalAvailable={false} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting}
         shadowAvailable={false} shadowAccentColor="" shadowThemeVariables={{}}
-        queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
+        queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
+                queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
         pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host?.id ?? sessionId } : null}
         connectionRecovery={chat.activeConnectionRecovery} error={error || taskError || configurationError || chat.error || (displayedStatus === 'failed' ? task.errorMessage ?? '' : '')} notice={chat.notice}
         onClearError={() => { setError(''); chat.clearError(); }} onClearNotice={chat.clearNotice}

@@ -104,7 +104,7 @@ try {
   const stalledRequest = (await messages.next()).value;
   extension.write(`${JSON.stringify({ type: 'progress', clientId: stalledRequest.clientId, id: stalledRequest.id, stage: 'command_pending' })}\n`);
   const timeout = await stalled;
-  assert.equal(timeout.code, 'chrome_connector_timeout');
+  assert.equal(timeout.code, 'browser_connector_timeout');
   assert.equal(timeout.details.diagnostics.stage, 'command_pending');
   assert.equal(timeout.details.diagnostics.command, 'Page.captureScreenshot');
   assert.ok(timeout.details.diagnostics.elapsedMs >= 200);
@@ -127,7 +127,7 @@ try {
     snapshotId: 'chrome-connector-contract',
     revision: 1,
     servers: [{
-      id: 'chrome_devtools',
+      id: 'browser_use',
       transport: {
         kind: 'stdio',
         command: connectorCommand,
@@ -142,8 +142,8 @@ try {
       toolPolicies: {},
     }],
   });
-  assert.equal(applied.servers[0].tools.length, 20);
-  const runtimeToolName = 'mcp__chrome_devtools__list_pages';
+  assert.equal(applied.servers[0].tools.length, 22);
+  const runtimeToolName = 'mcp__browser_use__list_pages';
   assert.ok(registry.resolve(runtimeToolName));
   const coordinator = new ToolExecutionCoordinator({
     registry,
@@ -178,7 +178,7 @@ try {
   const releaseExecution = coordinator.execute({
     protocol: 'bush.tool_call.v1',
     id: 'chrome-call-2',
-    name: 'mcp__chrome_devtools__release_browser',
+    name: 'mcp__browser_use__release_browser',
     argumentsText: '{}',
   }, {
     requestId: 'chrome-request-2',

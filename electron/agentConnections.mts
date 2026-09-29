@@ -1,10 +1,10 @@
-import { sendSharedConfiguration, type SharedConfigurationArchive } from './agentSharedConfiguration.mjs';
+import { sendSharedConfiguration, type SharedConfigurationArchive, type SharedConfigurationOptions, type SharedConfigurationReceipt } from './agentSharedConfiguration.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { AgentHttpClient, AgentHttpError, AgentIdentityError, AgentNetworkError, agentBaseUrl } from './agentHttpClient.mjs';
-import type { AgentInfo, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest } from './agentTypes.js';
+import type { AgentInfo, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest, AgentSyncPlugin } from './agentTypes.js';
 import type { SshConnectionManager } from './sshConnections.mjs';
 import type { SshTunnel } from './sshTunnel.mjs';
 type Saved = Omit<AgentConnection, 'hasToken' | 'connected' | 'info' | 'connectionState' | 'connectionError'> & { token?: string; legacyLaunch?: Record<string, unknown> };
@@ -28,11 +28,13 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   #errors = new Map<string, string>();
   #writes: Promise<unknown> = Promise.resolve();
   #closing = false;
-  #configuration = new Map<string, Promise<void>>();
+  #configuration = new Map<string, { plugins: boolean; promise: Promise<SharedConfigurationReceipt> }>();
+  #configurationRetry = new Map<string, { until: number; error: Error }>();
   #configurationErrors = new Map<string, string>();
   #configurationWarnings = new Map<string, string[]>();
   constructor(readonly path: string, readonly cipher: { encrypt(value: string): string; decrypt(value: string): string },
-    readonly options: { sharedConfiguration?: () => Promise<SharedConfigurationArchive>; ssh?: Pick<SshConnectionManager, 'list' | 'tunnel'>; reconnectDelayMs?: number; healthIntervalMs?: number } = {}) {}
+    readonly options: { sharedConfiguration?: (options: SharedConfigurationOptions) => Promise<SharedConfigurationArchive>; syncCatalog?: () => Promise<AgentSyncPlugin[]>;
+      ssh?: Pick<SshConnectionManager, 'list' | 'tunnel'>; reconnectDelayMs?: number; healthIntervalMs?: number } = {}) {}
   /** Restore saved managed tunnels without delaying desktop startup. */
   async restore() {
     if (this.#closing) return;
@@ -62,6 +64,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   async list(): Promise<AgentConnection[]> {
     return (await this.#read()).map(item => ({ id: item.id, name: item.name, transport: 'http', url: item.url,
       sshTunnel: item.sshTunnel, agentId: item.agentId, migrationIssue: item.migrationIssue, hasToken: Boolean(item.token), configurationError: this.#configurationErrors.get(item.id), configurationWarnings: this.#configurationWarnings.get(item.id),
+      autoSyncPlugins: item.autoSyncPlugins === true, excludedPluginIds: item.excludedPluginIds ?? [], syncSkills: item.syncSkills !== false,
       connected: this.#live.has(item.id), info: this.#live.get(item.id)?.info,
       connectionState: this.#live.has(item.id) ? 'connected' : this.#desired.has(item.id) && this.#managed.has(item.id) && this.#errors.has(item.id)
         ? 'reconnecting' : this.#clients.has(item.id) ? 'connecting' : 'disconnected', connectionError: this.#errors.get(item.id) }));
@@ -69,6 +72,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   async save(input: AgentConnectionInput) {
     const value = z.object({ id: z.string().optional(), name: z.string().trim().min(1).max(100), transport: z.literal('http'),
       url: z.string().min(1).optional(), token: z.string().optional(), sshTunnel: tunnelSchema.nullable().optional(),
+      autoSyncPlugins: z.boolean().optional(), excludedPluginIds: z.array(z.string().min(1).max(200)).max(512).optional(), syncSkills: z.boolean().optional(),
     }).strict().parse(input);
     if (value.sshTunnel) {
       if (!this.options.ssh || !(await this.options.ssh.list()).some(item => item.id === value.sshTunnel!.connectionId)) throw Error('请选择已保存的 SSH 连接。');
@@ -82,7 +86,9 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
       if (old && !old.sshTunnel && old.url !== url && !sshTunnel) throw new Error('Add a new connection when changing its endpoint.');
       const token = value.token === undefined || value.token === '' ? old?.token : this.cipher.encrypt(value.token);
       if (!token) throw new Error('Enter the Agent access token.');
-      const item: Saved = { ...value, url, id: old?.id ?? randomUUID(), agentId: old?.agentId, token, sshTunnel };
+      const item: Saved = { ...value, url, id: old?.id ?? randomUUID(), agentId: old?.agentId, token, sshTunnel,
+        autoSyncPlugins: value.autoSyncPlugins ?? old?.autoSyncPlugins ?? false,
+        excludedPluginIds: [...new Set(value.excludedPluginIds ?? old?.excludedPluginIds ?? [])], syncSkills: value.syncSkills ?? old?.syncSkills ?? true };
       return [...items.filter(item => item.id !== old?.id), item];
     });
     if (value.id) await this.disconnect(value.id);
@@ -162,6 +168,37 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     const entry = this.#clients.get(id); this.#clients.delete(id); this.#live.delete(id);
     entry?.abort.abort(); entry?.client?.close(); await entry?.tunnel?.close();
     await entry?.promise.catch(() => undefined);
+    this.#configurationRetry.delete(id);
+  }
+  async syncCatalog() { return this.options.syncCatalog ? this.options.syncCatalog() : []; }
+  async syncConfiguration(id: string) { return this.#syncConfiguration(id, await this.#connection(id), true); }
+  async #syncConfiguration(id: string, live: Live, manual = false): Promise<SharedConfigurationReceipt> {
+    const pending = this.#configuration.get(id);
+    if (pending && (!manual || pending.plugins)) return pending.promise;
+    if (pending) { await pending.promise.catch(() => undefined); return this.#syncConfiguration(id, live, manual); }
+    const backoff = this.#configurationRetry.get(id);
+    if (!manual && backoff && backoff.until > Date.now()) throw backoff.error;
+    // Register before reading settings so simultaneous catalog/model/task requests share one job.
+    const entry = { plugins: manual, promise: undefined! as Promise<SharedConfigurationReceipt> };
+    this.#configuration.set(id, entry);
+    entry.promise = (async () => {
+      if (!live.info.capabilities.sharedConfiguration || live.info.capabilities.sharedConfigurationVersion !== 2) throw new Error('请更新云端 Agent 服务以使用分包同步。Update the Agent service to support shared configuration v2.');
+      if (!this.options.sharedConfiguration) throw new Error('Shared configuration source is unavailable.');
+      const saved = (await this.#read()).find(item => item.id === id);
+      if (!saved) throw new Error('Agent connection was removed.');
+      entry.plugins = manual || saved.autoSyncPlugins === true;
+      const snapshot = await this.options.sharedConfiguration({ syncPlugins: entry.plugins,
+        excludedPluginIds: saved.excludedPluginIds ?? [], syncSkills: saved.syncSkills !== false });
+      const receipt = await sendSharedConfiguration(input => live.client.call('configuration.sync', input), snapshot);
+      this.#configurationWarnings.set(id, receipt.warnings); this.#configurationErrors.delete(id); this.#configurationRetry.delete(id);
+      return receipt;
+    })().catch(error => {
+      const failure = error instanceof Error ? error : new Error('Configuration sync failed.');
+      this.#configurationErrors.set(id, failure.message);
+      this.#configurationRetry.set(id, { until: Date.now() + 15_000, error: failure });
+      throw failure;
+    }).finally(() => { if (this.#configuration.get(id) === entry) this.#configuration.delete(id); });
+    return entry.promise;
   }
   async call(id: string, operation: AgentOperation, input: Record<string, unknown> = {}) {
     this.#desired.add(id);
@@ -171,15 +208,11 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
         ? (await client.call('chat.jobs', { sessionId: input.sessionId }) as Array<{ id: string }>).some(job => job.id === (operation === 'chat.send' ? input.requestId : input.taskId)) : false;
       if (!acknowledged && this.options.sharedConfiguration && (operation === 'chat.send' || operation === 'delegation.submit' || operation === 'conversation.catalog' ||
           operation === 'product.command' && input.kind === 'models.get')) {
-        const previous = this.#configuration.get(id) ?? Promise.resolve();
-        const task = previous.catch(() => undefined).then(async () => {
-          if (!info.capabilities.sharedConfiguration) throw new Error('请更新云端 Agent 服务以使用统一配置。Update the Agent service to support shared configuration.');
-          const snapshot = await this.options.sharedConfiguration!();
-          const receipt = await sendSharedConfiguration(input => client.call('configuration.sync', input), snapshot);
-          this.#configurationWarnings.set(id, receipt.warnings); this.#configurationErrors.delete(id);
-        }).catch(error => { this.#configurationErrors.set(id, error instanceof Error ? error.message : 'Configuration sync failed.'); throw error; });
-        this.#configuration.set(id, task);
-        try { await task; } finally { if (this.#configuration.get(id) === task) this.#configuration.delete(id); }
+        try { await this.#syncConfiguration(id, { client, info }); }
+        catch (error) {
+          // Reading existing state remains available; a new task must not silently run with stale model credentials.
+          if (operation === 'chat.send' || operation === 'delegation.submit') throw error;
+        }
       }
       // Never replay a failed mutation. Task submissions have their own durable identity.
       return await client.call(operation, input);

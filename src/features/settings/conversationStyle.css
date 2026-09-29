@@ -11,11 +11,7 @@
 .conversation-style-editor { display: grid; gap: 12px; padding-top: 12px; }
 .conversation-style-hint { color: var(--text-soft); line-height: 1.6; margin: 0; }
 .conversation-style-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.composer-style-select { max-width: min(160px, 28vw); min-width: 0; }
-.composer-style-select .settings-dropdown-trigger { min-height: 26px; max-width: 100%; padding: 3px 7px; border: 0; background: transparent; color: var(--text-soft); font-size: 12px; }
-.composer-style-select .settings-dropdown-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 600px) {
   .conversation-style-settings > .settings-select-row { flex-wrap: wrap; }
   .conversation-style-settings > .settings-select-row > span { flex-basis: 100%; }
-  .composer-style-select { max-width: 100px; }
 }

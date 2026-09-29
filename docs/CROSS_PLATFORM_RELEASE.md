@@ -31,6 +31,11 @@ meaningful differences rather than improve portability.
 
 ## Release gate
 
+For the current **Windows 11 Store MSIX** submission, use [the MSIX release
+procedure](MSIX_STORE_RELEASE.md) and its exact-package validation. The signed
+NSIS/AppImage publishing steps below describe those separate release channels;
+they are not prerequisites for preparing a Windows-only Store submission.
+
 1. `npm ci`, `npm run runtime-tools:install`, `npm run build`, type checking.
 2. `npm run test:release`: Runtime, permissions, cancellation, malformed provider
    events, request-size recovery, process ownership, file boundaries, plugin/MCP
@@ -93,9 +98,9 @@ The installer reads only the expected regular files from a verified archive and
 preserves its license notices. Cross-target verification checks bytes without
 attempting to execute a foreign binary.
 
-Windows process and Chrome hosts are included only in Windows packages. Linux
+Windows process and Browser Use ACL/package-identity helpers are included only in Windows packages. Linux
 does not currently provide Windows-equivalent CPU/memory limits, computer use or
-the Chrome native connector. Core terminal, search and integrated browser support
+the Browser Use external browser connector. Core terminal, search and integrated browser support
 do not depend on those services.
 
 Apache-2.0 applies to original CardBush code. Do not replace third-party licenses

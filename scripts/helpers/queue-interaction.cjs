@@ -16,7 +16,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
       queueFixture = items;
       updateChat({ queuedMessages: items, queuedMessageCount: items.length, queuedMessagePreview: items[0]?.text ?? '' });
     };
-    updateChat({ language: 'zh', sending: true, activeTurnId: 'queue-turn', permissionMode: 'all_free',
+    updateChat({ language: 'zh', sending: true, activeTurnId: 'queue-turn', permissionMode: 'all_free', queueLocked: false,
+      onToggleQueueLock: () => updateChat({ queueLocked: !chatProps.queueLocked }),
       onReorderQueuedMessage: (sourceId, targetId) => {
         setQueueFixture(views.reorderScopedQueue(queueFixture, sourceId, targetId, item => item.id, () => 'session-a'));
         queueOrders.push(queueFixture.map(item => item.id));
@@ -34,12 +35,21 @@ module.exports = async ({ run, until, pause, window, root }) => {
     void 0;
   `);
   await until("!!document.querySelector('.composer-queue-button')", 'queue shortcut appears');
-  assert.equal(await run("document.querySelector('.composer-queue-button').closest('.composer-tools') === document.querySelector('.permission-center-button').closest('.composer-tools')"), true, 'queue access shares the composer toolbar with permissions and style');
+  assert.equal(await run("document.querySelector('.composer-queue-button').closest('.composer-tools') === document.querySelector('.permission-center-button').closest('.composer-tools')"), true, 'queue access shares the composer toolbar with permissions');
   assert.equal(await run("document.querySelector('.composer-queue-button').textContent"), '3');
   assert.equal(await run("document.querySelectorAll('.composer-queue-row').length"), 0, 'no duplicate queue summary above input');
+  await run("document.querySelector('.composer-queue-lock').click()");
+  await until("document.querySelector('.composer-queue-lock')?.getAttribute('aria-pressed') === 'true'", 'queue lock is visible');
+  assert.equal(await run('queueFixture.length'), 3, 'locking retains all text and order');
   await run("document.querySelector('.composer-queue-button').click()");
   await until("!!document.querySelector('.composer-runtime-rail.context-visible .queue-context-panel')", 'queue shortcut opens details');
   await until("!!document.querySelector('.composer-runtime-screen.queue.open')", 'status reel switches to queue');
+  assert.ok((await run("document.querySelector('.runtime-queue-hint').textContent")).includes('不会自动发送'));
+  await pause(200);
+  fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'tmp', 'composer-queue-locked.png'), (await window.webContents.capturePage()).toPNG());
+  await run("document.querySelector('[data-composer-input]').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))");
+  await until('chatProps.queueLocked === false', 'lock keyboard shortcut restores automatic sending');
   await pause(200);
   const prompt = await run(`(() => {
     const p = document.querySelector('.runtime-queue-prompt'); const style = getComputedStyle(p);
@@ -178,6 +188,20 @@ module.exports = async ({ run, until, pause, window, root }) => {
   endDrag(drop);
   assert.equal(await run('queueOrders.length'), 3, 'switching sessions cancels the active drag');
   assert.equal(await run("document.querySelector('.runtime-queue-drag-preview')"), null, 'switching sessions also removes the floating card');
+  await run(`updateChat({ activeConversationId: 'idle-locked-session', sending: false, activeTurnId: '', draft: '', queueLocked: true });
+    setQueueFixture([{ id: 'locked-idle', text: '锁定后保留的原文', createdAt: '2026-09-29T00:00:00Z' }]);`);
+  await until("!!document.querySelector('[data-composer-input]') && !!document.querySelector('.composer-queue-lock')", 'idle locked queue');
+  const previousGuided = await run('queueGuided.length');
+  await run("document.querySelector('[data-composer-input]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }))");
+  await until(`queueGuided.length === ${previousGuided + 1}`, 'manual shortcut sends a locked message after the loop ends');
+  assert.equal(await run('queueGuided.at(-1)'), 'locked-idle');
+  assert.equal(await run('chatProps.queueLocked'), true, 'manual send does not unlock the queue');
+  assert.equal(await run("document.querySelector('.composer-queue-lock')?.getAttribute('aria-pressed')"), 'true', 'empty queue retains its lock control');
+  await run(`updateChat({ interactionContent: h('div', { 'data-queue-confirmation': true }, '请确认接下来如何处理') });`);
+  await until("!!document.querySelector('[data-queue-confirmation]') && !!document.querySelector('.interaction-queue-lock .composer-queue-lock')", 'confirmation keeps the emergency lock accessible');
+  await run("document.querySelector('.interaction-queue-lock .composer-queue-lock').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))");
+  await until('chatProps.queueLocked === false', 'lock shortcut works while a confirmation replaces the composer');
+  await run('updateChat({ interactionContent: null })');
   await run('window.queueLeavingList = document.querySelector(".message-list"); updateChat(queueOriginalProps)');
   await until('document.querySelector(".message-list") !== queueLeavingList', 'restored session has committed before the next view test');
   console.log('Queue interaction passed: full-card hold and pointer tracking, live gap, drop-only commit, cancel, keyboard, autoscroll, guidance, session isolation and narrow layout.');

@@ -16,6 +16,7 @@ export interface ConversationHost {
   plugins: CardbushAppPlugin[];
   pluginCommands: PluginCommandSummary[];
   uploadFiles(files: File[]): Promise<Array<{ path: string; name: string; previewUrl?: string }>>;
+  pastedTextAttachments?: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
   openFile(path: string): void;
   openExtract?(id: string): void;
   readFile?(path: string): Promise<{ name: string; blob: Blob }>;

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { configurePluginConnectionSchema, pluginConnectionIdentitySchema, type ConfigurePluginConnectionInput, type PluginConnectionIdentity } from './pluginConnectionManagement.mjs';
 
 export const PRODUCT_MCP_MANAGEMENT_ID = 'cardbush_management';
-const reservedIds = new Set([PRODUCT_MCP_MANAGEMENT_ID, 'cardbush_apps', 'chrome_devtools']);
+const reservedIds = new Set([PRODUCT_MCP_MANAGEMENT_ID, 'cardbush_apps', 'browser_use', 'chrome_devtools']);
 const serverId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
 const stringChanges = z.record(z.string(), z.string().nullable());
 export const mcpServerPatchSchema = z.object({

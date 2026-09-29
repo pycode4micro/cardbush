@@ -1,0 +1,32 @@
+---
+name: browser-use
+description: 在 Windows 11 上通过 Browser Use 操作用户已配对的 Chrome 或 Edge，复用登录状态并隔离会话标签组。适用于需要用户浏览器登录状态的网页操作、表单、截图及下载；本地网页预览优先使用 CardBush 内置浏览器。
+---
+
+# Browser Use
+
+使用宿主暴露的 `browser_use` MCP 工具。支持 Windows 11 的 Chrome 和 Edge；连接器通过同一扩展分别配对各浏览器和用户配置。
+
+## 选择连接
+
+- 用户指定 Chrome、Edge 或某个账号配置时，先 `list_browsers`，再用返回的连接 ID 调用 `select_browser`。多个同类连接时按用户提供的连接名称判断；仍有歧义再询问。
+- 未指定时使用设置中的默认连接。首次页面调用会固定会话归属；修改默认值不改变已绑定会话。
+- 切换连接会先释放旧浏览器的本会话控制。切换成功后重新 `list_pages` / `new_page` 和 `take_snapshot`，不复用旧页面、元素 ID。
+- 离线或授权撤销不能自动改用另一个浏览器。连接断开时动作可能已经执行，先恢复原连接并观察，再决定是否重试。
+
+## 页面工作
+
+- `list_pages` 只列本会话标签组。`new_page` 创建隔离标签；未指定网址时使用宿主主页设置。
+- 个人标签页必须由用户在扩展面板中选择目标 CardBush 会话、授权并复制进组。配对不等于网站授权，不绕过授权或搜索其他会话标签。
+- 优先使用 `take_snapshot` 返回的元素 ID 配合 click / fill / type_text；页面变化后重新观察。
+- 截图使用 `take_screenshot`，图片提取使用 `export_image`；结果自动附图并保存，无需通过下载来查看图片。
+- 文件下载使用 `download_file`，保留 taskId 后用 `download_status` 查询或 `cancel_download` 取消。pending 不代表失败，不重复提交同一下载。
+- 完成浏览器工作后调用 `release_browser`；它只释放本会话组的控制，不关闭用户浏览器。
+
+## 连接设置
+
+在「设置 → 浏览器 → Browser Use」开启连接器，选择 Chrome 或 Edge，填写可选连接名称并生成配对码。将码粘贴到对应浏览器的 CardBush Browser Use 扩展。扩展随应用提供，在 `chrome://extensions` / `edge://extensions` 加载；升级后重新加载扩展。浏览器重启后在扩展中点击连接。
+
+移除一条连接只撤销对应配对；关闭连接器撤销全部配对。不要自行读取凭据文件、Cookie 或密码数据库。连接器不可用时说明需要的连接或授权，避免自动启动新的浏览器配置。
+
+高级远程调试模式仍只面向用户主动开启调试的 Chrome；其工具以当前发现结果为准，不保证包含连接器的 `list_browsers` / `select_browser`。保持用户选择的模式，不静默切换。

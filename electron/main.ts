@@ -69,7 +69,7 @@ import { localFileResponse } from './localFileStream';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 import { readFilePrefix } from './fileRead';
 import { ImageGalleryScanner } from './imageGallery';
-import { readTextPreviewResult, renderTextFilePreview } from './textPreview';
+import { decodeTextPreview, TextPreviewError, readTextPreviewResult, renderTextFilePreview } from './textPreview';
 import { ModelPreviewError, ModelPreviewService } from './modelPreview';
 import {
   listProductSkills,
@@ -2205,11 +2205,24 @@ ipcMain.handle('chrome-connector:disable', async (event) => {
   return currentChromeConnectorStatus();
 });
 
-ipcMain.handle('chrome-connector:pair', (event) => {
+ipcMain.handle('chrome-connector:pair', (event, input: { browser?: 'chrome' | 'edge'; label?: string } = {}) => {
   assertMainWindowSender(event.sender.id);
   const broker = chromeConnectorLifecycle?.broker;
   if (!broker) throw new Error('Enable the connector before pairing.');
-  return broker.createPairing();
+  return broker.createPairing(input);
+});
+
+ipcMain.handle('browser-connector:select-default', (event, connectionId: string) => {
+  assertMainWindowSender(event.sender.id);
+  if (!chromeConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
+  chromeConnectorLifecycle.broker.setDefaultConnection(connectionId);
+  return currentChromeConnectorStatus();
+});
+ipcMain.handle('browser-connector:revoke', (event, connectionId: string) => {
+  assertMainWindowSender(event.sender.id);
+  if (!chromeConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
+  chromeConnectorLifecycle.broker.revokeConnection(connectionId);
+  return currentChromeConnectorStatus();
 });
 
 ipcMain.handle('chrome-connector:copy-legacy-cleanup', (event) => {
@@ -2422,10 +2435,11 @@ ipcMain.handle('dialog:pick-attachments', async () => {
 ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => {
   const uniquePaths = [...new Set(
     (Array.isArray(targetPaths) ? targetPaths : [])
-      .map((targetPath) => normalizeShellPath(String(targetPath ?? '')))
+      .map((targetPath) => typeof targetPath === 'string' && targetPath.startsWith('ssh://') ? targetPath : normalizeShellPath(String(targetPath ?? '')))
       .filter(Boolean),
   )].slice(0, 32);
   const inspected = await Promise.all(uniquePaths.map(async (targetPath) => {
+    if (targetPath.startsWith('ssh://')) return (await sshConnections()).snapshot(targetPath).catch(() => null);
     const stats = await fs.promises.stat(targetPath).catch(() => null);
     if (!stats || (!stats.isFile() && !stats.isDirectory())) {
       return null;
@@ -2482,7 +2496,12 @@ function agentConnections() {
       return safeStorage.encryptString(value).toString('base64');
     },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-    }, { ssh: await sshConnections(), sharedConfiguration: async () => {
+    }, { ssh: await sshConnections(), syncCatalog: async () => {
+      const snapshot = await (await ensureRuntimeServicesReady()).exportSharedConfiguration();
+      return ((snapshot.apps.plugins ?? []) as Array<Record<string, unknown>>).filter(plugin => plugin.installed).map(plugin => ({
+        id: String(plugin.id), name: String(plugin.name || plugin.id), version: String(plugin.version || ''), source: plugin.source === 'bundled' ? 'bundled' as const : 'user' as const,
+      }));
+    }, sharedConfiguration: async options => {
       const controller = await ensureRuntimeServicesReady();
       const { packSharedConfiguration } = await import('./agentSharedConfiguration.mjs');
       const dataRoot = app.getPath('userData');
@@ -2493,7 +2512,7 @@ function agentConnections() {
           { source: path.join(app.getAppPath(), 'assets', 'plugins'), target: 'bundled/plugins' },
           { source: bundledProductSkillRoot(), target: 'bundled/skills' },
         ],
-      }, dataRoot);
+      }, dataRoot, options);
     } });
     await manager.restore();
     return manager;
@@ -2517,6 +2536,8 @@ ipcMain.handle('agents:command', async (event, action: string, input: unknown) =
     }
     case 'release-file-preview': return (await agentFilePreviews()).release(event.sender.id, String(input));
     case 'list': return manager.list();
+    case 'sync-catalog': return manager.syncCatalog();
+    case 'sync-configuration': return manager.syncConfiguration(String(input));
     case 'save': return manager.save(input as Parameters<typeof manager.save>[0]);
     case 'remove': return manager.remove(String(input));
     case 'connect': return manager.connect(String(input));
@@ -2583,6 +2604,7 @@ ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string
   if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) {
     return null;
   }
+  if (targetPath.startsWith('ssh://')) return (await sshConnections()).snapshot(targetPath).catch(() => null);
   const normalizedPath = normalizeShellPath(targetPath);
   if (!normalizedPath) {
     return null;
@@ -3098,6 +3120,21 @@ ipcMain.handle('terminal:run', (event, command: string, cwd?: string, runtime?: 
   return runTerminalCommand(command, cwd, runtime, processOwnerSignal(event.sender));
 });
 
+let pastedTextStore: Promise<import('./pastedTextAttachments.mjs', { with: { 'resolution-mode': 'import' } }).PastedTextAttachments> | undefined;
+function pastedTextAttachments() {
+  return pastedTextStore ??= import('./pastedTextAttachments.mjs').then(({ PastedTextAttachments }) =>
+    new PastedTextAttachments(path.join(app.getPath('userData'), 'attachments', 'pasted-text')));
+}
+ipcMain.handle('files:pasted-text', async (event, action: string, input: unknown) => {
+  const source = BrowserWindow.fromWebContents(event.sender);
+  if (!source || (source !== mainWindow && !shadowWindows.has(event.sender.id))) throw new Error('Invalid attachment sender.');
+  const store = await pastedTextAttachments();
+  if (action === 'create') return store.create(input as string);
+  if (action === 'retain') return store.retain(input as string[]);
+  if (action === 'discard') return store.discard(input as string);
+  throw new Error('Unknown text attachment action.');
+});
+
 ipcMain.handle(
   'image:save-data-url',
   (_, dataUrl: string, name?: string, options?: { copyToClipboard?: boolean }) => {
@@ -3383,6 +3420,17 @@ ipcMain.handle('shell:read-text-preview', async (event, targetPath: string) => {
   if (!sourceWindow || sourceWindow !== mainWindow) {
     throw new Error('Text preview is only available from the main CardBush window.');
   }
+  if (targetPath.startsWith('ssh://')) {
+    const file = await (await sshConnections()).snapshot(targetPath, 2 * 1024 * 1024, undefined, true);
+    if (file.kind !== 'file' || file.contentBase64 === undefined) throw Error('Preview target is not a file.');
+    try {
+      return { ok: true, value: { path: file.path, ...decodeTextPreview(Buffer.from(file.contentBase64, 'base64'), file.name, file.truncated),
+        size: file.size, modifiedAt: file.mtimeMs, truncated: file.truncated } };
+    } catch (error) {
+      if (!(error instanceof TextPreviewError)) throw error;
+      return { ok: false, error: { code: error.code, message: error.message } };
+    }
+  }
   const normalizedPath = normalizeShellPath(targetPath);
   if (!normalizedPath) {
     throw new Error('Invalid preview path.');
@@ -3590,6 +3638,7 @@ app.whenReady().then(async () => {
     return;
   }
   void collectTemporaryCaches().then(result => { if (result.errors.length) console.warn('[cache-maintenance]', result.errors); }).catch(error => console.warn('[cache-maintenance]', error));
+  void pastedTextAttachments().then(store => store.sweep()).catch(error => console.warn('[text-attachment-cleanup]', error));
   await setHostApplicationMemoryProvider(applicationMemoryBytes, relievePreviewForMemoryPressure);
   // CardBush owns its complete frameless application chrome. Removing
   // Electron's hidden default menu also removes browser-style reload
@@ -4247,7 +4296,7 @@ function productAppsConfigPath(): string {
 }
 
 function isChromeRuntimeTool(toolName: string): boolean {
-  return toolName.startsWith('mcp__chrome_devtools__');
+  return toolName.startsWith('mcp__browser_use__');
 }
 
 function connectorLifecycle(): ChromeConnectorLifecycle {
@@ -4299,6 +4348,8 @@ function currentChromeConnectorStatus():
     controlledTabCount: 0,
     paired: false,
     transport: 'loopback_websocket' as const,
+    defaultConnectionId: '',
+    connections: [],
   };
   return {
     ...currentChromeConnectorRegistrationStatus(),
@@ -4353,6 +4404,16 @@ function registerLocalFileProtocol() {
     try {
       const parsed = new URL(request.url);
       const protocolHost = parsed.hostname.toLowerCase();
+      if (protocolHost === 'ssh-file') {
+        if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+        const uri = parsed.searchParams.get('path') ?? '';
+        const file = await (await sshConnections()).snapshot(uri, 8 * 1024 * 1024, request.signal);
+        if (file.kind !== 'file') return new Response('Not a file', { status: 404 });
+        if (file.contentBase64 === undefined) return new Response('Remote preview is limited to 8 MiB.', { status: 413 });
+        const bytes = Buffer.from(file.contentBase64, 'base64');
+        return new Response(new Uint8Array(bytes), { headers: { 'content-type': contentTypeForPath(file.name), 'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" } });
+      }
       if (protocolHost === 'model-preview') {
         if (parsed.pathname.startsWith('/assets/')) {
           return await previewRendererAssetResponse(parsed.pathname) ?? new Response('Not found', { status: 404 });

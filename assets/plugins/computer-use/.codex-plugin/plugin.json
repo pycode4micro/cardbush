@@ -9,13 +9,23 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Computer Use",
-    "shortDescription": "Windows 桌面控制（兜底工具）",
-    "longDescription": "仅在专用工具、文件工具、应用连接器或浏览器工具无法完成任务时使用。窗口观测会生成一次性状态令牌，并优先通过 UI Automation 语义操作控件；物理键鼠仅作为兜底。检测到用户操作时主动让行，鼠标动作后安全复位，并对陈旧状态与重复动作循环自动熔断。",
+    "shortDescription": "Windows desktop control (fallback)",
+    "longDescription": "Use when dedicated tools, file tools, app connectors, or browser tools cannot complete the task. Window observations provide single-use state tokens; UI Automation controls are preferred, with mouse and keyboard input as a fallback. Yields to user activity, restores the pointer after mouse actions, and stops stale or repeated actions.",
     "developerName": "CardBush",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
-    "defaultPrompt": ["查看当前桌面并说明可见内容", "打开应用并完成这个操作"],
+    "defaultPrompt": ["Inspect the current desktop and describe what is visible", "Open an app and complete this task"],
     "brandColor": "#8B7CF6",
     "logo": "./assets/logo.svg"
+  },
+  "cardbush": {
+    "runtime": { "platforms": ["win32"], "requires": ["computerUse"] },
+    "localizations": {
+      "zh": {
+        "shortDescription": "Windows 桌面控制（兜底工具）",
+        "longDescription": "仅在专用工具、文件工具、应用连接器或浏览器工具无法完成任务时使用。窗口观测会生成一次性状态令牌，并优先通过 UI Automation 语义操作控件；物理键鼠仅作为兜底。检测到用户操作时主动让行，鼠标动作后安全复位，并对陈旧状态与重复动作循环自动熔断。",
+        "defaultPrompt": ["查看当前桌面并说明可见内容", "打开应用并完成这个操作"]
+      }
+    }
   }
 }

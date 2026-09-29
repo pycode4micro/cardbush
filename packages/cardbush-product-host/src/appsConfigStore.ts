@@ -30,6 +30,8 @@ export interface CardbushPluginCatalogEntry {
   capabilities: string[];
   keywords: string[];
   defaultPrompts: string[];
+  localizations?: Partial<Record<'zh' | 'en', Partial<Pick<CardbushPluginCatalogEntry,
+    'description' | 'longDescription' | 'defaultPrompts'>>>>;
   brandColor: string;
   logoPath: string;
   logoDarkPath: string;

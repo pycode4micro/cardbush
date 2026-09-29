@@ -1101,6 +1101,24 @@ const changeExecution = (id, pathValue) => ({
     files: [{ path: pathValue, additions: 1, deletions: 0, diff: '+changed' }],
   },
 });
+// Reading a repository diff is not a mutation (the reported SSH regression).
+for (const output of ['75 files changed, 842 insertions(+), 577 deletions(-)', 'diff --git a/read.txt b/read.txt\n--- a/read.txt\n+++ b/read.txt\n@@ -1 +1 @@\n-old\n+new']) {
+  for (const name of ['terminal_exec', 'read_file', 'search_file_content', 'read_archived_tool_result']) {
+    const execution = { ...changeExecution('read-only', ''), name, output, metadata: { workspaceChanges: [] } };
+    assert.equal(changeReportModule.exports.toolChangeReportFromExecutions([execution]), null);
+  }
+}
+const sshReport = changeReportModule.exports.toolChangeReportFromExecutions([
+  ...['ssh://connection/work/File.ts', 'ssh://connection/work/file.ts'].map((path, index) => ({
+    ...changeExecution('ssh-' + index, path), name: 'edit_file', metadata: { workspaceChanges: [
+      { path, additions: 1, deletions: 1, metadata: { diff: '@@ -1 +1 @@\n-old\n+new', revertSupported: false } },
+    ] },
+  })),
+]);
+assert.equal(sshReport.fileCount, 2, 'remote paths preserve case');
+assert.equal(sshReport.revertSupported, false);
+assert.equal(sshReport.files[0].lines.length, 3);
+
 const reviewReports = changeReportsFromMessages([
   { id: 'user-a', role: 'user', content: '第一轮', turnId: 'turn-a' },
   {
@@ -1337,7 +1355,7 @@ assert.match(
 );
 assert.match(
   sidebarReviewSource,
-  /const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport\.fileCount > 0;/,
+  /const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport\.fileCount > 0 && selectedReport\.revertSupported !== false;/,
   'Revert requires an idle conversation and a selected report with changes.',
 );
 assert.match(

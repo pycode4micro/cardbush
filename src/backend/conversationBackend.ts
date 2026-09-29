@@ -27,8 +27,10 @@ export type ConversationBackend = typeof localConversationBackend & {
     remove(id: string): Promise<void>;
     reorder(id: string, targetId: string): Promise<void>;
     guide(id: string, turnId: string): Promise<void>;
+    setLocked(sessionId: string, locked: boolean): Promise<{ locked: boolean; revision: number }>;
   };
   watchSession?: (sessionId: string, listener: (state: {
     activeTurnId?: string; queued: QueuedChatMessage[]; revision: string;
+    queueState?: { locked: boolean; revision: number };
   }) => void, onError: (error: unknown) => void) => () => void;
 };

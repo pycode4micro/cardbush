@@ -19,3 +19,10 @@
 .chrome-connector-pairing label { display: grid; gap: 6px; flex: 1 1 220px; min-width: 0; }
 .chrome-connector-pairing input { width: 100%; min-width: 0; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 .chrome-connector-pairing p { flex-basis: 100%; }
+.browser-pairing-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.browser-connection-name { flex: 1 1 180px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface-raised); }
+.browser-connections { display: grid; gap: 8px; }
+.browser-connection-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.browser-connection-row > div { flex: 1 1 160px; min-width: 0; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.browser-connection-row strong { font-size: 13px; font-weight: 500; }
+.browser-connection-row small { color: var(--text-soft); font-size: 12px; }

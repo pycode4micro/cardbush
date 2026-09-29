@@ -11,6 +11,7 @@ const directory = await mkdtemp(join(parent, 'plugin-connections-ui-'));
 const local = file => resolve(file).replaceAll('\\', '/');
 const appearanceNavigation = process.argv.includes('--appearance-navigation');
 const coreSettings = process.argv.includes('--core-settings');
+const localization = process.argv.includes('--localization');
 let source = `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
@@ -36,7 +37,7 @@ window.fixtureApps.plugins[1].components.push({kind:'app',id:'chrome',name:'Chro
 window.fixtureApps.plugins[2].components[0].mcp={transport:'http',url:'https://fixture.invalid/mcp'};
 window.fixtureApps.plugins[2].components.push(...['command','prompt'].map((type,index)=>({kind:'hook',id:'hook-'+type,name:type==='command'?'SessionStart':'Stop',description:'Hook fixture',hook:{definitionHash:'hash-'+index,definition:{event:type==='command'?'SessionStart':'Stop',handler:{type,command:'echo reviewed'}},executable:type==='command'}})));
 window.fixtureOverview={revision:2,servers:[{id:'blender',name:'Blender MCP',description:'Blender tools',enabled:true,transport:'stdio'}],snapshot:{protocol:'bush.mcp_snapshot_result.v1',snapshotId:'cardbush-product-mcp',revision:2000001,configurationRevision:2,applicationState:'applied',servers:[{id:'blender',health:'ready',tools:Array.from({length:26},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__blender__tool'+i}))}]}};
-window.fixtureOverview.snapshot.servers.push({id:'chrome_devtools',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__chrome_devtools__tool'+i}))});
+window.fixtureOverview.snapshot.servers.push({id:'browser_use',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__browser_use__tool'+i}))});
 window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];window.externalUrls=[];window.externalOpenFails=false;
 window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},openExternal:async url=>{if(externalOpenFails)throw Error('fixture browser unavailable');externalUrls.push(url)}};
 window.localInstalls=[];window.localNotifications=[];
@@ -99,6 +100,14 @@ let fixtureRoot=createRoot(document.getElementById('root'));
 fixtureRoot.render(<Fixture/>);
 window.remountPlugins=()=>{fixtureRoot.unmount();fixtureRoot=createRoot(document.getElementById('root'));fixtureRoot.render(<Fixture/>)};
 `;
+if (localization) {
+  const { loadProductPluginCatalog } = await import('../dist-electron/productPlugins.js');
+  const catalog = await loadProductPluginCatalog([{ path: resolve('assets/plugins'), source: 'bundled' }]);
+  source += `
+    fixtureApps.plugins = [...${JSON.stringify(catalog)}.map(plugin=>({...plugin,installed:true,enabled:true,config:{}})),fixtureApps.plugins[2]];
+    window.setFixtureLanguage=language=>{props.language=language;fixtureRoot.render(<Fixture/>)};
+  `;
+}
 if (coreSettings) {
   source = source.replace('let fixtureRoot=createRoot', `
     import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
@@ -109,12 +118,16 @@ if (coreSettings) {
       updateBrowserConfiguration:async input=>{fixtureBrowser={...fixtureBrowser,startPage:input.startPage,revision:fixtureBrowser.revision+1};return structuredClone(fixtureBrowser)},
       chromeConnectorStatus:async()=>structuredClone(window.fixtureConnector),
       setupChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:true,lifecycleState:'enabled',bridgeRegistered:false,bridgeRunning:true});window.connectorActions.push('enable')},
-      pairChromeConnector:async()=>{window.connectorActions.push('pair');return {code:'CB2.45678.fixture-secret',expiresAt:new Date(Date.now()+300000).toISOString()}},
+      pairChromeConnector:async input=>{window.connectorActions.push('pair');window.lastPairInput=input;return {code:'CB2.45678.fixture-secret',id:'c'.repeat(32),browser:input.browser,expiresAt:new Date(Date.now()+300000).toISOString()}},
+      selectDefaultBrowserConnection:async id=>{window.fixtureConnector.defaultConnectionId=id;window.connectorActions.push('default');return structuredClone(fixtureConnector)},
+      revokeBrowserConnection:async id=>{window.fixtureConnector.connections=fixtureConnector.connections.filter(connection=>connection.id!==id);window.connectorActions.push('revoke');return structuredClone(fixtureConnector)},
       copyLegacyChromeConnectorCleanup:async()=>{window.connectorActions.push('legacy-cleanup')},
-      disableChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false});window.connectorActions.push('disable')},
-      removeChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false});window.connectorActions.push('remove')},
+      disableChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false,connections:[],defaultConnectionId:''});window.connectorActions.push('disable')},
+      removeChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false,connections:[],defaultConnectionId:''});window.connectorActions.push('remove')},
     });
     window.fixtureConnector={connectorEnabled:true,lifecycleState:'enabled',platformSupported:true,nativeHostAvailable:true,extensionConnected:true,bridgeRegistered:true,bridgeRunning:true,activeTabTitle:'当前授权页面',controlledTabCount:1};
+    window.fixtureConnections=[{id:'a'.repeat(32),browser:'chrome',label:'Chrome 工作账号',connected:true,controlledTabCount:1},{id:'b'.repeat(32),browser:'edge',label:'Edge 个人账号',connected:true,controlledTabCount:0}];
+    Object.assign(window.fixtureConnector,{connections:structuredClone(fixtureConnections),defaultConnectionId:'a'.repeat(32)});
     window.connectorActions=[];
     function CoreFixture(){const [section,setSection]=React.useState('browser'),[theme,setTheme]=React.useState('bright');window.coreSection=setSection;window.coreTheme=setTheme;return <div className={'app '+themeClassNames(theme==='custom'?'dark':theme)} style={{height:'100vh',...(theme==='custom'?{'--surface':'#201b2c','--surface-strong':'#31273f','--border':'#675679','--text':'#f3eafc','--text-mid':'#cec1db','--text-soft':'#c1afce','--accent':'#d2a9f4'}:{})}}><main className="settings-shell"><aside className="settings-sidebar"><button onClick={()=>setSection('browser')}>浏览器</button><button onClick={()=>setSection('computer-use')}>电脑操控</button></aside><section className="settings-content" style={{overflow:'auto',flex:1}}><div className="settings-panel"><header className="settings-section-header"><h2>{section==='browser'?'浏览器':'电脑操控'}</h2></header>{section==='browser'?<BrowserSettingsPanel language="zh"/>:<ComputerUseSettingsPanel language="zh"/>}</div></section></main></div>}
     let fixtureRoot=createRoot`).replaceAll('fixtureRoot.render(<Fixture/>);','fixtureRoot.render(<CoreFixture/>);');
@@ -155,7 +168,7 @@ try {
   const require=createRequire(import.meta.url),env={...process.env};
   if (process.argv.includes('--settings-only')) env.CARDBUSH_PLUGIN_SETTINGS_ONLY = '1';
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
-  const worker = coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
+  const worker = localization ? 'scripts/test-plugin-localization-ui.cjs' : coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
   const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});
   assert.equal(run.status,0,String(run.error??'Plugin UI fixture failed'));
 } finally {

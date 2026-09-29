@@ -1403,7 +1403,7 @@ function MessageBubbleView({
           {(completedChangeReport || completedArtifacts.length > 0) && <AssistantTurnArtifacts
             key={`${message.conversationId ?? ''}:${message.turnId ?? message.id}`}
             message={message} report={completedChangeReport} artifacts={completedArtifacts} language={language}
-            onRevert={readOnlyActions || !canRevertWorkspace || !completedChangeReport ? undefined : () => onRevertChangeReport({
+            onRevert={readOnlyActions || !canRevertWorkspace || !completedChangeReport || completedChangeReport.revertSupported === false ? undefined : () => onRevertChangeReport({
               ...completedChangeReport, id: `${message.id}:turn-artifacts`, messageId: message.id,
               turnId: message.turnId, createdAt: message.createdAt,
             }, message)} />}
@@ -1491,7 +1491,7 @@ function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert
 function resolveChangedFilePath(pathValue: string, workspaceRoot: string) {
   const path = stripWrappingQuotes(pathValue.trim());
   const root = stripWrappingQuotes(workspaceRoot.trim());
-  if (!path || !root || isAbsoluteLocalPath(path) || /^(?:https?|file):/i.test(path)) {
+  if (!path || !root || isAbsoluteLocalPath(path) || /^(?:https?|file|ssh):/i.test(path)) {
     return path;
   }
   const separator = root.includes('\\') ? '\\' : '/';

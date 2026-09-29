@@ -23,7 +23,7 @@ export function pluginMcpConnections(
     const connections = new Map<string, PluginMcpConnection>();
     for (const component of components) {
       // Product-owned launchers have fixed IDs; external plugins use productPlugins.ts's namespace.
-      const id = plugin.id === 'computer-use' ? 'cardbush_apps' : plugin.id === 'chrome' ? 'chrome_devtools'
+      const id = plugin.id === 'computer-use' ? 'cardbush_apps' : plugin.id === 'chrome' ? 'browser_use'
         : `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`;
       if (connections.has(id)) continue;
       connections.set(id, { id, name: component.name, description: component.description, plugin,

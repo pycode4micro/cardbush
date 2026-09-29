@@ -66,7 +66,7 @@ export function LocalFileReferenceLink({
       setInspection({ path, metadata: null });
       return undefined;
     }
-    const key = path.toLowerCase();
+    const key = path.startsWith('ssh://') ? path : path.toLowerCase();
     let pending = localReferenceMetadata.get(key);
     if (!pending) {
       pending = inspect(path).catch(() => null);

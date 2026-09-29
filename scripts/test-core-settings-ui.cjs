@@ -32,7 +32,25 @@ app.whenReady().then(async () => {
   };
   try {
     await win.loadFile(join(directory, 'index.html'));
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("Chrome 已连接")');
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("浏览器已连接")');
+    assert.equal(await read('document.querySelector(".core-capability-settings h3").textContent'), 'Browser Use');
+    assert.equal(await read('document.querySelectorAll(".browser-connection-row").length'), 2);
+    await read('document.querySelector(".browser-connections").scrollIntoView({block:"center"}); void 0');
+    await capture('browser-use-connections.png');
+    await read('document.querySelectorAll(".browser-connection-row")[1].querySelector("button").click(); void 0');
+    await until('document.querySelectorAll(".browser-connection-row")[1].querySelector("button").disabled');
+    assert.equal(await read('fixtureConnector.defaultConnectionId'), 'b'.repeat(32));
+    await read('document.querySelector("[aria-label=要配对的浏览器]").click(); void 0');
+    await until('document.querySelector("[role=option]") !== null');
+    await read('[...document.querySelectorAll("[role=option]")].find(option=>option.textContent.includes("Microsoft Edge")).click(); void 0');
+    await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='生成配对码').click(); void 0");
+    await until('document.querySelector(".chrome-connector-pairing input") !== null');
+    assert.equal(await read('lastPairInput.browser'), 'edge');
+    assert.equal(await read('document.querySelectorAll(".browser-connection-row").length'), 2, 'new pairing code does not replace existing connections');
+    await read('document.querySelectorAll(".browser-connection-row")[1].querySelectorAll("button")[1].click(); void 0');
+    await until('document.querySelectorAll(".browser-connection-row").length===1');
+    assert.equal(await read('fixtureConnector.connections[0].browser'), 'chrome');
+    await read('connectorActions=[]; void 0');
     assert.equal(await read('document.querySelector(".chrome-radio-setting input").checked'), true);
     assert.equal(await read('document.querySelector(".settings-field input").value'), 'https://www.google.com/');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='关闭连接器').click(); void 0");
@@ -46,6 +64,8 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
     assert.equal(await read('document.querySelector(".chrome-connector-pairing")'), null);
     assert.deepEqual(await read('connectorActions'), ['disable', 'enable', 'pair', 'remove']);
+    await read('Object.assign(fixtureConnector,{connectorEnabled:true,bridgeRunning:true,extensionConnected:true,lifecycleState:"enabled",connections:structuredClone(fixtureConnections),defaultConnectionId:"a".repeat(32)}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
+    await until('document.querySelectorAll(".browser-connection-row").length===2');
     const palettes = [];
     for (const theme of ['bright', 'dark', 'custom']) {
       await read(`coreTheme(${JSON.stringify(theme)}); void 0`);
@@ -96,6 +116,6 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector(".settings-content").scrollWidth<=document.querySelector(".settings-content").clientWidth+1'), true);
     await capture('browser-core-settings-narrow.png');
     assert.deepEqual(errors, []);
-    console.log('Core settings UI: Chrome connector/mode/enablement, desktop options, shared config preservation, stale saves, reload and narrow layout passed.');
+    console.log('Core settings UI: Browser Use connections/default/Edge pairing/revocation, connector mode/enablement, themes, stale saves and narrow layout passed.');
   } finally { win.destroy(); }
 }).then(() => app.exit(0), error => { console.error(error); app.exit(1); });

@@ -191,7 +191,7 @@ async function run() {
     mcpResponse.result = await waitForMcp();
     assert.deepEqual(
       mcpResponse.result.servers.map((server) => server.id),
-      ['cardbush_apps', 'chrome_devtools'],
+      ['cardbush_apps', 'browser_use'],
     );
     const toolCatalogResponse = await controller.command({
       protocol: BUSH_RUNTIME_IPC_PROTOCOL,
@@ -203,7 +203,7 @@ async function run() {
     const toolNames = toolCatalogResponse.result.map((tool) => tool.name);
     assert.ok(toolNames.includes('search_skills'));
     assert.ok(toolNames.includes('mcp__cardbush_apps__computer_use'));
-    assert.ok(toolNames.includes('mcp__chrome_devtools__navigate_page'));
+    assert.ok(toolNames.includes('mcp__browser_use__navigate_page'));
     const originalApps = JSON.parse(readFileSync(appsConfigPath, 'utf8'));
     const changedApps = structuredClone(originalApps);
     changedApps.plugins.find(plugin => plugin.id === 'chrome').enabled = false;
@@ -226,7 +226,7 @@ async function run() {
     writeFileSync(appsConfigPath, JSON.stringify(originalApps));
     const restoredChrome = await hotApply('hot_restore_chrome');
     assert.equal(restoredChrome.ok, true);
-    assert.deepEqual(restoredChrome.result.servers.map(server => server.id), ['cardbush_apps', 'chrome_devtools']);
+    assert.deepEqual(restoredChrome.result.servers.map(server => server.id), ['cardbush_apps', 'browser_use']);
     assert.ok(restoredChrome.result.revision > disabledChrome.result.revision);
     const noop = await hotApply('hot_noop');
     assert.equal(noop.result.revision, restoredChrome.result.revision);

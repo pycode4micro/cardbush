@@ -957,12 +957,12 @@ function mcpRequestMetadata(
   const sessionTitle = typeof declared.sessionTitle === "string"
     ? declared.sessionTitle.trim().slice(0, 80)
     : "";
-  const chromeScoped = serverId === "chrome_devtools" &&
+  const browserScoped = serverId === "browser_use" &&
     tool._meta?.["cardbush/plugin_id"] === "chrome";
   return {
     filesystem_roots: filesystemRoots,
     ...(transportChannel ? { transport_channel: transportChannel } : {}),
-    ...(chromeScoped ? {
+    ...(browserScoped ? {
       cardbush_session_id: context.sessionId,
       cardbush_turn_id: context.turnId,
       cardbush_request_id: context.requestId,

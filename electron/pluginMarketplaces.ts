@@ -18,7 +18,7 @@ import { collectTemporaryDirectories, leaseTemporaryDirectory, removeTemporaryDi
 type Json = Record<string, unknown>;
 type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: string };
 type Prepared = { sourceId: string; root: string; stage: string; preview: PluginMarketPreview; expiresAt: number };
-const reserved = new Set(['computer-use', 'chrome']);
+const reserved = new Set(['computer-use', 'chrome', 'browser-use']);
 const idPattern = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
 const maxArchiveBytes = pluginArchiveLimits.compressedBytes;
 const maxExpandedBytes = pluginArchiveLimits.expandedBytes;

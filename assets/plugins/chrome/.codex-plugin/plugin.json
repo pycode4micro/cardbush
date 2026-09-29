@@ -1,22 +1,31 @@
 {
   "name": "chrome",
-  "version": "2.0.0",
-  "description": "Automate the user's current Chrome through the CardBush Browser Connector, with remote debugging as an advanced fallback.",
+  "version": "2.1.0",
+  "description": "Browser Use for Chrome and Edge on Windows 11, with separate pairings and session-bound browser selection.",
   "author": { "name": "CardBush" },
   "license": "Proprietary",
-  "keywords": ["chrome", "browser", "tabs"],
-  "skills": "./runtime/chrome-devtools-mcp/skills",
-  "apps": "./.app.json",
+  "keywords": ["browser-use", "chrome", "edge", "browser", "tabs"],
+  "skills": "./skills",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Chrome",
-    "shortDescription": "通过连接器操作当前 Chrome 与登录状态",
-    "longDescription": "默认通过 CardBush Browser Connector 和主动配对的本机连接 复用当前 Chrome 的 Cookie 与登录状态。每个 CardBush 会话使用独立命名标签组，模型只能看到和控制本会话组内的标签；现有个人标签必须由用户在扩展中明确复制进组。官方 Chrome DevTools MCP 仅保留为高级远程调试兼容模式，不会创建临时浏览器资料。",
-    "developerName": "CardBush / Google ChromeDevTools",
+    "displayName": "Browser Use",
+    "shortDescription": "Control authorized Chrome and Edge pages",
+    "longDescription": "Pair Chrome, Edge, and their profiles separately on Windows 11 and choose a default browser. Each session uses a specific browser connection and its own tab group; disconnecting does not switch browsers automatically. Personal tabs must be explicitly copied into the group through the extension before they can be accessed. Advanced remote debugging remains available only for Chrome with debugging explicitly enabled.",
+    "developerName": "CardBush",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
-    "defaultPrompt": ["打开网页并检查页面内容", "使用 Chrome 调试当前网页"],
+    "defaultPrompt": ["Open a web page and inspect its contents", "Use Edge or Chrome to interact with an authorized page"],
     "brandColor": "#4285F4",
     "logo": "./assets/logo.svg"
+  },
+  "cardbush": {
+    "runtime": { "platforms": ["win32"], "requires": ["browserUi"] },
+    "localizations": {
+      "zh": {
+        "shortDescription": "连接 Chrome 和 Edge，按会话操作授权页面",
+        "longDescription": "在 Windows 11 上分别配对 Chrome、Edge 及其用户配置，并选择默认浏览器。每个会话绑定明确的浏览器连接和独立标签组；断线不会自动切换。个人标签须在扩展中明确复制进组后才能访问。高级远程调试模式仍仅用于主动开启调试的 Chrome。",
+        "defaultPrompt": ["打开网页并检查页面内容", "使用 Edge 或 Chrome 操作授权网页"]
+      }
+    }
   }
 }

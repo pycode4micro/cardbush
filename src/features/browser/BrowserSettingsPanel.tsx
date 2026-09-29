@@ -3,15 +3,15 @@ import { browserStartPageSchema, DEFAULT_BROWSER_START_PAGE, type BrowserConfigu
 import type { AppLanguage } from '../../types';
 import { SettingsCard, SettingsInput } from '../settings/SettingsControls';
 import { CoreCapabilitySettings } from '../capabilities/CoreCapabilitySettings';
-import { ChromeConnectionSettings } from './ChromeConnectionSettings';
+import { BrowserConnectionSettings } from './BrowserConnectionSettings';
 
 export function BrowserSettingsPanel({ language }: { language: AppLanguage }) {
   return <div className="settings-stack browser-settings-panel">
     <BrowserStartPageSettings language={language} />
-    <CoreCapabilitySettings id="chrome" language={language}>{controls => <ChromeConnectionSettings {...controls} />}</CoreCapabilitySettings>
-    <SettingsCard title={language === 'zh' ? 'Chrome 扩展与个人配置' : 'Chrome extensions and preferences'}>
-      <p>{language === 'zh' ? '连接真实 Chrome 后，可继续使用其中安装的扩展、登录状态和浏览器配置。请在 Chrome 的扩展管理器中安装和管理扩展。' : 'Connected Chrome retains its installed extensions, signed-in state, and browser preferences. Install and manage extensions in Chrome’s extension manager.'}</p>
-      <p>{language === 'zh' ? 'CardBush 内置浏览器使用独立页面；Chrome 扩展和密码不会自动导入其中。' : 'The embedded browser is separate. Chrome extensions and passwords are not automatically imported.'}</p>
+    <CoreCapabilitySettings id="chrome" language={language}>{controls => <BrowserConnectionSettings {...controls} />}</CoreCapabilitySettings>
+    <SettingsCard title={language === 'zh' ? '浏览器扩展与个人配置' : 'Browser extensions and preferences'}>
+      <p>{language === 'zh' ? '连接 Chrome 或 Edge 后，可继续使用对应浏览器中的扩展、登录状态和个人配置。扩展在各自浏览器的扩展管理器中安装和管理。' : 'Connected Chrome or Edge retains its extensions, sign-in and preferences. Manage extensions in each browser’s extension manager.'}</p>
+      <p>{language === 'zh' ? 'CardBush 内置浏览器使用独立页面；外部浏览器的扩展和密码不会自动导入其中。' : 'The embedded browser is separate. External browser extensions and passwords are not automatically imported.'}</p>
     </SettingsCard>
   </div>;
 }
@@ -42,7 +42,7 @@ export function BrowserStartPageSettings({ language }: { language: AppLanguage }
     } catch (error) { setError(String(error)); }
     finally { saving.current = false; setBusy(false); }
   };
-  return <SettingsCard title={zh ? '初始页面' : 'Start page'} subtitle={zh ? '应用内新标签页和 Chrome 工具未指定网址时使用。已打开的页面保持不变。' : 'Used for new embedded tabs and Chrome tool calls without a URL. Existing tabs keep their current pages.'}>
+  return <SettingsCard title={zh ? '初始页面' : 'Start page'} subtitle={zh ? '应用内新标签页和 Browser Use 未指定网址时使用。已打开的页面保持不变。' : 'Used for new embedded tabs and Browser Use calls without a URL. Existing tabs keep their current pages.'}>
     <form onSubmit={event => { event.preventDefault(); void save(); }}>
       <SettingsInput label={zh ? '默认主页' : 'Default home page'} value={draft} placeholder="https://www.google.com/" disabled={!configuration || busy}
         onChange={value => { setDraft(value); setSaved(false); setError(''); }} />

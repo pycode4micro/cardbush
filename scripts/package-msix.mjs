@@ -39,6 +39,18 @@ export function validateIdentity(input) {
   return result;
 }
 
+export function msixVersionConfiguration(identity) {
+  const version = validateIdentity(identity).version;
+  return {
+    buildEnvironment: { VITE_CARDBUSH_APP_VERSION: version },
+    builder: {
+      buildVersion: version,
+      // Electron/npm metadata uses SemVer; Windows and the About page use all four parts.
+      extraMetadata: { version: version.split('.').slice(0, 3).join('.') },
+    },
+  };
+}
+
 function xml(value) {
   return value.replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
@@ -154,6 +166,7 @@ async function main() {
     throw new Error(`MSIX identity is not ready. Copy packaging/msix/identity.example.json to identity.local.json and fill in Partner Center values.\n${error.message}`);
   }
   const manifest = createManifest(identity);
+  const versionConfiguration = msixVersionConfiguration(identity);
   if (values.check) { console.log('MSIX identity configuration is valid.', JSON.stringify(identity, null, 2)); return; }
   if (process.platform !== 'win32') throw new Error('Build the Windows x64 MSIX on Windows.');
   const sdk = await ensureMsixSdk(root);
@@ -172,7 +185,7 @@ async function main() {
   if (!npmCli) throw new Error('Run this script through npm run package:msix.');
   run(process.execPath, [npmCli, 'run', 'runtime-tools:verify']);
   run(process.execPath, ['scripts/build-process-resource-host.mjs']);
-  run(process.execPath, [npmCli, 'run', 'build']);
+  run(process.execPath, [npmCli, 'run', 'build'], { ...process.env, ...versionConfiguration.buildEnvironment });
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json']);
   const { default: electron } = await import('electron');
   const childEnv = { ...process.env };
@@ -190,6 +203,7 @@ async function main() {
     projectDir: root, publish: 'never', targets: Platform.WINDOWS.createTarget(['appx'], Arch.x64),
     config: {
       extends: path.join(root, 'electron-builder.yml'),
+      ...versionConfiguration.builder,
       // Reuse only the original archive verified with Electron's checksums.
       // The development runtime directory can contain extra branded executables.
       electronDist: await cachedElectronArchive(),
@@ -226,13 +240,15 @@ async function main() {
     artifact: artifactName, identity, ...verification,
     startedAt, completedAt: new Date().toISOString(),
     source: { commit, modifiedWorkingTree: Boolean(workingTree), appVersion: JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version },
+    applicationVersion: versionConfiguration.builder.extraMetadata.version,
+    displayedVersion: versionConfiguration.buildEnvironment.VITE_CARDBUSH_APP_VERSION,
     sdk: { version: sdk.version, archiveSha256: sdk.archiveSha256, archiveUrl: sdk.archiveUrl },
     verified: ['TypeScript and production build', 'production dependency inventory', 'MakeAppx validation', 'package contents and identity',
       'MakeAppx extraction', 'private keys and local data exclusion',
-      ...(runtimeValidation === 'passed' ? ['extracted application smoke', 'native Windows icons', 'Chrome production host boundary and ACL smoke'] : [])],
+      ...(runtimeValidation === 'passed' ? ['extracted application smoke', 'native Windows icons', 'Browser Use production host boundary and ACL smoke'] : [])],
     pending: [...(runtimeValidation === 'passed' ? [] : ['extracted application runtime validation']),
       'Store package signature', 'installed MSIX launch and tools with Smart App Control enabled', 'package LocalState ownership and legacy registration migration',
-      'installed Chrome round-trip and connector disable/remove/restart', 'upgrade and multi-account isolation',
+      'installed Browser Use Chrome and Edge round-trip, independent pairings, switching and disable/remove/restart', 'upgrade and multi-account isolation',
       'direct uninstall, running-app uninstall and crash-before-uninstall residue inspection',
       'notifications and taskbar identity', 'Windows App Certification Kit', 'Store certification'],
   }, null, 2) + '\n');

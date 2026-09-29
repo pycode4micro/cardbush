@@ -406,6 +406,8 @@ export interface CardbushAppPlugin {
   capabilities: string[];
   keywords: string[];
   defaultPrompts: string[];
+  localizations?: Partial<Record<AppLanguage, Partial<Pick<CardbushAppPlugin,
+    'description' | 'longDescription' | 'defaultPrompts'>>>>;
   brandColor: string;
   logoPath: string;
   logoDarkPath: string;

@@ -8,6 +8,12 @@ function parseConnectorPairing(code) {
   return { port: Number(match[1]), id: match[2], secret: match[3] };
 }
 function connectorHex(bytes) { return [...bytes].map(value => value.toString(16).padStart(2, '0')).join(''); }
+function connectorBrowser() {
+  const brands = globalThis.navigator?.userAgentData?.brands ?? [];
+  if (brands.some(value => value.brand === 'Microsoft Edge') || /Edg\//.test(globalThis.navigator?.userAgent ?? '')) return 'edge';
+  if (brands.some(value => value.brand === 'Google Chrome') || /Chrome\//.test(globalThis.navigator?.userAgent ?? '')) return 'chrome';
+  throw new Error('Browser Use 目前支持 Windows 11 上的 Chrome 和 Edge。');
+}
 async function connectorHmac(secret, text) {
   const bytes = new Uint8Array(secret.match(/../g).map(value => parseInt(value, 16)));
   const key = await crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -36,6 +42,7 @@ function createConnectorPort(pairing) {
     port.disconnect();
   };
   void (async () => {
+    const browser = connectorBrowser();
     const proof = await connectorHmac(pairing.secret, `upgrade:${pairing.id}:${nonce}`);
     if (closed) return;
     socket = new WebSocket(`ws://127.0.0.1:${pairing.port}/connect`, ['cardbush-v2', `auth.${pairing.id}.${nonce}.${proof}`]);
@@ -49,10 +56,10 @@ function createConnectorPort(pairing) {
         if (message.protocol !== 'cardbush.chrome_connector.v1' || !/^[a-f0-9]{64}$/.test(message.nonce)) throw new Error('Invalid challenge');
         const transcript = `${pairing.id}:${nonce}:${message.nonce}`;
         if (message.proof !== await connectorHmac(pairing.secret, `server:${transcript}`)) throw new Error('Untrusted broker');
-        const proof = await connectorHmac(pairing.secret, `client:${transcript}`);
+        const proof = await connectorHmac(pairing.secret, `client:${transcript}:${browser}`);
         if (closed) return;
         serverVerified = true;
-        socket.send(JSON.stringify({ type: 'authenticate', proof }));
+        socket.send(JSON.stringify({ type: 'authenticate', browser, proof }));
         return;
       }
       if (!ready) {

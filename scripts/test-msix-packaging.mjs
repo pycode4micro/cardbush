@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createManifest, validateIdentity } from './package-msix.mjs';
+import { createManifest, msixVersionConfiguration, validateIdentity } from './package-msix.mjs';
 import { verifySdkArchive } from './msix-sdk.mjs';
 import { chromeConnectorLaunchPath } from '../dist-electron/chromeConnectorRegistration.js';
 
@@ -29,6 +29,16 @@ test('requires a Store-compatible four-part version and prevents silent beta col
     assert.throws(() => validateIdentity({ ...identity, version }));
   }
   assert.equal(validateIdentity({ ...identity, version: '1.0.3.0' }).version, '1.0.3.0');
+});
+
+test('Store identity drives both the displayed version and packaged Electron metadata', () => {
+  for (const version of ['1.0.5.0', '2.13.4096.0']) {
+    const configuration = msixVersionConfiguration({ ...identity, version });
+    assert.equal(configuration.buildEnvironment.VITE_CARDBUSH_APP_VERSION, version);
+    assert.equal(configuration.builder.buildVersion, version);
+    assert.equal(configuration.builder.extraMetadata.version + '.0', version);
+  }
+  assert.throws(() => msixVersionConfiguration({ ...identity, version: '1.0.0-beta.4' }));
 });
 
 test('Store names cannot inject XML or builder macros; numeric identity prefix is retained', () => {

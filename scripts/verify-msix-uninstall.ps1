@@ -26,12 +26,12 @@ $result=[ordered]@{
 try {
     Remove-AppxPackage -Package $package.PackageFullName
     $deadline=(Get-Date).AddSeconds(15)
-    while((Test-Path -LiteralPath $connector) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 250}
+    while((Test-Path -LiteralPath $root) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 250}
     $result.packageRegisteredAfter=[bool](Get-AppxPackage -Name cardbush.cardbush)
     $result.connectorRemains=Test-Path -LiteralPath $connector
     $result.packageRootRemains=Test-Path -LiteralPath $root
     $result.nativeMessagingRegistrationRemains=Test-Path -LiteralPath 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.cardbush.browser_connector'
-    $result.success=!$result.packageRegisteredAfter -and !$result.connectorRemains -and !$result.nativeMessagingRegistrationRemains
+    $result.success=!$result.packageRegisteredAfter -and !$result.connectorRemains -and !$result.packageRootRemains -and !$result.nativeMessagingRegistrationRemains
 } catch { $result.error=$_.Exception.Message }
 $result.completedAt=Get-Date -Format o
 $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ResultPath -Encoding UTF8

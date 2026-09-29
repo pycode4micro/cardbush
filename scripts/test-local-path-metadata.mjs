@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import * as protocol from '@cardbush/bush-protocol';
 
 const fileReferenceSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'fileReferences.ts'),
@@ -20,7 +21,7 @@ vm.runInNewContext(fileReferenceTranspiled.outputText, {
   URL,
   module: fileReferenceModule,
   exports: fileReferenceModule.exports,
-  require: () => ({
+  require: name => name === '@cardbush/bush-protocol' ? protocol : ({
     basename: (value) => value.replaceAll('\\', '/').split('/').pop() || value,
     isAbsoluteLocalPath: (value) =>
       /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/'),
@@ -247,3 +248,19 @@ console.log('local path metadata tests passed');
 function assertJsonEqual(actual, expected) {
   assert.equal(JSON.stringify(actual), JSON.stringify(expected));
 }
+
+const sshRoot = protocol.sshWorkspace('saved-connection', '/home/user/Project');
+for (const [value, expected] of [
+  ['/home/user/report.md', '/home/user/report.md'],
+  ['src/App.tsx', '/home/user/Project/src/App.tsx'],
+  ['../report.md', '/home/user/report.md'],
+  ['report.md', '/home/user/Project/report.md'],
+]) assert.equal(markdownLocalFileReference(value, sshRoot)?.path, protocol.sshWorkspace('saved-connection', expected));
+const sshFile = protocol.sshWorkspace('saved-connection', '/work/A #100%.md');
+assert.equal(markdownLocalFileReference(sshFile, sshRoot)?.path, sshFile);
+assert.equal(localFileReferenceFromHref(localFileReferenceHref(sshFile)), sshFile);
+assert.equal(markdownLocalFileReference(absoluteDocument, sshRoot)?.path, absoluteDocument);
+assert.equal(markdownLocalFileReference('ssh://saved-connection/%broken', sshRoot), null);
+
+assert.equal(localFileReference('https://example.test/file.md', sshRoot), null);
+assert.equal(localFileReference('ssh://saved-connection/%broken', sshRoot), null);

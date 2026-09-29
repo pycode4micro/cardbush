@@ -18,6 +18,7 @@ export type ToolFileChange = {
 
 export type ToolChangeReport = {
   reverted?: boolean;
+  revertSupported?: boolean;
   files: ToolFileChange[];
   additions: number;
   deletions: number;
@@ -118,7 +119,7 @@ function buildToolChangeReport(
   const files = mergeToolFileChanges(allFiles);
   const parsedAdditions = files.reduce((sum, file) => sum + file.additions, 0);
   const parsedDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
-  if (files.length === 0 && fallbackAdditions === 0 && fallbackDeletions === 0) {
+  if (files.length === 0) {
     const running = relevant.some(isToolRunning);
     if (!running) {
       return null;
@@ -127,6 +128,7 @@ function buildToolChangeReport(
   return {
     files,
     ...(reverted ? { reverted: true } : {}),
+    ...(files.some(file => file.path.startsWith('ssh://')) || relevant.some(execution => runtimeWorkspaceChanges(execution.metadata).some(change => asRecord(asRecord(change).metadata).revertSupported === false)) ? { revertSupported: false } : {}),
     additions: parsedAdditions > 0 ? parsedAdditions : fallbackAdditions,
     deletions: parsedDeletions > 0 ? parsedDeletions : fallbackDeletions,
     fileCount: files.length === 0 ? 1 : files.length,
@@ -292,7 +294,7 @@ export function summarizeChangeReports(
 }
 
 function normalizeChangeFilePath(value: string) {
-  return value.trim().replaceAll('\\', '/').toLowerCase();
+  return value.startsWith('ssh://') ? value.trim() : value.trim().replaceAll('\\', '/').toLowerCase();
 }
 
 export function serializeToolChangeReport(report: ToolChangeReport): SerializedToolFileChange[] {
@@ -314,20 +316,9 @@ function looksLikeFileChangeExecution(execution: ChatToolExecution) {
     return true;
   }
   const name = execution.name.toLowerCase();
-  const text = `${execution.summary}\n${execution.output}`.toLowerCase();
-  return (
-    name.includes('edit_file') ||
-    name.includes('write_file') ||
-    name.includes('apply_patch') ||
-    name.includes('replace_file') ||
-    text.includes('*** update file:') ||
-    text.includes('*** add file:') ||
-    text.includes('*** delete file:') ||
-    text.includes('diff --git ') ||
-    text.includes('\n+++ ') ||
-    text.includes('files changed') ||
-    text.includes('个文件已更改')
-  );
+  // Tool output can quote diffs or summarize existing changes without editing.
+  // Terminal/script edits require authoritative workspace checkpoint evidence.
+  return ['edit_file', 'write_file', 'apply_patch', 'replace_file'].some(tool => name.includes(tool));
 }
 
 function parseToolFileChange(execution: ChatToolExecution): ParsedToolFileChange {

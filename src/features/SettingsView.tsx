@@ -5,7 +5,7 @@ import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
 import { SshConnectionsPanel } from './ssh/SshConnectionsPanel';
-import { ChromeConnectionSettings } from './browser/ChromeConnectionSettings';
+import { BrowserConnectionSettings } from './browser/BrowserConnectionSettings';
 import { ComputerUseSettings, ComputerUseSettingsPanel } from './computerUse/ComputerUseSettings';
 import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
 import { ArchivedItemsPanel } from './settings/ArchivedItemsPanel';
@@ -110,6 +110,8 @@ import type {
 } from '../types';
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
+// Store builds inject the MSIX identity version; other channels keep their own version.
+const applicationVersion = import.meta.env.VITE_CARDBUSH_APP_VERSION || packageMetadata.version;
 const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
 const defaultFontSettings = {
   family: '',
@@ -1471,7 +1473,7 @@ function AboutSettingsPanel({
   const modelInfo = resolveEffectiveModelInfo(settings, selectedModel, language);
   const copyEnvironment = async () => {
     await copyText([
-      `CARDBUSH_VERSION=${packageMetadata.version}`,
+      `CARDBUSH_VERSION=${applicationVersion}`,
       'RUNTIME=Embedded TypeScript Runtime',
       'RUNTIME_TRANSPORT=Electron typed IPC',
       `MODEL=${modelInfo.model}`,
@@ -1489,7 +1491,7 @@ function AboutSettingsPanel({
       }
     >
       <InfoRow label={language === 'zh' ? '应用' : 'App'} value="cardbush" />
-      <InfoRow label={language === 'zh' ? '版本' : 'Version'} value={packageMetadata.version} />
+      <InfoRow label={language === 'zh' ? '版本' : 'Version'} value={applicationVersion} />
       <InfoRow label="Runtime" value="Embedded TypeScript Runtime" />
       <InfoRow label={language === 'zh' ? '通信方式' : 'Transport'} value="Electron typed IPC" />
       <InfoRow
@@ -2149,7 +2151,7 @@ function CardbushAppsPanel({
               )}
               {expanded && plugin.id === 'chrome' && (
                 <div className="cardbush-app-config chrome-connector-settings-wrap">
-                  <ChromeConnectionSettings
+                  <BrowserConnectionSettings
                     language={language}
                     plugin={plugin}
                     busy={Boolean(busyKey)}

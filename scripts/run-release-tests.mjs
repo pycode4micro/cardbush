@@ -17,7 +17,7 @@ const tests = packages.flatMap(name => readdirSync(path.join(root, 'packages', n
 run(['scripts/build-chrome-native-host.mjs', '--test']);
 if (process.platform === 'win32') {
   run(['scripts/build-chrome-native-host.mjs', '--validation']);
-  run(['--test', 'scripts/test-chrome-connector-lifecycle.mjs', 'scripts/test-chrome-pairing.mjs']);
+  run(['--test', 'scripts/test-chrome-connector-lifecycle.mjs', 'scripts/test-chrome-pairing.mjs', 'scripts/test-browser-connections.mjs', 'scripts/test-msix-packaging.mjs']);
   run(['scripts/test-chrome-legacy-cleanup.mjs']);
   run(['scripts/test-chrome-native-host.mjs']);
   run(['scripts/test-chrome-native-host-production.mjs']);
@@ -32,11 +32,13 @@ run(['--test', 'scripts/test-app-center.mjs', 'scripts/test-local-applications.m
 run(['scripts/test-local-applications-native.mjs']);
 run(['scripts/test-automation-calendar.mjs']);
 run(['--test', 'scripts/test-file-preview-registry.mjs']);
+run(['--test', 'scripts/test-pasted-text-attachments.mjs']);
 run(['--test', 'scripts/test-code-rendering.mjs', 'scripts/test-diff-syntax-contract.mjs', 'scripts/test-markdown-format.mjs']);
 run(['--test', 'scripts/test-permission-modes.mjs']);
 run(['--test', 'scripts/test-sandbox-setup.mjs']);
 run(['--test', 'scripts/test-runtime-startup-races.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
+run(['--test', 'scripts/test-guidance-queue-lock.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-shared-configuration.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
@@ -44,7 +46,7 @@ for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', '
   'test-local-path-metadata.mjs', 'test-settings-layout-contract.mjs', 'test-panel-motion-contract.mjs',
   'test-chat-scroll-contract.mjs', 'test-scroll-anchoring.mjs', 'test-keyboard-shortcuts.mjs', 'test-chrome-connector-contract.mjs',
   'test-release-cleanup-contract.mjs', 'test-visual-theme-context.mjs',
-  'test-history-tool-contract.mjs', 'test-turn-guidance-contract.mjs',
+  'test-history-tool-contract.mjs', 'test-turn-guidance-contract.mjs', 'test-assistant-timing-contract.mjs',
   'test-message-media-contract.mjs', 'test-product-skills-contract.mjs']) run(['scripts/' + script]);
 if (!process.argv.includes('--no-ui')) {
   run(['scripts/test-runtime-host-env.cjs']);
@@ -57,7 +59,7 @@ if (!process.argv.includes('--no-ui')) {
   run(['scripts/run-agents-ui-test.mjs']);
   for (const script of ['run-app-views-test.mjs', 'test-source-memo-ui.mjs', 'test-subagent-conversation-ui.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
-  for (const view of ['html-references', 'code-rendering', 'markdown-tables', 'status-indicators', 'loop-previews', 'startup-presentation', 'composer-resize', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
+  for (const view of ['html-references', 'code-rendering', 'markdown-tables', 'status-indicators', 'loop-previews', 'startup-presentation', 'composer-resize', 'pasted-text', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
   run(['scripts/test-automations-ui.mjs']);
   run(['scripts/test-plugin-uninstall-worker.cjs']);
   run(['scripts/test-window-menu.mjs']);

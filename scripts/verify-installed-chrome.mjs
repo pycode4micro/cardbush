@@ -79,8 +79,10 @@ async function appStart() {
   const invoke = (name, args = []) => cdp.evaluate(`window.cardbushDesktop[${JSON.stringify(name)}](...${JSON.stringify(args)})`, session);
   return { process, cdp, invoke, status: () => invoke('chromeConnectorStatus') };
 }
-async function chromeStart(extensionDirectory) {
-  const process = child(config.chromeExecutable, [`--user-data-dir=${config.chromeProfile}`, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
+async function chromeStart(extensionDirectory, browser = 'chrome') {
+  const executable = browser === 'edge' ? config.edgeExecutable : config.chromeExecutable;
+  const profile = browser === 'edge' ? config.edgeProfile : config.chromeProfile;
+  const process = child(executable, [`--user-data-dir=${profile}`, ...(config.headlessBrowsers ? ['--headless=new'] : []), '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
   process.stderr.resume();
   const cdp = new Cdp(); cdp.write = text => process.stdio[3].write(text + '\0');
   let buffer = '';
@@ -88,7 +90,7 @@ async function chromeStart(extensionDirectory) {
     buffer += bytes.toString(); let boundary;
     while ((boundary = buffer.indexOf('\0')) >= 0) { const message = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 1); if (message) cdp.receive(message); }
   });
-  report.chromeVersion = (await cdp.send('Browser.getVersion')).product;
+  report[`${browser}Version`] = (await cdp.send('Browser.getVersion')).product;
   const loaded = await cdp.send('Extensions.loadUnpacked', { path: extensionDirectory });
   assert.equal(loaded.id, 'iibaamkfgackofhhpadgnmgcjkhckeln');
   const target = await cdp.send('Target.createTarget', { url: `chrome-extension://${loaded.id}/popup.html` });
@@ -120,11 +122,23 @@ async function bridgeRequest(method, params) {
     });
   });
 }
-let app, chrome;
+let app, chrome, edge;
 const server = http.createServer((_request, response) => { response.writeHead(200, { 'Content-Type': 'text/html' }); response.end('<!doctype html><title>CardBush isolated validation</title><h1 id="proof">Chrome connector round trip</h1>'); });
 try {
   await mkdir(path.dirname(config.reportPath), { recursive: true });
+  if (config.expectedPackageFullName) {
+    const elevated = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'], { encoding: 'utf8', windowsHide: true }).trim();
+    assert.ok(['True', 'False'].includes(elevated), 'Read the actual validation process privilege level');
+    report.elevated = elevated === 'True';
+    report.ordinaryAccountValidation = !report.elevated;
+    if (!config.allowElevatedTest) assert.equal(report.elevated, false, 'Installed validation must run unelevated; explicitly label any developer-only elevated run');
+  }
   assert.equal(await exists(config.chromeProfile), false, 'Refuse to reuse any existing Chrome profile');
+  if (config.edgeExecutable) {
+    assert.ok(config.edgeProfile, 'An independent Edge profile is required');
+    assert.notEqual(path.resolve(config.edgeProfile), path.resolve(config.chromeProfile));
+    assert.equal(await exists(config.edgeProfile), false, 'Refuse to reuse any existing Edge profile');
+  }
   app = await appStart();
   let status = await app.status();
   if (config.expectedCleanupWarning) {
@@ -159,6 +173,35 @@ try {
   assert.ok((await bridgeRequest('tabs.list', scope)).some(candidate => candidate.id === tab.id));
   await bridgeRequest('tabs.close', { ...scope, tabId: tab.id });
   await checkpoint('named pipe -> broker -> Chrome: create, list, debug, close');
+  if (config.edgeExecutable) {
+    const edgePair = await app.invoke('pairChromeConnector', [{ browser: 'edge', label: 'Isolated Edge validation' }]);
+    edge = await chromeStart(status.extensionDirectory, 'edge');
+    assert.equal((await edge.action('pair', { code: edgePair.code })).ok, true);
+    await until(async () => (await app.status()).connections.filter(connection => connection.connected).length === 2, 'simultaneous Chrome and Edge pairing');
+    const edgeScope = { scopeId: `edge-validation-${randomUUID()}`, scopeTitle: 'Isolated MSIX Edge validation' };
+    await bridgeRequest('browser.select', { ...edgeScope, connectionId: edgePair.id });
+    const edgeTab = await bridgeRequest('tabs.create', { ...edgeScope, url: `http://127.0.0.1:${server.address().port}/edge` });
+    await until(async () => {
+      const result = await bridgeRequest('debugger.command', { ...edgeScope, tabId: edgeTab.id, command: 'Runtime.evaluate', commandParams: { expression: 'document.querySelector("#proof")?.textContent', returnByValue: true } });
+      return result.result?.value === 'Chrome connector round trip';
+    }, 'Edge page text through installed broker');
+    const capture = await bridgeRequest('debugger.command', { ...edgeScope, tabId: edgeTab.id, command: 'Page.captureScreenshot', commandParams: { format: 'png' } });
+    assert.ok(Buffer.from(capture.data, 'base64').length > 100, 'Installed Edge screenshot has image bytes');
+    await app.invoke('selectDefaultBrowserConnection', [edgePair.id]);
+    assert.equal((await bridgeRequest('browser.list', scope)).selectedConnectionId, pair.id, 'Default change must not move the existing Chrome session');
+    await bridgeRequest('browser.select', { ...scope, connectionId: edgePair.id });
+    assert.equal((await bridgeRequest('tabs.list', scope)).length, 0, 'Another session in Edge remains isolated after switching');
+    await bridgeRequest('browser.select', { ...scope, connectionId: pair.id });
+    await checkpoint('installed Chrome and Edge coexist; Edge read/screenshot, sticky default, explicit switching and session isolation');
+    if (!config.uninstallMode) {
+      await app.invoke('revokeBrowserConnection', [edgePair.id]);
+      await until(async () => !(await edge.action('status')).connectorEnabled, 'individual Edge revocation');
+      assert.equal((await app.status()).connections.find(connection => connection.id === pair.id)?.connected, true);
+      await close(edge);
+      await checkpoint('individual Edge revocation preserves Chrome');
+    }
+    await app.invoke('selectDefaultBrowserConnection', [pair.id]);
+  }
   if (config.uninstallMode) {
     assert.ok(['normal', 'running', 'crash'].includes(config.uninstallMode));
     assert.ok(config.expectedPackageFullName && config.ownershipPath);
@@ -171,10 +214,15 @@ try {
     const removalReport = `${config.reportPath}.uninstall.json`;
     await runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', path.join(import.meta.dirname, 'verify-msix-uninstall.ps1'), '-OwnershipPath', config.ownershipPath, '-ResultPath', removalReport], { windowsHide: true, timeout: 120000 });
     const removal = JSON.parse((await readFile(removalReport, 'utf8')).replace(/^\uFEFF/, ''));
-    assert.equal(removal.success, true); assert.equal(removal.elevated, false);
+    assert.equal(removal.success, true);
+    // Explicitly labeled developer-only runs can inspect removal on UAC-disabled hosts.
+    // They must never be recorded as ordinary-account validation.
+    if (!config.allowElevatedTest) assert.equal(removal.elevated, false);
+    report.ordinaryAccountUninstall = removal.elevated === false;
     report.uninstall = removal;
     assert.equal(await exists(config.connectorDirectory), false);
     await until(async () => !(await chrome.action('status')).nativeConnected, 'Chrome disconnect after uninstall');
+    if (edge) await until(async () => !(await edge.action('status')).nativeConnected, 'Edge disconnect after uninstall');
     await checkpoint(`${config.uninstallMode} uninstall: package, connector data and registry absent`);
     report.success = true;
   } else {
@@ -224,7 +272,7 @@ try {
   // Redact pairing credentials before storing failure diagnostics.
   report.error = String(error.message).replace(/CB2\.[\w.]+/g, '[redacted pairing]').replace(/[a-f0-9]{64}/gi, '[redacted secret]');
 } finally {
-  for (const instance of [chrome, app]) if (instance && instance.process.exitCode === null && instance.process.signalCode === null) await close(instance).catch(() => { instance.process.kill(); });
+  for (const instance of [edge, chrome, app]) if (instance && instance.process.exitCode === null && instance.process.signalCode === null) await close(instance).catch(() => { instance.process.kill(); });
   for (const process of children) process.kill();
   server.close(); report.completedAt = new Date().toISOString(); await save();
 }

@@ -39,10 +39,10 @@ const plugin = (id, component) => ({ id, name: id, installed: true, enabled: tru
 const plugins = [plugin('computer-use', 'cardbush_apps'), plugin('chrome', 'chrome-devtools'), plugin('example.tools', 'echo')];
 plugins[1].components[0].name = 'Chrome Devtools';
 plugins[1].components.push({ kind: 'app', id: 'chrome', name: 'Chrome', description: 'Registered MCP connection' });
-snapshot.servers.push({ id: 'chrome_devtools', health: 'ready', tools: Array.from({ length: 15 }, (_, i) => ({ remoteName: `tool${i}`, runtimeName: `mcp__chrome_devtools__tool${i}` })) });
+snapshot.servers.push({ id: 'browser_use', health: 'ready', tools: Array.from({ length: 15 }, (_, i) => ({ remoteName: `tool${i}`, runtimeName: `mcp__browser_use__tool${i}` })) });
 const overview = { revision: 2, snapshot, servers: [{ id: 'blender', name: 'Blender MCP', description: '', enabled: true, transport: 'stdio' }] };
 const entries = pluginMcpConnections(plugins, overview, true);
-assert.equal(entries.map(item => item.id).join(','), 'cardbush_apps,chrome_devtools,plugin_example_tools_echo,blender');
+assert.equal(entries.map(item => item.id).join(','), 'cardbush_apps,browser_use,plugin_example_tools_echo,blender');
 assert.equal(entries.filter(item => item.plugin?.id === 'chrome').length, 1, 'application and MCP declarations for one runtime connection form one row');
 assert.equal(entries[1].toolCount, 15, 'the connection tool count is not duplicated');
 assert.equal(entries[1].name, 'Chrome Devtools');

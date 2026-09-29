@@ -39,12 +39,13 @@ const viewportSchema = z.object({ width: z.number().int().min(64).max(4096), hei
 
 export function createCardbushChromeServer(options: { connector?: typeof requestChromeConnector; artifactsDirectory?: string; browserConfigPath?: string } = {}): McpServer {
   const server = new McpServer({
-    name: 'cardbush_chrome',
+    name: 'browser_use',
     version: '0.1.0',
   }, {
     instructions: [
-      "Controls the user's existing Chrome tabs through the CardBush Browser Connector.",
-      'Each CardBush session is isolated in its own visibly named Chrome tab group. Only tabs in the current session group are visible or controllable.',
+      "Browser Use controls the user's Chrome or Edge on Windows 11 through a paired connector.",
+      'Use list_browsers and select_browser when the user names a browser or profile. Otherwise the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
+      'Each CardBush session is isolated in its own visibly named browser tab group. Only tabs in the current session group are visible or controllable.',
       'Use new_page to create an isolated tab. To use an existing personal tab, ask the user to copy it into the current CardBush group from the extension popup.',
       'Call release_browser when browser work is complete; it detaches and collapses only the current session groups.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
@@ -81,7 +82,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     }).catch(error => {
       if (method.startsWith('downloads.') && error instanceof ChromeConnectorError && error.code === 'unsupported_method') {
         throw new ChromeConnectorError('extension_update_required',
-          'Reload CardBush Browser Connector 1.0.2 or later in chrome://extensions to enable tracked downloads. Do not fall back to repeated download clicks. Screenshots and export_image do not require browser downloads.');
+          'Reload CardBush Browser Use 1.2.0 or later in chrome://extensions or edge://extensions to enable tracked downloads. Do not fall back to repeated download clicks. Screenshots and export_image do not require browser downloads.');
       }
       throw error;
     });
@@ -125,16 +126,36 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const selected = listed.find((page) => page.active) ?? listed[0];
     if (!selected) {
       throw new ChromeConnectorError(
-        'chrome_page_missing',
-        'This CardBush session has no isolated Chrome tabs. Open one with new_page or copy an existing tab from the extension popup.',
+        'browser_page_missing',
+        'This CardBush session has no isolated browser tabs. Open one with new_page or copy an existing tab from the extension popup.',
       );
     }
     selectedPageIds.set(scope.id, selected.id);
     return selected.id;
   };
 
+  server.registerTool('list_browsers', toolDefinition(
+    'List Browser Use connections',
+    'List paired Chrome/Edge connections, their online state, the default, and this session’s selection. No personal tabs or credentials are returned.',
+    z.object({}), true,
+  ), async (_input, context) => withToolResult(async () => {
+    const result = record(await request('browser.list', {}, context));
+    return { text: JSON.stringify(result), structured: result };
+  }));
+  server.registerTool('select_browser', toolDefinition(
+    'Select Browser Use connection',
+    'Explicitly bind this session to a connected browser/profile id from list_browsers. Switching releases the old session group first; a failed release leaves the binding unchanged. Take a fresh snapshot after switching; old tab and element ids must not be reused.',
+    z.object({ connectionId: z.string().regex(/^[a-f0-9]{32}$/) }), false,
+  ), async (input, context) => withToolResult(async () => {
+    const result = record(await request('browser.select', input, context));
+    const scopeId = scopeFromContext(context).id;
+    selectedPageIds.delete(scopeId); clearScreenshotFailures(scopeId);
+    for (const key of requestedViewports.keys()) if (key.startsWith(`[${JSON.stringify(scopeId)},`)) requestedViewports.delete(key);
+    return { text: 'Browser selected. Use list_pages or new_page, then take a fresh snapshot.', structured: result };
+  }));
+
   server.registerTool('list_pages', toolDefinition(
-    'List Chrome pages',
+    'List browser pages',
     'List tabs in the current CardBush session group; use only returned pages or new_page. Personal tabs and other sessions are hidden. To use a personal tab, the user must copy it into this group from the extension popup. If the connector is unavailable, use the integrated browser where practical or explain the required setup/grant. Remote debugging is an explicitly selected compatibility mode, not an automatic fallback.',
     z.object({}),
     true,
@@ -150,25 +171,25 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     return {
       text: listed.length > 0
         ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.title || '(untitled)'} — ${page.url}`).join('\n')
-        : 'This CardBush session has no isolated Chrome tabs. Use new_page, or copy an existing tab into the session group from the extension popup.',
+        : 'This CardBush session has no isolated browser tabs. Use new_page, or copy an existing tab into the session group from the extension popup.',
       structured: { pages: listed, selectedPageId },
     };
   }));
 
   server.registerTool('select_page', toolDefinition(
-    'Select Chrome page',
-    'Select and focus a Chrome tab by the numeric id returned by list_pages.',
+    'Select browser page',
+    'Select and focus a browser tab by the numeric id returned by list_pages.',
     z.object({ pageId: z.number().int().nonnegative() }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const result = record(await request('tabs.activate', { tabId: input.pageId }, context));
     selectedPageIds.set(scope.id, input.pageId);
-    return { text: `Selected Chrome tab ${input.pageId}: ${string(result.title)}`, structured: result };
+    return { text: `Selected browser tab ${input.pageId}: ${string(result.title)}`, structured: result };
   }));
 
   server.registerTool('new_page', toolDefinition(
-    'Open Chrome page',
+    'Open browser page',
     'Open a new tab in a visibly named group isolated to the current CardBush session. Omit url to use the start page in CardBush browser settings (initially https://www.google.com/).',
     z.object({ url: z.string().url().optional() }),
     false,
@@ -179,12 +200,12 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const result = record(await request('tabs.create', { url }, context));
     const selectedPageId = integer(result.id);
     if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);
-    return { text: `Opened Chrome tab ${selectedPageId ?? ''}: ${string(result.url)}`, structured: result };
+    return { text: `Opened browser tab ${selectedPageId ?? ''}: ${string(result.url)}`, structured: result };
   }));
 
   server.registerTool('close_page', toolDefinition(
-    'Close Chrome page',
-    'Close the selected Chrome tab, or a tab specified by pageId.',
+    'Close browser page',
+    'Close the selected browser tab, or a tab specified by pageId.',
     z.object({ pageId: z.number().int().nonnegative().optional() }),
     false,
     true,
@@ -193,12 +214,12 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const target = input.pageId ?? await pageId(context);
     const result = record(await request('tabs.close', { tabId: target }, context));
     if (selectedPageIds.get(scope.id) === target) selectedPageIds.delete(scope.id);
-    return { text: `Closed Chrome tab ${target}.`, structured: result };
+    return { text: `Closed browser tab ${target}.`, structured: result };
   }));
 
   server.registerTool('navigate_page', toolDefinition(
-    'Navigate Chrome page',
-    'Navigate, reload, go back, or go forward in the selected Chrome tab.',
+    'Navigate browser page',
+    'Navigate, reload, go back, or go forward in the selected browser tab.',
     z.object({
       type: z.enum(['url', 'back', 'forward', 'reload']).default('url'),
       url: z.string().optional(),
@@ -217,12 +238,12 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       ...(input.url ? { url: input.url } : {}),
       ignoreCache: input.ignoreCache === true,
     }, context));
-    return { text: `Chrome tab ${target} navigated to ${string(result.url) || input.type}.`, structured: result };
+    return { text: `browser tab ${target} navigated to ${string(result.url) || input.type}.`, structured: result };
   }));
 
   server.registerTool('take_snapshot', toolDefinition(
     'Take page snapshot',
-    'Return an accessibility snapshot of the selected Chrome tab. Use uid values from this output with click, fill, and hover.',
+    'Return an accessibility snapshot of the selected browser tab. Use uid values from this output with click, fill, and hover.',
     z.object({}),
     true,
   ), async (_input, context) => withToolResult(async () => {
@@ -332,7 +353,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('press_key', toolDefinition(
     'Press key in page',
-    'Dispatch a keyboard key to the selected Chrome tab, such as Enter, Tab, Escape, ArrowDown, or a single character.',
+    'Dispatch a keyboard key to the selected browser tab, such as Enter, Tab, Escape, ArrowDown, or a single character.',
     z.object({ key: z.string().min(1).max(40) }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -369,7 +390,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('resize_page', toolDefinition(
     'Set page viewport',
-    'Set this session tab’s virtual viewport without resizing the user’s Chrome window. It survives navigation and is cleared on release. Explicit small viewports are preserved for responsive tests.',
+    'Set this session tab’s virtual viewport without resizing the user’s browser window. It survives navigation and is cleared on release. Explicit small viewports are preserved for responsive tests.',
     viewportSchema, false,
   ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
@@ -409,7 +430,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
         },
       }, context, undefined, value => { connector = value; }));
       const data = string(result.data);
-      if (!data) throw new ChromeConnectorError('screenshot_empty', 'Chrome returned an empty screenshot.');
+      if (!data) throw new ChromeConnectorError('screenshot_empty', 'The browser returned an empty screenshot.');
       clearScreenshotFailures(scope.id, target);
       screenshotFailures.delete(JSON.stringify([scope.id, 'page_selection']));
       return imageResult(context, { data, mimeType: input.format === 'jpeg' ? 'image/jpeg' : 'image/png' }, {
@@ -427,7 +448,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       screenshotFailures.set(key, failure);
       // Bound diagnostic history, never the number of permitted tool calls.
       if (screenshotFailures.size > 256) screenshotFailures.delete(screenshotFailures.keys().next().value!);
-      throw new ChromeConnectorError(error instanceof ChromeConnectorError ? error.code : 'chrome_connector_failed',
+      throw new ChromeConnectorError(error instanceof ChromeConnectorError ? error.code : 'browser_connector_failed',
         errorMessage(error), {
           ...(error instanceof ChromeConnectorError ? error.details : {}),
           pageId: target, consecutiveFailures: failure.attempts, cumulativeAttemptMs: failure.elapsedMs,
@@ -496,7 +517,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       try { artifact = await artifacts.download(scopeFromContext(context).id, string(result.taskId), result.filename); }
       catch (error) {
         throw new ChromeConnectorError('download_artifact_unavailable',
-          'Chrome completed the download, but its local artifact could not be copied. Keep the existing taskId; do not start another download.',
+          'The browser completed the download, but its local artifact could not be copied. Keep the existing taskId; do not start another download.',
           { taskId: result.taskId, state: 'complete', filename: result.filename, reason: errorMessage(error) });
       }
     }
@@ -529,7 +550,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('wait_for', toolDefinition(
     'Wait for page text',
-    'Wait until text appears in the selected Chrome tab.',
+    'Wait until text appears in the selected browser tab.',
     z.object({ text: z.string().min(1), timeout: z.number().int().min(100).max(30_000).default(10_000) }),
     true,
   ), async (input, context) => withToolResult(async () => {
@@ -553,15 +574,15 @@ export function createCardbushChromeServer(options: { connector?: typeof request
   }));
 
   server.registerTool('release_browser', toolDefinition(
-    'Release Chrome',
-    'Detach CardBush from the current session tabs and collapse its Chrome groups after browser work is complete.',
+    'Release browser',
+    'Detach CardBush from the current session tabs and collapse its browser groups after browser work is complete.',
     z.object({}),
     false,
   ), async (_input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const result = record(await request('debugger.detachScope', {}, context));
     selectedPageIds.delete(scope.id);
-    return { text: 'Released this CardBush session\'s Chrome tabs.', structured: result };
+    return { text: 'Released this CardBush session\'s browser tabs.', structured: result };
   }));
 
   return server;
@@ -622,7 +643,7 @@ async function withToolResult(operation: () => Promise<{
     if (error instanceof Error && error.name === 'AbortError') throw error;
     const normalized = error instanceof ChromeConnectorError
       ? { code: error.code, message: error.message, details: error.details }
-      : { code: 'chrome_connector_failed', message: errorMessage(error), details: {} };
+      : { code: 'browser_connector_failed', message: errorMessage(error), details: {} };
     return {
       content: [{ type: 'text' as const, text: normalized.message }],
       structuredContent: { error: normalized },
@@ -774,5 +795,5 @@ export { ChromeConnectorError, requestChromeConnector } from './bridgeClient.js'
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void serveStdio(() => createCardbushChromeServer());
-  console.error('cardbush_chrome MCP server running on stdio');
+  console.error('browser_use MCP server running on stdio');
 }

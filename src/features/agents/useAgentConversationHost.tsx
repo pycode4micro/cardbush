@@ -5,8 +5,9 @@ import type { ConversationHost } from '../conversationHost';
 import { agentRuntimeClient, type AgentCall } from './agentConversationBackend';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 import { welcomeHistoryRequest } from '../../backend/welcomeHistory';
+import { uploadAgentFile } from './uploadAgentFile';
+import type { PastedTextAttachment, PastedTextAttachmentApi } from '../../../electron/pastedTextAttachments.mjs';
 
-const chunkSize = 512 * 1024;
 const maxSize = 64 * 1024 * 1024;
 type Catalog = { skills: SkillSummary[]; pluginCommands: PluginCommandSummary[] };
 export function useAgentConversationHost(call: AgentCall, connectionId: string, sessionId: string, enabled: boolean, management = false) {
@@ -38,18 +39,29 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     for (const file of files) if (file.size > maxSize) throw new Error('附件不能超过 64 MiB / Maximum attachment size: 64 MiB');
     const result: Array<{ path: string; name: string }> = [];
     for (const file of files) {
-      const uploadId = crypto.randomUUID(); let offset = 0;
-      do {
-        const bytes = new Uint8Array(await file.slice(offset, offset + chunkSize).arrayBuffer());
-        let raw = ''; for (let i = 0; i < bytes.length; i += 8192) raw += String.fromCharCode(...bytes.subarray(i, i + 8192));
-        const next = await call<{ path: string; name: string; nextOffset: number }>('files.upload', { sessionId, uploadId, name: file.name, offset, content: btoa(raw) });
-        if (next.nextOffset !== offset + bytes.length) throw new Error('Invalid upload acknowledgement.');
-        offset = next.nextOffset;
-        if (offset === file.size) result.push({ path: next.path, name: next.name });
-      } while (offset < file.size);
+      const uploadId = crypto.randomUUID();
+      const next = await uploadAgentFile(file, chunk => call<{ path: string; name: string; nextOffset: number }>('files.upload', { sessionId, uploadId, name: file.name, ...chunk }));
+      result.push({ path: next.path, name: next.name });
     }
     return result;
   }, [call, sessionId, enabled]);
+  const pastedTextAttachments = useMemo<PastedTextAttachmentApi>(() => ({
+    create: async text => {
+      if (!enabled) throw new Error('请更新此 Agent 服务以支持文本附件 / Update this Agent service to attach pasted text');
+      const id = crypto.randomUUID();
+      try {
+        const result = await uploadAgentFile(new Blob([text], { type: 'text/plain;charset=utf-8' }), chunk =>
+          call<PastedTextAttachment & { nextOffset: number }>('files.pasted-text', { sessionId, action: 'upload', id, ...chunk }));
+        return { id: result.id, path: result.path, name: result.name, size: result.size };
+      } catch (error) {
+        // Cleanup is best effort when the connection itself has failed. Incomplete uploads also expire on the service.
+        void call('files.pasted-text', { sessionId, action: 'discard', id }).catch(() => {});
+        throw error;
+      }
+    },
+    retain: ids => call<void>('files.pasted-text', { sessionId, action: 'retain', ids }),
+    discard: id => call<void>('files.pasted-text', { sessionId, action: 'discard', id }),
+  }), [call, sessionId, enabled]);
   const readFile = useCallback(async (path: string) => {
       if (!enabled) throw new Error('Update this Agent service to preview files.');
       if (path.startsWith('cardbush-extract://')) {
@@ -78,12 +90,12 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     const preview = await api.filePreview(connectionId, sessionId, path);
     return { source: preview.url, dispose: () => { void api.releaseFilePreview(preview.id).catch(() => {}); } };
   }, [connectionId, sessionId, enabled]);
-  const host = useMemo<ConversationHost>(() => ({ id: `${connectionId}:${sessionId}`, environmentId: connectionId, plugins, pluginCommands: catalog.pluginCommands, uploadFiles, openFile,
+  const host = useMemo<ConversationHost>(() => ({ id: `${connectionId}:${sessionId}`, environmentId: connectionId, plugins, pluginCommands: catalog.pluginCommands, uploadFiles, pastedTextAttachments, openFile,
     welcomeHistory: signal => client.listUserPrompts(welcomeHistoryRequest(), signal),
     openExtract: id => openFile(`cardbush-extract://${id}.md`),
     readFile, previewFile, readDirectory: management ? input => call('files.list', { ...input, sessionId }) : undefined,
     toolDetails: async (sessionId, turnId) => (await client.listTurnToolExecutions({ sessionId, turnId })).map(runtimeHistoryToolExecution),
-  }), [connectionId, sessionId, plugins, catalog.pluginCommands, uploadFiles, openFile, readFile, previewFile, client, call, management]);
+  }), [connectionId, sessionId, plugins, catalog.pluginCommands, uploadFiles, pastedTextAttachments, openFile, readFile, previewFile, client, call, management]);
   const closePreview = useCallback(() => setPreview(undefined), [setPreview]);
   return { host, skills: catalog.skills, error, preview, closePreview };
 }

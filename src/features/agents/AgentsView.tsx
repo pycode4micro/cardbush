@@ -86,8 +86,13 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
       onEdit={() => setEditing(connection)}/>)}
     {(adding || editing) && <AgentConnectionForm language={language} initial={editing} onClose={() => { setAdding(false); setEditing(undefined); }} onRemove={editing ? async () => {
       await api().remove(editing.id); if (selectedId === editing.id) onSelect(''); setEditing(undefined); await onRefresh();
-    } : undefined} onSave={async input => {
-      const next = await api().save(input); await onRefresh(); setAdding(false); setEditing(undefined); onSelect(input.id || next.at(-1)!.id); setReconnect(value => value + 1);
+    } : undefined} onSave={async (input, sync) => {
+      const next = await api().save(input), id = input.id || next.at(-1)!.id;
+      // Keep the saved identity on failures so retrying a new connection cannot create duplicates.
+      setAdding(false); setEditing(next.find(item => item.id === id));
+      try { if (sync) await api().syncConfiguration(id); }
+      finally { await onRefresh(); }
+      setEditing(undefined); onSelect(id); setReconnect(value => value + 1);
     }}/>}
   </div>;
 }
@@ -154,6 +159,7 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
     </div>;
   return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
+    {active && connection.configurationError ? <div className="agents-config-notice" role="status"><p>{connection.configurationError}</p><button onClick={onEdit}>{zh ? '连接设置与同步' : 'Connection settings and sync'}</button></div> : null}
     {active && connection.configurationWarnings?.length ? <div className="agents-config-notice" role="status">{connection.configurationWarnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
     {active && error && connection.connectionState !== 'reconnecting' && <div className="agents-error" role="alert">{error}</div>}
     <AgentChat {...appearance} active={active && Boolean(sessionId)} title={title} headerActions={headerActions} onCreate={() => void create()} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.('models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>
@@ -291,7 +297,8 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
         loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
         turnHistoryAvailable subagentObservabilityAvailable thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
         activeGoal={chat.activeGoal} goalAvailable={chat.goalAvailable} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting} shadowAvailable={false} shadowAccentColor="" shadowThemeVariables={{}}
-        queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
+        queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
+                queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
         pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host.id } : null}
         connectionRecovery={chat.activeConnectionRecovery} composerAccessory={projectPicker}
         error={error || hostError || chat.error} notice={chat.notice} onClearError={() => { setError(''); chat.clearError(); }} onClearNotice={chat.clearNotice}

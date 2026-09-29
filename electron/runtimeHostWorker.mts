@@ -402,7 +402,7 @@ function withBundledAppsServer(input: unknown): unknown {
   if (!managementUrl && !appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry) return input;
   const snapshot = object(input, 'MCP snapshot must be an object.');
   const configured = Array.isArray(snapshot.servers) ? snapshot.servers : [];
-  const reservedIds = new Set(['cardbush_apps', 'chrome_devtools', 'cardbush_management']);
+  const reservedIds = new Set(['cardbush_apps', 'browser_use', 'chrome_devtools', 'cardbush_management']);
   const overridden = configured.find((candidate) =>
     candidate && typeof candidate === 'object' && reservedIds.has(String((candidate as { id?: unknown }).id ?? ''))
   );
@@ -464,7 +464,7 @@ function withBundledAppsServer(input: unknown): unknown {
   if (chromeEntry && appsConfig.enabledPluginIds.has('chrome')) {
     const remoteDebugging = appsConfig.chromeConnectionMode === 'remote_debugging';
     bundled.push({
-      id: 'chrome_devtools',
+      id: 'browser_use',
       pluginId: 'chrome',
       transport: {
         kind: 'stdio',
@@ -503,10 +503,10 @@ function withBundledAppsServer(input: unknown): unknown {
       toolPolicies: {},
     });
     console.error(JSON.stringify({
-      type: 'runtime_chrome_connection',
+      type: 'runtime_browser_connection',
       requestedMode: appsConfig.chromeConnectionMode,
       effectiveMode: appsConfig.chromeConnectionMode,
-      reason: remoteDebugging ? 'advanced_remote_debugging' : 'extension_native_messaging',
+      reason: remoteDebugging ? 'advanced_remote_debugging' : 'paired_loopback_websocket',
     }));
   }
   return {

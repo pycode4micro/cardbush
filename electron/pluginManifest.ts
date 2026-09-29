@@ -23,7 +23,7 @@ export async function findPluginPackageRoot(root: string): Promise<string> {
 }
 
 /** One read model for preview, installation and execution. Never rewrites the package. */
-export async function resolvePluginManifest(root: string) {
+export async function resolvePluginManifest(root: string, platform: string = process.platform) {
   const portable = await jsonIfPresent(join(root, manifestFiles.portable));
   if (portable?.$schema && String(portable.$schema).startsWith('https://agent-plugins.org/') && portable.$schema !== pluginSchema) {
     throw new Error(`Unsupported Agent Plugins schema: ${portable.$schema}`);
@@ -123,6 +123,13 @@ export async function resolvePluginManifest(root: string) {
       servers[name] = { type: dependency.transport === 'streamable-http' ? 'streamable_http' : dependency.transport, url: dependency.url, required: false };
     }
     skill.command.dependencyServers = [...new Set(dependencies)];
+  }
+  // A package may provide a target-platform launcher (including its dependency bootstrap).
+  // Keep this in the shared resolver so catalogs, sync validation and actual execution agree.
+  const platformServers = object(object(object(object(manifest.cardbush).runtime).mcpServersByPlatform)[platform]);
+  for (const [name, override] of Object.entries(platformServers)) {
+    if (!isObject(override)) throw new Error(`Invalid platform MCP server: ${name}`);
+    servers[name] = { ...object(servers[name]), ...override };
   }
   manifest.mcpServers = servers;
   const registeredApps: Record<string, { id: string; required: boolean }> = {};

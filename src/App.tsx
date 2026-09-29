@@ -2384,6 +2384,7 @@ function CardbushApp() {
                 stopping={chat.stopping}
                 activeTurnId={chat.activeTurnId}
                 connectionRecovery={chat.activeConnectionRecovery}
+                queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
                 queuedMessageCount={chat.queuedMessageCount}
                 queuedMessagePreview={chat.queuedMessagePreview}
                 queuedMessages={chat.queuedMessages}

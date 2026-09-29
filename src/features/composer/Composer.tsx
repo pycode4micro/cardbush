@@ -1,8 +1,6 @@
 import { useConversationSource } from '../settings/conversationSource';
 import { useConversationStyle } from '../settings/useConversationStyle';
 import { conversationStyleName, conversationStylePresets } from '../settings/conversationStyle';
-import { SettingsDropdown } from '../settings/SettingsDropdown';
-import '../settings/conversationStyle.css';
 import { usePluginCatalog } from '../plugins/pluginCatalog';
 import { useApplications } from '../appCenter/appCenterStore';
 import { applicationReference } from '../appCenter/appCenterModel';
@@ -17,10 +15,12 @@ import { ComposerReferenceContext, referenceableUserMessages } from './ComposerR
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionBulbs } from '../chat/ConversationExtraction';
 import { promptReferenceMarkdown } from '../../shared/promptReferences';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
+import { pastedTextSummary } from './pastedText';
 import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
 import { normalizePermissionMode, permissionModeOptions } from '../../shared/permissionModes';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import { QueueLockButton } from './QueueLockButton';
 import {
   ArrowRight,
   ArrowUp,
@@ -115,6 +115,7 @@ type ComposerFileAttachment = {
   name: string;
   kind: 'file' | 'folder';
   size?: number;
+  pastedText?: { id: string; lines: number; preview: string };
 };
 
 function useRuntimeStartupStatus(enabled = true): RuntimeStartupStatus {
@@ -328,6 +329,9 @@ export function Composer({
   queuedMessageCount = 0,
   queuedMessagePreview = '',
   queuedMessages = [],
+  queueLocked = false,
+  queueLockPending = false,
+  onToggleQueueLock,
   selectedModel,
   availableModels,
   goalAvailable = false,
@@ -377,6 +381,9 @@ export function Composer({
   queuedMessageCount?: number;
   queuedMessagePreview?: string;
   queuedMessages?: ComposerQueuedMessage[];
+  queueLocked?: boolean;
+  queueLockPending?: boolean;
+  onToggleQueueLock?: () => void;
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   goalAvailable?: boolean;
@@ -464,7 +471,8 @@ export function Composer({
   const attachmentKey = conversationViewKey(host?.id, referenceContext.sessionId, 'attachments');
   const [imageAttachments, setImageAttachments] = useConversationViewState<ComposerImageAttachment[]>(`${attachmentKey}:images`, () => [], value => value.length > 0);
   const [fileAttachments, setFileAttachments] = useConversationViewState<ComposerFileAttachment[]>(`${attachmentKey}:files`, () => [], value => value.length > 0);
-  const [attachmentUploads, setAttachmentUploads] = useConversationViewState(`${attachmentKey}:uploads`, () => 0, value => value > 0);
+  const [attachmentUploads, setAttachmentUploads, currentAttachmentUploads] = useConversationViewState(`${attachmentKey}:uploads`, () => 0, value => value > 0);
+  const pastedTextApi = host ? host.pastedTextAttachments : window.cardbushDesktop?.pastedTextAttachments;
   const [, rememberDraft, currentSubmittedDraft] = useConversationViewState(`${attachmentKey}:text`, () => draft, value => Boolean(value));
   useLayoutEffect(() => { rememberDraft(draft); }, [draft, rememberDraft]);
   const dropTargetRef = fileDropTarget ?? composerStackRef;
@@ -559,7 +567,7 @@ export function Composer({
   ]);
 
   async function submit(immediate = false) {
-    if (submissionPending || attachmentUploads > 0) return;
+    if (submissionPending || currentAttachmentUploads() > 0) return;
     const styleCommand = styleAvailable ? detectComposerCommand(draft, draft.length) : null;
     if (styleCommand?.mode === 'style') {
       if (commandState?.mode === 'style' && commandItems.length) applyCommand(commandItems[Math.min(commandIndex, commandItems.length - 1)]);
@@ -592,17 +600,30 @@ export function Composer({
     const attachmentPaths = [...imageAttachments, ...fileAttachments]
       .map((item) => `@${item.path}`);
     const value = [...attachmentPaths, draft.trimEnd()].filter(Boolean).join('\n');
+    const pastedIds = fileAttachments.flatMap(file => file.pastedText ? [file.pastedText.id] : []);
+    if (pastedIds.length) {
+      setAttachmentUploads(current => current + 1);
+      try {
+        if (!pastedTextApi) throw new Error('Text attachment storage is unavailable.');
+        // Retain before handing off: guidance can be queued and a lost network
+        // acknowledgement must not let cleanup break a successfully sent reference.
+        for (let offset = 0; offset < pastedIds.length; offset += 32) await pastedTextApi.retain(pastedIds.slice(offset, offset + 32));
+      } catch (error) {
+        showUiError(language === 'zh' ? '无法发送文本附件' : 'Unable to send text attachment', String(error));
+        return;
+      } finally { setAttachmentUploads(current => current - 1); }
+    }
+    const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
     if (host) {
       if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
       if (currentSubmittedDraft() === draft) onDraftChange('');
-      const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
       setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       return;
     }
-    onDraftChange('');
-    setImageAttachments([]);
-    setFileAttachments([]);
+    if (currentSubmittedDraft() === draft) onDraftChange('');
+    setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
+    setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
     await onSend(value, immediate ? { immediate: true } : undefined);
   }
 
@@ -637,6 +658,7 @@ export function Composer({
 
   async function addAttachmentPaths(paths: string[]) {
     if (host) { onDraftChange([...paths.map(path => `@${path}`), draft].join('\n')); return; }
+    const identity = (path: string) => path.startsWith('ssh://') ? path : path.toLowerCase();
     const uniquePaths = [...new Set(paths.map((value) => value.trim()).filter(Boolean))]
       .slice(0, 32);
     if (uniquePaths.length === 0) {
@@ -646,40 +668,40 @@ export function Composer({
       ?.inspectAttachments?.(uniquePaths)
       .catch(() => []);
     const metadataByPath = new Map(
-      (inspected ?? []).map((item) => [item.path.toLowerCase(), item]),
+      (inspected ?? []).map((item) => [identity(item.path), item]),
     );
     const imagePaths = uniquePaths.filter((pathValue) => {
-      const metadata = metadataByPath.get(pathValue.toLowerCase());
-      return metadata?.kind !== 'folder' && isImagePath(pathValue);
+      const metadata = metadataByPath.get(identity(pathValue));
+      return !pathValue.startsWith('ssh://') && metadata?.kind !== 'folder' && isImagePath(pathValue);
     });
     if (imagePaths.length > 0) {
       setImageAttachments((current) => {
-        const existing = new Set(current.map((item) => item.path.toLowerCase()));
+        const existing = new Set(current.map((item) => identity(item.path)));
         return [
           ...current,
           ...imagePaths
-            .filter((pathValue) => !existing.has(pathValue.toLowerCase()))
+            .filter((pathValue) => !existing.has(identity(pathValue)))
             .map((pathValue) => imageAttachmentFromPath(pathValue)),
         ];
       });
     }
-    const imagePathSet = new Set(imagePaths.map((pathValue) => pathValue.toLowerCase()));
+    const imagePathSet = new Set(imagePaths.map((pathValue) => identity(pathValue)));
     const filePaths = uniquePaths.filter(
-      (pathValue) => !imagePathSet.has(pathValue.toLowerCase()),
+      (pathValue) => !imagePathSet.has(identity(pathValue)),
     );
     if (filePaths.length === 0) {
       return;
     }
     setFileAttachments((current) => {
-      const existing = new Set(current.map((item) => item.path.toLowerCase()));
+      const existing = new Set(current.map((item) => identity(item.path)));
       return [
         ...current,
         ...filePaths
-          .filter((pathValue) => !existing.has(pathValue.toLowerCase()))
+          .filter((pathValue) => !existing.has(identity(pathValue)))
           .map((pathValue) =>
             fileAttachmentFromPath(
               pathValue,
-              metadataByPath.get(pathValue.toLowerCase()),
+              metadataByPath.get(identity(pathValue)),
             ),
           ),
       ];
@@ -774,6 +796,38 @@ export function Composer({
     }
     event.preventDefault();
     await addTransferredFiles(files);
+  }
+
+  function capturePastedText(event: React.ClipboardEvent<HTMLDivElement>) {
+    if (inputReadOnly || submissionPending) { event.preventDefault(); event.stopPropagation(); return; }
+    if (event.clipboardData.files.length) return;
+    const text = event.clipboardData.getData('text/plain');
+    const summary = pastedTextSummary(text);
+    if (!summary.attach) return;
+    // Capture before either textarea or rich-editor paste handling inserts text.
+    event.preventDefault(); event.stopPropagation();
+    void attachPastedText(text, summary).catch(error => showUiError(
+      language === 'zh' ? '未能保存粘贴文本，原文仍在剪贴板中，可重试粘贴' : 'Could not save pasted text. It remains on the clipboard; try pasting again.', String(error)));
+  }
+
+  async function attachPastedText(text: string, summary: ReturnType<typeof pastedTextSummary>) {
+    if (!pastedTextApi) throw new Error(language === 'zh' ? '请更新并重启 CardBush / Agent 服务以使用文本附件。' : 'Update and restart CardBush / the Agent service to attach pasted text.');
+    setAttachmentUploads(current => current + 1);
+    try {
+      const saved = await pastedTextApi.create(text);
+      setFileAttachments(current => [...current, {
+        ...fileAttachmentFromPath(saved.path, { name: saved.name, size: saved.size }),
+        pastedText: { id: saved.id, lines: summary.lines, preview: summary.preview },
+      }]);
+    } finally { setAttachmentUploads(current => current - 1); }
+  }
+
+  async function removeFileAttachment(file: ComposerFileAttachment) {
+    if (file.pastedText) {
+      if (!pastedTextApi) throw new Error('Text attachment storage is unavailable.');
+      await pastedTextApi.discard(file.pastedText.id);
+    }
+    setFileAttachments(current => current.filter(item => item.id !== file.id));
   }
 
   async function addTransferredFiles(files: File[]) {
@@ -1114,7 +1168,8 @@ export function Composer({
         : `${queuedMessageCount} queued`
       : '';
   const queueHint =
-    language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply';
+    queueLocked ? language === 'zh' ? '已锁定，仅手动发送' : 'Locked · send manually'
+      : language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply';
   const queueTitle = queuedMessagePreview.trim()
     ? `${queueLabel} · ${queueHint}\n${queuePreview}`
     : `${queueLabel} · ${queueHint}`;
@@ -1133,7 +1188,7 @@ export function Composer({
   async function sendImmediate(fromQueue = false) {
     if (!runtimeReady || stopping || immediatePendingRef.current || (sending && !cancelEnabled)) return;
     const useQueue = fromQueue || !hasContent;
-    if (useQueue && (!sending || !firstQueuedMessage || !onGuideQueuedMessage)) return;
+    if (useQueue && (!firstQueuedMessage || !onGuideQueuedMessage)) return;
     immediatePendingRef.current = true;
     try {
       if (useQueue) await guideFirstQueuedMessage();
@@ -1298,6 +1353,7 @@ export function Composer({
           event.preventDefault();
           textareaRef.current?.focus();
         }}
+        onPasteCapture={capturePastedText}
         onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(language === 'zh' ? '无法添加附件' : 'Unable to add attachments', String(error)))}
       >
         {fileDragActive && dropTargetRef.current && createPortal(
@@ -1347,7 +1403,7 @@ export function Composer({
         {fileAttachments.length > 0 && (
           <div className="composer-file-strip">
             {fileAttachments.map((file) => (
-              <article className="composer-file-attachment" key={file.id}>
+              <article className="composer-file-attachment" data-pasted-text={file.pastedText ? true : undefined} key={file.id}>
                 <button
                   className="composer-file-preview"
                   type="button"
@@ -1360,26 +1416,26 @@ export function Composer({
                 >
                   <ComposerFileIcon name={file.name} kind={file.kind} />
                   <span className="composer-file-meta">
-                    <strong>{file.name}</strong>
-                    <small>{file.kind === 'folder'
+                    <strong>{file.pastedText ? language === 'zh' ? '粘贴文本' : 'Pasted text' : file.name}</strong>
+                    <small>{file.pastedText
+                      ? `${file.pastedText.lines} ${language === 'zh' ? '行' : file.pastedText.lines === 1 ? 'line' : 'lines'} · ${formatFileSize(file.size)}`
+                      : file.kind === 'folder'
                       ? language === 'zh' ? '文件夹' : 'Folder'
                       : formatFileSize(file.size)}</small>
+                    {file.pastedText?.preview && <small className="composer-pasted-text-preview">{file.pastedText.preview}</small>}
                   </span>
                 </button>
                 <button
                   className="composer-file-remove"
                   type="button"
+                  disabled={attachmentUploads > 0}
                   aria-label={file.kind === 'folder'
                     ? language === 'zh' ? `移除文件夹 ${file.name}` : `Remove folder ${file.name}`
                     : language === 'zh' ? `移除文件 ${file.name}` : `Remove ${file.name}`}
                   title={file.kind === 'folder'
                     ? language === 'zh' ? '移除文件夹' : 'Remove folder'
                     : language === 'zh' ? '移除文件' : 'Remove file'}
-                  onClick={() =>
-                    setFileAttachments((current) =>
-                      current.filter((item) => item.id !== file.id),
-                    )
-                  }
+                  onClick={() => void removeFileAttachment(file).catch(error => showUiError(language === 'zh' ? '无法移除附件' : 'Unable to remove attachment', String(error)))}
                 >
                   <X size={12} />
                 </button>
@@ -1387,6 +1443,7 @@ export function Composer({
             ))}
           </div>
         )}
+        {attachmentUploads > 0 && <div className="composer-attachment-progress" role="status">{language === 'zh' ? '正在准备附件…' : 'Preparing attachment…'}</div>}
         {goalDraft && (
           <div className="composer-command-mode goal" role="status">
             <Target size={15} />
@@ -1547,12 +1604,10 @@ export function Composer({
               <span>{permissionLabel}</span>
               <ChevronDown size={13} />
             </button>
-            {styleAvailable && <div className="composer-style-select">
-              <SettingsDropdown label={language === 'zh' ? '对话风格（仅当前会话，从下一轮回复生效）' : 'Conversation style (this chat, from the next reply)'}
-                value={conversationStyle.override ?? ''} options={styleOptions} minMenuWidth={200}
-                onChange={id => conversationStyle.select(id || null)} />
-            </div>}
             <ExtractionBulbs onInsert={insertExtraction} />
+            {onToggleQueueLock && (queuedMessageCount > 0 || queueLocked) && (
+              <QueueLockButton language={language} locked={queueLocked} pending={queueLockPending} onToggle={onToggleQueueLock} />
+            )}
             {queuedMessageCount > 0 && onShowQueue && (
               <button className="composer-queue-button" type="button"
                 title={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}

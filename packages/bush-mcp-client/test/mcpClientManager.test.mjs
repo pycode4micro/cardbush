@@ -22,8 +22,8 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
     createTransport: () => ({ async send() {} }),
   });
 
-  const runtimeName = "mcp__chrome_devtools__echo_tool";
-  const applied = await manager.apply(snapshot({ permission: "allow" }, "chrome_devtools"));
+  const runtimeName = "mcp__browser_use__echo_tool";
+  const applied = await manager.apply(snapshot({ permission: "allow" }, "browser_use"));
   assert.equal(applied.servers[0].negotiatedProtocolVersion, "2026-07-28");
   assert.deepEqual(applied.servers[0].tools, [{
     remoteName: "echo.tool",

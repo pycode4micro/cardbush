@@ -31,6 +31,10 @@ assert.equal(matchesShortcut('sendMessage', key('Enter'), {}), true);
 assert.equal(matchesShortcut('sendMessage', key('Enter', { ctrlKey: true }), {}), false, 'guidance must never enter the ordinary queue/send branch');
 assert.equal(matchesShortcut('guideNow', key('Enter', { ctrlKey: true }), {}), true);
 assert.equal(matchesShortcut('guideNow', key('Enter', { metaKey: true }), {}), true);
+assert.equal(matchesShortcut('toggleQueueLock', key('L', { ctrlKey: true, shiftKey: true }), {}), true);
+assert.equal(matchesShortcut('toggleQueueLock', key('l', { ctrlKey: true }), {}), false);
+assert.equal(matchesShortcut('toggleQueueLock', key('L', { ctrlKey: true, shiftKey: true, isComposing: true }), {}), false);
+assert.equal(conflictingShortcut('toggleQueueLock', { key: 'l', ctrl: true, shift: true }, {}), undefined);
 for (const flags of [{ shiftKey: true }, { ctrlKey: true, shiftKey: true }, { ctrlKey: true, isComposing: true }, { ctrlKey: true, keyCode: 229 }, { ctrlKey: true, repeat: true }]) {
   assert.equal(matchesShortcut('guideNow', key('Enter', flags), {}), false);
 }

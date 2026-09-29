@@ -30,6 +30,9 @@ export function WelcomeComposer({
   queuedMessageCount,
   queuedMessagePreview,
   queuedMessages,
+  queueLocked,
+  queueLockPending,
+  onToggleQueueLock,
   selectedModel,
   availableModels,
   teamAvailable = false,
@@ -74,6 +77,9 @@ export function WelcomeComposer({
   queuedMessageCount: number;
   queuedMessagePreview: string;
   queuedMessages: QueuedChatMessage[];
+  queueLocked?: boolean;
+  queueLockPending?: boolean;
+  onToggleQueueLock?: () => void;
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   teamAvailable?: boolean;
@@ -139,6 +145,9 @@ export function WelcomeComposer({
       queuedMessageCount={queuedMessageCount}
       queuedMessagePreview={queuedMessagePreview}
       queuedMessages={queuedMessages}
+      queueLocked={queueLocked}
+      queueLockPending={queueLockPending}
+      onToggleQueueLock={onToggleQueueLock}
       selectedModel={selectedModel}
       availableModels={availableModels}
       teamAvailable={teamAvailable}

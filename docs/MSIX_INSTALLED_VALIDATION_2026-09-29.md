@@ -1,5 +1,7 @@
 # MSIX 1.0.4.0 安装验证（2026-09-29）
 
+适用范围：本文固定记录 1.0.4.0 / 扩展 1.1.0 的历史证据。后续 Browser Use / Edge / 扩展 1.2.0 的提交准备见 [新记录](MSIX_SUBMISSION_PREPARATION_2026-09-29.md)，不沿用本文 hash 或把本文当成新包测试。
+
 新包的真实 Chrome 连接、停用、升级迁移及三种系统卸载路径通过。WACK 完整执行，结果为 **WARNING**，不是无警告通过；没有必测项 FAIL。此记录不代表 Store 认证完成，`releaseReady: false` 保持不变。
 
 ## 包与环境

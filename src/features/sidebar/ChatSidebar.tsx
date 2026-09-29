@@ -1844,7 +1844,7 @@ export function ConversationChangeDialog({
   const showCurrentContents = nativeFilePreview || previewPath === selectedPath;
   const selectedReport = selectedItem?.report ?? resolvedReports.at(-1);
   const selectedReverted = !!selectedReport && revertedChangeIds.has(selectedReport.id);
-  const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport.fileCount > 0;
+  const canRevert = revertAvailable && !revertingChangeId && !!selectedReport && selectedReport.fileCount > 0 && selectedReport.revertSupported !== false;
   const commentRevision = useMemo(() => reviewRevision(selectedItem?.file.lines ?? []), [selectedItem?.file.lines]);
   useEffect(() => {
     const allowed = new Set(retainedReports.map(report => reviewDetailKey(conversation.id, report.id)));

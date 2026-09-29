@@ -88,13 +88,13 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, gitAva
           <button disabled={disabled} onClick={() => void load()}>{zh ? '刷新' : 'Refresh'}</button>
           {workspace.mode === 'worktree' && <button disabled={disabled || !review?.changes.length || Boolean(review.error) || incomplete || review.runningTerminals} onClick={() => void act('apply')}>{zh ? '应用到原项目' : 'Apply to source'}</button>}
           {workspace.mode === 'worktree' && review.checkpoints.length === 0 && <button disabled={disabled || review.runningTerminals} onClick={() => void act('use_direct')}>{zh ? '改为原目录执行' : 'Use source directory'}</button>}
-          {workspace.mode === 'direct' && workspace.versioning === 'none' && <button disabled={disabled || review.runningTerminals} onClick={() => void act('init_git')}>{workspace.versioningError ? (zh ? '重试 Git 版本' : 'Retry Git versions') : (zh ? '创建 Git 仓库' : 'Create Git repository')}</button>}
+          {!workspace.workspaceDir.startsWith('ssh://') && workspace.mode === 'direct' && workspace.versioning === 'none' && <button disabled={disabled || review.runningTerminals} onClick={() => void act('init_git')}>{workspace.versioningError ? (zh ? '重试 Git 版本' : 'Retry Git versions') : (zh ? '创建 Git 仓库' : 'Create Git repository')}</button>}
           {incomplete && <button disabled={disabled || review.runningTerminals} onClick={() => void act('checkpoint')}>{zh ? '补建检查点' : 'Recover checkpoint'}</button>}
           {review.runningTerminals && <button disabled={disabled} onClick={() => void act('stop_terminals')}>{zh ? '停止工作区终端' : 'Stop workspace terminals'}</button>}
           {workspace.mode === 'worktree' && <button disabled={disabled || Boolean(review.error) || review.runningTerminals} onClick={() => void act('discard')}>{zh ? '丢弃副本' : 'Discard copy'}</button>}
         </div>
         {workspace.versioning === 'none' ? <>
-          <p>{workspace.versioningError || (zh ? '此目录尚未启用 Git。文件工具保留原有撤回能力；Git 版本还可记录终端和脚本的文件修改。' : 'Git is not enabled for this directory. File tools retain their existing undo support; Git versions can also capture file edits made by terminals and scripts.')}</p>
+          <p>{workspace.versioningError || (workspace.workspaceDir.startsWith('ssh://') ? (zh ? 'SSH 文件工具的修改可在审查中查看；暂不支持远程任务撤回或自动记录终端修改。' : 'SSH file tool edits are available for review. Remote undo and automatic terminal change tracking are not yet supported.') : (zh ? '此目录尚未启用 Git。文件工具保留原有撤回能力；Git 版本还可记录终端和脚本的文件修改。' : 'Git is not enabled for this directory. File tools retain their existing undo support; Git versions can also capture file edits made by terminals and scripts.'))}</p>
         </> : <details className="task-workspace-review">
           <summary>{zh ? `${review.changes.length} 个文件${workspace.mode === 'worktree' ? '待应用' : '有任务修改'} · 查看修改` : `${review.changes.length} ${workspace.mode === 'worktree' ? 'files pending' : 'files changed in this task'} · Review changes`}</summary>
           <p>{zh ? 'Git 版本覆盖已跟踪文件及未被忽略的新文件。任务修改包含终端、脚本和文件工具产生的变更。' : 'Git versions cover tracked and new non-ignored files, including edits made by terminals, scripts and file tools.'}</p>

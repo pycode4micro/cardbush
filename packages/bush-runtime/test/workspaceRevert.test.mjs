@@ -245,7 +245,7 @@ async function environment(t, sessionId, persistent = false) {
     root,
     sessionId,
     host,
-    reopen, dataRoot, recordTurn,
+    reopen, dataRoot, recordTurn, store,
     async execute(turnId, round, name, input) {
       recordTurn(turnId);
       const toolCall = {
@@ -308,4 +308,20 @@ test('legacy undo cannot bypass two-turn retention when subsequent Turns have no
   await assert.rejects(host.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
     payload: { sessionId: setup.sessionId, turnIds: ['turn-1'] } }), { code: 'workspace_checkpoint_expired' });
   assert.equal(readFileSync(path, 'utf8'), 'after');
+});
+
+
+test('a mixed local and SSH turn fails remote undo before touching any local file', async t => {
+  const setup = await environment(t, 'mixed-ssh-review');
+  const path = join(setup.root, 'local.txt'); writeFileSync(path, 'before');
+  await setup.execute('turn-1', 1, 'read_file', { path });
+  const edited = await setup.execute('turn-1', 2, 'edit_file', { path, old_text: 'before', new_text: 'after' });
+  const remoteChange = { ...edited.workspaceChanges[0], change_id:'remote-change', path:'ssh://saved/work/remote.txt',
+    metadata:{workspaceVersioned:false,revertSupported:false,diff:'@@ -1 +1 @@\n-before\n+after'} };
+  setup.store.record({protocol:'bush.tool_call.v1',id:'remote-edit',name:'edit_file',argumentsText:'{}'},
+    {requestId:'request_turn-1',sessionId:setup.sessionId,turnId:'turn-1',round:3,ordinal:9},
+    {kind:'returned',result:{path:remoteChange.path},workspaceChanges:[remoteChange]});
+  await assert.rejects(setup.revert(['turn-1']), /SSH changes can be reviewed/);
+  await assert.rejects(setup.restore(['turn-1']), /SSH changes can be reviewed/);
+  assert.equal(readFileSync(path, 'utf8'), 'after', 'rejection is atomic for the whole selection');
 });
