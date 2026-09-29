@@ -544,6 +544,11 @@ const desktopApi = {
     ipcRenderer.on('inspector:open-link', listener);
     return () => ipcRenderer.removeListener('inspector:open-link', listener);
   },
+  onInspectorGuestActivated: (callback: (detail: { guestWebContentsId: number }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, detail: { guestWebContentsId: number }) => callback(detail);
+    ipcRenderer.on('inspector:guest-activated', listener);
+    return () => ipcRenderer.removeListener('inspector:guest-activated', listener);
+  },
   readTextPreview: (targetPath: string) =>
     ipcRenderer.invoke('shell:read-text-preview', targetPath).then(
       (result: Awaited<ReturnType<typeof readTextPreviewResult>>) => {

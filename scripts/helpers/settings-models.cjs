@@ -16,17 +16,53 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
     await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
     await run("document.querySelector('.settings-dropdown-popover:popover-open [value=' + " + JSON.stringify(value) + " + ']').click()");
   };
+  const chooseProvider = async value => {
+    await run("document.querySelector('dialog [aria-label=模型商]').click()");
+    await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
+    await run("document.querySelector('.settings-dropdown-popover:popover-open [value=' + " + JSON.stringify(value) + " + ']').click()");
+  };
+  const savedAddress = await run("document.querySelector('dialog input[type=url]').value");
+  const savedProtocol = await run("document.querySelector('dialog [aria-label=接入协议]').textContent");
+  const savedProvider = await run('settingsProps.settings.managedModelConfigs[0].provider');
+  await chooseProvider('openrouter');
+  assert.equal(await run("document.querySelector('dialog input[type=url]').value"),savedAddress,'relabeling preserves saved connection');
+  assert.equal(await run("document.querySelector('dialog [aria-label=接入协议]').textContent"),savedProtocol);
+  await chooseProvider(savedProvider);
+  const reachHeaders = async () => {
+    await run("document.querySelector('.model-dialog-body').scrollTop = document.querySelector('.model-dialog-body').scrollHeight");
+    await pause(60);
+    const area = await run(`(() => {
+      const input = document.querySelector('dialog textarea'), rect = input.getBoundingClientRect();
+      const body = document.querySelector('.model-dialog-body').getBoundingClientRect();
+      const footer = document.querySelector('.model-dialog-footer').getBoundingClientRect();
+      const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+      return { x, y, top: rect.top, bottom: rect.bottom, bodyTop: body.top, bodyBottom: body.bottom,
+        footerTop: footer.top, hit: document.elementFromPoint(x, y) === input };
+    })()`);
+    assert.ok(area.top >= area.bodyTop && area.bottom <= area.bodyBottom && area.bodyBottom <= area.footerTop + 1 && area.hit,
+      'JSON editor is fully reachable above the footer: ' + JSON.stringify(area));
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(area.x), y: Math.round(area.y), button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(area.x), y: Math.round(area.y), button: 'left', clickCount: 1 });
+    await until("document.activeElement === document.querySelector('dialog textarea')");
+  };
+  const typeHeaders = async value => {
+    await reachHeaders();
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: ['control'] });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: ['control'] });
+    await win.webContents.insertText(value);
+    await until('document.querySelector("dialog textarea").value === ' + JSON.stringify(value));
+  };
   await choose('anthropic_messages');
   await until("document.querySelector('dialog').textContent.includes('/messages')");
   await choose('openai_chat_completions');
   await until("document.querySelector('dialog').textContent.includes('/chat/completions')");
   await run("document.querySelector('dialog .model-advanced-disclosure').click()");
   await edit('dialog input[type=number]', '500000');
-  await edit('dialog textarea', '{bad-json', true);
+  await typeHeaders('{bad-json');
   await click('保存模型');
   await until("!!document.querySelector('dialog [role=alert]')");
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].maxContextTokens'), 400000, 'invalid headers cannot save');
-  await edit('dialog textarea', JSON.stringify({ 'x-session-id': '{{sessionId}}' }), true);
+  await typeHeaders(JSON.stringify({ 'x-session-id': '{{sessionId}}' }, null, 2));
   await click('保存模型');
   await until("!document.querySelector('dialog.model-config-dialog')");
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].maxContextTokens'), 500000);
@@ -34,11 +70,13 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].defaultHeaders["x-session-id"]'), '{{sessionId}}');
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].hasApiKey'), true);
   assert.equal(await run("document.activeElement.classList.contains('model-row-edit')"), true, 'dialog restores focus');
-  for (const width of [1200, 760, 500]) {
-    win.setContentSize(width, 850); await pause(120);
+  for (const [width, height] of [[1200, 850], [760, 650], [500, 650]]) {
+    win.setContentSize(width, height); await pause(120);
     await run("document.querySelector('.model-row-edit').click()");
     await until("document.querySelector('dialog')?.open");
+    await choose('anthropic_messages');
     await run("document.querySelector('dialog .model-advanced-disclosure').click()");
+    await typeHeaders('{\n  "x-test": "editable"\n}');
     const dimensions = await run("(() => { const d = document.querySelector('dialog'), b = d.getBoundingClientRect(); return { width: d.clientWidth, scroll: d.scrollWidth, left: b.left, right: b.right, viewport: innerWidth, footer: d.querySelector('footer').getBoundingClientRect().bottom, height: innerHeight }; })()");
     assert.ok(dimensions.scroll <= dimensions.width + 1 && dimensions.left >= 0 && dimensions.right <= dimensions.viewport, 'modal fits narrow viewport ' + width);
     assert.ok(dimensions.footer <= dimensions.height, 'save controls stay reachable');
@@ -63,14 +101,33 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   assert.equal(await run('discoveryCalls[0][0]'), 'https://api.anthropic.com/v1');
   assert.equal(await run('discoveryCalls[0][2].apiProtocol'), 'anthropic_messages');
   await run("document.querySelector('dialog [aria-label=关闭]').click()");
+  await click('添加模型');
+  await until("document.querySelector('dialog')?.open");
+  await chooseProvider('openrouter');
+  assert.equal(await run("document.querySelector('dialog input[type=url]').value"),'https://openrouter.ai/api/v1');
+  assert.match(await run("document.querySelector('dialog [aria-label=接入协议]').textContent"),/Chat Completions/);
+  assert.match(await run("document.querySelector('.model-connection-note').textContent"),/当前对话 ID/);
+  await edit('dialog input[type=password]', 'fixture-openrouter-key');
+  await click('获取列表');
+  await until('discoveryCalls.length === 2');
+  assert.equal(await run('discoveryCalls[1][0]'),'https://openrouter.ai/api/v1');
+  assert.equal(await run('discoveryCalls[1][2].apiProtocol'),'openai_chat_completions');
+  await edit('dialog input[type=url]', 'https://custom.example/v1');
+  await choose('anthropic_messages');
+  await chooseProvider('openai'); await chooseProvider('openrouter');
+  assert.equal(await run("document.querySelector('dialog input[type=url]').value"),'https://custom.example/v1','explicit addresses override presets');
+  assert.match(await run("document.querySelector('dialog [aria-label=接入协议]').textContent"),/Messages/);
+  await run("document.querySelector('dialog [aria-label=关闭]').click()");
   await run("settingsProps.language = 'en'; settingsProps.themePreference = 'light'; window.settingsTheme = 'bright'; renderSettings()");
   await until("!!document.querySelector('.model-row-edit')");
   await run("document.querySelector('.model-row-edit').click()");
   await until("document.querySelector('dialog')?.open");
   assert.match(await run("document.querySelector('dialog').textContent"), /API protocol/);
+  await edit('dialog input[type=url]', 'https://openrouter.ai/api/v1');
+  assert.match(await run("document.querySelector('.model-connection-note').textContent"), /current conversation ID/);
   win.webContents.invalidate(); await pause(200);
   fs.writeFileSync(path.join(root, 'tmp/settings-model-dialog-light.png'), (await win.webContents.capturePage()).toPNG());
   await run("document.querySelector('dialog [aria-label=Close]').click()");
   await run("settingsProps.language = 'zh'; settingsProps.themePreference = 'dark'; window.settingsTheme = 'dark'; renderSettings()");
-  console.log('Native model settings passed: protocol selection, headers validation, saved credentials, focus restore and responsive modal.');
+  console.log('Native model settings passed: OpenRouter preset/discovery/localization, preserved custom connections, protocol selection, headers validation, saved credentials, focus restore and responsive modal.');
 };

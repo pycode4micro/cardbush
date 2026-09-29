@@ -485,6 +485,7 @@ function createAssistantStreamMessage(
       ...(route?.assistantSegmentIndex != null ? { assistant_segment_index: route.assistantSegmentIndex } : {}),
       ...(messageId ? { message_id: messageId } : {}),
       ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
+      ...(route?.finalResponse !== undefined ? { transcript_kind: route.finalResponse ? 'assistant_final' : 'assistant_segment' } : {}),
     },
   };
 }
@@ -506,6 +507,7 @@ export function applyAssistantStreamRoute(
     metadata: {
       ...(message.metadata ?? {}),
       ...(messageId ? { message_id: messageId } : {}),
+      ...(route.finalResponse !== undefined ? { transcript_kind: route.finalResponse ? 'assistant_final' : 'assistant_segment' } : {}),
       ...(route.assistantSegmentIndex != null
         ? { assistant_segment_index: route.assistantSegmentIndex }
         : {}),

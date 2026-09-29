@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnResourceManagedProcess, type ProcessResourceGovernor, type GuardedProcess } from './processResourceGuard.js';
 import { isWithin } from './workspaceAccessPolicy.js';
 import type { ExecutionSandboxPolicy } from './executionSandbox.js';
+import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 
 export type TerminalShell = 'cmd' | 'powershell' | 'posix';
 interface TerminalPollInput { sessionId: string; yieldTimeMs: number }
@@ -37,6 +38,7 @@ interface ManagedTerminalSession {
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
   waiters: Set<() => void>;
+  exclusiveResources: string[];
 }
 
 export class TerminalSessionManager {
@@ -67,19 +69,24 @@ export class TerminalSessionManager {
     signal?: AbortSignal;
     shell: TerminalShell;
     sandbox?: ExecutionSandboxPolicy;
+    exclusiveResources?: string[];
   }): Promise<Record<string, unknown>> {
     if (input.signal?.aborted) throw abortReason(input.signal);
     const invocation = commandInvocation(input.shell, input.command);
-    const guarded = await spawnResourceManagedProcess({
+    const sessionId = `terminal_${randomUUID()}`;
+    const exclusiveResources = decodeExclusiveResources(input.exclusiveResources);
+    const releaseResources = runtimeExclusiveResources.acquire(sessionId, input.cwd, exclusiveResources);
+    let guarded: GuardedProcess;
+    try { guarded = await spawnResourceManagedProcess({
       executable: invocation.executable,
       args: invocation.args,
       cwd: input.cwd,
       governor: this.#resourceGovernor,
       sandbox: input.sandbox,
-    });
+    }); } catch (error) { releaseResources(); throw error; }
     const child = guarded.child;
     const terminal: ManagedTerminalSession = {
-      sessionId: `terminal_${randomUUID()}`,
+      sessionId,
       ownerSessionId: input.ownerSessionId,
       command: input.command,
       cwd: input.cwd,
@@ -103,6 +110,7 @@ export class TerminalSessionManager {
       stdoutTruncated: false,
       stderrTruncated: false,
       waiters: new Set(),
+      exclusiveResources,
     };
     this.#sessions.set(terminal.sessionId, terminal);
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -113,18 +121,22 @@ export class TerminalSessionManager {
       appendTerminalOutput(terminal, "stderr", chunk);
       this.#notify(terminal);
     });
-    child.on("error", (error) => {
-      terminal.state = "failed";
-      terminal.error = error.message;
-      this.#notify(terminal);
-    });
-    child.on("exit", async (exitCode, signal) => {
-      const report = await guarded.complete();
+    let finishing = false;
+    const finish = async (exitCode: number | null, signal: NodeJS.Signals | null) => {
+      if (finishing) return;
+      finishing = true;
+      let report;
+      try { report = await guarded.complete(); }
+      catch (error) {
+        terminal.error = error instanceof Error ? error.message : String(error);
+        terminal.errorCode = 'terminal_cleanup_failed';
+      }
+      finally { releaseResources(); }
       if (report?.code && (!terminal.stopRequested || report.code === 'sandbox_cleanup_failed')) {
         terminal.error = report.message;
         terminal.errorCode = report.code;
       }
-      terminal.state = terminal.stopRequested ? "stopped" : terminal.errorCode ? "failed" : "exited";
+      terminal.state = terminal.stopRequested ? "stopped" : terminal.error || terminal.errorCode ? "failed" : "exited";
       terminal.exitCode = exitCode;
       terminal.signal = signal;
       this.#notify(terminal);
@@ -133,7 +145,13 @@ export class TerminalSessionManager {
         child.stderr?.destroy();
       }, 100);
       releaseStreams.unref?.();
+    };
+    child.on("error", error => {
+      terminal.error = error.message;
+      // Failed spawns may never emit exit. Settle cleanup before publishing failure.
+      void finish(null, null);
     });
+    child.on("exit", (exitCode, signal) => { void finish(exitCode, signal); });
     child.on("close", () => {
       terminal.closed = true;
       // The exit receipt may still be loading. Do not wake a poll with an empty
@@ -218,6 +236,7 @@ export class TerminalSessionManager {
       pid: terminal.pid,
       state: terminal.state,
       sandbox: terminal.guarded.sandbox ?? null,
+      exclusiveResources: terminal.exclusiveResources,
     };
   }
 
@@ -231,6 +250,7 @@ export class TerminalSessionManager {
         command: terminal.command,
         cwd: terminal.cwd,
         shell: terminal.shell,
+        exclusiveResources: terminal.exclusiveResources,
         sandbox: terminal.guarded.sandbox ?? null,
         startedAt: new Date(terminal.startedAt).toISOString(),
         durationMs: Date.now() - terminal.startedAt,
@@ -261,6 +281,7 @@ export class TerminalSessionManager {
       pid: terminal.pid,
       state: terminal.state,
       shellExecutable: terminal.shellExecutable,
+      ...(terminal.exclusiveResources.length ? { exclusiveResources: terminal.exclusiveResources } : {}),
       sandbox: terminal.guarded.sandbox ?? null,
       durationMs: Date.now() - terminal.startedAt,
       exitCode: terminal.exitCode,

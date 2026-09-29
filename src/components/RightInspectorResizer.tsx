@@ -23,6 +23,7 @@ export function RightInspectorResizer({
   windowMaximized,
   onWidthChange,
   onCollapse,
+  onExpand,
   softVisible = true,
   label,
 }: {
@@ -30,6 +31,7 @@ export function RightInspectorResizer({
   windowMaximized: boolean;
   onWidthChange: (width: number) => void;
   onCollapse?: () => void;
+  onExpand?: () => void;
   softVisible?: boolean;
   label: string;
 }) {
@@ -61,7 +63,7 @@ export function RightInspectorResizer({
       startX: event.clientX,
       startWidth: currentWidth,
       currentWidth,
-      maximumWidth: readMaximumInspectorWidth(currentWidth, windowMaximized),
+      maximumWidth: onExpand ? document.querySelector('.desktop-shell')?.getBoundingClientRect().width ?? window.innerWidth : readMaximumInspectorWidth(currentWidth, windowMaximized),
       pointerId: event.pointerId,
       scope,
       animationFrame: 0,
@@ -93,6 +95,11 @@ export function RightInspectorResizer({
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const state = dragRef.current;
       if (!state || moveEvent.pointerId !== state.pointerId) {
+        return;
+      }
+      if (onExpand && moveEvent.clientX <= (document.querySelector('.desktop-shell')?.getBoundingClientRect().left ?? 0) + 24) {
+        finish(true);
+        onExpand();
         return;
       }
       const nextWidth = clampPreviewWidth(
@@ -136,17 +143,23 @@ export function RightInspectorResizer({
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerCancel);
     window.addEventListener('blur', handleWindowBlur);
-  }, [onCollapse, onWidthChange, softVisible, width, windowMaximized]);
+  }, [onCollapse, onExpand, onWidthChange, softVisible, width, windowMaximized]);
 
   return (
     <div
       ref={handleRef}
       className="right-inspector-resizer"
       role="separator"
+      tabIndex={0}
       aria-orientation="vertical"
       aria-label={label}
       title={label}
       onPointerDown={beginResize}
+      onDoubleClick={onExpand}
+      onKeyDown={event => {
+        if (event.key === 'Home' && onExpand) { event.preventDefault(); onExpand(); }
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); onWidthChange(width + (event.key === 'ArrowLeft' ? 40 : -40)); }
+      }}
       onLostPointerCapture={() => cancelRef.current?.()}
     />
   );

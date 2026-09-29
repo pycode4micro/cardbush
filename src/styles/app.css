@@ -9664,6 +9664,8 @@ body.queue-reordering * {
   max-width: var(--chat-track-width);
 }
 
+.composer-command-portal > .composer-command-palette { position: relative; left: auto; bottom: auto; width: 100%; }
+
 .composer-command-palette {
   position: absolute;
   left: 0;
@@ -11466,6 +11468,21 @@ body.queue-reordering * {
   font-weight: 650;
 }
 
+.model-picker-copy .model-picker-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.model-picker-meta .model-picker-provider {
+  flex: 0 1 auto;
+}
+
+.model-picker-meta .model-picker-meta-separator,
+.model-picker-meta .model-picker-protocol {
+  flex: 0 0 auto;
+}
+
 .model-picker-row svg {
   color: currentColor;
 }
@@ -11562,6 +11579,10 @@ body.queue-reordering * {
 
 .model-reasoning-options.expanded .model-reasoning-pages {
   transform: translateX(-50%);
+}
+
+.model-reasoning-options.single-page {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .model-reasoning-primary-options,

@@ -6,7 +6,7 @@ import type {
 } from '@cardbush/bush-protocol';
 import type { ConversationStylePreferences } from './features/settings/conversationStyle';
 
-export type AppSection = 'chat' | 'plugins' | 'skills' | 'subagents' | 'team' | 'automations' | 'agents';
+export type AppSection = 'chat' | 'plugins' | 'skills' | 'subagents' | 'team' | 'automations' | 'agents' | 'components';
 export type SettingsSection =
   | 'projects'
   | 'instructions'
@@ -327,6 +327,7 @@ export type CardlingDesktopAction =
   | { type: 'miniChatSend'; text: string };
 
 export interface AppSettingsState {
+  individuation?: import('@cardbush/bush-protocol').IndividuationSettings;
   appearance?: import('./features/appearance/appearancePreferences').AppearancePreferences;
   conversationStyle: ConversationStylePreferences;
   proxy: ProxySettings;
@@ -604,6 +605,7 @@ export interface StreamStart {
 }
 
 export interface AssistantStreamChunk {
+  finalResponse?: boolean;
   messageId: string;
   assistantSegmentIndex?: number;
   segmentId?: string;

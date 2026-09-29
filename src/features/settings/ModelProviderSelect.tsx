@@ -2,7 +2,7 @@ import type { AppLanguage, ManagedModelConfig } from '../../types';
 import { SettingsDropdown } from './SettingsDropdown';
 
 export const customProviderValue = '__custom_provider__';
-export const suggestedProviders = ['openai', 'anthropic', 'gemini', 'deepseek', 'moonshot', 'qwen'];
+export const suggestedProviders = ['openai', 'anthropic', 'gemini', 'deepseek', 'moonshot', 'qwen', 'openrouter'];
 
 export function normalizeProvider(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '-');

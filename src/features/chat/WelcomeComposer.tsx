@@ -3,8 +3,10 @@ import { type ReactNode, type RefObject, useRef } from 'react';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import { Composer } from '../composer';
 import { basename, samePath } from '../../shared/localPaths';
-import { StarWordmark } from './StarWordmark';
 import { WelcomeSuggestions } from './WelcomeSuggestions';
+import { WelcomePage } from '../components/WelcomePage';
+import { useComponents } from '../components/componentStore';
+import '../components/components.css';
 import type { WelcomeSuggestion } from './welcomeSuggestionRanking';
 import type {
   AppLanguage,
@@ -114,6 +116,7 @@ export function WelcomeComposer({
   submissionPending?: boolean;
 }) {
   const welcomeRef = useRef<HTMLDivElement>(null);
+  const collection = useComponents();
   const selectedProjectTitle = availableProjects.find(project => samePath(project.rootPath, selectedProjectDir))?.title
     || basename(selectedProjectDir);
   function selectSuggestion({ text, sessionId }: WelcomeSuggestion) {
@@ -133,6 +136,7 @@ export function WelcomeComposer({
   const welcomeComposer = (
     <Composer
       compact
+      portalCommands={Boolean(collection.welcomeLayout)}
       fileDropTarget={fileDropTarget}
       language={language}
       draft={draft}
@@ -178,29 +182,26 @@ export function WelcomeComposer({
   );
 
   return (
-    <div className="welcome-composer" ref={welcomeRef}>
-      <div className="welcome-hero">
-        <StarWordmark />
-        <h2>
+    <WelcomePage language={language} collection={collection} layout={collection.welcomeLayout} canvasRef={welcomeRef} slots={{
+      greeting: <h2>
           {selectedProjectDir
             ? language === 'zh'
               ? `你想在 ${selectedProjectTitle} 中做些什么？`
               : `What would you like to do in ${selectedProjectTitle}?`
             : language === 'zh' ? '你想做些什么？' : 'What would you like to do?'}
-        </h2>
-        <WelcomeSuggestions language={language} disabled={sending} hasDraft={Boolean(draft.trim())} onSelect={selectSuggestion} />
-      </div>
-      <div className="welcome-input-stack">
-        {workspaceControl !== undefined ? workspaceControl : <WelcomeProjectSwitcher
+        </h2>,
+      suggestions: <WelcomeSuggestions language={language} disabled={sending} hasDraft={Boolean(draft.trim())} onSelect={selectSuggestion} />,
+      input: <>
+        <div className="builtin-workspace-control">{workspaceControl !== undefined ? workspaceControl : <WelcomeProjectSwitcher
           language={language}
           projects={availableProjects}
           selectedProjectDir={selectedProjectDir}
           disabled={sending}
           onSelect={onProjectChange}
-        />}
+        />}</div>
         {welcomeComposer}
-      </div>
-    </div>
+      </>,
+    }}/>
   );
 }
 

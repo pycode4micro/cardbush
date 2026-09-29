@@ -1,4 +1,6 @@
-import { journalCacheEntries } from './cacheMaintenance.js';
+import { journalCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
+import { archiveRuntimeEvents } from './runtimeEventArchive.js';
+import { gunzipSync } from 'node:zlib';
 import {
   chmodSync,
   existsSync,
@@ -76,6 +78,7 @@ export class FileRuntimeEventPersistence implements RuntimeEventPersistence {
   readonly #root: string;
   readonly #onRecoveryIssue?: FileRuntimeEventPersistenceOptions["onRecoveryIssue"];
   readonly #descriptors = new Map<string, number>();
+  #archiveCursor?: string;
 
   constructor(options: FileRuntimeEventPersistenceOptions) {
     const root = String(options.root || "").trim();
@@ -94,11 +97,14 @@ export class FileRuntimeEventPersistence implements RuntimeEventPersistence {
   }
 
   load(sessionId: string, turnId: string): RuntimeEvent[] {
-    const path = this.#path(sessionId, turnId);
+    const original = this.#path(sessionId, turnId);
+    const archived = !existsSync(original) && existsSync(`${original}.gz`);
+    const path = archived ? `${original}.gz` : original;
     if (!existsSync(path)) return [];
-    let bytes = readFileSync(path);
+    let bytes = archived ? gunzipSync(readFileSync(path)) : readFileSync(path);
     const lastNewline = bytes.lastIndexOf(0x0a);
     if (bytes.length > 0 && lastNewline !== bytes.length - 1) {
+      if (archived) throw new RuntimeEventJournalCorruptionError(path, 0, 'Archived journal has an incomplete tail.');
       const retainedBytes = lastNewline >= 0 ? lastNewline + 1 : 0;
       const removedBytes = bytes.length - retainedBytes;
       truncateSync(path, retainedBytes);
@@ -137,11 +143,18 @@ export class FileRuntimeEventPersistence implements RuntimeEventPersistence {
     }
   }
 
-  cacheEntries() {
-    return journalCacheEntries(this.#root, 'events', RECORD_PROTOCOL, 'event', 'sessionId', path => {
+  async cacheEntries() {
+    return [...await journalCacheEntries(this.#root, 'events', RECORD_PROTOCOL, 'event', 'sessionId', path => {
       const descriptor = this.#descriptors.get(path);
       if (descriptor !== undefined) { closeSync(descriptor); this.#descriptors.delete(path); }
-    }, true);
+    }, true, true), ...await temporaryCacheEntries(this.#root)];
+  }
+
+  maintain(signal?: AbortSignal) {
+    return archiveRuntimeEvents(this.#root, (path, line, text) => this.#decodeRecord(path, line, text), {
+      signal, isOpen: path => this.#descriptors.has(path),
+      after: this.#archiveCursor, visited: path => { this.#archiveCursor = path; },
+    });
   }
 
   close(): void {
@@ -179,6 +192,7 @@ export class FileRuntimeEventPersistence implements RuntimeEventPersistence {
   #descriptor(path: string): number {
     const existing = this.#descriptors.get(path);
     if (existing !== undefined) return existing;
+    if (existsSync(`${path}.gz`)) throw new Error('Cannot append to an archived terminal Turn.');
     const descriptor = openSync(path, "a", 0o600);
     this.#descriptors.set(path, descriptor);
     return descriptor;

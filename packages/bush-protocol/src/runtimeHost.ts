@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema, providerInputObservationSchema } from "./cacheChain.js";
 import { toolDisplaySchema, toolErrorKindSchema } from "./tool.js";
-import { modelEventSchema, modelFailureDiagnosticsSchema, providerCompatibilityDiagnosticSchema } from "./model.js";
+import { modelEventSchema, modelFailureDiagnosticsSchema, providerCompatibilityDiagnosticSchema, providerStreamDiagnosticSchema } from "./model.js";
 import { runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema } from './solutionSelection.js';
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
@@ -67,6 +67,7 @@ export const runtimeEventKindSchema = z.enum([
   "cache_chain_observed",
   "provider_input_observed",
   "provider_compatibility",
+  "provider_stream_diagnostic",
   "model_request_usage",
   "model_maintenance_response",
   "context_compaction_started",
@@ -104,6 +105,7 @@ const segmentIdentitySchema = z.object({
   messageId: z.string().min(1),
   segmentId: z.string().min(1),
   ordinal: z.number().int().nonnegative(),
+  finalResponse: z.boolean().optional(),
 });
 
 const segmentStartedPayloadSchema = segmentIdentitySchema;
@@ -306,6 +308,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("provider_compatibility"),
     payload: providerCompatibilityDiagnosticSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal('provider_stream_diagnostic'),
+    payload: providerStreamDiagnosticSchema.extend({ round: z.number().int().positive(), attempt: z.number().int().positive() }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("model_request_usage"),

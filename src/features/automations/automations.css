@@ -92,8 +92,8 @@
 .automation-plan-details .automation-prompt { margin-top: 0; font-size: 13px; }
 .automation-plan-details .automation-actions { justify-content: flex-start; gap: 6px; }
 .automation-plan-details .automation-actions button { padding: 6px 8px; font-size: 12px; }
-.automation-calendar { margin-top: 12px; min-width: 0; }
-.automation-calendar-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); gap: 20px; }
+.automation-calendar { margin: 24px auto 0; min-width: 0; max-width: 640px; }
+.automation-calendar-layout { display: block; }
 .automation-calendar-month { min-width: 0; }
 .automation-calendar-heading, .automation-agenda-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; margin-bottom: 10px; }
 .automation-calendar-heading h2, .automation-agenda-heading h2 { margin: 0; font-size: 17px; font-weight: 600; }
@@ -101,29 +101,7 @@
 .automation-calendar-controls > button { display: flex; flex: none; align-items: center; justify-content: center; height: 28px; width: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-mid); font: inherit; cursor: pointer; }
 .automation-calendar-controls > button:hover { color: var(--text); background: var(--surface-hover, var(--border)); }
 .automation-calendar-controls > button svg { flex: none; }
-.automation-calendar-weekdays, .automation-calendar-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.automation-calendar-weekdays { margin-bottom: 4px; color: var(--text-mid); font-size: 11px; text-align: center; }
-.automation-calendar-weekdays span { padding: 4px 0; }
-.automation-calendar-week { border-top: 1px solid var(--border); }
-.automation-calendar-week > div { min-width: 0; }
-.automation-calendar-date { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 1px; width: 100%; height: 56px; padding: 3px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
-.automation-calendar-date:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
-.automation-calendar-date[data-selected=true] { background: var(--surface-hover, color-mix(in srgb, var(--text) 8%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 15%, transparent); }
-.automation-calendar-date:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
-.automation-calendar-date-number { display: grid; place-items: center; align-self: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; line-height: 1; }
-.automation-calendar-date[data-today=true] .automation-calendar-date-number { background: var(--action); color: var(--on-action); font-weight: 600; }
-.automation-calendar-date[data-outside=true] { color: var(--text-mid); }
-.automation-calendar-date[data-outside=true] .automation-calendar-date-items { opacity: .55; }
-.automation-calendar-date-items { display: flex; gap: 2px; min-width: 0; text-align: left; }
-.automation-calendar-date-items .automation-calendar-chip { flex: 1; min-width: 0; }
-.automation-calendar-date-items .automation-calendar-more { flex: none; align-self: center; }
-.automation-calendar-chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 3px; padding: 1px 3px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); border-left: 2px solid var(--accent); font-size: 10px; line-height: 1.3; }
-.automation-calendar-chip[data-recorded=true] { background: color-mix(in srgb, var(--text) 5%, transparent); border-left-color: var(--text-mid); }
-.automation-calendar-more { color: var(--text-mid); font-size: 10px; line-height: 1.2; padding-left: 3px; }
-.automation-calendar-marker { display: none; align-items: center; justify-content: center; gap: 4px; height: 14px; color: var(--text-mid); }
-.automation-calendar-marker i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
-.automation-calendar-marker small { font-size: 9px; }
-.automation-calendar-agenda { min-width: 0; border-left: 1px solid var(--border); padding-left: 22px; }
+.automation-calendar-agenda { min-width: 0; padding-top: 12px; }
 .automation-agenda-heading { flex-wrap: wrap; }
 .automation-agenda-heading h2 { font-size: 15px; }
 .automation-agenda-heading > span { color: var(--text-mid); font-size: 11px; }
@@ -233,12 +211,45 @@
   .automation-agenda-list { max-height: 480px; }
 }
 @container (max-width: 520px) {
-  .automation-calendar-date { height: 56px; }
   .calendar-year-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .calendar-year-month { padding: 9px; }
-  .automation-calendar-date-items { display: none; }
-  .automation-calendar-marker { display: flex; }
   .automation-plan-toggle { padding: 12px 10px; gap: 8px; }
   .automation-calendar-heading h2 { font-size: 16px; }
 }
 @media (max-width: 640px) { .feature-content.automation-panel { padding: 12px 16px; } .automation-fields { grid-template-columns: minmax(0, 1fr); } .automation-form { padding: 16px; } .automation-actions { justify-content: flex-start; } }
+
+.automation-heading { margin: 0 0 14px; }
+.automation-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 4px; padding: 2px 0; }
+.automation-tabs button { flex: none; }
+.automation-command-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.automation-search-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--text-mid); border-bottom: 1px solid var(--border); }
+.automation-panel .automation-search-field input { margin: 0; border: 0; border-radius: 0; padding: 8px 0; background: transparent; font-size: 12px; }
+.automation-search-field:focus-within { border-color: var(--accent); }
+.automation-search-field input:focus { outline: none; }
+.automation-command-bar .automation-actions { flex: none; flex-wrap: nowrap; gap: 6px; }
+.automation-command-bar .automation-actions button { padding: 7px 9px; border-radius: 18px; font-size: 12px; }
+.automation-command-bar .automation-actions button:first-child { border-color: transparent; background: transparent; padding: 7px; }
+.automation-calendar .calendar-toolbar { margin-bottom: 16px; gap: 14px; }
+.automation-calendar-heading { flex: 1; }
+.automation-calendar-controls { width: 100%; border: 0; padding: 0; gap: 3px; }
+.automation-calendar-controls h2 { margin-right: auto; font-size: 14px; font-weight: 500; }
+.calendar-period-title { padding-left: 0; font-size: 14px; }
+.automation-calendar-controls > .calendar-today { width: auto; padding: 0 6px; font-size: 11px; }
+.automation-calendar .calendar-view-switch { border: 0; background: var(--surface-hover, var(--hover)); border-radius: 16px; }
+.automation-calendar .calendar-view-switch button { padding: 4px 9px; font-size: 11px; border-radius: 14px; }
+.automation-calendar-grid { height: 330px; font-size: 13px; }
+.automation-calendar-grid .calendar-day-number { min-width: 28px; height: 28px; }
+.automation-calendar-grid .calendar-day-dot { bottom: 4px; }
+.calendar-matching-dates .calendar-day-button { height: 44px; }
+.automation-calendar[data-view=day] .automation-calendar-agenda { border: 0; padding: 0; }
+.automation-calendar[data-view=day] .automation-agenda-list { max-height: none; }
+.automation-calendar-notice { max-width: 640px; margin: 14px auto 0; font-size: 11px; }
+.automation-calendar .calendar-data-controls { margin-top: 18px; padding-top: 12px; }
+@container (max-width: 520px) {
+  .automation-command-bar { flex-wrap: wrap; gap: 10px; }
+  .automation-command-bar .automation-actions { margin-left: auto; }
+  .automation-search-field { flex-basis: 160px; }
+  .automation-calendar-grid { height: 300px; }
+  .automation-calendar .calendar-toolbar { gap: 8px; }
+  .calendar-period-title { font-size: 13px; }
+}

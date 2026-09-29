@@ -32,6 +32,7 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
     { id: 'builtin:plugins', kind: 'builtin', target: 'plugins', title: zh ? '插件' : 'Plugins', description: zh ? '发现与管理技能、工具和插件' : 'Discover and manage skills, tools and plugins', shortcut: 'openPlugins' },
     { id: 'builtin:automations', kind: 'builtin', target: 'automations', title: zh ? '定时与自动化' : 'Automations', description: zh ? '日历、定时任务与执行结果' : 'Calendar, scheduled tasks and results', shortcut: 'openAutomations' },
     { id: 'builtin:settings', kind: 'builtin', target: 'settings', title: zh ? '设置' : 'Settings', description: zh ? '模型、连接、外观和偏好' : 'Models, connections, appearance and preferences', shortcut: 'openSettings' },
+    { id: 'builtin:components', kind: 'builtin', target: 'components', title: zh ? '组件' : 'Components', description: zh ? '排列内置视图与自定义组件，调整大小和位置' : 'Arrange and resize built-in views and custom components' },
     ...plugins.filter(plugin => plugin.installed && plugin.enabled && !plugin.removalPending).flatMap(plugin => plugin.components.filter(component => component.kind === 'app' && (
       component.app?.kind === 'url' ? Boolean(applicationLink(component.app.url)) : component.app?.kind === 'renderer' && component.app.extensionId === plugin.id
     )).map(component => ({

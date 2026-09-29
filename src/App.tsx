@@ -17,6 +17,7 @@ import type { AppPage } from './features/navigation/appPage';
 import { GlobalTooltip } from './components/GlobalTooltip';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { readConversationStyle, saveConversationStyle, normalizeConversationStylePreferences } from './features/settings/conversationStyle';
+import { readIndividuation, saveIndividuation, normalizeIndividuation } from './features/settings/individuation';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
@@ -71,7 +72,9 @@ import { CompactSidebarBackdrop } from './components/CompactSidebarBackdrop';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { ConversationInspectorContext, ConversationInspectorOutlet, useConversationInspectorOutlets } from './features/inspector/ConversationInspector';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
-import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
+import { ComposerReferenceContext, inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
+import { Composer } from './features/composer';
+import { WelcomeProjectSwitcher } from './features/chat/WelcomeComposer';
 import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
 import { forkConversation } from './backend/api';
 import { workSummaryInspectorTab, type InspectorTab, type InspectorResourceTab, type InspectorReviewTab } from './features/inspector/inspectorTabs';
@@ -84,6 +87,14 @@ import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { inspectorMaximum } from './components/rightInspectorSizing';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
+import { BrowserBookmarkButton } from './features/inspector/BrowserBookmarkButton';
+import { InspectorPageDialog } from './features/inspector/InspectorPageDialog';
+import { InspectorTileFrame } from './features/inspector/InspectorTileFrame';
+import { addPanel, panelIds, panelRects, retainPanels, resizePanelSplit, swapPanels, type PanelLayout } from './features/inspector/panelLayout';
+import { ComposerPortalContext } from './features/composer/ComposerPortalContext';
+import { HtmlComponentContext } from './features/components/HtmlComponentContext';
+import { dispatchComponentMessage } from './features/components/dispatchComponentMessage';
+import './features/inspector/inspectorWorkspace.css';
 import { sectionLabels } from './features/appSections';
 import { automationSetupPrompt } from './features/automations/automationPrompts';
 import { AutomationRunPanel } from './features/automations/AutomationRunPanel';
@@ -286,6 +297,7 @@ const importedThemeStyleStorageKey = 'cardbush_imported_theme_style';
 
 const defaultAppSettings: AppSettingsState = {
   conversationStyle: normalizeConversationStylePreferences(undefined),
+  individuation: normalizeIndividuation(undefined),
   proxy: {
     mode: 'none',
     httpProxy: '',
@@ -770,9 +782,16 @@ function CardbushApp() {
     : -1;
   const [inspectorWidth, setInspectorWidthState] = useState(() => {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
-    return Number.isFinite(stored) ? Math.min(900, Math.max(380, stored)) : 620;
+    return Number.isFinite(stored) ? Math.min(window.innerWidth, Math.max(380, stored)) : 620;
   });
   const inspectorWidthRef = useRef(inspectorWidth);
+  const [inspectorLayout, setInspectorLayout] = useState<PanelLayout | null>(null);
+  const [inspectorCover, setInspectorCover] = useState(false);
+  const [quickInputOpen, setQuickInputOpen] = useState(false);
+  const [quickInputTarget, setQuickInputTarget] = useState<HTMLDivElement | null>(null);
+  const [addPageOpen, setAddPageOpen] = useState(false);
+  const multiPageRestore = useRef<{ width: number; sidebar: boolean } | null>(null);
+  const coverRestore = useRef<{ section: AppSection; sidebar: boolean } | null>(null);
   const setInspectorWidth = useCallback((width: number) => {
     const next = Math.min(
       inspectorMaximum(windowMaximized, window.innerWidth),
@@ -782,6 +801,55 @@ function CardbushApp() {
     setInspectorWidthState(next);
     window.localStorage.setItem('cardbush.inspector_width', String(next));
   }, [windowMaximized]);
+  const leaveInspectorCover = useCallback(() => {
+    setInspectorCover(false); setQuickInputOpen(false);
+    const previous = coverRestore.current; coverRestore.current = null;
+    if (previous) { setSidebarCollapsed(previous.sidebar); setSection(previous.section); }
+  }, [setSidebarCollapsed]);
+  const enterInspectorCover = useCallback(() => {
+    coverRestore.current ??= { section, sidebar: sidebarCollapsed };
+    setInspectorCover(true); setSidebarCollapsed(true); setInspectorOpen(true);
+  }, [section, sidebarCollapsed, setSidebarCollapsed]);
+  const leaveMultiPage = useCallback(() => {
+    setInspectorLayout(null);
+    const previous = multiPageRestore.current; multiPageRestore.current = null;
+    if (previous) { setInspectorWidth(previous.width); if (!coverRestore.current) setSidebarCollapsed(previous.sidebar); }
+  }, [setInspectorWidth, setSidebarCollapsed]);
+  const toggleMultiPage = () => {
+    if (inspectorLayout) { leaveMultiPage(); return; }
+    if (!window.confirm(language === 'zh'
+      ? '多页面 (Beta) 为大屏设计。DPI、缩放和多显示器可能影响页面尺寸、弹层及输入体验。请确认正在使用大屏，再开启两个并排页面。继续吗？'
+      : 'Multiple pages (Beta) is designed for large displays. DPI, scaling and multiple monitors may affect page sizes, popovers and input. Confirm you are using a large display to open at least two panes. Continue?')) return;
+    multiPageRestore.current = { width: inspectorWidthRef.current, sidebar: sidebarCollapsed };
+    const initial = [activeInspectorTab, ...inspectorTabs.filter(tab => tab.id !== activeInspectorTab?.id)].filter((tab): tab is InspectorTab => Boolean(tab)).slice(0, 2);
+    while (initial.length < 2) {
+      const tab: InspectorResourceTab = { id: `browser:${crypto.randomUUID()}`, kind: 'resource', detail: { target: 'about:blank', title: language === 'zh' ? '新页面' : 'New page' } };
+      openInspectorTab(tab); initial.push(tab);
+    }
+    setInspectorLayout(initial.reduce<PanelLayout | null>((tree, tab) => addPanel(tree, tab.id), null));
+    setSidebarCollapsed(true); setInspectorOpen(true);
+    setInspectorWidth(window.innerWidth - 340);
+    setInspectorAddMenuOpen(false); setInspectorTabsMenuOpen(false);
+  };
+  useEffect(() => {
+    if (!inspectorLayout) return;
+    const available = new Set(inspectorTabs.map(tab => tab.id));
+    let next = retainPanels(inspectorLayout, available);
+    if (activeInspectorTab && !panelIds(next).includes(activeInspectorTab.id)) next = addPanel(next, activeInspectorTab.id);
+    if (panelIds(next).length < 2) { leaveMultiPage(); return; }
+    if (JSON.stringify(next) !== JSON.stringify(inspectorLayout)) setInspectorLayout(next);
+  }, [inspectorTabs, activeInspectorTab, inspectorLayout, leaveMultiPage]);
+  useEffect(() => { if (!inspectorOpen && inspectorCover) leaveInspectorCover(); }, [inspectorOpen, inspectorCover, leaveInspectorCover]);
+  useEffect(() => {
+    if (!inspectorCover) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open]')) return;
+      event.preventDefault();
+      if (quickInputOpen) setQuickInputOpen(false); else leaveInspectorCover();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [inspectorCover, quickInputOpen, leaveInspectorCover]);
   const openInspectorTarget = useCallback((detail: InspectorOpenDetail) => {
     const target = stripWrappingQuotes(detail.target.trim());
     if (!target) return;
@@ -1158,6 +1226,10 @@ function CardbushApp() {
     onOpenFiles: () => { void openInspectorFiles(); },
     onOpenShadow: openShadowInspectorTab,
     onOpenBrowser: openNewBrowserInspectorTab,
+    onAddPage: () => { setInspectorAddMenuOpen(false); setAddPageOpen(true); },
+    onOpenBookmark: (url: string) => openInspectorTarget({ target: url }),
+    onMultiPage: toggleMultiPage,
+    multiPage: Boolean(inspectorLayout),
   };
   const dismissInspectorMenus = useCallback(() => {
     setInspectorAddMenuOpen(false);
@@ -2162,7 +2234,12 @@ function CardbushApp() {
     openBrowser: () => { setSettingsOpen(false); openNewBrowserInspectorTab(); },
     focusBrowserAddress: !settingsOpen && inspectorOpen && displayedInspectorTarget &&
       isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType)
-      ? () => { inspectorAddressRef.current?.focus(); inspectorAddressRef.current?.select(); } : undefined,
+      ? () => {
+        const address = inspectorLayout
+          ? document.querySelector<HTMLInputElement>(`[data-inspector-page-id="${CSS.escape(activeInspectorTabIdentity)}"] .right-inspector-address input`)
+          : inspectorAddressRef.current;
+        address?.focus(); address?.select();
+      } : undefined,
     reloadBrowser: !settingsOpen && inspectorOpen && displayedInspectorTarget && activeInspectorNavigation &&
       inspectorWebviewRefs.current.has(activeInspectorTabIdentity)
       ? () => inspectorWebviewRefs.current.get(activeInspectorTabIdentity)?.reload() : undefined,
@@ -2203,7 +2280,7 @@ function CardbushApp() {
         if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
-        else setSection(application.target === 'automations' ? 'automations' : 'plugins');
+        else setSection(application.target === 'automations' ? 'automations' : application.target === 'components' ? 'components' : 'plugins');
         if (compactLayout) collapseSidebar();
       }}>
       <GlobalTooltip/>
@@ -2284,7 +2361,7 @@ function CardbushApp() {
       <PageNavigationScope.Provider value={`main:${section}`}>
       <ConversationInspectorContext.Provider value={{ open: openConversationInspector, close: closeInspectorTab, outlets: conversationInspectorOutlets, visible: inspectorOpen }}>
       <main
-        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
+        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${inspectorCover ? ' inspector-covered' : ''}`}
         aria-hidden={settingsVisible}
         inert={settingsVisible ? true : undefined}
       >
@@ -2336,9 +2413,46 @@ function CardbushApp() {
               />
             </>
           )}
-          <section className="main-stage" inert={compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
-            {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
+          <section className="main-stage" inert={inspectorCover || compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
+            {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView composerPortalTarget={section === 'agents' && quickInputOpen ? quickInputTarget : null} active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
+              <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
+                draft: activeDraft, notice: chat.error || chat.notice || undefined,
+                selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },
+                composer: section === 'components' ? <ComposerReferenceContext.Provider value={{ sessionId: chat.activeConversationId, browserTabs: composerBrowserTabs,
+                  messages: chat.activeMessages, projects: projectItems, onWorkspaceSelect: chat.sending ? undefined : changeWelcomeProject }}>
+                  <div className="builtin-workspace-control"><WelcomeProjectSwitcher language={language}
+                    projects={projectItems.filter(project => !project.archived && !project.missing)} selectedProjectDir={activeConversationProjectDir}
+                    disabled={chat.sending} onSelect={changeWelcomeProject}/></div>
+                  <Composer compact portalCommands language={language} draft={activeDraft} onDraftChange={setActiveDraft}
+                    sending={chat.sending} stopping={chat.stopping} cancelEnabled={Boolean(chat.activeTurnId)}
+                    guidanceDeliveryMode={appSettings.guidance.deliveryMode}
+                    selectedModel={chat.selectedModel} availableModels={availableModels}
+                    teamAvailable={backendCapabilities.teamMode} goalAvailable={chat.goalAvailable}
+                    referencePlanAvailable={backendCapabilities.taskPlan} referencePlanMode={chat.referencePlanMode}
+                    permissionMode={chat.permissionMode} subagentPermissionRouting={chat.subagentPermissionRouting}
+                    reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection} reasoningLevel={chat.reasoningLevel} reasoningLevels={backendCapabilities.reasoningLevels}
+                    onModelChange={chat.setSelectedModel} onReferencePlanModeChange={chat.setReferencePlanMode}
+                    onPermissionModeChange={chat.setPermissionMode} onSubagentPermissionRoutingChange={chat.setSubagentPermissionRouting} onReasoningLevelChange={chat.setReasoningLevel}
+                    onConfigureModels={() => openSettings('models')} onCreateConversation={handleSidebarCreateConversation}
+                    skills={chat.skills} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled}
+                    queuedMessageCount={chat.queuedMessageCount} queuedMessages={chat.queuedMessages}
+                    queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
+                    onEditQueuedMessage={item => { chat.removeQueuedMessage(item.id); setActiveDraft(activeDraft.trim() ? `${activeDraft.trimEnd()}\n${item.text.trim()}` : item.text); }}
+                    onGuideQueuedMessage={id => chat.sendQueuedMessageAsGuidance(id, 'append_context')} onRemoveQueuedMessage={chat.removeQueuedMessage}
+                    onSend={(text, options) => {
+                      if (chat.sending && chat.activeTurnId && (options?.immediate || appSettings.guidance.deliveryMode === 'immediate')) {
+                        return chat.sendTurnGuidance({ id: chat.activeTurnId, role: 'assistant', content: '', createdAt: new Date().toISOString(),
+                          conversationId: chat.activeConversationId, turnId: chat.activeTurnId }, text, 'append_context');
+                      }
+                      return chat.sendMessage(text);
+                    }} onCancel={chat.cancelSending}/>
+                </ComposerReferenceContext.Provider> : undefined,
+                fill: text => { setActiveDraft(text); setSection('chat'); },
+                send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
+                  onError: error => { void showUiError(language === 'zh' ? '组件消息发送失败' : 'Component message failed', error instanceof Error ? error.message : String(error)); } }),
+                openBrowser: url => openInspectorTarget({ target: url }) }}>
             {section === 'agents' ? null : section === 'chat' ? (
+              <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
               <ChatPanel
                 browserTabs={composerBrowserTabs}
                 language={language}
@@ -2437,6 +2551,7 @@ function CardbushApp() {
                 draft={activeDraft}
                 onDraftChange={setActiveDraft}
               />
+              </ComposerPortalContext.Provider>
             ) : (
               <FeaturePanel
                 language={language}
@@ -2456,6 +2571,7 @@ function CardbushApp() {
                 onOpenConversation={openAutomationConversation}
               />
             )}
+              </HtmlComponentContext.Provider>
           </section>
           {inspectorPresence.mounted ? (
             <aside
@@ -2471,8 +2587,9 @@ function CardbushApp() {
                 windowMaximized={windowMaximized}
                 onWidthChange={setInspectorWidth}
                 onCollapse={closeInspector}
+                onExpand={enterInspectorCover}
                 softVisible={inspectorPresence.visible}
-                label={language === 'zh' ? '拖动调整右侧栏宽度，靠近右边缘收起' : 'Drag to resize; move toward the right edge to collapse'}
+                label={language === 'zh' ? '拖动调整宽度，向最左覆盖内容区，向右收起' : 'Drag left to cover content, or right to collapse'}
               />
               <div className="right-inspector-viewport">
               <div className="right-inspector-content">
@@ -2717,7 +2834,7 @@ function CardbushApp() {
                 </div>,
                 document.querySelector('.app') ?? document.body,
               )}
-              {displayedInspectorTarget && (
+              {displayedInspectorTarget && !inspectorLayout && (
                 <div className="right-inspector-navigation">
                   <button
                     type="button"
@@ -2774,6 +2891,7 @@ function CardbushApp() {
                         spellCheck={false}
                         onChange={(event) => setInspectorAddressDraft(event.target.value)}
                       />
+                      <BrowserBookmarkButton address={activeInspectorAddress} title={activeInspectorNavigation?.title || inspectorTabLabel(displayedInspectorTarget)} language={language}/>
                     </form>
                   ) : (
                     <div className="right-inspector-address" title={activeInspectorAddress}>
@@ -2791,7 +2909,18 @@ function CardbushApp() {
                     onContextMenu={(event) => { event.preventDefault(); dismissInspectorMenus(); }} />
                 )}
                 {displayedInspectorTab ? (
-                  <InspectorTabPages tabs={displayedInspectorTabs} activeId={activeInspectorTabIdentity}>
+                  <InspectorTabPages tabs={displayedInspectorTabs} activeId={activeInspectorTabIdentity} layout={inspectorLayout} language={language}
+                    onActivate={selectInspectorTab}
+                    onResize={(path, ratio) => setInspectorLayout(tree => tree ? resizePanelSplit(tree, path, ratio) : tree)}
+                    renderFrame={tab => <InspectorTileFrame tab={tab} language={language} navigation={inspectorNavigationByTarget[tab.id]}
+                      handle={inspectorWebviewRefs.current.get(tab.id)}
+                      onSwap={(from, x, y) => {
+                        const bounds = document.querySelector('.right-inspector-tab-pages')?.getBoundingClientRect();
+                        if (!bounds || !inspectorLayout) return;
+                        const px = (x - bounds.left) / bounds.width, py = (y - bounds.top) / bounds.height;
+                        const to = Object.entries(panelRects(inspectorLayout)).find(([, rect]) => px >= rect.x && px <= rect.x + rect.width && py >= rect.y && py <= rect.y + rect.height)?.[0];
+                        if (to && to !== from) setInspectorLayout(tree => tree ? swapPanels(tree, from, to) : tree);
+                      }}/>}>
                     {(tab, active) => {
                       const displayedReviewConversation = tab.kind === 'review'
                         ? reviewConversationsById.get(tab.conversationId)
@@ -2814,6 +2943,7 @@ function CardbushApp() {
                               title={tab.detail.title}
                               language={language}
                               onNavigationStateChange={updateInspectorNavigation}
+                              onActivate={id => { if (inspectorLayout) selectInspectorTab(id); }}
                               onOpenTarget={openInspectorTarget}
                             />
                           ) : tab.kind === 'conversation' ? (
@@ -2898,7 +3028,18 @@ function CardbushApp() {
               </div>
             </aside>
           ) : null}
+          {inspectorCover && <div className="inspector-cover-controls">
+            {quickInputOpen && <div className="inspector-quick-input" ref={setQuickInputTarget}
+              aria-label={language === 'zh' ? '快速输入' : 'Quick input'} />}
+            <div className="inspector-cover-capsule">
+              <button type="button" onClick={leaveInspectorCover}><ArrowLeft size={15}/>{language === 'zh' ? '返回' : 'Back'}</button>
+              <button type="button" aria-expanded={quickInputOpen} onClick={() => { if (!quickInputOpen && section !== 'agents') setSection('chat'); setQuickInputOpen(open => !open); }}>
+                {language === 'zh' ? '输入' : 'Input'}
+              </button>
+            </div>
+          </div>}
       </main>
+      {addPageOpen && <InspectorPageDialog language={language} onClose={() => setAddPageOpen(false)} onOpen={url => openInspectorTarget({ target: url, newTab: true })}/>}
       </ConversationInspectorContext.Provider>
       </PageNavigationScope.Provider>
       {projectRenameTarget && (
@@ -3316,6 +3457,7 @@ function readInitialAppSettings(): AppSettingsState {
   return normalizeAppSettings({
     appearance: readAppearance(),
     conversationStyle: readConversationStyle(),
+    individuation: readIndividuation(),
     proxy: {
       mode: proxyModeFromStorage(
         window.localStorage.getItem('cardbush_proxy_mode'),
@@ -3431,6 +3573,7 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
   return {
     appearance: normalizeAppearance(settings.appearance),
     conversationStyle: normalizeConversationStylePreferences(settings.conversationStyle),
+    individuation: normalizeIndividuation(settings.individuation),
     proxy: {
       mode: normalizeProxyMode(settings.proxy.mode),
       httpProxy,
@@ -3510,6 +3653,7 @@ function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
 function persistAppSettings(settings: AppSettingsState) {
   window.localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(normalizeAppearance(settings.appearance)));
   saveConversationStyle(settings.conversationStyle);
+  saveIndividuation(settings.individuation);
   window.localStorage.setItem('cardbush_proxy_mode', settings.proxy.mode);
   window.localStorage.setItem('cardbush_proxy_http', settings.proxy.httpProxy);
   window.localStorage.setItem('cardbush_proxy_https', settings.proxy.httpsProxy);

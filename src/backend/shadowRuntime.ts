@@ -1,5 +1,6 @@
 import type { RuntimeEvent } from '@cardbush/bush-protocol';
 import { resolveConversationStyle } from '../features/settings/conversationStyle';
+import { readIndividuation } from '../features/settings/individuation';
 import {
   CHILD_AGENT_SYSTEM_PROMPT,
   createProductAgentTurnRequest,
@@ -237,6 +238,7 @@ export async function streamRuntimeShadowConversationMessage(
       createdAt: new Date().toISOString(),
       userText: request.content,
       conversationStyle: resolveConversationStyle(state.sessionId),
+      individuation: readIndividuation(),
       userMessageName: 'shadow_user',
       model: resolved.model,
       providerBinding: resolved.binding,

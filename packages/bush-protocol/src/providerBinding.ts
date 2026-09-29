@@ -25,15 +25,28 @@ export function modelApiBaseURL(protocol: ModelApiProtocol, baseURL?: string): s
   return url.replace(/\/+$/, '');
 }
 
+/** Gateway behavior follows the destination, not the user-editable provider label. */
+export function modelApiGateway(baseURL?: string): 'opencode' | 'openrouter' | undefined {
+  if (!baseURL) return;
+  const url = z.url({ protocol: /^https?$/, hostname: /^(opencode|openrouter)\.ai$/i, normalize: true }).safeParse(baseURL);
+  if (!url.success || /^https?:\/\/[^/]*@/i.test(url.data)) return;
+  return /^https?:\/\/openrouter\.ai(?:[/:]|$)/i.test(url.data) ? 'openrouter' : 'opencode';
+}
+
 /** Resolve on every request; never mutate a shared client's defaults. */
 export function modelRequestHeaders(baseURL: string | undefined, defaults: Record<string, string> | undefined, sessionId: string): Record<string, string> {
   const headers: Record<string, string> = { 'user-agent': 'CardBush/1.0' };
   for (const [name, value] of Object.entries(modelHeadersSchema.parse(defaults ?? {}))) {
     headers[name.toLowerCase()] = value.replaceAll('{{sessionId}}', sessionId);
   }
-  if (baseURL && z.url({ hostname: /^opencode\.ai$/i }).safeParse(baseURL).success) {
+  if (modelApiGateway(baseURL) === 'opencode') {
     // OpenCode routes all main/auxiliary calls by the stable conversation identity.
     headers['x-opencode-session'] = sessionId;
+  }
+  if (modelApiGateway(baseURL) === 'openrouter') {
+    // Routing/cache affinity belongs to the executing conversation, not the SDK client.
+    headers['x-session-id'] = z.string().min(1).max(256).parse(sessionId);
+    if (!headers['x-openrouter-title'] && !headers['x-title']) headers['x-openrouter-title'] = 'CardBush';
   }
   return modelHeadersSchema.parse(headers);
 }

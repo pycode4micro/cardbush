@@ -1,0 +1,76 @@
+.welcome-layout-surface { container: welcome-layout / inline-size; }
+.welcome-layout-slot { position: relative; min-width: 0; flex: none; }
+.welcome-slot-content { width: 100%; height: 100%; min-width: 0; }
+.default-layout .welcome-slot-brand { width: min(480px, 100%); height: clamp(90px, 13vw, 150px); }
+.welcome-layout-slot .welcome-star-wordmark { width: 100%; height: 100%; }
+.default-layout .welcome-slot-greeting { width: 100%; }
+.default-layout .welcome-slot-suggestions { width: min(100%, 720px); margin-top: 14px; }
+.default-layout .welcome-slot-input { width: min(100%, var(--chat-track-width)); }
+.welcome-layout-slot .welcome-suggestions { width: 100%; margin: 0; }
+.welcome-layout-slot .welcome-input-stack { width: 100%; max-width: none; height: 100%; padding: 0; overflow: visible; justify-content: center; gap: 0; }
+.welcome-layout-slot .welcome-slot-content > h2 { height: 100%; display: flex; align-items: center; justify-content: center; }
+.welcome-layout-slot .welcome-input-stack.simple { height: auto; min-height: 100%; }
+.welcome-layout-slot .welcome-input-stack.standard { padding-bottom: 0; }
+.welcome-layout-slot .builtin-workspace-control { flex: none; }
+.welcome-layout-surface.custom-layout { display: block; padding: 0; overflow: auto; }
+.welcome-layout-canvas { position: relative; width: 100%; height: 100%; }
+.custom-layout .welcome-layout-slot { position: absolute; }
+.custom-layout .welcome-slot-content { overflow: auto; container: welcome-hero / inline-size; }
+.custom-layout .welcome-slot-input > .welcome-slot-content { overflow: visible; }
+.custom-layout .welcome-slot-suggestions > .welcome-slot-content { display: flex; align-items: center; }
+.welcome-layout-editor { height: 100%; min-height: 0; position: relative; display: flex; flex-direction: column; background: var(--surface); --work-summary-content-inset: 0px; container: welcome-editor / inline-size; }
+.main-stage .welcome-layout-editor { position: absolute; inset: 0; z-index: 15; }
+.welcome-layout-editor > .topbar { flex: none; }
+.welcome-editor-page { position: relative; flex: 1; min-height: 0; }
+.welcome-layout-toolbar { position: absolute; z-index: 35; top: 70px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); }
+.welcome-toolbar-group { position: relative; }
+.welcome-layout-pill { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 16px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface-alt, var(--surface)); color: var(--text); font: inherit; font-size: 12px; white-space: nowrap; box-shadow: 0 4px 16px color-mix(in srgb, var(--shadow) 28%, transparent); }
+.welcome-layout-pill:hover, .welcome-layout-menu button:hover, .welcome-undo-split button:hover:not(:disabled) { background: var(--hover); }
+.welcome-layout-pill.save { background: var(--text); color: var(--surface); }
+.welcome-undo-split { padding: 0; gap: 0; overflow: hidden; }
+.welcome-undo-split button { display: flex; align-items: center; gap: 7px; align-self: stretch; padding: 0 14px; font: inherit; color: inherit; background: transparent; border: 0; }
+.welcome-undo-split button:last-child { padding: 0 8px; border-left: 1px solid var(--border); }
+.welcome-undo-split button:disabled { opacity: .4; cursor: default; }
+.welcome-layout-menu { position: absolute; top: calc(100% + 8px); left: 0; min-width: 185px; padding: 5px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-alt, var(--surface)); box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 35%, transparent); }
+.welcome-layout-menu button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; }
+.welcome-layout-menu button span { flex: 1; }
+.welcome-layout-menu .danger { color: var(--danger); }
+.welcome-component-picker { max-height: min(420px, 45vh); overflow-y: auto; }
+.welcome-layout-toolbar.menus-above .welcome-layout-menu { top: auto; bottom: calc(100% + 8px); }
+.welcome-layout-pill.welcome-toolbar-drag { flex: none; width: 28px; padding: 0; cursor: grab; touch-action: none; }
+.welcome-toolbar-drag:active, .welcome-layout-drag:active { cursor: grabbing; }
+.welcome-layout-surface.is-editing { overflow: auto; scrollbar-gutter: stable; overflow-anchor: none; }
+.is-editing .welcome-layout-slot { cursor: grab; touch-action: none; }
+.component-layout-editing .welcome-layout-editor { user-select: none; }
+.welcome-alignment-guides { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+.welcome-alignment-guide { position: absolute; background: var(--accent); opacity: .9; }
+.welcome-alignment-guide.x { width: 1px; top: 0; bottom: 0; }
+.welcome-alignment-guide.y { height: 1px; left: 0; right: 0; }
+.welcome-component-preview { position: absolute; z-index: 40; pointer-events: none; overflow: hidden; padding: 10px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-alt, var(--surface)); box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 35%, transparent); }
+.welcome-preview-heading { display: flex; justify-content: space-between; gap: 12px; padding: 2px 4px 10px; font-size: 11px; }
+.welcome-preview-heading span:last-child { color: var(--text-soft); }
+.welcome-preview-surface { height: 220px; overflow: hidden; border-radius: 9px; background: var(--surface); container: component-preview / inline-size; }
+.welcome-preview-surface .builtin-suggestions { overflow: hidden; }
+.welcome-preview-surface .builtin-input { justify-content: center; padding: 8px; }
+.welcome-layout-error { position: absolute; top: 100%; left: 0; right: 0; color: var(--danger); background: var(--surface); padding: 10px; border-radius: 8px; font-size: 12px; }
+.is-editing .welcome-layout-slot { outline: 1px dashed color-mix(in srgb, var(--text) 22%, transparent); outline-offset: 4px; border-radius: 10px; }
+.is-editing .welcome-slot-content { pointer-events: none; }
+.welcome-layout-handles { position: absolute; z-index: 12; top: -28px; left: 0; max-width: 100%; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt, var(--surface)); opacity: 0; transition: opacity 100ms; }
+.is-editing .welcome-layout-slot:hover .welcome-layout-handles, .is-editing .welcome-layout-slot:focus-within .welcome-layout-handles { opacity: 1; }
+.welcome-layout-handles button, .welcome-layout-resize { color: var(--text-soft); background: transparent; border: 0; font: inherit; font-size: 11px; padding: 4px 6px; display: inline-flex; align-items: center; gap: 5px; }
+.welcome-layout-handles button[aria-pressed=true] { color: var(--text); background: var(--hover); border-radius: 5px; }
+.welcome-layout-drag { touch-action: none; cursor: grab; white-space: nowrap; }
+.welcome-layout-resize { position: absolute; z-index: 13; right: 0; bottom: 0; background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); border-radius: 6px; touch-action: none; cursor: nwse-resize; }
+@container welcome-layout (max-width: 620px) {
+  .welcome-layout-surface .welcome-suggestions-list { grid-template-columns: 1fr; gap: 6px; }
+}
+@container welcome-editor (max-width: 400px) {
+  .welcome-layout-toolbar { gap: 4px; }
+  .welcome-layout-pill { padding: 0 10px; font-size: 11px; }
+  .welcome-undo-split { padding: 0; }
+  .welcome-undo-split button { padding: 0 10px; }
+  .welcome-undo-split button:last-child { padding: 0 6px; }
+  .welcome-layout-handles { flex-wrap: wrap; }
+  .welcome-layout-pill.welcome-toolbar-drag { width: 24px; padding: 0; }
+}
+@media (max-height: 680px) { .default-layout .welcome-slot-brand { height: 100px; } .default-layout .welcome-slot-suggestions { margin-top: 6px; } }

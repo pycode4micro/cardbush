@@ -19,6 +19,7 @@ import { recentReviewTurns } from '../sidebar/reviewModel';
 import { WorkspaceChangeStateContext } from '../tools/WorkspaceChangeStateContext';
 import { ConversationExtractionProvider } from '../chat/ConversationExtraction';
 import { ConversationHostContext } from '../conversationHost';
+import { ComposerPortalContext } from '../composer/ComposerPortalContext';
 import { createAgentConversationBackend } from './agentConversationBackend';
 import { useCardbushChat } from '../../hooks/useCardbushChat';
 import { changeReportsFromMessages, type ConversationChangeReport } from '../tools/toolChangeReports';
@@ -34,7 +35,7 @@ type Models = { defaultModelId: string; models: ManagedModelConfig[] };
 type Projects = { projects: AgentProject[]; defaultProjectId: string | null };
 const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw new Error('Agent connections are unavailable.'); return value; };
 
-type AgentChatAppearance = { visualInputEnabled?: boolean; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onOpenSettings?: (section: SettingsSection) => void; theme?: ThemeMode; sidebarCollapsed?: boolean; windowMaximized?: boolean; thinkingVisible?: boolean; guidanceDeliveryMode?: 'queue' | 'immediate' };
+type AgentChatAppearance = { composerPortalTarget?: HTMLElement | null; visualInputEnabled?: boolean; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onOpenSettings?: (section: SettingsSection) => void; theme?: ThemeMode; sidebarCollapsed?: boolean; windowMaximized?: boolean; thinkingVisible?: boolean; guidanceDeliveryMode?: 'queue' | 'immediate' };
 
 const emptyStates = new Map<string, boolean>();
 
@@ -167,7 +168,7 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   </div>;
 }
 
-function AgentChat({ active, call, sharedSettings, enhanced, management, visualInputAvailable, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, onForkSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false, disabledSkillNames, onToggleSkill }: { active: boolean; call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; onForkSession: (id: string) => Promise<void>; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
+function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhanced, management, visualInputAvailable, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, onForkSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false, disabledSkillNames, onToggleSkill }: { active: boolean; call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; onForkSession: (id: string) => Promise<void>; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
   const zh = language === 'zh'; const storageKey = `cardbush-agent-draft:${connectionId}:${sessionId}`;
   const viewKey = (field: string) => conversationViewKey(connectionId, sessionId, field);
   const submittedRef = useRef<(sessionId: string) => void>(() => {});
@@ -290,6 +291,7 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
     language={language} onOpen={onOpenSession} onFork={onForkSession}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || Boolean(reverting) }}>
     <section className="agent-chat">
+      <ComposerPortalContext.Provider value={composerPortalTarget ?? null}>
       <ChatPanel language={language} theme={theme} title={title} headerActions={headerActions}
         sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} inspectorOpen={inspector?.visible ?? false} onToggleInspector={() => openReview()}
         activeConversationId={host.id} activeProjectDir={workspaceRoot} projectPathAliases={[]} selectedProjectDir={selectedProject?.path ?? ''} availableProjects={availableProjects} onWelcomeProjectChange={selectProject}
@@ -314,6 +316,7 @@ function AgentChat({ active, call, sharedSettings, enhanced, management, visualI
         onGuideMessage={async (message, text, mode) => { await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); setDraft(''); }} onRetryGuidance={chat.retryTurnGuidance}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
+      </ComposerPortalContext.Provider>
       {review && reviewOutlet && createPortal(<ConversationChangeDialog key={review.turnId ?? ''} embedded language={language}
         conversation={chat.activeConversation ?? { id: sessionId, title, updatedAt: '', preview: '' }}
         reports={reports} turns={recentReviewTurns(chat.activeMessages)} initialFilePath={review.path} initialTurnId={review.turnId} selectionRequestId={review.requestId}

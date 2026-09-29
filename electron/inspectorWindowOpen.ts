@@ -10,6 +10,14 @@ export function installInspectorWindowOpen(owner: WebContents): void {
     preferences.sandbox = true;
   });
   owner.on('did-attach-webview', (_event, guest) => {
+    const activate = () => {
+      if (!owner.isDestroyed() && !guest.isDestroyed() && guest.hostWebContents?.id === owner.id) {
+        owner.send('inspector:guest-activated', { guestWebContentsId: guest.id });
+      }
+    };
+    guest.on('focus', activate);
+    // Guest mouse/focus events do not bubble into the renderer's React tree.
+    guest.on('before-mouse-event', (_event, input) => { if (input.type === 'mouseDown') activate(); });
     guest.on('will-navigate', (event, url) => {
       const opener = guest.getURL();
       if (!opener.startsWith('cardbush-agent://')) return;

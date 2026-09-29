@@ -1,4 +1,4 @@
-import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
+import { memoryCacheEntry, type CacheEntry, type CacheMaintenanceResult } from './cacheMaintenance.js';
 import { randomUUID } from "node:crypto";
 
 import {
@@ -47,6 +47,7 @@ export interface RuntimeEventLogOptions {
 
 export interface RuntimeEventPersistence {
   cacheEntries?(): Promise<CacheEntry[]>;
+  maintain?(signal?: AbortSignal): Promise<CacheMaintenanceResult>;
   load(sessionId: string, turnId: string): RuntimeEvent[];
   append(event: RuntimeEvent): void;
 }
@@ -55,6 +56,7 @@ interface TurnEventStream {
   identity?: RuntimeEventIdentity;
   events: RuntimeEvent[];
   listeners: Set<(event: RuntimeEvent) => void>;
+  lastAccess: number;
 }
 
 export class RuntimeCursorError extends Error {
@@ -71,6 +73,20 @@ export class RuntimeCursorError extends Error {
 }
 
 export class InMemoryRuntimeEventLog {
+  async maintain(signal?: AbortSignal): Promise<CacheMaintenanceResult> {
+    const result = await this.#persistence?.maintain?.(signal) ?? { counts: {}, errors: [] };
+    if (!this.#persistence) return result;
+    const before = Date.now() - 10 * 60_000;
+    for (const [key, stream] of this.#streams) {
+      signal?.throwIfAborted();
+      if (stream.lastAccess > before || stream.listeners.size || stream.events.at(-1)?.kind !== 'turn_terminal') continue;
+      for (const event of stream.events) this.#eventIds.delete(event.eventId);
+      this.#streams.delete(key);
+      result.counts.evicted_event_streams = (result.counts.evicted_event_streams ?? 0) + 1;
+    }
+    return result;
+  }
+
   async cacheEntries(): Promise<CacheEntry[]> {
     return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#streams].map(([key, stream]) =>
       memoryCacheEntry('events', JSON.parse(key)[0], this.#persistence?.cacheEntries ? [] : stream.events, () => {
@@ -134,7 +150,8 @@ export class InMemoryRuntimeEventLog {
     const events = this.#stream(sessionId, turnId).events;
     let afterSequence = validatedCursor.afterSequence ?? 0;
     if (validatedCursor.lastEventId) {
-      const cursorEvent = events.find(
+      const indexed = validatedCursor.afterSequence === undefined ? undefined : events[afterSequence - 1];
+      const cursorEvent = indexed?.eventId === validatedCursor.lastEventId ? indexed : events.find(
         (event) => event.eventId === validatedCursor.lastEventId,
       );
       if (!cursorEvent) {
@@ -154,7 +171,8 @@ export class InMemoryRuntimeEventLog {
       }
       afterSequence = cursorEvent.sequence;
     }
-    return events.filter((event) => event.sequence > afterSequence);
+    // Sequences are validated as contiguous and start at one, including old journals.
+    return events.slice(afterSequence);
   }
 
   async *subscribe(
@@ -175,10 +193,8 @@ export class InMemoryRuntimeEventLog {
     stream.listeners.add(listener);
     let lastSequence = cursor.afterSequence ?? 0;
     try {
-      if (cursor.lastEventId) {
-        lastSequence =
-          stream.events.find((event) => event.eventId === cursor.lastEventId)
-            ?.sequence ?? lastSequence;
+      if (cursor.lastEventId && cursor.afterSequence === undefined) {
+        lastSequence = stream.events.find((event) => event.eventId === cursor.lastEventId)?.sequence ?? 0;
       }
       for (const event of this.replay(sessionId, turnId, cursor)) {
         if (signal?.aborted) return;
@@ -231,9 +247,11 @@ export class InMemoryRuntimeEventLog {
           : undefined,
         events,
         listeners: new Set(),
+        lastAccess: Date.now(),
       };
       this.#streams.set(key, stream);
     }
+    stream.lastAccess = Date.now();
     return stream;
   }
 

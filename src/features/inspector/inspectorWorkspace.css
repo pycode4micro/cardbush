@@ -1,0 +1,53 @@
+.inspector-page-content { flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; overflow: hidden; }
+.right-inspector-tab-page { display: flex; flex-direction: column; }
+.right-inspector-tab-pages.tiled { background: var(--border); }
+.right-inspector-tab-pages.tiled > .right-inspector-tab-page { inset: auto; box-sizing: border-box; border: 1px solid var(--border); background: var(--surface); overflow: hidden; }
+.inspector-tile-frame { flex: none; min-width: 0; background: var(--surface); }
+.inspector-tile-frame button { display: inline-flex; align-items: center; justify-content: center; padding: 5px; color: var(--text-soft); background: transparent; border: 0; border-radius: 6px; }
+.inspector-tile-frame button:hover { background: var(--hover); color: var(--text); }
+.inspector-tile-frame .inspector-tile-drag { flex: 0 0 24px; width: 24px; cursor: grab; touch-action: none; }
+.inspector-tile-frame .inspector-tile-drag:active { cursor: grabbing; }
+.inspector-tile-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-tile-frame .right-inspector-navigation { padding: 5px; gap: 2px; }
+.inspector-tile-frame .right-inspector-address { min-width: 0; }
+.inspector-tile-frame .right-inspector-address input { min-width: 0; width: 100%; }
+.right-inspector-address .inspector-bookmark-button { flex: none; width: 26px; height: 26px; padding: 4px; border: 0; background: transparent; color: var(--text-soft); border-radius: 50%; }
+.right-inspector-address .inspector-bookmark-button:hover, .right-inspector-address .inspector-bookmark-button[aria-pressed="true"] { color: var(--text); background: var(--hover); }
+.inspector-tile-divider { position: absolute; z-index: 6; touch-action: none; }
+.inspector-tile-divider.axis-x { width: 8px; margin-left: -4px; cursor: col-resize; }
+.inspector-tile-divider.axis-y { height: 8px; margin-top: -4px; cursor: row-resize; }
+.inspector-tile-divider:hover, .inspector-tile-divider:focus-visible { background: color-mix(in srgb, var(--text) 12%, transparent); }
+body.inspector-layout-resizing webview, body.inspector-layout-resizing iframe { pointer-events: none !important; }
+body.inspector-layout-resizing { user-select: none; }
+.desktop-shell.inspector-multi-page.window-maximized, .desktop-shell.inspector-multi-page { --conversation-pane-min-width: 340px; }
+.desktop-shell.inspector-covered { position: relative; }
+.desktop-shell.inspector-covered > .main-stage, .desktop-shell.inspector-covered > .sidebar, .desktop-shell.inspector-covered > .sidebar-resizer { visibility: hidden; pointer-events: none; }
+.desktop-shell.inspector-covered > .right-inspector { --side-panel-width: calc(100cqw - 2px); position: absolute; inset: 0; width: 100%; max-width: 100%; height: 100%; border-left: 0; border-radius: 0; z-index: 20; }
+/* Cover follows the actual viewport, while normal reveal/hide keeps its fixed inner width. */
+.desktop-shell.inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
+.desktop-shell.inspector-covered > .right-inspector .right-inspector-body { padding-bottom: 70px; }
+.desktop-shell.inspector-covered > .right-inspector .right-inspector-resizer { display: none; }
+body.right-inspector-resizing .desktop-shell > .right-inspector { --side-panel-width: min(var(--right-inspector-width), 100cqw); position: absolute; right: 0; top: 0; bottom: 0; z-index: 25; transition: none; }
+.desktop-shell { position: relative; }
+.inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
+.inspector-cover-capsule { display: flex; background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); border-radius: 28px; padding: 4px; box-shadow: 0 6px 25px var(--shadow); pointer-events: auto; }
+.inspector-cover-capsule button { border: 0; border-radius: 24px; padding: 8px 18px; display: flex; align-items: center; gap: 7px; background: transparent; color: var(--text); font: inherit; }
+.inspector-cover-capsule button + button { border-left: 1px solid var(--border); }
+.inspector-cover-capsule button:hover { background: var(--hover); }
+.inspector-quick-input { width: 100%; pointer-events: auto; }
+.inspector-quick-input .composer-stack { margin: 0; max-width: none; width: 100%; }
+.composer-stack.input-only .composer-tools, .composer-stack.input-only .model-select, .composer-stack.input-only .composer-note { display: none; }
+.composer-stack.input-only .composer-footer { justify-content: flex-end; margin-top: 0; }
+.composer-stack.input-only .composer { box-shadow: 0 6px 25px var(--shadow); }
+.inspector-page-dialog { width: min(460px, calc(100% - 32px)); padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+.inspector-page-dialog::backdrop { background: #0008; }
+.inspector-page-dialog form, .inspector-page-dialog label { display: flex; flex-direction: column; gap: 12px; }
+.inspector-page-dialog h2 { margin: 0 0 8px; font-size: 19px; }
+.inspector-page-dialog input, .inspector-page-dialog textarea, .inspector-page-dialog select { font: inherit; color: var(--text); background: var(--surface); padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; min-width: 0; }
+.inspector-page-dialog footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.inspector-page-dialog button { font: inherit; color: var(--text); background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); padding: 7px 16px; border-radius: 8px; }
+.right-inspector-start-actions { max-height: calc(100% - 48px); overflow-y: auto; scrollbar-width: thin; }
+.right-inspector-add-menu { max-height: min(600px, calc(100vh - 120px)); overflow-y: auto; scrollbar-width: thin; }
+.right-inspector-start-actions .inspector-add-page { border: 1px dashed var(--border); }
+.right-inspector-start-actions .inspector-bookmark-entry { min-height: 42px; }
+@media(max-width:720px) { .desktop-shell.inspector-multi-page { --conversation-pane-min-width: 0px; } .inspector-tile-frame .right-inspector-navigation > .inspector-tile-history { display: none; } }

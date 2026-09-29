@@ -1,5 +1,5 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
-import { asRecord } from './toolPayload';
+import { normalizeToolDisplay } from '@cardbush/bush-protocol';
 
 export function decodeToolExecutionState(value: unknown): ChatToolExecution['state'] {
   if (
@@ -33,9 +33,10 @@ export function runningToolLabel(
 // Titles describe an intended action; status always comes from runtime facts.
 // Never use raw arguments, shell commands or error payloads as a fallback title.
 export function toolActionTitle(execution: ChatToolExecution, language: AppLanguage): string {
-  const localized = asRecord(execution.metadata.displayTitles)[language];
+  const display = normalizeToolDisplay(execution.metadata.displayTitles) ?? normalizeToolDisplay(execution.metadata.displayTitle);
+  const localized = display?.titles?.[language];
   if (typeof localized === 'string' && localized.trim()) return compactActionTitle(localized);
-  const supplied = execution.metadata.displayTitle;
+  const supplied = display?.title;
   // Legacy receipts have one title only. Keep it in its own locale; otherwise
   // use the localized tool action without inventing a translation or exposing arguments.
   if (typeof supplied === 'string' && supplied.trim() &&
@@ -45,6 +46,7 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
     terminal_exec: ['执行命令', 'Run command'], shell_command: ['执行命令', 'Run command'],
     terminal_poll: ['查看命令进度', 'Check command progress'], terminal_write: ['向终端输入', 'Write to terminal'],
     read_file: ['读取文件', 'Read file'], read_files: ['读取文件', 'Read files'],
+    summary_for_user: ['准备最终回复', 'Prepare final reply'], check_habit: ['查看个性化记忆', 'Check personalization'],
     search_file_content: ['检索文件内容', 'Search file contents'], list_directory: ['查看目录', 'List directory'],
     apply_patch: ['修改文件', 'Edit files'], edit_file: ['修改文件', 'Edit file'], write_file: ['写入文件', 'Write file'],
     terminal_stop: ['停止命令', 'Stop command'], terminal_list: ['查看终端任务', 'List terminal tasks'],

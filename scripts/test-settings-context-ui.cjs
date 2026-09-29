@@ -16,6 +16,7 @@ app.whenReady().then(async () => {
     load: id => id === '\0settings-context-fixture' ? [
       'src/features/SettingsView.tsx', 'src/features/composer/Composer.tsx', 'src/features/chat/GitBranchMenu.tsx', 'src/features/chat/TaskWorkspaceBar.tsx',
       'src/features/settings/conversationStyle.ts', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
+      'src/features/settings/individuation.ts',
       'src/features/appearance/appearancePreferences.ts', 'src/features/appearance/useAppearanceRuntime.ts',
       'src/features/notificationSound.ts',
       'src/features/shortcuts/keyboardShortcuts.ts',
@@ -198,6 +199,29 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       console.log('Conversation styles UI passed: library CRUD, migration, defaults, chat scopes, command selection, language and narrow layout.');
       return;
+    }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'individuation') {
+      await click('个性化');
+      await until("document.body.innerText.includes('个性化记忆')");
+      const checkbox = title => `Array.from(document.querySelectorAll('.settings-switch')).find(label => label.querySelector('strong').textContent === ${JSON.stringify(title)}).querySelector('input')`;
+      for (const title of ['记住并参考用户习惯', '预测下一步行为']) assert.equal(await run(`${checkbox(title)}.checked`), false);
+      await run(`${checkbox('记住并参考用户习惯')}.click()`);
+      await until('settingsProps.settings.individuation?.habits === true');
+      assert.equal(await run(`${checkbox('预测下一步行为')}.checked`), false);
+      await run(`${checkbox('预测下一步行为')}.click()`);
+      await until('settingsProps.settings.individuation?.predictions === true');
+      await run(`${checkbox('记住并参考用户习惯')}.click()`);
+      await until('settingsProps.settings.individuation?.habits === false');
+      await run('styleFixture.saveIndividuation(settingsProps.settings.individuation); settingsProps.settings.individuation=styleFixture.readIndividuation(); renderSettings()');
+      assert.deepEqual(await run('settingsProps.settings.individuation'), { habits: false, predictions: true });
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'tmp/settings-individuation.png'), (await win.webContents.capturePage()).toPNG());
+      await run("settingsProps.language='en'; renderSettings()");
+      await until("document.body.innerText.includes('Personalization memory')");
+      assert.equal(await run(`${checkbox('Predict next actions')}.checked`), true);
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log('Individuation settings UI passed: default off, independent switches, persistence and bilingual labels.');
+      win.destroy(); app.exit(0); return;
     }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'appearance') {
       await require('./helpers/settings-appearance.cjs')({ run, until, click, choose, edit, pause, window: win, root });

@@ -1,15 +1,19 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParamsStreaming, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import { modelApiBaseURL, modelRequestHeaders, type ModelEvent, type ModelRequest } from '@cardbush/bush-protocol';
+import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, protocolReasoningEffort, type ModelEvent, type ModelRequest } from '@cardbush/bush-protocol';
 import { modelReplayMatches, withToolDisplayTitle, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
 import { providerToolName } from './toolNames.js';
 import { providerFailureEvent } from './providerFailure.js';
 import { eventWriter, incompleteStream, recordProjection, toolCallEvents, type PortableCall } from './portableProvider.js';
+import { OpenRouterReasoning } from './openRouterReasoning.js';
 
 const FORMAT = 'openai.chat_completions.v1';
-export function toChatCompletionsParams(request: ModelRequest): ChatCompletionCreateParamsStreaming {
+const OPENROUTER_FORMAT = 'openrouter.chat_completions.v1';
+type ChatParams = ChatCompletionCreateParamsStreaming & { reasoning?: { effort: 'low' | 'medium' | 'high' } };
+export function toChatCompletionsParams(request: ModelRequest, baseURL?: string): ChatParams {
+  const openRouter = modelApiGateway(baseURL) === 'openrouter';
   const messages: ChatCompletionMessageParam[] = [];
   // Tool messages cannot carry image parts. Append images only after the entire
   // tool-result batch so assistant/tool adjacency stays valid on strict gateways.
@@ -19,10 +23,13 @@ export function toChatCompletionsParams(request: ModelRequest): ChatCompletionCr
     if (message.role !== 'tool') flush();
     if (message.role === 'assistant') {
       const replay = message.providerReplay;
-      const reasoning = replay?.format === FORMAT && modelReplayMatches(message, request) &&
+      const reasoning = replay?.format === FORMAT && !openRouter && modelReplayMatches(message, request) &&
         typeof replay.data.reasoning_content === 'string' && replay.data.reasoning_content === message.reasoningContent ? replay.data.reasoning_content : undefined;
+      const routerReplay = openRouter && replay?.format === OPENROUTER_FORMAT && modelReplayMatches(message, request) ? replay.data : undefined;
+      const details = Array.isArray(routerReplay?.reasoning_details) ? routerReplay.reasoning_details : undefined;
       messages.push({ role: 'assistant', content: message.content || null,
         ...(reasoning ? { reasoning_content: reasoning } : {}),
+        ...(details?.length ? { reasoning_details: details } : typeof routerReplay?.reasoning === 'string' ? { reasoning: routerReplay.reasoning } : {}),
         ...(message.toolCalls.length ? { tool_calls: message.toolCalls.map(call => ({ type: 'function' as const, id: call.id,
           function: { name: providerToolName(call.name), arguments: call.argumentsText } })) } : {}) });
     } else if (message.role === 'tool') {
@@ -41,29 +48,36 @@ export function toChatCompletionsParams(request: ModelRequest): ChatCompletionCr
     ...(request.tools.length ? { tools: request.tools.map(tool => ({ type: 'function' as const,
       function: { name: providerToolName(tool.name), description: tool.description, parameters: withToolDisplayTitle(tool).inputSchema, strict: false } })) } : {}),
     max_completion_tokens: request.maxOutputTokens, temperature: request.temperature, top_p: request.topP,
-    ...(request.reasoningEffort ? { reasoning_effort: request.reasoningEffort === 'max' ? 'xhigh' : request.reasoningEffort } : {}) };
+    ...(request.reasoningEffort ? openRouter
+      ? { reasoning: { effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } }
+      : { reasoning_effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } : {}) };
 }
 
 export class OpenAIChatCompletionsProvider implements ModelProvider {
   readonly #client: OpenAI;
+  readonly #openRouter: boolean;
+  readonly #format: string;
   constructor(readonly config: ModelProviderConfig) {
+    this.#openRouter = modelApiGateway(config.baseURL) === 'openrouter';
+    this.#format = this.#openRouter ? OPENROUTER_FORMAT : FORMAT;
     this.#client = new OpenAI({ apiKey: config.apiKey, baseURL: modelApiBaseURL('openai_chat_completions', config.baseURL),
       timeout: config.timeoutMs, fetch: config.fetch, maxRetries: 0 });
   }
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
-    const params = toChatCompletionsParams(await resolveLocalImageInputs(request));
+    const params = toChatCompletionsParams(await resolveLocalImageInputs(request), this.config.baseURL);
     options.signal?.throwIfAborted();
-    return recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes);
+    return recordProjection(this.#format, request, { ...params }, options, this.config.maxRequestBodyBytes);
   }
   async *stream(request: ModelRequest, options: ModelStreamOptions = {}): AsyncIterable<ModelEvent> {
     const emit = eventWriter(request.requestId);
     let finished: string | undefined, reasoning = '';
+    const routerReasoning = new OpenRouterReasoning();
     const calls = new Map<number, PortableCall>();
     try {
-      const params = toChatCompletionsParams(await resolveLocalImageInputs(request));
+      const params = toChatCompletionsParams(await resolveLocalImageInputs(request), this.config.baseURL);
       options.signal?.throwIfAborted();
-      recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
+      recordProjection(this.#format, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
       const stream = await this.#client.chat.completions.create(params, { signal: options.signal,
         headers: modelRequestHeaders(this.config.baseURL, this.config.defaultHeaders, request.sessionId) });
       yield emit({ kind: 'response_started' });
@@ -76,7 +90,8 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
         if (finished) throw new Error('The provider sent content after completion.');
         if (choice.delta.content) yield emit({ kind: 'text_delta', delta: choice.delta.content });
         if (choice.delta.refusal) yield emit({ kind: 'text_delta', delta: choice.delta.refusal });
-        const thought = (choice.delta as { reasoning_content?: string }).reasoning_content;
+        const thought = this.#openRouter ? routerReasoning.append(choice.delta as Parameters<OpenRouterReasoning['append']>[0])
+          : (choice.delta as { reasoning_content?: string }).reasoning_content;
         if (typeof thought === 'string' && thought) { reasoning += thought; yield emit({ kind: 'reasoning_delta', delta: thought }); }
         for (const delta of choice.delta.tool_calls ?? []) {
           const call = calls.get(delta.index) ?? { id: '', name: '', arguments: '' };
@@ -87,13 +102,16 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
       }
       options.signal?.throwIfAborted();
       if (!finished) { yield emit(incompleteStream()); return; }
+      if (finished === 'error') throw new Error('The provider reported a stream error.');
       const truncated = finished === 'length';
       if (!truncated && calls.size && finished !== 'tool_calls') throw new Error('Tool calls were not confirmed by the provider.');
       if (finished === 'tool_calls' && !calls.size) throw new Error('The provider finished with missing tool calls.');
       // A length stop has no per-tool completion markers. Never execute its partial batch.
       if (!truncated) for (const event of toolCallEvents(calls, request)) yield emit(event);
+      const replay = this.#openRouter ? routerReasoning.details.length ? { reasoning_details: routerReasoning.details }
+        : reasoning ? { reasoning } : undefined : reasoning ? { reasoning_content: reasoning } : undefined;
       yield emit({ kind: 'response_completed', finishReason: finished,
-        ...(truncated ? { completedToolCallIndices: [] } : reasoning ? { providerReplay: { format: FORMAT, data: { reasoning_content: reasoning } } } : {}) });
+        ...(truncated ? { completedToolCallIndices: [] } : replay ? { providerReplay: { format: this.#format, data: replay } } : {}) });
     } catch (error) {
       const failure = providerFailureEvent(request.requestId, 0, error, options.signal?.aborted ?? false);
       const { protocol: _p, requestId: _r, sequence: _s, createdAt: _t, ...payload } = failure;

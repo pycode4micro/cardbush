@@ -3,6 +3,21 @@ import { createReadStream } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { sourceMemoReference } from './sourceMemo.js';
+import { createGunzip } from 'node:zlib';
+import { StringDecoder } from 'node:string_decoder';
+
+/** Read archived journals as text for reference marking, never scan compressed bytes. */
+export async function* journalChunks(path: string, signal?: AbortSignal, compressed = path.endsWith('.gz')): AsyncGenerator<Buffer> {
+  const source = createReadStream(path, { highWaterMark: 64 * 1024, signal });
+  const gunzip = compressed ? createGunzip() : undefined;
+  const decoded = gunzip ?? source;
+  if (gunzip) {
+    source.on('error', error => gunzip.destroy(error));
+    source.pipe(gunzip);
+  }
+  try { for await (const chunk of decoded) yield chunk as Buffer; }
+  finally { source.destroy(); decoded.destroy(); }
+}
 
 /** Owners describe their disposable data; this collector never guesses directories. */
 export interface CacheEntry {
@@ -40,7 +55,9 @@ export function fileCacheEntry(file: { path: string; bytes: number }, category: 
   return { category, keys, owner, bytes: file.bytes, file: file.path,
     async scan(visit, signal) {
       // Bounded reads; a large execution journal must never be loaded just to clean it.
-      for await (const chunk of createReadStream(file.path, { encoding: 'utf8', highWaterMark: 64 * 1024, signal })) visit(chunk);
+      const decoder = new StringDecoder('utf8');
+      for await (const chunk of journalChunks(file.path, signal)) visit(decoder.write(chunk));
+      visit(decoder.end());
     },
     async remove() {
       const stat = await lstat(file.path).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -60,6 +77,19 @@ export function memoryCacheEntry(category: string, owner: string, rows: unknown[
 }
 
 async function firstRecord(path: string) {
+  if (path.endsWith('.gz')) {
+    const parts: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of journalChunks(path)) {
+      const newline = chunk.indexOf(10);
+      const part = newline < 0 ? chunk : chunk.subarray(0, newline);
+      size += part.length;
+      if (size > 4 * 1024 * 1024) throw new Error(`Cache journal identity is too large: ${path}`);
+      parts.push(part);
+      if (newline >= 0) return JSON.parse(Buffer.concat(parts).toString('utf8'));
+    }
+    throw new Error(`Archived cache journal identity is incomplete: ${path}`);
+  }
   const file = await open(path, 'r');
   try {
     let text = '';
@@ -82,16 +112,16 @@ async function firstRecord(path: string) {
   } finally { await file.close(); }
 }
 
-export async function journalCacheEntries(root: string, category: string, protocol: string, field: 'event' | 'record', ownerField: 'sessionId' | 'parentSessionId', close: (path: string) => void, perTurn = false): Promise<CacheEntry[]> {
+export async function journalCacheEntries(root: string, category: string, protocol: string, field: 'event' | 'record', ownerField: 'sessionId' | 'parentSessionId', close: (path: string) => void, perTurn = false, archives = false): Promise<CacheEntry[]> {
   const result: CacheEntry[] = [];
-  for (const file of await cacheFiles(root, name => /^[a-f0-9]{64}\.jsonl$/.test(name))) {
+  for (const file of await cacheFiles(root, name => (archives ? /^[a-f0-9]{64}\.jsonl(?:\.gz)?$/ : /^[a-f0-9]{64}\.jsonl$/).test(name))) {
     const row = await firstRecord(file.path);
     if (!row) { result.push(fileCacheEntry(file, category, [], undefined, () => close(file.path))); continue; }
     const record = row[field], owner = record?.[ownerField];
     const identity = perTurn ? JSON.stringify([owner, record?.turnId]) : owner;
     if (row.protocol !== protocol || typeof owner !== 'string' || !owner ||
         row.checksum !== createHash('sha256').update(JSON.stringify(record)).digest('hex') ||
-        basename(file.path) !== `${sessionCacheKey(identity)}.jsonl`) {
+        basename(file.path).replace(/\.gz$/, '') !== `${sessionCacheKey(identity)}.jsonl`) {
       throw new Error(`Cannot safely identify cache journal: ${file.path}`);
     }
     result.push(fileCacheEntry(file, category, [owner], owner, () => close(file.path)));

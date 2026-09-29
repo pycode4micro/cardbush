@@ -1,4 +1,5 @@
 import { CHECKPOINT_CONTINUATION_INSTRUCTIONS } from "@cardbush/bush-protocol";
+import { individuationPreferenceText, normalizeIndividuation, type IndividuationSettings } from '@cardbush/bush-protocol';
 import { createTurnTimeContext } from "./timeContext.js";
 export { createTurnTimeContext } from "./timeContext.js";
 import { CONVERSATION_STYLE_INSTRUCTIONS, conversationStyleContext, type ConversationStyleSettings } from "./conversationStyle.js";
@@ -51,6 +52,8 @@ ${LOCAL_DELIVERABLE_INSTRUCTIONS}
 
 Source annotations are concise Agent-authored explanations, not independent verification. Follow this turn's user Source preference; use remember_source to prewrite worthwhile notes, then place its exact Markdown marker beside the relevant final-answer prose. Preserve ordinary file, media and web references regardless of Source mode.
 
+Before every final user-facing answer, call summary_for_user, even with empty arguments when individuation is disabled or there is nothing to remember. Follow the tool descriptions and this turn's user individuation state for optional habit lookup and next-step prediction.
+
 For audio and video edits, preserve the source and export to a new, non-colliding path by default, including transcoding, metadata changes and regeneration. Replace a source only when explicitly requested; first preserve a verified backup unless the user declines it. Text/code undo cannot restore overwritten binary media. Verify the export and return its path.`;
 
 // Keep one stable policy for both roles; child identity belongs to the appended assignment.
@@ -88,6 +91,7 @@ export interface ProductAgentTurnInput {
   uiLanguage?: "zh" | "en";
   conversationStyle?: ConversationStyleSettings;
   sourceEnabled?: boolean;
+  individuation?: IndividuationSettings;
   model: string;
   providerBinding?: RuntimeProviderBindingRef;
   tools: ToolDefinition[];
@@ -185,6 +189,7 @@ function createBaseProductAgentTurnRequest(
     permissionMode: input.permissionMode,
     metadata: {
       source: "cardbush_product_agent",
+      individuation: normalizeIndividuation(input.individuation),
       ...(input.uiLanguage ? { uiLanguage: input.uiLanguage } : {}),
       ...(workspaceDir ? { workspaceDir } : {}),
       ...(projectDir ? { projectDir } : {}),
@@ -276,6 +281,9 @@ export function createProductAgentTurnRequest(
       { messageId: `${input.messageId}:source-preference`, createdAt: input.createdAt,
         message: { role: 'user' as const, name: 'source_preference', visibility: 'internal' as const,
           content: sourcePreferenceText(input.sourceEnabled !== false) } },
+      { messageId: `${input.messageId}:individuation-preference`, createdAt: input.createdAt,
+        message: { role: 'user' as const, name: 'individuation_preference', visibility: 'internal' as const,
+          content: individuationPreferenceText(input.individuation) } },
       ...request.inputMessages,
     ],
   });

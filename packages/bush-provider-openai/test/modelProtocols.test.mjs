@@ -237,7 +237,9 @@ test('Anthropic thinking is explicit, with adaptive and legacy budgets kept sepa
   assert.deepEqual(toAnthropicMessagesParams(input).thinking, { type: 'adaptive' });
   assert.deepEqual(toAnthropicMessagesParams(input).output_config, { effort: 'high' });
   assert.deepEqual(toAnthropicMessagesParams(input, 'budget').thinking, { type: 'enabled', budget_tokens: 4096 });
-  assert.equal(toAnthropicMessagesParams(req({ reasoningEffort: 'none' })).thinking, undefined);
+  assert.deepEqual(toAnthropicMessagesParams(req({ reasoningEffort: 'none' })).thinking, { type: 'disabled' });
+  assert.deepEqual(toAnthropicMessagesParams(req({ reasoningEffort: 'none' }), 'budget').thinking, { type: 'disabled' });
+  assert.equal(toAnthropicMessagesParams(req()).thinking, undefined, 'unspecified effort still uses provider defaults');
   assert.equal(toAnthropicMessagesParams(req({ reasoningEffort: 'high', maxOutputTokens: 128 })).thinking.type, 'adaptive');
   assert.throws(() => toAnthropicMessagesParams(req({ reasoningEffort: 'high', maxOutputTokens: 1024 }), 'budget'), /greater than 1024/);
 });

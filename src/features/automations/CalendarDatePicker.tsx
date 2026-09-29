@@ -90,9 +90,10 @@ export function CalendarDatePicker({ selected, view, title, zh, onMove, onSelect
   const todayAllowed = supported(new Date());
   return <div className="automation-calendar-heading">
     <div className="automation-calendar-controls" role="group" aria-label={zh ? '日期导航' : 'Date navigation'}>
-      <button type="button" aria-label={zh ? { day: '上一天', month: '上个月', year: '上一年' }[view] : `Previous ${view}`} onClick={() => onMove(-1)}><ChevronLeft size={16}/></button>
       <h2 aria-live="polite"><button type="button" className="calendar-period-title" data-date-picker-trigger="title" {...commonTrigger}
         aria-label={zh ? `选择日期范围，${title}` : `Choose date range, ${title}`} onClick={event => show(event.currentTarget)}>{title}</button></h2>
+      <button type="button" aria-label={zh ? { day: '上一天', month: '上个月', year: '上一年' }[view] : `Previous ${view}`} onClick={() => onMove(-1)}><ChevronLeft size={14}/></button>
+      <button type="button" className="calendar-today" onClick={() => onSelect(localDay(new Date()), view)}>{zh ? '今天' : 'Today'}</button>
       <button type="button" aria-label={zh ? { day: '下一天', month: '下个月', year: '下一年' }[view] : `Next ${view}`} onClick={() => onMove(1)}><ChevronRight size={16}/></button>
     </div>
     <div id={id} ref={panel} popover="auto" className="calendar-date-picker" role="dialog" aria-label={zh ? '选择日期范围' : 'Choose date range'}

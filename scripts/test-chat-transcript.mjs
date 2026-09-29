@@ -17,6 +17,7 @@ const allowed = {
 };
 const adapters = new Set([
   '../assistantTurnTiming', '../../../shared/goalState',
+  '../../../shared/motionPreference',
   '../../../backend/toolArtifacts', '../../../backend/historyToolAssociation',
 ]);
 const ownedFunctions = new Set();

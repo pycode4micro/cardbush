@@ -5,11 +5,12 @@
 }
 .model-config-dialog[open] { display: flex; flex-direction: column; }
 .model-config-dialog::backdrop { background: #0005; backdrop-filter: blur(5px); }
-.model-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px 18px; border-bottom: 1px solid var(--border); }
+.model-dialog-header { display: flex; flex-shrink: 0; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px 18px; border-bottom: 1px solid var(--border); }
 .model-dialog-header h2 { margin: 0; font-size: 18px; }
 .model-dialog-header p { margin: 7px 0 0; color: var(--text-soft); font-size: 12px; line-height: 1.6; }
 .model-config-dialog .model-form { display: flex; flex-direction: column; min-height: 0; gap: 0; }
-.model-config-dialog .model-dialog-body { padding: 22px 26px; gap: 15px; overflow-y: auto; }
+.model-config-dialog .model-dialog-body { min-height: 0; padding: 22px 26px; overflow-y: auto; }
+.model-config-dialog .agent-model-fields { gap: 15px; }
 .model-config-dialog .model-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .model-config-dialog .model-name-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
 .model-config-dialog .settings-field { min-width: 0; display: grid; gap: 7px; }

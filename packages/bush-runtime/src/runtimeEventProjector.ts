@@ -8,8 +8,13 @@ import type {
 } from "./runtimeEventLog.js";
 
 export interface RuntimeEventProjectorOptions {
+  /** Display intent only; terminal events still own completion and cancellation. */
+  finalResponse?: boolean;
   createMessageId?: () => string;
   createSegmentId?: () => string;
+  /** Coalesce before assigning event IDs; published events and cursors never change. */
+  deltaFlushIntervalMs?: number;
+  deltaFlushChars?: number;
 }
 
 type SegmentChannel = "reasoning" | "assistant";
@@ -26,11 +31,19 @@ export class RuntimeEventProjector {
   readonly #identity: RuntimeEventIdentity;
   readonly #messageId: string;
   readonly #createSegmentId: () => string;
+  readonly #deltaFlushIntervalMs: number;
+  readonly #deltaFlushChars: number;
+  #pending: string[] = [];
+  #pendingChars = 0;
+  #flushTimer?: ReturnType<typeof setTimeout>;
+  #flushFailure?: Error;
   #active?: ActiveSegment;
   #nextOrdinal = 0;
   #hasAssistantSegment = false;
   #assistantContent = "";
   #reasoningContent = "";
+  #finalResponse: boolean | undefined;
+  #lastAssistantSegment?: ActiveSegment;
 
   constructor(
     eventLog: InMemoryRuntimeEventLog,
@@ -38,9 +51,16 @@ export class RuntimeEventProjector {
     options: RuntimeEventProjectorOptions = {},
   ) {
     this.#eventLog = eventLog;
+    this.#finalResponse = options.finalResponse || undefined;
     this.#identity = identity;
     this.#messageId = (options.createMessageId ?? (() => `msg_${randomUUID()}`))();
     this.#createSegmentId = options.createSegmentId ?? (() => `seg_${randomUUID()}`);
+    this.#deltaFlushIntervalMs = options.deltaFlushIntervalMs ?? 40;
+    this.#deltaFlushChars = options.deltaFlushChars ?? 2048;
+    if (!Number.isFinite(this.#deltaFlushIntervalMs) || this.#deltaFlushIntervalMs < 0 ||
+        !Number.isSafeInteger(this.#deltaFlushChars) || this.#deltaFlushChars < 1) {
+      throw new Error('Invalid stream delta batching limits.');
+    }
   }
 
   get messageId(): string {
@@ -60,6 +80,7 @@ export class RuntimeEventProjector {
   }
 
   accept(event: ModelEvent): RuntimeEvent[] {
+    if (this.#flushFailure) throw this.#flushFailure;
     switch (event.kind) {
       case "reasoning_delta":
         return this.#appendDelta("reasoning", event.delta);
@@ -69,17 +90,32 @@ export class RuntimeEventProjector {
       case "response_failed":
         return this.completeOpenSegment();
       case "response_started":
-      case "tool_call_delta":
       case "usage":
-        return [];
+        return this.flush();
+      case "tool_call_delta": {
+        if (!this.#finalResponse) return this.flush();
+        this.#finalResponse = false;
+        if (this.#active?.channel === 'assistant') return this.completeOpenSegment();
+        const events = this.flush();
+        // A model may continue work despite its final intent. Correct any text
+        // already displayed, including a block closed by subsequent reasoning.
+        const segment = this.#lastAssistantSegment;
+        if (segment) events.push(this.#eventLog.append(this.#identity, {
+          kind: 'assistant_segment_completed', payload: { messageId: this.#messageId,
+            segmentId: segment.segmentId, ordinal: segment.ordinal, content: segment.content, finalResponse: false },
+        }));
+        return events;
+      }
     }
   }
 
   completeOpenSegment(): RuntimeEvent[] {
+    const events = this.flush();
     if (!this.#active) return [];
     const active = this.#active;
+    if (active.channel === 'assistant') this.#lastAssistantSegment = active;
     this.#active = undefined;
-    return [
+    return [...events,
       this.#eventLog.append(this.#identity, {
         kind: `${active.channel}_segment_completed`,
         payload: {
@@ -87,6 +123,7 @@ export class RuntimeEventProjector {
           segmentId: active.segmentId,
           ordinal: active.ordinal,
           content: active.content,
+          ...(active.channel === 'assistant' && this.#finalResponse !== undefined ? { finalResponse: this.#finalResponse } : {}),
         },
       } as const),
     ];
@@ -99,7 +136,10 @@ export class RuntimeEventProjector {
   }
 
   #appendDelta(channel: SegmentChannel, delta: string): RuntimeEvent[] {
+    if (this.#flushFailure) throw this.#flushFailure;
+    if (!delta) return [];
     const events: RuntimeEvent[] = [];
+    const first = this.#active?.channel !== channel;
     if (channel === "assistant") this.#assistantContent += delta;
     else this.#reasoningContent += delta;
     if (this.#active?.channel !== channel) {
@@ -120,22 +160,45 @@ export class RuntimeEventProjector {
             messageId: this.#messageId,
             segmentId: this.#active.segmentId,
             ordinal: this.#active.ordinal,
+            ...(channel === 'assistant' && this.#finalResponse !== undefined ? { finalResponse: this.#finalResponse } : {}),
           },
         } as const),
       );
     }
     this.#active.content += delta;
-    events.push(
-      this.#eventLog.append(this.#identity, {
-        kind: `${channel}_segment_delta`,
-        payload: {
-          messageId: this.#messageId,
-          segmentId: this.#active.segmentId,
-          ordinal: this.#active.ordinal,
-          delta,
-        },
-      } as const),
-    );
+    this.#pending.push(delta);
+    this.#pendingChars += delta.length;
+    // First text is immediate. Slow streams flush on time even without another chunk.
+    if (first || this.#deltaFlushIntervalMs === 0 || this.#pendingChars >= this.#deltaFlushChars) {
+      events.push(...this.flush());
+    } else if (!this.#flushTimer) {
+      this.#flushTimer = setTimeout(() => {
+        this.#flushTimer = undefined;
+        try { this.flush(); } catch (error) {
+          // Propagate storage failures through the model round, never an uncaught timer.
+          this.#flushFailure = error instanceof Error ? error : new Error(String(error));
+        }
+      }, this.#deltaFlushIntervalMs);
+      this.#flushTimer.unref?.();
+    }
     return events;
+  }
+
+  flush(): RuntimeEvent[] {
+    clearTimeout(this.#flushTimer);
+    this.#flushTimer = undefined;
+    if (this.#flushFailure) throw this.#flushFailure;
+    if (!this.#active || !this.#pendingChars) return [];
+    const event = this.#eventLog.append(this.#identity, {
+      kind: `${this.#active.channel}_segment_delta`,
+      payload: {
+        messageId: this.#messageId, segmentId: this.#active.segmentId,
+        ordinal: this.#active.ordinal, delta: this.#pending.join(''),
+        ...(this.#active.channel === 'assistant' && this.#finalResponse !== undefined ? { finalResponse: this.#finalResponse } : {}),
+      },
+    } as const);
+    this.#pending = [];
+    this.#pendingChars = 0;
+    return [event];
   }
 }

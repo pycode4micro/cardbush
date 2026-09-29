@@ -45,7 +45,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.deepEqual(await run('centerEvents'), [['search']]);
   await run("document.querySelector('.app-center-launcher').focus();centerClick('应用中心')");
   await until("document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-drawer')?.dataset.visible==='true'", 'drawer opened');
-  assert.equal(await run("document.querySelectorAll('.app-center-tile').length"), 4);
+  assert.equal(await run("document.querySelectorAll('.app-center-tile').length"), 5);
+  assert.equal(await run("document.querySelectorAll('[data-application-id=\"builtin:components\"]').length"), 1, 'components are available in the app center without a new default dock shortcut');
   assert.equal(await run("document.activeElement.getAttribute('aria-label')"), '搜索应用');
   assert.equal(await run('centerEvents.length'), 1, 'opening the center cannot execute an app');
   await pause(230);

@@ -1,5 +1,6 @@
 import {
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+  individuationPreferenceText,
   DEFAULT_CHILD_AGENT_DISABLED_TOOLS,
   modelMessageSchema,
   runtimeProviderBindingRefSchema,
@@ -154,6 +155,10 @@ export function buildChildTurnRequest(input: {
       ...(input.additionalPrefixMessages ?? []),
     ],
     inputMessages: [{
+      messageId: `${input.ids.messageId}:individuation-preference`,
+      message: { role: 'user', name: 'individuation_preference', visibility: 'internal',
+        content: individuationPreferenceText(parentRequest.metadata.individuation) },
+    }, {
       messageId: input.ids.messageId,
       message: { role: "user", content: `${CHILD_AGENT_ASSIGNMENT_PREFIX}\n\n${input.prompt}` },
       metadata: { subagentAuthor: 'parent' },

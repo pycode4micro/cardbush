@@ -1,14 +1,17 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ContentBlockParam, MessageCreateParamsStreaming, MessageParam, RawMessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
-import { modelApiBaseURL, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
+import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
 import { modelReplayMatches, withToolDisplayTitle, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
 import { providerToolName } from './toolNames.js';
-import { providerFailureEvent } from './providerFailure.js';
+import { anthropicValidationMessage, providerFailureEvent } from './providerFailure.js';
+import { InMemoryProviderCapabilityStore, modelProviderCapabilityScope, type ProviderCapabilityStore } from './providerCapabilities.js';
 import { eventWriter, incompleteStream, recordProjection, toolCallEvents, type PortableCall } from './portableProvider.js';
+import { AnthropicStreamDiagnostics } from './anthropicStreamDiagnostics.js';
 
 const FORMAT = 'anthropic.messages.v1';
+const PROMPT_CACHING_CAPABILITY = 'anthropic_automatic_prompt_caching';
 function imageBlock(url: string): ContentBlockParam {
   const data = /^data:(image\/(?:jpeg|png|gif|webp));base64,(.+)$/s.exec(url);
   if (data) return { type: 'image', source: { type: 'base64', media_type: data[1] as 'image/png', data: data[2] } };
@@ -44,9 +47,10 @@ function replayContent(message: Extract<ModelMessage, { role: 'assistant' }>, re
   return structuredClone(blocks) as unknown as ContentBlockParam[];
 }
 
-export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: 'adaptive' | 'budget' = 'adaptive'): MessageCreateParamsStreaming {
+export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: 'adaptive' | 'budget' = 'adaptive', cache = true): MessageCreateParamsStreaming {
   const messages: MessageParam[] = [], system: string[] = [];
   const textCallIds = new Set<string>();
+  let inPrefix = true;
   const append = (role: 'user' | 'assistant', content: ContentBlockParam[]) => {
     if (!content.length) return;
     const previous = messages.at(-1);
@@ -59,7 +63,16 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
     else messages.push({ role, content });
   };
   for (const message of portableMessages(request)) {
-    if (message.role === 'system' || message.role === 'developer') { system.push(namedMessageContent(message.name, message.content)); continue; }
+    if (message.role === 'system' || message.role === 'developer') {
+      const content = namedMessageContent(message.name, message.content);
+      if (inPrefix) system.push(content);
+      // Messages has no portable mid-conversation developer role. Keep runtime
+      // notices at their original boundary instead of rewriting the system
+      // prefix or leaving an assistant prefill after a failed tool call.
+      else append('user', textBlocks(`Runtime ${message.role} instruction:\n${content}`));
+      continue;
+    }
+    inPrefix = false;
     if (message.role === 'assistant') {
       const replay = replayContent(message, request);
       if (replay) {
@@ -87,23 +100,30 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
   if (thinking && thinkingMode === 'budget' && maxTokens <= 1024) throw new Error('Anthropic budget thinking requires an output limit greater than 1024 tokens.');
   const budget = thinking && thinkingMode === 'budget' ? Math.min(maxTokens - 1, { low: 1024, medium: 2048, high: 4096, xhigh: 8192, max: 16384 }[effort]) : undefined;
   return { model: request.model, messages, system: system.join('\n\n') || undefined, max_tokens: maxTokens, stream: true,
+    ...(cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
     ...(request.tools.length ? { tools: request.tools.map(tool => ({ name: providerToolName(tool.name), description: tool.description,
       input_schema: { ...withToolDisplayTitle(tool).inputSchema, type: 'object' as const } })) } : {}),
     ...(thinking ? budget ? { thinking: { type: 'enabled' as const, budget_tokens: budget } }
       : { thinking: { type: 'adaptive' as const }, output_config: { effort } }
-      : request.temperature !== undefined ? { temperature: request.temperature } : { top_p: request.topP }) };
+      : { ...(effort === 'none' ? { thinking: { type: 'disabled' as const } } : {}),
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : { top_p: request.topP }) }) };
 }
 
 type Block = { value: Record<string, unknown>; json: string; stopped: boolean };
 export class AnthropicMessagesProvider implements ModelProvider {
   readonly #client: Anthropic;
   readonly #baseURL: string;
+  readonly #capabilityStore: ProviderCapabilityStore;
+  readonly #capabilityScope: string;
   constructor(readonly config: ModelProviderConfig) {
     this.#baseURL = modelApiBaseURL('anthropic_messages', config.baseURL);
+    this.#capabilityStore = config.capabilityStore ?? new InMemoryProviderCapabilityStore();
+    this.#capabilityScope = config.capabilityScope ?? modelProviderCapabilityScope({ ...config, adapter: 'anthropic_messages' });
     // SDK paths begin with /v1. Map them to the configured API root, including
     // gateway prefixes such as /zen/go/v1, without doubling or dropping /v1.
     const fetcher = config.fetch ?? globalThis.fetch;
-    this.#client = new Anthropic({ apiKey: config.apiKey, baseURL: this.#baseURL,
+    this.#client = new Anthropic({ ...(modelApiGateway(this.#baseURL) === 'openrouter'
+      ? { apiKey: null, authToken: config.apiKey } : { apiKey: config.apiKey }), baseURL: this.#baseURL,
       timeout: config.timeoutMs, maxRetries: 0, fetch: (input, init) => {
         const url = String(input);
         const prefix = `${this.#baseURL}/v1/`;
@@ -112,21 +132,22 @@ export class AnthropicMessagesProvider implements ModelProvider {
   }
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
-    const params = toAnthropicMessagesParams(await resolveLocalImageInputs(request), this.config.anthropicThinkingMode);
+    const params = this.#project(await resolveLocalImageInputs(request));
     options.signal?.throwIfAborted();
     return recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes);
   }
   async *stream(request: ModelRequest, options: ModelStreamOptions = {}): AsyncIterable<ModelEvent> {
     const emit = eventWriter(request.requestId), blocks = new Map<number, Block>();
+    const diagnostics = new AnthropicStreamDiagnostics(options.onStreamDiagnostic, options.signal);
     let started = false, finishReason: string | undefined;
     let usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
     try {
-      const params = toAnthropicMessagesParams(await resolveLocalImageInputs(request), this.config.anthropicThinkingMode);
+      const resolvedRequest = await resolveLocalImageInputs(request);
       options.signal?.throwIfAborted();
-      recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
-      const stream = await this.#client.messages.create(params, { signal: options.signal,
-        headers: modelRequestHeaders(this.#baseURL, this.config.defaultHeaders, request.sessionId) });
+      const stream = await this.#createStream(resolvedRequest, options, diagnostics);
+      diagnostics.report('response_headers');
       for await (const event of stream) {
+        diagnostics.observe(event);
         options.signal?.throwIfAborted();
         if (event.type === 'message_start') {
           if (started) throw new Error('Duplicate Anthropic message_start.');
@@ -165,6 +186,14 @@ export class AnthropicMessagesProvider implements ModelProvider {
           yield emit({ kind: 'usage', ...usage });
         } else if (event.type === 'message_stop') {
           if (!finishReason) { yield emit(incompleteStream()); return; }
+          if (finishReason === 'model_context_window_exceeded') {
+            // No tools from an incomplete response may run. Use the existing
+            // bounded context recovery, or fail explicitly when unavailable.
+            yield emit({ kind: 'usage', ...usage });
+            yield emit({ kind: 'response_failed', code: 'context_length_exceeded',
+              message: 'The model reached its context window before completing the response.', retryable: false });
+            return;
+          }
           const truncated = finishReason === 'max_tokens';
           const calls = new Map<number, PortableCall>();
           for (const [index, block] of blocks) {
@@ -194,11 +223,47 @@ export class AnthropicMessagesProvider implements ModelProvider {
           return;
         }
       }
+      options.signal?.throwIfAborted();
+      diagnostics.report('eof');
       yield emit(incompleteStream());
     } catch (error) {
+      diagnostics.report('error');
       const failure = providerFailureEvent(request.requestId, 0, error, options.signal?.aborted ?? false);
       const { protocol: _p, requestId: _r, sequence: _s, createdAt: _t, ...payload } = failure;
       yield emit(payload);
+    } finally { diagnostics.close(); }
+  }
+
+  #cacheIdentity(model: string) {
+    return { scope: this.#capabilityScope, model, capability: PROMPT_CACHING_CAPABILITY };
+  }
+
+  #project(request: ModelRequest): MessageCreateParamsStreaming {
+    return toAnthropicMessagesParams(request, this.config.anthropicThinkingMode,
+      this.#capabilityStore.read(this.#cacheIdentity(request.model)).status !== 'unsupported');
+  }
+
+  async #createStream(request: ModelRequest, options: ModelStreamOptions, diagnostics: AnthropicStreamDiagnostics) {
+    for (let attempt = 0; ; attempt++) {
+      options.signal?.throwIfAborted();
+      const params = this.#project(request);
+      recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
+      diagnostics.dispatch(params);
+      try {
+        return await this.#client.messages.create(params, { signal: options.signal,
+          headers: modelRequestHeaders(this.#baseURL, this.config.defaultHeaders, request.sessionId) });
+      } catch (error) {
+        const message = anthropicValidationMessage(error) ?? '';
+        const unsupportedCache = /^(?:["']?cache_control["']?)\s*(?::|is\b)\s*(?:extra inputs are not permitted|not supported|unsupported)\b/i.test(message) ||
+          /^(?:unknown|unsupported|unrecognized) (?:field|parameter|request argument(?: supplied)?)\s*:?\s*["']?cache_control\b/i.test(message);
+        // This retry only removes a rejected optional field, before any output.
+        // HTTP auth, overflow, unrelated validation and stream errors never use it.
+        if (attempt > 0 || !params.cache_control || !unsupportedCache || options.signal?.aborted) throw error;
+        this.#capabilityStore.observe(this.#cacheIdentity(request.model), { status: 'unsupported', reason: 'cache_control_rejected' });
+        options.onCompatibilityDiagnostic?.({ model: request.model, source: 'generation', action: 'retry',
+          error: { code: 'anthropic_prompt_cache_unsupported', status: 400,
+            message: 'This endpoint rejected automatic prompt caching; retrying without cache_control.' } });
+      }
     }
   }
 }

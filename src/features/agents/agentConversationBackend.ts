@@ -1,4 +1,5 @@
 import { resolveConversationStyle } from '../settings/conversationStyle';
+import { readIndividuation } from '../settings/individuation';
 import type { RuntimeEvent, SessionSnapshot, ConversationExtractDesktopApi } from '@cardbush/bush-protocol';
 import type { AgentDesktopApi, AgentJob, AgentSendInput, AgentOperation } from '../../../electron/agentTypes';
 import * as shared from '../../backend/api';
@@ -138,6 +139,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     ...(request.files?.length ? { files: request.files } : {}), ...(request.images?.length ? { images: request.images.map(image => image.path) } : {}),
     ...(hostOptions.visualInputAvailable && request.standardImageInputEnabled ? { visionEnabled: true } : {}),
     ...(hostOptions.sharedSettings ? { conversationStyle: resolveConversationStyle(request.sessionId, connectionId) } : {}),
+    individuation: readIndividuation(),
     goalObjective: parseGoalCommand(request.userInput)?.objective, ...options,
   });
   const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession']; queueOnly?: boolean }) => {

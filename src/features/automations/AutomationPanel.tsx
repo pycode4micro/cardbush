@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, CalendarDays, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare, Check, Mail, ChevronRight } from 'lucide-react';
+import { CalendarClock, CalendarDays, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare, Check, Mail, ChevronRight, Search } from 'lucide-react';
 import { isAutomationResult } from '@cardbush/bush-protocol';
 import { openAutomationRun } from './automationEvents';
 import type { AutomationCommand, AutomationDefinition, AutomationJob, AutomationOverview, AutomationRun } from '@cardbush/bush-protocol';
@@ -135,9 +135,12 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
           {tab === 'calendar' && <CalendarDays size={15}/>}{{ calendar: zh ? '日历' : 'Calendar', unread: zh ? '未读' : 'Unread', today: zh ? '今天' : 'Today', all: zh ? '全部结果' : 'All results', plans: zh ? '计划管理' : 'Plans' }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
         </button>)}
       </nav>
-      <div className="automation-actions"><button type="button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()}><RefreshCw size={16}/></button>
-        <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={zh ? '在新会话中设置定时任务' : 'Set up a scheduled task in a new conversation'}><Plus size={16}/>{zh ? '新建自动化' : 'New automation'}</button></div>
     </header>
+    <div className="automation-command-bar">
+      <label className="automation-search-field"><Search size={15}/><input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={view === 'calendar' ? (zh ? '搜索安排、节日或日期' : 'Search schedules, holidays or dates') : (zh ? '搜索自动化' : 'Search automations')} value={filter} onChange={event => setFilter(event.target.value)}/></label>
+      <div className="automation-actions"><button type="button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} title={zh ? '刷新' : 'Refresh'} onClick={() => void refresh()}><RefreshCw size={15}/></button>
+        <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={zh ? '在新会话中设置定时任务' : 'Set up a scheduled task in a new conversation'}><Plus size={15}/>{zh ? '新建自动化' : 'New automation'}</button></div>
+    </div>
     {error && <p className="automation-error" role="alert">{error}</p>}
     {form && <form className="automation-form" onSubmit={event => { event.preventDefault(); save(); }}>
       <h2>{zh ? '编辑自动化' : 'Edit automation'}</h2>
@@ -163,10 +166,10 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
         </select></label>}
         <div className="automation-actions"><button type="button" onClick={() => setForm(undefined)}>{zh ? '取消' : 'Cancel'}</button><button type="submit" className="primary-button">{busy === 'form' ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存自动化' : 'Save automation')}</button></div>
       </fieldset></form>}
-    <input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={view === 'calendar' ? (zh ? '搜索安排、节日或日期' : 'Search schedules, holidays or dates') : (zh ? '搜索自动化' : 'Search automations')} value={filter} onChange={event => setFilter(event.target.value)}/>
     {!overview && !error && <p role="status">{zh ? '正在读取自动化…' : 'Loading automations…'}</p>}
-    {overview && !jobs.length && (view !== 'calendar' || !filter) && <div className={view === 'calendar' ? 'automation-calendar-notice' : 'automation-empty'}><CalendarClock size={view === 'calendar' ? 18 : 32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.')}</p></div>}
+    {overview && !jobs.length && view !== 'calendar' && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.')}</p></div>}
     {view === 'calendar' && overview && <AutomationCalendar jobs={overview.jobs} language={language} renderJob={renderPlan} onShowPlans={() => setView('plans')} query={filter}/>}
+    {view === 'calendar' && overview && !overview.jobs.length && !filter && <p className="automation-calendar-notice">{zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.'}</p>}
     {view !== 'plans' && view !== 'calendar' && <section className="automation-inbox">
       {unreadIds.length > 0 && <div className="automation-inbox-heading automation-actions"><button disabled={Boolean(busy)} type="button" onClick={() => void operate({ action: 'mark_read', runIds: unreadIds }, 'read-batch')}><Check size={14}/>{zh ? `标记这 ${unreadIds.length} 条已读` : `Mark these ${unreadIds.length} read`}</button></div>}
       {overview && jobs.length > 0 && !entries.length && <div className="automation-empty"><Check size={28}/><p>{view === 'unread' ? (zh ? '未读结果已清空。下一次执行结束后会出现在这里。' : 'No unread results. New results will appear here after execution.') : (zh ? '暂时没有执行结果。' : 'No execution results yet.')}</p><button type="button" onClick={() => setView('plans')}>{zh ? '查看计划' : 'View plans'}</button></div>}

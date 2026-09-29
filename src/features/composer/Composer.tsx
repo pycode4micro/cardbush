@@ -6,9 +6,13 @@ import { useApplications } from '../appCenter/appCenterStore';
 import { applicationReference } from '../appCenter/appCenterModel';
 import { ApplicationIcon } from '../appCenter/AppCenter';
 import { ConversationHostContext } from '../conversationHost';
+import { ComposerPortalContext } from './ComposerPortalContext';
+import { ComposerPresentationContext } from './ComposerPresentationContext';
+import { ComposerCommandPortal } from './ComposerCommandPortal';
 import { useSshConnections } from '../ssh/SshConnectionsPanel';
 import { pickWorkspace } from '../ssh/WorkspaceLocationPicker';
-import { parseSshWorkspace } from '@cardbush/bush-protocol';
+import { parseSshWorkspace, protocolReasoningEffort, reasoningEffortsForProtocol } from '@cardbush/bush-protocol';
+import { modelProtocolInfo } from '../settings/modelProtocols';
 import { pluginReference } from '../plugins/pluginPrompts';
 import { PluginGlyph } from '../plugins/PluginGlyph';
 import { ComposerReferenceContext, referenceableUserMessages } from './ComposerReferenceContext';
@@ -368,6 +372,7 @@ export function Composer({
   contextWindow,
   submissionPending = false,
   inputReadOnly = false,
+  portalCommands = false,
 }: {
   compact?: boolean;
   fileDropTarget?: React.RefObject<HTMLElement | null>;
@@ -420,8 +425,23 @@ export function Composer({
   contextWindow?: ContextWindowUsage;
   submissionPending?: boolean;
   inputReadOnly?: boolean;
+  portalCommands?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
+  const portalTarget = useContext(ComposerPortalContext);
+  const presentation = useContext(ComposerPresentationContext);
+  const simple = presentation.style === 'simple';
+  const simplePermissionInitialized = useRef(false);
+  useEffect(() => {
+    if (presentation.preview) return;
+    if (!simple) {
+      simplePermissionInitialized.current = false;
+    } else if (!simplePermissionInitialized.current) {
+      // Apply the default on entry, without overwriting later permission changes.
+      simplePermissionInitialized.current = true;
+      if (permissionMode !== 'all_free') onPermissionModeChange('all_free');
+    }
+  }, [simple, presentation.preview, permissionMode, onPermissionModeChange]);
   const runtimeStartup = useRuntimeStartupStatus(!host);
   const keyboardShortcuts = useKeyboardShortcuts();
   const immediatePendingRef = useRef(false);
@@ -430,6 +450,11 @@ export function Composer({
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
+  useEffect(() => {
+    if (!portalTarget || presentation.preview) return;
+    const frame = requestAnimationFrame(() => textareaRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [portalTarget, presentation.preview]);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
@@ -1154,8 +1179,10 @@ export function Composer({
   );
   const modelLabel =
     selectedModelConfig
-      ? `${selectedModelConfig.modelName} · ${selectedModelConfig.provider}`
+      ? selectedModelConfig.modelName
       : language === 'zh' ? '待配置' : 'Configure';
+  const supportedReasoningLevels = reasoningEffortsForProtocol(selectedModelConfig?.apiProtocol);
+  const effectiveReasoningLevel = protocolReasoningEffort(selectedModelConfig?.apiProtocol, reasoningLevel);
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
   const firstQueuedMessage = queuedMessages[0] ?? null;
@@ -1215,9 +1242,9 @@ export function Composer({
     return () => window.removeEventListener('keydown', handleImmediate);
   }, [fileDropTarget, keyboardShortcuts]);
 
-  return (
+  const composer = (
     <div
-      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''}`}
+      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''} ${portalTarget ? 'input-only' : ''}`}
       ref={composerStackRef}
       style={
         {
@@ -1225,20 +1252,22 @@ export function Composer({
         } as CSSProperties
       }
     >
-      {commandState && (
-        <ComposerCommandPalette
+      {commandState && (() => {
+        const palette = <ComposerCommandPalette
           language={language}
           mode={commandState.mode}
           items={commandItems}
           selectedIndex={commandIndex}
           onSelect={(item) => applyCommand(item)}
-        />
-      )}
+        />;
+        return portalCommands ? <ComposerCommandPortal anchor={composerStackRef}>{palette}</ComposerCommandPortal> : palette;
+      })()}
       {activeMenu &&
         (() => {
           const popover = (
             <ComposerPopover
               menu={activeMenu}
+              simpleModels={simple}
               language={language}
               contextWindow={contextWindow}
               skills={skills}
@@ -1248,8 +1277,9 @@ export function Composer({
               permissionMode={permissionMode}
               subagentPermissionRouting={subagentPermissionRouting}
               reasoningLevelAvailable={reasoningLevelAvailable}
-              reasoningLevel={reasoningLevel}
-              reasoningLevels={reasoningLevels}
+              reasoningLevel={effectiveReasoningLevel}
+              reasoningLevels={reasoningLevels.filter(level => supportedReasoningLevels.includes(level))}
+              reasoningMode={selectedModelConfig?.apiProtocol === 'anthropic_messages' ? selectedModelConfig.anthropicThinkingMode ?? 'adaptive' : 'effort'}
               referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
               sourceEnabled={source.enabled}
@@ -1468,7 +1498,7 @@ export function Composer({
           plugins={plugins}
           skills={skills}
           language={language}
-          autoFocus={autoFocus}
+          autoFocus={autoFocus && !presentation.preview}
           value={composerInputValue}
           onChange={(next, caret) => {
             if (goalDraft) {
@@ -1485,6 +1515,7 @@ export function Composer({
             }
           }}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.repeat) {
               const gesture = { key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey };
               if (keyboardShortcuts.matches('guideNow', gesture) || keyboardShortcuts.matches('sendMessage', gesture) ||
@@ -1547,6 +1578,7 @@ export function Composer({
               ? runtimeStartupFailed
                 ? language === 'zh' ? 'Runtime 启动失败，点击发送按钮重试' : 'Runtime failed to start. Use Send to retry'
                 : language === 'zh' ? 'CardBush Runtime 正在准备…' : 'CardBush Runtime is preparing...'
+            : simple ? "let's talk"
             : shadowActive
               ? language === 'zh'
                 ? `回复 ${shadowAgentName || 'Shadow Agent'}…`
@@ -1673,6 +1705,7 @@ export function Composer({
       )}
     </div>
   );
+  return portalTarget ? createPortal(composer, portalTarget) : composer;
 }
 
 function ComposerCommandPalette({
@@ -1851,6 +1884,7 @@ export function composerGoalDraftPresentation(value: string) {
 function ComposerPopover({
   sourceEnabled, onSourceChange,
   menu,
+  simpleModels,
   language,
   contextWindow,
   skills,
@@ -1862,6 +1896,7 @@ function ComposerPopover({
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
+  reasoningMode,
   referencePlanAvailable,
   referencePlanMode,
   onToggleSkill,
@@ -1878,6 +1913,7 @@ function ComposerPopover({
   sourceEnabled: boolean;
   onSourceChange: (enabled: boolean) => void;
   menu: Exclude<ComposerMenu, null>;
+  simpleModels: boolean;
   language: AppLanguage;
   contextWindow?: ContextWindowUsage;
   skills: SkillSummary[];
@@ -1889,6 +1925,7 @@ function ComposerPopover({
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
+  reasoningMode: 'effort' | 'adaptive' | 'budget';
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
@@ -1910,11 +1947,10 @@ function ComposerPopover({
     [reasoningLevels],
   );
   const referencePlanEnabled = referencePlanMode === 'auto';
+  const secondaryReasoningSelected = reasoningLevelGroups.secondary.includes(reasoningLevel);
   useEffect(() => {
-    if (menu !== 'models' || reasoningLevelGroups.secondary.length === 0) {
-      setReasoningExpanded(false);
-    }
-  }, [menu, reasoningLevelGroups.secondary.length]);
+    setReasoningExpanded(menu === 'models' && secondaryReasoningSelected);
+  }, [menu, selectedModel, reasoningMode, secondaryReasoningSelected]);
   const selectPermission = (mode: PermissionMode) => {
     onSelectPermissionMode(mode);
     onClose();
@@ -2120,27 +2156,35 @@ function ComposerPopover({
                 <ModelLogoMark model={config.modelName} size={16} />
                 <span className="model-picker-copy">
                   <strong>{config.modelName}</strong>
-                  <small>{config.provider}</small>
+                  <small className="model-picker-meta" title={`${config.provider} · ${modelProtocolInfo(config.apiProtocol).label}`}>
+                    <span className="model-picker-provider">{config.provider}</span>
+                    <span className="model-picker-meta-separator" aria-hidden="true">·</span>
+                    <span className="model-picker-protocol">{modelProtocolInfo(config.apiProtocol).shortLabel}</span>
+                  </small>
                 </span>
                 {config.id === selectedModel && <Check size={16} />}
               </button>
             ))
           )}
+          {!simpleModels && <>
           <div className="model-picker-divider" />
           <ContextWindowMeter usage={contextWindow} language={language} />
           {reasoningLevelAvailable && reasoningLevels.length > 0 && (
             <div className="model-reasoning-section">
               <div className="model-picker-inline-label">
-                <span>{language === 'zh' ? '推理强度' : 'Reasoning effort'}</span>
+                <span>{reasoningMode === 'budget' ? (language === 'zh' ? '思考预算' : 'Thinking budget')
+                  : reasoningMode === 'adaptive' ? (language === 'zh' ? '思考强度' : 'Thinking effort')
+                  : language === 'zh' ? '推理强度' : 'Reasoning effort'}</span>
                 <strong>{reasoningLevelLabel(reasoningLevel, language)}</strong>
               </div>
-              <div className={`model-reasoning-options ${reasoningExpanded ? 'expanded' : ''}`}>
+              <div className={`model-reasoning-options ${reasoningExpanded ? 'expanded' : ''} ${reasoningLevelGroups.secondary.length ? '' : 'single-page'}`}>
                 <div className="model-reasoning-viewport">
                   <div className="model-reasoning-pages">
                     <div className="model-reasoning-primary-options" aria-hidden={reasoningExpanded}>
                       {reasoningLevelGroups.primary.map((level) => (
                         <button
                           className={level === reasoningLevel ? 'active' : ''}
+                          aria-pressed={level === reasoningLevel}
                           type="button"
                           tabIndex={reasoningExpanded ? -1 : 0}
                           key={level}
@@ -2155,6 +2199,7 @@ function ComposerPopover({
                       {reasoningLevelGroups.secondary.map((level) => (
                         <button
                           className={level === reasoningLevel ? 'active' : ''}
+                          aria-pressed={level === reasoningLevel}
                           type="button"
                           tabIndex={reasoningExpanded ? 0 : -1}
                           key={level}
@@ -2192,6 +2237,7 @@ function ComposerPopover({
             <span>{language === 'zh' ? '管理模型' : 'Manage models'}</span>
             <ArrowRight size={15} />
           </button>
+          </>}
         </div>
       )}
     </div>

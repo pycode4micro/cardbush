@@ -1,5 +1,6 @@
-import { lstat, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
+import { lstatSync, unlinkSync } from 'node:fs';
 
 export type CleanupResult = { counts: Record<string, number>; errors: string[] };
 export const emptyCleanup = (): CleanupResult => ({ counts: { files: 0, bytes: 0 }, errors: [] });
@@ -32,12 +33,41 @@ export async function clearDiagnosticFiles(root: string, accept: (name: string, 
       try {
         const stat = await lstat(file);
         if (!stat.isFile() || stat.isSymbolicLink() || !accept(item.name, stat.mtimeMs)) continue;
-        await unlink(file); result.counts.files!++; result.counts.bytes! += stat.size;
+        // Recheck immediately before deletion: a logger may have appended since the asynchronous stat.
+        const current = lstatSync(file);
+        if (!current.isFile() || current.isSymbolicLink() || !accept(item.name, current.mtimeMs)) continue;
+        unlinkSync(file); result.counts.files!++; result.counts.bytes! += current.size;
       } catch (error) { result.errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`); }
     }
   };
   await visit(resolve(root));
   return result;
+}
+
+export const DIAGNOSTIC_RETENTION_MS = 14 * 24 * 60 * 60_000;
+
+export function expireDiagnosticLogs(root: string, now = Date.now()) {
+  return clearDiagnosticFiles(root, (name, modified) => /\.(?:log|jsonl)(?:\.[1-3])?$/i.test(name) && modified <= now - DIAGNOSTIC_RETENTION_MS);
+}
+
+/** Both desktop and cloud hosts expire only their diagnostic roots, never runtime history. */
+export function scheduleDiagnosticRetention(roots: string[]) {
+  let stopped = false, pending: Promise<void> | undefined;
+  const run = () => {
+    if (stopped || pending) return;
+    pending = (async () => {
+      for (const root of new Set(roots)) {
+        if (stopped) break;
+        try {
+          const result = await expireDiagnosticLogs(root);
+          if (result.errors.length) console.warn('[diagnostic-retention]', result.errors);
+        } catch (error) { console.warn('[diagnostic-retention]', error); }
+      }
+    })().finally(() => { pending = undefined; });
+  };
+  const startup = setTimeout(run, 60_000), interval = setInterval(run, 60 * 60_000);
+  startup.unref(); interval.unref();
+  return async () => { stopped = true; clearTimeout(startup); clearInterval(interval); await pending; };
 }
 
 const activeTemporaryDirectories = new Set<string>();

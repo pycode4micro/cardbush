@@ -1,4 +1,4 @@
-import type { ModelEvent, ModelRequest, ProviderInputProjection, ProviderCompatibilityDiagnostic } from "@cardbush/bush-protocol";
+import type { ModelEvent, ModelRequest, ProviderInputProjection, ProviderCompatibilityDiagnostic, ProviderStreamDiagnostic } from "@cardbush/bush-protocol";
 
 export interface ModelRequestBodyBudget {
   /** UTF-8 bytes of the complete serialized HTTP body, including base64. */
@@ -16,6 +16,8 @@ export interface ModelStreamOptions {
   onRequestBodyBudget?: (budget: ModelRequestBodyBudget) => void;
   /** Original provider failures and compatibility recovery, independent of UI output. */
   onCompatibilityDiagnostic?: (diagnostic: ProviderCompatibilityDiagnostic) => void;
+  /** Content-free stream lifecycle observations; never changes request or retry policy. */
+  onStreamDiagnostic?: (diagnostic: ProviderStreamDiagnostic) => void;
 }
 
 export interface ModelInputTokenCount {

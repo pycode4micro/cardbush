@@ -13,7 +13,7 @@ export function continueChildConversation(input: RuntimeSessionTurnRequest, save
     tools: input.tools.filter(tool => originalTools.has(tool.name)),
     permissionMode: levels[Math.min(levels.indexOf(saved.permissionMode), levels.indexOf(input.permissionMode))] as RuntimeSessionTurnRequest['permissionMode'],
     sessionMetadata: { ...saved.sessionMetadata, agentRole: 'child' },
-    metadata: { ...saved.metadata, subagentUserContinuation: true,
+    metadata: { ...saved.metadata, individuation: input.metadata.individuation, subagentUserContinuation: true,
       // A human follow-up belongs to this new turn; never publish approval events
       // into the original (possibly already terminal) parent turn.
       permissionRouting: 'user', permissionScopeSessionId: input.sessionId,

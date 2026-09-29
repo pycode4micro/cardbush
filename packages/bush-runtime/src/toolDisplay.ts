@@ -1,11 +1,13 @@
 import type { ToolCall, ToolDefinition, ToolDisplay } from '@cardbush/bush-protocol';
+import { normalizeToolDisplay } from '@cardbush/bush-protocol';
+export { normalizeToolDisplayTitle } from '@cardbush/bush-protocol';
 
 // Host presentation metadata. Never forward this field to a tool or MCP server.
 export const TOOL_DISPLAY_TITLE = '_display_title';
 
 function acceptsDisplayTitle(definition: ToolDefinition): boolean {
   // Context maintenance uses its own strict exchange, not the tool coordinator.
-  if (definition.name === 'checkpoint_context') return false;
+  if (definition.name === 'checkpoint_context' || definition.name === 'summary_for_user') return false;
   const schema = definition.inputSchema;
   if (schema.type !== 'object' || ['$ref', 'allOf', 'anyOf', 'oneOf', 'if', 'patternProperties'].some(key => key in schema)) return false;
   const properties = schema.properties;
@@ -30,25 +32,11 @@ export function withToolDisplayTitle(definition: ToolDefinition): ToolDefinition
   }, required: [...(Array.isArray(definition.inputSchema.required) ? definition.inputSchema.required : []), TOOL_DISPLAY_TITLE] } };
 }
 
-export function normalizeToolDisplayTitle(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const title = value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim();
-  return title ? Array.from(title).slice(0, 80).join('') : undefined;
-}
-
 export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): ToolDisplay | undefined {
   if (!definition || !acceptsDisplayTitle(definition)) return undefined;
   try {
     const value = JSON.parse(call.argumentsText);
-    const supplied = value?.[TOOL_DISPLAY_TITLE];
-    if (supplied && typeof supplied === 'object' && !Array.isArray(supplied)) {
-      const zh = normalizeToolDisplayTitle(supplied.zh);
-      const en = normalizeToolDisplayTitle(supplied.en);
-      if (zh || en) return { title: en || zh!, titles: { ...(zh ? { zh } : {}), ...(en ? { en } : {}) } };
-    }
-    // Old models and persisted calls may still supply a single-language string.
-    const title = normalizeToolDisplayTitle(supplied);
-    return title ? { title } : undefined;
+    return normalizeToolDisplay(value?.[TOOL_DISPLAY_TITLE]);
   } catch { return undefined; }
 }
 

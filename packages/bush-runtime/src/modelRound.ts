@@ -94,6 +94,7 @@ export async function executeModelRound(
     signal: options.signal, onInputProjection: options.onInputProjection,
     onRequestBodyBudget: options.onRequestBodyBudget,
     onCompatibilityDiagnostic: options.onCompatibilityDiagnostic,
+    onStreamDiagnostic: options.onStreamDiagnostic,
   })) {
     const event = modelEventSchema.parse(candidate);
     if (event.requestId !== request.requestId) {

@@ -9,7 +9,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { clearDiagnosticFiles, mergeCleanup, type CleanupResult } from './cacheMaintenance.js';
+import { clearDiagnosticFiles, mergeCleanup, scheduleDiagnosticRetention, type CleanupResult } from './cacheMaintenance.js';
 
 import {
   CardbushAppsConfigStore,
@@ -84,6 +84,7 @@ export class ElectronProductHostController {
   readonly #logRoots: string[];
   readonly #clearApplicationCaches?: ElectronProductHostControllerOptions['clearApplicationCaches'];
   readonly #clearCrashReports?: ElectronProductHostControllerOptions['clearCrashReports'];
+  readonly #stopDiagnosticRetention: () => Promise<void>;
 
   constructor(options: ElectronProductHostControllerOptions) {
     const dataRoot = resolve(options.dataRoot);
@@ -150,6 +151,7 @@ export class ElectronProductHostController {
     }, {
       get: async () => this.#subagents.read(),
     }, options.sandbox);
+    this.#stopDiagnosticRetention = scheduleDiagnosticRetention(this.#logRoots);
   }
 
   async execute(command: unknown): Promise<unknown> {
@@ -293,10 +295,15 @@ export class ElectronProductHostController {
   }
 
   async shutdown(): Promise<void> {
+    await this.stopMaintenance();
     await Promise.race([
       this.#runtime.sendCommand({ kind: SHUTDOWN_RUNTIME_COMMAND, payload: {} }),
       new Promise((resolve) => setTimeout(resolve, 6_000)),
     ]).catch(() => undefined);
+  }
+
+  stopMaintenance(): Promise<void> {
+    return this.#stopDiagnosticRetention();
   }
 
   async #ensureLegacyModelCredentials(): Promise<void> {

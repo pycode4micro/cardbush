@@ -1,5 +1,6 @@
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
 import { registerSourceMemoTools, resolveSourceMemo } from "./sourceMemo.js";
+import { hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
 import { RESOLVE_SOURCE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { canonicalStoragePath } from '@cardbush/platform';
@@ -353,6 +354,7 @@ export class InMemoryRuntimeHost {
   #cacheMaintenance: Promise<void> | undefined;
   #cacheCleanupPending = false;
   #cacheCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  #cacheRetentionTimer: ReturnType<typeof setInterval> | undefined;
   #backgroundCacheController: AbortController | undefined;
   #activeAppCommands = 0;
 
@@ -386,6 +388,7 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
+    registerIndividuationTools(this.#toolRegistry, join(runtimeDataRoot, 'personalization.sqlite'));
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
     this.#legacyCaptureCacheRoot = options.legacyCaptureCacheRoot;
     this.#loadPluginExtensions = options.loadPluginExtensions;
@@ -710,6 +713,11 @@ export class InMemoryRuntimeHost {
       ],
     };
     for (const candidate of options.extensions ?? []) this.installExtension(candidate.create, { enabled: candidate.enabled });
+    this.#scheduleCacheCleanup(60_000);
+    this.#cacheRetentionTimer = setInterval(() => {
+      if (!this.#cacheCleanupPending) this.#scheduleCacheCleanup();
+    }, 60 * 60_000);
+    this.#cacheRetentionTimer.unref();
   }
 
   /** Stage registrations, then atomically admit a plugin. A bad factory cannot leave partial tools behind. */
@@ -1154,6 +1162,8 @@ export class InMemoryRuntimeHost {
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#mcpApps.close();
         this.#shuttingDown = true;
+        clearInterval(this.#cacheRetentionTimer);
+        this.#cacheRetentionTimer = undefined;
         clearTimeout(this.#cacheCleanupTimer);
         this.#cacheCleanupTimer = undefined;
         this.#pluginBackground.stop();
@@ -2202,7 +2212,8 @@ export class InMemoryRuntimeHost {
           const projector = new RuntimeEventProjector(
             this.#eventLog,
             identity,
-            this.#projectorOptions,
+            { ...this.#projectorOptions, finalResponse: !contextCompactionRequired &&
+              hasPendingUserSummary(messages, this.#toolExecutions, request.sessionId, request.turnId) },
           );
           const attemptStartSequence =
             this.#eventLog.replay(request.sessionId, request.turnId).at(-1)
@@ -2231,6 +2242,9 @@ export class InMemoryRuntimeHost {
                   signal: input.signal,
                   onCompatibilityDiagnostic: payload => {
                     this.#eventLog.append(identity, { kind: "provider_compatibility", payload });
+                  },
+                  onStreamDiagnostic: payload => {
+                    this.#eventLog.append(identity, { kind: 'provider_stream_diagnostic', payload: { ...payload, round, attempt } });
                   },
                   onInputProjection: projection => {
                     dispatchedInputProjection = structuredClone(projection);
@@ -2369,6 +2383,14 @@ export class InMemoryRuntimeHost {
             // allowance; a rejected maintenance job must first partition.
             const canRecover = !compactionTransaction || compactionTransaction.partition();
             if (canRecover) {
+              // Some protocols report context exhaustion after streaming partial
+              // output. It is not an accepted answer and must disappear on retry.
+              if (result.text || result.reasoning) {
+                const supersededEventIds = this.#eventLog.replay(request.sessionId, request.turnId,
+                  { afterSequence: attemptStartSequence }).map(event => event.eventId);
+                this.#eventLog.append(identity, { kind: 'replay_reset', payload: {
+                  reason: 'provider_attempt_failed', supersededEventIds } });
+              }
               contextOverflowRecoveries += 1;
               forceContextCompaction = !compactionTransaction;
               providerState = freshResponseChain();
@@ -2591,6 +2613,7 @@ export class InMemoryRuntimeHost {
             inputTokenUsage = undefined;
             const preference = latestConversationPreference(messages);
             const sourcePreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference');
+            const individuationPreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'individuation_preference');
             messages = this.#rebuildCompactedMessages(
               request.sessionId,
               request.turnId,
@@ -2610,6 +2633,11 @@ export class InMemoryRuntimeHost {
               generatedMessages.push({ messageId: `msg_source_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
             }
             const postCompact = await runHook('PostCompact', { signal: input.signal, trigger: 'auto' });
+            if (individuationPreference && [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'individuation_preference')?.content !== individuationPreference.content) {
+              const message = structuredClone(individuationPreference);
+              messages.push(message);
+              generatedMessages.push({ messageId: `msg_individuation_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+            }
             if (postCompact.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: postCompact.stopTurn } });
             if (request.metadata.agentRole !== 'child') {
               const compactStart = await runHook('SessionStart', { signal: input.signal, source: 'compact' });
@@ -3477,14 +3505,14 @@ export class InMemoryRuntimeHost {
     catch (error) { return { counts: {}, errors: [`History was removed; associated cache cleanup needs a retry: ${error instanceof Error ? error.message : String(error)}`] }; }
   }
 
-  #scheduleCacheCleanup() {
+  #scheduleCacheCleanup(delayMs = 1_000) {
     this.#cacheCleanupPending = true;
     clearTimeout(this.#cacheCleanupTimer);
     if (this.#shuttingDown) return;
     this.#cacheCleanupTimer = setTimeout(() => {
       this.#cacheCleanupTimer = undefined;
       void this.#collectIdleCaches();
-    }, 1_000);
+    }, delayMs);
     this.#cacheCleanupTimer.unref();
   }
 
@@ -3515,6 +3543,7 @@ export class InMemoryRuntimeHost {
 
   async #collectCaches(signal?: AbortSignal) {
     signal?.throwIfAborted();
+    const retention = await this.#eventLog.maintain(signal);
     const sessions = this.#sessions.list();
     const children = sessions.filter(session => session.metadata?.agentRole === 'child' && typeof session.metadata.parentSessionId === 'string' && session.metadata.parentSessionId !== session.sessionId);
     const childIds = new Set(children.map(session => session.sessionId));
@@ -3546,6 +3575,8 @@ export class InMemoryRuntimeHost {
     signal?.throwIfAborted();
     const result = await collectUnreferencedCache([...entries, ...childEntries],
       [...userSessions, ...protectedChildren, ...checkpoints, automation?.roots ?? {}, ...this.#mcpApps.cacheRoots(), owners.flatMap(sessionCacheKeys)], this.#toolExecutions.fileMemoLocators(), signal);
+    for (const [key, count] of Object.entries(retention.counts)) result.counts[key] = (result.counts[key] ?? 0) + count;
+    result.errors.push(...retention.errors);
     signal?.throwIfAborted();
     this.#cacheCleanupPending = false;
     clearTimeout(this.#cacheCleanupTimer);

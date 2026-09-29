@@ -81,9 +81,12 @@ test("forks the exact pre-dispatch context and tool declarations and returns the
     "original objective",
     "evidence",
   ]);
-  assert.deepEqual(childRequest.inputMessages.map((item) => item.message.content), [
+  assert.deepEqual(childRequest.inputMessages.filter(item => item.message.visibility !== 'internal').map((item) => item.message.content), [
     "你当前处于子agent状态\n\nbounded assignment",
   ]);
+  assert.equal(childRequest.inputMessages.at(-1).message.content, '你当前处于子agent状态\n\nbounded assignment');
+  assert.match(childRequest.inputMessages.find(item => item.message.name === 'individuation_preference').message.content,
+    /habits disabled; next-step prediction disabled/);
   assert.deepEqual(childRequest.tools, parentRequest.tools);
   assert.equal(childRequest.model, "reviewer-model");
   assert.equal(childRequest.providerBinding.bindingId, "binding_reviewer");

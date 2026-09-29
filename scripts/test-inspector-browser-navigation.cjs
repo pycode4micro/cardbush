@@ -43,6 +43,8 @@ app.whenReady().then(async () => {
   const store = new BrowserConfigStore(path.join(directory, 'browser.json'));
   ipcMain.handle('browser:settings-read', () => store.read());
   ipcMain.handle('browser:settings-update', (_event, input) => store.update(input));
+  const externallyOpened=[];
+  ipcMain.handle('shell:open-external', (_event, target) => { externallyOpened.push(target); });
   const errors = [];
   window.webContents.on('preload-error', (_event, _file, error) => errors.push(error.message));
   window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
@@ -84,6 +86,61 @@ app.whenReady().then(async () => {
     assert.equal(await original.executeJavaScript('retainedState'), 'search-state');
     assert.equal(await read('openedLinks.length'), 2, 'only the originating guest opens one inspector tab');
     assert.equal(BrowserWindow.getAllWindows().length, 1, 'no native popup is created');
+
+    const guestIds = await read('[...document.querySelectorAll("webview")].map(view=>view.getWebContentsId())');
+    await read('browserFixture.setLayout(browserFixture.tabs.reduce((tree,tab)=>browserFixture.addPanel(tree,tab.id),null));void 0');
+    await waitFor('document.querySelectorAll(".right-inspector-tab-page.active").length===2');
+    const widths = await read('[...document.querySelectorAll(".right-inspector-tab-page")].map(page=>page.getBoundingClientRect().width)');
+    assert.ok(Math.abs(widths[0]-widths[1])<2, 'two pages start at half width');
+    await until(async () => await original.executeJavaScript('innerWidth') < widths[0]+10, 'guest viewport follows half-size tile');
+    assert.equal(await read('document.querySelectorAll(".inspector-tile-frame > header,.inspector-tile-frame svg.lucide-external-link,.inspector-tile-frame svg.lucide-x").length'),0,'no duplicate tile title or global actions');
+    assert.equal(await read(`Array.from(document.querySelectorAll('.inspector-tile-frame')).every(frame=>{
+      const drag=frame.querySelector('.inspector-tile-drag').getBoundingClientRect(),address=frame.querySelector('form').getBoundingClientRect();
+      return Math.abs(drag.y+drag.height/2-address.y-address.height/2)<2 && frame.getBoundingClientRect().height<60;
+    })`),true,'drag handle and address share a single row');
+    await read('browserFixture.setCovered(true);void 0');
+    await waitFor('document.querySelector(".right-inspector-content").getBoundingClientRect().width>1000');
+    const coverWidth=await read('document.querySelector(".right-inspector").getBoundingClientRect().width');
+    await until(async () => Math.abs(await original.executeJavaScript('innerWidth')-(coverWidth/2-2))<3,'native guest fills half of full-cover content');
+    assert.ok(await original.executeJavaScript('innerWidth')>widths[0]+50,'full-cover enlarges the actual guest');
+    require('node:fs').writeFileSync(path.resolve('tmp/inspector-multipage.png'),(await window.webContents.capturePage()).toPNG());
+    await read('browserFixture.setCovered(false);void 0');
+    await until(async () => Math.abs(await original.executeJavaScript('innerWidth')-(widths[0]-2))<3,'leaving cover restores guest size');
+    await waitFor('Math.abs(document.querySelector(".right-inspector").getBoundingClientRect().width-820)<0.5','return animation settles before targeting drag handles');
+    await read('browserFixture.setLayout(browserFixture.resizePanelSplit(browserFixture.layout,"",.65));void 0');
+    await waitFor('document.querySelector(".inspector-tile-divider").getAttribute("aria-valuenow")==="65"');
+    const getSwapPoints=()=>read(`(()=>{const pages=document.querySelectorAll('.right-inspector-tab-page');
+      const from=pages[0].querySelector('.inspector-tile-drag').getBoundingClientRect(),to=pages[1].querySelector('.right-inspector-navigation').getBoundingClientRect();
+      return {from:{x:Math.round(from.x+from.width/2),y:Math.round(from.y+from.height/2)},to:{x:Math.round(to.x+to.width/2),y:Math.round(to.y+to.height/2)}};})()`);
+    let swapPoints=await getSwapPoints();
+    window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...swapPoints.from});
+    await waitFor('document.body.classList.contains("inspector-layout-resizing")');
+    await read('window.dispatchEvent(new Event("blur"));void 0');
+    window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...swapPoints.to});
+    assert.equal(await read('document.body.classList.contains("inspector-layout-resizing")'),false,'focus loss cancels drag and restores interaction');
+    assert.equal(await read('document.querySelector(".right-inspector-tab-page").style.left'),'0%','cancelled drag does not swap pages');
+    swapPoints=await getSwapPoints();
+    window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...swapPoints.from});
+    window.webContents.sendInputEvent({type:'mouseMove',button:'left',...swapPoints.to});
+    window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...swapPoints.to});
+    await waitFor('document.querySelector(".right-inspector-tab-page").style.left==="65%"');
+    assert.equal(await read('document.body.classList.contains("inspector-layout-resizing")'),false,'drag releases page interaction');
+    assert.deepEqual(await read('[...document.querySelectorAll("webview")].map(view=>view.getWebContentsId())'),guestIds, 'resize and swap preserve native guests');
+    assert.equal(await original.executeJavaScript('retainedState'),'search-state', 'page state survives multi-page layout');
+    await original.executeJavaScript('document.body.insertAdjacentHTML("beforeend","<input id=tile-draft style=position:fixed;top:5px;left:5px>");void 0');
+    await click(original,'#tile-draft');
+    await waitFor(`browserFixture.activeId===${JSON.stringify(searchUrl)}`, 'guest focus activates its tile for browser shortcuts');
+    await click(window.webContents,'#external');
+    await until(()=>externallyOpened.length===1,'global external action');
+    assert.equal(externallyOpened[0],searchUrl,'global action follows clicked guest');
+    await click(window.webContents,'.right-inspector-tab-page:nth-child(2) input[aria-label="网址"]');
+    await waitFor('browserFixture.activeId===browserFixture.tabs[1].id','address focus selects its page');
+    await click(window.webContents,'#external');
+    await until(()=>externallyOpened.length===2,'second global external action');
+    assert.equal(externallyOpened[1],origin+'/landing?query=%E6%A8%A1%E5%9E%8B','global action uses selected page current URL after redirect');
+    await read('browserFixture.setLayout(null);void 0');
+    await waitFor('document.querySelectorAll(".right-inspector-tab-page.active").length===1');
+    assert.deepEqual(await read('[...document.querySelectorAll("webview")].map(view=>view.getWebContentsId())'),guestIds, 'return to tabs preserves native guests');
 
     await selectSearch(); await click(original, '#script');
     await waitFor('browserFixture.tabs.length===3'); await activeReady();
@@ -206,6 +263,6 @@ app.whenReady().then(async () => {
     assert.equal(delayedDocuments.length, 1, 'a late successful load clears timeout UI without reloading');
     await read('window.setTimeout=normalTimeout; void 0');
     assert.deepEqual(errors, []);
-    console.log('Inspector browser: navigation, guest isolation, home pages, normal-scale resizing, lazy frames during scrolling and late-load recovery passed.');
+    console.log('Inspector browser: single-row chrome, real drag/cancel, full-cover guest sizing/restore, selected-page external action, preserved guests, navigation, home pages and loading recovery passed.');
   } finally { for (const response of [...delayedFrames, ...delayedDocuments]) response.end(); window.destroy(); server.close(); }
 }).then(() => app.exit(0), error => { console.error(error); app.exit(1); });

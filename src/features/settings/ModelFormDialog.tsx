@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, X } from 'lucide-react';
-import { modelApiBaseURL, modelHeadersSchema, type ModelApiProtocol } from '@cardbush/bush-protocol';
+import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, type ModelApiProtocol } from '@cardbush/bush-protocol';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import type { AppLanguage, ManagedModelConfig } from '../../types';
 import { ModelProviderSelect, customProviderValue, normalizeProvider } from './ModelProviderSelect';
@@ -22,6 +22,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   const [anthropicThinkingMode, setAnthropicThinkingMode] = useState<'adaptive' | 'budget'>(model?.anthropicThinkingMode ?? 'adaptive');
   const protocol = modelProtocols.find(item => item.value === apiProtocol)!;
   const [baseUrl, setBaseUrl] = useState(model?.baseUrl ?? '');
+  const gateway = modelApiGateway(baseUrl.trim());
   const [key, setKey] = useState('');
   const [context, setContext] = useState(String(model?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS));
   const [completion, setCompletion] = useState(String(model?.maxCompletionTokens ?? ''));
@@ -55,15 +56,23 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
       <p>{zh ? '选择接入协议，填写服务地址和模型信息。' : 'Choose an API protocol and configure the model connection.'}</p></div>
       <button type="button" className="icon-button" disabled={busy} aria-label={zh ? '关闭' : 'Close'} onClick={onCancel}><X size={18}/></button></header>
     <form className="model-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <fieldset disabled={busy} className="agent-model-fields model-dialog-body">
-        <div className="model-form-grid"><ModelProviderSelect language={language} value={providerSelection} options={providerOptions} onChange={setProviderSelection}/>
+      <div className="model-dialog-body">
+      <fieldset disabled={busy} className="agent-model-fields">
+        <div className="model-form-grid"><ModelProviderSelect language={language} value={providerSelection} options={providerOptions} onChange={value => {
+          setProviderSelection(value);
+          // Do not overwrite an existing connection when only changing its label.
+          if (!model && !baseUrl.trim() && value === 'openrouter') {
+            setBaseUrl('https://openrouter.ai/api/v1'); setApiProtocol('openai_chat_completions');
+          }
+          changedConnection();
+        }}/>
           <label className="settings-field"><span>{zh ? '接入协议' : 'API protocol'}</span><SettingsDropdown label={zh ? '接入协议' : 'API protocol'} value={apiProtocol} options={modelProtocols}
             onChange={value => { setApiProtocol(value as ModelApiProtocol); changedConnection(); }}/></label></div>
         {providerSelection === customProviderValue && <SettingsInput label={zh ? '模型商名称' : 'Provider name'} value={customProvider} placeholder="myprovider" onChange={setCustomProvider}/>}
         <SettingsInput label={zh ? 'API 地址' : 'API base URL'} type="url" value={baseUrl} placeholder={protocol.baseUrl} onChange={value => { setBaseUrl(value); changedConnection(); }}/>
         <p className="model-field-hint">{zh ? `填写 API 根地址，请求会发送到 ${protocol.path}。` : `Enter the API root; requests will use ${protocol.path}.`}</p>
         <SettingsInput label="API Key" type="password" value={key} placeholder={hasKey ? zh ? '已保存，留空保留' : 'Saved; leave blank to keep' : zh ? '模型服务的 API Key' : 'Provider API key'} onChange={value => { setKey(value); changedConnection(); }}/>
-        <div className="model-name-row"><SettingsInput label={zh ? '模型名称' : 'Model name'} value={name} placeholder={apiProtocol === 'anthropic_messages' ? 'claude-sonnet-4-6' : 'gpt-6-luna'} onChange={setName}/>
+        <div className="model-name-row"><SettingsInput label={zh ? '模型名称' : 'Model name'} value={name} placeholder={gateway === 'openrouter' ? 'provider/model-id' : apiProtocol === 'anthropic_messages' ? 'claude-sonnet-4-6' : 'gpt-6-luna'} onChange={setName}/>
           {discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim()} title={hasKey && !key.trim() ? zh ? '获取列表需要重新输入 API Key' : 'Re-enter the API key to fetch models' : undefined}
             onClick={async () => {
               const version = discoveryVersion.current; setDiscovering(true); setFormError('');
@@ -73,7 +82,8 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
               finally { if (mounted.current) setDiscovering(false); }
             }}><Download size={14}/>{discovering ? zh ? '获取中…' : 'Fetching…' : zh ? '获取列表' : 'Fetch models'}</button>}</div>
         {discovered.length > 0 && <SettingsDropdown label={zh ? '选择模型' : 'Choose model'} value={name} options={discovered.map(value => ({ value, label: value }))} onChange={setName}/>}
-        {/^https?:\/\/opencode\.ai(?:[/:]|$)/i.test(baseUrl.trim()) && <p className="model-connection-note">{zh ? '已支持 OpenCode：自动传入当前对话的会话 ID 和 CardBush 标识，无需手动填写。' : 'OpenCode: the conversation ID and CardBush user agent are sent automatically.'}</p>}
+        {gateway === 'opencode' && <p className="model-connection-note">{zh ? '已支持 OpenCode：自动传入当前对话的会话 ID 和 CardBush 标识，无需手动填写。' : 'OpenCode: the conversation ID and CardBush user agent are sent automatically.'}</p>}
+        {gateway === 'openrouter' && <p className="model-connection-note">{zh ? 'OpenRouter：自动携带当前对话 ID 和 CardBush 标识。模型名称请使用列表中的完整 ID，例如 provider/model-id。' : 'OpenRouter: the current conversation ID and CardBush identifier are sent automatically. Use the full model ID from the list, such as provider/model-id.'}</p>}
         <button type="button" className="model-advanced-disclosure" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><ChevronDown size={14}/>{zh ? '高级选项' : 'Advanced options'}</button>
         {advanced && <div className="model-advanced-fields">
           {apiProtocol === 'anthropic_messages' && <label className="settings-field"><span>{zh ? '思考参数模式' : 'Thinking parameters'}</span>
@@ -87,6 +97,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
         </div>}
         {(formError || error) && <p className="settings-inline-error" role="alert">{formError || error}</p>}
       </fieldset>
+      </div>
       <footer className="model-dialog-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{zh ? '取消' : 'Cancel'}</button>
         <button type="submit" className="primary-button" disabled={busy || !name.trim() || !provider}>{busy ? zh ? '保存中…' : 'Saving…' : zh ? '保存模型' : 'Save model'}</button></footer>
     </form>

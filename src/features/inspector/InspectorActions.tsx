@@ -1,4 +1,5 @@
-import { Clipboard, Clock3, FolderOpen, Globe2 } from 'lucide-react';
+import { Clipboard, Clock3, FolderOpen, Globe2, PanelsTopLeft, Plus, Star } from 'lucide-react';
+import { useBrowserBookmarks } from './useBrowserBookmarks';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage } from '../../types';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
@@ -14,6 +15,10 @@ export function InspectorActions({
   onOpenFiles,
   onOpenShadow,
   onOpenBrowser,
+  onAddPage,
+  onOpenBookmark,
+  onMultiPage,
+  multiPage = false,
 }: {
   language: AppLanguage;
   menu?: boolean;
@@ -24,9 +29,14 @@ export function InspectorActions({
   onOpenFiles: () => void;
   onOpenShadow: () => void;
   onOpenBrowser: () => void;
+  onAddPage?: () => void;
+  onOpenBookmark?: (url: string) => void;
+  onMultiPage?: () => void;
+  multiPage?: boolean;
 }) {
   const zh = language === 'zh';
   const shortcuts = useKeyboardShortcuts();
+  const bookmarks = useBrowserBookmarks();
   const actions = [
     ...(onOpenReview ? [{
       id: 'review', icon: <Clipboard size={16} aria-hidden="true" />,
@@ -59,6 +69,9 @@ export function InspectorActions({
       description: zh ? '打开可导航的空白页' : 'Open a navigable blank page',
       unavailable: '', onClick: onOpenBrowser,
     },
+    ...(onMultiPage ? [{ id: 'multi-page', icon: <PanelsTopLeft size={16} aria-hidden="true" />,
+      label: zh ? `${multiPage ? '退出' : ''}多页面 (Beta)` : `${multiPage ? 'Exit ' : ''}Multiple pages (Beta)`, shortcut: '', keyShortcut: undefined,
+      description: zh ? '适用于大屏，同时排列多个侧栏页面' : 'Arrange multiple inspector pages on a large display', unavailable: '', onClick: onMultiPage }] : []),
   ];
   return (
     <div className={menu ? 'right-inspector-add-menu' : 'right-inspector-start-actions'}
@@ -78,6 +91,13 @@ export function InspectorActions({
           {action.shortcut && <kbd title={action.shortcut}>{action.shortcut.replaceAll(' + ', '+')}</kbd>}
         </button>
       ))}
+      {onOpenBookmark && bookmarks.map(bookmark => <button key={bookmark.id} type="button" role={menu ? 'menuitem' : undefined}
+        className="inspector-bookmark-entry" title={bookmark.url} onClick={() => onOpenBookmark(bookmark.url)}>
+        <Star size={16} aria-hidden="true"/><span><strong>{bookmark.title}</strong>{menu && <small>{new URL(bookmark.url).host}</small>}</span>
+      </button>)}
+      {onAddPage && <button type="button" role={menu ? 'menuitem' : undefined} className="inspector-add-page" onClick={onAddPage}>
+        <Plus size={16} aria-hidden="true"/><span><strong>{zh ? '添加页面' : 'Add page'}</strong></span>
+      </button>}
     </div>
   );
 }

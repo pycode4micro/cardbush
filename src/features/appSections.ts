@@ -2,6 +2,7 @@ import type { AppSection } from '../types';
 
 export const sectionLabels: Record<AppSection, { zh: string; en: string }> = {
   agents: { zh: 'Agents', en: 'Agents' },
+  components: { zh: '组件', en: 'Components' },
   chat: { zh: '对话', en: 'Chat' },
   plugins: { zh: '插件', en: 'Plugins' },
   automations: { zh: '定时与自动化', en: 'Automations' },

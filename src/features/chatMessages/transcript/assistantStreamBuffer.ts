@@ -364,6 +364,7 @@ export function createAssistantStreamDeltaBuffer(
 
 export type AssistantStreamRoute = Pick<
   AssistantStreamChunk,
+  | 'finalResponse'
   | 'messageId'
   | 'assistantSegmentIndex'
   | 'segmentId'

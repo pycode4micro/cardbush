@@ -24,6 +24,7 @@ import type {
 import { SkillIcon } from '../skills/SkillIcon';
 import { AutomationPanel } from '../automations/AutomationPanel';
 import { PluginWorkspace } from '../plugins/PluginWorkspace';
+import { ComponentsApp } from '../components/ComponentsApp';
 
 import { RuntimeDelegationSurface } from '../../plugins/runtimeWorkspaces';
 
@@ -56,6 +57,7 @@ export function FeatureContentPanel({
   onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
+  if (section === 'components') return <ComponentsApp language={language}/>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
     onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;

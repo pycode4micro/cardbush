@@ -30,6 +30,7 @@ import { spawnResourceManagedProcess } from "./processResourceGuard.js";
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTerminalResult, renderTextFields } from "./toolResultText.js";
 import { workspaceEditRecoveryError } from './workspaceEditRecovery.js';
+import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 
 interface PathInput { path: string }
 interface ReadFileInput extends PathInput { encoding: BufferEncoding; range?: FileLineRange }
@@ -49,6 +50,7 @@ interface SearchInput extends PathInput {
   contextAfter: number;
 }
 interface TerminalInput {
+  exclusiveResources: string[];
   notifyOnExit: boolean;
   command: string;
   cwd: string;
@@ -73,7 +75,6 @@ interface Observation {
 export class WorkspaceObservationStore {
   readonly #observations = new Map<string, Map<string, Observation>>();
   readonly #projectObservations = new Map<string, Map<string, Observation>>();
-  readonly #mutations = new Set<string>();
   readonly #persistencePath?: string;
 
   constructor(options: { persistencePath?: string } = {}) {
@@ -107,15 +108,7 @@ export class WorkspaceObservationStore {
   }
 
   acquireMutation(path: string): () => void {
-    const identity = normalizeIdentity(path);
-    if (this.#mutations.has(identity)) {
-      throw codedError(
-        "workspace_resource_busy",
-        `A concurrent mutation already holds the resource lease for ${path}.`,
-      );
-    }
-    this.#mutations.add(identity);
-    return () => this.#mutations.delete(identity);
+    return runtimeExclusiveResources.acquire('workspace edit', dirname(path), [path], 'workspace_resource_busy');
   }
 
   #load(): void {
@@ -414,6 +407,10 @@ export function registerWorkspaceTools(
           minLength: 1,
           description: "Working directory. Use an absolute path when the Turn has no workspace.",
         },
+        exclusive_resources: {
+          type: 'array', maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 4096 },
+          description: 'Cooperative exclusive resources on this Runtime host. For parallel builds/tests, declare the same absolute project/output path (directories include descendants); for GPU or browser profiles use the same host:gpu or host:browser-profile label. Relative paths resolve against cwd. Leases last until the process tree exits, including after this call returns. A conflict returns terminal_resource_busy without starting the command; coordinate with the owning task before retrying. Does not grant permissions or lock external processes. Direct SSH is unsupported; use a CardBush Agent there.',
+        },
         yield_time_ms: {
           type: "integer",
           minimum: 1,
@@ -478,6 +475,7 @@ export function registerWorkspaceTools(
         signal: context.signal,
         shell: context.input.shell,
         sandbox: authorizedCommandSandbox(plan, context.capabilityIds),
+        exclusiveResources: context.input.exclusiveResources,
       });
     },
   });
@@ -758,6 +756,7 @@ function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput 
   }
   return {
     command: requiredString(object.command, "command", false),
+    exclusiveResources: decodeExclusiveResources(object.exclusive_resources),
     notifyOnExit: booleanValue(object.notify_on_exit, true),
     cwd: typeof object.cwd === "string" ? object.cwd.trim() : "",
     yieldTimeMs: Number(yieldTime),

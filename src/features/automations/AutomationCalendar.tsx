@@ -5,7 +5,9 @@ import type { AutomationJob } from '@cardbush/bush-protocol';
 import { chineseDate } from '../../../assets/skills/cardbush-docs/scripts/calendar-date.mjs';
 import { CalendarDataControls, useCalendarData } from './CalendarDataControls';
 import { CalendarDatePicker, type CalendarView } from './CalendarDatePicker';
-import { calendarDayKey, calendarEntriesForDays, calendarMonthDays, calendarQueryMatches, calendarYearDays, importedEntriesForDays, matchingCalendarDates, compactAutomationText, localDay, shiftCalendarDay, shiftCalendarMonth, type AutomationCalendarEntry } from './automationCalendarModel';
+import { calendarDayKey, calendarEntriesForDays, calendarMonthDays, calendarQueryMatches, calendarYearDays, importedEntriesForDays, matchingCalendarDates, localDay, shiftCalendarDay, shiftCalendarMonth, type AutomationCalendarEntry } from './automationCalendarModel';
+import { CalendarMonthGrid } from './CalendarMonthGrid';
+import { useCalendarDayDetails } from './useCalendarDayDetails';
 
 const fromKey = (key: string) => new Date(`${key}T12:00:00`);
 export function AutomationCalendar({ jobs, language, renderJob, onShowPlans, query = '' }: {
@@ -40,13 +42,16 @@ export function AutomationCalendar({ jobs, language, renderJob, onShowPlans, que
   useEffect(() => { if (focusDay.current) { dayButtons.current.get(selectedKey)?.focus(); focusDay.current = false; } }, [selectedKey, view]);
   const days = useMemo(() => view === 'year' ? calendarYearDays(selected.getFullYear()) : view === 'day' ? [selected] : calendarMonthDays(selected), [selected, view]);
   const entries = useMemo(() => calendarEntriesForDays(filteredJobs, days, now), [days, filteredJobs, now]);
-  const imported = useMemo(() => importedEntriesForDays(calendars, days, '', view === 'month' ? 1 : 0), [calendars, days, view]);
+  const imported = useMemo(() => importedEntriesForDays(calendars, days, '', 0), [calendars, days]);
   const selectedImports = useMemo(() => view === 'year' ? undefined : importedEntriesForDays(calendars, [selected], '', agendaLimit).get(selectedKey), [calendars, selected, selectedKey, agendaLimit, view]);
   useEffect(() => setAgendaLimit(100), [selectedKey, filter]);
   const count = (key: string) => (entries.get(key)?.length ?? 0) + (imported.get(key)?.count ?? 0);
   const selectedEntries = entries.get(selectedKey) ?? [], selectedImported = selectedImports?.items ?? [];
   const eventPlans = filteredJobs.filter(job => job.state === 'active' && job.trigger.kind === 'event').length;
   const lunar = (key: string) => data.state.chineseLunar && key >= '1900-01-01' && key <= '2199-12-31' ? chineseDate(key) : undefined;
+  const details = useCalendarDayDetails({ jobs: filteredJobs, calendars, chineseLunar: data.state.chineseLunar, now, language,
+    onOpenDay: date => { setSelected(localDay(date)); setView('day'); } });
+  useEffect(() => { details.close(); }, [view, filter, selected.getMonth(), selectedYear]);
   const move = (amount: number) => {
     if (filter) {
       const current = view === 'year' ? selectedKey.slice(0, 4) : view === 'month' ? selectedKey.slice(0, 7) : selectedKey;
@@ -78,21 +83,15 @@ export function AutomationCalendar({ jobs, language, renderJob, onShowPlans, que
     event.preventDefault(); focusDay.current = true; setSelected(next);
   };
   const dayButton = (day: Date, sparse = false) => {
-    const key = calendarDayKey(day), items = entries.get(key) ?? [], notes = imported.get(key)?.items ?? [], lunarDate = lunar(key);
+    const key = calendarDayKey(day), handlers = details.dayProps(day);
     const dateLabel = day.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
-    return <button type="button" className="automation-calendar-date" key={key} data-date={key} data-outside={!sparse && day.getMonth() !== selected.getMonth()}
+    return <button type="button" className="calendar-day-button automation-calendar-date" key={key} data-date={key} data-outside={!sparse && day.getMonth() !== selected.getMonth()}
       data-selected={key === selectedKey} data-today={key === todayKey} tabIndex={key === selectedKey || sparse ? 0 : -1}
       ref={node => { if (node) dayButtons.current.set(key, node); else dayButtons.current.delete(key); }}
-      aria-current={key === todayKey ? 'date' : undefined} aria-label={`${dateLabel} · ${count(key)} ${zh ? '项安排' : 'items'}${lunarDate ? ` · ${lunarDate.fullLabel}` : ''}`}
-      onClick={() => setSelected(localDay(day))} onKeyDown={event => keyDown(event, day)}>
-      <span className="automation-calendar-date-number">{sparse ? day.toLocaleDateString(locale, { month: 'numeric', day: 'numeric' }) : day.getDate()}</span>
-      {lunarDate && <span className="calendar-lunar-date" title={lunarDate.fullLabel}>{lunarDate.label}</span>}
-      <span className="automation-calendar-date-items" aria-hidden="true">
-        {items.slice(0, 1).map(item => <span className="automation-calendar-chip" data-recorded={item.scheduledCount === 0} key={item.job.id}>{compactAutomationText(item.job.name)}</span>)}
-        {notes.slice(0, items.length ? 0 : 1).map(({ calendar, entry }) => <span className="automation-calendar-chip calendar-import-chip" key={`${calendar.id}:${entry.id}`}>{compactAutomationText(entry.title)}</span>)}
-        {count(key) > 1 && <span className="automation-calendar-more">+{count(key) - 1}</span>}
-      </span>
-      {count(key) > 0 && <span className="automation-calendar-marker" aria-hidden="true"><i/>{count(key) > 1 && <small>{count(key)}</small>}</span>}
+      aria-current={key === todayKey ? 'date' : undefined} aria-label={`${dateLabel} · ${count(key)} ${zh ? '项安排' : 'items'}`} {...handlers}
+      onClick={event => { setSelected(localDay(day)); handlers.onClick(event); }} onKeyDown={event => keyDown(event, day)}>
+      <span className="calendar-day-number">{sparse ? day.toLocaleDateString(locale, { month: 'numeric', day: 'numeric' }) : day.getDate()}</span>
+      {count(key) > 0 && <i className="calendar-day-dot" aria-hidden="true"/>}
     </button>;
   };
   const agenda = <section className="automation-calendar-agenda" aria-label={zh ? '当天安排' : 'Selected day schedule'}>
@@ -134,20 +133,22 @@ export function AutomationCalendar({ jobs, language, renderJob, onShowPlans, que
       return <button type="button" className="calendar-year-month" data-month={prefix} key={month} onClick={() => { setSelected(hits[0] ?? monthDate); setView('month'); }}>
         <strong>{monthDate.toLocaleDateString(locale, { month: 'long' })}<small>{hits.length > 0 && `${hits.length} ${zh ? '天' : 'days'}`}</small></strong>
         <span className={filter ? 'calendar-year-matches' : 'calendar-mini-grid'}>{!filter && Array.from({ length: (monthDate.getDay() + 6) % 7 }, (_, index) => <i key={`empty-${index}`}/>)}
-          {(filter ? hits : actualDays).map(day => <span key={calendarDayKey(day)} data-has-items={count(calendarDayKey(day)) > 0} data-today={calendarDayKey(day) === todayKey}>{day.getDate()}</span>)}</span>
+          {(filter ? hits : actualDays).map(day => {
+            const hover = details.dayProps(day);
+            return <span key={calendarDayKey(day)} data-date={calendarDayKey(day)} data-has-items={count(calendarDayKey(day)) > 0} data-today={calendarDayKey(day) === todayKey}
+              onMouseOver={hover.onMouseOver} onMouseLeave={hover.onMouseLeave}>{day.getDate()}</span>;
+          })}</span>
       </button>;
     })}</div> : <div className="automation-calendar-layout">
       {view === 'month' && <div className="automation-calendar-month">
         {filter ? <div className="calendar-matching-dates">{periodMatches.slice(0, dateLimit).map(key => dayButton(fromKey(key), true))}{!periodMatches.length && <p className="automation-hint">{zh ? '本月没有匹配日期' : 'No matching dates this month'}</p>}
           {periodMatches.length > dateLimit && <button type="button" onClick={() => setDateLimit(limit => limit + 48)}>{zh ? '更多日期' : 'More dates'}</button>}</div>
-          : <div className="automation-calendar-grid" role="grid" aria-label={title}>
-            <div className="automation-calendar-weekdays" role="row">{(zh ? ['一', '二', '三', '四', '五', '六', '日'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']).map(day => <span role="columnheader" key={day}>{day}</span>)}</div>
-            {Array.from({ length: 6 }, (_, week) => <div role="row" className="automation-calendar-week" key={week}>{days.slice(week * 7, week * 7 + 7).map(day => <div role="gridcell" aria-selected={calendarDayKey(day) === selectedKey} key={calendarDayKey(day)}>{dayButton(day)}</div>)}</div>)}
-          </div>}
+          : <CalendarMonthGrid className="automation-calendar-grid" days={days} month={selected.getMonth()} language={language} renderDay={day => dayButton(day)}/>}
       </div>}
-      {(!filter || matches.includes(selectedKey)) && agenda}
+      {view === 'day' && (!filter || matches.includes(selectedKey)) && agenda}
     </div>}
     {eventPlans > 0 && <button type="button" className="automation-calendar-events" onClick={onShowPlans}>{zh ? `${eventPlans} 个事件计划，无固定日期` : `${eventPlans} event plans without fixed dates`}<ChevronRight size={14}/></button>}
     <CalendarDataControls data={data} zh={zh}/>
+    {details.popover}
   </section>;
 }

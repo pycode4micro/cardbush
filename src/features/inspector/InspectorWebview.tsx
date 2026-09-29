@@ -63,6 +63,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     navigation: InspectorNavigationState,
   ) => void;
   onOpenTarget: (detail: InspectorOpenDetail) => void;
+  onActivate?: (identity: string) => void;
 }>(function InspectorWebview({
   identity,
   target,
@@ -72,8 +73,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   language,
   onNavigationStateChange,
   onOpenTarget,
+  onActivate,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
+  const activateRef = useRef(onActivate); activateRef.current = onActivate;
   const webviewDomReadyRef = useRef(false);
   const requestedUrlRef = useRef(source);
   const filePath = inspectorFilePath(target);
@@ -283,6 +286,11 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       publishNavigation();
     };
     const updateTitle = () => publishNavigation();
+    const stopActivation = window.cardbushDesktop?.onInspectorGuestActivated?.(detail => {
+      if (!webview.isConnected || !webviewDomReadyRef.current) return;
+      try { if (webview.getWebContentsId?.() === detail.guestWebContentsId) activateRef.current?.(identity); }
+      catch { /* The guest may have closed while its activation was in flight. */ }
+    });
     const stopOpenLink = window.cardbushDesktop?.onInspectorOpenLink?.((detail) => {
       if (!webview.isConnected) return;
       try {
@@ -335,6 +343,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webview.addEventListener('page-title-updated', updateTitle);
     webview.addEventListener('context-menu', contextMenu);
     return () => {
+      stopActivation?.();
       stopOpenLink?.();
       window.clearTimeout(deadline);
       webview.removeEventListener('dom-ready', ready);

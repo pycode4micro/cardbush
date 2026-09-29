@@ -7,6 +7,13 @@ import { RequestBodyBudgetError } from "./requestBodyBudget.js";
 type FailureEvent = Extract<ModelEvent, { kind: "response_failed" }>;
 type Diagnostics = NonNullable<FailureEvent["diagnostics"]>;
 
+/** Read the typed provider body, not arbitrary text wrapped by the SDK. */
+export function anthropicValidationMessage(error: unknown): string | undefined {
+  if (!(error instanceof Anthropic.APIError) || error.status !== 400 || error.type !== 'invalid_request_error') return;
+  const body = error.error as { error?: { message?: unknown } } | undefined;
+  return typeof body?.error?.message === 'string' ? body.error.message : undefined;
+}
+
 /** All wire decoders report repairable call failures through the same Runtime contract. */
 export class ProviderToolCallError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -96,7 +103,11 @@ export function providerFailureEvent(
   // An explicit HTTP response wins over any provider-supplied error code.
   // In particular, a 401 with code="ECONNRESET" must never become a socket retry.
   if ((error instanceof OpenAI.APIError || error instanceof Anthropic.APIError) && error.status !== undefined) {
-    const code = 'code' in error && typeof error.code === "string" && error.code ? error.code : `provider_http_${error.status}`;
+    // Anthropic reports input overflow as a typed 400 rather than an OpenAI
+    // context code. Only its explicit overflow message enters shared recovery.
+    const overflow = /^prompt is too long(?::|\s*$)/i.test(anthropicValidationMessage(error) ?? '');
+    const code = overflow ? 'context_length_exceeded'
+      : 'code' in error && typeof error.code === "string" && error.code ? error.code : `provider_http_${error.status}`;
     const status = error.status;
     return {
       ...base,

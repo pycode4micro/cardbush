@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { toolDefinitionSchema } from "./tool.js";
-import { runtimeProviderBindingRefSchema } from "./providerBinding.js";
+import { runtimeProviderBindingRefSchema, type ModelApiProtocol } from "./providerBinding.js";
 
 export const BUSH_MODEL_REQUEST_PROTOCOL = "bush.model_request.v1" as const;
 export const BUSH_MODEL_EVENT_PROTOCOL = "bush.model_event.v1" as const;
@@ -99,6 +99,20 @@ export const reasoningEffortSchema = z.enum([
 
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
+/** Product-supported levels; wire protocols need not expose identical controls. */
+export function reasoningEffortsForProtocol(protocol?: ModelApiProtocol): ReasoningEffort[] {
+  return protocol === 'openai_chat_completions'
+    ? ['low', 'medium', 'high'] : [...reasoningEffortSchema.options];
+}
+
+/** Keep saved conversations, remote clients and the picker on the same mapping. */
+export function protocolReasoningEffort(protocol: 'openai_chat_completions', effort: ReasoningEffort): 'low' | 'medium' | 'high';
+export function protocolReasoningEffort(protocol: ModelApiProtocol | undefined, effort: ReasoningEffort): ReasoningEffort;
+export function protocolReasoningEffort(protocol: ModelApiProtocol | undefined, effort: ReasoningEffort): ReasoningEffort {
+  if (protocol !== 'openai_chat_completions') return effort;
+  return effort === 'max' || effort === 'xhigh' ? 'high' : effort === 'none' ? 'low' : effort;
+}
+
 /**
  * Ephemeral provider-side continuation for consecutive model rounds in one
  * active Turn. Runtime checkpoints intentionally omit this state and rebuild
@@ -183,6 +197,29 @@ export const providerCompatibilityDiagnosticSchema = z.object({
   }).optional(),
 });
 export type ProviderCompatibilityDiagnostic = z.infer<typeof providerCompatibilityDiagnosticSchema>;
+
+// Allowlisted stream facts only; never persist text, thinking, tool arguments or headers.
+export const providerStreamDiagnosticSchema = z.object({
+  format: z.literal('anthropic.messages.v1'),
+  stage: z.enum(['request', 'response_headers', 'event', 'progress', 'idle', 'eof', 'error', 'closed']),
+  elapsedMs: z.number().int().nonnegative(),
+  idleMs: z.number().int().nonnegative(),
+  eventCount: z.number().int().nonnegative(),
+  lastEventType: z.enum(['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']).optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  thinkingMode: z.enum(['adaptive', 'enabled', 'disabled', 'between_tools']).optional(),
+  effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  stopReason: z.enum(['end_turn', 'max_tokens', 'stop_sequence', 'tool_use', 'pause_turn', 'refusal', 'model_context_window_exceeded', 'unknown']).optional(),
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  thinkingChars: z.number().int().nonnegative(),
+  textChars: z.number().int().nonnegative(),
+  toolArgumentChars: z.number().int().nonnegative(),
+  messageStopReceived: z.boolean(),
+  aborted: z.boolean(),
+});
+export type ProviderStreamDiagnostic = z.infer<typeof providerStreamDiagnosticSchema>;
 
 export const modelEventSchema = z.discriminatedUnion("kind", [
   eventBaseSchema.extend({

@@ -1,4 +1,5 @@
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
+import { individuationSettingsSchema } from '@cardbush/bush-protocol';
 import { AgentSharedConfiguration, recoverSharedConfiguration } from './agentSharedConfiguration.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
@@ -28,6 +29,7 @@ const sendSchema = z.object({
   userMessageMetadata: z.record(z.string(), z.unknown()).optional(),
   visionEnabled: z.boolean().optional(),
   sourceEnabled: z.boolean().optional(),
+  individuation: individuationSettingsSchema.optional(),
   conversationStyle: z.object({ mode: z.enum(['natural', 'professional', 'concise', 'custom']), customTone: z.string().max(100_000) }).strict().optional(),
   turnId: id.optional(), supersession: sessionSupersessionSchema.extend({ expectedRevision: z.number().int().nonnegative() }).optional(), files: z.array(z.string()).optional(), images: z.array(z.string()).optional(), goalObjective: z.string().trim().min(1).optional(),
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
@@ -151,7 +153,7 @@ export class AgentService {
       await service.runtime.transport.sendCommand({ kind: 'runtime.automation_start', payload: {} });
       service.#pump();
       return service;
-    } catch (error) { if (service) { await service.runtime.close(); await service.#network.close(); } await release(); throw error; }
+    } catch (error) { if (service) { await service.product.stopMaintenance(); await service.runtime.close(); await service.#network.close(); } await release(); throw error; }
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
@@ -515,7 +517,7 @@ export class AgentService {
       const request = createProductAgentTurnRequest({
         requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, messageId: `message-${job.id}`, createdAt: job.createdAt,
         userText: job.input.text, userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
-        sourceEnabled: job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false), conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
+        sourceEnabled: job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false), individuation: job.input.individuation, conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
         maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens,
         tools: catalog.filter(tool => tool.name !== 'update_goal' || activeGoal?.status === 'active'), projectDir, workspaceDir,
         instructionDocuments: await readAgentInstructionDocuments(this.instructions, projectDir ?? workspaceDir, workspaceDir),
@@ -609,6 +611,7 @@ export class AgentService {
   async close() {
     if (this.#closing) return; this.#closing = true;
     await this.#mutations;
+    await this.product.stopMaintenance();
     await this.#marketplaces.close();
     for (const abort of this.#busy.values()) abort.abort();
     await this.runtime.close();

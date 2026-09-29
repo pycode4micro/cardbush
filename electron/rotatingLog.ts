@@ -7,7 +7,10 @@ export function appendRotatingLog(file: string, value: unknown, maxBytes = 8 * 1
   let line = JSON.stringify(value);
   if (Buffer.byteLength(line, 'utf8') > maxBytes) line = JSON.stringify({ truncated: true, preview: line.slice(0, Math.floor(maxBytes / 8)) });
   line += '\n';
-  if (existsSync(file) && statSync(file).size + Buffer.byteLength(line) > maxBytes) {
+  const current = existsSync(file) ? statSync(file) : undefined;
+  // Rotate at the next day's first write as well, so a quiet but continuously used log can age out.
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (current && (current.size + Buffer.byteLength(line) > maxBytes || current.mtimeMs < today.getTime())) {
     rmSync(`${file}.3`, { force: true });
     for (let index = 2; index >= 1; index--) if (existsSync(`${file}.${index}`)) renameSync(`${file}.${index}`, `${file}.${index + 1}`);
     renameSync(file, `${file}.1`);

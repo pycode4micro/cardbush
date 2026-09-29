@@ -1,6 +1,7 @@
 import { conversationRuntime, conversationInteractions, type ConversationRuntime } from './conversationRuntime';
 import { readAgentInstructions } from './globalInstructions';
 import { resolveConversationStyle } from '../features/settings/conversationStyle';
+import { readIndividuation } from '../features/settings/individuation';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
 import type {
   RuntimeEvent,
@@ -157,6 +158,7 @@ export async function streamRuntimeChat(
       disabledSkills: request.disabledSkills,
       planEnabled: request.referencePlanMode !== 'off',
       sourceEnabled: request.sourceEnabled,
+      individuation: readIndividuation(),
       maxOutputTokens: configuredMaxOutputTokens,
       maxContextTokens,
       reasoningEffort: reasoningEffort(request.reasoningLevel),

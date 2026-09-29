@@ -31,8 +31,8 @@ test('only explicit launchable pages enter the app center; connectors, tools and
     { id: 'removing', installed: true, enabled: true, removalPending: true, components: [canvas] },
     { id: 'invalid', installed: true, enabled: true, components: [{ ...canvas, app: { kind: 'url', url: 'javascript:alert(1)' } }] }];
   const entries = applicationCatalog('zh', plugins, normalizeAppCenterPreferences(null));
-  assert.equal(entries.length, 4); assert.deepEqual(entries.slice(0, 3).map(app => app.id), ['builtin:plugins', 'builtin:automations', 'builtin:settings']);
-  const app = entries[3]; assert.equal(app.id, 'plugin:demo:canvas'); assert.equal(app.launch.url, canvas.app.url);
+  assert.equal(entries.length, 5); assert.deepEqual(entries.slice(0, 4).map(app => app.id), ['builtin:plugins', 'builtin:automations', 'builtin:settings', 'builtin:components']);
+  const app = entries[4]; assert.equal(app.id, 'plugin:demo:canvas'); assert.equal(app.launch.url, canvas.app.url);
   assert.deepEqual(applicationReference(app), { kind: 'application', id: app.id, title: 'Canvas', applicationKind: 'plugin', target: 'demo', componentId: 'canvas' });
   assert.ok(entries.every(app => !('command' in app) && !('toolCallId' in app)));
 });
@@ -42,7 +42,7 @@ test('drag reorder supports moving before an item, appending and adding without 
   assert.deepEqual(moveApplication(['a', 'b'], 'c', 'b'), ['a', 'c', 'b']);
   assert.deepEqual(moveApplication(['a', 'b'], 'a', 'a'), ['a', 'b']);
   const prefs = normalizeAppCenterPreferences({ order: ['builtin:settings', 'builtin:plugins', 'builtin:settings'] });
-  assert.deepEqual(applicationCatalog('zh', [], prefs).map(app => app.id), ['builtin:settings', 'builtin:plugins', 'builtin:automations']);
+  assert.deepEqual(applicationCatalog('zh', [], prefs).map(app => app.id), ['builtin:settings', 'builtin:plugins', 'builtin:automations', 'builtin:components']);
 });
 
 test('local apps persist icons and dock pins, reject invalid metadata, and deduplicate Windows paths', () => {

@@ -12,6 +12,7 @@ const local = file => resolve(file).replaceAll('\\', '/');
 const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationPanel} from '${local('src/features/automations/AutomationPanel.tsx')}';
+import {CalendarWidget} from '${local('src/features/automations/CalendarWidget.tsx')}';
 import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
 import chinaCalendar from '${local('assets/calendars/china.json')}';
 import usCalendar from '${local('assets/calendars/us.json')}';
@@ -43,7 +44,9 @@ window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return(
  else if(command.action==='delete')state.jobs=state.jobs.filter(job=>job.id!==command.id);
  notify();return structuredClone(job);
 }};
-createRoot(document.getElementById('root')).render(<div className="app theme-dark" style={{display:'flex',flexDirection:'column',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
+const root=createRoot(document.getElementById('root'));
+window.renderCalendarWidgets=(language='zh',count=1)=>root.render(<div className="app theme-dark" style={{display:'flex',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}>{Array.from({length:count},(_,i)=><div className="widget-fixture" key={i} style={{width:300,height:310,overflow:'hidden',margin:20,flex:'none'}}><CalendarWidget language={language}/></div>)}</div>);
+root.render(<div className="app theme-dark" style={{display:'flex',flexDirection:'column',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
 `;
 try {
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{

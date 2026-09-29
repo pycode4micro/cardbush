@@ -87,6 +87,18 @@ test('parallel selection is sticky and permission requests remain visible', () =
   assert.equal(api.selectToolActivityExecution([first, { ...second, state: 'awaiting_permission' }], 'first').id, 'second');
 });
 
+test('JSON-encoded legacy locale titles follow language switching; malformed JSON uses the tool fallback', () => {
+  const titles = { zh: '检查接收端改动', en: 'Inspect receiver changes' };
+  const legacy = { ...record, toolCall: { ...record.toolCall, name: 'terminal_exec' }, display: { title: JSON.stringify(titles) } };
+  const row = api.runtimeHistoryToolExecution(legacy);
+  for (const language of ['zh', 'en', 'zh']) assert.equal(api.toolActionTitle(row, language), titles[language]);
+  for (const title of ['{"zh":"unfinished', '{"command":"private"}', '["private"]']) {
+    row.metadata.displayTitle = title;
+    assert.equal(api.toolActionTitle(row, 'zh'), '执行命令');
+    assert.equal(api.toolActionTitle(row, 'en'), 'Run command');
+  }
+});
+
 test('opaque IDs never reorder calls with equal ordering facts', () => {
   const calls = ['job-9', 'job-10', 'job-11'].map(id => ({ ...api.toolLifecycle(event(1, 'tool_returned')), id }));
   assert.deepEqual(calls.sort(api.compareToolExecutionOrder).map(row => row.id), ['job-9', 'job-10', 'job-11']);

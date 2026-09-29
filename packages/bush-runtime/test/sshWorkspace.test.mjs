@@ -74,6 +74,10 @@ test('built-in files/terminals route via SSH, permissions name remote paths, and
   assert.equal((await execute('terminal_exec',{cwd:'.',command:'pwd',shell:'posix',yield_time_ms:1})).kind,'returned');
   assert.ok(permissions[0].targets[0].value.startsWith('ssh://'));
   const before=requests.filter(item=>item.action==='execute').length;
+  const permissionCount=permissions.length;
+  assert.match(JSON.stringify(await execute('terminal_exec',{cwd:'.',command:'pwd',shell:'posix',yield_time_ms:1,exclusive_resources:['host:gpu']})),/terminal_resource_coordination_unavailable/);
+  assert.equal(permissions.length,permissionCount,'unsupported coordination must fail before asking permission');
+  assert.equal(requests.filter(item=>item.action==='execute').length,before,'never silently drop the resource declaration on SSH');
   assert.match(JSON.stringify(await execute('terminal_exec',{cwd:'.',command:'rm -rf .',shell:'posix',yield_time_ms:1})),/protected_path_delete_denied/);
   assert.equal(requests.filter(item=>item.action==='execute').length,before);
   const unavailable=await setup(undefined)('read_file',{path:'package.json'});assert.notEqual(unavailable.kind,'returned');assert.match(JSON.stringify(unavailable),/SSH/);

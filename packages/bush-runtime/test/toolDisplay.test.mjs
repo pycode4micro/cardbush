@@ -29,6 +29,8 @@ test('model requires localized descriptions while native schemas stay immutable 
 });
 
 for (const title of ['核对产品资料', { zh: '核对产品资料', en: 'Check product information' },
+  JSON.stringify({ zh: '核对产品资料', en: 'Check product information' }),
+  '{"zh":"truncated', '["not a title"]',
   { zh: '  核对\n产品资料\u202e  ', en: 'Check '.repeat(100) }, { zh: null, en: 'Check files' },
   undefined, '', null, { reason: 'not a title' }, '  核对\n产品资料\u202e  ', '界'.repeat(500)]) {
   test(`title is presentation only, including invalid/long values: ${String(title).slice(0, 25)}`, async () => {

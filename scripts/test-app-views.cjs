@@ -65,6 +65,18 @@ async function buildViews() {
     'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-cover' ? [
+      'src/features/composer/ComposerPortalContext.ts', 'src/features/inspector/InspectorTabPages.tsx',
+      'src/features/inspector/InspectorTileFrame.tsx', 'src/features/inspector/panelLayout.ts',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components' ? [
+      'src/features/components/ComponentsApp.tsx', 'src/features/components/HtmlComponentSurface.tsx',
+      'src/features/components/HtmlComponentContext.ts', 'src/features/components/componentStore.ts',
+      'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',
+      'src/features/inspector/InspectorTabPages.tsx', 'src/features/inspector/InspectorTileFrame.tsx',
+      'src/features/inspector/panelLayout.ts', 'src/features/inspector/BrowserBookmarkButton.tsx',
+      'src/features/inspector/useBrowserBookmarks.ts', 'src/features/composer/ComposerPortalContext.ts',
+    ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
     ] : []),
@@ -170,6 +182,7 @@ app.whenReady().then(async () => {
     });
   }
   const errors = [];
+  if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components') require('../dist-electron/sandboxFrameGuard.js').installSandboxFrameNavigationGuard(window.webContents);
   window.webContents.on('console-message', event => {
     if (/Maximum update depth|Invalid hook call|ResizeObserver loop|passive event listener|Encountered two children with the same key/.test(event.message)) errors.push(event.message);
   });
@@ -198,7 +211,9 @@ app.whenReady().then(async () => {
       fs.unlinkSync(host);
     } else await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
     await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/theme.css'), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8')
-      + '\n' + fs.readFileSync(path.join(root, 'src/features/chatMessages/turn-artifacts.css'), 'utf8'));
+      + '\n' + fs.readFileSync(path.join(root, 'src/features/chatMessages/turn-artifacts.css'), 'utf8')
+      + '\n' + fs.readFileSync(path.join(root, 'src/features/components/components.css'), 'utf8')
+      + '\n' + fs.readFileSync(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8'));
     await run(`
       window.failures = [];
       addEventListener('error', event => failures.push(event.message));
@@ -247,6 +262,12 @@ app.whenReady().then(async () => {
       };
       if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components') {
+      await require('./helpers/html-components-ui.cjs')({ run, until, pause, window, root });
+      await require('./helpers/builtin-components-ui.cjs')({ run, until, pause, window, root });
+      await require('./helpers/welcome-layout-ui.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no component/workspace renderer errors'); assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation') {
       await require('./helpers/page-navigation.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no page navigation renderer errors'); assert.deepEqual(errors, []); return;
@@ -352,7 +373,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['inspector-cover', 'model-protocols', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -530,6 +551,16 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-cover') {
+      await require('./helpers/inspector-cover.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no cover/composer renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'model-protocols') {
+      await require('./helpers/composer-model-protocols.cjs')({ run, until, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'model-protocols') {
+      assert.deepEqual(await run('failures'), [], 'no protocol picker renderer errors'); assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text') {
       await require('./helpers/composer-pasted-text.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no pasted text renderer errors'); assert.deepEqual(errors, []); return;

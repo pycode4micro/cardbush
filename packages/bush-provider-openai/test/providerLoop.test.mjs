@@ -64,7 +64,12 @@ function fixture(t, adapter, steps, denied = false) {
       if (String(url).endsWith('/input_tokens')) return Response.json({ input_tokens: 100 });
       const step = steps[calls.length];
       assert.ok(step, `Unexpected additional generation: ${adapter}`);
-      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      const body = JSON.parse(init.body);
+      if (adapter === 'anthropic_messages') {
+        assert.equal(body.messages.at(-1).role, 'user', 'Repair/continuation must not create assistant prefill');
+        assert.doesNotMatch(body.system ?? '', /\[tool_call_repair\]/, 'Mid-turn notices must not rewrite the system prefix');
+      }
+      calls.push({ url: String(url), body });
       if (step === 'cancel') { controller.abort(); throw controller.signal.reason; }
       if (step === 'retry') return Response.json({ error: { type: 'overloaded_error', message: 'Temporary overload' } }, { status: 503 });
       return wire(adapter, step);

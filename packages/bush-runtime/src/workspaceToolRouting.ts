@@ -80,6 +80,9 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       return uri;
     }
     const uri = chosenRemote(context);
+    if (uri && name === 'terminal_exec' && (input.exclusiveResources as unknown[] | undefined)?.length) {
+      throw Object.assign(new Error('Direct SSH does not support exclusive_resources. No command was sent. Use a CardBush Agent on that host for coordinated execution.'), { code: 'terminal_resource_coordination_unavailable' });
+    }
     const path = input.path ?? input.cwd;
     if (!uri && typeof path === 'string' && path.startsWith('ssh:')) throw Error('An SSH path requires an explicit SSH environment; it cannot be used as a local path.');
     return uri;

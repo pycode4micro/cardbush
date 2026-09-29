@@ -27,6 +27,7 @@ export function assistantStreamChunk(
     // assistant messages across the Turn's tool loop. Route by messageId.
     segmentId: event.payload.segmentId,
     segmentOrdinal: event.payload.ordinal,
+    ...(event.payload.finalResponse !== undefined ? { finalResponse: event.payload.finalResponse } : {}),
   };
 }
 

@@ -25,12 +25,12 @@ app.whenReady().then(async () => {
       import {RightInspectorResizer} from ${JSON.stringify(path.join(root,'src/components/RightInspectorResizer.tsx'))};
       const noop=()=>{};
       function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[sharedVision,setSharedVision]=useState(false);window.fixtureVision=sharedVision;const[viewActive,setViewActive]=useState(true);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:window.models.models});
-        window.refreshAgentConnections=agents.refresh;
+        const[composerTarget,setComposerTarget]=useState(null);window.fixtureComposerTarget=setComposerTarget;window.refreshAgentConnections=agents.refresh;
         window.openFixtureSettings=(id,section='mcp')=>setSetting({id,section});
         const open=useCallback((id,title)=>tabs.openTab({id,title,kind:'conversation'}),[tabs.openTab]);const close=useCallback(id=>tabs.closeTabs(new Set([id])),[tabs.closeTabs]);
         return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.tabs.length>0}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button><button onClick={()=>setViewActive(false)}>Local view</button><button onClick={()=>setViewActive(true)}>Agent view</button>{['a1','a2','a3'].map(id=><button key={id} onClick={()=>agents.select('a',id)}>{id}</button>)}</nav>
         <ChatSidebar language="zh" section="agents" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}} agents={agents.connections} activeAgentId={agents.selectedId} agentSessions={agents} onAgentSelect={agents.select} onSectionChange={()=>agents.select('')} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop} onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenPlugins={noop} onOpenSearch={noop}/>
-        <main className="main-stage" hidden={!!setting}><AgentsView active={viewActive} language="zh" agents={agents} visualInputEnabled={sharedVision} onOpenSettings={section=>setSetting({section})}/></main>
+        <main className="main-stage" hidden={!!setting}><AgentsView composerPortalTarget={composerTarget} active={viewActive} language="zh" agents={agents} visualInputEnabled={sharedVision} onOpenSettings={section=>setSetting({section})}/></main>
         {setting&&<SettingsView active onReady={noop} language="zh" languageMode="zh" systemLanguage="zh" themePreference="dark"
           agentConnections={agents.connections}
           initialSection={setting.section} initialPluginTab="plugins" settings={preferences} onSettingsChange={fn=>setPreferences(current=>{const next=fn(current);if(JSON.stringify(next.managedModelConfigs)!==JSON.stringify(current.managedModelConfigs)){window.models={defaultModelId:'model',models:next.managedModelConfigs};window.calls.push({id:'shared',operation:'product.command',input:{kind:'models.update',config:window.models}});}return next;})}
@@ -119,6 +119,10 @@ app.whenReady().then(async () => {
     if (!process.argv.includes('--images')) await run("localStorage.setItem('a:cardbush.permission_mode','user_free');localStorage.setItem('b:cardbush.permission_mode','all_free');undefined;");
     await run(js + '\n;undefined;');
     await until("document.querySelectorAll('.agents-card').length===3",'Agent overview renders');
+    if (process.argv.includes('--quick-input')) {
+      await require('./helpers/agent-quick-input.cjs')({ run, until, pause });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.argv.includes('--plugin-sync')) {
       await require('./helpers/agent-plugin-sync.cjs')({ run, until, pause, win, root });
       assert.deepEqual(errors, []); return;

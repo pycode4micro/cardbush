@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { ElectronProductHostController } from '../dist-electron/productHostController.mjs';
 import { PluginMarketplaceService } from '../dist-electron/pluginMarketplaces.js';
-import { collectTemporaryDirectories, leaseTemporaryDirectory, clearDiagnosticFiles, clearBrowserCaches } from '../dist-electron/cacheMaintenance.js';
+import { collectTemporaryDirectories, leaseTemporaryDirectory, clearDiagnosticFiles, clearBrowserCaches, expireDiagnosticLogs, scheduleDiagnosticRetention } from '../dist-electron/cacheMaintenance.js';
 import { appendRotatingLog } from '../dist-electron/rotatingLog.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -83,6 +83,48 @@ test('diagnostic log rotation keeps a fixed number of bounded files', async t =>
   assert.equal((await readdir(dirname(file))).length, 4);
   for (const name of await readdir(dirname(file))) assert.ok((await stat(join(dirname(file), name))).size <= 300);
   assert.match(await readFile(file, 'utf8'), /"index":23/);
+});
+
+test('diagnostic expiration is restricted to old log files, preserving recent logs, history and settings', async t => {
+  const root = await fixture(t), logs = join(root, 'logs'), history = join(root, 'runtime-state', 'events');
+  await mkdir(logs); await mkdir(history, { recursive: true });
+  const stale = new Date(Date.now() - 15 * 86400_000);
+  for (const name of ['renderer.log', 'renderer.log.3', 'trace.jsonl', 'config.json', 'report.md', 'new.log']) {
+    const file = join(logs, name); await writeFile(file, name);
+    if (name !== 'new.log') await utimes(file, stale, stale);
+  }
+  const journal = join(history, 'history.jsonl'); await writeFile(journal, 'keep history'); await utimes(journal, stale, stale);
+  const result = await expireDiagnosticLogs(logs);
+  assert.deepEqual(result.errors, []); assert.equal(result.counts.files, 3);
+  assert.deepEqual((await readdir(logs)).sort(), ['config.json', 'new.log', 'report.md']);
+  assert.equal(await readFile(journal, 'utf8'), 'keep history');
+});
+
+test('a quiet diagnostic log rotates on the first write of a new day', async t => {
+  const root = await fixture(t), file = join(root, 'daily.log');
+  appendRotatingLog(file, { message: 'old' });
+  const yesterday = new Date(Date.now() - 86400_000); await utimes(file, yesterday, yesterday);
+  appendRotatingLog(file, { message: 'new' });
+  assert.match(await readFile(`${file}.1`, 'utf8'), /old/);
+  assert.doesNotMatch(await readFile(file, 'utf8'), /old/);
+  assert.match(await readFile(file, 'utf8'), /new/);
+});
+
+test('diagnostic cleanup runs after startup and hourly, and stops on shutdown', async t => {
+  const root = await fixture(t), file = join(root, 'expired.log');
+  const stale = new Date(Date.now() - 15 * 86400_000);
+  const seed = async () => { await writeFile(file, 'expired'); await utimes(file, stale, stale); };
+  await seed();
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const stop = scheduleDiagnosticRetention([root]); t.after(stop);
+  const settle = async () => {
+    for (let attempt = 0; attempt < 100 && await exists(file); attempt++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await exists(file), false);
+  };
+  t.mock.timers.tick(60_000); await settle();
+  await seed(); t.mock.timers.tick(60 * 60_000); await settle();
+  await stop(); await seed(); t.mock.timers.tick(60 * 60_000);
+  assert.equal(await exists(file), true);
 });
 
 test('history clear is one runtime command and cache failure never reports unconditional success', async t => {

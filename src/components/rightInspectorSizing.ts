@@ -4,7 +4,6 @@ const restoredConversationPaneMinimum = 440;
 const maximizedConversationPaneMinimum = 340;
 const maximizedConversationPanePreferredRatio = 0.18;
 const maximizedConversationPaneMaximum = 440;
-const restoredInspectorMaximum = 900;
 
 export function conversationPaneMinimum(
   windowMaximized: boolean,
@@ -21,10 +20,8 @@ export function conversationPaneMinimum(
 }
 
 export function inspectorMaximum(
-  windowMaximized: boolean,
+  _windowMaximized: boolean,
   viewportWidth: number,
 ) {
-  return windowMaximized
-    ? Math.max(minimumInspectorWidth, viewportWidth)
-    : restoredInspectorMaximum;
+  return Math.max(minimumInspectorWidth, viewportWidth);
 }

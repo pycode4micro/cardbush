@@ -67,6 +67,7 @@ export function createFrameStreamBuffers(
     const key = messageKey(route);
     let message = messages.get(key);
     if (!message) messages.set(key, message = { route, seed: '', segments: new Map() });
+    if (route.finalResponse !== undefined) message.route = { ...message.route, finalResponse: route.finalResponse };
     return message;
   };
   const segmentFor = (route: AssistantStreamRoute) => {
@@ -74,6 +75,7 @@ export function createFrameStreamBuffers(
     const key = segmentKey(route);
     let segment = message.segments.get(key);
     if (!segment) message.segments.set(key, segment = { route, text: '', emitted: 0, completed: false });
+    if (route.finalResponse !== undefined) segment.route = { ...segment.route, finalResponse: route.finalResponse };
     return segment;
   };
   const pending = () => [...messages.values()].some(message =>
@@ -147,7 +149,11 @@ export function createFrameStreamBuffers(
     completeSegment(content: string, route: AssistantStreamRoute) {
       if (disposed) return Promise.resolve();
       const segment = segmentFor(route);
-      if (segment.completed) return Promise.resolve();
+      if (segment.completed) {
+        // A later tool call can revoke an earlier final-answer display intent.
+        if (route.finalResponse !== undefined) replaceMessage(messageFor(route));
+        return Promise.resolve();
+      }
       const message = messageFor(route);
       // A revision can seed a message before protocol segment IDs are known.
       // Do not append that prefix twice when the first segment snapshot arrives.
