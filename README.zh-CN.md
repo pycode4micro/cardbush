@@ -36,6 +36,8 @@ AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）�
 
 首次启动后，在 **应用中心 → 设置 → 模型管理** 中配置模型服务、模型名称和 API 密钥。设置页顶部可选择本机或已连接的 Agent。模型费用由所选服务商计收。插件可能需要自己的依赖或凭证，请按照插件说明安装。
 
+模型编辑弹窗支持选择 **OpenAI Responses、Chat Completions 或 Anthropic Messages**，配置自定义 HTTP 请求头，并自动为 OpenCode Go 传入稳定的对话标识。详见[模型接入说明](docs/MODEL_CONNECTIONS.md)。
+
 ## 主要功能
 
 - 本地与远端共用的流式对话、项目、图片附件、预览、消息排队和运行中引导。
@@ -103,7 +105,7 @@ Electron 默认从官方源下载，网络需要时可设置 `ELECTRON_MIRROR`�
 | `packages/bush-product-agent` | 共用的产品指令与回合请求构造 |
 | `packages/cardbush-product-host` | 模型、插件、MCP、沙盒和维护的共享命令约定及配置 |
 | `packages/bush-protocol` | 命令、事件与 IPC 类型约定 |
-| `packages/bush-provider-openai` | OpenAI 兼容模型传输 |
+| `packages/bush-provider-openai` | Responses、Chat Completions 和 Anthropic Messages 模型传输 |
 | `packages/bush-mcp-client` | MCP 传输及工具／资源接入 |
 | `packages/bush-runtime-electron` | 桌面与 Node 宿主共用的类型化 Runtime 传输和客户端 |
 | `electron` | 桌面生命周期、Utility Runtime 宿主、无界面 Agent 服务与宿主适配 |

@@ -2346,8 +2346,11 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string) => {
-  const endpoint = modelListEndpoint(baseUrl);
+ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string, options?: { apiProtocol?: unknown; defaultHeaders?: Record<string, string> }) => {
+  const { modelApiProtocolSchema, modelApiBaseURL, modelRequestHeaders } = await import('@cardbush/bush-protocol');
+  const protocol = modelApiProtocolSchema.parse(options?.apiProtocol ?? 'openai_responses');
+  const root = modelApiBaseURL(protocol, baseUrl);
+  const endpoint = modelListEndpoint(root);
   const token = String(apiKey ?? '').trim();
   if (!token) {
     throw new Error('Missing API key');
@@ -2356,7 +2359,8 @@ ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string) => {
     method: 'GET',
     headers: {
       accept: 'application/json',
-      authorization: `Bearer ${token}`,
+      ...(protocol === 'anthropic_messages' ? { 'x-api-key': token, 'anthropic-version': '2023-06-01' } : { authorization: `Bearer ${token}` }),
+      ...modelRequestHeaders(root, options?.defaultHeaders, 'cardbush-model-discovery'),
     },
   });
   const text = await response.text();

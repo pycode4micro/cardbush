@@ -1,7 +1,7 @@
 import type { Response, ResponseInputItem } from "openai/resources/responses/responses";
 import type { ModelMessage, ModelReplayData, ModelRequest } from "@cardbush/bush-protocol";
 import { modelReplayMatches } from "@cardbush/bush-runtime";
-import { responseToolName } from "./responsesToolNames.js";
+import { providerToolName } from "./toolNames.js";
 
 const REPLAY_FORMAT = "openai.responses.output.v1";
 export type ResponsesToolSearchMode = "native" | "function";
@@ -59,7 +59,7 @@ export function replayResponsesOutput(
   if (message.reasoningContent && reasoningText.length !== message.reasoningContent.length &&
     !reasoningItems.some(item => item.encrypted_content)) return undefined;
   if (text !== message.content || JSON.stringify(calls) !== JSON.stringify(
-    message.toolCalls.map((call) => [call.id, responseToolName(call.name), call.argumentsText]),
+    message.toolCalls.map((call) => [call.id, providerToolName(call.name), call.argumentsText]),
   )) return undefined;
   return structuredClone(items) as ResponseInputItem[];
 }

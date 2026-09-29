@@ -1,10 +1,16 @@
 import OpenAI from "openai";
+import Anthropic from '@anthropic-ai/sdk';
 import { BUSH_MODEL_EVENT_PROTOCOL, type ModelEvent } from "@cardbush/bush-protocol";
 import { ModelImageInputError } from "@cardbush/bush-runtime";
 import { RequestBodyBudgetError } from "./requestBodyBudget.js";
 
 type FailureEvent = Extract<ModelEvent, { kind: "response_failed" }>;
 type Diagnostics = NonNullable<FailureEvent["diagnostics"]>;
+
+/** All wire decoders report repairable call failures through the same Runtime contract. */
+export class ProviderToolCallError extends Error {
+  constructor(readonly code: string, message: string) { super(message); }
+}
 
 const TRANSIENT_CODES = new Set([
   "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT",
@@ -75,17 +81,22 @@ export function providerFailureEvent(
     createdAt: new Date().toISOString(),
     kind: "response_failed" as const,
   };
-  if (aborted || error instanceof OpenAI.APIUserAbortError) {
+  if (aborted || error instanceof OpenAI.APIUserAbortError || error instanceof Anthropic.APIUserAbortError) {
     return { ...base, code: "request_aborted", message: "The model request was aborted.", retryable: false };
   }
-  if (error instanceof ModelImageInputError || error instanceof RequestBodyBudgetError) {
+  if (error instanceof ModelImageInputError || error instanceof RequestBodyBudgetError || error instanceof ProviderToolCallError) {
     return { ...base, code: error.code, message: error.message, retryable: false };
   }
   const diagnostics = transportDiagnostics(error);
+  if (error instanceof Anthropic.APIError && error.status === undefined && error.type) {
+    return { ...base, code: error.type, message: error.message,
+      retryable: ['overloaded_error', 'rate_limit_error', 'api_error'].includes(error.type),
+      providerRequestId: error.requestID ?? undefined, retryAfterMs: retryAfterMs(error.headers), diagnostics };
+  }
   // An explicit HTTP response wins over any provider-supplied error code.
   // In particular, a 401 with code="ECONNRESET" must never become a socket retry.
-  if (error instanceof OpenAI.APIError && error.status !== undefined) {
-    const code = typeof error.code === "string" && error.code ? error.code : `provider_http_${error.status}`;
+  if ((error instanceof OpenAI.APIError || error instanceof Anthropic.APIError) && error.status !== undefined) {
+    const code = 'code' in error && typeof error.code === "string" && error.code ? error.code : `provider_http_${error.status}`;
     const status = error.status;
     return {
       ...base,
@@ -101,8 +112,8 @@ export function providerFailureEvent(
   }
   const permanentCode = diagnostics.causeCodes.find((code) => PERMANENT_CODES.has(code));
   const transientCode = diagnostics.causeCodes.find((code) => TRANSIENT_CODES.has(code));
-  const timedOut = error instanceof OpenAI.APIConnectionTimeoutError;
-  if (error instanceof OpenAI.APIConnectionError || permanentCode || transientCode) {
+  const timedOut = error instanceof OpenAI.APIConnectionTimeoutError || error instanceof Anthropic.APIConnectionTimeoutError;
+  if (error instanceof OpenAI.APIConnectionError || error instanceof Anthropic.APIConnectionError || permanentCode || transientCode) {
     const code = permanentCode ?? transientCode ?? (timedOut ? "provider_timeout" : "provider_connection_error");
     const message = permanentCode
       ? "The model connection configuration is invalid."

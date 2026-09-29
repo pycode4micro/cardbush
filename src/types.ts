@@ -186,6 +186,9 @@ export interface ManagedModelConfig {
   apiKeyMasked?: string;
   modelName: string;
   baseUrl: string;
+  apiProtocol?: import('@cardbush/bush-protocol').ModelApiProtocol;
+  anthropicThinkingMode?: 'adaptive' | 'budget';
+  defaultHeaders?: Record<string, string>;
   maxContextTokens?: number;
   maxCompletionTokens?: number;
 }

@@ -1,4 +1,5 @@
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
+import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema } from '@cardbush/bush-protocol';
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
@@ -1056,6 +1057,9 @@ function managedModelConfigFromPayload(
       item.has_api_key === true ||
       Boolean(String(item.apiKeyMasked ?? item.api_key_masked ?? '').trim()),
     apiKeyMasked: optionalString(item.apiKeyMasked ?? item.api_key_masked),
+    apiProtocol: modelApiProtocolSchema.parse(item.apiProtocol ?? 'openai_responses'),
+    anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(item.anthropicThinkingMode),
+    defaultHeaders: modelHeadersSchema.parse(item.defaultHeaders ?? {}),
     modelName,
     baseUrl: String(item.baseUrl ?? item.base_url ?? item.llm_base_url ?? ''),
     ...(maxContextTokens ? { maxContextTokens } : {}),

@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { modelRequestSchema } from '@cardbush/bush-protocol';
 import { executeModelRound, FileRuntimeEventPersistence, InMemoryRuntimeHost, ToolRegistry, registerMcpDiscovery } from '@cardbush/bush-runtime';
-import { FileProviderCapabilityStore, InMemoryProviderCapabilityStore, OpenAIResponsesProvider, OpenAIResponsesProviderRegistry,
-  openAIResponsesCapabilityScope, toResponsesCreateParams } from '../dist/index.js';
+import { FileProviderCapabilityStore, InMemoryProviderCapabilityStore, OpenAIResponsesProvider, ModelProviderRegistry,
+  modelProviderCapabilityScope, toResponsesCreateParams } from '../dist/index.js';
 
 const model = 'fixture-model';
 const scope = 'fixture-endpoint';
@@ -129,17 +129,17 @@ test('compatibility binds to provider configuration and model for seven days acr
     ? { status: 500, error: { code: 'GatewayFailure', message: 'request failed' } } : {}, store);
   const config = { protocol: 'bush.provider_binding_config.v1', adapter: 'openai_responses',
     bindingId: 'first-binding', apiKey: f.config.apiKey, baseURL: f.config.baseURL, timeoutMs: 2000 };
-  const firstRegistry = new OpenAIResponsesProviderRegistry({ capabilityStore: store });
+  const firstRegistry = new ModelProviderRegistry({ capabilityStore: store });
   const initial = request({ providerBinding: firstRegistry.upsert(config).binding });
   assert.equal((await executeModelRound(firstRegistry, initial)).status, 'completed');
   assert.deepEqual(f.calls.map(call => native(call.body)), [true, false]);
-  const identity = { ...profile, scope: openAIResponsesCapabilityScope(config) };
+  const identity = { ...profile, scope: modelProviderCapabilityScope(config) };
   const expiresAt = new Date(7 * 24 * 60 * 60 * 1000).toISOString();
   assert.equal(store.read(identity).expiresAt, expiresAt);
 
   now = Date.parse(expiresAt) - 1;
   const restartedStore = new FileProviderCapabilityStore(path, options);
-  const restartedRegistry = new OpenAIResponsesProviderRegistry({ capabilityStore: restartedStore });
+  const restartedRegistry = new ModelProviderRegistry({ capabilityStore: restartedStore });
   const fresh = request({ sessionId: 'fresh-session',
     providerBinding: restartedRegistry.upsert({ ...config, bindingId: 'new-binding-same-provider' }).binding });
   assert.equal(await restartedRegistry.countInputTokens(fresh), undefined);
@@ -164,7 +164,7 @@ test('compatibility binds to provider configuration and model for seven days acr
 
   now += 1;
   const expiredStore = new FileProviderCapabilityStore(path, options);
-  const expiredRegistry = new OpenAIResponsesProviderRegistry({ capabilityStore: expiredStore });
+  const expiredRegistry = new ModelProviderRegistry({ capabilityStore: expiredStore });
   const afterExpiry = request({ sessionId: 'after-expiry', providerBinding: expiredRegistry.upsert(config).binding });
   assert.equal(expiredStore.read(identity).status, 'unknown');
   assert.equal((await expiredRegistry.countInputTokens(afterExpiry)).inputTokens, 100);

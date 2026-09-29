@@ -58,9 +58,9 @@ import {
 import {
   FileProviderCapabilityStore,
   InMemoryProviderCapabilityStore,
-  OpenAIResponsesProvider,
-  OpenAIResponsesProviderRegistry,
-  openAIResponsesCapabilityScope,
+  ModelProviderRegistry,
+  createModelProvider,
+  modelProviderCapabilityScope,
   type ProviderCapabilityStore,
 } from '@cardbush/bush-provider-openai';
 import {
@@ -125,7 +125,7 @@ const mcpOAuth = new McpOAuthCoordinator({
 }, url => mcpHost.request<void>('open-url', { url }), server => async (input, init) => (await pluginNetwork(server, init?.signal ?? undefined)).fetch(input, init));
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
-let providers: OpenAIResponsesProviderRegistry;
+let providers: ModelProviderRegistry;
 let mcp: McpClientManager;
 let mcpUpdate: Promise<unknown> = Promise.resolve();
 let effectiveMcp: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
@@ -265,11 +265,11 @@ function createEnvironmentProvider(
       undefined,
     ),
   };
-  return new OpenAIResponsesProvider({
+  return createModelProvider({
     ...config,
     ...(process.env.CARDBUSH_SERVICE_ID ? { fetch: agentModelFetch } : {}),
     capabilityStore,
-    capabilityScope: openAIResponsesCapabilityScope(config),
+    capabilityScope: modelProviderCapabilityScope(config),
   });
 }
 
@@ -709,9 +709,9 @@ const subagentPersistence = runtimeStateRoot
 const providerCapabilityStore = runtimeStateRoot
   ? new FileProviderCapabilityStore(join(runtimeStateRoot, 'provider-capabilities.json'))
   : new InMemoryProviderCapabilityStore();
-providers = new OpenAIResponsesProviderRegistry({
+providers = new ModelProviderRegistry({
   fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
-  ...(process.env.CARDBUSH_SERVICE_ID ? { createProvider: config => new OpenAIResponsesProvider({ ...config, fetch: agentModelFetch }) } : {}),
+  ...(process.env.CARDBUSH_SERVICE_ID ? { createProvider: config => createModelProvider({ ...config, fetch: agentModelFetch }) } : {}),
   capabilityStore: providerCapabilityStore,
 });
 const usageLedgerPath = process.env.CARDBUSH_USAGE_LEDGER_PATH?.trim();

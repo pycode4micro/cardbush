@@ -3,25 +3,74 @@ const fs = require('node:fs');
 const path = require('node:path');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 module.exports = async ({ run, until, click, edit, window: win, root }) => {
-    await click('模型管理');
-    await until("document.querySelectorAll('.model-row').length === 2");
-    assert.equal(await run("document.querySelector('.settings-switch input').checked"), false);
-    await run("document.querySelector('.settings-switch input').click()");
-    await until('settingsProps.visualInputEnabled === true');
-    await edit('.model-row input', '500000');
-    await run("document.querySelector('.model-context-save').click()");
-    await until('settingsProps.settings.managedModelConfigs[0].maxContextTokens === 500000');
-    for (const width of [1200, 1000, 760]) {
-      win.setContentSize(width, 850); await pause(150);
-      const bounds = await run(`Array.from(document.querySelectorAll('.model-row'), row => ({
-        width: row.clientWidth, scroll: row.scrollWidth,
-        inputs: Array.from(row.querySelectorAll('input'), input => { const r = input.getBoundingClientRect(), rowRect = row.getBoundingClientRect(); return { width: r.width, left: r.left - rowRect.left, right: rowRect.right - r.right }; })
-      }))`);
-      for (const row of bounds) {
-        assert.ok(row.scroll <= row.width + 1, 'model row must fit width ' + width);
-        for (const input of row.inputs) assert.ok(input.width >= 72 && input.left >= 0 && input.right >= 0, 'token controls remain readable and inside the row');
-      }
-      if (width === 1200) fs.writeFileSync(path.join(root, 'tmp/settings-model-limits.png'), (await win.webContents.capturePage()).toPNG());
+  await click('模型管理');
+  await until("document.querySelectorAll('.model-row').length === 2");
+  assert.equal(await run("document.querySelectorAll('.model-row input').length"), 0, 'list stays compact');
+  await run("document.querySelector('.settings-switch input').click()");
+  await until('settingsProps.visualInputEnabled === true');
+  await run("document.querySelector('.model-row-edit').focus(); document.querySelector('.model-row-edit').click()");
+  await until("document.querySelector('dialog.model-config-dialog')?.open");
+  assert.equal(await run("document.querySelector('dialog input[type=password]').placeholder"), '已保存，留空保留');
+  const choose = async value => {
+    await run("document.querySelector('dialog [aria-label=接入协议]').click()");
+    await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
+    await run("document.querySelector('.settings-dropdown-popover:popover-open [value=' + " + JSON.stringify(value) + " + ']').click()");
+  };
+  await choose('anthropic_messages');
+  await until("document.querySelector('dialog').textContent.includes('/messages')");
+  await choose('openai_chat_completions');
+  await until("document.querySelector('dialog').textContent.includes('/chat/completions')");
+  await run("document.querySelector('dialog .model-advanced-disclosure').click()");
+  await edit('dialog input[type=number]', '500000');
+  await edit('dialog textarea', '{bad-json', true);
+  await click('保存模型');
+  await until("!!document.querySelector('dialog [role=alert]')");
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].maxContextTokens'), 400000, 'invalid headers cannot save');
+  await edit('dialog textarea', JSON.stringify({ 'x-session-id': '{{sessionId}}' }), true);
+  await click('保存模型');
+  await until("!document.querySelector('dialog.model-config-dialog')");
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].maxContextTokens'), 500000);
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].apiProtocol'), 'openai_chat_completions');
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].defaultHeaders["x-session-id"]'), '{{sessionId}}');
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].hasApiKey'), true);
+  assert.equal(await run("document.activeElement.classList.contains('model-row-edit')"), true, 'dialog restores focus');
+  for (const width of [1200, 760, 500]) {
+    win.setContentSize(width, 850); await pause(120);
+    await run("document.querySelector('.model-row-edit').click()");
+    await until("document.querySelector('dialog')?.open");
+    await run("document.querySelector('dialog .model-advanced-disclosure').click()");
+    const dimensions = await run("(() => { const d = document.querySelector('dialog'), b = d.getBoundingClientRect(); return { width: d.clientWidth, scroll: d.scrollWidth, left: b.left, right: b.right, viewport: innerWidth, footer: d.querySelector('footer').getBoundingClientRect().bottom, height: innerHeight }; })()");
+    assert.ok(dimensions.scroll <= dimensions.width + 1 && dimensions.left >= 0 && dimensions.right <= dimensions.viewport, 'modal fits narrow viewport ' + width);
+    assert.ok(dimensions.footer <= dimensions.height, 'save controls stay reachable');
+    if (width === 1200) {
+      win.webContents.invalidate(); await pause(200);
+      fs.writeFileSync(path.join(root, 'tmp/settings-model-dialog.png'), (await win.webContents.capturePage()).toPNG());
     }
-  console.log('Native model settings passed: vision, shared model rows, token editing and responsive layout.');
+    await run("document.querySelector('dialog').dispatchEvent(new Event('cancel', {cancelable:true}))");
+    await until("!document.querySelector('dialog')");
+    const overflow = await run("Array.from(document.querySelectorAll('.model-row')).some(row => row.scrollWidth > row.clientWidth + 1)");
+    assert.equal(overflow, false, 'model rows fit viewport ' + width);
+  }
+  win.setContentSize(1200, 850); await pause(120);
+  await click('添加模型');
+  await until("document.querySelector('dialog')?.open");
+  assert.equal(await run("document.querySelector('dialog [aria-label=接入协议]').textContent.includes('Responses')"), true);
+  await choose('anthropic_messages');
+  await run("window.discoveryCalls = []; window.cardbushDesktop.listProviderModels = async (...args) => { discoveryCalls.push(args); return { models: ['fixture-claude'], endpoint: 'fixture', rawCount: 1 }; }; void 0");
+  await edit('dialog input[type=password]', 'fixture-discovery-key');
+  await click('获取列表');
+  await until('discoveryCalls.length === 1');
+  assert.equal(await run('discoveryCalls[0][0]'), 'https://api.anthropic.com/v1');
+  assert.equal(await run('discoveryCalls[0][2].apiProtocol'), 'anthropic_messages');
+  await run("document.querySelector('dialog [aria-label=关闭]').click()");
+  await run("settingsProps.language = 'en'; settingsProps.themePreference = 'light'; window.settingsTheme = 'bright'; renderSettings()");
+  await until("!!document.querySelector('.model-row-edit')");
+  await run("document.querySelector('.model-row-edit').click()");
+  await until("document.querySelector('dialog')?.open");
+  assert.match(await run("document.querySelector('dialog').textContent"), /API protocol/);
+  win.webContents.invalidate(); await pause(200);
+  fs.writeFileSync(path.join(root, 'tmp/settings-model-dialog-light.png'), (await win.webContents.capturePage()).toPNG());
+  await run("document.querySelector('dialog [aria-label=Close]').click()");
+  await run("settingsProps.language = 'zh'; settingsProps.themePreference = 'dark'; window.settingsTheme = 'dark'; renderSettings()");
+  console.log('Native model settings passed: protocol selection, headers validation, saved credentials, focus restore and responsive modal.');
 };

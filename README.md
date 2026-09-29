@@ -36,6 +36,8 @@ AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is
 
 On first launch, open **App Center → Settings → Models** and configure a supported provider, model and API key. The settings environment selector chooses the local host or a connected Agent. Model usage is billed by your provider. Plugins may require their own dependencies or credentials; follow each plugin's installation instructions.
 
+The model editor supports **OpenAI Responses, Chat Completions, and Anthropic Messages**, with custom HTTP headers and automatic per-conversation session headers for OpenCode Go. See [model connections](docs/MODEL_CONNECTIONS.md).
+
 ## What is included?
 
 - Shared local/remote chat, streaming, projects, image attachments, previews, queued messages and in-turn guidance.
@@ -103,7 +105,7 @@ Electron downloads use the official source by default. An optional `ELECTRON_MIR
 | `packages/bush-product-agent` | Shared product instructions and turn-request construction |
 | `packages/cardbush-product-host` | Shared model, plugin, MCP, sandbox and maintenance command contracts/configuration |
 | `packages/bush-protocol` | Typed commands, events and IPC contracts |
-| `packages/bush-provider-openai` | OpenAI-compatible provider transport |
+| `packages/bush-provider-openai` | Responses, Chat Completions and Anthropic Messages transport |
 | `packages/bush-mcp-client` | MCP transports and tool/resource integration |
 | `packages/bush-runtime-electron` | Typed Runtime transport/client reused by desktop and Node hosts |
 | `electron` | Desktop lifecycle, Utility Runtime host, headless Agent service and host adapters |

@@ -12,7 +12,7 @@ import {
   InMemoryRuntimeHost,
   ToolRegistry,
 } from '@cardbush/bush-runtime';
-import { OpenAIResponsesProviderRegistry } from '@cardbush/bush-provider-openai';
+import { ModelProviderRegistry } from '@cardbush/bush-provider-openai';
 
 const configPath = requiredAbsolute(process.env.BUSH_LIVE_MODEL_CONFIG_PATH, 'BUSH_LIVE_MODEL_CONFIG_PATH');
 const sourceProject = requiredAbsolute(process.env.BUSH_LIVE_PROJECT, 'BUSH_LIVE_PROJECT');
@@ -45,7 +45,7 @@ await cp(sourceProject, projectDir, {
   filter: (source) => !excludedPath(source, sourceProject),
 });
 
-const providers = new OpenAIResponsesProviderRegistry();
+const providers = new ModelProviderRegistry();
 const configured = providers.upsert({
   protocol: 'bush.provider_binding_config.v1',
   bindingId: String(selected.id ?? model),

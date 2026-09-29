@@ -40,6 +40,7 @@ run(['--test', 'scripts/test-runtime-startup-races.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
 run(['--test', 'scripts/test-guidance-queue-lock.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-shared-configuration.mjs']);
+run(['--test', '--test-timeout=45000', 'scripts/test-model-protocols-host.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
 for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', 'test-conversation-switching.mjs', 'test-session-read-fences.mjs', 'test-startup-runtime-contract.mjs', 'test-runtime-host-lifecycle.mjs',
@@ -54,6 +55,7 @@ if (!process.argv.includes('--no-ui')) {
   run(['scripts/run-settings-context-ui-test.mjs', 'agents']);
   run(['scripts/run-settings-context-ui-test.mjs', 'notification-sound']);
   run(['scripts/run-settings-context-ui-test.mjs', 'appearance']);
+  run(['scripts/run-settings-context-ui-test.mjs', 'models']);
   run(['scripts/run-settings-context-ui-test.mjs', 'layout']);
   run(['scripts/run-settings-context-ui-test.mjs', 'styles']);
   run(['scripts/run-agents-ui-test.mjs']);

@@ -26,6 +26,8 @@ async function fixture(t) {
 
 test('syncs private model credentials, instructions, plugin files/config and skills; unchanged settings do no writes', async t=>{
   const f=await fixture(t);
+  f.payload.models.models[0].apiProtocol = 'anthropic_messages';
+  f.payload.models.models[0].defaultHeaders = { 'x-session-id': '{{sessionId}}' };
   await mkdir(join(f.local,'plugins','fixture-plugin','.codex-plugin'),{recursive:true});
   await writeFile(join(f.local,'plugins','fixture-plugin','.codex-plugin','plugin.json'),JSON.stringify({name:'fixture-plugin',version:'1.0.0',description:'Shared fixture'}));
   await mkdir(join(f.local,'skills','fixture'),{recursive:true});
@@ -37,6 +39,8 @@ test('syncs private model credentials, instructions, plugin files/config and ski
   assert.equal(receipt.digest,archive.digest);assert.doesNotMatch(JSON.stringify(receipt),/fixture-secret|plugin-secret/);
   const models=await new ProductModelConfigStore(join(f.remote,'config','models.json')).read();
   assert.equal(models.models[0].apiKey,'fixture-secret');
+  assert.equal(models.models[0].apiProtocol, 'anthropic_messages');
+  assert.deepEqual(models.models[0].defaultHeaders, { 'x-session-id': '{{sessionId}}' });
   assert.equal(await readFile(join(f.remote,'AGENTS.md'),'utf8'),'Shared rules.');
   assert.deepEqual(JSON.parse(await readFile(join(f.remote,'config','sandbox.json'),'utf8')),f.payload.sandbox);
   assert.deepEqual(JSON.parse(await readFile(join(f.remote,'config','network.json'),'utf8')),f.payload.network);

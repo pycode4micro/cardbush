@@ -10,6 +10,7 @@ import type { InputTokenCountParams } from "openai/resources/responses/input-tok
 
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
+  modelRequestHeaders,
   type ModelEvent,
   type ModelMessage,
   type ModelRequest,
@@ -20,36 +21,26 @@ import type {
   ModelProvider,
   ModelStreamOptions,
 } from "@cardbush/bush-runtime";
-import { readLocalModelImage, isToolCallValidationFailure } from "@cardbush/bush-runtime";
-import { providerFailureEvent } from "./providerFailure.js";
+import { isToolCallValidationFailure } from "@cardbush/bush-runtime";
+import { providerFailureEvent, ProviderToolCallError } from "./providerFailure.js";
+import type { ModelProviderConfig } from './providerConfig.js';
+import { namedMessageContent, resolveLocalImageInputs } from './modelInputs.js';
 import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from "./requestBodyBudget.js";
 import { historicalCompatibilityMode, isClientToolSearchCall, portableResponsesReplay, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
-import { ResponseToolCalls, ResponseToolCallError } from "./responsesToolCalls.js";
+import { ResponseToolCalls } from "./responsesToolCalls.js";
 import { ResponseText, ResponseTextError } from "./responsesText.js";
 import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
 import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
 import { compatibleToolImageProjection, RESPONSES_COMPATIBILITY_CAPABILITY } from "./responsesCompatibility.js";
-import { responseToolAliases, responseToolName } from "./responsesToolNames.js";
+import { providerToolAliases, providerToolName } from "./toolNames.js";
 import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
 import { responsesInputFingerprint } from "./responsesInputFingerprint.js";
 import {
   InMemoryProviderCapabilityStore,
-  openAIResponsesCapabilityScope,
+  modelProviderCapabilityScope,
   type ProviderCapabilityStatus,
   type ProviderCapabilityStore,
 } from "./providerCapabilities.js";
-
-export interface OpenAIResponsesProviderConfig {
-  apiKey: string;
-  fetch?: typeof fetch;
-  baseURL?: string;
-  defaultHeaders?: Record<string, string>;
-  timeoutMs?: number;
-  capabilityStore?: ProviderCapabilityStore;
-  capabilityScope?: string;
-  /** Local JSON-body budget, independent of the model's context window. */
-  maxRequestBodyBytes?: number;
-}
 
 export interface ResponseCreateProjectionOptions {
   disableProviderState?: boolean;
@@ -166,7 +157,7 @@ export function normalizeResponseStreamEvent(
         break;
     }
   } catch (error) {
-    if (!(error instanceof ResponseToolCallError) && !(error instanceof ResponseTextError) && !(error instanceof ResponseOutputIdentityError)) throw error;
+    if (!(error instanceof ProviderToolCallError) && !(error instanceof ResponseTextError) && !(error instanceof ResponseOutputIdentityError)) throw error;
     append({ kind: "response_failed", code: error.code, message: error.message, retryable: false });
     state.terminal = true;
   }
@@ -325,7 +316,7 @@ function toResponseInputItems(
     } : ({
       type: "function_call" as const,
       call_id: call.id,
-      name: responseToolName(call.name),
+      name: providerToolName(call.name),
       arguments: call.argumentsText,
     })));
     return items;
@@ -352,10 +343,6 @@ function toResponseInputItems(
   }];
 }
 
-function namedMessageContent(name: string | undefined, content: string): string {
-  return name ? `[${name}]\n${content}` : content;
-}
-
 function reasoningItemId(message: Extract<ModelMessage, { role: "assistant" }>, index: number) {
   const identity = JSON.stringify([
     index,
@@ -366,37 +353,16 @@ function reasoningItemId(message: Extract<ModelMessage, { role: "assistant" }>, 
   return `rs_${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`;
 }
 
-export async function resolveLocalImageInputs(request: ModelRequest): Promise<ModelRequest> {
-  const messages = await Promise.all(request.messages.map(async (message) => {
-    if (!("images" in message) || !message.images?.length) return message;
-    return {
-      ...message,
-      images: await Promise.all(message.images.map(async (image) => ({
-        ...image,
-        url: await resolvedImageUrl(image.url),
-      }))),
-    };
-  }));
-  return { ...request, messages };
-}
-
-async function resolvedImageUrl(source: string): Promise<string> {
-  const value = source.trim();
-  if (/^https?:\/\//i.test(value) || /^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
-    return value;
-  }
-  const { content, mime } = await readLocalModelImage(value);
-  return `data:${mime};base64,${content.toString("base64")}`;
-}
-
 export class OpenAIResponsesProvider implements ModelProvider {
+  readonly #config: ModelProviderConfig;
   readonly #client: OpenAI;
   readonly #capabilityStore: ProviderCapabilityStore;
   readonly #capabilityScope: string;
   readonly #maxRequestBodyBytes: number;
   readonly #diagnosticSecrets: string[];
 
-  constructor(config: OpenAIResponsesProviderConfig) {
+  constructor(config: ModelProviderConfig) {
+    this.#config = config;
     this.#maxRequestBodyBytes = config.maxRequestBodyBytes ?? DEFAULT_REQUEST_BODY_MAX_BYTES;
     if (!Number.isSafeInteger(this.#maxRequestBodyBytes) || this.#maxRequestBodyBytes <= 0) {
       throw new Error("maxRequestBodyBytes must be a positive safe integer.");
@@ -404,13 +370,12 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.#client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
-      defaultHeaders: config.defaultHeaders,
       fetch: config.fetch,
       timeout: config.timeoutMs,
       maxRetries: 0,
     });
     this.#capabilityStore = config.capabilityStore ?? new InMemoryProviderCapabilityStore();
-    this.#capabilityScope = config.capabilityScope ?? openAIResponsesCapabilityScope(config);
+    this.#capabilityScope = config.capabilityScope ?? modelProviderCapabilityScope(config);
     this.#diagnosticSecrets = [config.apiKey, ...Object.values(config.defaultHeaders ?? {})].filter(Boolean);
   }
 
@@ -443,7 +408,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
     if (projection.compatibilityMode) return undefined;
     try {
       const result = await this.#client.responses.inputTokens.count(
-        toResponsesInputTokenCountParams(projection.params), { signal: options.signal });
+        toResponsesInputTokenCountParams(projection.params), { signal: options.signal,
+          headers: modelRequestHeaders(this.#config.baseURL, this.#config.defaultHeaders, request.sessionId) });
       if (!Number.isSafeInteger(result.input_tokens) || result.input_tokens < 0) {
         throw new Error("The provider returned an invalid input token count.");
       }
@@ -489,12 +455,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
           requestId: request.requestId, sequence: 0, started: false,
           ...(hasMcpDiscovery(resolvedRequest) ? { toolSearchMode: projection.toolSearchMode } : {}),
           compatibilityMode: projection.compatibilityMode,
-          toolAliases: responseToolAliases(resolvedRequest),
+          toolAliases: providerToolAliases(resolvedRequest),
         };
         let pendingStart: ModelEvent | undefined;
         let outputExposed = false;
         try {
-          const stream = await this.#client.responses.create(params, { signal: options.signal });
+          const stream = await this.#client.responses.create(params, { signal: options.signal,
+            headers: modelRequestHeaders(this.#config.baseURL, this.#config.defaultHeaders, request.sessionId) });
           for await (const providerEvent of stream) {
             options.signal?.throwIfAborted();
             const response = responseFromEvent(providerEvent);

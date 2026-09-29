@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, type ModelApiProtocol } from '@cardbush/bush-protocol';
 
 import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
@@ -9,6 +10,8 @@ export interface ProductModelConfig {
   model: string;
   apiKey: string;
   baseURL?: string;
+  apiProtocol?: ModelApiProtocol;
+  anthropicThinkingMode?: 'adaptive' | 'budget';
   defaultHeaders?: Record<string, string>;
   maxContextTokens?: number;
   maxOutputTokens?: number;
@@ -92,6 +95,9 @@ export class ProductModelConfigStore {
         hasApiKey: Boolean(config.apiKey),
         apiKeyMasked: config.apiKey ? maskSecret(config.apiKey) : undefined,
         baseUrl: config.baseURL ?? "",
+        apiProtocol: config.apiProtocol ?? 'openai_responses',
+        anthropicThinkingMode: config.anthropicThinkingMode,
+        defaultHeaders: config.defaultHeaders ?? {},
         maxContextTokens: config.maxContextTokens,
         maxCompletionTokens: config.maxOutputTokens,
       })),
@@ -176,8 +182,10 @@ function decodeUpdate(
       provider: requiredString(config.provider, "provider"),
       model: requiredString(config.model ?? config.modelName ?? config.model_name, "model"),
       apiKey: suppliedApiKey ?? previous?.apiKey ?? "",
+      apiProtocol: modelApiProtocolSchema.parse(config.apiProtocol ?? previous?.apiProtocol ?? 'openai_responses'),
+      anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(config.anthropicThinkingMode ?? previous?.anthropicThinkingMode),
       ...optionalProperty("baseURL", optionalString(config.baseURL ?? config.baseUrl ?? config.base_url)),
-      ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders ?? config.default_headers)),
+      ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders ?? config.default_headers ?? previous?.defaultHeaders)),
       ...optionalProperty("maxContextTokens", maxContextTokens),
       ...optionalProperty("maxOutputTokens", maxOutputTokens),
     } satisfies ProductModelConfig;
@@ -208,6 +216,8 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
       provider: requiredString(config.provider, "provider"),
       model: requiredString(config.model, "model"),
       apiKey: optionalString(config.apiKey) ?? "",
+      apiProtocol: modelApiProtocolSchema.parse(config.apiProtocol ?? 'openai_responses'),
+      anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(config.anthropicThinkingMode),
       ...optionalProperty("baseURL", optionalString(config.baseURL)),
       ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders)),
       ...optionalProperty("maxContextTokens", maxContextTokens),
@@ -279,7 +289,7 @@ function stringRecord(input: unknown): Record<string, string> | undefined {
   if (entries.some(([, item]) => typeof item !== "string")) {
     throw new Error("defaultHeaders values must be strings.");
   }
-  return Object.fromEntries(entries) as Record<string, string>;
+  return modelHeadersSchema.parse(Object.fromEntries(entries));
 }
 
 function optionalProperty<Key extends string, Value>(

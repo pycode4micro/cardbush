@@ -1,3 +1,4 @@
+import { modelRequestHeaders } from '@cardbush/bush-protocol';
 import { normalizeAppearance, updateAppearanceProfile } from './appearance/appearancePreferences';
 import { useSettingsHost } from './settings/SettingsHostContext';
 import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
@@ -2380,16 +2381,20 @@ type ProviderModelListResult = {
 async function requestProviderModels(
   baseUrl: string,
   apiKey: string,
+  options: import('./settings/modelProtocols').ModelDiscoveryOptions,
 ): Promise<ProviderModelListResult> {
   if (window.cardbushDesktop?.listProviderModels) {
-    return window.cardbushDesktop.listProviderModels(baseUrl, apiKey);
+    return window.cardbushDesktop.listProviderModels(baseUrl, apiKey, options);
   }
   const endpoint = modelListEndpoint(baseUrl);
   const response = await fetch(endpoint, {
     method: 'GET',
     headers: {
       accept: 'application/json',
-      authorization: `Bearer ${apiKey.trim()}`,
+      ...(options.apiProtocol === 'anthropic_messages'
+        ? { 'x-api-key': apiKey.trim(), 'anthropic-version': '2023-06-01' }
+        : { authorization: `Bearer ${apiKey.trim()}` }),
+      ...modelRequestHeaders(baseUrl, options.defaultHeaders, 'cardbush-model-discovery'),
     },
   });
   const text = await response.text();

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { OpenAIChatCompletionsProvider } from './chatCompletions.js';
+import { AnthropicMessagesProvider } from './anthropicMessages.js';
 
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
@@ -16,20 +18,27 @@ import type {
   ModelStreamOptions,
 } from "@cardbush/bush-runtime";
 
-import {
-  OpenAIResponsesProvider,
-  type OpenAIResponsesProviderConfig,
-} from "./responses.js";
+import { OpenAIResponsesProvider } from "./responses.js";
+import type { ModelProviderConfig } from './providerConfig.js';
 import {
   InMemoryProviderCapabilityStore,
-  openAIResponsesCapabilityScope,
+  modelProviderCapabilityScope,
   type ProviderCapabilityStore,
 } from "./providerCapabilities.js";
 
-export interface OpenAIResponsesProviderRegistryOptions {
+/** Select only the wire adapter. Execution and continuation stay in the Runtime. */
+export function createModelProvider(config: ModelProviderConfig): ModelProvider {
+  switch (config.adapter ?? 'openai_responses') {
+    case 'openai_chat_completions': return new OpenAIChatCompletionsProvider(config);
+    case 'anthropic_messages': return new AnthropicMessagesProvider(config);
+    case 'openai_responses': return new OpenAIResponsesProvider(config);
+  }
+}
+
+export interface ModelProviderRegistryOptions {
   fallbackProvider?: ModelProvider;
   createRevision?: (config: RuntimeProviderBindingConfig) => string;
-  createProvider?: (config: OpenAIResponsesProviderConfig) => ModelProvider;
+  createProvider?: (config: ModelProviderConfig) => ModelProvider;
   capabilityStore?: ProviderCapabilityStore;
 }
 
@@ -41,22 +50,22 @@ export interface OpenAIResponsesProviderRegistryOptions {
  * binding ID creates a new revision while older revisions remain usable by
  * already-running Turns.
  */
-export class OpenAIResponsesProviderRegistry implements ModelProvider {
+export class ModelProviderRegistry implements ModelProvider {
   readonly #providers = new Map<string, ModelProvider>();
   readonly #bindingKeys = new Map<string, Set<string>>();
   readonly #fallbackProvider?: ModelProvider;
   readonly #createRevision: (config: RuntimeProviderBindingConfig) => string;
   readonly #createProvider: (
-    config: OpenAIResponsesProviderConfig,
+    config: ModelProviderConfig,
   ) => ModelProvider;
   readonly #capabilityStore: ProviderCapabilityStore;
 
-  constructor(options: OpenAIResponsesProviderRegistryOptions = {}) {
+  constructor(options: ModelProviderRegistryOptions = {}) {
     this.#fallbackProvider = options.fallbackProvider;
     this.#createRevision = options.createRevision ?? bindingRevision;
     this.#createProvider =
       options.createProvider ??
-      ((config) => new OpenAIResponsesProvider(config));
+      createModelProvider;
     this.#capabilityStore = options.capabilityStore ?? new InMemoryProviderCapabilityStore();
   }
 
@@ -139,14 +148,16 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
 function toProviderConfig(
   config: RuntimeProviderBindingConfig,
   capabilityStore: ProviderCapabilityStore,
-): OpenAIResponsesProviderConfig {
+): ModelProviderConfig {
   return {
+    adapter: config.adapter,
+    anthropicThinkingMode: config.anthropicThinkingMode,
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     defaultHeaders: config.defaultHeaders,
     timeoutMs: config.timeoutMs,
     capabilityStore,
-    capabilityScope: openAIResponsesCapabilityScope(config),
+    capabilityScope: modelProviderCapabilityScope(config),
   };
 }
 
@@ -157,6 +168,7 @@ function bindingKey(bindingId: string, revision: string): string {
 function bindingRevision(config: RuntimeProviderBindingConfig): string {
   const canonical = JSON.stringify({
     adapter: config.adapter,
+    ...(config.anthropicThinkingMode ? { anthropicThinkingMode: config.anthropicThinkingMode } : {}),
     apiKey: config.apiKey,
     baseURL: config.baseURL ?? null,
     defaultHeaders: Object.fromEntries(

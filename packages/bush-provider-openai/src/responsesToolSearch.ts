@@ -2,7 +2,8 @@ import type { FunctionTool, ResponseInputItem, Tool } from "openai/resources/res
 import { toolDefinitionSchema, type ModelRequest, type ToolDefinition } from "@cardbush/bush-protocol";
 import { mcpDiscoveryResults, withToolDisplayTitle } from "@cardbush/bush-runtime";
 import { replayToolSearchMode, type ResponsesToolSearchMode } from "./responsesReplay.js";
-import { responseToolName } from "./responsesToolNames.js";
+import { providerToolName } from "./toolNames.js";
+import { discoveryReceipt } from './modelInputs.js';
 
 export const TOOL_SEARCH_CAPABILITY = "client_tool_search";
 
@@ -23,7 +24,7 @@ export function historicalToolSearchMode(request: ModelRequest): ResponsesToolSe
 }
 
 export function responseFunctionTool(tool: ToolDefinition): FunctionTool {
-  return { type: "function", name: responseToolName(tool.name), description: tool.description,
+  return { type: "function", name: providerToolName(tool.name), description: tool.description,
     parameters: withToolDisplayTitle(tool).inputSchema, strict: false };
 }
 
@@ -37,13 +38,6 @@ export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMo
     if (mode === "native" && tool.name === "mcp_call") return [];
     return [responseFunctionTool(tool)];
   });
-}
-
-/** Identity stays in durable Runtime history for discovery recovery, not in model text. */
-function discoveryReceipt(output: Record<string, unknown>): string {
-  const { protocol: _protocol, sessionId: _sessionId, next_step: _next, ...receipt } = output;
-  if (receipt.more === false) delete receipt.more;
-  return JSON.stringify(receipt);
 }
 
 /** A derived view of the very same discovery results used by the Runtime. */
@@ -73,7 +67,7 @@ export function discoveryInputProjection(request: ModelRequest) {
       const receipt = result ? discoveryReceipt({ ...result.output, matches: result.output.matches.map(match => {
         if (!match || typeof match !== "object") return match;
         const { description: _description, inputSchema: _schema, ...reference } = match as Record<string, unknown>;
-        return { ...reference, ...(typeof reference.name === "string" ? { name: responseToolName(reference.name) } : {}) };
+        return { ...reference, ...(typeof reference.name === "string" ? { name: providerToolName(reference.name) } : {}) };
       }) }) : message.content;
       items = [{ type: "tool_search_output", call_id: message.toolCallId,
         execution: "client", status: "completed", tools }];

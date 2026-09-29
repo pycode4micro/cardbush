@@ -7,7 +7,7 @@ import test from "node:test";
 import {
   FileProviderCapabilityStore,
   InMemoryProviderCapabilityStore,
-  openAIResponsesCapabilityScope,
+  modelProviderCapabilityScope,
 } from "../dist/index.js";
 
 const identity = {
@@ -71,19 +71,19 @@ test("defaults to seven days and keeps the original expiry across reads and rest
 });
 
 test("derives opaque capability scopes without exposing credentials", () => {
-  const first = openAIResponsesCapabilityScope({
+  const first = modelProviderCapabilityScope({
     apiKey: "secret-one",
     baseURL: "https://provider.invalid/v1",
   });
-  const same = openAIResponsesCapabilityScope({
+  const same = modelProviderCapabilityScope({
     apiKey: "secret-one",
     baseURL: "https://provider.invalid/v1",
   });
-  const changedEndpoint = openAIResponsesCapabilityScope({
+  const changedEndpoint = modelProviderCapabilityScope({
     apiKey: "secret-one",
     baseURL: "https://other.invalid/v1",
   });
-  const changedCredential = openAIResponsesCapabilityScope({
+  const changedCredential = modelProviderCapabilityScope({
     apiKey: "secret-two",
     baseURL: "https://provider.invalid/v1",
   });

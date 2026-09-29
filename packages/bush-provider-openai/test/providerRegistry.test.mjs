@@ -6,11 +6,11 @@ import {
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
 } from "@cardbush/bush-protocol";
-import { OpenAIResponsesProviderRegistry } from "../dist/index.js";
+import { ModelProviderRegistry } from "../dist/index.js";
 
 test("keeps provider secrets outside the returned binding reference", () => {
   const created = [];
-  const registry = new OpenAIResponsesProviderRegistry({
+  const registry = new ModelProviderRegistry({
     createRevision: () => "revision_1",
     createProvider: (config) => {
       created.push(config);
@@ -31,7 +31,7 @@ test("keeps provider secrets outside the returned binding reference", () => {
 
 test("retains immutable revisions for concurrent Turns", async () => {
   let revision = 0;
-  const registry = new OpenAIResponsesProviderRegistry({
+  const registry = new ModelProviderRegistry({
     createRevision: () => `revision_${++revision}`,
     createProvider: (config) => provider(config.apiKey),
   });
@@ -50,13 +50,13 @@ test("retains immutable revisions for concurrent Turns", async () => {
 });
 
 test("recreates the same opaque revision after restart for the same exact config", () => {
-  const first = new OpenAIResponsesProviderRegistry({
+  const first = new ModelProviderRegistry({
     createProvider: () => provider("first"),
   }).upsert(bindingConfig("same-secret"));
-  const restarted = new OpenAIResponsesProviderRegistry({
+  const restarted = new ModelProviderRegistry({
     createProvider: () => provider("second"),
   }).upsert(bindingConfig("same-secret"));
-  const changed = new OpenAIResponsesProviderRegistry({
+  const changed = new ModelProviderRegistry({
     createProvider: () => provider("third"),
   }).upsert(bindingConfig("changed-secret"));
 
@@ -66,7 +66,7 @@ test("recreates the same opaque revision after restart for the same exact config
 });
 
 test("returns factual failures for missing bindings and removes all revisions", async () => {
-  const registry = new OpenAIResponsesProviderRegistry({
+  const registry = new ModelProviderRegistry({
     createRevision: () => "revision_1",
     createProvider: () => provider("configured"),
   });

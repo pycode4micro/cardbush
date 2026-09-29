@@ -6,6 +6,31 @@ import test from "node:test";
 
 import { ProductModelConfigStore } from "../dist/index.js";
 
+test('protocol and custom headers round-trip through public editing, preserving saved credentials', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-model-protocol-'));
+  const store = new ProductModelConfigStore(join(root, 'models.json'));
+  const original = { id: 'gateway', provider: 'openai', model: 'model', apiKey: 'saved-secret', baseURL: 'https://opencode.ai/zen/go/v1' };
+  let saved = await store.write({ models: [original] });
+  assert.equal(saved.models[0].apiProtocol, 'openai_responses');
+  for (const apiProtocol of ['openai_chat_completions', 'anthropic_messages', 'openai_responses']) {
+    const publicValue = store.publicPayload(saved);
+    publicValue.models[0].apiProtocol = apiProtocol;
+    publicValue.models[0].defaultHeaders = { 'x-session-id': '{{sessionId}}' };
+    saved = await store.write(publicValue);
+    assert.equal(saved.models[0].apiKey, 'saved-secret');
+    assert.equal((await store.read()).models[0].apiProtocol, apiProtocol);
+    assert.deepEqual(store.publicPayload(saved).models[0].defaultHeaders, { 'x-session-id': '{{sessionId}}' });
+  }
+  const publicValue = store.publicPayload(saved);
+  publicValue.models[0].defaultHeaders = {};
+  assert.deepEqual((await store.write(publicValue)).models[0].defaultHeaders, {});
+  publicValue.models[0].apiProtocol = 'unknown';
+  await assert.rejects(store.write(publicValue));
+  publicValue.models[0].apiProtocol = 'openai_responses';
+  publicValue.models[0].defaultHeaders = { 'x-bad': 'value\r\nnew-header: injected' };
+  await assert.rejects(store.write(publicValue));
+});
+
 test("persists model secrets in the Product Host and only exposes masked facts", async () => {
   const root = await mkdtemp(join(tmpdir(), "cardbush-model-config-"));
   const path = join(root, "models.json");

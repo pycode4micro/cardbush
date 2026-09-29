@@ -200,6 +200,7 @@ declare global {
       listProviderModels: (
         baseUrl: string,
         apiKey: string,
+        options?: { apiProtocol: import('@cardbush/bush-protocol').ModelApiProtocol; defaultHeaders: Record<string, string> },
       ) => Promise<{
         endpoint: string;
         models: string[];

@@ -169,14 +169,15 @@ export class FileProviderCapabilityStore implements ProviderCapabilityStore {
   }
 }
 
-export function openAIResponsesCapabilityScope(config: {
+export function modelProviderCapabilityScope(config: {
+  adapter?: import('@cardbush/bush-protocol').ModelApiProtocol;
   apiKey: string;
   baseURL?: string;
   defaultHeaders?: Record<string, string>;
   timeoutMs?: number;
 }): string {
   const canonical = JSON.stringify({
-    adapter: "openai_responses",
+    adapter: config.adapter ?? "openai_responses",
     credentialDigest: createHash("sha256").update(config.apiKey).digest("hex"),
     baseURL: config.baseURL ?? null,
     defaultHeaders: Object.fromEntries(

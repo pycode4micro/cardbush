@@ -35,7 +35,7 @@ flowchart TD
 | `packages/bush-runtime` | Agent 循环、回合状态、执行历史、权限、上下文维护和内置工具 |
 | `packages/bush-product-agent` | 产品指令、用户时间快照、模型参数与回合请求构造；本地和远端共用 |
 | `packages/cardbush-product-host` | 模型、插件、MCP、沙盒、维护等产品命令及配置存储；具体能力由宿主注入 |
-| `packages/bush-provider-openai` | OpenAI 兼容请求、流式协议和供应商差异处理 |
+| `packages/bush-provider-openai` | 按模型配置选择 Responses、Chat Completions 或 Anthropic Messages；请求投影、流式归一化、工具回放与供应商差异处理 |
 | `packages/bush-mcp-client` | MCP 连接及工具／资源调用 |
 | `packages/bush-runtime-electron` | 类型化 Runtime 客户端与传输适配；名称包含 Electron，但 Node Agent 也复用其协议实现 |
 | `packages/cardbush-platform` | 系统能力、Shell 与原生程序解析；浏览器安全类型和 Node 实现分别导出 |
@@ -57,6 +57,10 @@ flowchart TD
 - 页面前进后退保存访问位置，不保存凭据、草稿或执行结果。后台流式更新不产生新页面历史。
 
 设置页面通过环境适配选择本机或 Agent 的 Product Host。模型、插件、MCP、全局指令和沙盒设置属于所选主机；主题、语言、字体、快捷键及显示偏好属于桌面。新能力通过服务声明的 capability 判断，不能向旧服务无条件发送新字段。
+
+模型连接使用明确的 `apiProtocol` 和自定义请求头。Provider binding 按协议和连接参数生成不可变修订；对话 ID 在每次请求时注入头部，避免并发会话互相覆盖。新增协议仍消费统一 `ModelRequest` 并产出 `ModelEvent`，不另建 Agent 循环。配置界面和传输约定见[模型接入](MODEL_CONNECTIONS.md)。
+
+`ModelProviderRegistry` 只选择请求适配器。Responses、Chat Completions、Messages 分别投影消息与解析流，公共输入处理和工具身份映射不依赖任何具体协议。适配器不能执行工具、修改权威历史或决定下一轮；`executeModelRound` 汇总统一事件，`InMemoryRuntimeHost` 处理执行、权限、重试、停止、压缩和恢复。供应商签名思考等数据以不透明 replay 携带，不能成为另一套 loop 状态。
 
 ## 插件、应用中心与引用
 

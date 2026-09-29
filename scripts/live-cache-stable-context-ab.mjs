@@ -8,7 +8,7 @@ import {
 import { createLegacyProductAgentTurnRequest } from './cache-stable-legacy-baseline.mjs';
 import { GET_RUNTIME_SESSION_COMMAND } from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
-import { OpenAIResponsesProviderRegistry } from '@cardbush/bush-provider-openai';
+import { ModelProviderRegistry } from '@cardbush/bush-provider-openai';
 
 const configPath = resolve(
   process.env.BUSH_LIVE_MODEL_CONFIG_PATH ||
@@ -30,7 +30,7 @@ const model = stringValue(selected.model ?? selected.modelName ?? selected.model
 const baseURL = stringValue(selected.baseURL ?? selected.baseUrl ?? selected.base_url);
 if (!apiKey || !model) throw new Error('The selected live model configuration is incomplete.');
 
-const providers = new OpenAIResponsesProviderRegistry();
+const providers = new ModelProviderRegistry();
 const configured = providers.upsert({
   protocol: 'bush.provider_binding_config.v1',
   bindingId: stringValue(selected.id) || model,

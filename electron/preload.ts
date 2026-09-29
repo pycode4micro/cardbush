@@ -293,8 +293,8 @@ const desktopApi = {
       name: string;
       path: string;
     }>>,
-  listProviderModels: (baseUrl: string, apiKey: string) =>
-    ipcRenderer.invoke('models:list', baseUrl, apiKey) as Promise<{
+  listProviderModels: (baseUrl: string, apiKey: string, options?: { apiProtocol: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).ModelApiProtocol; defaultHeaders: Record<string, string> }) =>
+    ipcRenderer.invoke('models:list', baseUrl, apiKey, options) as Promise<{
       endpoint: string;
       models: string[];
       rawCount: number;

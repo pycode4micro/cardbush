@@ -5,7 +5,7 @@ import { join, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { configure, runTask } from './live.mjs';
-import { OpenAIResponsesProviderRegistry } from '@cardbush/bush-provider-openai';
+import { ModelProviderRegistry } from '@cardbush/bush-provider-openai';
 
 const task = { id: 'fake-provider', prompt: 'Finish the local test task.' };
 test('saved product configuration preserves its endpoint and headers without exposing credentials', async t => {
@@ -19,7 +19,7 @@ test('saved product configuration preserves its endpoint and headers without exp
   const model = { id: 'default', model: 'test-model', apiKey: 'fixture-key-only', baseURL: 'https://provider.invalid/v1', defaultHeaders: { 'X-Fixture': 'fixture-header-only' } };
   await writeFile(path, JSON.stringify({ version: 1, defaultModelId: 'default', models: [model] }));
   const result = await configure({ config: path, model: 'test-model', reasoning: 'high', 'max-rounds': '2', 'timeout-ms': '1000', 'token-stop': '1000', 'max-output-tokens': '12800' });
-  const expected = new OpenAIResponsesProviderRegistry().upsert({
+  const expected = new ModelProviderRegistry().upsert({
     protocol: 'bush.provider_binding_config.v1', bindingId: 'coding-benchmark', adapter: 'openai_responses',
     apiKey: model.apiKey, baseURL: model.baseURL, defaultHeaders: model.defaultHeaders,
   });

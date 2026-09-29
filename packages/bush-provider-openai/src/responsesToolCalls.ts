@@ -1,6 +1,7 @@
 import type { ModelEvent } from '@cardbush/bush-protocol';
 import { clientToolSearchArguments, isClientToolSearchCall, type ResponsesToolSearchMode } from './responsesReplay.js';
 import { ResponseOutputIndex } from './responsesOutputIndex.js';
+import { ProviderToolCallError } from './providerFailure.js';
 
 type Delta = Omit<Extract<ModelEvent, { kind: 'tool_call_delta' }>, 'protocol' | 'requestId' | 'sequence' | 'createdAt'>;
 type Call = {
@@ -12,10 +13,6 @@ type Call = {
   emittedIdentity: boolean; emittedChars: number;
 };
 
-export class ResponseToolCallError extends Error {
-  constructor(readonly code: string, message: string) { super(message); }
-}
-
 /** Reconcile lifecycle events and final snapshots before the Runtime may execute a batch. */
 export class ResponseToolCalls {
   readonly #calls = new Map<number, Call>();
@@ -25,7 +22,7 @@ export class ResponseToolCalls {
   get hasCalls(): boolean { return this.#calls.size > 0; }
 
   #changed(): never {
-    throw new ResponseToolCallError('provider_tool_call_changed', 'The provider changed a tool call identity or its arguments.');
+    throw new ProviderToolCallError('provider_tool_call_changed', 'The provider changed a tool call identity or its arguments.');
   }
 
   #call(index: number, type: Call['type']): Call {
@@ -73,7 +70,7 @@ export class ResponseToolCalls {
     }
     const incomplete = item.status === 'incomplete' || item.status === 'in_progress';
     if (item.type === 'tool_search_call' && (mode !== 'native' || item.execution !== 'client' || (completed && !incomplete && !isClientToolSearchCall(item)))) {
-      throw new ResponseToolCallError('provider_tool_search_invalid', 'The provider returned an invalid or unrequested client tool search call.');
+      throw new ProviderToolCallError('provider_tool_search_invalid', 'The provider returned an invalid or unrequested client tool search call.');
     }
     const call = this.#call(index, item.type);
     this.#identity(call, index, 'id', item.call_id);
@@ -86,7 +83,7 @@ export class ResponseToolCalls {
       call.itemCompleted = false;
       if (incomplete) return;
       if (!call.id || !call.name || (item.status !== undefined && item.status !== 'completed')) {
-        throw new ResponseToolCallError('provider_tool_call_incomplete', 'The provider did not complete a tool call.');
+        throw new ProviderToolCallError('provider_tool_call_incomplete', 'The provider did not complete a tool call.');
       }
       this.#completeArguments(call, item.type === 'tool_search_call' ? clientToolSearchArguments({ arguments: item.arguments }) : item.arguments);
       call.itemCompleted = true;
@@ -149,7 +146,7 @@ export class ResponseToolCalls {
   finish(): void {
     for (const call of this.#calls.values()) {
       if (call.incomplete || !call.id || !call.name || !call.argumentsDone) {
-        throw new ResponseToolCallError('provider_tool_call_incomplete', 'The provider ended the response with an unfinished tool call.');
+        throw new ProviderToolCallError('provider_tool_call_incomplete', 'The provider ended the response with an unfinished tool call.');
       }
     }
   }

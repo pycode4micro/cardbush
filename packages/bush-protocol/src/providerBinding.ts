@@ -1,5 +1,43 @@
 import { z } from "zod";
 
+export const modelApiProtocolSchema = z.enum(["openai_responses", "openai_chat_completions", "anthropic_messages"]);
+export type ModelApiProtocol = z.infer<typeof modelApiProtocolSchema>;
+export const anthropicThinkingModeSchema = z.enum(['adaptive', 'budget']);
+
+export const modelHeadersSchema = z.record(z.string(), z.string()).superRefine((headers, ctx) => {
+  const names = new Set<string>();
+  for (const [name, value] of Object.entries(headers)) {
+    const key = name.toLowerCase();
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(name) || /[^\x20-\x7e\t]/.test(value) ||
+      names.has(key) || ['host', 'content-length', 'connection', 'transfer-encoding'].includes(key)) {
+      ctx.addIssue({ code: 'custom', message: `Invalid or duplicate HTTP header: ${name}` });
+    }
+    names.add(key);
+  }
+});
+
+export function modelApiBaseURL(protocol: ModelApiProtocol, baseURL?: string): string {
+  const value = baseURL?.trim() || (protocol === 'anthropic_messages' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1');
+  const url = z.url({ protocol: /^https?$/, normalize: true }).parse(value);
+  if (/^https?:\/\/[^/]*@/i.test(url) || /[?#]/.test(url)) {
+    throw new Error('API base URL must be an HTTP(S) URL without credentials, query or fragment.');
+  }
+  return url.replace(/\/+$/, '');
+}
+
+/** Resolve on every request; never mutate a shared client's defaults. */
+export function modelRequestHeaders(baseURL: string | undefined, defaults: Record<string, string> | undefined, sessionId: string): Record<string, string> {
+  const headers: Record<string, string> = { 'user-agent': 'CardBush/1.0' };
+  for (const [name, value] of Object.entries(modelHeadersSchema.parse(defaults ?? {}))) {
+    headers[name.toLowerCase()] = value.replaceAll('{{sessionId}}', sessionId);
+  }
+  if (baseURL && z.url({ hostname: /^opencode\.ai$/i }).safeParse(baseURL).success) {
+    // OpenCode routes all main/auxiliary calls by the stable conversation identity.
+    headers['x-opencode-session'] = sessionId;
+  }
+  return modelHeadersSchema.parse(headers);
+}
+
 export const BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL =
   "bush.provider_binding_config.v1" as const;
 export const BUSH_PROVIDER_BINDING_RESULT_PROTOCOL =
@@ -21,10 +59,11 @@ export type RuntimeProviderBindingRef = z.infer<
 export const runtimeProviderBindingConfigSchema = z.object({
   protocol: z.literal(BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL),
   bindingId: z.string().min(1),
-  adapter: z.literal("openai_responses"),
+  adapter: modelApiProtocolSchema,
+  anthropicThinkingMode: anthropicThinkingModeSchema.optional(),
   apiKey: z.string().min(1),
   baseURL: z.string().min(1).optional(),
-  defaultHeaders: z.record(z.string(), z.string()).default({}),
+  defaultHeaders: modelHeadersSchema.default({}),
   timeoutMs: z.number().int().positive().optional(),
 });
 

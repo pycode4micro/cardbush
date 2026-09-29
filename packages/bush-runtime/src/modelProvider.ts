@@ -23,6 +23,13 @@ export interface ModelInputTokenCount {
   source: "provider";
 }
 
+/**
+ * One model exchange at the protocol boundary: canonical ModelRequest in,
+ * normalized ModelEvent out. Adapters own wire roles, tool/image encoding,
+ * streaming and opaque replay only. They never execute tools, append canonical
+ * conversation messages, or decide Agent continuation/permissions/recovery.
+ * InMemoryRuntimeHost + executeModelRound own that loop for every adapter.
+ */
 export interface ModelProvider {
   /** Local estimate of the full wire context (including any chained history).
    * Counts the Provider projection once, without Runtime replay sidecars.

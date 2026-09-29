@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { GET_RUNTIME_SESSION_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND, reasoningEffortSchema } from '@cardbush/bush-protocol';
 import { createProductAgentTurnRequest, ROOT_AGENT_SYSTEM_PROMPT } from '@cardbush/bush-product-agent';
 import { InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
-import { OpenAIResponsesProviderRegistry } from '@cardbush/bush-provider-openai';
+import { ModelProviderRegistry } from '@cardbush/bush-provider-openai';
 import { benchmarkTools } from './suite.mjs';
 import { containedPath, projectRoot } from './harness.mjs';
 
@@ -35,7 +35,7 @@ export async function configure(values) {
   const maxOutputTokens = positiveInteger(values['max-output-tokens'] ?? '4096', '--max-output-tokens');
   if (maxOutputTokens >= 100_000) throw new Error('--max-output-tokens must be smaller than the benchmark context window (100000).');
   reasoningEffortSchema.parse(values.reasoning);
-  const providers = new OpenAIResponsesProviderRegistry();
+  const providers = new ModelProviderRegistry();
   const configured = providers.upsert({
     protocol: 'bush.provider_binding_config.v1', bindingId: 'coding-benchmark', adapter: 'openai_responses',
     apiKey: apiKey.trim(), baseURL: baseURL?.trim() || undefined, defaultHeaders,
