@@ -1,11 +1,11 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { ConversationHostContext } from '../conversationHost';
-import { basename } from '../../shared/localPaths';
+import { basename, mediaResourceUrl } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage } from '../../types';
 import { ImagePreviewDialog, type ImagePreviewSource } from '../chatMessages/ImagePreviewDialog';
 
-export function MediaInspectorPreview({ kind, source, path, name: displayName, language, onLoadingChange }: {
+export function MediaInspectorPreview({ kind, source: rawSource, path, name: displayName, language, onLoadingChange }: {
   kind: 'image' | 'video' | 'audio';
   source: string;
   path: string;
@@ -13,6 +13,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
   language: AppLanguage;
   onLoadingChange: (loading: boolean) => void;
 }) {
+  const source = mediaResourceUrl(rawSource);
   const host = useContext(ConversationHostContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<'load' | 'timeout' | null>(null);
@@ -22,7 +23,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
 
   useEffect(() => {
     const media = containerRef.current?.querySelector('img, video, audio') as HTMLImageElement | HTMLMediaElement | null;
-    if (!media) return;
+    if (!media) { onLoadingChange(false); return; }
     setError(null);
     onLoadingChange(true);
     const ready = () => {
@@ -63,7 +64,7 @@ export function MediaInspectorPreview({ kind, source, path, name: displayName, l
   return (
     <div className="inspector-media-preview" ref={containerRef}
       onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { image: kind === 'image', language })}>
-      {kind === 'image' ? (
+      {!source ? <p role="status">{language === 'zh' ? '媒体地址不可用' : 'Media address unavailable'}</p> : kind === 'image' ? (
         <button type="button" className="inspector-image-open" aria-label={language === 'zh' ? `查看 ${name}` : `View ${name}`}
           onClick={event => {
             const image = event.currentTarget.querySelector('img');

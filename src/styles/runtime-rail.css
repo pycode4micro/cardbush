@@ -75,7 +75,7 @@
   pointer-events: auto;
 }
 
-.runtime-screen-queue-actions button {
+.runtime-screen-queue-actions > button {
   width: 22px;
   height: 22px;
   padding: 0;
@@ -87,14 +87,14 @@
   background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
 }
 
-.runtime-screen-queue-actions button:hover:not(:disabled),
-.runtime-screen-queue-actions button:focus-visible {
+.runtime-screen-queue-actions > button:hover:not(:disabled),
+.runtime-screen-queue-actions > button:focus-visible {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
   background: color-mix(in srgb, var(--accent) 13%, var(--surface-strong));
 }
 
-.runtime-screen-queue-actions button:disabled {
+.runtime-screen-queue-actions > button:disabled {
   opacity: 0.48;
 }
 
@@ -647,7 +647,7 @@
   padding: 6px 8px;
   margin-bottom: 6px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
@@ -658,42 +658,6 @@
 
 .runtime-queue-item:last-child {
   margin-bottom: 0;
-}
-
-.runtime-queue-drag-handle {
-  width: 26px;
-  height: 28px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-radius: 6px;
-  color: var(--text-soft);
-  background: color-mix(in srgb, var(--text) 7%, transparent);
-  font-size: calc(9px * var(--ui-font-scale, 1));
-  font-weight: 800;
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-  transition:
-    color 120ms ease,
-    background-color 120ms ease,
-    transform 120ms ease;
-}
-
-.runtime-queue-drag-handle:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.runtime-queue-drag-handle:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--accent) 72%, var(--text));
-  outline-offset: 2px;
-}
-
-.runtime-queue-drag-handle:hover:not(:disabled) {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .runtime-queue-item.dragging {
@@ -757,7 +721,7 @@ body.queue-reordering * {
   gap: 6px;
 }
 
-.runtime-queue-actions button {
+.runtime-queue-actions > button {
   min-width: 58px;
   height: 28px;
   padding: 0 9px;
@@ -773,23 +737,23 @@ body.queue-reordering * {
   white-space: nowrap;
 }
 
-.runtime-queue-actions button:hover:not(:disabled) {
+.runtime-queue-actions > button:hover:not(:disabled) {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-.runtime-queue-actions button:disabled {
+.runtime-queue-actions > button:disabled {
   opacity: 0.45;
 }
 
 @container queued-message (max-width: 480px) {
-  .runtime-queue-actions button {
+  .runtime-queue-actions > button {
     min-width: 28px;
     width: 28px;
     padding: 0;
   }
 
-  .runtime-queue-actions button span {
+  .runtime-queue-actions > button > span {
     display: none;
   }
 }

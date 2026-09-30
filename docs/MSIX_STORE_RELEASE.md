@@ -32,7 +32,7 @@ replace these values exactly:
 `version` is the explicit Store package version, such as `1.0.0.0`. Use four
 integers, keep the last component zero, and increase the version for each update.
 Do not reuse one version for different beta builds. The npm application version
-in the source checkout is unchanged; `1.0.0-beta.4` itself is not a valid MSIX version.
+in the source checkout is unchanged; `1.0.0-beta.5` itself is not a valid MSIX version.
 The MSIX build injects its identity version into About and Copy environment, and
 sets the packaged Electron version to the corresponding three-part SemVer. For
 example, identity `1.0.5.0` displays `1.0.5.0` and packages Electron metadata as
@@ -99,7 +99,7 @@ In particular verify:
   browser, update and uninstall behavior under the MSIX package identity.
 - Notifications, taskbar identity and shortcut handling, which currently use the
   desktop application's AppUserModelID.
-- Browser Use: pair real Chrome and Edge with bundled extension **1.2.0** over
+- Browser Use: pair real Chrome and Edge with bundled extension **1.2.1** over
   authenticated loopback WebSocket. Reload old loaded extension copies first.
   Validate simultaneous independent pairings, default selection, explicit switching,
   session isolation and individual revocation. Configuration belongs to the current

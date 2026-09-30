@@ -2,11 +2,13 @@ export const componentProtocol = 'cardbush.html-surface/1';
 export const componentStorageKey = 'cardbush.html_components.v1';
 export const maxComponentBytes = 256 * 1024;
 type ComponentLayout = { id: string; width: number; height: number; order: number };
+export type ComposerFlow = { afterSend: 'bottom' | 'keep'; output: 'above' | 'below' };
+type ComposerFlowOptions = { composerFlow?: ComposerFlow };
 export type HtmlComponent = ComponentLayout & { kind?: 'html'; title: string; html: string; allowActions: boolean };
 export type BuiltinKind = 'clock' | 'digital-clock' | 'calendar' | 'brand' | 'greeting' | 'suggestions' | 'input';
-export type BuiltinComponent = ComponentLayout & { kind: 'builtin'; builtin: BuiltinKind; inputStyle?: 'standard' | 'simple' };
+export type BuiltinComponent = ComponentLayout & ComposerFlowOptions & { kind: 'builtin'; builtin: BuiltinKind; inputStyle?: 'standard' | 'simple' };
 export type ComponentItem = HtmlComponent | BuiltinComponent;
-export type WelcomePlacement = { componentId: string; x: number; y: number; width: number; height: number; inputStyle?: 'standard' | 'simple' };
+export type WelcomePlacement = ComposerFlowOptions & { componentId: string; x: number; y: number; width: number; height: number; inputStyle?: 'standard' | 'simple'; composerDock?: 'bottom' };
 export type WelcomeLayout = { items: WelcomePlacement[] };
 export type ComponentCollection = { version: 1; revision: number; items: ComponentItem[]; welcomeLayout?: WelcomeLayout };
 export const defaultWelcomeIds = ['system-brand', 'system-greeting', 'system-suggestions', 'system-input'];
@@ -34,6 +36,17 @@ export function welcomeInputStyle(collection: ComponentCollection): 'standard' |
   return collection.welcomeLayout?.items.find(item => item.componentId === input.id)?.inputStyle ?? input.inputStyle ?? 'standard';
 }
 
+export function normalizeComposerFlow(value: unknown): ComposerFlow {
+  const flow = value as Partial<ComposerFlow> | null;
+  return { afterSend: flow?.afterSend === 'keep' ? 'keep' : 'bottom', output: flow?.output === 'below' ? 'below' : 'above' };
+}
+
+export function welcomeComposerFlow(collection: ComponentCollection): ComposerFlow {
+  const input = collection.items.find(item => isBuiltinComponent(item) && item.builtin === 'input');
+  return normalizeComposerFlow(collection.welcomeLayout?.items.find(item => item.componentId === input?.id)?.composerFlow
+    ?? (input && isBuiltinComponent(input) ? input.composerFlow : undefined));
+}
+
 export function normalizeComponents(value: unknown): ComponentCollection {
   const input = value as Partial<ComponentCollection> | null;
   if (!input || input.version !== 1 || !Array.isArray(input.items)) return defaultComponents;
@@ -56,7 +69,10 @@ export function normalizeComponents(value: unknown): ComponentCollection {
       width: saved ? Math.max(3, Math.min(12, Math.round(Number(saved.width) || fallback.width))) : fallback.width,
       height: saved ? Math.max(120, Math.min(1200, Math.round(Number(saved.height) || fallback.height))) : fallback.height,
       order: saved && Number.isFinite(saved.order) ? saved.order : nextOrder + fallback.order,
-      ...(isBuiltinComponent(fallback) && fallback.builtin === 'input' ? { inputStyle: saved && isBuiltinComponent(saved) && saved.inputStyle === 'simple' ? 'simple' as const : 'standard' as const } : {}),
+      ...(isBuiltinComponent(fallback) && fallback.builtin === 'input' ? {
+        inputStyle: saved && isBuiltinComponent(saved) && saved.inputStyle === 'simple' ? 'simple' as const : 'standard' as const,
+        ...(saved && isBuiltinComponent(saved) && saved.composerFlow ? { composerFlow: normalizeComposerFlow(saved.composerFlow) } : {}),
+      } : {}),
     });
   }
   return { version: 1, revision: Math.max(0, Math.floor(Number(input.revision) || 0)), items: items.sort((a, b) => a.order - b.order),
@@ -70,8 +86,10 @@ function normalizeWelcomeLayout(layout: WelcomeLayout, catalog: ComponentItem[])
     if (!item || seen.has(item.componentId) || !catalog.some(component => component.id === item.componentId)) return [];
     seen.add(item.componentId);
     const width = bounded(item.width, 50, 10, 100);
-    return [{ componentId: item.componentId, x: bounded(item.x, 0, 0, 100 - width), y: bounded(item.y, 0, 0, 10000), width,
-      height: bounded(item.height, 200, 20, 1200), ...(item.inputStyle ? { inputStyle: item.inputStyle === 'simple' ? 'simple' as const : 'standard' as const } : {}) }];
+    return [{ componentId: item.componentId, x: item.componentId === 'system-input' ? (100 - width) / 2 : bounded(item.x, 0, 0, 100 - width), y: bounded(item.y, 0, 0, 10000), width,
+      height: bounded(item.height, 200, 20, 1200), ...(item.inputStyle ? { inputStyle: item.inputStyle === 'simple' ? 'simple' as const : 'standard' as const } : {}),
+      ...(item.componentId === 'system-input' && item.composerDock === 'bottom' ? { composerDock: 'bottom' as const } : {}),
+      ...(item.componentId === 'system-input' && item.composerFlow ? { composerFlow: normalizeComposerFlow(item.composerFlow) } : {}) }];
   }) };
 }
 

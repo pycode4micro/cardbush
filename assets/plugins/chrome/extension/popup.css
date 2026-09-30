@@ -9,6 +9,10 @@ small { color: #829493; }
 .mark { width: 36px; height: 36px; object-fit: contain; filter: drop-shadow(0 0 5px rgb(18 221 208 / 28%)); }
 .connection { padding: 9px 10px; margin-bottom: 12px; color: #d9f700; border-left: 3px solid #d9f700; background: #10191b; }
 .connection.offline { color: #ff637d; border-color: #ff637d; }
+.connection.waiting { color: #c5cfce; border-color: #829493; }
+.hint { margin: 10px 0; color: #a8b9b7; font-size: 12px; line-height: 1.5; }
+details { margin-bottom: 12px; }
+summary { color: #a8b9b7; font-size: 12px; cursor: pointer; }
 .scope { margin: -3px 0 5px; overflow: hidden; color: #12ddd0; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .scope-picker { display: grid; gap: 5px; margin: 8px 0 3px; color: #829493; font-size: 11px; }
 .scope-picker[hidden] { display: none; }

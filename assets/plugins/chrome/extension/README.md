@@ -14,7 +14,7 @@ Development installation:
 4. To use an existing personal tab, open the extension popup and explicitly
    copy it into the active CardBush group. The original tab remains untouched.
 
-Version 1.2.0 adds browser-bound pairing and concurrent connections. Reload the extension after upgrading.
+Version 1.2.1 preserves pairings and enabled intent across app/browser restarts and temporary desktop disable. Reload the existing extension after upgrading; do not uninstall it, which deletes its saved state.
 `list_browsers` and `select_browser` expose the connected profiles to the agent. The configured default applies only to unbound sessions; existing bindings survive a broker restart. Switching explicitly releases the old session scope first. A failed release or disconnect never falls through to another browser. Browser and profile labels describe the target; the pairing credential and exact Origin authenticate it.
 
 Turn completion suspends the browser debugger and collapses managed groups, but
@@ -55,10 +55,27 @@ before shipping the desktop installer. Set
 `CARDBUSH_CHROME_CONNECTOR_STORE_URL` to the final listing URL so CardBush opens
 the reviewed install page instead of the unpacked-extension directory.
 
-The connector starts disabled. Explicit desktop disable revokes all paired
-credentials; enabling again requires new pairings. Removing a connection revokes only that credential. App exit preserves pairings
-in app data. A fresh browser session requires an explicit Connect click;
-worker recovery within an enabled session is bounded. Pairing a new connection preserves other credentials. After re-pairing the same profile, remove its old offline entry. The extension has no nativeMessaging permission.
+The connector starts disabled. First pairing enables automatic reconnection,
+including after a browser restart. Five minutes limits accepting a new pairing
+code, not the lifetime of an established pairing. Offline retries back off from
+30 seconds to a maximum interval of two minutes and continue while enabled;
+opening the popup retries immediately. No browser action is replayed.
+
+Desktop disable stops the listener and active control while retaining pairings
+and session bindings. Re-enabling the desktop connector allows automatic
+reconnection. Explicit extension disable stays off across browser/worker restarts
+until Connect is clicked, retaining its pairing. Removing a connection revokes
+only that credential; removing connector configuration revokes all pairings and
+clears bindings. Ordinary app exit preserves enabled intent and pairing data.
+
+Per-site and all-site grants survive ordinary app/browser restarts and temporary
+disable; use Revoke access in the extension to clear them. This consent only
+applies to managed session groups. It never authorizes personal tabs implicitly.
+One-time grants and tab/group IDs remain browser-session state; a browser restart
+does not adopt restored personal tabs based on their title or numeric ID.
+Pairing a new connection preserves other credentials. After intentionally
+re-pairing the same profile, remove its old offline entry. The extension has no
+nativeMessaging permission. See [implementation and license scope](../THIRD_PARTY_NOTICES.md).
 
 MSIX connector configuration resides in the package's LocalState. Older
 Native Messaging registrations require an ownership-checked migration; see

@@ -6,6 +6,8 @@ release/
 release-*/
 logs/
 tmp/
+.cardbush-runtime/
+/deploy-manifest.json
 *.log
 __pycache__/
 *.py[cod]

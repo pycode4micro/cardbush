@@ -1,8 +1,9 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, X } from 'lucide-react';
-import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, type ModelApiProtocol } from '@cardbush/bush-protocol';
+import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, resolveModelReasoningEffort, reasoningEffortsForProtocol, type ModelApiProtocol } from '@cardbush/bush-protocol';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
-import type { AppLanguage, ManagedModelConfig } from '../../types';
+import type { AppLanguage, ManagedModelConfig, ReasoningLevel } from '../../types';
+import { modelReasoningLabel } from './modelReasoning';
 import { ModelProviderSelect, customProviderValue, normalizeProvider } from './ModelProviderSelect';
 import { SettingsInput } from './SettingsControls';
 import { SettingsDropdown } from './SettingsDropdown';
@@ -20,6 +21,8 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   const provider = normalizeProvider(providerSelection === customProviderValue ? customProvider : providerSelection);
   const [apiProtocol, setApiProtocol] = useState<ModelApiProtocol>(model?.apiProtocol ?? 'openai_responses');
   const [anthropicThinkingMode, setAnthropicThinkingMode] = useState<'adaptive' | 'budget'>(model?.anthropicThinkingMode ?? 'adaptive');
+  const [reasoning, setReasoning] = useState<ReasoningLevel>(model?.reasoningEffort ?? 'default');
+  const effectiveReasoning = resolveModelReasoningEffort({ apiProtocol }, reasoning) ?? 'default';
   const protocol = modelProtocols.find(item => item.value === apiProtocol)!;
   const [baseUrl, setBaseUrl] = useState(model?.baseUrl ?? '');
   const gateway = modelApiGateway(baseUrl.trim());
@@ -46,6 +49,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
       modelApiBaseURL(apiProtocol, baseUrl);
       await onSave({ ...model, id: model?.id ?? crypto.randomUUID(), modelName: name.trim(), provider,
         apiProtocol, baseUrl: baseUrl.trim(), apiKey: key.trim(), defaultHeaders: readHeaders(),
+        reasoningEffort: resolveModelReasoningEffort({ apiProtocol }, reasoning) ?? null,
         ...(apiProtocol === 'anthropic_messages' ? { anthropicThinkingMode } : {}),
         maxContextTokens: context.trim() ? Number(context) : undefined, maxCompletionTokens: completion.trim() ? Number(completion) : undefined });
     } catch (failure) { setFormError(agentErrorText(failure)); }
@@ -82,6 +86,12 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
               finally { if (mounted.current) setDiscovering(false); }
             }}><Download size={14}/>{discovering ? zh ? '获取中…' : 'Fetching…' : zh ? '获取列表' : 'Fetch models'}</button>}</div>
         {discovered.length > 0 && <SettingsDropdown label={zh ? '选择模型' : 'Choose model'} value={name} options={discovered.map(value => ({ value, label: value }))} onChange={setName}/>}
+        <label className="settings-field"><span>{zh ? '思考强度' : 'Reasoning effort'}</span>
+          <SettingsDropdown label={zh ? '思考强度' : 'Reasoning effort'} value={effectiveReasoning}
+            options={(['default', ...reasoningEffortsForProtocol(apiProtocol)] as ReasoningLevel[]).map(value => ({ value, label: modelReasoningLabel(value, language) }))}
+            onChange={value => setReasoning(value as ReasoningLevel)}/>
+          <small className="model-field-hint">{zh ? '仅用于这个模型，切换模型时自动切换。未指定时使用服务商默认；具体档位需由模型支持。' : 'Saved for this model and restored when switching models. Provider default leaves effort unspecified; individual levels require model support.'}</small>
+        </label>
         {gateway === 'opencode' && <p className="model-connection-note">{zh ? '已支持 OpenCode：自动传入当前对话的会话 ID 和 CardBush 标识，无需手动填写。' : 'OpenCode: the conversation ID and CardBush user agent are sent automatically.'}</p>}
         {gateway === 'openrouter' && <p className="model-connection-note">{zh ? 'OpenRouter：自动携带当前对话 ID 和 CardBush 标识。模型名称请使用列表中的完整 ID，例如 provider/model-id。' : 'OpenRouter: the current conversation ID and CardBush identifier are sent automatically. Use the full model ID from the list, such as provider/model-id.'}</p>}
         <button type="button" className="model-advanced-disclosure" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><ChevronDown size={14}/>{zh ? '高级选项' : 'Advanced options'}</button>

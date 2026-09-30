@@ -250,7 +250,7 @@ export async function streamRuntimeShadowConversationMessage(
       planEnabled: false,
       maxOutputTokens: resolved.maxOutputTokens,
       maxContextTokens: resolved.maxContextTokens,
-      reasoningEffort: request.reasoningLevel,
+      reasoningEffort: request.reasoningLevel === 'default' ? undefined : request.reasoningLevel ?? resolved.reasoningEffort,
       sessionMetadata: {
         parentSessionId: state.sessionId,
         agentRole: 'child',

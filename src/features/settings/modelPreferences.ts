@@ -1,4 +1,5 @@
 import { type ManagedModelConfig } from '../../types';
+import { reasoningEffortSchema, resolveModelReasoningEffort } from '@cardbush/bush-protocol';
 
 export function readManagedModelConfigs() {
   const raw =
@@ -34,6 +35,10 @@ export function readManagedModelConfigs() {
           typeof item.apiKeyMasked === 'string' ? item.apiKeyMasked : undefined,
         modelName: String(item.modelName ?? ''),
         baseUrl: String(item.baseUrl ?? ''),
+        apiProtocol: item.apiProtocol as ManagedModelConfig['apiProtocol'],
+        anthropicThinkingMode: item.anthropicThinkingMode as ManagedModelConfig['anthropicThinkingMode'],
+        defaultHeaders: item.defaultHeaders as ManagedModelConfig['defaultHeaders'],
+        reasoningEffort: reasoningEffortSchema.nullish().safeParse(item.reasoningEffort).data ?? null,
         maxContextTokens: normalizeMaxContextTokens(
           item.maxContextTokens ??
             item.max_context_tokens ??
@@ -93,6 +98,7 @@ export function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
       apiKeyMasked: raw.apiKeyMasked?.trim() || undefined,
       apiProtocol: raw.apiProtocol ?? 'openai_responses',
       anthropicThinkingMode: raw.anthropicThinkingMode,
+      reasoningEffort: resolveModelReasoningEffort({ ...raw, reasoningEffort: reasoningEffortSchema.nullish().safeParse(raw.reasoningEffort).data }) ?? null,
       defaultHeaders: raw.defaultHeaders ?? {},
       modelName,
       baseUrl,

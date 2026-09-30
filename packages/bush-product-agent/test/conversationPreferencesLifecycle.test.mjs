@@ -198,7 +198,7 @@ for (const format of ['ordered', 'incremental']) test(`individuation gates survi
   let { host } = open();
   await host.runSessionTurn(request('individuation_initial', { individuation: { habits: true, predictions: true } }));
   compact();
-  const settings = { individuation: { habits: false, predictions: true }, ...(format === 'incremental' ? { tools: [] } : {}) };
+  const settings = { individuation: { habits: false, predictions: true, summaryTokenThreshold: 7000, recallMode: 'context' }, ...(format === 'incremental' ? { tools: [] } : {}) };
   await host.runSessionTurn(request('individuation_compact', settings));
   const latest = () => observed.at(-1).messages.filter(message => message.name === 'individuation_preference').at(-1);
   assert.match(latest().content, /habits disabled; next-step prediction enabled/);

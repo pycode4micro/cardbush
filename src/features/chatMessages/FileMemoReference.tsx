@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState, type ReactNode } from 'react';
 import type { FileMemoResolution } from '@cardbush/bush-protocol';
 import { fetchFileMemo } from '../../backend/fileMemo';
-import { fileUrl, isImagePath, isVideoPath, isAudioPath } from '../../shared/localPaths';
+import { fileUrl, isImagePath, isVideoPath, isAudioPath, resourceTargetKind } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { openInspector } from '../inspector/inspectorEvents';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
@@ -58,7 +58,8 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const { memo, status, currentVersion } = current.result;
   const label = children || memo.file.name;
   const path = memo.file.path;
-  if (status === 'unavailable') return <span className="local-file-reference-unavailable">
+  const targetKind = resourceTargetKind(path);
+  if (status === 'unavailable' || (targetKind !== 'local-file' && targetKind !== 'ssh-file')) return <span className="local-file-reference-unavailable">
     {label} · {language === 'zh' ? '文件不可访问' : 'File unavailable'}
     {' '}<button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button>
   </span>;
@@ -79,8 +80,8 @@ export function FileMemoReference({ reference, children, inline = false, languag
       onError={() => setFailedMedia(mediaKey)}
       onClick={() => openInspector(path, memo.file.name)}
       onContextMenu={event => openFileContextMenu(event, path, { image: true, language })} />
-      : media && isVideoPath(path) ? <InlineVideo src={source} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
-      : media && isAudioPath(path) ? <InlineAudio src={source} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
+      : media && isVideoPath(path) ? <InlineVideo src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
+      : media && isAudioPath(path) ? <InlineAudio src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : <LocalFileReferenceLink path={path} knownFileName={memo.file.name}>{label}</LocalFileReferenceLink>}
     {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
     {status === 'available' && inline && failedMedia === mediaKey && <small role="status"> · {language === 'zh' ? '无法预览，打开文件查看' : 'Preview unavailable; open the file'}</small>}

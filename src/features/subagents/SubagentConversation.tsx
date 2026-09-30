@@ -91,15 +91,18 @@ export function SubagentConversationView({ task, language, active, refresh, refr
     const load = () => void (call ? call<{ models: ManagedModelConfig[]; defaultModelId: string }>('product.command', { kind: 'models.get' }) : api.fetchModelConfigs())
       .then(value => { if (alive) { setModels([...value.models].sort((a, b) => Number(b.id === value.defaultModelId) - Number(a.id === value.defaultModelId))); setConfigurationError(''); } })
       .catch(error => { if (alive) setConfigurationError(String(error.message ?? error)); });
+    const reasoningChanged = (event: Event) => { if ((event as CustomEvent<{ connectionId: string }>).detail.connectionId === (host?.environmentId ?? '')) load(); };
     load(); window.addEventListener('cardbush:shared-configuration-updated', load);
-    return () => { alive = false; window.removeEventListener('cardbush:shared-configuration-updated', load); };
-  }, [call]);
+    window.addEventListener('cardbush:model-reasoning-updated', reasoningChanged);
+    return () => { alive = false; window.removeEventListener('cardbush:shared-configuration-updated', load); window.removeEventListener('cardbush:model-reasoning-updated', reasoningChanged); };
+  }, [call, host?.environmentId]);
   const accepted = useRef<(() => void) | undefined>(undefined);
   const knownTask = useRef(task);
   knownTask.current = task;
   const backend = useMemo(() => subagentConversationBackend({ base, runtime, sessionId, readTasks, knownTask: () => knownTask.current,
     onSubmitted: () => accepted.current?.() }), [base, runtime, sessionId, readTasks]);
   const chat = useCardbushChat(models, models, { runtimeReady: true, activeConversationId: sessionId, viewActive: active,
+    onModelReasoningChange: (id, effort) => api.saveModelReasoning(id, effort, host?.environmentId),
     language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputEnabled, disabledSkillNames,
     interactiveRequestsAvailable: true, contextWindowUsageAvailable: true, workspaceChangesAvailable: true }, backend);
   const [draft, setDraft] = useConversationViewState(conversationViewKey(host?.environmentId, sessionId, 'subagent-draft'), () => '', Boolean);

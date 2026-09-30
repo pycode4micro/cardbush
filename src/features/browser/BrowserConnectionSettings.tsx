@@ -77,11 +77,11 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
     <SettingsCard title={language === 'zh' ? '浏览器连接' : 'Browser connection'}>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
-        <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '连接 Chrome 或 Edge，使用对应浏览器的登录状态。默认关闭，仅操作你授权的页面。' : 'Connect Chrome or Edge using that browser’s sign-in. Off by default; only authorized pages can be controlled.'}</small></span>
+        <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? 'CardBush 自有连接器，连接 Chrome 或 Edge 并使用对应浏览器的登录状态。默认关闭，仅操作你授权的页面。' : 'CardBush’s own connector for Chrome or Edge, using that browser’s sign-in. Off by default; only authorized pages can be controlled.'}</small></span>
       </label>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
-        <span><strong>{language === 'zh' ? '远程调试兼容模式' : 'Remote debugging compatibility mode'}</strong><small>{language === 'zh' ? '仅供开发者使用；连接已主动开启远程调试的 Chrome，不创建临时资料。' : 'For advanced development only; connects to an opted-in remote-debugging Chrome without creating a temporary profile.'}</small></span>
+        <span><strong>{language === 'zh' ? '远程调试兼容模式' : 'Remote debugging compatibility mode'}</strong><small>{language === 'zh' ? '使用 Google 的 Chrome DevTools MCP，仅供开发者连接已主动开启远程调试的 Chrome，不创建临时资料。' : 'Uses Google’s Chrome DevTools MCP for advanced development with an opted-in remote-debugging Chrome. Does not create a temporary profile.'}</small></span>
       </label>
       {mode === 'connector' ? (
         <div className="chrome-connector-card">
@@ -99,7 +99,9 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                   : (language === 'zh' ? '连接器未就绪' : 'Connector not ready')}</strong>
               <small>{status?.extensionConnected
                 ? `${status.activeTabTitle || (language === 'zh' ? '当前标签页' : 'Current tab')} · ${status.controlledTabCount} ${language === 'zh' ? '个受控标签页' : 'controlled tabs'}`
-                : (language === 'zh' ? '选择浏览器并生成配对码，粘贴到对应浏览器的 Browser Use 扩展中。页面授权单独选择。' : 'Choose a browser and paste its pairing code into the Browser Use extension in that browser. Page access is authorized separately.')}</small>
+                : status?.paired
+                  ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可打开扩展立即重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; open the extension to retry now. No new code or permission is needed.')
+                  : (language === 'zh' ? '首次使用时选择浏览器并生成配对码，粘贴到对应浏览器的 Browser Use 扩展中。页面授权单独选择。' : 'For first use, choose a browser and paste its pairing code into the Browser Use extension. Page access is authorized separately.')}</small>
             </div>
           </div>
           <div className="chrome-connector-actions">
@@ -153,8 +155,8 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
             <p className="browser-setting-note">{language === 'zh' ? `仅粘贴到 ${pairing.browser === 'edge' ? 'Edge' : 'Chrome'} 的 CardBush Browser Use 扩展。其他连接会继续保留；更换同一配置的配对后可移除旧记录。` : `Paste only into CardBush Browser Use in ${pairing.browser === 'edge' ? 'Edge' : 'Chrome'}. Other connections are retained; remove old records after re-pairing a profile.`}</p>
           </div>}
           <p className="browser-setting-note">{language === 'zh'
-            ? '“停止控制”只结束当前控制。关闭连接器会断开全部浏览器并撤销配对；再次开启需要重新配对。移除单个连接只撤销该配对。扩展可在 chrome://extensions 或 edge://extensions 中移除。'
-            : 'Stop control ends current control. Disabling the connector disconnects all browsers and revokes all pairings. Removing one connection revokes only that pairing. Remove extensions at chrome://extensions or edge://extensions.'}</p>
+            ? '“停止控制”只结束当前控制。关闭连接器保留配对，再次开启后自动重连。移除单个连接只撤销该配对；移除连接器配置撤销全部配对和会话绑定。已保存的网站授权可在扩展中单独撤销。'
+            : 'Stop control only ends current control. Disabling the connector preserves pairings for reconnection when re-enabled. Removing a connection revokes that pairing; removing connector configuration clears all pairings and session bindings. Saved site permissions can be revoked separately in the extension.'}</p>
           {status?.cleanupWarning && <div className="browser-setting-note">
             <p>{status.cleanupWarning === 'legacy_external_registration'
               ? (language === 'zh' ? '检测到旧版的外部注册项。请退出所有 CardBush 窗口和后台进程，在 Windows 终端的 PowerShell 中执行清理命令。新版本不会再创建此注册项。' : 'A legacy external registration remains. Exit all CardBush windows and background processes and run the cleanup command in Windows Terminal’s PowerShell. This version does not recreate it.')

@@ -57,6 +57,7 @@ import {
   revertSessionWorkspaceChanges,
   restoreSessionWorkspaceChanges,
   saveModelConfigs,
+  saveModelReasoning,
 } from './backend/api';
 import { useCardbushChat } from './hooks/useCardbushChat';
 import { showUiError } from './shared/showUiError';
@@ -83,6 +84,7 @@ import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
 import { BrowserBookmarkButton } from './features/inspector/BrowserBookmarkButton';
+import { BrowserTranslateButton } from './features/inspector/BrowserTranslateButton';
 import { InspectorPageDialog } from './features/inspector/InspectorPageDialog';
 import { InspectorTileFrame } from './features/inspector/InspectorTileFrame';
 import {
@@ -148,6 +150,7 @@ import {
   type AppSection,
   type AppSettingsState,
   type BackendCapabilities,
+  type ManagedModelConfig,
   type ChatMessage,
   type ConversationSummary,
   type RuntimeAssetCategory,
@@ -182,7 +185,8 @@ import { CopyToastHost } from './components/CopyToastHost';
 import { readInitialThemePreference, resolveTheme, systemPrefersDark } from './features/appearance/themePreferences';
 import { useInspectorWorkspace } from './features/inspector/useInspectorWorkspace';
 import { FeaturePanel, FeaturePanelLoading } from './features/panels/FeaturePanel';
-import { normalizeAppSettings, persistAppSettings, readInitialAppSettings } from './features/settings/appSettingsStore';
+import { normalizeAppSettings, persistAppSettings } from './features/settings/appSettingsStore';
+import { useAppSettings } from './features/settings/useAppSettings';
 import { clampSidebarWidth, persistDisabledSkillNames, persistVisualInputEnabled, readDisabledSkillNames, readInitialLanguageMode, readInitialSidebarWidth, readSystemLanguage, readVisualInputEnabled, resolveAppLanguage } from './features/settings/localPreferences';
 import { defaultModelConfigId, effectiveModels, mergeLegacyModelCredentials, modelConfigSignature, normalizeManagedModelConfigs, readManagedModelConfigs } from './features/settings/modelPreferences';
 import { ProjectRenameDialog } from './features/sidebar/ProjectRenameDialog';
@@ -266,9 +270,7 @@ function CardbushApp() {
   const [systemLanguage, setSystemLanguage] = useState<AppLanguage>(() =>
     readSystemLanguage(),
   );
-  const [appSettings, setAppSettings] = useState<AppSettingsState>(() =>
-    readInitialAppSettings(),
-  );
+  const [appSettings, setAppSettings] = useAppSettings();
   const [section, setSection] = useState<AppSection>('chat');
   const agentsVisitedRef = useRef(false);
   if (section === 'agents') agentsVisitedRef.current = true;
@@ -500,13 +502,21 @@ function CardbushApp() {
     terminalRuntime: appSettings.terminal.runtime,
     reasoningTraceVisible,
     interactiveRequestsAvailable: backendCapabilities.interactiveRequests,
-    reasoningLevelSelection: backendCapabilities.reasoningLevelSelection,
-    reasoningLevels: backendCapabilities.reasoningLevels,
-    defaultReasoningLevel: backendCapabilities.defaultReasoningLevel,
+    onModelReasoningChange: saveModelReasoning,
     contextWindowUsageAvailable: backendCapabilities.contextWindowUsage,
     workspaceChangesAvailable: backendCapabilities.workspaceChanges,
   });
   useEffect(() => installUiLongTaskObserver(), []);
+  useEffect(() => {
+    const saved = (event: Event) => {
+      const detail = (event as CustomEvent<{ connectionId: string; modelId: string; reasoningEffort: ManagedModelConfig['reasoningEffort'] }>).detail;
+      if (detail.connectionId) return;
+      setAppSettings(current => ({ ...current, managedModelConfigs: current.managedModelConfigs.map(model =>
+        model.id === detail.modelId ? { ...model, reasoningEffort: detail.reasoningEffort } : model) }));
+    };
+    window.addEventListener('cardbush:model-reasoning-updated', saved);
+    return () => window.removeEventListener('cardbush:model-reasoning-updated', saved);
+  }, []);
   useEffect(() => {
     setUiPerformanceActiveSession(chat.activeConversationId);
   }, [chat.activeConversationId]);
@@ -1912,9 +1922,8 @@ function CardbushApp() {
     if (nextSection === 'agents') closeInspector();
   }, [closeInspector]);
   const handleAgentSelect = useCallback((id: string, sessionId?: string, view?: 'chat' | 'settings') => {
-    if (view === 'settings') { openSettings('models', 'plugins'); return; }
     agents.select(id, sessionId, view); setSection('agents'); closeInspector(); if (compactLayout && (sessionId !== undefined || !id)) collapseSidebar();
-  }, [agents.select, compactLayout, collapseSidebar, closeInspector, openSettings]);
+  }, [agents.select, compactLayout, collapseSidebar, closeInspector]);
   useEffect(() => {
     const open = (event: Event) => {
       const target = (event as CustomEvent<AgentConversationTarget>).detail;
@@ -2676,6 +2685,8 @@ function CardbushApp() {
                         onChange={(event) => setInspectorAddressDraft(event.target.value)}
                       />
                       <BrowserBookmarkButton address={activeInspectorAddress} title={activeInspectorNavigation?.title || inspectorTabLabel(displayedInspectorTarget)} language={language}/>
+                      <BrowserTranslateButton address={activeInspectorAddress} language={language} state={activeInspectorNavigation?.translation}
+                        loading={activeInspectorNavigation?.loading} onClick={() => inspectorWebviewRefs.current.get(activeInspectorTabIdentity)?.toggleTranslation()}/>
                     </form>
                   ) : (
                     <div className="right-inspector-address" title={activeInspectorAddress}>

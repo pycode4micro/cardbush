@@ -537,6 +537,8 @@ const desktopApi = {
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
   readBrowserConfiguration: () => ipcRenderer.invoke('browser:settings-read') as Promise<BrowserConfiguration>,
+  translateInspectorPage: (input: import('./browserTranslationTypes').BrowserTranslationRequest) =>
+    ipcRenderer.invoke('inspector:translate', input) as Promise<import('./browserTranslationTypes').BrowserTranslationResult>,
   updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) =>
     ipcRenderer.invoke('browser:settings-update', input) as Promise<BrowserConfiguration>,
   onInspectorOpenLink: (callback: (detail: { guestWebContentsId: number; target: string }) => void) => {

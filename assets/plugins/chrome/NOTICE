@@ -1,0 +1,13 @@
+CardBush Browser Use
+Copyright 2026 CardBush contributors
+
+CardBush-authored connector, extension, MCP adapter and skill content is
+licensed under the Apache License, Version 2.0. See LICENSE.
+
+The default connector is developed by CardBush. It is not Google's Chrome
+DevTools MCP. The separately bundled chrome-devtools-mcp 1.8.0 is used only
+by the advanced remote-debugging mode and retains its upstream license and
+third-party notices. See THIRD_PARTY_NOTICES.md for scope and source links.
+
+Chrome, Chrome DevTools, Google and Microsoft Edge names identify compatible
+products or component origins; they do not imply sponsorship or endorsement.

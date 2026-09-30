@@ -37,6 +37,37 @@ export function isAbsoluteLocalPath(value: string) {
   return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
 }
 
+export type ResourceTargetKind = 'local-file' | 'ssh-file' | 'url' | 'inline' | 'unsupported';
+
+/** Byte sources use an allowlist. An internal reference or unknown scheme is never a path. */
+export function resourceTargetKind(value: string): ResourceTargetKind {
+  const target = stripWrappingQuotes(value);
+  if (!target || /[\x00-\x1f\x7f]/.test(target)) return 'unsupported';
+  if (isAbsoluteLocalPath(target)) return 'local-file';
+  if (/^data:[^,]+,/i.test(target) || /^blob:/i.test(target)) return 'inline';
+  try {
+    const url = new URL(target);
+    if (/^https?:\/\//i.test(target) && url.hostname) return 'url';
+    if (/^cardbush-file:\/\//i.test(target) && !url.username && !url.password) return 'url';
+    if (/^file:\/\//i.test(target) && !url.username && !url.password && !url.port && !url.search && !url.hash) {
+      if (!/[\x00-\x1f\x7f]/.test(decodeURIComponent(url.pathname))) return 'local-file';
+    }
+    if (/^ssh:\/\/[a-z0-9-]+\/[^?#]*$/.test(target) && !/[\x00-\x1f\x7f]/.test(decodeURIComponent(url.pathname))) return 'ssh-file';
+  } catch { /* Invalid or relative targets require explicit resolution by the caller. */ }
+  return 'unsupported';
+}
+
+export function isLocalFileResource(value: string) {
+  return resourceTargetKind(value) === 'local-file';
+}
+
+export function mediaResourceUrl(value: string) {
+  const target = stripWrappingQuotes(value);
+  const kind = resourceTargetKind(target);
+  return kind === 'local-file' || kind === 'ssh-file' ? fileUrl(target)
+    : kind === 'url' || kind === 'inline' ? target : '';
+}
+
 /** Only explicit @ references outside code attach files; ordinary path text stays authored text. */
 export function splitExplicitAttachmentMentions(content: string) {
   const paths: string[] = [], lines: string[] = [];
@@ -99,14 +130,17 @@ export function compactPath(value?: string) {
 
 export function fileUrl(value: string) {
   const normalized = stripWrappingQuotes(value.trim());
-  if (normalized.startsWith('ssh://')) return `cardbush-file://ssh-file/?path=${encodeURIComponent(normalized)}`;
+  const kind = resourceTargetKind(normalized);
+  if (kind === 'ssh-file') return `cardbush-file://ssh-file/?path=${encodeURIComponent(normalized)}`;
+  if (kind === 'url' && /^cardbush-file:/i.test(normalized)) return normalized;
+  if (kind !== 'local-file') return '';
   if (/^file:\/\//i.test(normalized)) {
     if (!window.cardbushDesktop) {
       return normalized;
     }
     try {
       const parsed = new URL(normalized);
-      const hostPrefix = parsed.hostname ? `/${parsed.hostname}` : '';
+      const hostPrefix = parsed.hostname ? `//${parsed.hostname}` : '';
       return encodedLocalResourceUrl(
         `${hostPrefix}${decodeURIComponent(parsed.pathname)}`,
       );
@@ -118,7 +152,9 @@ export function fileUrl(value: string) {
 }
 
 function encodedLocalResourceUrl(value: string) {
-  const pathValue = value.replaceAll('\\', '/').replace(/^\/+/, '');
+  const normalized = value.replaceAll('\\', '/');
+  const network = normalized.startsWith('//');
+  const pathValue = normalized.replace(/^\/+/, '');
   const encodedPath = pathValue
     .split('/')
     .map((segment, index) =>
@@ -128,5 +164,5 @@ function encodedLocalResourceUrl(value: string) {
     )
     .join('/');
   const scheme = window.cardbushDesktop ? 'cardbush-file' : 'file';
-  return `${scheme}:///${encodedPath}`;
+  return `${scheme}://${network ? '' : '/'}${encodedPath}`;
 }

@@ -4,6 +4,7 @@ import { useSettingsHost } from './settings/SettingsHostContext';
 import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
 import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
+import { SettingsSummaryPanel } from './settings/SettingsSummaryPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
 import { SshConnectionsPanel } from './ssh/SshConnectionsPanel';
 import { BrowserConnectionSettings } from './browser/BrowserConnectionSettings';
@@ -120,7 +121,7 @@ const defaultFontSettings = {
   filePath: '',
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
-  profile: SlidersHorizontal, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
+  profile: SlidersHorizontal, summary_for_user: Clipboard, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
   models: Cpu, mcp: PluginIcon, browser: Monitor, 'computer-use': Keyboard,
   projects: PackageOpen, runtime: Container, ssh: Network, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
@@ -334,6 +335,8 @@ export function SettingsView({
     if (effectiveSection === 'computer-use') return <ComputerUseSettingsPanel language={language} />;
     if (effectiveSection === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
       reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
+    if (effectiveSection === 'summary_for_user') return <SettingsSummaryPanel language={language} settings={settings}
+      onSettingsChange={updateSettings} modelId={selectedModel} connections={agentConnections}/>;
     if (effectiveSection === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
     if (effectiveSection === 'appearance') return <SettingsAppearancePanel
       themePreference={themePreference} windowMaterial={windowMaterial} onWindowMaterialChange={onWindowMaterialChange}

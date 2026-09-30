@@ -3,6 +3,7 @@ import { adoptDraftConversationStyle } from '../features/settings/conversationSt
 import { useConversationViewState } from '../shared/conversationViewState';
 import { localConversationBackend, type ConversationBackend } from '../backend/conversationBackend';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
+import { resolveModelReasoningEffort, type ReasoningEffort } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirmAction } from '../components/confirmAction';
 import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
@@ -194,9 +195,7 @@ export function useCardbushChat(
     terminalRuntime?: TerminalRuntime;
     reasoningTraceVisible?: boolean;
     interactiveRequestsAvailable?: boolean;
-    reasoningLevelSelection?: boolean;
-    reasoningLevels?: ReasoningLevel[];
-    defaultReasoningLevel?: ReasoningLevel;
+    onModelReasoningChange?: (modelId: string, effort: ReasoningEffort | null) => void | Promise<unknown>;
     contextWindowUsageAvailable?: boolean;
     workspaceChangesAvailable?: boolean;
   } = {},
@@ -278,13 +277,8 @@ export function useCardbushChat(
   );
   const [subagentPermissionRouting, setSubagentPermissionRoutingState] =
     useState<SubagentPermissionRouting>(() => readInitialSubagentPermissionRouting(preferenceStorage));
-  const [reasoningLevel, setReasoningLevelState] = useState<ReasoningLevel>(() =>
-    readInitialReasoningLevel(
-      requestContext.reasoningLevels,
-      requestContext.defaultReasoningLevel,
-      preferenceStorage,
-    ),
-  );
+  const selectedReasoningConfig = modelConfigFor(managedModelConfigs, selectedModel) ?? modelConfigFor(availableModels, selectedModel);
+  const reasoningLevel: ReasoningLevel = resolveModelReasoningEffort(selectedReasoningConfig ?? {}) ?? 'default';
   const controllersRef = useRef<Record<string, AbortController>>({});
   const goalTurnControllersRef = useRef<
     Record<string, { turnId: string; controller: AbortController }>
@@ -797,24 +791,15 @@ export function useCardbushChat(
   }, []);
 
   const setReasoningLevel = useCallback((level: ReasoningLevel) => {
-    setReasoningLevelState(level);
-    preferenceStorage.setItem('cardbush.reasoning_level', level);
-  }, []);
-
-  useEffect(() => {
-    const levels = normalizeReasoningLevels(requestContext.reasoningLevels);
-    setReasoningLevelState((current) => {
-      if (levels.includes(current)) {
-        return current;
-      }
-      const next = normalizeReasoningLevel(
-        requestContext.defaultReasoningLevel,
-        levels,
-      );
-      preferenceStorage.setItem('cardbush.reasoning_level', next);
-      return next;
+    if (!selectedReasoningConfig || !requestContext.onModelReasoningChange) return;
+    const effort = resolveModelReasoningEffort(selectedReasoningConfig, level) ?? null;
+    // Capture the model identity before awaiting persistence; switching models
+    // while saving must never apply this selection to the new model.
+    const save = requestContext.onModelReasoningChange;
+    void Promise.resolve().then(() => save(selectedReasoningConfig.id, effort)).catch(error => {
+      setError(localize('思考强度保存失败：', 'Unable to save reasoning effort: ') + String(error instanceof Error ? error.message : error));
     });
-  }, [requestContext.defaultReasoningLevel, requestContext.reasoningLevels]);
+  }, [selectedReasoningConfig, requestContext.onModelReasoningChange, localize]);
 
   const refreshMeasuredContextWindowUsage = useCallback((
     sessionId: string,
@@ -4321,51 +4306,12 @@ function readInitialSubagentPermissionRouting(storage: Pick<Storage, 'getItem'> 
   );
 }
 
-function readInitialReasoningLevel(
-  available?: ReasoningLevel[],
-  fallback?: ReasoningLevel,
-  storage: Pick<Storage, 'getItem'> = window.localStorage,
-): ReasoningLevel {
-  const levels = normalizeReasoningLevels(available);
-  return normalizeReasoningLevel(
-    storage.getItem('cardbush.reasoning_level') ?? fallback,
-    levels,
-  );
-}
-
 function normalizeReferencePlanMode(value: string): ReferencePlanMode {
   return value.trim() === 'off' ? 'off' : 'auto';
 }
 
 function normalizeSubagentPermissionRouting(value: string): SubagentPermissionRouting {
   return value.trim() === 'user' ? 'user' : 'parent';
-}
-
-function normalizeReasoningLevels(values?: ReasoningLevel[]): ReasoningLevel[] {
-  const normalized = (values ?? [])
-    .filter((item) =>
-      item === 'none' ||
-      item === 'low' ||
-      item === 'medium' ||
-      item === 'high' ||
-      item === 'xhigh' ||
-      item === 'max')
-    .filter((item, index, all) => all.indexOf(item) === index);
-  return normalized.length > 0
-    ? normalized
-    : ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
-}
-
-function normalizeReasoningLevel(
-  value: unknown,
-  available: ReasoningLevel[],
-): ReasoningLevel {
-  const raw = String(value ?? '').trim().toLowerCase();
-  const normalized = raw as ReasoningLevel;
-  if (available.includes(normalized)) {
-    return normalized;
-  }
-  return available.includes('high') ? 'high' : available[0] ?? 'high';
 }
 
 function normalizeDisabledToolNames(values?: Set<string>) {

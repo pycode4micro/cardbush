@@ -25,6 +25,11 @@ module.exports = async ({ run, until, window, root }) => {
       await until('!!document.querySelector(".model-reasoning-primary-options button")', `${surface} reasoning menu`);
       assert.deepEqual(await run('[...document.querySelectorAll(".model-reasoning-options button")].map(button => button.textContent)'), ['Low', 'Medium', 'High']);
       assert.equal(await run('document.querySelector(".model-reasoning-primary-options button.active")?.textContent'), 'High');
+      await run('document.querySelector(".model-reasoning-default").click()');
+      await until('chatProps.reasoningLevel === "default"', 'provider default is selectable');
+      assert.equal(await run('document.querySelectorAll(".model-reasoning-options button.active").length'), 0, 'default is distinct from none and low');
+      assert.equal(await run('document.querySelector(".model-reasoning-default").getAttribute("aria-pressed")'), 'true');
+      await run('updateChat({ reasoningLevel: "max" })');
       assert.equal(await run('chatProps.reasoningLevel'), 'max', 'Rendering a protocol must not overwrite the saved Responses preference');
       assert.deepEqual(await run('[...document.querySelectorAll(".model-picker-protocol")].map(node => node.textContent)'),
         ['Chat Completions', 'Responses', 'Messages', 'Messages', 'Responses']);

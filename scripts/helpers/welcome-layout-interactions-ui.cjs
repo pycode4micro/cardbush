@@ -18,13 +18,22 @@ module.exports = async ({ run, until, pause, window, root }) => {
     (()=>{const state=JSON.parse(localStorage.getItem('cardbush.html_components.v1'));views.saveComponents({...state,welcomeLayout:{items:[
       {componentId:'system-digital-clock',x:10,y:100,width:22,height:150},
       {componentId:'system-calendar',x:55,y:300,width:30,height:220},
-      {componentId:'system-input',x:15,y:1100,width:70,height:120}
+      {componentId:'system-brand',x:15,y:1100,width:70,height:120}
     ]}},state.revision)})();showWelcomeLibrary();
   `);
   await until('!!document.querySelector(".components-app")', 'interaction library');
   await click('编辑布局'); await until('!!document.querySelector(".welcome-layout-editor")', 'interaction editor');
   await run(`Object.assign(document.querySelector('.main-stage').style,{zoom:'1.25',width:'80%',height:'80%',flex:'none'});void 0`);
   await pause();
+  await until('Number(document.querySelector(".welcome-layout-bottom-hint")?.dataset.layoutOverflow)>0', 'long layout reports content beyond the viewport');
+  const overflow = await run('Number(document.querySelector(".welcome-layout-bottom-hint").dataset.layoutOverflow)');
+  await run('document.querySelector(".welcome-layout-surface").style.scrollbarWidth="none"');
+  await pause();
+  assert.equal(await run('document.querySelector(".welcome-layout-bottom-hint").classList.contains("is-overflow")'),true,'warning remains when the scrollbar is hidden');
+  window.setContentSize(1280,800);
+  await until(`Number(document.querySelector('.welcome-layout-bottom-hint').dataset.layoutOverflow)>${overflow}`, 'window height updates overflow');
+  window.setContentSize(1280,960);
+  await until(`Number(document.querySelector('.welcome-layout-bottom-hint').dataset.layoutOverflow)===${overflow}`, 'restored window restores overflow measurement');
   const clock = '[data-welcome-component=system-digital-clock]', calendar = '[data-welcome-component=system-calendar]';
   const first = await bounds(clock), start = await grab(clock, true), end = { x: start.x + 43, y: start.y + 61 };
   mouse('mouseMove', end, true); await pause(40); mouse('mouseUp', end, true); await pause();
@@ -53,7 +62,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   mouse('mouseMove', scrollEnd, true); mouse('mouseUp', scrollEnd, true); await pause();
   close((await bounds(clock)).y, beforeScroll.y + 25, 'scroll and final pointer movement are both applied');
   const beforeCancel = await bounds(clock), cancelStart = { x: beforeCancel.x + 30, y: beforeCancel.y + 30 };
+  assert.equal(await run(`document.elementFromPoint(${cancelStart.x},${cancelStart.y})?.closest('[data-welcome-component]')?.dataset.welcomeComponent`), 'system-digital-clock', 'cancel grab is on the clock');
   mouse('mouseMove', cancelStart); mouse('mouseDown', cancelStart, true); await pause(30);
+  assert.equal(await run('document.body.classList.contains("component-layout-editing")'), true, 'cancel drag has pointer capture');
   mouse('mouseMove', { x: cancelStart.x + 20, y: cancelStart.y + 20 }, true); await pause(30);
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); await pause();
   mouse('mouseUp', cancelStart, true);
@@ -89,6 +100,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.activeElement.textContent'), '输入框', 'preview does not steal keyboard focus');
   assert.equal(await run('document.querySelector(".welcome-component-preview [data-composer-input]").closest("[inert]")!==null'), true);
   await click('组件'); await until('!document.querySelector(".welcome-component-preview")', 'closing picker clears preview');
+  const scrolled = await run('(()=>{const c=document.querySelector(".welcome-layout-surface");c.scrollTop=480;return c.scrollTop})()');
+  assert.equal(await run('Number(document.querySelector(".welcome-layout-bottom-hint").dataset.layoutOverflow)'),overflow,'scrolling does not hide the total layout overflow');
+  assert.equal(await run('(()=>{const hint=document.querySelector(".welcome-layout-bottom-hint").getBoundingClientRect(),page=document.querySelector(".welcome-editor-page").getBoundingClientRect();return hint.top>=page.top&&hint.bottom<=page.bottom&&hint.left>=page.left&&hint.right<=page.right})()'),true,'bottom hint stays visible outside the scrolled canvas');
+  const placementsBeforeAdd = await run('[...document.querySelectorAll("[data-welcome-component]")].map(s=>({id:s.dataset.welcomeComponent,left:s.style.left,top:s.style.top,width:s.style.width,height:s.style.height}))');
+  await click('组件'); await click('时钟'); await pause();
+  assert.equal(await run('document.querySelector(".welcome-layout-surface").scrollTop'),scrolled,'adding does not jump away from the scrolled viewport');
+  assert.equal(await run('(()=>{const c=document.querySelector(".welcome-layout-surface").getBoundingClientRect(),s=document.querySelector("[data-welcome-component=system-clock]").getBoundingClientRect();return s.top>=c.top&&s.bottom<=c.bottom&&s.left>=c.left&&s.right<=c.right})()'),true,'new component stays visible in a long layout at 125% zoom');
+  assert.deepEqual(await run('[...document.querySelectorAll("[data-welcome-component]")].filter(s=>s.dataset.welcomeComponent!=="system-clock").map(s=>({id:s.dataset.welcomeComponent,left:s.style.left,top:s.style.top,width:s.style.width,height:s.style.height}))'),placementsBeforeAdd,'adding preserves all existing placements');
   await run('Object.assign(document.querySelector(".main-stage").style,{zoom:"1",width:"340px",height:"100%"});void 0'); await pause();
   const narrow = await bounds('.welcome-layout-editor'), bounded = await bounds('.welcome-layout-toolbar');
   assert.ok(bounded.x >= narrow.x && bounded.right <= narrow.right, 'moved toolbar is clamped when window narrows');

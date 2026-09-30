@@ -1,7 +1,7 @@
 import { FolderOpen, Play } from 'lucide-react';
 import { useContext, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { basename, fileUrl } from '../../shared/localPaths';
+import { basename, fileUrl, resourceTargetKind } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { openInspector } from '../inspector/inspectorEvents';
 import { FileTypeIcon } from './FileTypeIcon';
@@ -47,6 +47,8 @@ export function LocalFileReferenceLink({
   const gallery = useContext(ImageGalleryContext);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [inspection, setInspection] = useState<LocalReferenceInspection | null>(null);
+  const targetKind = resourceTargetKind(path);
+  const fileTarget = targetKind === 'local-file' || targetKind === 'ssh-file';
   const inspectionComplete = knownFileName !== undefined || inspection?.path === path;
   const metadata = knownFileName !== undefined ? { path, name: knownFileName, kind: 'file' as const }
     : inspection?.path === path ? inspection.metadata : null;
@@ -59,7 +61,7 @@ export function LocalFileReferenceLink({
     : children || metadata?.name || pathLabel;
 
   useEffect(() => {
-    if (knownFileName !== undefined) return;
+    if (knownFileName !== undefined || !fileTarget) return;
     let active = true;
     const inspect = window.cardbushDesktop?.inspectLocalReference;
     if (!inspect) {
@@ -78,9 +80,9 @@ export function LocalFileReferenceLink({
     return () => {
       active = false;
     };
-  }, [path, knownFileName]);
+  }, [path, knownFileName, fileTarget]);
 
-  if (!inspectionComplete || !metadata) {
+  if (!fileTarget || !inspectionComplete || !metadata) {
     return (
       <span className="local-file-reference-unavailable" title={path}>
         {unavailableLabel ?? children ?? pathLabel}

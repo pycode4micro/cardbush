@@ -22,6 +22,19 @@ module.exports = async ({ run, until, pause, window, root }) => {
   `);
   await until('!!document.querySelector(".welcome-composer .composer-stack.simple")','welcome uses saved simple style');
   await until('chatProps.permissionMode==="all_free"','new simple conversation sets its default permission');
+  const checkSimpleWelcome = async () => {
+    assert.equal(await run('getComputedStyle(document.querySelector(".welcome-input-stack.simple")).boxShadow'),'none','simple welcome has no painted outer card');
+    assert.equal(await run('getComputedStyle(document.querySelector(".welcome-input-stack.simple")).backgroundColor'),'rgba(0, 0, 0, 0)','simple layout spacing is transparent');
+    assert.equal(await run('getComputedStyle(document.querySelector(".composer-surface")).borderRadius'),'30px','only the input capsule keeps its rounded surface');
+  };
+  await run('updateChat({draft:""})'); await until('document.querySelector("[data-composer-input]").value===""','empty welcome draft');
+  await checkSimpleWelcome();
+  await run('document.querySelector(".app").classList.replace("theme-dark","theme-light");saveInputStyle("simple","simple");');
+  await until('!!document.querySelector(".custom-layout .welcome-input-stack.simple")','custom simple welcome layout');
+  await checkSimpleWelcome(); await pause();
+  fs.writeFileSync(path.join(root,'tmp','welcome-input-simple-light.png'),(await window.webContents.capturePage()).toPNG());
+  await run('updateChat({draft:"第一条消息"});document.querySelector(".app").classList.replace("theme-light","theme-dark");');
+  await checkSimpleWelcome();
   // A later explicit permission choice must survive the first-message remount.
   await run('updateChat({permissionMode:"task_free"});document.querySelector(".send-button").click()');
   await until('!document.querySelector(".welcome-composer") && !!document.querySelector(".composer-dock .composer-stack.simple")','sending preserves simple style in actual ChatPanel');

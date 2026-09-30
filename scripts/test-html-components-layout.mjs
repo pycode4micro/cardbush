@@ -1,15 +1,62 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
-const load = file => { const exports = {}; new Function('exports', ts.transpileModule(readFileSync(file, 'utf8'), {
+const load = file => { const exports = {}; new Function('exports', 'require', ts.transpileModule(readFileSync(file, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText)(exports); return exports; };
+}).outputText)(exports, spec => load(path.resolve(path.dirname(file), spec + '.ts'))); return exports; };
 const p = load('src/features/inspector/panelLayout.ts');
 const b = load('src/features/inspector/browserBookmarks.ts');
 const c = load('src/features/components/componentModel.ts');
 const { dispatchComponentMessage } = load('src/features/components/dispatchComponentMessage.ts');
 const g = load('src/features/components/welcomeLayoutGeometry.ts');
+const composer = load('src/features/components/composerLayoutGeometry.ts');
+
+test('composer is centered before storage and cannot move horizontally or resize its empty height', () => {
+  const input = { componentId: 'system-input', x: 0, y: 150, width: 60, height: 52 };
+  const stored = c.normalizeComponents({ ...c.defaultComponents, welcomeLayout: { items: [input] } }).welcomeLayout.items[0];
+  assert.equal(stored.x, 20);
+  const space = { width: 1000, height: 800, scaleX: 1.25, scaleY: 1.25 };
+  const moved = g.alignPlacement(stored, [], 'move', { x: 400, y: 60 }, space, false).placement;
+  assert.equal(moved.x, 20); assert.equal(moved.y, 210); assert.equal(moved.width, 60);
+  const resized = g.alignPlacement(moved, [], 'resize', { x: 50, y: 500 }, space, false).placement;
+  assert.equal(resized.width, 70); assert.equal(resized.x, 15); assert.equal(resized.height, 52);
+  const narrow = g.alignPlacement(input, [], 'resize', { x: -500, y: 0 }, { ...space, width: 240 }).placement;
+  assert.equal(narrow.width * 240 / 100, 216); assert.equal(narrow.x * 240 / 100, 12);
+  const pinned = { ...stored, y: 728, composerDock: 'bottom', composerFlow: { afterSend: 'keep', output: 'above' } };
+  assert.equal(g.alignPlacement(pinned, [], 'move', { x: 80, y: 0 }, space, false).placement.composerDock, 'bottom',
+    'horizontal-only dragging cannot remove the vertical pin');
+});
+
+test('bottom placements snap or leave meaningful travel, including tall inputs and small windows', () => {
+  for (const viewport of [300, 480, 680, 900, 1200]) for (const height of [52, 104, 240]) {
+    for (const y of [12, 200, viewport - height - 70, viewport + 200]) {
+      const auto = composer.composerVerticalBounds(viewport, height, y, 'bottom');
+      assert.ok(auto.minimumTravel >= 120 && auto.minimumTravel <= 160);
+      assert.ok(auto.bottom - auto.top === 0 || auto.bottom - auto.top >= auto.minimumTravel);
+      assert.ok(auto.top >= 12 && auto.top <= auto.bottom);
+      if (viewport === 300) assert.equal(auto.top, auto.bottom);
+    }
+  }
+  const kept = composer.composerVerticalBounds(680, 52, 560, 'keep');
+  assert.equal(kept.top, 560, 'keep allows a small gap without silently moving');
+  const pinned = composer.composerVerticalBounds(900, 52, 560, 'bottom', true);
+  assert.equal(pinned.top, 828, 'saved bottom pin follows viewport height');
+  assert.equal(composer.composerHorizontalBounds(1000, 60).left, 200);
+  assert.deepEqual(composer.composerHorizontalBounds(1000, 90, 704, 700), { left: 12, width: 676 }, 'summary constrains width symmetrically');
+});
+
+test('composer flow defaults, validates choices and lets a placement override the catalog', () => {
+  assert.deepEqual(c.welcomeComposerFlow(c.defaultComponents), { afterSend: 'bottom', output: 'above' });
+  const catalog = { ...c.defaultComponents, items: c.defaultComponents.items.map(item => item.id === 'system-input'
+    ? { ...item, composerFlow: { afterSend: 'keep', output: 'below' } } : item) };
+  assert.deepEqual(c.welcomeComposerFlow(c.normalizeComponents(catalog)), { afterSend: 'keep', output: 'below' });
+  const placed = c.normalizeComponents({ ...catalog, welcomeLayout: { items: [{ componentId: 'system-input', x: 10, y: 260, width: 80, height: 120,
+    composerFlow: { afterSend: 'bottom', output: 'above' } }] } });
+  assert.deepEqual(c.welcomeComposerFlow(placed), { afterSend: 'bottom', output: 'above' });
+  assert.deepEqual(c.normalizeComposerFlow({ afterSend: 'invalid', output: 'invalid' }), { afterSend: 'bottom', output: 'above' });
+});
 
 function assertPartition(tree) {
   const rects = Object.values(p.panelRects(tree));

@@ -4,6 +4,7 @@ import {
   DEFAULT_CHILD_AGENT_DISABLED_TOOLS,
   modelMessageSchema,
   runtimeProviderBindingRefSchema,
+  reasoningEffortSchema,
   type ModelMessage,
   type RuntimeEvent,
   type RuntimePermissionMode,
@@ -172,7 +173,7 @@ export function buildChildTurnRequest(input: {
     maxOutputTokens,
     temperature: settings.temperature ?? parentRequest.temperature,
     topP: settings.top_p ?? parentRequest.topP,
-    reasoningEffort: settings.reasoning_effort ?? parentRequest.reasoningEffort,
+    reasoningEffort: settings.reasoning_effort ?? (modelPolicy ? modelPolicy.reasoningEffort : parentRequest.reasoningEffort),
     requestCapabilities: {
       vision: parentRequest.requestCapabilities?.vision ?? false,
       interactiveRequests: false,
@@ -299,6 +300,7 @@ function resolvedChildModel(input: unknown): {
   providerBinding: NonNullable<RuntimeSessionTurnRequest["providerBinding"]>;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort;
 } | undefined {
   if (input === undefined) return undefined;
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -321,6 +323,7 @@ function resolvedChildModel(input: unknown): {
     modelId,
     model,
     providerBinding: binding.data,
+    reasoningEffort: reasoningEffortSchema.optional().parse(value.reasoningEffort),
     ...(Number.isInteger(maxContextTokens) && maxContextTokens > 0 ? { maxContextTokens } : {}),
     ...(Number.isInteger(maxOutputTokens) && maxOutputTokens > 0 ? { maxOutputTokens } : {}),
   };

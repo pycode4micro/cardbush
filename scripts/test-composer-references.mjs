@@ -23,13 +23,14 @@ const skillRefs = load('src/features/skills/skillReferences.ts');
 const { resolvePromptReferenceContext } = load('src/backend/promptReferenceContext.ts');
 const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessageProjection.ts');
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
+const { applicationCatalog, applicationReference, defaultAppCenterPreferences } = load('src/features/appCenter/appCenterModel.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
 test('application references append selection facts without invoking tools or changing authored text', async () => {
   const entries = [
-    { kind: 'application', id: 'builtin:automations', title: '定时与自动化', applicationKind: 'builtin', target: 'automations' },
     { kind: 'application', id: 'plugin:sample:design', title: '设计 [草稿]', applicationKind: 'plugin', target: 'sample', componentId: 'design' },
     { kind: 'application', id: 'external:example', title: '本地应用', applicationKind: 'external', target: 'http://localhost:8989/' },
     { kind: 'application', id: 'local:editor', title: '本地编辑器', applicationKind: 'local', target: 'C:\\Program Files\\编辑器\\editor.exe' },
+    ...['zh', 'en'].flatMap(language => applicationCatalog(language, [], defaultAppCenterPreferences).map(applicationReference)),
   ];
   for (const entry of entries) {
     const link = refs.promptReferenceMarkdown(entry); assert.deepEqual(refs.parsePromptReference(refs.promptReferenceHref(entry)), entry);
@@ -42,10 +43,10 @@ test('application references append selection facts without invoking tools or ch
     assert.equal(refs.promptReferenceParts('`' + link + '`').some(part => part.reference), false);
   }
   for (const entry of [
-    { ...entries[0], target: 'execute' }, { ...entries[0], id: 'builtin:settings' },
-    { ...entries[1], componentId: 'different' }, { ...entries[2], target: 'javascript:alert(1)' },
-    { ...entries[2], target: 'https://user:secret@example.test/' }, { ...entries[2], target: 'file:///C:/program.exe' },
-    { ...entries[3], target: 'editor.exe --run' }, { ...entries[3], target: 'https://example.test/app.exe' },
+    { ...entries[3], target: 'execute' }, { ...entries[3], id: 'builtin:settings' },
+    { ...entries[0], componentId: 'different' }, { ...entries[1], target: 'javascript:alert(1)' },
+    { ...entries[1], target: 'https://user:secret@example.test/' }, { ...entries[1], target: 'file:///C:/program.exe' },
+    { ...entries[2], target: 'editor.exe --run' }, { ...entries[2], target: 'https://example.test/app.exe' },
   ]) assert.equal(refs.parsePromptReference(refs.promptReferenceHref(entry)), null);
 });
 test('SSH references follow the selected execution environment and never carry credentials', async () => {

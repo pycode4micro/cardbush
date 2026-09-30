@@ -46,7 +46,7 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
     terminal_exec: ['执行命令', 'Run command'], shell_command: ['执行命令', 'Run command'],
     terminal_poll: ['查看命令进度', 'Check command progress'], terminal_write: ['向终端输入', 'Write to terminal'],
     read_file: ['读取文件', 'Read file'], read_files: ['读取文件', 'Read files'],
-    summary_for_user: ['准备最终回复', 'Prepare final reply'], check_habit: ['查看个性化记忆', 'Check personalization'],
+    summary_for_user: ['准备最终回复', 'Prepare final reply'], check_habit: ['查看个性化记忆', 'Check personalization'], revise_memory: ['修正个性化记忆', 'Correct memory'],
     search_file_content: ['检索文件内容', 'Search file contents'], list_directory: ['查看目录', 'List directory'],
     apply_patch: ['修改文件', 'Edit files'], edit_file: ['修改文件', 'Edit file'], write_file: ['写入文件', 'Write file'],
     terminal_stop: ['停止命令', 'Stop command'], terminal_list: ['查看终端任务', 'List terminal tasks'],

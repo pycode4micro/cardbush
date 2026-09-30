@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { individuationPreferenceText } from '@cardbush/bush-protocol';
 import {
   buildChildTurnRequest, CacheChainTracker, inheritedChildMessages, InMemoryRuntimeHost,
   SubagentTaskStore, ToolExecutionCoordinator, ToolRegistry, registerSubagentTool,
@@ -13,6 +14,17 @@ const request = (registry, overrides = {}) => ({ protocol: 'bush.model_request.v
 const registration = (name, overrides = {}) => ({ definition: definition(name), manifest, decodeInput: value => value, execute: () => ({ ok: true }), ...overrides });
 const coordinator = (registry, hooks) => new ToolExecutionCoordinator({ registry, hooks, permissions: { request: async () => { throw Error('Unexpected permission request'); } } });
 const invoke = (runner, req, name, input = {}) => runner.execute({ protocol: 'bush.tool_call.v1', id: `call-${name}`, name, argumentsText: JSON.stringify(input) }, { requestId: req.requestId, sessionId: req.sessionId, turnId: req.turnId, round: 1, ordinal: 0 }, undefined, { request: req, contextMessages: req.messages });
+
+test('a child switching models uses its own effort, while an inherited model keeps the parent override', () => {
+  const registry = new ToolRegistry(), parent = request(registry, { reasoningEffort: 'max' });
+  const context = { sessionId: parent.sessionId, turnId: parent.turnId, turn: { request: parent, contextMessages: [] } };
+  const build = options => buildChildTurnRequest({ context, registry, ids, prompt: 'Review', inherited: [], metadata: {}, ...options });
+  assert.equal(build({}).reasoningEffort, 'max');
+  const cleanModel = { id: 'other', model: 'fixture', providerBinding: { bindingId: 'other', revision: '1' }, reasoningEffort: 'low' };
+  assert.equal(build({ cleanModel }).reasoningEffort, 'low');
+  assert.equal(build({ cleanModel: { ...cleanModel, reasoningEffort: undefined } }).reasoningEffort, undefined);
+  assert.equal(build({ cleanModel, cleanSettings: { reasoning_effort: 'high' } }).reasoningEffort, 'high');
+});
 
 test('inherited child input extends the exact cached prefix with frozen definitions in parent order', () => {
   const registry = new ToolRegistry();
@@ -40,7 +52,7 @@ test('inherited child input extends the exact cached prefix with frozen definiti
   assert.equal(child.prefixMessages.at(-1).name, 'plugin_agent_role');
   assert.deepEqual(child.tools, parent.tools);
   assert.deepEqual(child.inputMessages[0].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
-    content: 'Individuation for this turn: habits disabled; next-step prediction disabled.' });
+    content: individuationPreferenceText() });
   assert.equal(child.inputMessages[1].message.content, '你当前处于子agent状态\n\n请验证修改；我将处理界面，接口结果稍后提供。');
   const tracker = new CacheChainTracker();
   const baseline = tracker.observe(parent);

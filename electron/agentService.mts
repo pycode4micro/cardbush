@@ -35,7 +35,7 @@ const sendSchema = z.object({
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
   permissionMode: z.enum(['task_free', 'user_free', 'all_free']).default('task_free'),
   language: z.enum(['zh', 'en']).default('zh'),
-  reasoningEffort: reasoningEffortSchema.optional(), planEnabled: z.boolean().optional(), disabledSkills: z.array(z.string()).optional(), subagentPermissionRouting: z.enum(['user', 'parent']).optional(),
+  reasoningEffort: reasoningEffortSchema.nullish(), planEnabled: z.boolean().optional(), disabledSkills: z.array(z.string()).optional(), subagentPermissionRouting: z.enum(['user', 'parent']).optional(),
 }).strict();
 type SessionPresentation = { title?: string; pinned?: boolean; archived?: boolean; readAt?: string; forcedUnread?: boolean; queueLocked?: boolean };
 type AgentState = { version: 1; id: string; name: string; revision: number; projects: AgentProject[]; defaultProjectId: string | null; jobs: AgentJob[]; sessions?: Record<string, SessionPresentation> };
@@ -503,7 +503,7 @@ export class AgentService {
     try {
       signal.throwIfAborted();
       const snapshot = decodeSessionSnapshot(await this.#command('runtime.get_session', { sessionId: job.sessionId }));
-      const selected = await this.product.resolveSubagentModel(job.input.modelId) as { model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number };
+      const selected = await this.product.resolveSubagentModel(job.input.modelId) as { model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number; reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort };
       const catalog = await this.#command('runtime.get_tool_catalog') as ToolDefinition[];
       const workspace = snapshot.metadata?.runtimeWorkspace as { workspaceDir?: string; sourceDir?: string } | undefined;
       const projectDir = typeof snapshot.metadata?.projectDir === 'string' ? snapshot.metadata.projectDir : undefined;
@@ -523,7 +523,7 @@ export class AgentService {
         instructionDocuments: await readAgentInstructionDocuments(this.instructions, projectDir ?? workspaceDir, workspaceDir),
         teamInstructions: 'This is an independent headless CardBush Agent. Paths and tools belong to this server. Desktop mouse control and graphical browser control are unavailable. Never imply access to the connecting user’s computer.',
         permissionMode: job.input.permissionMode, planEnabled: job.input.planEnabled ?? true, interactiveRequestsEnabled: true,
-        reasoningEffort: job.input.reasoningEffort, disabledSkills: job.input.disabledSkills, subagentPermissionRouting: job.input.subagentPermissionRouting,
+        reasoningEffort: job.input.reasoningEffort === null ? undefined : job.input.reasoningEffort ?? selected.reasoningEffort, disabledSkills: job.input.disabledSkills, subagentPermissionRouting: job.input.subagentPermissionRouting,
         sessionTitle: String(snapshot.metadata?.title ?? ''),
       });
       if (job.input.supersession) request.supersession = job.input.supersession;

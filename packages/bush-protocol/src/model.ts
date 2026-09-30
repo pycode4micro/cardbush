@@ -99,6 +99,13 @@ export const reasoningEffortSchema = z.enum([
 
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
+/** An explicit provider default clears the effort; an absent override uses this model's setting. */
+export function resolveModelReasoningEffort(config: { reasoningEffort?: ReasoningEffort | null; apiProtocol?: ModelApiProtocol },
+  override?: ReasoningEffort | 'default' | null): ReasoningEffort | undefined {
+  const value = override === undefined ? config.reasoningEffort : override;
+  return value == null || value === 'default' ? undefined : protocolReasoningEffort(config.apiProtocol, value);
+}
+
 /** Product-supported levels; wire protocols need not expose identical controls. */
 export function reasoningEffortsForProtocol(protocol?: ModelApiProtocol): ReasoningEffort[] {
   return protocol === 'openai_chat_completions'

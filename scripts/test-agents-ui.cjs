@@ -5,6 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function toggleModelSettings(run, until) {
+  if (await run("!!document.querySelector('.settings-shell .back-button')")) {
+    await run("document.querySelector('.settings-shell .back-button').click()"); return;
+  }
+  if (!await run("!!document.querySelector('.model-picker-row.secondary')")) await run("document.querySelector('.agent-chat .model-select').click()");
+  await until("!![...document.querySelectorAll('.model-picker-row')].find(button=>button.textContent.includes('管理模型'))", 'model management entry');
+  await run("[...document.querySelectorAll('.model-picker-row')].find(button=>button.textContent.includes('管理模型')).click()");
+}
 app.whenReady().then(async () => {
   const { build } = await import('vite'); const { default: react } = await import('@vitejs/plugin-react');
   const entry = '\0agents-ui.tsx';
@@ -49,7 +57,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 1100, height: 820, webPreferences: { contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: true } });
   const errors = []; win.webContents.on('console-message', event => { if (event.level === 'error') { errors.push(event.message); console.error(event.message); } });
   const run = source => win.webContents.executeJavaScript(source, true).catch(error => { console.error(source.slice(0, 500)); throw error; });
-  const until = async (expression, label, timeout = 3500) => { for (let i=0;i<Math.ceil(timeout/35);i++) { if (await run(expression)) return; await pause(35); } console.error(await run("JSON.stringify({body:document.querySelector('.agents-view')?.innerText.slice(-6000),calls:calls.slice(-10)})")); assert.fail(label); };
+  const until = async (expression, label, timeout = 3500) => { for (let i=0;i<Math.ceil(timeout/35);i++) { if (await run(expression)) return; await pause(35); } console.error(await run("JSON.stringify({body:document.querySelector('.agents-view')?.innerText.slice(-6000),connections:connections.map(c=>({id:c.id,connected:c.connected,state:c.connectionState,error:c.connectionError})),alerts:[...document.querySelectorAll('.agents-view [role=alert]')].map(e=>({parent:e.parentElement.className,text:e.textContent})),calls:calls.slice(-10)})")); assert.fail(label); };
   try {
     const fixture = path.join(root, 'tmp/agents-ui-fixture.html'); fs.mkdirSync(path.dirname(fixture), { recursive: true }); fs.writeFileSync(fixture, '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>'); await win.loadFile(fixture);
     await run(`document.body.innerHTML='<div id="root"></div>';document.head.innerHTML='<style>html,body,#root{height:100%;margin:0}body{background:#191919;color:#ededed;font:14px system-ui;--surface:#202020;--surface-strong:#2b2b2b;--text:#eee;--text-soft:#aaa;--border:#ffffff25}#root{display:flex;flex-direction:column}.fixture-shell{display:flex;height:100vh;--sidebar-width:260px;--layout-sidebar-space:260px;--conversation-pane-min-width:440px;--wallpaper-accent-rgb:40 32 28}.fixture-nav{display:none}.main-stage{height:100%}.fixture-shell .sidebar{position:relative;inset:auto}.fixture-shell.narrow .sidebar{display:none}</style>';var style=document.createElement('style');style.textContent=${JSON.stringify(css)};document.head.append(style);var layout=document.createElement('style');layout.textContent='.fixture-shell{display:flex;height:100vh;--sidebar-width:260px;--layout-sidebar-space:260px;--conversation-pane-min-width:440px}.fixture-nav{display:none}.main-stage{height:100%;flex:1}.fixture-shell .sidebar{position:relative;inset:auto}.fixture-shell.narrow .sidebar{display:none}';document.head.append(layout);window.calls=[];window.failSend=false;window.delayA=false;
@@ -228,7 +236,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("calls.some(c=>c.operation==='product.command'&&c.input.kind==='models.update')"),false,'vision is a conversation preference');
     await pause(200);
     fs.writeFileSync(path.join(root,'tmp/agents-vision-settings.png'),(await win.webContents.capturePage()).toPNG());
-    await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await toggleModelSettings(run, until);
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'return after enabling vision');
     await run("document.querySelector('.agent-chat .model-select').click()");
     await until("!!document.querySelector('.model-reasoning-primary-options button:last-child')",'cloud reasoning uses the shared picker');
@@ -334,10 +342,10 @@ app.whenReady().then(async () => {
     assert.ok(await run("var content=document.querySelector('.agent-chat .message-list').textContent;content.indexOf('第二轮正文')<content.indexOf('请调整执行方向')&&content.indexOf('请调整执行方向')<content.indexOf('已按引导调整')"), await run("document.querySelector('.agent-chat .message-list').textContent"));
     assert.equal(await run("document.querySelectorAll('.guidance-delivery-status').length"),1,'guidance receipt and applied event do not duplicate the user bubble');
 
-    await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await toggleModelSettings(run, until);
     await until("!!document.querySelector('.settings-shell')",'leave active guided conversation');
     const readersBeforeReplay=await run('readers.length');
-    await run("sessionStorage.removeItem('cardbush-agent-guidance:a:same-session');(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await run("sessionStorage.removeItem('cardbush-agent-guidance:a:same-session')"); await toggleModelSettings(run, until);
     assert.equal(await run('readers.length'), readersBeforeReplay, 'settings keep the existing stream reader alive');
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select B').click()");
     await until("document.querySelector('.agent-chat h1')?.textContent !== 'A 的工作'", 'leave A for replay');
@@ -358,13 +366,13 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.agent-chat .composer-stack .send-button:not(:disabled)')",'stop is ready after the interaction closes');
     await run("document.querySelector('.agent-chat .composer-stack .send-button').click()");
     await until("calls.some(c=>c.operation==='chat.stop'&&c.id==='a')",'explicit stop routes to A');
-    await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await toggleModelSettings(run, until);
     await until("!!document.querySelector('.settings-shell')",'Agent settings');
     assert.ok(await run("!!document.querySelector('.agent-chat')"),'opening settings preserves the mounted chat');
     await run("document.querySelector('[data-settings-section=profile]').click()");
     await until("document.querySelector('#global-agent-instructions')?.value==='# Shared rules'",'instructions use the common configuration');
     fs.mkdirSync(path.join(root,'tmp'),{recursive:true});fs.writeFileSync(path.join(root,'tmp/agents-settings-ui.png'),(await win.webContents.capturePage()).toPNG());
-    await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await toggleModelSettings(run, until);
     await until("!!document.querySelector('.agent-chat .composer-stack')",'return chat');
     await run("document.querySelector('.agent-chat .model-select').click()");
     assert.equal(await run("document.querySelector('.model-reasoning-primary-options button:last-child').classList.contains('active')"),true,'reasoning selection survives settings and session remount');
@@ -436,7 +444,7 @@ app.whenReady().then(async () => {
     await run("document.querySelector('button[aria-label=\"删除 Second Model\"]').click()");
     await until("models.defaultModelId==='model'&&models.models.length===1",'removing the default model keeps a valid remaining default');
     await until("!document.querySelector('.model-settings-stack .settings-actions .primary-button').disabled",'remove model has settled');
-    await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await toggleModelSettings(run, until);
     await until("!!document.querySelector('.agent-chat .composer-stack')",'return from model settings');
     win.setSize(540,720); await run("document.querySelector('.fixture-shell').classList.add('narrow')"); await pause(200);
     assert.ok(await run("document.documentElement.scrollWidth<=innerWidth"),'narrow layout has no horizontal overflow');
@@ -560,7 +568,7 @@ app.whenReady().then(async () => {
     await clickSidebar('[data-agent-id=b] .conversation-archive'); await until("!document.querySelector('[data-agent-id=b] .remote-conversation')",'inline archive removes chat from ordinary list');
     assert.equal(await run("document.querySelector('[data-agent-id=b]').textContent.includes('已归档对话')"),false,'archive collection is absent from the sidebar');
     assert.ok(await run("!!document.querySelector('[data-agent-id=b] .agent-sidebar-empty')"),'an Agent with only archived chats still offers a new conversation');
-    await run("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['same-session']));document.querySelector('.agent-manage').click()");
+    await run("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['same-session']))"); await toggleModelSettings(run, until);
     await until("!!document.querySelector('.settings-shell [data-settings-section=cache]')",'open Agent settings');
     await run("document.querySelector('.settings-shell [data-settings-section=cache]').click()");
     await run("document.querySelector('[data-agent-data=b] > summary').click()");
@@ -608,7 +616,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').disabled"),false,'global preference is independent of the currently viewed Agent');
     assert.equal(await run("document.querySelector('.settings-shell .settings-switch input').checked===true"),false,'unsupported stored preference is not shown as enabled');
     assert.equal(await run("document.querySelector('.settings-target')===null"),true,'the settings source never changes with the Agent');
-    await run("(document.querySelector('.settings-shell .back-button')??document.querySelector('.agent-manage')).click()");
+    await toggleModelSettings(run, until);
     await until("!!document.querySelector('.agent-chat .composer-stack textarea')",'return to legacy service chat');
     await run("window.originalCall=cardbushDesktop.agents.call;window.rejectRefresh=true;cardbushDesktop.agents.call=async(id,operation,input)=>{if(id==='c'&&operation==='sessions.list'&&rejectRefresh){rejectRefresh=false;throw Error('Fixture list refresh failed')}return originalCall(id,operation,input)};undefined;");
     await setDraft('刷新失败也已发送'); await run("document.querySelector('.agent-chat .composer-stack .send-button').click()");
@@ -620,7 +628,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("calls.filter(c=>c.operation==='local-runtime').length"),0,'remote components never call the local Runtime');
     assert.equal(await run("sessionStorage.getItem('cardbush-agent-draft:c:same-session:submission')"),null,'accepted submission is cleared despite refresh error');
     assert.equal(await run("document.querySelector('.agent-chat .composer-stack textarea').value"),'','accepted draft stays cleared');
-    await run("[...document.querySelectorAll('.agent-header-actions button')].find(b=>b.textContent==='连接设置').click()");
+    await run("document.querySelector('.agent-chat .agent-manage').click()");
     await until("!!document.querySelector('.agent-remove-action')",'connection removal lives in connection settings');
     await run("window.removeCalls=[];window.originalRemove=cardbushDesktop.agents.remove;cardbushDesktop.agents.remove=async id=>{removeCalls.push(id);return originalRemove(id)};document.querySelector('.agent-remove-action').click();undefined;");
     await until("!!document.querySelector('.agent-connection-removal')",'removal requires explicit confirmation');

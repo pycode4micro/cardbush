@@ -7,6 +7,7 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
   projects: { zh: '项目', en: 'Projects' },
   ssh: { zh: 'SSH 连接', en: 'SSH connections' },
   profile: { zh: '个性化', en: 'Personalization' },
+  summary_for_user: { zh: 'summary_for_user', en: 'summary_for_user' },
   appearance: { zh: '外观与语言', en: 'Appearance & language' },
   shortcuts: { zh: '快捷键', en: 'Keyboard shortcuts' },
   usage: { zh: '使用统计', en: 'Usage' },
@@ -24,6 +25,7 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   projects: { zh: '管理当前 Agent 的项目目录和默认项目。', en: 'Manage this Agent’s project directories and default project.' },
   ssh: { zh: '管理远程主机，通过项目或 @ 引用接入。', en: 'Manage remote hosts for projects and @ references.' },
   profile: { zh: '调整对话语气、交互方式和长期偏好。', en: 'Set the conversation tone, interaction preferences, and shared instructions.' },
+  summary_for_user: { zh: '管理用户习惯、下一步预测和记忆总结。', en: 'Manage habits, next-step predictions, and memory summaries.' },
   appearance: { zh: '调整颜色、字体、显示效果和界面语言。', en: 'Adjust colors, typography, display effects, and interface language.' },
   shortcuts: { zh: '查看和自定义快捷键，让操作更顺手。', en: 'View and customize keyboard shortcuts.' },
   usage: { zh: '查看实际记录的 Token 用量和使用活动。', en: 'Review recorded token usage and activity.' },
@@ -39,11 +41,12 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
 
 export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
   { label: { zh: '能力', en: 'Capabilities' }, sections: ['browser', 'computer-use', 'mcp', 'models'] },
-  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'shortcuts', 'usage', 'appearance'] },
+  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'summary_for_user', 'shortcuts', 'usage', 'appearance'] },
   { label: { zh: '系统', en: 'System' }, sections: ['ssh', 'runtime', 'proxy', 'cache', 'diagnostics'] },
 ];
 
 const keywords: Record<VisibleSettingsSection, string> = {
+  summary_for_user: '习惯 记忆 预测 命中 总结 压缩 阈值 Token check_habit memory habit prediction summary threshold consolidation',
   projects: '项目 工作区 目录 project workspace directory',
   ssh: 'SSH 远程 连接 主机 服务器 私钥 项目 remote connection server key project',
   profile: '对话 风格 角色 自然 专业 直率 简短 自定义 语气 全局约束 AGENTS.md 提示词 引导 排队 队列 思考 消息 提醒 音效 音量 声音 通知 instructions tone persona style natural professional direct concise guidance queue thinking notification sound volume',

@@ -16,9 +16,9 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: {
 const compile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
-const load = (file) => {
+const load = (file, dependencies = {}) => {
   const module = { exports: {} };
-  new Function('require', 'module', 'exports', compile(readSourceFile(path.join(root, file), 'utf8')))(require, module, module.exports);
+  new Function('require', 'module', 'exports', compile(readSourceFile(path.join(root, file), 'utf8')))(name => dependencies[name] ?? require(name), module, module.exports);
   return module.exports;
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -36,7 +36,8 @@ app.whenReady().then(async () => {
     return node.getText(ast);
   }).join('\n');
   const deps = { fs, path, protocol, localPath: require('@cardbush/platform').localPath, localFileProtocol: 'cardbush-file',
-    ...load('electron/localFileProtocol.ts'), ...load('electron/fileRead.ts'), ...load('electron/localFileStream.ts') };
+    ...load('electron/localFileProtocol.ts'), ...load('electron/fileRead.ts'), ...load('electron/localFileStream.ts'),
+    ...load('electron/localResourcePath.ts', { './localFileProtocol': load('electron/localFileProtocol.ts') }) };
   new Function(...Object.keys(deps), compile(funcs) + '\nregisterLocalFileProtocol();')(...Object.values(deps));
   const window = new BrowserWindow({ show: false, width: 600, height: 720,
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false, offscreen: true, webviewTag: true } });
@@ -53,10 +54,12 @@ app.whenReady().then(async () => {
     await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/app.css'), 'utf8'));
     const modules = Object.fromEntries([
       'src/shared/localPaths.ts', 'src/shared/textPreview.ts',
+      'src/features/conversationHost.ts',
       'src/shared/showUiError.ts',
       'src/shared/recoverableLazy.tsx',
       'src/shared/fileContextMenu.ts',
       'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
+      'src/features/inspector/useBrowserTranslation.ts', 'src/features/inspector/BrowserTranslateButton.tsx',
       'src/features/inspector/MediaInspectorPreview.tsx',
       'src/features/tools/PlainSourceLines.tsx',
       'src/features/tools/VirtualSourceLines.tsx', 'src/features/tools/sourcePreviewBlocks.ts',
@@ -133,6 +136,14 @@ app.whenReady().then(async () => {
       assert.equal(await run('Boolean(document.querySelector("webview"))'), false, 'local media bypasses webview');
       assert.equal(await run('Boolean(document.querySelector(".right-inspector-preview-loading"))'), false);
     };
+    await run(`window.invalidPreviewReads=[];window.cardbushDesktop={...window.cardbushDesktop,readTextPreview:async path=>{invalidPreviewReads.push(path);throw Error('Unexpected read');}};void 0;`);
+    for (const target of ['cardbush-source:13-74679519b39c20e4','unknown:photo.png','unknown:voice.mp3','unknown:clip.mp4','unknown:report.md','unknown:report.pdf','unknown:document.docx','unknown:page.html']) {
+      assert.equal(await run(`targets.inspectorSource(${JSON.stringify(target)})`), 'about:blank');
+      await open(target, '.inspector-file-fallback');
+      assert.equal(await run('document.querySelectorAll("img,video,audio,webview,.inspector-open-external").length'), 0);
+      assert.match(await run('document.querySelector(".inspector-file-fallback").textContent'), /资源地址不可用/);
+    }
+    assert.deepEqual(await run('window.invalidPreviewReads'), [], 'unsupported resources cannot reach a text/file reader');
     const imageFile = path.join(scratch, '中文 空格 # 图.png');
     fs.writeFileSync(imageFile, png);
     await open(imageFile, 'img');

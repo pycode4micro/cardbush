@@ -133,10 +133,9 @@ export function useQueueReorder(
   function onPointerDown(id: string, event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0 || !event.isPrimary || !onReorder || disabled || items.length < 2) return;
     const target = event.target as HTMLElement;
-    const handle = target.closest('.runtime-queue-drag-handle');
-    if (!handle && target.closest('button, a, input, textarea, select')) return;
-    // Touch can scroll the card body; the handle is the dedicated touch drag area.
-    if (event.pointerType === 'touch' && !handle) return;
+    if (target.closest('button, a, input, textarea, select')) return;
+    // Touch scrolls the queue; the overflow menu also exposes Move up/down.
+    if (event.pointerType === 'touch') return;
     finish();
     event.preventDefault();
     const row = event.currentTarget;

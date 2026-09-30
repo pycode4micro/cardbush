@@ -81,9 +81,22 @@ async function buildViews() {
       'src/features/inspector/panelLayout.ts', 'src/features/inspector/BrowserBookmarkButton.tsx',
       'src/features/inspector/useBrowserBookmarks.ts', 'src/features/composer/ComposerPortalContext.ts',
     ] : []),
-    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-presentation' ? [
+    ...(['composer-presentation', 'composer-layout', 'composer-reference-sizing'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
       'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
       'src/features/composer/ComposerPortalContext.ts',
+      'src/features/components/ComponentsApp.tsx',
+      'src/features/components/HtmlComponentContext.ts',
+      'src/features/composer/Composer.tsx',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing' ? [
+      'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory' ? [
+      'src/features/settings/SettingsSummaryPanel.tsx', 'src/features/settings/useAppSettings.ts',
+      'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning' ? [
+      'src/hooks/useCardbushChat.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -192,7 +205,7 @@ app.whenReady().then(async () => {
   const errors = [];
   if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components') require('../dist-electron/sandboxFrameGuard.js').installSandboxFrameNavigationGuard(window.webContents);
   window.webContents.on('console-message', event => {
-    if (/Maximum update depth|Invalid hook call|ResizeObserver loop|passive event listener|Encountered two children with the same key/.test(event.message)) errors.push(event.message);
+    if (/Maximum update depth|Cannot update a component|Invalid hook call|ResizeObserver loop|passive event listener|Encountered two children with the same key/.test(event.message)) errors.push(event.message);
   });
   window.webContents.session.webRequest.onBeforeRequest((details, done) => {
     const external = /^https?:/.test(details.url);
@@ -222,7 +235,11 @@ app.whenReady().then(async () => {
       + '\n' + readSourceFile(path.join(root, 'src/features/chatMessages/turn-artifacts.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/components/components.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/composer/composerPresentation.css'), 'utf8')
-      + '\n' + readSourceFile(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8'));
+      + '\n' + readSourceFile(path.join(root, 'src/features/composer/queueActions.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/chat/conversationComposerLayout.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/settings/summarySettings.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/styles/settings-controls.css'), 'utf8'));
     await run(`
       window.failures = [];
       addEventListener('error', event => failures.push(event.message));
@@ -382,7 +399,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['inspector-cover', 'model-protocols', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -567,6 +584,23 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-presentation') {
       await require('./helpers/composer-presentation.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no presentation renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing') {
+      await require('./helpers/composer-reference-sizing.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no composer reference renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-layout') {
+      await require('./helpers/composer-layout.cjs')({ run, until, pause, window, root });
+      await require('./helpers/composer-centered-layout.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no composer layout renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory') {
+      await require('./helpers/composer-memory.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no memory shortcut renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning') {
+      await require('./helpers/model-reasoning.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no model reasoning renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'model-protocols') {
       await require('./helpers/composer-model-protocols.cjs')({ run, until, window, root });

@@ -5,6 +5,7 @@ export interface SubagentModelOption {
   model: string;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface SubagentModelSelection extends SubagentModelOption {

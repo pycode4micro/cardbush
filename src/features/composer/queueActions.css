@@ -1,0 +1,63 @@
+.runtime-queue-actions > .queue-actions-trigger {
+  min-width: 28px;
+  width: 28px;
+  padding: 0;
+}
+.interaction-queue-lock > .queue-actions-trigger {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-soft);
+}
+.queue-actions-trigger.is-locked {
+  color: var(--accent);
+}
+
+.queue-actions-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--shadow) 65%, transparent);
+}
+
+.queue-actions-popover:popover-open { display: grid; gap: 2px; }
+
+.queue-actions-popover > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 450;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.queue-actions-popover .queue-menu-label { display: block; }
+.queue-actions-popover > button[aria-checked="true"] { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.queue-actions-popover > button:hover:not(:disabled),
+.queue-actions-popover > button:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+}
+.queue-actions-popover > button:disabled { opacity: .4; }
+.queue-menu-divider { height: 1px; margin: 3px 7px; background: var(--border); }

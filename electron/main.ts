@@ -10,6 +10,9 @@ import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceContro
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
+import { BrowserTranslationService } from './browserTranslation';
+import { createBrowserTranslator } from './browserTranslationBridge';
+import type { BrowserTranslationRequest } from './browserTranslationTypes';
 import { McpDesktopHost } from './mcpDesktopHost';
 import {
   app,
@@ -67,6 +70,7 @@ import { isOfficePreviewPath } from './officePreview';
 import { checkOfficePreviewAdmission, officePreviewLimits } from './officePreviewAdmission';
 import { localFileResponse } from './localFileStream';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
+import { localResourcePath } from './localResourcePath';
 import { readFilePrefix } from './fileRead';
 import { ImageGalleryScanner } from './imageGallery';
 import { decodeTextPreview, TextPreviewError, readTextPreviewResult, renderTextFilePreview } from './textPreview';
@@ -241,7 +245,7 @@ type ShadowWindowPayload = {
     maxContextTokens?: number;
     maxCompletionTokens?: number;
   };
-  reasoningLevel?: ReasoningEffort;
+  reasoningLevel?: ReasoningEffort | 'default';
   projectDir: string;
   initialMode: ShadowWindowMode;
 };
@@ -688,12 +692,12 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     ? input.theme
     : 'dark';
   const requestedReasoningLevel = String(input.reasoningLevel ?? '').trim().toLowerCase();
-  const reasoningLevel: ReasoningEffort = requestedReasoningLevel === 'none' ||
+  const reasoningLevel: ReasoningEffort | 'default' = requestedReasoningLevel === 'none' ||
       requestedReasoningLevel === 'low' || requestedReasoningLevel === 'medium' ||
       requestedReasoningLevel === 'high' || requestedReasoningLevel === 'xhigh' ||
       requestedReasoningLevel === 'max'
     ? requestedReasoningLevel
-    : 'high';
+    : 'default';
   const themeVariableInput = input.themeVariables && typeof input.themeVariables === 'object'
     ? input.themeVariables as Record<string, unknown>
     : {};
@@ -2609,10 +2613,8 @@ ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string
     return null;
   }
   if (targetPath.startsWith('ssh://')) return (await sshConnections()).snapshot(targetPath).catch(() => null);
-  const normalizedPath = normalizeShellPath(targetPath);
-  if (!normalizedPath) {
-    return null;
-  }
+  let normalizedPath: string;
+  try { normalizedPath = localResourcePath(targetPath); } catch { return null; }
   const stats = await fs.promises.stat(normalizedPath).catch(() => null);
   if (!stats || (!stats.isFile() && !stats.isDirectory())) {
     return null;
@@ -3181,6 +3183,13 @@ ipcMain.handle('browser:settings-read', async event => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).read();
 });
+const browserTranslation = new BrowserTranslationService(id => electronWebContents.fromId(id), createBrowserTranslator(async () => ({
+  product: await ensureRuntimeServicesReady(), runtime: await ensureRuntimeHostReady(),
+})));
+ipcMain.handle('inspector:translate', (event, input: BrowserTranslationRequest) => {
+  assertMainWindowSender(event.sender.id);
+  return browserTranslation.run(event.sender.id, input);
+});
 ipcMain.handle('browser:settings-update', async (event, input: { startPage: string; expectedRevision: number }) => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).update(input);
@@ -3435,10 +3444,7 @@ ipcMain.handle('shell:read-text-preview', async (event, targetPath: string) => {
       return { ok: false, error: { code: error.code, message: error.message } };
     }
   }
-  const normalizedPath = normalizeShellPath(targetPath);
-  if (!normalizedPath) {
-    throw new Error('Invalid preview path.');
-  }
+  const normalizedPath = localResourcePath(targetPath);
   return readTextPreviewResult(normalizedPath);
 });
 
@@ -4438,7 +4444,7 @@ function registerLocalFileProtocol() {
         if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
         if (parsed.pathname === '/manifest' && request.method === 'GET') {
           try {
-            const result = await modelPreviewService.preview(normalizeShellPath(parsed.searchParams.get('path') ?? ''), parsed.searchParams.get('scene') ?? '', request.signal, parsed.searchParams.get('requestId') || undefined);
+            const result = await modelPreviewService.preview(localResourcePath(parsed.searchParams.get('path')), parsed.searchParams.get('scene') ?? '', request.signal, parsed.searchParams.get('requestId') || undefined);
             return Response.json({ ...result.metadata, size: result.size, resource: `cardbush-file://model-preview/resource/${result.id}` }, { headers });
           } catch (error) {
             return Response.json({ error: error instanceof Error ? error.message : String(error), code: error instanceof ModelPreviewError ? error.code : 'read_failed' }, { headers });
@@ -4459,7 +4465,7 @@ function registerLocalFileProtocol() {
         return new Response('Not found', { status: 404 });
       }
       if (protocolHost === 'office-source') {
-        const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+        const officePath = localResourcePath(parsed.searchParams.get('path'));
         const stats = await fs.promises.stat(officePath);
         if (!stats.isFile() || !isHighFidelityOfficePreviewPath(officePath)) {
           return new Response('Not found', { status: 404 });
@@ -4475,7 +4481,7 @@ function registerLocalFileProtocol() {
           return await previewRendererAssetResponse(parsed.pathname)
             ?? new Response('Not found', { status: 404 });
         }
-        const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+        const officePath = localResourcePath(parsed.searchParams.get('path'));
         const stats = await fs.promises.stat(officePath);
         if (!stats.isFile() || !isOfficePreviewPath(officePath)) {
           return new Response('Not found', { status: 404 });
@@ -4511,7 +4517,7 @@ function registerLocalFileProtocol() {
         });
       }
       if (parsed.hostname.toLowerCase() === 'text-preview') {
-        const textPath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+        const textPath = localResourcePath(parsed.searchParams.get('path'));
         const stats = await fs.promises.stat(textPath);
         if (!stats.isFile()) {
           return new Response('Not found', { status: 404 });
@@ -4524,7 +4530,7 @@ function registerLocalFileProtocol() {
         });
       }
       const targetPath = localPathFromProtocolUrl(request.url);
-      const normalizedPath = normalizeShellPath(targetPath);
+      const normalizedPath = localResourcePath(targetPath);
       const stats = await fs.promises.stat(normalizedPath);
       if (!stats.isFile()) {
         return new Response('Not found', { status: 404 });
@@ -5891,7 +5897,7 @@ async function copyWindowsFileToClipboard(targetPath: string) {
 }
 
 async function readLocalImageDataUrl(targetPath: string) {
-  const normalizedPath = normalizeShellPath(targetPath);
+  const normalizedPath = localResourcePath(targetPath);
   const stats = await fs.promises.stat(normalizedPath);
   if (!stats.isFile()) {
     throw new Error('Image path is not a file');

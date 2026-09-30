@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { installInspectorWindowOpen } = require('../dist-electron/inspectorWindowOpen.js');
+const { BrowserTranslationService } = require('../dist-electron/browserTranslation.js');
 const directory = path.resolve(process.argv[2]);
 app.setPath('userData', path.join(directory, 'profile'));
 app.on('window-all-closed', () => {});
@@ -16,6 +17,14 @@ app.whenReady().then(async () => {
   const server = http.createServer((req, res) => {
     if (req.url === '/redirect') { res.writeHead(302, { Location: '/landing?query=%E6%A8%A1%E5%9E%8B' }); res.end(); return; }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    if (req.url === '/translation') {
+      res.end(`<title>Translation example</title><style>body{font:16px/1.6 sans-serif;margin:24px;min-height:2200px}</style>
+        <h1>Overview</h1><p>Read <a href="#details" onclick="window.linkClicks=(window.linkClicks||0)+1;return false">more details</a> here.</p>
+        <p class="repeat">Repeated label</p><p class="repeat">Repeated label</p><code>keep_code()</code>
+        <input value="Private value"><textarea>Private textarea</textarea><div contenteditable>Private editable draft</div>
+        <div hidden>Private hidden</div><div style="display:none">Private invisible</div><div translate="no">Private untranslated</div>`); return;
+    }
+    if (req.url === '/translation-long') { res.end('<title>Long page</title>' + Array.from({length:85}, (_,i)=>`<p>Paragraph ${i}</p>`).join('')); return; }
     if (req.url === '/delayed-frame') { delayedFrames.push(res); return; }
     if (req.url === '/delayed-document') { delayedDocuments.push(res); return; }
     if (req.url === '/background-frame') {
@@ -43,6 +52,18 @@ app.whenReady().then(async () => {
   const store = new BrowserConfigStore(path.join(directory, 'browser.json'));
   ipcMain.handle('browser:settings-read', () => store.read());
   ipcMain.handle('browser:settings-update', (_event, input) => store.update(input));
+  const translationCalls = [];
+  let translationMode = 'normal', modeCalls = 0;
+  const translation = new BrowserTranslationService(id => webContents.fromId(id), async (texts, language, jobId, signal) => {
+    translationCalls.push({ texts, language, jobId, signal }); modeCalls++;
+    if (translationMode === 'hold') await new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+      if (signal.aborted) reject(new Error('cancelled'));
+    });
+    if (translationMode === 'second-batch-fails' && modeCalls === 2) throw new Error('fixture provider failure');
+    return texts.map(item => ({ ...item, text: (language === 'zh' ? '中文：' : 'English: ') + item.text }));
+  });
+  ipcMain.handle('inspector:translate', (event, input) => translation.run(event.sender.id, input));
   const externallyOpened=[];
   ipcMain.handle('shell:open-external', (_event, target) => { externallyOpened.push(target); });
   const errors = [];
@@ -266,6 +287,8 @@ app.whenReady().then(async () => {
     await waitFor('document.querySelector(".right-inspector-tab-page.active .inspector-preview-error")===null');
     assert.equal(delayedDocuments.length, 1, 'a late successful load clears timeout UI without reloading');
     await read('window.setTimeout=normalTimeout; void 0');
+    await require('./helpers/browser-translation-ui.cjs')({ window, read, waitFor, activeReady, origin, webContents,
+      translation, calls: translationCalls, setMode: value => { translationMode = value; modeCalls = 0; } });
     assert.deepEqual(errors, []);
     console.log('Inspector browser: single-row chrome, real drag/cancel, full-cover guest sizing/restore, selected-page external action, preserved guests, navigation, home pages and loading recovery passed.');
   } catch(error) {

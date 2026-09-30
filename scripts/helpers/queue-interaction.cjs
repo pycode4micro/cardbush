@@ -28,7 +28,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     setQueueFixture(queueFixture);
     window.queuePoint = (id, handle = true, fraction = 0.5) => {
       const row = document.querySelector('[data-queue-item-id="' + id + '"]');
-      const target = handle ? row.querySelector('.runtime-queue-drag-handle') : row;
+      const target = handle ? row.querySelector('.runtime-queue-prompt') : row;
       const r = target.getBoundingClientRect();
       return { x: Math.round(r.left + (handle ? r.width / 2 : 60)), y: Math.round(r.top + r.height * fraction) };
     };
@@ -38,16 +38,43 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("document.querySelector('.composer-queue-button').closest('.composer-tools') === document.querySelector('.permission-center-button').closest('.composer-tools')"), true, 'queue access shares the composer toolbar with permissions');
   assert.equal(await run("document.querySelector('.composer-queue-button').textContent"), '3');
   assert.equal(await run("document.querySelectorAll('.composer-queue-row').length"), 0, 'no duplicate queue summary above input');
-  await run("document.querySelector('.composer-queue-lock').click()");
-  await until("document.querySelector('.composer-queue-lock')?.getAttribute('aria-pressed') === 'true'", 'queue lock is visible');
+  assert.equal(await run("document.querySelectorAll('.runtime-screen-queue-actions > button').length"), 3, 'collapsed actions only expose send, delete and more');
+  const clickMenuTrigger = async selector => {
+    await pause(200);
+    const point = await run(`(() => {
+      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+    window.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+    window.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+  };
+  const openMenu = async selector => {
+    await clickMenuTrigger(selector);
+    await until("!!document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]')", 'queue overflow opens in the top layer');
+  };
+  await openMenu('.runtime-screen-queue-actions .queue-actions-trigger');
+  assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').getAttribute('aria-checked')"), 'false');
+  await clickMenuTrigger('.runtime-screen-queue-actions .queue-actions-trigger');
+  await until("!document.querySelector('.queue-actions-popover:popover-open')", 'clicking more again closes the menu');
+  await openMenu('.runtime-screen-queue-actions .queue-actions-trigger');
+  await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').click()");
+  await until("!!document.querySelector('.composer-runtime-rail[data-queue-locked=true]')", 'queue lock is visible');
   assert.equal(await run('queueFixture.length'), 3, 'locking retains all text and order');
   await run("document.querySelector('.composer-queue-button').click()");
   await until("!!document.querySelector('.composer-runtime-rail.context-visible .queue-context-panel')", 'queue shortcut opens details');
   await until("!!document.querySelector('.composer-runtime-screen.queue.open')", 'status reel switches to queue');
   assert.ok((await run("document.querySelector('.runtime-queue-hint').textContent")).includes('不会自动发送'));
+  assert.equal(await run("[...document.querySelectorAll('.runtime-queue-actions')].every(node => node.querySelectorAll(':scope > button').length === 3)"), true, 'expanded rows only expose send, delete and more');
+  await openMenu('[data-queue-item-id=q1] .queue-actions-trigger');
+  assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').getAttribute('aria-checked')"), 'true', 'every overflow reflects the shared queue lock');
+  assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock] svg') !== null"), true, 'locked entry has a checkmark');
   await pause(200);
   fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
   fs.writeFileSync(path.join(root, 'tmp', 'composer-queue-locked.png'), (await window.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.queue-actions-popover:popover-open').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+  await until("!document.querySelector('.queue-actions-popover:popover-open')", 'escape dismisses overflow');
+  assert.equal(await run("document.activeElement === document.querySelector('[data-queue-item-id=q1] .queue-actions-trigger')"), true, 'escape restores focus without closing the queue');
   await run("document.querySelector('[data-composer-input]').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))");
   await until('chatProps.queueLocked === false', 'lock keyboard shortcut restores automatic sending');
   await pause(200);
@@ -123,8 +150,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(await run("document.body.classList.contains('queue-reordering')"), false);
     assert.equal(await run('queueOrders.length'), 2, mode + ' does not change order');
   }
-  await run(`document.querySelector('[data-queue-item-id=q2] .runtime-queue-drag-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))`);
-  await until('queueOrders.length === 3', 'keyboard reorder');
+  await openMenu('[data-queue-item-id=q2] .queue-actions-trigger');
+  await run("document.querySelector('.queue-actions-popover:popover-open').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))");
+  assert.equal(await run("document.activeElement.dataset.queueAction"), 'up', 'menu arrows navigate to move up');
+  window.webContents.focus();
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+  await until('queueOrders.length === 3', 'keyboard selects reorder from the menu');
   assert.deepEqual(await run('queueFixture.map(item => item.id)'), ['q2', 'q1', 'q3']);
   // Appended messages should not close the panel while the user is reading it.
   await run("setQueueFixture([...queueFixture, ...Array.from({ length: 9 }, (_, i) => ({ id: 'extra-' + i, text: '新增排队消息 ' + i + '。'.repeat(55), createdAt: '2026-09-11T00:00:03Z' }))])");
@@ -158,13 +190,22 @@ module.exports = async ({ run, until, pause, window, root }) => {
         iconReachable: hit === iconNode || iconNode.contains(hit),
         textFits: [...document.querySelectorAll('.runtime-queue-item')].every(row => {
           const text = row.querySelector('.runtime-queue-prompt').getBoundingClientRect();
-          const handle = row.querySelector('.runtime-queue-drag-handle').getBoundingClientRect();
+          const bounds = row.getBoundingClientRect();
           const actions = row.querySelector('.runtime-queue-actions').getBoundingClientRect();
-          return row.scrollWidth <= row.clientWidth + 1 && text.width > 20 && text.left >= handle.right && text.right <= actions.left
+          return row.scrollWidth <= row.clientWidth + 1 && text.width > 20 && text.left >= bounds.left && text.right <= actions.left
             && Math.abs(text.top + text.height / 2 - actions.top - actions.height / 2) < 1;
         }) };
     })()`);
     assert.deepEqual(layout, { inside: true, iconRight: true, iconReachable: true, textFits: true }, width + 'px queue layout');
+    await openMenu('[data-queue-item-id=q1] .queue-actions-trigger');
+    assert.equal(await run(`(() => {
+      const menu = document.querySelector('.queue-actions-popover:popover-open');
+      const r = menu.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight
+        && menu.contains(hit) && getComputedStyle(menu.querySelector('.queue-menu-label')).display !== 'none';
+    })()`), true, width + 'px menu stays visible above queue clipping and retains its labels');
+    await run("document.querySelector('.queue-actions-popover:popover-open').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
   }
   await run("document.querySelector('.chat-panel').style.width = ''");
   // Restoring the wide composer also updates its ResizeObserver-driven queue
@@ -176,7 +217,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   native('mouseUp', guidePoint, { button: 'left', clickCount: 1 });
   await until('queueGuided.length === 1', 'guidance action still uses selected queue item');
   assert.equal(await run('queueGuided[0]'), 'q2');
-  await until("document.querySelector('[data-queue-item-id=q1] .runtime-queue-drag-handle')?.disabled === false && document.querySelector('.composer-queue-button')?.textContent === '2'", 'guidance finishes updating the queue');
+  await until("document.querySelector('[data-queue-item-id=q1] .runtime-queue-guide')?.disabled === false && document.querySelector('.composer-queue-button')?.textContent === '2'", 'guidance finishes updating the queue');
   await pause(250);
   await startDrag('q1');
   drop = await run("queuePoint('q3', false, 0.8)");
@@ -190,16 +231,19 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("document.querySelector('.runtime-queue-drag-preview')"), null, 'switching sessions also removes the floating card');
   await run(`updateChat({ activeConversationId: 'idle-locked-session', sending: false, activeTurnId: '', draft: '', queueLocked: true });
     setQueueFixture([{ id: 'locked-idle', text: '锁定后保留的原文', createdAt: '2026-09-29T00:00:00Z' }]);`);
-  await until("!!document.querySelector('[data-composer-input]') && !!document.querySelector('.composer-queue-lock')", 'idle locked queue');
+  await until("!!document.querySelector('[data-composer-input]') && !!document.querySelector('.composer-runtime-rail[data-queue-locked=true] .queue-actions-trigger')", 'idle locked queue');
   const previousGuided = await run('queueGuided.length');
   await run("document.querySelector('[data-composer-input]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }))");
   await until(`queueGuided.length === ${previousGuided + 1}`, 'manual shortcut sends a locked message after the loop ends');
   assert.equal(await run('queueGuided.at(-1)'), 'locked-idle');
   assert.equal(await run('chatProps.queueLocked'), true, 'manual send does not unlock the queue');
-  assert.equal(await run("document.querySelector('.composer-queue-lock')?.getAttribute('aria-pressed')"), 'true', 'empty queue retains its lock control');
+  await openMenu('.runtime-screen-queue-actions .queue-actions-trigger');
+  assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').getAttribute('aria-checked')"), 'true', 'empty queue retains its lock control');
+  await run("document.querySelector('.queue-actions-popover:popover-open').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
   await run(`updateChat({ interactionContent: h('div', { 'data-queue-confirmation': true }, '请确认接下来如何处理') });`);
-  await until("!!document.querySelector('[data-queue-confirmation]') && !!document.querySelector('.interaction-queue-lock .composer-queue-lock')", 'confirmation keeps the emergency lock accessible');
-  await run("document.querySelector('.interaction-queue-lock .composer-queue-lock').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))");
+  await until("!!document.querySelector('[data-queue-confirmation]') && !!document.querySelector('.interaction-queue-lock .queue-actions-trigger')", 'confirmation keeps the emergency lock accessible');
+  await openMenu('.interaction-queue-lock .queue-actions-trigger');
+  await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))");
   await until('chatProps.queueLocked === false', 'lock shortcut works while a confirmation replaces the composer');
   await run('updateChat({ interactionContent: null })');
   await run('window.queueLeavingList = document.querySelector(".message-list"); updateChat(queueOriginalProps)');

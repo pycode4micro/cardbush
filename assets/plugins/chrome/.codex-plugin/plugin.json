@@ -1,9 +1,9 @@
 {
   "name": "chrome",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Browser Use for Chrome and Edge on Windows 11, with separate pairings and session-bound browser selection.",
   "author": { "name": "CardBush" },
-  "license": "Proprietary",
+  "license": "Apache-2.0",
   "keywords": ["browser-use", "chrome", "edge", "browser", "tabs"],
   "skills": "./skills",
   "mcpServers": "./.mcp.json",

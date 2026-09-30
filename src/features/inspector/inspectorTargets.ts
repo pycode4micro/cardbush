@@ -1,4 +1,4 @@
-import { basename, fileUrl, isAbsoluteLocalPath, stripWrappingQuotes } from '../../shared/localPaths';
+import { basename, fileUrl, isAbsoluteLocalPath, resourceTargetKind, stripWrappingQuotes } from '../../shared/localPaths';
 import { resolveFilePreview } from './filePreviewRegistry';
 import type { InspectorMediaType, InspectorOpenDetail } from './inspectorEvents';
 
@@ -60,6 +60,7 @@ export function inspectorSource(target: string) {
     return value;
   }
   const path = inspectorFilePath(value);
+  if (resourceTargetKind(path) === 'unsupported') return 'about:blank';
   const adapter = resolveFilePreview(path);
   // An unknown local file has no navigable source. The inspector displays its
   // fallback component without sending arbitrary bytes to a text parser/guest.

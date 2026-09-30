@@ -7,6 +7,7 @@ import { HtmlComponentSurface } from './HtmlComponentSurface';
 import { componentId } from './componentId';
 import { BuiltinComponentSurface } from './BuiltinComponentSurface';
 import { WelcomeLayoutEditor } from './WelcomeLayoutEditor';
+import { ComposerLayoutSettings } from './ComposerLayoutSettings';
 import './components.css';
 
 export function ComponentsApp({ language }: { language: AppLanguage }) {
@@ -38,6 +39,8 @@ export function ComponentsApp({ language }: { language: AppLanguage }) {
               {style === 'standard' ? zh ? '标准' : 'Standard' : zh ? '精简' : 'Simple'}
             </button>)}
           </div>}
+          {isBuiltinComponent(item) && item.builtin === 'input' && <ComposerLayoutSettings language={language} flow={item.composerFlow}
+            onChange={composerFlow => commit({ ...saved, items: saved.items.map(current => current.id === item.id ? { ...item, composerFlow } : current) })}/>}
           {isBuiltinComponent(item) ? <span className="component-builtin-label">{zh ? '内置' : 'Built-in'}</span>
             : <button type="button" title={zh ? '移除组件' : 'Remove component'} onClick={() => commit({ ...saved, items: saved.items.filter(current => current.id !== item.id) })}><Trash2 size={14}/></button>}
         </header>

@@ -11,8 +11,13 @@
 .inspector-tile-frame .right-inspector-navigation { padding: 5px; gap: 2px; }
 .inspector-tile-frame .right-inspector-address { min-width: 0; }
 .inspector-tile-frame .right-inspector-address input { min-width: 0; width: 100%; }
-.right-inspector-address .inspector-bookmark-button { flex: none; width: 26px; height: 26px; padding: 4px; border: 0; background: transparent; color: var(--text-soft); border-radius: 50%; }
-.right-inspector-address .inspector-bookmark-button:hover, .right-inspector-address .inspector-bookmark-button[aria-pressed="true"] { color: var(--text); background: var(--hover); }
+.right-inspector-address :is(.inspector-bookmark-button, .inspector-translate-button) { flex: none; width: 26px; height: 26px; padding: 4px; border: 0; background: transparent; color: var(--text-soft); border-radius: 50%; }
+.right-inspector-address :is(.inspector-bookmark-button, .inspector-translate-button):hover,
+.right-inspector-address :is(.inspector-bookmark-button, .inspector-translate-button)[aria-pressed="true"] { color: var(--text); background: var(--hover); }
+.right-inspector-address .inspector-translate-button[data-error] { color: var(--text); }
+.inspector-translation-notice { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 4px 16px var(--shadow); font-size: 12px; }
+.inspector-translation-notice span { flex: 1; }
+.inspector-translation-notice button { flex: none; border: 0; background: transparent; color: inherit; padding: 2px 6px; border-radius: 50%; cursor: pointer; }
 .inspector-tile-divider { position: absolute; z-index: 6; touch-action: none; }
 .inspector-tile-divider.axis-x { width: 8px; margin-left: -4px; cursor: col-resize; }
 .inspector-tile-divider.axis-y { height: 8px; margin-top: -4px; cursor: row-resize; }

@@ -401,8 +401,7 @@
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
-.composer-queue-button,
-.composer-queue-lock {
+.composer-queue-button {
   flex: 0 0 auto;
   height: 28px;
   display: inline-flex;
@@ -421,18 +420,13 @@
 }
 
 .composer-queue-button:hover,
-.composer-queue-button:focus-visible,
-.composer-queue-lock:hover,
-.composer-queue-lock:focus-visible {
+.composer-queue-button:focus-visible {
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-strong));
-}
-.composer-queue-lock[aria-pressed="true"] {
-  color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-strong));
 }
 .interaction-queue-lock {
   display: flex;
+  pointer-events: auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -1547,7 +1541,7 @@
   opacity: 1;
 }
 
-.composer-queue-actions button {
+.composer-queue-actions > button {
   width: 22px;
   height: 20px;
   display: inline-flex;
@@ -1563,16 +1557,16 @@
   font-weight: 800;
 }
 
-.composer-queue-actions button span {
+.composer-queue-actions > button > span {
   display: none;
 }
 
-.composer-queue-actions button:hover:not(:disabled) {
+.composer-queue-actions > button:hover:not(:disabled) {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
-.composer-queue-actions button:disabled {
+.composer-queue-actions > button:disabled {
   opacity: 0.52;
 }
 
@@ -1651,7 +1645,7 @@
   width: min(320px, calc(100vw - 24px));
   height: auto;
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--menu-surface);
   border-color: var(--menu-border);
   border-radius: var(--menu-radius);
@@ -2058,6 +2052,10 @@
   background: color-mix(in srgb, var(--text) 5%, transparent);
   border-radius: 7px;
 }
+
+.model-reasoning-current { display: inline-flex; align-items: center; gap: 8px; }
+.model-reasoning-default { padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-soft); font: inherit; cursor: pointer; }
+.model-reasoning-default:hover, .model-reasoning-default[aria-pressed="true"] { color: var(--text); background: var(--hover); }
 
 .model-reasoning-viewport {
   min-width: 0;

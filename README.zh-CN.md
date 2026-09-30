@@ -6,20 +6,20 @@
 
 ## 下载
 
-源码版本：**1.0.0-beta.4**。以下安装包在标签发布流程通过双平台验证后提供；发布完成前，请从[发行版页面](https://github.com/pycode4micro/cardbush/releases)选择最新已发布版本。
+源码版本：**1.0.0-beta.5**。以下安装包在标签发布流程通过双平台验证后提供；发布完成前，请从[发行版页面](https://github.com/pycode4micro/cardbush/releases)选择最新已发布版本。
 
 | 系统 | 下载 | 适用电脑 |
 | --- | --- | --- |
-| Windows 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64 位 |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-linux-x86_64.AppImage) | x86-64 桌面 Linux；CI 使用 Ubuntu 22.04 验证 |
+| Windows 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.5/CardBush-1.0.0-beta.5-windows-x64.exe) | Intel / AMD 64 位 |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.5/CardBush-1.0.0-beta.5-linux-x86_64.AppImage) | x86-64 桌面 Linux；CI 使用 Ubuntu 22.04 验证 |
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-两个平台均使用同一 Beta 4 源码标签构建。本次加入独立 Agent 服务、SSH 工作区、应用中心、本地与远端共用的对话和设置、命令沙盒，并改善工具执行与上下文恢复。详见[发布说明](docs/releases/1.0.0-beta.4.md)。SHA-256 校验文件和成品启动报告随包提供；主分支构建成功不等于已经发布发行版。
+两个平台发布时均使用同一 Beta 5 源码标签构建。应用版本信息与当前文档已统一为 Beta 5，Beta 6 为下一版计划。详见[发布说明](docs/releases/1.0.0-beta.5.md)。SHA-256 校验文件和成品启动报告随包提供；主分支构建成功不等于已经发布发行版。
 
 当前 Windows 开发版本面向 Windows 11 x64（build 22000 起），包括商店 MSIX 与 Browser Use（Chrome / Edge）；历史下载版本可能有不同要求。无需按 Intel、AMD 或显卡型号区分。本次不支持 ARM64、32 位 Windows、Windows 7/8/10 或 macOS 安装包。Windows EXE 发行流程要求发布者签名证书；普通 CI 构建生成未签名的开发安装包。
 
-商店 MSIX 使用独立的四段版本号，由 Microsoft 在认证过程中签名；不能把仅用于本机验证的测试签名副本上传商店。当前候选包与提交说明见 [MSIX 提交准备](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md)，本仓库提供准备材料，不代表已经通过或提交认证。
+商店 MSIX 使用独立的四段版本号，由 Microsoft 在认证过程中签名；不能把仅用于本机验证的测试签名副本上传商店。维护者已确认 Beta 5 MSIX 上传至 Partner Center，上传不代表认证通过。包信息与审核材料见 [MSIX 提交记录](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md)。
 
 ### 安装与开始使用
 
@@ -28,8 +28,8 @@
 **Linux：** 下载后赋予执行权限并启动：
 
 ```sh
-chmod +x CardBush-1.0.0-beta.4-linux-x86_64.AppImage
-./CardBush-1.0.0-beta.4-linux-x86_64.AppImage
+chmod +x CardBush-1.0.0-beta.5-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.5-linux-x86_64.AppImage
 ```
 
 AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）。没有 FUSE 时可使用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。Chromium 需要正常的沙箱环境，不建议通过关闭沙箱解决安装问题。

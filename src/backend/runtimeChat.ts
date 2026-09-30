@@ -11,6 +11,8 @@ import type {
 } from '@cardbush/bush-protocol';
 import {
   planStateSchema,
+  reasoningEffortSchema,
+  resolveModelReasoningEffort,
   runtimeProviderBindingRefSchema,
   subagentTaskStatusSchema,
 } from '@cardbush/bush-protocol';
@@ -90,6 +92,7 @@ export async function streamRuntimeChat(
           : rootModelId,
         model: childModel.model,
         providerBinding: childModel.binding,
+        reasoningEffort: childModel.reasoningEffort,
         ...(childModel.maxContextTokens ? { maxContextTokens: childModel.maxContextTokens } : {}),
         ...(childModel.maxOutputTokens ? { maxOutputTokens: childModel.maxOutputTokens } : {}),
       } : { mode: 'inherit' },
@@ -161,7 +164,7 @@ export async function streamRuntimeChat(
       individuation: readIndividuation(),
       maxOutputTokens: configuredMaxOutputTokens,
       maxContextTokens,
-      reasoningEffort: reasoningEffort(request.reasoningLevel),
+      reasoningEffort: resolveModelReasoningEffort(resolvedModel, request.reasoningLevel),
       sessionTitle: optionalString(existingSession?.metadata?.title) || undefined,
     };
     const submittedAt = Date.parse(request.submittedAt ?? '');
@@ -310,6 +313,7 @@ interface ResolvedProductModel {
   binding: RuntimeProviderBindingRef;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort;
 }
 
 export async function resolveProductModel(modelId: string): Promise<ResolvedProductModel> {
@@ -338,6 +342,7 @@ export async function resolveProductModel(modelId: string): Promise<ResolvedProd
   return {
     model,
     binding: runtimeProviderBindingRefSchema.parse(value.binding),
+    reasoningEffort: reasoningEffortSchema.optional().parse(value.reasoningEffort),
     ...(positiveInteger(value.maxContextTokens) ? {
       maxContextTokens: positiveInteger(value.maxContextTokens),
     } : {}),
@@ -805,17 +810,6 @@ function subagentDispatches(
     raw: item,
     };
   });
-}
-
-function reasoningEffort(
-  value: ChatStreamRequest['reasoningLevel'],
-): 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  return normalized === 'none' || normalized === 'low' ||
-    normalized === 'medium' || normalized === 'high' ||
-    normalized === 'xhigh' || normalized === 'max'
-    ? normalized
-    : undefined;
 }
 
 async function loadToolExecutionWithTimeout(

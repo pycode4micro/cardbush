@@ -11,6 +11,11 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {MarkdownContent} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {SourceMemoReference} from '${local('src/features/chatMessages/SourceMemoReference.tsx')}';
+import {ImagePreviewDialog} from '${local('src/features/chatMessages/ImagePreviewDialog.tsx')}';
+import {InlineAudio,InlineVideo} from '${local('src/features/chatMessages/InlineMedia.tsx')}';
+import {LocalFileReferenceLink} from '${local('src/features/chatMessages/LocalFileReferenceLink.tsx')}';
+import {MessageToolOutputs} from '${local('src/features/tools/MessageToolOutputs.tsx')}';
+import {useConversationFileSource} from '${local('src/features/conversationFileSource.ts')}';
 import {ConversationHostContext} from '${local('src/features/conversationHost.ts')}';
 import {resolveConversationSource,setConversationSource,adoptDraftConversationSource} from '${local('src/features/settings/conversationSource.ts')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}';
@@ -35,6 +40,33 @@ window.showLocal=(theme='dark',language='zh')=>{
   window.cardbushDesktop={showFileContextMenu:async(path,options)=>{window.menuRequests.push({path,options});return '';}};
   root.render(<div className={'app theme-'+theme} style={{height:'100vh',padding:32}}><div style={{marginTop:240,marginLeft:310}}><SourceMemoReference reference={memo.reference} language={language} load={loadLocal}/></div></div>);
 };
+const regressionReference='cardbush-source:13-74679519b39c20e4';
+const regressionMemo={...memo,reference:regressionReference,markdown:'[13]('+regressionReference+')'};
+window.resourceReads=[];window.referenceLookups=[];
+const resolveRegression=command=>{
+  window.referenceLookups.push(command.kind);
+  if(command.kind==='runtime.resolve_source_memo')return {status:'resolved',memo:regressionMemo,evidenceStatus:['changed','link','unavailable']};
+  if(command.kind==='runtime.resolve_file_memo')return {status:'available',memo:{protocol:'bush.file_memo.v1',id:'file_9',reference:'cardbush-memo:9',file:{path:regressionReference+'.png',name:'bad.png',size:1,mtimeMs:1},note:{purpose:'Invalid stored path',points:[]}}};
+  throw Error('Unexpected request '+command.kind);
+};
+const rejectRead=async(path)=>{window.resourceReads.push(path);throw Error('Unexpected file read '+path);};
+const regressionHost={...host,id:'resource-regression',runtime:{client:{command:async(command,decode)=>decode(resolveRegression(command))},dispose(){}},readFile:rejectRead,previewFile:rejectRead};
+function ResourceProbe({path}){const file=useConversationFileSource(path);return <output data-probe={path} data-source={file.source} data-error={Boolean(file.error)}/>;}
+const invalidTargets=[regressionReference,'unknown:photo.png','unknown:voice.mp3','unknown:clip.mp4','unknown:report.pdf'];
+window.showResourceRegression=(remote=false)=>{
+  window.cardbushDesktop={readImageDataUrl:rejectRead,inspectLocalReference:rejectRead,runtime:{
+    command:async request=>({protocol:request.protocol,type:'command_response',operationId:request.operationId,ok:true,result:resolveRegression(request.command)}),
+    onStreamFrame:()=>()=>{},cancelOperation:async()=>{},stopStream:async()=>{},
+  }};
+  root.render(<div key={String(remote)} className="app theme-dark" style={{padding:24}}><ConversationHostContext.Provider value={remote?regressionHost:null}>
+    <MarkdownContent language="zh" content={'[13]('+regressionReference+')\\n\\n![鹈鹕骑车]('+regressionReference+')\\n\\n![无效来源](cardbush-source:invalid)\\n\\n![无效媒体](unknown:voice.mp3)\\n\\n![错误文件](cardbush-memo:9)'}/>
+    <MessageToolOutputs language="zh" artifacts={['image','audio','video','file'].map(type=>({id:type,name:type,path:regressionReference,type}))}/>
+    <InlineAudio src="unknown:voice.mp3"/><InlineVideo src="unknown:clip.mp4"/>
+    <LocalFileReferenceLink path={regressionReference}>Invalid file</LocalFileReferenceLink>
+    {invalidTargets.map(path=><ResourceProbe key={path} path={path}/>)}
+  </ConversationHostContext.Provider></div>);
+};
+window.showInvalidImageDialog=()=>root.render(<div className="app theme-dark"><ImagePreviewDialog image={{src:regressionReference,path:regressionReference,name:'Invalid image'}} language="en" onClose={()=>{}}/></div>);
 window.show();
 `;
 const result = await build({ configFile:false,logLevel:'warn',esbuild:{jsx:'automatic'},define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'source-fixture',resolveId(id){if(id.endsWith('__source_fixture__.tsx'))return '\0source-fixture.tsx';},load(id){if(id==='\0source-fixture.tsx')return source;}}],build:{outDir:directory,emptyOutDir:false,minify:false,lib:{entry:resolve('__source_fixture__.tsx'),formats:['es'],fileName:()=> 'fixture.js'}}});

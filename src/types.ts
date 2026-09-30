@@ -11,6 +11,7 @@ export type SettingsSection =
   | 'projects'
   | 'instructions'
   | 'profile'
+  | 'summary_for_user'
   | 'appearance'
   | 'shortcuts'
   | 'usage'
@@ -60,7 +61,7 @@ export type TaskPlanStatus = 'pending' | 'in_progress' | 'waiting' | 'completed'
 type ProxyMode = 'none' | 'system' | 'manual';
 export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
 export type SubagentPermissionRouting = 'user' | 'parent';
-export type ReasoningLevel = ReasoningEffort;
+export type ReasoningLevel = ReasoningEffort | 'default';
 export type TerminalRuntime = import('@cardbush/platform/contracts').TerminalRuntime;
 export type RuntimeAssetCategory = 'prompts' | 'skills';
 export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
@@ -188,6 +189,7 @@ export interface ManagedModelConfig {
   baseUrl: string;
   apiProtocol?: import('@cardbush/bush-protocol').ModelApiProtocol;
   anthropicThinkingMode?: 'adaptive' | 'budget';
+  reasoningEffort?: ReasoningEffort | null;
   defaultHeaders?: Record<string, string>;
   maxContextTokens?: number;
   maxCompletionTokens?: number;

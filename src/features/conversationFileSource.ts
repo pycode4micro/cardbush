@@ -1,12 +1,13 @@
 import { useContext, useEffect, useState } from 'react';
 import { ConversationHostContext } from './conversationHost';
-import { fileUrl } from '../shared/localPaths';
+import { mediaResourceUrl, resourceTargetKind } from '../shared/localPaths';
 
 /** Preview components share rendering; only the byte source is host-specific. */
 export function useConversationFileSource(path: string, enabled = true, options: { preview?: boolean; revision?: string | number } = {}): { source: string; error?: string } {
   const host = useContext(ConversationHostContext);
-  const external = /^(?:https?:|data:|blob:)/i.test(path.trim());
-  const remote = Boolean(host && !external);
+  const kind = resourceTargetKind(path);
+  const supported = kind !== 'unsupported';
+  const remote = Boolean(host && (kind === 'local-file' || kind === 'ssh-file'));
   const { preview, revision } = options;
   const key = JSON.stringify([host?.id, path, revision, preview]);
   const [file, setFile] = useState<{ key: string; source: string; error?: string }>();
@@ -30,5 +31,6 @@ export function useConversationFileSource(path: string, enabled = true, options:
     }).catch(error => { if (alive) setFile({ key, source: '', error: String(error.message ?? error) }); });
     return () => { alive = false; dispose?.(); };
   }, [host?.readFile, host?.previewFile, path, remote, enabled, preview, key]);
-  return !enabled ? { source: '' } : remote ? file?.key === key ? file : { source: '' } : { source: external ? path : fileUrl(path) };
+  return !enabled ? { source: '' } : !supported ? { source: '', error: 'Unsupported resource address.' }
+    : remote ? file?.key === key ? file : { source: '' } : { source: mediaResourceUrl(path) };
 }

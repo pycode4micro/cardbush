@@ -1,4 +1,5 @@
 import { useConversationSource } from '../settings/conversationSource';
+import { useIndividuation } from '../settings/useIndividuation';
 import { useConversationStyle } from '../settings/useConversationStyle';
 import { conversationStyleName, conversationStylePresets } from '../settings/conversationStyle';
 import { usePluginCatalog } from '../plugins/pluginCatalog';
@@ -27,11 +28,12 @@ import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
 import { normalizePermissionMode, permissionModeOptions } from '../../shared/permissionModes';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
-import { QueueLockButton } from './QueueLockButton';
+import { QueueActionsMenu } from './QueueActionsMenu';
 import {
   ArrowRight,
   ArrowUp,
   Box,
+  Brain,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -1187,8 +1189,8 @@ export function Composer({
     selectedModelConfig
       ? selectedModelConfig.modelName
       : language === 'zh' ? '待配置' : 'Configure';
-  const supportedReasoningLevels = reasoningEffortsForProtocol(selectedModelConfig?.apiProtocol);
-  const effectiveReasoningLevel = protocolReasoningEffort(selectedModelConfig?.apiProtocol, reasoningLevel);
+  const supportedReasoningLevels: ReasoningLevel[] = reasoningEffortsForProtocol(selectedModelConfig?.apiProtocol);
+  const effectiveReasoningLevel = reasoningLevel === 'default' ? 'default' : protocolReasoningEffort(selectedModelConfig?.apiProtocol, reasoningLevel);
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
   const firstQueuedMessage = queuedMessages[0] ?? null;
@@ -1325,19 +1327,19 @@ export function Composer({
           onClose={() => setPreviewImage(null)}
         />
       )}
-      {queueLabel && !onShowQueue && (
+      {(queueLabel || queueLocked) && !onShowQueue && (
         <div className="composer-secondary-row composer-queue-row" title={queueTitle}>
           <div className="composer-queue-summary">
             <Clock3 size={13} />
-            <span>{queueLabel}</span>
+            <span>{queueLocked ? language === 'zh' ? '已锁定' : 'Locked' : queueLabel}</span>
             <small>{queuePreview || queueHint}</small>
           </div>
-          {firstQueuedMessage && (
-            <div className="composer-queue-actions">
+          <div className="composer-queue-actions">
+            {firstQueuedMessage && <>
               <button
                 type="button"
-                aria-label={language === 'zh' ? '将排队消息用于引导' : 'Use queued message as guidance'}
-                title={[language === 'zh' ? '引导' : 'Guide', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
+                aria-label={language === 'zh' ? '发送排队引导' : 'Send queued message'}
+                title={[language === 'zh' ? '发送' : 'Send', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
                 aria-keyshortcuts={keyboardShortcuts.aria('guideNow')}
                 disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
                 onClick={() => void guideFirstQueuedMessage()}
@@ -1347,17 +1349,7 @@ export function Composer({
                 ) : (
                   <CornerDownLeft size={12} />
                 )}
-                <span>{language === 'zh' ? '引导' : 'Guide'}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={language === 'zh' ? '编辑排队消息' : 'Edit queued message'}
-                title={language === 'zh' ? '编辑' : 'Edit'}
-                disabled={!onEditQueuedMessage}
-                onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
-              >
-                <Edit3 size={12} />
-                <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
+                <span>{language === 'zh' ? '发送' : 'Send'}</span>
               </button>
               <button
                 type="button"
@@ -1369,8 +1361,11 @@ export function Composer({
                 <Trash2 size={12} />
                 <span>{language === 'zh' ? '删除' : 'Delete'}</span>
               </button>
-            </div>
-          )}
+            </>}
+            <QueueActionsMenu language={language} locked={queueLocked} lockPending={queueLockPending}
+              onToggleLock={onToggleQueueLock} busy={Boolean(guidingQueuedId)}
+              onEdit={firstQueuedMessage && onEditQueuedMessage ? () => onEditQueuedMessage(firstQueuedMessage) : undefined} />
+          </div>
         </div>
       )}
       <div
@@ -1643,9 +1638,6 @@ export function Composer({
               <ChevronDown size={13} />
             </button>
             <ExtractionBulbs onInsert={insertExtraction} />
-            {onToggleQueueLock && (queuedMessageCount > 0 || queueLocked) && (
-              <QueueLockButton language={language} locked={queueLocked} pending={queueLockPending} onToggle={onToggleQueueLock} />
-            )}
             {queuedMessageCount > 0 && onShowQueue && (
               <button className="composer-queue-button" type="button"
                 title={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}
@@ -1945,6 +1937,7 @@ function ComposerPopover({
   onClose: () => void;
   anchor: ComposerPopoverAnchor | null;
 }) {
+  const memory = useIndividuation();
   const models = availableModels;
   const pickerMenu = menu === 'models';
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
@@ -2018,6 +2011,15 @@ function ComposerPopover({
               <span className={`composer-add-toggle${referencePlanEnabled ? ' on' : ''}`} aria-hidden="true" />
             </button>
           )}
+          <button className="composer-add-action" type="button" role="switch" aria-checked={memory.habits}
+            aria-label={language === 'zh' ? '个性化记忆' : 'Personalization memory'} onClick={() => memory.setHabits(!memory.habits)}>
+            <Brain size={18} />
+            <span className="composer-add-copy">
+              <strong>{language === 'zh' ? '个性化记忆' : 'Personalization memory'}</strong>
+              <small>{language === 'zh' ? '记住并参考用户习惯，从下一轮生效' : 'Remember and use habits next turn'}</small>
+            </span>
+            <span className={`composer-add-toggle${memory.habits ? ' on' : ''}`} aria-hidden="true" />
+          </button>
         </div>
       )}
       {menu === 'permissions' && (
@@ -2181,7 +2183,12 @@ function ComposerPopover({
                 <span>{reasoningMode === 'budget' ? (language === 'zh' ? '思考预算' : 'Thinking budget')
                   : reasoningMode === 'adaptive' ? (language === 'zh' ? '思考强度' : 'Thinking effort')
                   : language === 'zh' ? '推理强度' : 'Reasoning effort'}</span>
-                <strong>{reasoningLevelLabel(reasoningLevel, language)}</strong>
+                <span className="model-reasoning-current">
+                  {reasoningLevel !== 'default' && <strong>{reasoningLevelLabel(reasoningLevel, language)}</strong>}
+                  <button type="button" className="model-reasoning-default" aria-pressed={reasoningLevel === 'default'}
+                    title={reasoningLevelDescription('default', language)} onClick={() => onSelectReasoningLevel('default')}>
+                    {reasoningLevelLabel('default', language)}</button>
+                </span>
               </div>
               <div className={`model-reasoning-options ${reasoningExpanded ? 'expanded' : ''} ${reasoningLevelGroups.secondary.length ? '' : 'single-page'}`}>
                 <div className="model-reasoning-viewport">
@@ -2347,6 +2354,7 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
 
 function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {
   const labels: Record<ReasoningLevel, { zh: string; en: string }> = {
+    default: { zh: '默认', en: 'Default' },
     none: { zh: '关闭', en: 'None' },
     low: { zh: '低', en: 'Low' },
     medium: { zh: '中', en: 'Medium' },
@@ -2377,6 +2385,7 @@ function splitReasoningLevels(levels: ReasoningLevel[]) {
 
 function reasoningLevelDescription(level: ReasoningLevel, language: AppLanguage) {
   const descriptions: Record<ReasoningLevel, { zh: string; en: string }> = {
+    default: { zh: '使用当前模型的服务商默认值，不额外指定思考强度', en: 'Leave reasoning effort unspecified and use the provider default' },
     none: { zh: '不分配推理预算，适合最低延迟请求', en: 'No reasoning budget for lowest-latency requests' },
     low: { zh: '更快，适合直接问题', en: 'Faster for direct questions' },
     medium: { zh: '质量与延迟的平衡档', en: 'Balanced quality and latency' },

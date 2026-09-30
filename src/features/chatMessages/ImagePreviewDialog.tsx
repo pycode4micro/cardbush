@@ -12,6 +12,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import type { AppLanguage } from '../../types';
+import { isLocalFileResource } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { useImageGallery } from './useImageGallery';
 import { ConversationHostContext } from '../conversationHost';
@@ -90,7 +91,8 @@ export function ImagePreviewDialog({
   const [fallback, setFallback] = useState<{ key: string; src: string } | null>(null);
   const currentKey = useRef(imageKey);
   currentKey.current = imageKey;
-  const source = host ? remoteSource.source || undefined : fallback?.key === imageKey ? fallback.src : image.src;
+  const source = !host && fallback?.key === imageKey ? fallback.src : remoteSource.source || undefined;
+  const unavailable = failed || Boolean(remoteSource.error);
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -236,7 +238,7 @@ export function ImagePreviewDialog({
     event.preventDefault();
   }, [updateView]);
 
-  const ready = !failed && naturalSize.width > 0 && naturalSize.height > 0 && stageSize.width > 0 && stageSize.height > 0;
+  const ready = !unavailable && naturalSize.width > 0 && naturalSize.height > 0 && stageSize.width > 0 && stageSize.height > 0;
   // Keep the image plane at its natural resolution. 100% is one source pixel
   // per CSS pixel, not a magnification of the fitted thumbnail.
   const canvasWidth = ready ? naturalSize.width : 0;
@@ -338,7 +340,7 @@ export function ImagePreviewDialog({
           ref={stageRef}
           className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
           title={language === 'zh' ? '滚轮缩放 · 拖动查看' : 'Scroll to zoom · Drag to pan'}
-          aria-busy={!ready && !failed}
+          aria-busy={!ready && !unavailable}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
@@ -363,7 +365,7 @@ export function ImagePreviewDialog({
             <button type="button" disabled={gallery.index === gallery.images.length - 1} onClick={() => gallery.move(1)}
               aria-label={language === 'zh' ? '下一张图片' : 'Next image'} title="→"><ChevronRight size={22} /></button>
           </div>}
-          {!ready && <p className="image-preview-status" role="status">{failed
+          {!ready && <p className="image-preview-status" role="status">{unavailable
             ? language === 'zh' ? '图片无法预览' : 'Image preview unavailable'
             : language === 'zh' ? '正在加载图片…' : 'Loading image…'}</p>}
           <div
@@ -371,7 +373,7 @@ export function ImagePreviewDialog({
             style={{ width: canvasWidth, height: canvasHeight, visibility: ready ? 'visible' : 'hidden',
               transform: `translate3d(${(stageSize.width - canvasWidth * zoom) / 2 + view.x}px, ${(stageSize.height - canvasHeight * zoom) / 2 + view.y}px, 0) scale(${zoom})` }}
           >
-            <img
+            {source && <img
               ref={imageRef}
               key={imageKey}
               src={source}
@@ -380,7 +382,7 @@ export function ImagePreviewDialog({
               decoding="sync"
               onError={() => {
                 const read = host ? undefined : window.cardbushDesktop?.readImageDataUrl;
-                if (read && image.path && !/^(?:https?:|data:|blob:)/i.test(image.path) && !source?.startsWith('data:')) {
+                if (read && image.path && isLocalFileResource(image.path) && !source?.startsWith('data:')) {
                   void read(image.path).then(src => {
                     if (currentKey.current !== imageKey) return;
                     if (src.startsWith('data:image/')) setFallback({ key: imageKey, src });
@@ -394,7 +396,7 @@ export function ImagePreviewDialog({
                   height: event.currentTarget.naturalHeight,
                 });
               }}
-            />
+            />}
           </div>
         </div>
       </section>

@@ -209,11 +209,11 @@ export class ChromeConnectorBroker {
     });
   }
 
-  async disableExtension(): Promise<void> {
+  async disableExtension(forgetPairing = false): Promise<void> {
     await Promise.all([...this.#extensions.values()].map(extension => new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 2000);
       extension.socket.once('close', () => { clearTimeout(timer); resolve(); });
-      writeLine(extension.socket, { type: 'control', method: 'connector.disable' });
+      writeLine(extension.socket, { type: 'control', method: 'connector.disable', ...(forgetPairing ? { reason: 'pairing_removed' } : {}) });
     })));
   }
 

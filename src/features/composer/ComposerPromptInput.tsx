@@ -37,8 +37,10 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const editor = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
-  const focused = useRef(false);
+  const previousInput = editor.current ?? textarea.current;
+  const hadInputFocus = Boolean(previousInput && document.activeElement === previousInput);
   const lastCaret = useRef(value.length);
+  const removedSelection = useRef<{ value: string; caret: number } | null>(null);
   const change = useRef(onChange);
   change.current = onChange;
   const parsedParts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
@@ -55,6 +57,15 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       else textarea.current?.setSelectionRange(start, end);
     },
   }), [rich]);
+
+  const removeReference = (node: HTMLElement, chip: HTMLElement) => {
+    const start = offsetBefore(node, chip);
+    const current = readPrompt(node, true);
+    lastCaret.current = start;
+    const next = current.slice(0, start) + current.slice(start + tokenText(chip)!.length);
+    removedSelection.current = { value: next, caret: start };
+    change.current(next, start);
+  };
 
   useLayoutEffect(() => {
     const node = editor.current;
@@ -89,16 +100,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       remove.type = 'button'; remove.tabIndex = -1; remove.textContent = '×';
       remove.setAttribute('aria-label', `${language === 'zh' ? part.plugin ? '移除插件引用' : part.skillReference ? '移除技能引用' : '移除引用' : part.plugin ? 'Remove plugin reference' : part.skillReference ? 'Remove skill reference' : 'Remove reference'} ${title}`);
       remove.onmousedown = event => event.preventDefault();
-      remove.onclick = () => {
-        const start = offsetBefore(node, chip);
-        const current = readPrompt(node);
-        change.current(current.slice(0, start) + current.slice(start + part.text.length), start);
-        requestAnimationFrame(() => {
-          focusEditor(editor.current ?? textarea.current);
-          if (editor.current) selectOffsets(editor.current, start, start);
-          else textarea.current?.setSelectionRange(start, start);
-        });
-      };
+      remove.onclick = () => removeReference(node, chip);
       chip.append(remove); fragment.append(chip);
     }
     // A text node after a terminal chip gives the caret a valid insertion position.
@@ -118,16 +120,24 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   }, [autoFocus]);
 
   useLayoutEffect(() => {
-    if (!focused.current) return;
-    focusEditor(editor.current ?? textarea.current);
-    if (editor.current) selectOffsets(editor.current, lastCaret.current, lastCaret.current);
-    else textarea.current?.setSelectionRange(lastCaret.current, lastCaret.current);
-  }, [rich]);
+    const node = editor.current ?? textarea.current;
+    const removed = removedSelection.current;
+    removedSelection.current = null;
+    // React removes the old editor before this effect; its blur cannot tell us
+    // whether the user was typing. Capture that fact before replacing the node.
+    // Apply removals in this commit, so a delayed frame cannot move a newer caret.
+    const caret = removed?.value === value ? removed.caret
+      : previousInput !== node && hadInputFocus && (document.activeElement === document.body || document.activeElement === node) ? lastCaret.current : undefined;
+    if (caret === undefined) return;
+    focusEditor(node);
+    if (editor.current) selectOffsets(editor.current, caret, caret);
+    else textarea.current?.setSelectionRange(caret, caret);
+  });
 
   const publish = () => {
     if (editor.current && !composing.current) {
       lastCaret.current = caretOffset(editor.current);
-      onChange(readPrompt(editor.current), lastCaret.current);
+      onChange(readPrompt(editor.current, true), lastCaret.current);
     }
   };
   const select = () => {
@@ -139,6 +149,17 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const keyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
     onKeyDown(event);
+    const node = editor.current;
+    const selection = window.getSelection();
+    if (rich && node && !readOnly && !event.defaultPrevented && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+      (event.key === 'Backspace' || event.key === 'Delete') && selection?.isCollapsed && node.contains(selection.focusNode)) {
+      const caret = caretOffset(node);
+      const chip = Array.from(node.querySelectorAll<HTMLElement>('[data-plugin-reference], [data-context-reference], [data-skill-reference]'))
+        .find(chip => offsetBefore(node, chip) + (event.key === 'Backspace' ? tokenText(chip)!.length : 0) === caret);
+      // An atomic chip at the edge of contentEditable has no text to delete.
+      // Remove it through the same path as × instead of relying on a filler BR.
+      if (chip) { event.preventDefault(); removeReference(node, chip); return; }
+    }
     if (rich && !event.defaultPrevented && event.key === 'Enter' && event.shiftKey) {
       event.preventDefault(); document.execCommand('insertText', false, '\n');
     }
@@ -146,7 +167,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   return rich ? <div ref={editor} className="composer-prompt-editor" data-composer-input
     role="textbox" aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')} aria-multiline="true" aria-readonly={readOnly}
     contentEditable={!readOnly} suppressContentEditableWarning data-placeholder={placeholder}
-    onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; composing.current = false; }}
+    onBlur={() => { composing.current = false; }}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onInput={event => {
       // An interrupted IME session may never emit compositionend. The next
@@ -184,22 +205,30 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     }}
   /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
     aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')}
-    onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; }}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onChange={event => { lastCaret.current = event.currentTarget.selectionStart; onChange(event.target.value, lastCaret.current); }}
     onClick={select} onKeyUp={select} onKeyDown={keyDown} />;
 });
 
-function readPrompt(node: Node): string {
+function readPrompt(node: Node, nativeEditing = false): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
   if (node instanceof HTMLElement) {
     const token = tokenText(node);
     if (token) return token;
     if (node.tagName === 'BR') return '\n';
   }
-  return Array.from(node.childNodes).map((child, index) => {
+  const children = Array.from(node.childNodes);
+  // Chromium leaves a terminal BR to hold the caret after native deletion or
+  // a line break. It is layout scaffolding, not an additional authored line.
+  // Normalize only live input; partial copy/selection ranges keep their breaks.
+  // The layout effect then replaces native markup with canonical text nodes.
+  const last = nativeEditing && node instanceof HTMLElement && /^(DIV|P)$/.test(node.tagName)
+    ? children.filter(child => child.nodeType !== Node.TEXT_NODE || Boolean(child.textContent)).at(-1) : undefined;
+  const placeholder = last instanceof HTMLBRElement ? last : undefined;
+  return children.map((child, index) => {
+    if (child === placeholder) return '';
     const block = child instanceof HTMLElement && /^(DIV|P)$/.test(child.tagName);
-    return `${block && index ? '\n' : ''}${readPrompt(child)}`;
+    return `${block && index ? '\n' : ''}${readPrompt(child, nativeEditing)}`;
   }).join('');
 }
 

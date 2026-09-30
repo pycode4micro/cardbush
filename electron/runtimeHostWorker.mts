@@ -48,6 +48,7 @@ import {
 import { McpClientManager, McpOAuthCoordinator, type CredentialState } from '@cardbush/bush-mcp-client';
 import { RuntimePluginState } from './runtimePluginState.mjs';
 import { ProxyFetchPool } from './proxyFetch.mjs';
+import { translateBrowserTexts } from './browserTranslationModel.mjs';
 import { openPluginAgentMcp } from './pluginAgentMcp.mjs';
 import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
 import {
@@ -277,6 +278,19 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
+  if (command.kind === 'runtime.browser_translate') return translateBrowserTexts(providers, command.payload, signal);
+  if (command.kind === 'runtime.personalization') {
+    const { personalizationCommandSchema } = await import('@cardbush/bush-protocol');
+    const payload = personalizationCommandSchema.parse(command.payload);
+    if (payload.action !== 'summarize') return host.sendCommand({kind:command.kind,payload},signal);
+    if (!payload.settings.habits && !payload.settings.predictions) return host.sendCommand({ kind: command.kind, payload: { action: 'status', settings: payload.settings } }, signal);
+    if (!payload.modelId) throw new Error('Choose a configured model before summarizing memory.');
+    const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort }>('automation.prepare-model', { modelId: payload.modelId }, signal);
+    return host.sendCommand({ kind: command.kind, payload: { action: payload.action, settings: payload.settings, model: {
+      protocol: 'bush.model_request.v1', requestId: randomUUID(), sessionId: 'personalization-memory', turnId: randomUUID(),
+      model: selected.model, providerBinding: selected.binding, reasoningEffort: selected.reasoningEffort, messages: [], tools: [], metadata: { maxContextTokens: selected.maxContextTokens },
+    } } }, signal);
+  }
   if ([GET_RUNTIME_CAPABILITIES_COMMAND, GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
     ].some(kind => kind === command.kind) || !host.capabilities().supportedCommands.includes(command.kind) || host.isExtensionCommand(command.kind) || command.kind.startsWith('plugin.')) {
     await optionalRuntimePlugins.refresh();
@@ -746,13 +760,14 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
       const extensions = await loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '');
       if (!extensions.hooks.some(hook => hook.id === job.plugin!.hookId && hook.definitionHash === job.plugin!.definitionHash && hook.trusted === true)) throw new Error('The originating plugin hook is disabled, changed, or no longer trusted.');
     }
-    const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number }>('automation.prepare-model', { modelId: context.providerBinding?.bindingId ?? context.model }, signal);
+    const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number; reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort }>('automation.prepare-model', { modelId: context.providerBinding?.bindingId ?? context.model }, signal);
     signal.throwIfAborted();
     const available = new Map(toolRegistry.definitions().map(tool => [tool.name, tool]));
     const activatedAt = run.startedAt ?? run.queuedAt;
     const request = runtimeSessionTurnRequestSchema.parse({ ...context,
       protocol: 'bush.session_turn_request.v1', sessionId, turnId: run.turnId, requestId: `request_${run.id}`,
       model: selected.model, providerBinding: selected.binding,
+      reasoningEffort: selected.reasoningEffort,
       maxOutputTokens: selected.maxOutputTokens ?? context.maxOutputTokens,
       // Refresh availability/definitions without changing the source conversation's order.
       tools: context.tools.flatMap(tool => { const current = available.get(tool.name); return current ? [current] : []; }),
@@ -833,8 +848,8 @@ host = new InMemoryRuntimeHost({
   subagentModels: {
     list: signal => mcpHost.request<import('@cardbush/bush-runtime').SubagentModelOption[]>('subagent.models', {}, signal),
     resolve: async (modelId, signal) => {
-      const selected = await mcpHost.request<{ modelId: string; model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number }>('subagent.prepare-model', { modelId }, signal);
-      return { id: selected.modelId, model: selected.model, providerBinding: selected.binding, maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens };
+      const selected = await mcpHost.request<{ modelId: string; model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number; reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort }>('subagent.prepare-model', { modelId }, signal);
+      return { id: selected.modelId, model: selected.model, providerBinding: selected.binding, maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens, reasoningEffort: selected.reasoningEffort };
     },
   },
   loadPluginExtensions: () => loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),

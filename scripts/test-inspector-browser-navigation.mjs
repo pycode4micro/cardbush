@@ -16,6 +16,8 @@ import { InspectorWebview } from '${local('src/features/inspector/InspectorWebvi
 import { InspectorTabPages } from '${local('src/features/inspector/InspectorTabPages.tsx')}';
 import { addPanel, panelRects, resizePanelSplit, swapPanels } from '${local('src/features/inspector/panelLayout.ts')}';
 import { InspectorTileFrame } from '${local('src/features/inspector/InspectorTileFrame.tsx')}';
+import { BrowserTranslateButton } from '${local('src/features/inspector/BrowserTranslateButton.tsx')}';
+import { BrowserBookmarkButton } from '${local('src/features/inspector/BrowserBookmarkButton.tsx')}';
 import { RightInspectorResizer } from '${local('src/components/RightInspectorResizer.tsx')}';
 import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
 import { BrowserStartPageSettings } from '${local('src/features/browser/BrowserSettingsPanel.tsx')}';
@@ -30,12 +32,13 @@ function Harness() {
   const [layout,setLayout]=React.useState(null);
   const [covered,setCovered]=React.useState(false);
   const [width,setWidth]=React.useState(820);
+  const [language,setLanguage]=React.useState('zh');
   const open=React.useCallback(detail=>{
     window.openedLinks.push(detail.target);
     tabs.openTab({id:detail.newTab ? crypto.randomUUID() : detail.target,kind:'resource',detail});
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
-  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth};
+  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage};
   const active=navigation[tabs.activeId];
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
@@ -50,18 +53,24 @@ function Harness() {
       <button id="forward" disabled={!active?.canGoForward} onClick={()=>refs.current[tabs.activeId]?.goForward()}>前进</button>
       <button id="external" onClick={()=>window.cardbushDesktop.openExternal(active?.url||tabs.tabs.find(tab=>tab.id===tabs.activeId)?.detail.target)}>外部打开</button>
       <output id="address">{active?.url}</output></nav>
+      <div className="right-inspector-navigation"><div className="right-inspector-address editable">
+        <input aria-label="Address" value={active?.url||''} readOnly/>
+        <BrowserBookmarkButton address={active?.url||''} title={active?.title||''} language={language}/>
+        <BrowserTranslateButton address={active?.url||''} language={language} state={active?.translation} loading={active?.loading}
+          onClick={()=>refs.current[tabs.activeId]?.toggleTranslation()}/>
+      </div></div>
       {settings && <div className="settings-stack" style={{padding:24}}><BrowserStartPageSettings language="zh"/></div>}
       <div className="right-inspector-body" style={{display:settings?'none':undefined}}><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId} layout={layout} language="zh"
         onActivate={tabs.activateTab}
         onResize={(path,ratio)=>setLayout(current=>resizePanelSplit(current,path,ratio))}
-        renderFrame={tab=><InspectorTileFrame tab={tab} language="zh" navigation={navigation[tab.id]} handle={refs.current[tab.id]} onSwap={(from,x,y)=>{
+        renderFrame={tab=><InspectorTileFrame tab={tab} language={language} navigation={navigation[tab.id]} handle={refs.current[tab.id]} onSwap={(from,x,y)=>{
           const bounds=document.querySelector('.right-inspector-tab-pages').getBoundingClientRect();
           const px=(x-bounds.left)/bounds.width,py=(y-bounds.top)/bounds.height;
           const to=Object.entries(panelRects(layout)).find(([id,r])=>id!==from&&px>=r.x&&px<=r.x+r.width&&py>=r.y&&py<=r.y+r.height)?.[0];
           if(to)setLayout(current=>swapPanels(current,from,to));
         }}/>}>{tab=>
         <InspectorWebview ref={value=>{refs.current[tab.id]=value;}} identity={tab.id} target={tab.detail.target} source={tab.detail.target}
-          language="zh" onOpenTarget={open} onNavigationStateChange={update} onActivate={id=>{if(layout)tabs.activateTab(id);}}/>
+          language={language} onOpenTarget={open} onNavigationStateChange={update} onActivate={id=>{if(layout)tabs.activateTab(id);}}/>
       }</InspectorTabPages></div>
     </div></div>
     </aside>

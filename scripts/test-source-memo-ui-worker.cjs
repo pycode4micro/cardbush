@@ -109,8 +109,23 @@ app.whenReady().then(async()=>{
     await read(`document.querySelector('${localLink}').click()`);await pause();
     assert.equal(await read('window.opens.at(-1)'),'C:/workspace/runtime.ts');
     assert.equal(await read('window.localLoads'),1,'known source metadata avoids file inspection and repeated lookups');
+    for (const remote of [false,true]) {
+      await read(`window.showResourceRegression(${remote})`);
+      await until(`document.querySelectorAll('.source-memo-marker').length===2 && document.body.innerText.includes('文件不可访问')`);
+      assert.equal(await read(`document.querySelectorAll('img,video,audio').length`),0,'references and unknown schemes never mount broken media');
+      assert.equal(await read(`document.querySelectorAll('output[data-source=""][data-error="true"]').length`),5);
+      assert.equal(await read(`document.querySelectorAll('.message-tool-artifact [role="status"]').length`),4,'image/audio/video/file artifacts degrade consistently');
+      assert.equal(await read(`document.querySelectorAll('.inline-media-unavailable').length`),2);
+      await read(`document.querySelectorAll('.source-memo-marker')[1].click()`);
+      await until(`document.querySelector('.source-memo-card')?.innerText.includes('保留已完成')`);
+      assert.deepEqual(await read('window.resourceReads'),[],'source IDs never trigger local or remote byte reads');
+    }
+    await read('window.showInvalidImageDialog()');
+    await until(`document.body.innerText.includes('Image preview unavailable')`);
+    assert.equal(await read(`document.querySelectorAll('img').length`),0);
+    assert.deepEqual(await read('window.resourceReads'),[],'opening an invalid image cannot enter filesystem fallback');
     assert.deepEqual(errors,[]);
-    console.log('Source UI passed: named sections, filename links and icons, existing file menus, cascading and stacked excerpts without a back button, pointer/keyboard navigation, preload-only reads, existing file/web/memo links, conversation scope.');
+    console.log('Source UI passed: file/web/memo links and source popovers; malformed image/audio/video/file references in local/remote conversations never read files or mount broken media.');
     win.destroy();app.exit(0);
   }catch(error){console.error(error);console.error(errors);writeFileSync(resolve('tmp/source-memo-failed.png'),(await win.webContents.capturePage()).toPNG());win.destroy();app.exit(1);}
 });

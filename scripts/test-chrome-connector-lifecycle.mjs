@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { ChromeConnectorLifecycle, acquireConnectorLease } from '../dist-electron/chromeConnectorLifecycle.js';
 import { ChromeConnectorRegistration } from '../dist-electron/chromeConnectorRegistration.js';
 import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
 const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -60,6 +61,41 @@ test('foreign registration is never overwritten or removed', async t => {
   assert.equal(f.values.get('32'), 'C:\\OtherApplication\\host.json');
   assert.deepEqual(f.operations, []); assert.equal(app.broker, null);
   assert.equal(f.state().enabled, false);
+});
+
+test('temporary desktop disable preserves credentials and routing; only remove revokes them', async t => {
+  const f = fixture(t), app = f.create();
+  await app.setEnabled(true);
+  const code = app.broker.createPairing().code;
+  const first = await pairedClient(code);
+  t.after(() => first.destroy());
+  const pairingPath = path.join(f.root, 'browser-connector/pairing.json');
+  const routesPath = path.join(f.root, 'browser-connector/routes.json');
+  const credentials = fs.readFileSync(pairingPath, 'utf8');
+  const routes = JSON.stringify({ version: 1, bindings: [['fixture-session', code.split('.')[2]]] });
+  fs.writeFileSync(routesPath, routes);
+  const controls = [];
+  first.on('data', data => controls.push(String(data)));
+  await app.setEnabled(false);
+  await delay(30);
+  assert.equal(first.destroyed, true);
+  assert.equal(controls.some(value => value.includes('connector.disable')), false, 'temporary disable must preserve extension enable intent');
+  assert.equal(fs.readFileSync(pairingPath, 'utf8'), credentials);
+  assert.equal(fs.existsSync(routesPath), true);
+  assert.equal(fs.readFileSync(routesPath, 'utf8'), routes);
+  assert.equal(f.state().enabled, false);
+  app.dispose();
+  const restarted = f.create(); await restarted.restore();
+  assert.equal(restarted.broker, null, 'desktop must stay off until explicitly re-enabled');
+  await restarted.setEnabled(true);
+  const second = await pairedClient(code);
+  t.after(() => second.destroy());
+  assert.equal(restarted.broker.status().connections.length, 1, 'reuse pairing instead of creating duplicate profiles');
+  await restarted.setEnabled(false, true);
+  assert.equal(fs.existsSync(pairingPath), false);
+  assert.equal(fs.existsSync(routesPath), false);
+  await restarted.setEnabled(true);
+  await assert.rejects(pairedClient(code), 'removed credentials cannot authenticate');
 });
 
 test('corrupt preferences show a repair state without starting or registering a connector', async t => {

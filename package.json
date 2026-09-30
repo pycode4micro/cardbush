@@ -1,6 +1,6 @@
 {
   "name": "cardbush",
-  "version": "1.0.0-beta.4",
+  "version": "1.0.0-beta.5",
   "description": "CardBush desktop AI workspace",
   "author": {
     "name": "CardBush"
@@ -85,8 +85,10 @@
     "test:chrome-native-host": "node scripts/build-chrome-native-host.mjs --test && tsc -p tsconfig.node.json && node scripts/test-chrome-native-host.mjs",
     "test:turn-guidance": "node scripts/test-turn-guidance-contract.mjs && node --test scripts/test-guidance-queue-lock.mjs",
     "test:agent-language": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && node --test scripts/test-agent-language.mjs",
-    "test:individuation": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && node --test packages/bush-runtime/test/individuation.test.mjs packages/bush-product-agent/test/individuation.test.mjs packages/bush-product-agent/test/conversationPreferencesLifecycle.test.mjs && node scripts/test-summary-for-user-ui.mjs",
+    "test:individuation": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && node --test packages/bush-runtime/test/individuation.test.mjs packages/bush-runtime/test/individuationRecall.test.mjs packages/bush-product-agent/test/individuation.test.mjs packages/bush-product-agent/test/conversationPreferencesLifecycle.test.mjs && node scripts/test-summary-for-user-ui.mjs",
     "test:composer-actions": "node --test scripts/test-composer-quick-actions-contract.mjs scripts/test-plugin-prompts.mjs",
+    "test:composer-memory": "node scripts/run-app-views-test.mjs composer-memory",
+    "test:composer-layout": "node --test scripts/test-html-components-layout.mjs && node scripts/run-app-views-test.mjs composer-layout",
     "test:composer-references": "npm run build:runtime && node --test scripts/test-composer-references.mjs scripts/test-composer-quick-actions-contract.mjs packages/bush-runtime/test/sessionRuntimeHost.test.mjs && node scripts/test-plugin-connections-ui.mjs && node scripts/test-inspector-navigation-ui.mjs",
     "test:editor-focus": "tsc -p tsconfig.node.json && node --test scripts/test-editor-focus.mjs && node scripts/test-editor-focus-worker.cjs && node scripts/run-app-views-test.mjs delete-focus",
     "test:panel-motion": "node scripts/test-panel-motion-contract.mjs",
@@ -95,6 +97,7 @@
     "test:work-summary-outputs": "node --test scripts/test-work-summary-outputs.mjs && node scripts/test-work-summary-outputs-ui.mjs",
     "test:inspector-tabs": "node scripts/run-inspector-tabs-test.mjs && node scripts/test-inspector-navigation-ui.mjs",
     "test:inspector-browser": "tsc -p tsconfig.node.json && node scripts/test-inspector-browser-navigation.mjs",
+    "test:browser-translation": "tsc -p tsconfig.node.json && node --test scripts/test-browser-translation.mjs && node scripts/test-inspector-browser-navigation.mjs",
     "test:browser-settings": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/product-host && npm run build --workspace @cardbush/chrome-mcp && tsc -p tsconfig.node.json && node --test packages/cardbush-product-host/test/browserConfigStore.test.mjs packages/cardbush-chrome-mcp/test/startPage.test.mjs && node scripts/test-inspector-browser-navigation.mjs && node scripts/test-plugin-connections-ui.mjs --core-settings && node scripts/test-product-plugins-contract.mjs",
     "test:inspector-media": "node scripts/run-inspector-media-test.mjs",
     "test:model-preview": "tsc -p tsconfig.node.json && vite build && node --test scripts/test-model-preview.mjs && node scripts/run-model-preview-test.mjs",
@@ -139,6 +142,7 @@
     "test:assistant-timing": "node scripts/test-assistant-timing-contract.mjs",
     "test:run-status": "node scripts/test-run-status.mjs && node scripts/test-run-status-ui.mjs",
     "test:message-media": "node scripts/test-message-media-contract.mjs && node --test scripts/test-media-presentation.mjs",
+    "test:resource-references": "node scripts/test-resource-targets.mjs && node scripts/test-source-memo-ui.mjs",
     "test:media-reveal": "node scripts/run-app-views-test.mjs media-reveal",
     "test:media-file-menu": "tsc -p tsconfig.node.json && node scripts/test-media-file-menu.mjs",
     "test:image-preview": "node scripts/run-image-preview-test.mjs",

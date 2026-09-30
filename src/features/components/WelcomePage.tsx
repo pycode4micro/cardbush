@@ -1,4 +1,4 @@
-import { useContext, type CSSProperties, type ReactNode, type RefObject, type PointerEvent } from 'react';
+import { useContext, useRef, type CSSProperties, type ReactNode, type RefObject, type PointerEvent } from 'react';
 import type { AppLanguage } from '../../types';
 import { ComposerPresentationContext } from '../composer/ComposerPresentationContext';
 import { StarWordmark } from '../chat/StarWordmark';
@@ -6,7 +6,8 @@ import { WelcomeSuggestions } from '../chat/WelcomeSuggestions';
 import { BuiltinComponentSurface } from './BuiltinComponentSurface';
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { HtmlComponentSurface } from './HtmlComponentSurface';
-import { defaultWelcomeIds, isBuiltinComponent, type BuiltinKind, type ComponentCollection, type ComponentItem, type WelcomeLayout, type WelcomePlacement } from './componentModel';
+import { defaultWelcomeIds, isBuiltinComponent, welcomeComposerFlow, type BuiltinKind, type ComponentCollection, type ComponentItem, type WelcomeLayout, type WelcomePlacement } from './componentModel';
+import { useWelcomeComposerLayout } from './useWelcomeComposerLayout';
 import './welcomeLayout.css';
 
 // Both the new-conversation page and its editor use these same live component views.
@@ -19,6 +20,9 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
   overlay?: ReactNode; minHeight?: number;
 }) {
   const host = useContext(HtmlComponentContext), zh = language === 'zh';
+  const internalRef = useRef<HTMLDivElement>(null), pageRef = canvasRef ?? internalRef;
+  const flow = welcomeComposerFlow({ ...collection, welcomeLayout: layout });
+  useWelcomeComposerLayout(pageRef, layout?.items.find(item => item.componentId === 'system-input'), flow, layout);
   function content(item: ComponentItem, placement?: WelcomePlacement) {
     if (!isBuiltinComponent(item)) return <HtmlComponentSurface component={item} active={!editing}/>;
     const inputStyle = placement?.inputStyle ?? item.inputStyle ?? 'standard';
@@ -36,18 +40,27 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
     const item = collection.items.find(candidate => candidate.id === id); if (!item) return null;
     return <div key={id} data-welcome-component={id} className={`welcome-layout-slot ${isBuiltinComponent(item) ? `welcome-slot-${item.builtin}` : 'welcome-slot-html'}`}
       onPointerDown={event => { if (!(event.target as Element).closest('button')) onMove?.(event, item); }}
-      style={placement ? { left: `${placement.x}%`, top: placement.y, width: `${placement.width}%`, height: placement.height } as CSSProperties : undefined}>
+      style={placement && id !== 'system-input' ? { left: `${placement.x}%`, top: placement.y, width: `${placement.width}%`, height: placement.height } as CSSProperties : undefined}>
       <div className="welcome-slot-content" inert={editing || undefined}>{content(item, placement)}</div>
       {controls?.(item)}
     </div>;
   }
-  return <div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={canvasRef}>
-    {layout ? <div className="welcome-layout-canvas" style={{ minHeight: Math.max(minHeight, ...layout.items.map(item => item.y + item.height + 20)) }}>
+  const landing = editing && flow.afterSend === 'bottom' && (layout?.items.some(item => item.componentId === 'system-input') ?? true)
+    ? <div className="welcome-composer-landing" role="note">
+      <span className="welcome-composer-landing-label">
+        <span className="composer-will-move">{zh ? '发送后落点 · 下移 ' : 'After sending · Move down '}<span data-composer-travel/></span>
+        <span className="composer-stays">{zh ? '已吸附底部 · 发送后不移动' : 'Docked · Stays here after sending'}</span>
+      </span>
+    </div> : null;
+  return <div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>
+    {layout ? <div className="welcome-layout-canvas" style={{ minHeight: Math.max(minHeight, ...layout.items.filter(item => item.componentId !== 'system-input').map(item => item.y + item.height + 20)) }}>
       {layout.items.map(item => view(item.componentId, item))}
+      {landing}
       {overlay}
     </div> : <>
       <div className="welcome-hero">{defaultWelcomeIds.slice(0, 3).map(id => view(id))}</div>
       {view('system-input')}
+      {landing}
     </>}
   </div>;
 }

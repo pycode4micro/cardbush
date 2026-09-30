@@ -4,12 +4,14 @@
 
 ## 当前实现
 
+2026-09-30 源码更新：扩展 1.2.1 调整断线恢复及关闭/移除的边界。下文的历史安装证据仍对应原包，不代表已验证包含此修改的新 MSIX。
+
 - Windows 仅支持 Windows 11 x64 build 22000 起；Browser Use 支持 Chrome 和 Edge。扩展声明 Chromium 116 API 最低版本，不代表已验证所有最低版本组合。
-- 链路为 Electron → 本地 Broker → 已配对的 Browser Use 扩展（1.2.0）。MCP 与 Broker 保留受当前用户 ACL 保护的命名管道。
+- 链路为 Electron → 本地 Broker → 已配对的 Browser Use 扩展（1.2.1）。MCP 与 Broker 保留受当前用户 ACL 保护的命名管道。
 - 删除创建 Native Messaging 注册项的代码，以及 MSIX 的 `unvirtualizedResources`、注册表虚拟化排除、execution alias。保留正常 MSIX 虚拟化和 Electron 必需的 `runFullTrust`。
 - 连接器默认关闭。明确开启后监听 `127.0.0.1` 本机端口，首次使用需复制五分钟内有效的配对码到对应浏览器。最多八条独立配对；新配对不撤销其他已配对连接，可单独移除。配对本身不授予页面权限。
 - MSIX 的 `preference.json`、`pairing.json`、`routes.json` 和运行中的 `bridge.json` 位于当前包 `%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalState\browser-connector`。包身份来自 Windows API，不接受 renderer 指定目录。
-- 普通退出保留配对、启用意图和会话绑定，关闭监听和命名管道；关闭连接器撤销全部配对，保留关闭标记及绑定；移除配置还会移除绑定。修改默认值不改变已绑定会话，离线不自动切换或重放动作。浏览器新会话仍需用户点击连接，失败自动重连有上限。
+- 普通退出保留配对、启用意图和会话绑定，关闭监听和命名管道；关闭连接器保留配对及绑定、持久保存关闭标记，再次开启后可自动重连；移除配置才撤销全部配对并移除绑定。修改默认值不改变已绑定会话，离线不自动切换或重放动作。浏览器重启使用已保存的启用意图自动连接，离线重试间隔逐渐增加到最多两分钟；明确关闭扩展连接后不会自动开启。网站授权独立持久保存，仍只适用于会话隔离组。
 - 保留页面授权、会话标签组隔离、停止控制和撤销授权行为。授权页文字、截图和操作结果可能发送至用户配置的模型服务。
 
 ## 访问控制

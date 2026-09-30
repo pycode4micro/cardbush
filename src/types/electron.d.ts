@@ -401,6 +401,7 @@ declare global {
       onInspectorOpenLink: (callback: (detail: { guestWebContentsId: number; target: string }) => void) => () => void;
       onInspectorGuestActivated: (callback: (detail: { guestWebContentsId: number }) => void) => () => void;
       readBrowserConfiguration: () => Promise<import('@cardbush/bush-protocol').BrowserConfiguration>;
+      translateInspectorPage?: (input: import('../../electron/browserTranslationTypes').BrowserTranslationRequest) => Promise<import('../../electron/browserTranslationTypes').BrowserTranslationResult>;
       updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) => Promise<import('@cardbush/bush-protocol').BrowserConfiguration>;
       showInspectorContextMenu: (payload: {
         guestWebContentsId: number;

@@ -1,6 +1,8 @@
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
 import { registerSourceMemoTools, resolveSourceMemo } from "./sourceMemo.js";
-import { hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
+import { deliveredMemoryIds, deliveredMemoryVersions, hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
+import { IndividuationMemory } from './individuationMemory.js';
+import { PERSONALIZATION_COMMAND, normalizeIndividuation, individuationSettingsSchema, modelRequestSchema as memoryModelSchema } from '@cardbush/bush-protocol';
 import { RESOLVE_SOURCE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { canonicalStoragePath } from '@cardbush/platform';
@@ -295,6 +297,7 @@ export class InMemoryRuntimeHost {
   readonly #requestBackgroundPermission?: InMemoryRuntimeHostOptions['requestBackgroundPermission'];
   readonly #mcpApps: McpAppsHost;
   readonly #provider: ModelProvider;
+  readonly #memory: IndividuationMemory;
   readonly #loadPluginExtensions?: PluginExtensionLoader;
   readonly #pluginHooks: PluginHookRunner;
   readonly #automation?: AutomationScheduler;
@@ -388,7 +391,8 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
-    registerIndividuationTools(this.#toolRegistry, join(runtimeDataRoot, 'personalization.sqlite'));
+    this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.#provider);
+    registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
     this.#legacyCaptureCacheRoot = options.legacyCaptureCacheRoot;
     this.#loadPluginExtensions = options.loadPluginExtensions;
@@ -630,6 +634,7 @@ export class InMemoryRuntimeHost {
         ].includes(kind),
       ),
       supportedCommands: [
+        PERSONALIZATION_COMMAND,
         MCP_APPS_COMMAND,
         GET_RUNTIME_WORKSPACE_COMMAND,
         UPDATE_RUNTIME_WORKSPACE_COMMAND,
@@ -850,6 +855,25 @@ export class InMemoryRuntimeHost {
       }
     }
     switch (command.kind) {
+      case PERSONALIZATION_COMMAND: {
+        const payload = command.payload as { action?: unknown; settings?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string };
+        const settings = individuationSettingsSchema.parse(payload.settings ?? {});
+        if (payload.action === 'status') return this.#memory.store.status(settings, signal);
+        if (payload.action === 'list') return this.#memory.store.list(settings,payload.cursor,payload.includeInactive,signal);
+        if (payload.action === 'history') return this.#memory.store.history(settings,payload.cursor,signal);
+        if (payload.action === 'purge_history') return this.#memory.store.purgeHistory(settings,signal);
+        if (payload.action === 'change' || payload.action === 'undo') {
+          if(!payload.operationId)throw new Error('A stable memory operation ID is required.');
+          const owner={sessionId:'memory-settings',turnId:payload.operationId,operationId:payload.operationId};
+          if(payload.action==='undo')return this.#memory.store.undo(String(payload.changeId??''),settings,owner,signal);
+          const {memoryChangeSchema}=await import('@cardbush/bush-protocol');
+          return this.#memory.store.change(memoryChangeSchema.parse(payload.change),settings,owner,'user','',signal);
+        }
+        if (payload.action !== 'summarize') throw new Error('Unknown memory action.');
+        if (!settings.habits && !settings.predictions) return this.#memory.store.status(settings, signal);
+        const model = memoryModelSchema.parse(payload.model);
+        return this.#memory.compact(settings, model, true, signal);
+      }
       case MCP_APPS_COMMAND:
         this.#activeAppCommands++;
         try { return await this.#mcpApps.command(command.payload, signal); }
@@ -1160,8 +1184,9 @@ export class InMemoryRuntimeHost {
         };
       }
       case SHUTDOWN_RUNTIME_COMMAND:
-        this.#mcpApps.close();
         this.#shuttingDown = true;
+        await this.#memory.close();
+        this.#mcpApps.close();
         clearInterval(this.#cacheRetentionTimer);
         this.#cacheRetentionTimer = undefined;
         clearTimeout(this.#cacheCleanupTimer);
@@ -1380,6 +1405,7 @@ export class InMemoryRuntimeHost {
     const prepared = this.#sessions.prepare(
       candidate,
     );
+    const memorySettings = normalizeIndividuation(candidate.metadata.individuation);
     // Persist exactly what is sent. New inbox observations never replace old history.
     const reminderMessage = unreadReminder && this.#automationReminderMessage(unreadReminder, prepared.modelRequest.messages);
     if (reminderMessage) {
@@ -1393,6 +1419,21 @@ export class InMemoryRuntimeHost {
     }
     let workspaceStarted = false;
     try {
+      if (authoredInput && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
+        try {
+          const text = authoredInput.message.content;
+          await this.#memory.store.observe(text, memorySettings, candidate, options.signal);
+          const recall = await this.#memory.store.read({topics:[text.slice(0,4000)||'memory'],count_only:memorySettings.recallMode==='hint'}, memorySettings, deliveredMemoryIds(prepared.modelRequest.messages), 510, options.signal);
+          if (recall.memories.length || memorySettings.recallMode==='hint'&&recall.matched_count) {
+            const message: ModelMessage = { role: 'user', name: 'habit_reference', visibility: 'internal', content: JSON.stringify({
+              reference: memorySettings.recallMode==='hint'?'Related memory candidates exist. No content has been loaded; check_habit is optional.':'Historical memory, not a new request. Notes and predictions are unconfirmed. Current user instructions and permissions take priority. Use check_habit with ids to retrieve full originals.', ...recall,
+            }) };
+            prepared.modelRequest.messages.push(message);
+            prepared.sessionCommit.inputMessages.push({ messageId: `memory_${candidate.turnId}`, createdAt: prepared.sessionCommit.createdAt, message });
+            prepared.sessionCommit.initialMessageCount++;
+          }
+        } catch (error) { options.signal?.throwIfAborted(); this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
+      }
       if (automationContext) {
         try { await this.#automation?.remember(automationContext); }
         catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
@@ -1400,12 +1441,14 @@ export class InMemoryRuntimeHost {
       if (workspace?.versioning === "git") {
         workspaceStarted = await this.#taskWorkspaces!.beginTurn(candidate.sessionId, candidate.turnId);
       }
-      return await this.#runModelTurn(prepared.modelRequest, {
+      const terminal = await this.#runModelTurn(prepared.modelRequest, {
         signal: options.signal,
         sessionCommit: prepared.sessionCommit,
         cacheChainState: prepared.cacheChainState,
         ...(workspaceStarted ? { finalizeWorkspace: () => this.#finalizeWorkspace(candidate.sessionId, candidate.turnId, workspace!.workspaceDir) } : {}),
       });
+      if (!this.#shuttingDown) this.#memory.schedule(memorySettings, prepared.modelRequest);
+      return terminal;
     } catch (error) {
       this.#sessions.abandon(input.sessionId, input.turnId);
       if (workspaceStarted) {
@@ -1931,6 +1974,16 @@ export class InMemoryRuntimeHost {
         }
       }
       while (true) {
+        if (!compactionTransaction && !activeContextCompaction) {
+          try {
+            const changes=await this.#memory.store.changedReferences(deliveredMemoryVersions(messages),normalizeIndividuation(request.metadata.individuation),input.signal);
+            if(changes.length){
+              const message:ModelMessage={role:'user',name:'memory_state_updates',visibility:'internal',content:JSON.stringify({
+                reference:'Memory state changed. Inactive records must no longer guide this task; active records were updated or restored. Use replacement IDs for current content. Current user instructions take priority.',changes})};
+              messages.push(message);generatedMessages.push({messageId:`memory_state_${request.turnId}_${round}`,createdAt:this.#sessionNow(),message});
+            }
+          } catch(error){input.signal?.throwIfAborted();this.#onRecoveryError?.(error instanceof Error?error:new Error(String(error)));}
+        }
         round += 1;
         const backgroundStop = this.#backgroundTools.stopReason(request.sessionId, request.turnId);
         if (backgroundStop) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: backgroundStop } });

@@ -1,6 +1,6 @@
 # 当前架构
 
-本页描述 Beta 4 的当前实现。历史迁移记录和分析报告不代替这里的运行边界；部署步骤见 [Agent 服务](AGENT_SERVICES.md)，发布步骤见[跨平台发布](CROSS_PLATFORM_RELEASE.md)。
+本页描述 Beta 5 的当前实现。历史迁移记录和分析报告不代替这里的运行边界；部署步骤见 [Agent 服务](AGENT_SERVICES.md)，发布步骤见[跨平台发布](CROSS_PLATFORM_RELEASE.md)。
 
 ## 三种执行方式
 
@@ -69,6 +69,10 @@ flowchart TD
 应用中心是可操作页面和快捷入口目录：内置页面、用户添加的应用／网址，以及插件明确声明的 `cardbush.applications`。普通 `.app.json` MCP 连接不是应用页面，仍由插件设置管理。
 
 `@` 应用引用只为当前用户消息提供名称、类型和入口信息；不安装工具、不授予权限、不证明应用已经执行。由 MCP 工具结果生成的交互页面通过真实结果的 App 引用打开，不应在运行循环中自行弹出。详见[应用中心约定](../assets/skills/cardbush-docs/references/app-center.md)与[插件兼容性](PLUGIN_COMPATIBILITY.md)。
+
+引用身份与资源地址分开解析。Markdown 链接与媒体嵌入共用 `MarkdownReference`：Source 始终是来源注释，File Memo 先解析文件记录，App 与 `@` 引用保留各自入口。即使模型把 Source 写成图片语法，也只显示来源注释；不能把引用 ID 当作文件名，或猜测它是图片、音频或视频。
+
+图片、音视频、文件附件与预览共用 `localPaths` 的资源地址分类。本地文件、SSH 文件、网络地址及内联数据各走对应通道；相对文件必须先结合已知工作区解析，未知协议显示不可用。Electron 文件读取与预览接口再通过 `localResourcePath` 验证绝对路径，禁止把引用 ID、网页地址或预览路由拼接到进程工作目录后读取。错误展示不改写历史消息，也不触发模型重试。
 
 ## 权限与隔离
 

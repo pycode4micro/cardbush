@@ -135,14 +135,17 @@ export class ChromeConnectorLifecycle {
   }
   async #disable(remove: boolean): Promise<void> {
     // Persist first: even a crash during cleanup must not re-enable the connector.
-    try { this.#persist(false, remove); await this.broker?.disableExtension(); }
+    try {
+      this.#persist(false, remove);
+      if (remove) await this.broker?.disableExtension(true);
+    }
     finally { this.#stopBroker(); }
     const bridge = path.join(connectorDirectory(this.input.userDataPath), 'bridge.json');
     assertConnectorFile(bridge);
     fs.rmSync(bridge, { force: true });
-    const pairing = path.join(connectorDirectory(this.input.userDataPath), 'pairing.json');
-    assertConnectorFile(pairing); fs.rmSync(pairing, { force: true });
     if (remove) {
+      const pairing = path.join(connectorDirectory(this.input.userDataPath), 'pairing.json');
+      assertConnectorFile(pairing); fs.rmSync(pairing, { force: true });
       const routes = path.join(connectorDirectory(this.input.userDataPath), 'routes.json');
       assertConnectorFile(routes); fs.rmSync(routes, { force: true });
     }

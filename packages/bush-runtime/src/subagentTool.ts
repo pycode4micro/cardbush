@@ -137,10 +137,10 @@ export function registerSubagentTool(
       const childRequest = { ...request, metadata: { ...request.metadata, agentRole: 'child', disabledTools } };
       const result = {
         default_mode: 'fork', clean_usage: 'Use clean only when the user explicitly requests independent configuration; choose all applicable settings yourself.',
-        models: (await options.models?.list(context.signal) ?? []).map(({ id, model, maxContextTokens, maxOutputTokens }) => ({ id, model, maxContextTokens, maxOutputTokens })),
+        models: (await options.models?.list(context.signal) ?? []).map(({ id, model, maxContextTokens, maxOutputTokens, reasoningEffort }) => ({ id, model, maxContextTokens, maxOutputTokens, reasoningEffort })),
         defaults: {
           model: modelPolicy.mode === 'fixed' ? { mode: 'fixed', id: modelPolicy.modelId, model: modelPolicy.model } : { mode: 'inherit' }, parent_model: request.model,
-          reasoning_effort: request.reasoningEffort, max_output_tokens: modelPolicy.maxOutputTokens ?? request.maxOutputTokens,
+          reasoning_effort: modelPolicy.mode === 'fixed' ? modelPolicy.reasoningEffort : request.reasoningEffort, max_output_tokens: modelPolicy.maxOutputTokens ?? request.maxOutputTokens,
           max_context_tokens: modelPolicy.maxContextTokens ?? request.metadata.contextWindowTokens, temperature: request.temperature, top_p: request.topP,
           permission_routing: route,
           permission_ceiling: request.permissionMode === 'all_free' || route === 'user' ? request.permissionMode : policy?.childPermissionMode ?? configured?.childPermissionMode ?? 'task_free',

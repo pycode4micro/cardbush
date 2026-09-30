@@ -1,10 +1,10 @@
 /** Wire-facing types shared by the renderer and service. No host imports. */
-import type { RuntimeEvent, ReasoningEffort, RuntimeSessionTurnRequest } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type { RuntimeEvent, ReasoningEffort, RuntimeSessionTurnRequest, IndividuationSettings } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 export const agentApiPath = '/api/agent/v1';
 export type AgentEventRequest = { sessionId: string; turnId: string; afterSequence?: number };
 export type AgentEventFrame = { type: 'ready'; agentId: string } | { type: 'event'; event: RuntimeEvent }
   | { type: 'heartbeat' } | { type: 'end'; afterSequence: number | null } | { type: 'error'; error: string };
-export type AgentSendInput = { individuation?: { habits: boolean; predictions: boolean }; queueOnly?: boolean; sourceEnabled?: boolean; conversationStyle?: import('@cardbush/bush-product-agent', { with: { 'resolution-mode': 'import' } }).ConversationStyleSettings; visionEnabled?: boolean; supersession?: RuntimeSessionTurnRequest['supersession']; turnId?: string; files?: string[]; images?: string[]; goalObjective?: string; userMessageMetadata?: Record<string, unknown>; requestId: string; sessionId: string; text: string; modelId: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: 'zh' | 'en'; reasoningEffort?: ReasoningEffort; planEnabled?: boolean; disabledSkills?: string[]; subagentPermissionRouting?: 'user' | 'parent' };
+export type AgentSendInput = { individuation?: IndividuationSettings; queueOnly?: boolean; sourceEnabled?: boolean; conversationStyle?: import('@cardbush/bush-product-agent', { with: { 'resolution-mode': 'import' } }).ConversationStyleSettings; visionEnabled?: boolean; supersession?: RuntimeSessionTurnRequest['supersession']; turnId?: string; files?: string[]; images?: string[]; goalObjective?: string; userMessageMetadata?: Record<string, unknown>; requestId: string; sessionId: string; text: string; modelId: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: 'zh' | 'en'; reasoningEffort?: ReasoningEffort | null; planEnabled?: boolean; disabledSkills?: string[]; subagentPermissionRouting?: 'user' | 'parent' };
 export type AgentProject = { id: string; name: string; path: string };
 export type AgentJob = {
   id: string; sessionId: string; turnId: string; createdAt: string; startedAt?: string; completedAt?: string;

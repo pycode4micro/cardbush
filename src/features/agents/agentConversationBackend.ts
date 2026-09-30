@@ -134,7 +134,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   const toInput = (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession'] }): AgentSendInput => ({
     requestId: crypto.randomUUID(), sessionId: request.sessionId, text: request.userInput,
     modelId: request.modelConfig?.id || request.model, language: request.uiLanguage ?? 'zh', permissionMode: request.permissionMode ?? 'task_free',
-    ...(hostOptions.enhanced === false ? {} : { reasoningEffort: request.reasoningLevel, planEnabled: request.referencePlanMode !== 'off', disabledSkills: request.disabledSkills,
+    ...(hostOptions.enhanced === false ? {} : { reasoningEffort: request.reasoningLevel === 'default' ? null : request.reasoningLevel, planEnabled: request.referencePlanMode !== 'off', disabledSkills: request.disabledSkills,
       subagentPermissionRouting: request.subagentPermissionRouting }),
     ...(request.files?.length ? { files: request.files } : {}), ...(request.images?.length ? { images: request.images.map(image => image.path) } : {}),
     ...(hostOptions.visualInputAvailable && request.standardImageInputEnabled ? { visionEnabled: true } : {}),

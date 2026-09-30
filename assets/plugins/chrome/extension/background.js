@@ -7,12 +7,13 @@ const CONTROL_IDLE_TIMEOUT_MS = 60_000;
 const SCREENSHOT_TIMEOUT_MS = 25_000;
 const RECONNECT_ALARM = 'cardbush-native-reconnect';
 const RECONNECT_DELAY_MINUTES = 0.5;
+const MAX_RECONNECT_DELAY_MINUTES = 2;
 const RECONNECT_STATE_KEY = 'cardbushNativeReconnect';
 const CONNECTOR_ENABLED_KEY = 'cardbushConnectorEnabled';
 let connectorEnabled = false;
 let connectionEpoch = 0;
 let connectorPreferenceQueue = Promise.resolve();
-const MAX_CONNECTION_FAILURES = 3;
+let connectionCleanup = Promise.resolve();
 const MANAGED_SCOPES_STORAGE_KEY = 'cardbushManagedScopes';
 const ACTIVE_SCOPE_STORAGE_KEY = 'cardbushActiveScope';
 const SESSION_GRANTS_STORAGE_KEY = 'cardbushSessionGrants';
@@ -26,7 +27,7 @@ let nativePort = null;
 let nativeReady = false;
 let lastError = '';
 let connectionFailures = 0;
-let reconnectPaused = false;
+let pairingRequired = false;
 let activeScope = null;
 const attachedTabs = new Map();
 const viewportTabs = new Set();
@@ -88,17 +89,20 @@ async function connectNative(manual = false) {
     if (epoch !== connectionEpoch) return;
     connectorEnabled = true;
     connectionFailures = 0;
-    reconnectPaused = false;
+    pairingRequired = false;
     void persistReconnectState();
   }
-  if (!connectorEnabled || reconnectPaused) return;
+  if (!connectorEnabled || pairingRequired) return;
   if (nativePort) return;
   const epoch = connectionEpoch;
   void chrome.alarms.clear(RECONNECT_ALARM);
   try {
+    await connectionCleanup;
     const saved = await chrome.storage.local.get([PAIRING_KEY]);
-    if (epoch !== connectionEpoch || !connectorEnabled || nativePort || reconnectPaused) return;
-    const pairing = parseConnectorPairing(saved[PAIRING_KEY]);
+    if (epoch !== connectionEpoch || !connectorEnabled || nativePort || pairingRequired) return;
+    let pairing;
+    try { pairing = parseConnectorPairing(saved[PAIRING_KEY]); }
+    catch (error) { pairingRequired = true; lastError = errorMessage(error); return; }
     const port = createConnectorPort(pairing);
     nativePort = port;
     nativeReady = false;
@@ -106,10 +110,10 @@ async function connectNative(manual = false) {
     let connectionError = '';
     const handshakeTimer = setTimeout(() => {
       if (nativePort !== port || nativeReady) return;
-      lastError = 'CardBush 配对握手超时，请确认连接器已开启，或重新生成配对码。';
+      lastError = 'CardBush 连接超时，正在等待本机连接器恢复。';
       nativePort = null;
       port.disconnect();
-      void releaseAll();
+      suspendDisconnectedControl();
       scheduleReconnect();
     }, 8_000);
     port.onMessage.addListener((message) => {
@@ -119,7 +123,7 @@ async function connectNative(manual = false) {
         nativeReady = true;
         lastError = '';
         connectionFailures = 0;
-        reconnectPaused = false;
+        pairingRequired = false;
         void persistReconnectState();
         void publishStatus();
         return;
@@ -139,7 +143,7 @@ async function connectNative(manual = false) {
       }
       if (!nativeReady) return;
       if (message?.type === 'control' && message.method === 'connector.disable') {
-        void disableConnector().catch(error => { lastError = errorMessage(error); });
+        void disableConnector(message.reason === 'pairing_removed').catch(error => { lastError = errorMessage(error); });
         return;
       }
       if (message?.type === 'control' && message.method === 'debugger.detachAll') {
@@ -156,13 +160,14 @@ async function connectNative(manual = false) {
       const disconnectError = chrome.runtime.lastError?.message;
       clearTimeout(handshakeTimer);
       if (nativePort !== port) return;
-      lastError = connectionError || disconnectError || 'CardBush is not connected.';
+      lastError = connectionError || disconnectError || 'CardBush 暂时离线，等待自动重连。';
       nativePort = null;
       nativeReady = false;
-      void releaseAll();
+      suspendDisconnectedControl();
       scheduleReconnect();
     });
   } catch (error) {
+    if (epoch !== connectionEpoch || nativePort) return;
     lastError = errorMessage(error);
     nativePort = null;
     nativeReady = false;
@@ -171,37 +176,37 @@ async function connectNative(manual = false) {
 }
 
 function scheduleReconnect() {
-  if (!connectorEnabled) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
-  connectionFailures++;
-  reconnectPaused = connectionFailures >= MAX_CONNECTION_FAILURES;
+  if (!connectorEnabled || pairingRequired) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
+  // An offline app is normal. Bound retry frequency, not the lifetime of consent.
+  connectionFailures = Math.min(connectionFailures + 1, 4);
   void persistReconnectState();
-  if (reconnectPaused) {
-    void chrome.alarms.clear(RECONNECT_ALARM);
-    return;
-  }
   void chrome.alarms.create(RECONNECT_ALARM, {
-    delayInMinutes: RECONNECT_DELAY_MINUTES * 2 ** (connectionFailures - 1),
+    delayInMinutes: Math.min(MAX_RECONNECT_DELAY_MINUTES, RECONNECT_DELAY_MINUTES * 2 ** (connectionFailures - 1)),
   });
+}
+
+function suspendDisconnectedControl() {
+  // Release active debugger access before a new connection can issue commands,
+  // while preserving grants for the same isolated tabs within this browser run.
+  connectionCleanup = connectionCleanup.catch(() => {}).then(async () => {
+    await managedScopesReady;
+    await suspendAll();
+  }).catch(error => { lastError = errorMessage(error); });
 }
 
 async function restoreReconnectState() {
   const preference = await chrome.storage.local.get([CONNECTOR_ENABLED_KEY]);
-  const saved = await chrome.storage.session.get([RECONNECT_STATE_KEY, CONNECTOR_ENABLED_KEY]);
-  // A fresh browser session requires an explicit Connect click. Worker restarts
-  // within that browser session may recover an already enabled connection.
-  connectorEnabled = preference[CONNECTOR_ENABLED_KEY] === true && saved[CONNECTOR_ENABLED_KEY] === true;
+  const saved = await chrome.storage.session.get([RECONNECT_STATE_KEY]);
+  // The user's explicit enable choice survives both browser and worker restarts.
+  // Session storage only holds transient retry state, never the enable authority.
+  connectorEnabled = preference[CONNECTOR_ENABLED_KEY] === true;
   if (!connectorEnabled) { await chrome.alarms.clear(RECONNECT_ALARM); return; }
   const state = saved[RECONNECT_STATE_KEY];
   if (!state || !Number.isInteger(state.failures) || state.failures < 0) return;
-  connectionFailures = Math.min(MAX_CONNECTION_FAILURES, state.failures);
-  reconnectPaused = connectionFailures >= MAX_CONNECTION_FAILURES;
-  if (reconnectPaused) {
-    lastError = typeof state.lastError === 'string' ? state.lastError : '';
-    await chrome.alarms.clear(RECONNECT_ALARM);
-  }
+  connectionFailures = Math.min(4, state.failures);
 }
 
-async function disableConnector() {
+async function disableConnector(forgetPairing = false) {
   await reconnectReady;
   connectorEnabled = false;
   connectionEpoch++;
@@ -209,8 +214,15 @@ async function disableConnector() {
   const port = nativePort;
   nativePort = null;
   await persistConnectorPreference(false, async () => {
+    if (forgetPairing) {
+      await chrome.storage.local.set({ [PAIRING_KEY]: '' });
+      pairingRequired = true;
+      lastError = '此浏览器的配对已被移除，请在 CardBush 中重新配对。';
+    }
     await chrome.alarms.clear(RECONNECT_ALARM);
     port?.disconnect();
+    await connectionCleanup.catch(() => {});
+    await managedScopesReady;
     await releaseAll();
   });
 }
@@ -362,7 +374,12 @@ async function handlePopupMessage(message) {
   await managedScopesReady;
   await reconnectReady;
   const action = String(message?.action || 'status');
-  if (action === 'status') return { ok: true, ...(await popupState(message?.scopeId)) };
+  if (action === 'status') {
+    // Opening the popup may retry immediately; passive status polling does not
+    // bypass backoff or re-enable an explicitly disabled extension.
+    if (message?.reconnect === true) await connectNative();
+    return { ok: true, ...(await popupState(message?.scopeId)) };
+  }
   if (action === 'pair') {
     const code = String(message?.code || '').trim();
     parseConnectorPairing(code);
@@ -393,7 +410,7 @@ async function handlePopupMessage(message) {
   if (!['allow_once', 'allow_site', 'allow_all'].includes(action)) {
     throw connectorError('unsupported_popup_action', `Unsupported action: ${action}`);
   }
-  if (!nativePort) {
+  if (!nativePort || !nativeReady) {
     throw connectorError(
       'cardbush_not_connected',
       'Open CardBush and start a browser task before adding an existing browser tab.',
@@ -844,7 +861,9 @@ async function publishStatus(includeError = true) {
 
 async function popupState(preferredScopeId = '') {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const stored = await chrome.storage.local.get(['allowedOrigins', 'allowAllSites']);
+  const stored = await chrome.storage.local.get(['allowedOrigins', 'allowAllSites', PAIRING_KEY]);
+  let hasPairing = false;
+  try { parseConnectorPairing(stored[PAIRING_KEY]); hasPairing = true; } catch { /* First use or explicitly removed. */ }
   const origin = originForTab(tab);
   const allowedOrigins = Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : [];
   const candidates = await popupScopeCandidates(tab);
@@ -856,7 +875,10 @@ async function popupState(preferredScopeId = '') {
   return {
     connectorEnabled,
     nativeConnected: nativePort != null && nativeReady,
-    reconnectPaused,
+    hasPairing,
+    pairingRequired: pairingRequired || !hasPairing,
+    allowAllSites: stored.allowAllSites === true,
+    allowedSiteCount: allowedOrigins.length,
     nativeConnecting: nativePort != null && !nativeReady && !lastError,
     controlledTabCount: attachedTabs.size,
     activeScope: selectedScope ? {

@@ -1,0 +1,25 @@
+.summary-threshold{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:12px 0}
+.summary-threshold input{width:160px;max-width:100%;border:1px solid var(--border);border-radius:10px;padding:9px 12px;background:var(--surface);color:var(--text)}
+.summary-memory-status{display:grid;gap:8px;padding:16px 0;color:var(--text-muted)}
+.summary-memory-status strong{color:var(--text)}
+.summary-memory-status progress{width:100%;height:8px;accent-color:var(--accent)}
+.summary-memory-actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.summary-settings small{color:var(--text-muted);overflow-wrap:anywhere}
+.summary-settings [role=alert]{color:var(--danger)}
+.memory-record-toolbar,.memory-record-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.memory-record-toolbar label{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px}
+.memory-record-list{display:grid;gap:12px;margin:12px 0;min-width:0}
+.memory-record{border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0;overflow-wrap:anywhere}
+.memory-record-heading{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12px}
+.memory-record-heading span,.memory-record-heading code{color:var(--text-muted);font-size:11px}
+.memory-record p{white-space:pre-wrap;margin:8px 0;font-size:13px;line-height:1.6}
+.memory-record small{display:block;margin:4px 0;font-size:11px}
+.memory-record summary{cursor:pointer;font-size:12px;line-height:1.6}
+.memory-change-diff{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:14px;margin:14px 0}
+.memory-change-diff p{font-size:12px;padding-top:8px;border-top:1px solid var(--border)}
+.memory-record-editor{display:grid;gap:12px;border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0}
+.memory-record-editor label{display:grid;gap:6px;font-size:12px}
+.memory-record-editor :is(input,textarea,select){box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:8px}
+.memory-record-editor textarea{min-height:100px;resize:vertical}
+.memory-history-purge{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.memory-history-purge p{flex-basis:100%;font-size:12px;color:var(--text-muted)}

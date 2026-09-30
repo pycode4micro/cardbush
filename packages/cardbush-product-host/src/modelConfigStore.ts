@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, type ModelApiProtocol } from '@cardbush/bush-protocol';
+import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, reasoningEffortSchema, protocolReasoningEffort, type ModelApiProtocol, type ReasoningEffort } from '@cardbush/bush-protocol';
 
 import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
@@ -12,6 +12,7 @@ export interface ProductModelConfig {
   baseURL?: string;
   apiProtocol?: ModelApiProtocol;
   anthropicThinkingMode?: 'adaptive' | 'budget';
+  reasoningEffort?: ReasoningEffort;
   defaultHeaders?: Record<string, string>;
   maxContextTokens?: number;
   maxOutputTokens?: number;
@@ -56,6 +57,17 @@ export class ProductModelConfigStore {
   async migrateMissingCredentials(input: unknown): Promise<number> {
     return withConfigFileLock(this.#path, () => this.#migrateMissingCredentials(input));
   }
+
+  async updateReasoning(modelId: string, effort: unknown): Promise<ProductModelConfigSnapshot> {
+    return withConfigFileLock(this.#path, async () => {
+      const snapshot = await this.#read();
+      const config = snapshot.models.find(model => model.id === modelId);
+      if (!config) throw new Error(`Model configuration not found: ${modelId}`);
+      config.reasoningEffort = decodeReasoning(effort, config.apiProtocol);
+      await this.#writeSnapshot(snapshot);
+      return snapshot;
+    });
+  }
   async #migrateMissingCredentials(input: unknown): Promise<number> {
     const existing = await this.#read();
     const credentials = decodeLegacyCredentials(input);
@@ -97,6 +109,7 @@ export class ProductModelConfigStore {
         baseUrl: config.baseURL ?? "",
         apiProtocol: config.apiProtocol ?? 'openai_responses',
         anthropicThinkingMode: config.anthropicThinkingMode,
+        reasoningEffort: config.reasoningEffort ?? null,
         defaultHeaders: config.defaultHeaders ?? {},
         maxContextTokens: config.maxContextTokens,
         maxCompletionTokens: config.maxOutputTokens,
@@ -184,6 +197,8 @@ function decodeUpdate(
       apiKey: suppliedApiKey ?? previous?.apiKey ?? "",
       apiProtocol: modelApiProtocolSchema.parse(config.apiProtocol ?? previous?.apiProtocol ?? 'openai_responses'),
       anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(config.anthropicThinkingMode ?? previous?.anthropicThinkingMode),
+      reasoningEffort: decodeReasoning(config.reasoningEffort === undefined ? previous?.reasoningEffort : config.reasoningEffort,
+        modelApiProtocolSchema.parse(config.apiProtocol ?? previous?.apiProtocol ?? 'openai_responses')),
       ...optionalProperty("baseURL", optionalString(config.baseURL ?? config.baseUrl ?? config.base_url)),
       ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders ?? config.default_headers ?? previous?.defaultHeaders)),
       ...optionalProperty("maxContextTokens", maxContextTokens),
@@ -218,6 +233,7 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
       apiKey: optionalString(config.apiKey) ?? "",
       apiProtocol: modelApiProtocolSchema.parse(config.apiProtocol ?? 'openai_responses'),
       anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(config.anthropicThinkingMode),
+      reasoningEffort: decodeReasoning(config.reasoningEffort, modelApiProtocolSchema.parse(config.apiProtocol ?? 'openai_responses')),
       ...optionalProperty("baseURL", optionalString(config.baseURL)),
       ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders)),
       ...optionalProperty("maxContextTokens", maxContextTokens),
@@ -236,6 +252,11 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
 
 function emptySnapshot(): ProductModelConfigSnapshot {
   return { version: 1, defaultModelId: "", models: [] };
+}
+
+function decodeReasoning(value: unknown, protocol?: ModelApiProtocol): ReasoningEffort | undefined {
+  const effort = reasoningEffortSchema.nullish().parse(value);
+  return effort == null ? undefined : protocolReasoningEffort(protocol, effort);
 }
 
 function maskSecret(value: string): string {

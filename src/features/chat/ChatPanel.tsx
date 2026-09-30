@@ -1,6 +1,6 @@
 import { ArrowDown, Sparkles } from 'lucide-react';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
-import { QueueLockButton } from '../composer/QueueLockButton';
+import { QueueActionsMenu } from '../composer/QueueActionsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ExtractionSelector } from './ConversationExtraction';
 import { ConversationHostContext } from '../conversationHost';
@@ -116,6 +116,8 @@ import {
 import { WelcomeComposer } from './WelcomeComposer';
 import { TopBar } from '../../components/TopBar';
 import { InteractionCard } from '../interactions/InteractionCard';
+import { useConversationComposerLayout } from './useConversationComposerLayout';
+import './conversationComposerLayout.css';
 
 const LazyRuntimeStreamPreTest = import.meta.env.DEV
   ? lazy(async () => {
@@ -503,6 +505,10 @@ export function ChatPanel({
     return () => window.removeEventListener('keydown', toggle);
   }, [keyboardShortcuts, onToggleQueueLock, queueLockPending]);
   const composerDockRef = useRef<HTMLDivElement>(null);
+  const { anchored: composerAnchored, flow: composerFlow, capture: captureComposerPosition } = useConversationComposerLayout({
+    bodyRef: chatBodyRef, dockRef: composerDockRef, scrollerRef: listScrollerRef,
+    scope: JSON.stringify([host?.id ?? 'local', activeConversationId]), welcome: showWelcome, loading, embedded, interaction: hasInteraction,
+  });
   const runtimeRailRef = useRef<ComposerRuntimeRailHandle>(null);
   const scrollBottomButtonRef = useRef<HTMLButtonElement>(null);
   const scrollMotion = useMemo(() => createChatScrollMotion(), []);
@@ -939,6 +945,7 @@ export function ChatPanel({
 
   const ensureMessageBottomVisible = useCallback(
     (messageId: string) => {
+      if (composerAnchored) return;
       const scroller = listScrollerRef.current;
       if (!scroller) {
         return;
@@ -959,7 +966,7 @@ export function ChatPanel({
       const delta = Math.ceil(itemRect.bottom - visibleBottom);
       scrollMotion.move(scroller, scroller.scrollTop + delta, 'follow');
     },
-    [quickContextBottomInset, scrollMotion, streamStatusHeight],
+    [quickContextBottomInset, scrollMotion, streamStatusHeight, composerAnchored],
   );
 
   const cancelScheduledStreamFollow = useCallback(() => {
@@ -972,6 +979,7 @@ export function ChatPanel({
 
   const scheduleActiveAssistantFollow = useCallback(
     (messageId: string, _index: number) => {
+      if (composerAnchored) return;
       const scroller = listScrollerRef.current;
       if (!scroller || scrollActivationRef.current?.restoring) return;
       if (streamScrollFrameRef.current != null) {
@@ -1010,7 +1018,7 @@ export function ChatPanel({
         ensureMessageBottomVisible(messageId);
       });
     },
-    [composerDockHeight, ensureMessageBottomVisible, streamStatusHeight],
+    [composerDockHeight, ensureMessageBottomVisible, streamStatusHeight, composerAnchored],
   );
 
   const restoreWheelLockedScrollTop = useCallback(
@@ -1206,6 +1214,7 @@ export function ChatPanel({
 
   const handleListWheelCapture = useCallback(
     (event: WheelEvent<HTMLElement>) => {
+      if (composerAnchored) { scrollMotion.cancel(); return; }
       if (event.defaultPrevented || wheelAlreadyHandled(event)) {
         return;
       }
@@ -1246,11 +1255,13 @@ export function ChatPanel({
       releaseWheelBottomFreeze,
       scrollMotion,
       wheelAlreadyHandled,
+      composerAnchored,
     ],
   );
 
   const handleChatBodyWheelCapture = useCallback(
     (event: WheelEvent<HTMLElement>) => {
+      if (composerAnchored) return;
       if (
         event.defaultPrevented ||
         wheelAlreadyHandled(event) ||
@@ -1279,6 +1290,7 @@ export function ChatPanel({
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
       wheelTargetIsListSurface,
+      composerAnchored,
     ],
   );
 
@@ -1288,6 +1300,7 @@ export function ChatPanel({
       return undefined;
     }
     const handleNativeWheel = (event: globalThis.WheelEvent) => {
+      if (composerAnchored) return;
       if (
         event.defaultPrevented ||
         wheelAlreadyHandled(event) ||
@@ -1325,6 +1338,7 @@ export function ChatPanel({
     releaseWheelBottomFreeze,
     wheelAlreadyHandled,
     wheelTargetIsListSurface,
+    composerAnchored,
   ]);
 
   const lockStreamFollow = useCallback(
@@ -1524,6 +1538,12 @@ export function ChatPanel({
       lastScrollTopRef.current = scroller.scrollTop;
       const metrics = readBottomMetrics(scroller);
       atBottomRef.current = metrics.visualAtBottom;
+      if (composerAnchored) {
+        autoFollowStreamRef.current = false;
+        userDetachedFromBottomRef.current = true;
+        setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
+        return;
+      }
       const now = Date.now();
       const recentLock = lastWheelLockRef.current;
       const recentWheel = now - lastWheelEventAtRef.current <= 250;
@@ -1653,6 +1673,7 @@ export function ChatPanel({
       scrollMotion,
       setScrollBottomVisible,
       shouldShowScrollBottomForMetrics,
+      composerAnchored,
     ],
   );
 
@@ -1688,7 +1709,7 @@ export function ChatPanel({
         ? firstVisibleElement.getBoundingClientRect().top
         : dockRect.top;
       const nextDockHeight = Math.ceil(dockRect.height);
-      const nextBottomInset = Math.ceil(Math.max(0, dockRect.bottom - visibleTop));
+      const nextBottomInset = composerAnchored && !hasInteraction ? 0 : Math.ceil(Math.max(0, dockRect.bottom - visibleTop));
       if (chatBody) {
         const chatBodyRect = chatBody.getBoundingClientRect();
         chatBody.style.setProperty(
@@ -1774,10 +1795,10 @@ export function ChatPanel({
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       chatBody?.style.removeProperty('--message-list-viewport-height');
     };
-  }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome]);
+  }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome, composerAnchored]);
 
   useEffect(() => {
-    if (loading || showWelcome) return undefined;
+    if (loading || showWelcome || composerAnchored) return undefined;
     const chatBody = chatBodyRef.current;
     const chatPanel = chatBody?.closest('.chat-panel');
     const mainStage = chatBody?.closest('.main-stage');
@@ -1907,6 +1928,7 @@ export function ChatPanel({
     scrollMotion,
     setScrollBottomVisible,
     showWelcome,
+    composerAnchored,
   ]);
 
   useEffect(() => {
@@ -1975,6 +1997,14 @@ export function ChatPanel({
       messageSnapshotRef.current = { conversationId: activeConversationId, ids };
       return;
     }
+    if (composerAnchored) {
+      pendingSubmittedUserFocusRef.current = false;
+      autoFollowStreamRef.current = false;
+      userDetachedFromBottomRef.current = true;
+      setScrollBottomVisible(shouldShowScrollBottomForScroller(listScrollerRef.current));
+      messageSnapshotRef.current = { conversationId: activeConversationId, ids };
+      return;
+    }
     if (
       !loading &&
       !scrollActivationRef.current?.restoring &&
@@ -2006,6 +2036,8 @@ export function ChatPanel({
     renderMessages,
     sending,
     setScrollBottomVisible,
+    composerAnchored,
+    shouldShowScrollBottomForScroller,
   ]);
 
   useLayoutEffect(() => {
@@ -2225,14 +2257,14 @@ export function ChatPanel({
       scrollActivationRef.current = null;
       if (!scroller) return;
       const position = conversationScrollPositions.get(scrollPositionKey);
-      const freshSubmission = messageSnapshotRef.current.conversationId === activeConversationId
+      const freshSubmission = !composerAnchored && messageSnapshotRef.current.conversationId === activeConversationId
         && pendingSubmittedUserFocusRef.current;
       scrollActivationRef.current = { scroller, position, restoring: !freshSubmission };
       if (!freshSubmission) scroller.dataset.scrollRestoring = 'true';
       // Ref replay can remount a keyed child without rerunning its parent's
       // effects (StrictMode). Every activation must own a restoration commit.
       setScrollMountRevision((revision) => revision + 1);
-      autoFollowStreamRef.current = position?.followLatest ?? true;
+      autoFollowStreamRef.current = !composerAnchored && (position?.followLatest ?? true);
       userDetachedFromBottomRef.current = !autoFollowStreamRef.current;
       atBottomRef.current = autoFollowStreamRef.current;
       manualScrollDetachUntilRef.current = 0;
@@ -2246,14 +2278,14 @@ export function ChatPanel({
       if (!freshSubmission) {
         pendingSubmittedUserFocusRef.current = false;
         pendingSubmittedUserEntryUntilRef.current = 0;
-        assistantStageAnchorRef.current = position?.responseAnchorKey ?? '';
+        assistantStageAnchorRef.current = composerAnchored ? '' : position?.responseAnchorKey ?? '';
         if (position?.submittedUserReadingAnchor) {
           scroller.style.setProperty('--submitted-user-reading-anchor', position.submittedUserReadingAnchor);
         }
       }
       setScrollBottomVisible(false);
     };
-  }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible]);
+  }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible, composerAnchored]);
 
   const diagnosticStateRef = useRef<() => Record<string, unknown>>(() => ({}));
   diagnosticStateRef.current = () => ({
@@ -2276,7 +2308,9 @@ export function ChatPanel({
     if (!activation?.restoring) return;
     const restore = () => {
       if (scrollActivationRef.current !== activation || !activation.restoring) return;
-      restoreConversationScrollPosition(activation.scroller, activation.position, quickContextBottomInset);
+      const position = composerAnchored ? { scrollTop: 0, responseAnchorKey: '', submittedUserReadingAnchor: '', anchor: null,
+        ...activation.position, followLatest: false } : activation.position;
+      restoreConversationScrollPosition(activation.scroller, position, quickContextBottomInset);
       lastScrollTopRef.current = activation.scroller.scrollTop;
       scrollDebug('session-scroll-restore', {
         conversationId: activeConversationId,
@@ -2311,6 +2345,7 @@ export function ChatPanel({
     readBottomMetrics,
     setScrollBottomVisible,
     shouldShowScrollBottomForMetrics,
+    composerAnchored,
   ]);
 
   useEffect(() => {
@@ -2393,6 +2428,7 @@ export function ChatPanel({
 
   const handleComposerSend = useCallback(
     async (text: string, options?: { immediate?: boolean }) => {
+      captureComposerPosition(!sending);
       if (
         guidanceAvailable && sending &&
         (options?.immediate || guidanceDeliveryMode === 'immediate') &&
@@ -2418,7 +2454,7 @@ export function ChatPanel({
         finishConversationScrollRestoration();
         pendingSubmittedUserEntryUntilRef.current = Date.now() + 2000;
         const shouldFollowSubmission =
-          !showScrollBottomRef.current || !userDetachedFromBottomRef.current;
+          !composerAnchored && (!showScrollBottomRef.current || !userDetachedFromBottomRef.current);
         pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
         releaseAssistantStageReservation();
         if (shouldFollowSubmission) {
@@ -2443,6 +2479,8 @@ export function ChatPanel({
       guidanceAvailable,
       sending,
       setScrollBottomVisible,
+      composerAnchored,
+      captureComposerPosition,
     ],
   );
 
@@ -2552,7 +2590,9 @@ export function ChatPanel({
   return (
     <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
     <div
-      className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
+      className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${composerAnchored ? ' composer-anchored' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
+      data-composer-after-send={composerFlow.afterSend}
+      data-conversation-output={composerFlow.output}
     >
       {!embedded && <TopBar
         title={title}
@@ -2808,7 +2848,7 @@ export function ChatPanel({
             {onToggleQueueLock && (queuedMessageCount > 0 || queueLocked) && <div className="interaction-queue-lock">
               <span>{queueLocked ? language === 'zh' ? '引导队列已锁定' : 'Guidance queue locked'
                 : language === 'zh' ? '引导队列自动发送已开启' : 'Guidance auto-send is on'}</span>
-              <QueueLockButton language={language} locked={queueLocked} pending={queueLockPending} onToggle={onToggleQueueLock} />
+              <QueueActionsMenu language={language} locked={queueLocked} lockPending={queueLockPending} onToggleLock={onToggleQueueLock} />
             </div>}
             {interactionContent ?? (pendingInteraction && <InteractionCard
               key={pendingInteraction.id}
@@ -2831,7 +2871,7 @@ export function ChatPanel({
               '--shadow-accent': shadowAccentColor,
             } as CSSProperties}
           >
-            {queuedMessageCount > 0 && (
+            {(queuedMessageCount > 0 || queueLocked) && (
               <ComposerRuntimeRail
                 key={`runtime:${activeConversationId}`}
                 ref={runtimeRailRef}
@@ -2840,6 +2880,8 @@ export function ChatPanel({
                 queuedMessagePreview={queuedMessagePreview}
                 queuedMessages={queuedMessages}
                 queueLocked={queueLocked}
+                queueLockPending={queueLockPending}
+                onToggleQueueLock={onToggleQueueLock}
                 onEditQueuedMessage={editQueuedMessage}
                 onGuideQueuedMessage={(queuedId) =>
                   onGuideQueuedMessage(queuedId, 'append_context')

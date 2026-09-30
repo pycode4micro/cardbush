@@ -6,6 +6,33 @@ import test from "node:test";
 
 import { ProductModelConfigStore } from "../dist/index.js";
 
+test('reasoning belongs to each configuration, survives restart, and clears explicitly to provider default', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-model-reasoning-'));
+  const path = join(root, 'models.json'), store = new ProductModelConfigStore(path);
+  await store.write({ defaultModelId: 'a', models: [
+    { id: 'a', provider: 'custom', model: 'same-name', apiKey: 'secret-a', reasoningEffort: 'max' },
+    { id: 'b', provider: 'custom', model: 'same-name', apiKey: 'secret-b', reasoningEffort: 'low', apiProtocol: 'openai_chat_completions' },
+    { id: 'c', provider: 'custom', model: 'third-model', apiKey: 'secret-c' },
+  ] });
+  assert.deepEqual((await new ProductModelConfigStore(path).read()).models.map(model => model.reasoningEffort), ['max', 'low', undefined]);
+  // Independent quick edits must not overwrite another model or change the default model.
+  await Promise.all([store.updateReasoning('a', 'medium'), store.updateReasoning('b', 'max')]);
+  let snapshot = await store.read();
+  assert.deepEqual(snapshot.models.map(model => model.reasoningEffort), ['medium', 'high', undefined]);
+  assert.equal(snapshot.defaultModelId, 'a');
+  assert.deepEqual(snapshot.models.map(model => model.apiKey), ['secret-a', 'secret-b', 'secret-c']);
+  const publicValue = store.publicPayload(snapshot);
+  publicValue.models[0].reasoningEffort = null;
+  snapshot = await store.write(publicValue);
+  assert.equal(snapshot.models[0].reasoningEffort, undefined);
+  assert.equal(store.publicPayload(await new ProductModelConfigStore(path).read()).models[0].reasoningEffort, null);
+  await store.updateReasoning('b', null);
+  const before = await readFile(path, 'utf8');
+  await assert.rejects(store.updateReasoning('c', 'invalid'));
+  await assert.rejects(store.updateReasoning('missing', 'high'));
+  assert.equal(await readFile(path, 'utf8'), before, 'invalid updates leave all model settings intact');
+});
+
 test('protocol and custom headers round-trip through public editing, preserving saved credentials', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-model-protocol-'));
   const store = new ProductModelConfigStore(join(root, 'models.json'));

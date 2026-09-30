@@ -1,15 +1,16 @@
-import { Clock3, CornerDownLeft, Edit3, GripVertical, LoaderCircle, Trash2, X } from 'lucide-react';
+import { Clock3, CornerDownLeft, LoaderCircle, LockKeyhole, Trash2, X } from 'lucide-react';
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react';
 import type { AppLanguage } from '../../types';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { useQueueReorder } from './useQueueReorder';
+import { QueueActionsMenu } from './QueueActionsMenu';
 
 type RuntimeQueuedMessage = { id: string; text: string; createdAt: string };
 export type ComposerRuntimeRailHandle = { showQueue: () => void };
 
 export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, queuedMessagePreview = '', queuedMessages = [],
-  queueLocked = false,
+  queueLocked = false, queueLockPending = false, onToggleQueueLock,
   onEditQueuedMessage, onGuideQueuedMessage, onRemoveQueuedMessage, onReorderQueuedMessage,
 }: {
   ref?: Ref<ComposerRuntimeRailHandle>;
@@ -18,6 +19,8 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
   queuedMessagePreview?: string;
   queuedMessages?: RuntimeQueuedMessage[];
   queueLocked?: boolean;
+  queueLockPending?: boolean;
+  onToggleQueueLock?: () => void;
   onEditQueuedMessage?: (item: RuntimeQueuedMessage) => void;
   onGuideQueuedMessage?: (id: string) => Promise<void>;
   onRemoveQueuedMessage?: (id: string) => void;
@@ -37,7 +40,7 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
     setGuidingQueuedId(id);
     try { await onGuideQueuedMessage(id); } finally { setGuidingQueuedId(''); }
   }
-  if (queuedMessageCount <= 0) return null;
+  if (queuedMessageCount <= 0 && !queueLocked) return null;
   return (
     <div className={`composer-runtime-rail ${panelPresence.mounted ? 'expanded' : ''} ${panelPresence.visible ? 'context-visible' : 'context-exiting'}`}
       data-queue-locked={queueLocked} onKeyDown={event => {
@@ -52,8 +55,8 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
         >
           <header>
             <span>
-              <Clock3 size={14} />
-              <strong>{language === 'zh' ? `排队 ${queuedMessageCount}` : `${queuedMessageCount} queued`}</strong>
+              {queueLocked ? <LockKeyhole size={14} /> : <Clock3 size={14} />}
+              <strong>{language === 'zh' ? `${queueLocked ? '已锁定 · ' : ''}排队 ${queuedMessageCount}` : `${queueLocked ? 'Locked · ' : ''}${queuedMessageCount} queued`}</strong>
             </span>
             <button
               type="button"
@@ -84,43 +87,18 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
                     onPointerCancel={queueDrag.onPointerCancel}
                     onLostPointerCapture={queueDrag.onPointerCancel}
                   >
-                    <button
-                      className="runtime-queue-drag-handle"
-                      type="button"
-                      disabled={!onReorderQueuedMessage || queuedMessages.length < 2 || Boolean(guidingQueuedId)}
-                      aria-label={language === 'zh'
-                        ? `第 ${index + 1} 条，拖动或按上下方向键排序`
-                        : `Queue item ${index + 1}. Drag or use the up and down arrows to reorder`}
-                      title={language === 'zh' ? '拖动排序，也可用上下方向键' : 'Drag to reorder, or use the up and down arrows'}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-                        event.preventDefault();
-                        queueDrag.moveWithKeyboard(item.id, event.key === 'ArrowUp' ? -1 : 1);
-                      }}
-                    >
-                      <GripVertical size={16} aria-hidden="true" />
-                    </button>
                     <p className="runtime-queue-prompt" title={item.text}>{item.text}</p>
                     <div className="runtime-queue-actions">
                       <button
                         className="runtime-queue-guide"
-                        title={[language === 'zh' ? '立即引导（快捷键发送队列第一条）' : 'Guide now (shortcut sends the first queued message)', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
+                        title={[language === 'zh' ? '立即发送（快捷键发送队列第一条）' : 'Send now (shortcut sends the first queued message)', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
                         type="button"
                         disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
                         onClick={() => void guideQueuedMessage(item.id)}
-                        aria-label={language === 'zh' ? `将第 ${index + 1} 条用于引导` : `Use queue item ${index + 1} as guidance`}
+                        aria-label={language === 'zh' ? `发送第 ${index + 1} 条引导` : `Send queue item ${index + 1}`}
                       >
                         {guidingQueuedId === item.id ? <LoaderCircle size={13} /> : <CornerDownLeft size={13} />}
-                        <span>{language === 'zh' ? '引导' : 'Guide'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!onEditQueuedMessage || Boolean(guidingQueuedId)}
-                        onClick={() => onEditQueuedMessage?.(item)}
-                        aria-label={language === 'zh' ? `编辑第 ${index + 1} 条排队消息` : `Edit queue item ${index + 1}`}
-                      >
-                        <Edit3 size={13} />
-                        <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
+                        <span>{language === 'zh' ? '发送' : 'Send'}</span>
                       </button>
                       <button
                         type="button"
@@ -131,6 +109,11 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
                         <Trash2 size={13} />
                         <span>{language === 'zh' ? '删除' : 'Delete'}</span>
                       </button>
+                      <QueueActionsMenu language={language} locked={queueLocked} lockPending={queueLockPending}
+                        onToggleLock={onToggleQueueLock} busy={Boolean(guidingQueuedId)}
+                        onEdit={onEditQueuedMessage ? () => onEditQueuedMessage(item) : undefined}
+                        onMoveUp={onReorderQueuedMessage && index > 0 ? () => queueDrag.moveWithKeyboard(item.id, -1) : undefined}
+                        onMoveDown={onReorderQueuedMessage && index < queuedMessages.length - 1 ? () => queueDrag.moveWithKeyboard(item.id, 1) : undefined} />
                     </div>
                   </article>
                 ))}
@@ -142,44 +125,38 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
         </section>
       )}
       <button
-        className={`composer-runtime-screen queue ${queueOpen ? 'open' : ''}${firstQueuedMessage ? ' has-queue-actions' : ''}`}
+        className={`composer-runtime-screen queue has-queue-actions ${queueOpen ? 'open' : ''}`}
         type="button" aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)}
+        disabled={queuedMessageCount <= 0}
         title={language === 'zh' ? '查看引导队列' : 'View guidance queue'}>
         <span className="runtime-screen-viewport" aria-live="polite">
           <span className="runtime-screen-line queue">
-            <Clock3 size={13} />
+            {queueLocked ? <LockKeyhole size={13} /> : <Clock3 size={13} />}
             <strong>{queueLocked ? language === 'zh' ? '已锁定' : 'Locked' : language === 'zh' ? `排队 ${queuedMessageCount}` : `${queuedMessageCount} queued`}</strong>
-            <small>{queuePreview || (language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply')}</small>
+            <small>{queuePreview || (queueLocked
+              ? language === 'zh' ? '仅手动发送' : 'Manual sending only'
+              : language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply')}</small>
           </span>
         </span>
       </button>
-      {firstQueuedMessage && (
-        <div
-          className="runtime-screen-queue-actions"
-          role="group"
-          aria-label={language === 'zh' ? '排队消息操作' : 'Queued message actions'}
-        >
+      <div
+        className="runtime-screen-queue-actions"
+        role="group"
+        aria-label={language === 'zh' ? '排队消息操作' : 'Queued message actions'}
+      >
+        {firstQueuedMessage && <>
           <button
             className="runtime-screen-queue-guide"
             aria-keyshortcuts={keyboardShortcuts.aria('guideNow')}
             type="button"
             disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
-            aria-label={language === 'zh' ? '将首条排队消息用于引导' : 'Use first queued message as guidance'}
-            title={[language === 'zh' ? '引导' : 'Guide', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
+            aria-label={language === 'zh' ? '发送首条引导' : 'Send first queued message'}
+            title={[language === 'zh' ? '发送' : 'Send', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
             onClick={() => void guideQueuedMessage(firstQueuedMessage.id)}
           >
             {guidingQueuedId === firstQueuedMessage.id
               ? <LoaderCircle size={13} />
               : <CornerDownLeft size={13} />}
-          </button>
-          <button
-            type="button"
-            disabled={!onEditQueuedMessage || Boolean(guidingQueuedId)}
-            aria-label={language === 'zh' ? '编辑首条排队消息' : 'Edit first queued message'}
-            title={language === 'zh' ? '编辑' : 'Edit'}
-            onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
-          >
-            <Edit3 size={13} />
           </button>
           <button
             type="button"
@@ -190,8 +167,13 @@ export function ComposerRuntimeRail({ ref, language, queuedMessageCount = 0, que
           >
             <Trash2 size={13} />
           </button>
-        </div>
-      )}
+        </>}
+        <QueueActionsMenu language={language} locked={queueLocked} lockPending={queueLockPending}
+          onToggleLock={onToggleQueueLock} busy={Boolean(guidingQueuedId)}
+          onEdit={firstQueuedMessage && onEditQueuedMessage ? () => onEditQueuedMessage(firstQueuedMessage) : undefined}
+          onMoveDown={firstQueuedMessage && onReorderQueuedMessage && queuedMessages.length > 1
+            ? () => onReorderQueuedMessage(firstQueuedMessage.id, queuedMessages[1].id) : undefined} />
+      </div>
     </div>
   );
 }

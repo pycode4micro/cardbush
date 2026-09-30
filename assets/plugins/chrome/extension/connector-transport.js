@@ -36,9 +36,9 @@ function createConnectorPort(pairing) {
       for (const callback of disconnects) callback();
     },
   };
-  const fail = () => {
+  const fail = (code, message) => {
     if (closed) return;
-    for (const callback of messages) callback({ type: 'connector_error', message: '配对校验失败或连接已断开，请确认 CardBush 已开启；必要时重新生成配对码。' });
+    for (const callback of messages) callback({ type: 'connector_error', code, message });
     port.disconnect();
   };
   void (async () => {
@@ -46,8 +46,10 @@ function createConnectorPort(pairing) {
     const proof = await connectorHmac(pairing.secret, `upgrade:${pairing.id}:${nonce}`);
     if (closed) return;
     socket = new WebSocket(`ws://127.0.0.1:${pairing.port}/connect`, ['cardbush-v2', `auth.${pairing.id}.${nonce}.${proof}`]);
-    socket.onerror = fail;
-    socket.onclose = fail;
+    // WebSocket errors do not expose whether the app is offline or an upgrade
+    // was rejected. Never infer credential revocation from a network failure.
+    socket.onerror = () => fail('connector_unavailable', '暂时无法连接 CardBush，请确认应用和本机连接器已开启。已保存的配对与网站授权保持不变。');
+    socket.onclose = () => fail('connector_disconnected', 'CardBush 连接已断开，等待自动重连。');
     socket.onmessage = event => { void (async () => {
       if (closed || typeof event.data !== 'string') return;
       const message = JSON.parse(event.data);
@@ -67,13 +69,13 @@ function createConnectorPort(pairing) {
         ready = true;
         lastHeartbeat = Date.now();
         heartbeat = setInterval(() => {
-          if (Date.now() - lastHeartbeat > 60_000) { fail(); return; }
+          if (Date.now() - lastHeartbeat > 60_000) { fail('connector_timeout', 'CardBush 暂时没有响应，等待自动重连。'); return; }
           port.postMessage({ type: 'heartbeat' });
         }, 20_000);
       }
       if (message.type === 'heartbeat_ack') { lastHeartbeat = Date.now(); return; }
       for (const callback of messages) callback(message);
-    })().catch(fail); };
-  })().catch(fail);
+    })().catch(() => fail('connector_handshake_failed', '连接校验未通过，未开放浏览器控制。请确认连接的是原来配对的 CardBush；仅在移除过配对或更换应用配置时重新配对。')); };
+  })().catch(() => fail('connector_unavailable', '暂时无法建立 CardBush 本地连接，等待自动重连。'));
   return port;
 }

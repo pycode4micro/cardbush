@@ -129,6 +129,7 @@ export class ElectronProductHostController {
         return this.#models.publicPayload(snapshot);
       },
       resolve: (modelId) => this.#resolveModel(modelId),
+      updateReasoning: async (modelId, effort) => this.#models.publicPayload(await this.#models.updateReasoning(modelId, effort)),
     }, {
       clearConversations: () => this.#clearConversations(),
       clearLogsCache: () => this.#clearLogsCache(),
@@ -175,7 +176,7 @@ export class ElectronProductHostController {
 
   async subagentModels() {
     const config = await this.#models.read();
-    return config.models.map(({ id, model, maxContextTokens, maxOutputTokens }) => ({ id, model, maxContextTokens, maxOutputTokens }));
+    return config.models.map(({ id, model, maxContextTokens, maxOutputTokens, reasoningEffort }) => ({ id, model, maxContextTokens, maxOutputTokens, reasoningEffort }));
   }
 
   async resolveSubagentModel(modelId: string) {
@@ -492,6 +493,7 @@ export class ElectronProductHostController {
       provider: selected.provider,
       model: selected.model,
       binding: configured.binding,
+      reasoningEffort: selected.reasoningEffort,
       maxContextTokens: selected.maxContextTokens,
       maxOutputTokens: selected.maxOutputTokens,
     };

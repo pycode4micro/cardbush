@@ -6,20 +6,20 @@ A desktop AI workspace for conversations, files, coding, automation and MCP plug
 
 ## Download
 
-Source version: **1.0.0-beta.4**. The installers below become available when both platforms pass the tagged release workflow. Until publication completes, use the latest completed version on the [Releases page](https://github.com/pycode4micro/cardbush/releases).
+Source version: **1.0.0-beta.5**. The installers below become available when both platforms pass the tagged release workflow. Until publication completes, use the latest completed version on the [Releases page](https://github.com/pycode4micro/cardbush/releases).
 
 | System | Download | Suitable computers |
 | --- | --- | --- |
-| Windows 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-windows-x64.exe) | Intel / AMD 64-bit |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.4/CardBush-1.0.0-beta.4-linux-x86_64.AppImage) | x86-64 desktop Linux; CI validates Ubuntu 22.04 |
+| Windows 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.5/CardBush-1.0.0-beta.5-windows-x64.exe) | Intel / AMD 64-bit |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.5/CardBush-1.0.0-beta.5-linux-x86_64.AppImage) | x86-64 desktop Linux; CI validates Ubuntu 22.04 |
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-Both packages use the same Beta 4 source tag. This update adds independent Agent services and SSH workspaces, an App Center, shared local/remote conversations and settings, command sandboxes, and improvements to tool execution and context recovery. See the [release notes](docs/releases/1.0.0-beta.4.md). Releases include SHA-256 checksums and packaged startup reports; a successful main-branch build alone does not publish a release.
+Both packages use the same Beta 5 source tag when published. The application metadata and current documentation now agree on Beta 5; Beta 6 is the next planned version. See the [release notes](docs/releases/1.0.0-beta.5.md). Releases include SHA-256 checksums and packaged startup reports; a successful main-branch build alone does not publish a release.
 
 Current development targets Windows 11 only (build 22000 or later), including Store MSIX packages and the Browser Use connector (Chrome / Edge). Older published downloads may have different requirements. There is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8/10 and macOS packages are not supported by the current Windows build. The Windows EXE release workflow requires a publisher signing certificate; ordinary CI builds produce unsigned development installers.
 
-Store MSIX packages use a separate four-part version and are signed by Microsoft during certification. Locally test-signed copies must not be uploaded. See the [MSIX submission preparation](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md) for the current candidate and review materials; preparing them does not mean certification has been submitted or approved.
+Store MSIX packages use a separate four-part version and are signed by Microsoft during certification. Locally test-signed copies must not be uploaded. The maintainer reports that the Beta 5 MSIX has been uploaded to Partner Center; this does not establish certification approval. See the [MSIX submission record](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md) for package and review materials.
 
 ### Install and start
 
@@ -28,8 +28,8 @@ Store MSIX packages use a separate four-part version and are signed by Microsoft
 **Linux:** download the AppImage, allow it to execute, then run it:
 
 ```sh
-chmod +x CardBush-1.0.0-beta.4-linux-x86_64.AppImage
-./CardBush-1.0.0-beta.4-linux-x86_64.AppImage
+chmod +x CardBush-1.0.0-beta.5-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.5-linux-x86_64.AppImage
 ```
 
 AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1`. Chromium also requires a working sandbox; do not disable it as an installation workaround.

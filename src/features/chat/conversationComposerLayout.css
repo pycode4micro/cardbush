@@ -1,0 +1,26 @@
+.chat-panel.composer-layout-managed .composer-dock:not(.interaction-only) {
+  left: var(--flow-composer-left, 12px);
+  right: auto;
+  width: var(--flow-composer-width, calc(100% - 24px));
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 20px;
+  /* The dock is composer-width, so the surface alone should paint its background. */
+  background: none;
+}
+.chat-panel.composer-layout-managed .composer-dock .composer-stack { width: 100%; }
+.chat-panel.composer-anchored .composer-dock:not(.interaction-only) {
+  top: var(--flow-composer-top, 12px);
+  left: var(--flow-composer-left, 12px);
+  right: auto;
+  bottom: auto;
+  width: var(--flow-composer-width, calc(100% - 24px));
+  padding: 0;
+}
+.chat-panel.composer-anchored .composer-dock .composer-stack { width: 100%; }
+.chat-panel.composer-anchored .message-list,
+.chat-panel.composer-anchored .message-list-content { overflow-anchor: none; }
+.chat-panel.composer-anchored[data-conversation-output="above"] .message-list-item { content-visibility: visible; }
+.chat-panel.composer-anchored .message-list-item.first { padding-top: 0; }
+.chat-panel.composer-anchored .scroll-bottom { top: auto; bottom: 20px; left: var(--composer-surface-center-x, 50%); }
+.chat-panel.composer-anchored .quick-context-rail { top: 0; }

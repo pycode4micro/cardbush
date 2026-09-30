@@ -1,3 +1,5 @@
+import { reasoningEffortSchema, type ReasoningEffort } from '@cardbush/bush-protocol';
+
 export const PRODUCT_HOST_IPC_PROTOCOL = "cardbush.product_host_ipc.v1" as const;
 
 export type RuntimeAssetCategory = "prompts" | "skills";
@@ -7,6 +9,7 @@ export type ProductHostCommand =
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: 'sandbox.install'; confirm: true }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: 'sandbox.update'; enabled: boolean }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "models.get" }
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: 'model.reasoning.update'; modelId: string; reasoningEffort: ReasoningEffort | null }
   | {
       protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
       kind: "models.update";
@@ -42,6 +45,7 @@ export interface ProductModelHost {
   get(): Promise<Record<string, unknown>>;
   update(config: Record<string, unknown>): Promise<Record<string, unknown>>;
   resolve(modelId: string): Promise<Record<string, unknown>>;
+  updateReasoning?(modelId: string, effort: ReasoningEffort | null): Promise<Record<string, unknown>>;
 }
 
 export interface ProductAppsHost {
@@ -115,6 +119,9 @@ export class ProductHost {
       case 'sandbox.get': case 'sandbox.install': case 'sandbox.update':
         if (!this.sandbox) throw new ProductHostProtocolError('sandbox_settings_unavailable', 'Update CardBush on this host to manage its sandbox.');
         return command.kind === 'sandbox.get' ? this.sandbox.get() : command.kind === 'sandbox.install' ? this.sandbox.install() : this.sandbox.update(command.enabled);
+      case 'model.reasoning.update':
+        if (!this.model?.updateReasoning) throw new ProductHostProtocolError('product_model_host_unavailable', 'Update this host to manage model reasoning.');
+        return this.model.updateReasoning(command.modelId, command.reasoningEffort);
       case "models.get":
         if (!this.model) {
           throw new ProductHostProtocolError(
@@ -237,6 +244,9 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
     case "maintenance.runtime_assets.plan":
     case "maintenance.diagnostics":
       return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind };
+    case 'model.reasoning.update':
+      return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind, modelId: requiredString(value.modelId, 'modelId'),
+        reasoningEffort: reasoningEffortSchema.nullable().parse(value.reasoningEffort) };
     case "models.update":
       return {
         protocol: PRODUCT_HOST_IPC_PROTOCOL,

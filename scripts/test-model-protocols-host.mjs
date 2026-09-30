@@ -36,27 +36,41 @@ test('Agent worker resolves saved protocols, headers and model credentials throu
   let service;
   try {
     service = await AgentService.open({ dataRoot: root, name: 'protocol-fixture', env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
-    for (const [apiProtocol, endpoint] of [['openai_responses', '/responses'], ['openai_chat_completions', '/chat/completions'], ['anthropic_messages', '/messages']]) {
-      await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'custom', model: 'fixture',
-        apiKey: 'fixture-secret', baseURL: `http://127.0.0.1:${server.address().port}/gateway/v1`, apiProtocol,
+    const protocols = [['openai_responses', '/responses', 'max'], ['openai_chat_completions', '/chat/completions', 'low'], ['anthropic_messages', '/messages', 'high']];
+    await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'openai_responses', models: protocols.map(([apiProtocol, , reasoningEffort]) => ({ id: apiProtocol, provider: 'custom', model: 'fixture',
+        apiKey: 'fixture-secret', baseURL: `http://127.0.0.1:${server.address().port}/gateway/v1`, apiProtocol, reasoningEffort,
         defaultHeaders: { 'x-conversation': '{{sessionId}}' }, maxContextTokens: 400000, maxOutputTokens: 8192,
-      }] } });
-      await service.call('sessions.create', { sessionId: apiProtocol });
-      const job = await service.call('chat.send', { sessionId: apiProtocol, requestId: apiProtocol, modelId: 'fixture', text: 'Say hello.', language: 'en', permissionMode: 'task_free', reasoningEffort: 'high' });
+      })) } });
+    const run = async (sessionId, modelId, override) => {
+      await service.call('sessions.create', { sessionId });
+      const job = await service.call('chat.send', { sessionId, requestId: sessionId, modelId, text: 'Say hello.', language: 'en', permissionMode: 'task_free', ...override });
       let state;
       for (let i = 0; i < 150; i++) {
-        state = (await service.call('chat.jobs', { sessionId: apiProtocol })).find(item => item.id === job.id);
+        state = (await service.call('chat.jobs', { sessionId })).find(item => item.id === job.id);
         if (state && ['completed', 'failed', 'cancelled'].includes(state.status)) break;
         await new Promise(resolve => setTimeout(resolve, 40));
       }
       assert.equal(state?.status, 'completed', JSON.stringify(state));
+    };
+    for (const [apiProtocol, endpoint, effort] of protocols) {
+      await run(apiProtocol, apiProtocol);
       const wire = calls.find(call => call.path === `/gateway/v1${endpoint}` && call.headers['x-conversation'] === apiProtocol);
       assert.ok(wire, `${apiProtocol} must use its actual protocol in the worker`);
       assert.equal(wire.headers['user-agent'], 'CardBush/1.0');
       if (apiProtocol === 'anthropic_messages') {
         assert.equal(wire.headers['x-api-key'], 'fixture-secret'); assert.deepEqual(wire.body.thinking, { type: 'adaptive' }); assert.equal(wire.body.output_config.effort, 'high');
-      } else assert.equal(wire.headers.authorization, 'Bearer fixture-secret');
+      } else {
+        assert.equal(wire.headers.authorization, 'Bearer fixture-secret');
+        assert.equal(apiProtocol === 'openai_responses' ? wire.body.reasoning.effort : wire.body.reasoning_effort, effort);
+      }
+      await run(`${apiProtocol}-default`, apiProtocol, { reasoningEffort: null });
+      const defaultWire = calls.find(call => call.path === `/gateway/v1${endpoint}` && call.headers['x-conversation'] === `${apiProtocol}-default`);
+      for (const field of ['reasoning', 'reasoning_effort', 'thinking', 'output_config']) assert.equal(defaultWire.body[field], undefined, `${apiProtocol} provider default must omit ${field}`);
     }
+    const updated = await service.call('product.command', { kind: 'model.reasoning.update', modelId: 'openai_responses', reasoningEffort: 'medium' });
+    assert.deepEqual(updated.models.map(model => model.reasoningEffort), ['medium', 'low', 'high']);
+    await run('saved-update', 'openai_responses');
+    assert.equal(calls.find(call => call.path.endsWith('/responses') && call.headers['x-conversation'] === 'saved-update').body.reasoning.effort, 'medium');
   } finally {
     await service?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     assert.ok(resolve(root).startsWith(base + '\\') || resolve(root).startsWith(base + '/'));

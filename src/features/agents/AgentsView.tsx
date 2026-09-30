@@ -22,6 +22,7 @@ import { ConversationHostContext } from '../conversationHost';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
 import { createAgentConversationBackend } from './agentConversationBackend';
 import { useCardbushChat } from '../../hooks/useCardbushChat';
+import { saveModelReasoning } from '../../backend/api';
 import { changeReportsFromMessages, type ConversationChangeReport } from '../tools/toolChangeReports';
 import { conversationWorkspaceRoot } from '../conversationWorkspace';
 import { useAgentConversationHost } from './useAgentConversationHost';
@@ -53,6 +54,8 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
   const [connecting, setConnecting] = useState(false);
   const [reconnect, setReconnect] = useState(0);
   const selected = connections.find(item => item.id === selectedId);
+  const managingConnection = !adding && active && agents.views[selectedId] === 'settings';
+  const connectionToEdit = managingConnection ? selected : editing;
   const info = connectedHosts[selectedId];
   useEffect(() => {
     let alive = true; setError('');
@@ -80,13 +83,15 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
       <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{zh ? '添加连接' : 'Add connection'}</strong><span>SSH / HTTP / HTTPS</span></button></div></div>}
     {connecting && !info && selected?.connectionState !== 'reconnecting' && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
     {selected && <AgentConnectionStatus key={selected.id} connection={selected} language={language} error={error} pending={connecting} retained={Boolean(info)}
-      onEdit={() => setEditing(selected)} onRetry={() => setReconnect(value => value + 1)}/>}
+      onEdit={() => onSelect(selected.id, undefined, 'settings')} onRetry={() => setReconnect(value => value + 1)}/>}
     {connections.filter(item => connectedHosts[item.id]).map(connection => <AgentWorkspace {...appearance} key={connection.id}
       active={active && connection.id === selectedId} connection={connection} info={connectedHosts[connection.id]} language={language} agents={agents}
       onReconnect={() => { void api().disconnect(connection.id).then(() => setReconnect(value => value + 1)).catch(error => setError(errorText(error))); }}
-      onEdit={() => setEditing(connection)}/>)}
-    {(adding || editing) && <AgentConnectionForm language={language} initial={editing} onClose={() => { setAdding(false); setEditing(undefined); }} onRemove={editing ? async () => {
-      await api().remove(editing.id); if (selectedId === editing.id) onSelect(''); setEditing(undefined); await onRefresh();
+      onEdit={() => onSelect(connection.id, undefined, 'settings')}/>)}
+    {active && (adding || connectionToEdit) && <AgentConnectionForm key={managingConnection ? `connection-settings:${selectedId}` : 'new-connection'} language={language} initial={connectionToEdit} onClose={() => {
+      setAdding(false); setEditing(undefined); if (agents.views[selectedId] === 'settings') onSelect(selectedId);
+    }} onRemove={connectionToEdit ? async () => {
+      await api().remove(connectionToEdit.id); if (selectedId === connectionToEdit.id) onSelect(''); setEditing(undefined); await onRefresh();
     } : undefined} onSave={async (input, sync) => {
       const next = await api().save(input), id = input.id || next.at(-1)!.id;
       // Keep the saved identity on failures so retrying a new connection cannot create duplicates.
@@ -150,13 +155,11 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
     return () => window.removeEventListener('cardbush:agent-settings-updated', updated);
   }, [connection.id, refresh]);
   const create = () => agents.createSession(connection.id, zh ? '新对话' : 'New conversation');
-  const manage = () => appearance.onOpenSettings?.('models');
   const title = String(sessions.find(item => item.sessionId === sessionId)?.metadata?.title || connection.name);
   const headerActions = <div className="agent-header-actions">
-      <button className="topbar-inspector-action" onClick={onEdit}>{zh ? '连接设置' : 'Connection settings'}</button>
       <button className="topbar-inspector-action icon-only" title={zh ? '刷新连接' : 'Refresh connection'} aria-label={zh ? '刷新连接' : 'Refresh connection'} onClick={onReconnect}><RefreshCw size={15}/></button>
       <button className="topbar-inspector-action icon-only" title={zh ? '新建会话' : 'New chat'} aria-label={zh ? '新建会话' : 'New chat'} disabled={creating} onClick={() => void create()}><Plus size={16}/></button>
-      <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '设置' : 'Settings'} aria-label={zh ? '设置' : 'Settings'} onClick={manage}><Settings size={15}/></button>
+      <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '连接设置' : 'Connection settings'} aria-label={zh ? '连接设置' : 'Connection settings'} onClick={onEdit}><Settings size={15}/></button>
     </div>;
   return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
@@ -178,6 +181,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
   const availableModels = useMemo(() => [...models.models].sort((a, b) => Number(b.id === models.defaultModelId) - Number(a.id === models.defaultModelId)), [models]);
   const chat = useCardbushChat(availableModels, models.models, { runtimeReady: true,
     activeConversationId: sessionId, viewActive: active,
+    onModelReasoningChange: (id, effort) => saveModelReasoning(id, effort, connectionId),
     language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputAvailable && visualInputEnabled, disabledSkillNames: disabledSkills,
     interactiveRequestsAvailable: enhanced, contextWindowUsageAvailable: true, workspaceChangesAvailable: true,
   }, connection.backend);

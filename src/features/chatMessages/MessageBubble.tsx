@@ -46,11 +46,13 @@ import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableL
 
 import {
   basename,
-  fileUrl,
   isAbsoluteLocalPath,
   isAudioPath,
   isImagePath,
+  isLocalFileResource,
   isVideoPath,
+  mediaResourceUrl,
+  resourceTargetKind,
   stripWrappingQuotes,
   splitExplicitAttachmentMentions,
 } from '../../shared/localPaths';
@@ -73,8 +75,7 @@ import {
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { modelFailurePresentation } from './modelFailurePresentation';
 import { MessageToolArtifact, MessageToolOutputs } from '../tools/MessageToolOutputs';
-import { McpAppReferenceLink, McpAppReferencesContext } from '../tools/McpAppReferenceLink';
-import { MCP_APP_REFERENCE_SCHEME, parseMcpAppReference } from '@cardbush/bush-protocol';
+import { McpAppReferencesContext } from '../tools/McpAppReferenceLink';
 import { LoopExecutionPreviews, isLoopPreviewExecution } from '../tools/LoopExecutionPreviews';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import {
@@ -92,16 +93,12 @@ import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { InlineAudio, InlineVideo } from './InlineMedia';
 import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
-import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
-import { parsePromptReference } from '../../shared/promptReferences';
+import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
-import { SourceMemoReference } from './SourceMemoReference';
-import { parseSourceMemoReference } from '@cardbush/bush-protocol';
-import { FileMemoReference } from './FileMemoReference';
+import { MarkdownReference, parseMarkdownReference, UnavailableMarkdownReference } from './MarkdownReference';
 import { ConversationFileReference } from './ConversationFileReference';
 import { FileMemoScope } from './FileMemoScope';
 import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
-import { parseFileMemoReference } from '@cardbush/bush-protocol';
 import {
   copyText,
   readAssistantFeedback,
@@ -374,16 +371,8 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const host = useContext(ConversationHostContext);
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
-      if (href?.startsWith(MCP_APP_REFERENCE_SCHEME)) return parseMcpAppReference(href) && richFileReferences
-        ? <McpAppReferenceLink key={href} reference={href} language={language}>{children}</McpAppReferenceLink>
-        : <span>{children}</span>;
-      const contextReference = href && parsePromptReference(href);
-      if (contextReference) return <PromptReferenceLink reference={contextReference} />;
-      if (href && parseSourceMemoReference(href)) return richFileReferences
-        ? <SourceMemoReference reference={href} language={language} /> : <span>{children}</span>;
-      if (href && parseFileMemoReference(href)) return richFileReferences
-        ? <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>
-        : <span>{children || href}</span>;
+      const reference = parseMarkdownReference(href);
+      if (reference) return <MarkdownReference reference={reference} language={language} rich={richFileReferences}>{children}</MarkdownReference>;
       if (referenceMode === 'remote' && href && !/^(https?:\/\/|#)/i.test(href)) {
         const path = remoteMarkdownPath(href, workspaceRoot);
         return host && path ? <ConversationFileReference path={path} language={language}>{children}</ConversationFileReference> : <span>{children}</span>;
@@ -435,11 +424,10 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
-      if (src?.startsWith(MCP_APP_REFERENCE_SCHEME)) return <span>{alt}</span>;
-      if (src && parseFileMemoReference(src)) return richFileReferences
-        ? <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>
-        : <span>{alt}</span>;
-      if (referenceMode === 'remote' && !/^https?:\/\//i.test(src || '')) {
+      const internalReference = parseMarkdownReference(src);
+      if (internalReference) return <MarkdownReference reference={internalReference} language={language} rich={richFileReferences} inline>{alt}</MarkdownReference>;
+      const targetKind = resourceTargetKind(src || '');
+      if (referenceMode === 'remote' && targetKind !== 'url' && targetKind !== 'inline') {
         const path = remoteMarkdownPath(src, workspaceRoot);
         return host && path && richFileReferences ? <ConversationFileReference path={path} inline language={language}>{alt}</ConversationFileReference> : <span>{alt}</span>;
       }
@@ -448,18 +436,21 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const resolvedPath = reference
         ? remapProjectPath(reference.path, pathAliases)
         : '';
-      const resolvedSource = reference ? fileUrl(resolvedPath) : src;
+      const resolvedSource = mediaResourceUrl(resolvedPath || src || '');
+      if (!resolvedSource) {
+        return <UnavailableMarkdownReference language={language}>{alt}</UnavailableMarkdownReference>;
+      }
       if (resolvedPath && isHtmlPreviewPath(resolvedPath)) return richFileReferences
         ? <InlineHtmlPreview key={resolvedPath} path={resolvedPath} title={alt} language={language} />
         : <span>{alt || basename(resolvedPath)}</span>;
       const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
       if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
-      if (finalAnswerMedia && isVideoPath(resolvedPath || src || '')) {
-        return <InlineVideo src={resolvedSource} aria-label={alt || undefined}
+      if (finalAnswerMedia && (isVideoPath(resolvedPath || src || '') || /^data:video\//i.test(resolvedSource))) {
+        return <InlineVideo src={resolvedSource} language={language} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
-      if (finalAnswerMedia && isAudioPath(resolvedPath || src || '')) {
-        return <InlineAudio src={resolvedSource} aria-label={alt || undefined}
+      if (finalAnswerMedia && (isAudioPath(resolvedPath || src || '') || /^data:audio\//i.test(resolvedSource))) {
+        return <InlineAudio src={resolvedSource} language={language} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
       return (
@@ -540,11 +531,9 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       return plugins;
     }, [workspaceRoot, richFileReferences, referenceMode]);
-    const urlTransform = useCallback((url: string) => {
-      if (url.startsWith(MCP_APP_REFERENCE_SCHEME)) return parseMcpAppReference(url) ? url : '';
-      if (parsePromptReference(url)) return url;
-      if (parseSourceMemoReference(url)) return url;
-      if (parseFileMemoReference(url)) return url;
+    const urlTransform = useCallback((url: string, key: string) => {
+      if (parseMarkdownReference(url)) return url;
+      if (key === 'src' && /^(?:data:(?:image|audio|video)\/|blob:|cardbush-file:\/\/)/i.test(url)) return mediaResourceUrl(url);
       if (referenceMode === 'remote') return /^(https?:\/\/|#)/i.test(url) ? defaultUrlTransform(url) : remoteMarkdownPath(url, workspaceRoot) ? url : '';
       const reference = markdownLocalFileReference(url, workspaceRoot);
       return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
@@ -2631,7 +2620,7 @@ function MessagePlayableMedia({ path, kind, language }: { path: string; kind: 'v
   const caption = <figcaption title={path}>{name}</figcaption>;
   return <figure className={`message-${kind}-player`} onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { language })}>
     {kind === 'audio' && caption}
-    {file.error ? <span role="alert">{file.error}</span> : file.source ? <Player controls preload="metadata" src={file.source} aria-label={language === 'zh' ? `播放${kind === 'video' ? '视频' : '音频'} ${name}` : `Play ${kind} ${name}`}/> : <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>}
+    {file.error ? <span role="alert">{file.error}</span> : file.source ? <Player controls preload="metadata" src={file.source} language={language} aria-label={language === 'zh' ? `播放${kind === 'video' ? '视频' : '音频'} ${name}` : `Play ${kind} ${name}`}/> : <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>}
     {kind === 'video' && caption}
   </figure>;
 }
@@ -2879,7 +2868,7 @@ function MessageImagePreviewButton({
   const recoverLocalImage = useCallback(async () => {
     if (
       host || fallbackAttemptedRef.current ||
-      /^(?:https?:|data:|blob:)/i.test(pathValue.trim()) ||
+      !isLocalFileResource(pathValue) ||
       !window.cardbushDesktop?.readImageDataUrl
     ) {
       setFailed(true);

@@ -1,4 +1,5 @@
-import type { WelcomePlacement } from './componentModel';
+import type { ComponentItem, WelcomePlacement } from './componentModel';
+import { moveComposerPlacement } from './composerLayoutGeometry';
 
 export type LayoutPoint = { x: number; y: number };
 export type AlignmentGuide = { axis: 'x' | 'y'; position: number };
@@ -19,6 +20,31 @@ export function layoutPoint(space: LayoutSpace, clientX: number, clientY: number
 }
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+// New components belong in the viewport the user is editing, even when the
+// saved page has content far below it. Prefer nearby free space; on a full
+// canvas, keep the new component visible and available to drag instead.
+export function placeInViewport(item: ComponentItem, peers: WelcomePlacement[], space: LayoutSpace): WelcomePlacement {
+  const canvasWidth = Math.max(1, space.width), gap = 16;
+  const width = item.width / 12 * 90, w = canvasWidth * width / 100;
+  const top = space.scrollTop + 40, height = Math.min(item.height, Math.max(40, space.height - 56));
+  const left = canvasWidth * .05, right = canvasWidth * .95 - w;
+  const bottom = Math.max(top, space.scrollTop + space.height - gap - height);
+  const center = { x: (canvasWidth - w) / 2, y: (top + bottom) / 2 };
+  const visible = peers.filter(peer => peer.y + peer.height + gap > top && peer.y - gap < bottom + height)
+    .map(peer => ({ x: peer.x * canvasWidth / 100, y: peer.y, width: peer.width * canvasWidth / 100, height: peer.height }));
+  const xs = new Set([center.x, left, right]), ys = new Set([center.y, top, bottom]);
+  for (const peer of visible) {
+    for (const x of [peer.x - gap - w, peer.x + peer.width + gap]) if (x >= left && x <= right) xs.add(x);
+    for (const y of [peer.y - gap - height, peer.y + peer.height + gap]) if (y >= top && y <= bottom) ys.add(y);
+  }
+  const candidates = [...ys].flatMap(y => [...xs].map(x => ({ x, y })))
+    .sort((a, b) => Math.hypot(a.x - center.x, a.y - center.y) - Math.hypot(b.x - center.x, b.y - center.y));
+  const point = candidates.find(({ x, y }) => visible.every(peer => x + w + gap <= peer.x || x >= peer.x + peer.width + gap ||
+    y + height + gap <= peer.y || y >= peer.y + peer.height + gap)) ?? center;
+  return { componentId: item.id, x: point.x / canvasWidth * 100, y: point.y, width, height };
+}
+
 function correction(anchors: number[], targets: number[], tolerance: number, min: number, max: number) {
   let best = 0, distance = tolerance + Number.EPSILON;
   for (const anchor of anchors) for (const target of targets) {
@@ -30,6 +56,11 @@ function correction(anchors: number[], targets: number[], tolerance: number, min
 
 export function alignPlacement(item: WelcomePlacement, peers: WelcomePlacement[], kind: 'move' | 'resize', delta: LayoutPoint,
   space: Pick<LayoutSpace, 'width' | 'height' | 'scaleX' | 'scaleY'>, snap = true): { placement: WelcomePlacement; guides: AlignmentGuide[] } {
+  if (item.componentId === 'system-input') {
+    const placement = moveComposerPlacement(item, kind, delta, space);
+    return { placement, guides: [{ axis: 'x', position: space.width / 2 },
+      ...(placement.composerDock ? [{ axis: 'y' as const, position: placement.y + placement.height }] : [])] };
+  }
   const width = Math.max(1, space.width), px = width / 100;
   let x = item.x * px, y = item.y, w = item.width * px, h = item.height;
   const minWidth = Math.min(width - x, width * .1);

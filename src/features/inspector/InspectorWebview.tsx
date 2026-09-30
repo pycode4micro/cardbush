@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { basename, resourceBasename } from '../../shared/localPaths';
+import { basename, resourceBasename, resourceTargetKind } from '../../shared/localPaths';
 import type { InspectorOpenDetail } from './inspectorEvents';
 import type { AppLanguage } from '../../types';
 import { InspectorErrorBoundary } from './InspectorErrorBoundary';
@@ -16,6 +16,9 @@ import { MediaInspectorPreview } from './MediaInspectorPreview';
 import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import { DeferredResizePreview } from './DeferredResizePreview';
+import { useBrowserTranslation } from './useBrowserTranslation';
+import { browserTranslationError } from './BrowserTranslateButton';
+import type { BrowserTranslationState } from '../../../electron/browserTranslationTypes';
 import {
   normalizeInspectorBrowserAddress,
   inspectorFilePath,
@@ -29,6 +32,7 @@ export type InspectorNavigationState = {
   canGoBack: boolean;
   canGoForward: boolean;
   loading: boolean;
+  translation?: BrowserTranslationState;
 };
 
 export type InspectorWebviewHandle = {
@@ -36,6 +40,7 @@ export type InspectorWebviewHandle = {
   goForward: () => void;
   reload: () => void;
   navigate: (address: string) => void;
+  toggleTranslation: () => void;
 };
 
 type ElectronInspectorWebview = HTMLElement & {
@@ -82,7 +87,9 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const filePath = inspectorFilePath(target);
   const media = mediaType ? inspectorMediaTarget(target, mediaType) : null;
   const fileTitle = title?.trim() || resourceBasename(filePath) || media?.kind || basename(filePath);
-  const adapter = isInspectorBrowserTarget(target) ? null : resolveFilePreview(filePath);
+  const resourceKind = resourceTargetKind(filePath);
+  const adapter = isInspectorBrowserTarget(target) || (resourceKind !== 'local-file' && resourceKind !== 'ssh-file')
+    ? null : resolveFilePreview(filePath);
   const FilePreview = isInspectorBrowserTarget(target) || adapter?.renderer === 'webview'
     ? null : inspectorFilePreviewRenderers[adapter?.renderer ?? 'fallback'];
   const rendererPreview = Boolean(media) || FilePreview !== null;
@@ -92,10 +99,16 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const [hasDocument, setHasDocument] = useState(false);
   const [webviewRevision, setWebviewRevision] = useState(0);
   const [previewError, setPreviewError] = useState<'timeout' | 'load' | 'crash' | null>(null);
+  const translation = useBrowserTranslation(language, () => {
+    const webview = webviewRef.current;
+    if (!webview?.isConnected || !webviewDomReadyRef.current || rendererPreview) return undefined;
+    try { return webview.getWebContentsId?.(); } catch { return undefined; }
+  });
 
   useEffect(() => {
     requestedUrlRef.current = source;
-  }, [source]);
+    translation.reset();
+  }, [source, translation.reset]);
 
   const publishNavigation = useCallback(() => {
     const webview = webviewRef.current;
@@ -105,6 +118,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       canGoBack: false,
       canGoForward: false,
       loading: loadingRef.current,
+      translation: translation.stateRef.current,
     };
     if (!webview?.isConnected || !webviewDomReadyRef.current) {
       onNavigationStateChange(identity, fallbackNavigation);
@@ -119,6 +133,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         canGoBack: webview.canGoBack?.() ?? false,
         canGoForward: webview.canGoForward?.() ?? false,
         loading: loadingRef.current,
+        translation: translation.stateRef.current,
       });
     } catch {
       // Electron throws when a <webview> is queried between React mounting and
@@ -127,9 +142,11 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webviewDomReadyRef.current = false;
       onNavigationStateChange(identity, fallbackNavigation);
     }
-  }, [identity, onNavigationStateChange, source]);
+  }, [identity, onNavigationStateChange, source, translation.stateRef]);
+  useEffect(() => { if (!rendererPreview) publishNavigation(); }, [translation.state, publishNavigation, rendererPreview]);
 
   useImperativeHandle(forwardedRef, () => ({
+    toggleTranslation: translation.toggle,
     goBack: () => {
       const webview = webviewRef.current;
       if (!webview?.isConnected || !webviewDomReadyRef.current) return;
@@ -207,7 +224,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         publishNavigation();
       }
     },
-  }), [identity, fileTitle, onNavigationStateChange, publishNavigation, rendererPreview, target]);
+  }), [identity, fileTitle, onNavigationStateChange, publishNavigation, rendererPreview, target, translation.toggle]);
 
   const publishFileNavigation = useCallback((isLoading: boolean) => {
     loadingRef.current = isLoading;
@@ -258,6 +275,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       // Lazy frames and in-page navigation can start the browser's spinner too.
       // Only a new top-level document changes this preview's loading lifecycle.
       if (!detail.isMainFrame || detail.isInPlace) return;
+      translation.reset();
       if (detail.url) requestedUrlRef.current = detail.url;
       setPreviewError(null);
       armDeadline();
@@ -274,6 +292,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     const fail = (event: Event) => {
       const detail = event as Event & { isMainFrame?: boolean; errorCode?: number };
       if (detail.isMainFrame === false || detail.errorCode === -3) return;
+      translation.reset();
       window.clearTimeout(deadline);
       setPreviewError(event.type === 'render-process-gone' ? 'crash' : 'load');
       loadingRef.current = false;
@@ -282,6 +301,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     };
     const navigate = (event: Event) => {
       const url = (event as Event & { url?: string }).url?.trim();
+      if (url && url.split('#')[0] !== requestedUrlRef.current.split('#')[0]) translation.reset();
       if (url) requestedUrlRef.current = url;
       publishNavigation();
     };
@@ -364,6 +384,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     source,
     target,
     webviewRevision,
+    translation.reset,
   ]);
 
   return (
@@ -405,6 +426,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
         })}
       </InspectorErrorBoundary>
+      {translation.state.status === 'error' && !previewError && (
+        <div className="inspector-translation-notice" role="status">
+          <span>{browserTranslationError(translation.state.error, language)}</span>
+          <button type="button" onClick={translation.reset} aria-label={language === 'zh' ? '关闭翻译提示' : 'Dismiss translation notice'}>×</button>
+        </div>
+      )}
       {!rendererPreview && previewError && (
         <div className="inspector-preview-error" role="alert">
           <p>{language === 'zh' ? '无法加载预览，文件可能不可用、格式不受支持，或加载已超时。' : 'Preview unavailable. The file may be missing, unsupported, or taking too long to load.'}</p>

@@ -13,6 +13,14 @@
 .component-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .component-builtin-label { flex: none; font-size: 10px; color: var(--text-soft); }
 .component-input-choices { display: flex; gap: 2px; }
+.composer-layout-dialog { width: min(420px, calc(100% - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 20px; border: 1px solid var(--border); border-radius: 18px; color: var(--text); background: var(--surface); box-shadow: 0 16px 48px color-mix(in srgb, var(--shadow) 50%, transparent); }
+.composer-layout-dialog::backdrop { background: color-mix(in srgb, var(--text) 18%, transparent); backdrop-filter: blur(3px); }
+.composer-layout-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.composer-layout-dialog button { display: flex; align-items: center; justify-content: center; padding: 7px 10px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface); font: inherit; }
+.composer-layout-dialog label { display: grid; gap: 8px; margin-bottom: 16px; font-size: 12px; }
+.composer-layout-dialog select { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); font: inherit; }
+.composer-layout-dialog p { color: var(--text-soft); font-size: 12px; line-height: 1.65; }
+.composer-layout-dialog .composer-layout-done { display: flex; margin-left: auto; min-height: 34px; padding-inline: 20px; border: 1px solid var(--border); border-radius: 20px; color: var(--surface); background: var(--text); }
 .html-component-card .component-input-choices button { font-size: 11px; border-radius: 6px; background: transparent; color: var(--text-soft); }
 .html-component-card .component-input-choices button[aria-pressed="true"] { color: var(--text); background: var(--hover); }
 .html-component-card > header button { border: 0; padding: 4px 8px; height: 30px; }

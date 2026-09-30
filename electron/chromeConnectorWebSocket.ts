@@ -132,7 +132,7 @@ export class ChromeConnectorWebSocket {
     if (previous === id) this.#defaultConnectionId = '';
     try { this.#save(); } catch (error) { this.#credentials.set(id, credential); this.#defaultConnectionId = previous; throw error; }
     for (const [client, connectionId] of this.#clients) if (connectionId === id) {
-      client.send(JSON.stringify({ type: 'control', method: 'connector.disable' }));
+      client.send(JSON.stringify({ type: 'control', method: 'connector.disable', reason: 'pairing_removed' }));
       client.close(1008, 'Pairing removed');
       const timer = setTimeout(() => client.terminate(), 1000);
       timer.unref(); client.once('close', () => clearTimeout(timer));

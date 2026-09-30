@@ -1,7 +1,7 @@
 import { Eye, FileImage, LoaderCircle } from 'lucide-react';
 import { useCallback, useContext, useEffect, useState } from 'react';
 
-import { basename, fileUrl } from '../../shared/localPaths';
+import { basename, isLocalFileResource, mediaResourceUrl, resourceTargetKind } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage, ChatToolArtifact } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
@@ -31,7 +31,10 @@ export function ToolImageArtifactViewer({
 
   const openImage = useCallback(async (artifact: ChatToolArtifact) => {
     const pathValue = artifact.path.trim();
-    if (!pathValue) return;
+    if (!pathValue || resourceTargetKind(pathValue) === 'unsupported') {
+      setFailedPaths(current => new Set(current).add(pathValue));
+      return;
+    }
     const name = artifact.name || basename(pathValue);
     if (host) {
       // The shared dialog reads the selected host and owns the remote blob lifetime.
@@ -40,9 +43,9 @@ export function ToolImageArtifactViewer({
     }
     setLoadingPath(pathValue);
     try {
-      let src = mediaSource(pathValue);
+      let src = mediaResourceUrl(pathValue);
       if (
-        !/^(?:https?:|data:|blob:)/i.test(pathValue) &&
+        isLocalFileResource(pathValue) &&
         window.cardbushDesktop?.readImageDataUrl
       ) {
         const dataUrl = await window.cardbushDesktop.readImageDataUrl(pathValue);
@@ -117,12 +120,6 @@ export function ToolImageArtifactViewer({
   );
 }
 
-function mediaSource(pathValue: string) {
-  return /^(?:https?:|data:|blob:)/i.test(pathValue.trim())
-    ? pathValue.trim()
-    : fileUrl(pathValue);
-}
-
 function ToolImageThumbnail({ path, name, language }: { path: string; name: string; language: AppLanguage }) {
   const host = useContext(ConversationHostContext);
   const { source, error } = useConversationFileSource(path);
@@ -131,7 +128,7 @@ function ToolImageThumbnail({ path, name, language }: { path: string; name: stri
   const [fallbackFailed, setFallbackFailed] = useState(false);
   useEffect(() => {
     const read = window.cardbushDesktop?.readImageDataUrl;
-    if (host || !failed || /^(?:https?:|data:|blob:)/i.test(path) || !read) return;
+    if (host || !failed || !isLocalFileResource(path) || !read) return;
     let disposed = false;
     // Use the file protocol first; only request a data URL if it cannot load.
     void read(path).then(source => {

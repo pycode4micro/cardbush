@@ -11,6 +11,14 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   await run("document.querySelector('.model-row-edit').focus(); document.querySelector('.model-row-edit').click()");
   await until("document.querySelector('dialog.model-config-dialog')?.open");
   assert.equal(await run("document.querySelector('dialog input[type=password]').placeholder"), '已保存，留空保留');
+  const otherEffort = await run('settingsProps.settings.managedModelConfigs[1].reasoningEffort ?? null');
+  const chooseReasoning = async value => {
+    await run("document.querySelector('dialog [aria-label=思考强度]').click()");
+    await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
+    await run("document.querySelector('.settings-dropdown-popover:popover-open [value=' + " + JSON.stringify(value) + " + ']').click()");
+  };
+  assert.match(await run("document.querySelector('dialog [aria-label=思考强度]').textContent"), /服务商默认/);
+  await chooseReasoning('max');
   const choose = async value => {
     await run("document.querySelector('dialog [aria-label=接入协议]').click()");
     await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
@@ -56,6 +64,8 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   await until("document.querySelector('dialog').textContent.includes('/messages')");
   await choose('openai_chat_completions');
   await until("document.querySelector('dialog').textContent.includes('/chat/completions')");
+  assert.equal(await run("document.querySelector('dialog [aria-label=思考强度]').textContent.trim()"), '高', 'protocol mapping is reflected before saving');
+  await chooseReasoning('low');
   await run("document.querySelector('dialog .model-advanced-disclosure').click()");
   await edit('dialog input[type=number]', '500000');
   await typeHeaders('{bad-json');
@@ -69,11 +79,14 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].apiProtocol'), 'openai_chat_completions');
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].defaultHeaders["x-session-id"]'), '{{sessionId}}');
   assert.equal(await run('settingsProps.settings.managedModelConfigs[0].hasApiKey'), true);
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].reasoningEffort'), 'low');
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[1].reasoningEffort ?? null'), otherEffort, 'other model is untouched');
   assert.equal(await run("document.activeElement.classList.contains('model-row-edit')"), true, 'dialog restores focus');
   for (const [width, height] of [[1200, 850], [760, 650], [500, 650]]) {
     win.setContentSize(width, height); await pause(120);
     await run("document.querySelector('.model-row-edit').click()");
     await until("document.querySelector('dialog')?.open");
+    assert.equal(await run("document.querySelector('dialog [aria-label=思考强度]').textContent.trim()"), '低', 'saved model effort survives reopening');
     await choose('anthropic_messages');
     await run("document.querySelector('dialog .model-advanced-disclosure').click()");
     await typeHeaders('{\n  "x-test": "editable"\n}');
@@ -92,6 +105,7 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   win.setContentSize(1200, 850); await pause(120);
   await click('添加模型');
   await until("document.querySelector('dialog')?.open");
+  assert.match(await run("document.querySelector('dialog [aria-label=思考强度]').textContent"), /服务商默认/, 'new model must not inherit previous effort');
   assert.equal(await run("document.querySelector('dialog [aria-label=接入协议]').textContent.includes('Responses')"), true);
   await choose('anthropic_messages');
   await run("window.discoveryCalls = []; window.cardbushDesktop.listProviderModels = async (...args) => { discoveryCalls.push(args); return { models: ['fixture-claude'], endpoint: 'fixture', rawCount: 1 }; }; void 0");
@@ -129,5 +143,11 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   fs.writeFileSync(path.join(root, 'tmp/settings-model-dialog-light.png'), (await win.webContents.capturePage()).toPNG());
   await run("document.querySelector('dialog [aria-label=Close]').click()");
   await run("settingsProps.language = 'zh'; settingsProps.themePreference = 'dark'; window.settingsTheme = 'dark'; renderSettings()");
+  await run("document.querySelector('.model-row-edit').click()");
+  await until("document.querySelector('dialog')?.open");
+  await chooseReasoning('default');
+  await click('保存模型');
+  await until("!document.querySelector('dialog')");
+  assert.equal(await run('settingsProps.settings.managedModelConfigs[0].reasoningEffort'), null, 'provider default explicitly clears this model');
   console.log('Native model settings passed: OpenRouter preset/discovery/localization, preserved custom connections, protocol selection, headers validation, saved credentials, focus restore and responsive modal.');
 };

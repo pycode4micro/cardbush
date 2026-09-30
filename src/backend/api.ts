@@ -1,5 +1,5 @@
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
-import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema } from '@cardbush/bush-protocol';
+import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, reasoningEffortSchema, type ReasoningEffort } from '@cardbush/bush-protocol';
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
@@ -718,6 +718,18 @@ export async function saveModelConfigs(request: {
   );
 }
 
+export async function saveModelReasoning(modelId: string, reasoningEffort: ReasoningEffort | null, connectionId = '') {
+  const command = { kind: 'model.reasoning.update' as const, modelId, reasoningEffort };
+  const saved = modelConfigsFromPayload(connectionId
+    ? await window.cardbushDesktop!.agents!.call(connectionId, 'product.command', command)
+    : await productHostValue(command));
+  window.dispatchEvent(new CustomEvent('cardbush:model-reasoning-updated', { detail: {
+    connectionId, modelId, reasoningEffort: saved.models.find(model => model.id === modelId)?.reasoningEffort ?? null,
+  } }));
+  if (connectionId) window.dispatchEvent(new CustomEvent('cardbush:agent-settings-updated', { detail: connectionId }));
+  return saved;
+}
+
 export async function fetchCardbushAppsConfiguration(): Promise<CardbushAppsConfiguration> {
   return cardbushAppsConfigurationFromPayload(
     await productHostValue({ kind: 'apps.get' }),
@@ -1059,6 +1071,7 @@ function managedModelConfigFromPayload(
     apiKeyMasked: optionalString(item.apiKeyMasked ?? item.api_key_masked),
     apiProtocol: modelApiProtocolSchema.parse(item.apiProtocol ?? 'openai_responses'),
     anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(item.anthropicThinkingMode),
+    reasoningEffort: reasoningEffortSchema.nullish().parse(item.reasoningEffort) ?? null,
     defaultHeaders: modelHeadersSchema.parse(item.defaultHeaders ?? {}),
     modelName,
     baseUrl: String(item.baseUrl ?? item.base_url ?? item.llm_base_url ?? ''),
