@@ -1,4 +1,9 @@
-import { APPEARANCE_STORAGE_KEY, appearanceVariables, appearanceHasCustomPalette, normalizeAppearance, readAppearance } from './features/appearance/appearancePreferences';
+import {
+  APPEARANCE_STORAGE_KEY,
+  appearanceVariables,
+  appearanceHasCustomPalette,
+  normalizeAppearance,
+} from './features/appearance/appearancePreferences';
 import { useAppearanceRuntime } from './features/appearance/useAppearanceRuntime';
 import { pickWorkspace } from './features/ssh/WorkspaceLocationPicker';
 import { useAgentConnections } from './features/agents/useAgentConnections';
@@ -7,7 +12,6 @@ import { withWorkspaceReference } from './shared/promptReferences';
 import { recentReviewTurns } from './features/sidebar/reviewModel';
 import { newBrowserTab } from './features/browser/browserStartPage';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
-import { defaultHostTerminalRuntime, normalizeHostTerminalRuntime } from './backend/hostPlatform';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
 import { AppCenterProvider } from './features/appCenter/AppCenter';
 import { requestAppCenter } from './features/appCenter/appCenterStore';
@@ -16,21 +20,16 @@ import { PageNavigationContext, PageNavigationScope, usePageNavigation } from '.
 import type { AppPage } from './features/navigation/appPage';
 import { GlobalTooltip } from './components/GlobalTooltip';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
-import { readConversationStyle, saveConversationStyle, normalizeConversationStylePreferences } from './features/settings/conversationStyle';
-import { readIndividuation, saveIndividuation, normalizeIndividuation } from './features/settings/individuation';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
   ArrowRight,
   Bot,
-  CheckCircle2,
   Clipboard,
   Clock3,
   ExternalLink,
   FileText,
-  Folder,
   Globe2,
-  LoaderCircle,
   Menu,
   PanelRightClose,
   Plus,
@@ -38,11 +37,8 @@ import {
   X,
 } from 'lucide-react';
 import {
-  Component,
   type CSSProperties,
-  type ErrorInfo,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
   Suspense,
   useCallback,
   useEffect,
@@ -55,6 +51,7 @@ import {
   fetchBackendCapabilities,
   fetchBackendReadiness,
   fetchModelConfigs,
+  forkConversation,
   fetchSkills,
   isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
@@ -76,7 +73,6 @@ import { ComposerReferenceContext, inspectorBrowserReferences } from './features
 import { Composer } from './features/composer';
 import { WelcomeProjectSwitcher } from './features/chat/WelcomeComposer';
 import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
-import { forkConversation } from './backend/api';
 import { workSummaryInspectorTab, type InspectorTab, type InspectorResourceTab, type InspectorReviewTab } from './features/inspector/inspectorTabs';
 import { useOutsideDismiss } from './hooks/useOutsideDismiss';
 import { createPortal } from 'react-dom';
@@ -84,18 +80,20 @@ import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import { WindowFrame } from './components/WindowFrame';
 import { applicationMenus } from './features/windowMenu/applicationMenus';
-import { inspectorMaximum } from './components/rightInspectorSizing';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
 import { BrowserBookmarkButton } from './features/inspector/BrowserBookmarkButton';
 import { InspectorPageDialog } from './features/inspector/InspectorPageDialog';
 import { InspectorTileFrame } from './features/inspector/InspectorTileFrame';
-import { addPanel, panelIds, panelRects, retainPanels, resizePanelSplit, swapPanels, type PanelLayout } from './features/inspector/panelLayout';
+import {
+  panelRects,
+  resizePanelSplit,
+  swapPanels,
+} from './features/inspector/panelLayout';
 import { ComposerPortalContext } from './features/composer/ComposerPortalContext';
 import { HtmlComponentContext } from './features/components/HtmlComponentContext';
 import { dispatchComponentMessage } from './features/components/dispatchComponentMessage';
 import './features/inspector/inspectorWorkspace.css';
-import { sectionLabels } from './features/appSections';
 import { automationSetupPrompt } from './features/automations/automationPrompts';
 import { AutomationRunPanel } from './features/automations/AutomationRunPanel';
 import { OPEN_AUTOMATION_RUN_EVENT, type AutomationRunOpenDetail } from './features/automations/automationEvents';
@@ -117,7 +115,6 @@ import {
 } from './features/sidebar';
 import { refreshRuntimeRendererPlugins, useRuntimeDelegationWorkspace } from './plugins/runtimeExtensions';
 import { RuntimeDelegationSurface } from './plugins/runtimeWorkspaces';
-import { COPY_FEEDBACK_EVENT } from './features/messageFeedback';
 import { basename, fileUrl, samePath, stripWrappingQuotes } from './shared/localPaths';
 import {
   themeAccentColor,
@@ -128,9 +125,6 @@ import { useVisualThemeContext } from './features/appearance/useVisualThemeConte
 import { ConversationSearchDialog } from './features/search/ConversationSearchDialog';
 import { useConversationSearch } from './features/search/useConversationSearch';
 import { usePreviousConversationShortcut } from './features/shortcuts/usePreviousConversationShortcut';
-import {
-  normalizeImportedThemeStyle,
-} from './features/appearance/importedThemeStyle';
 import {
   changeReportsFromMessages,
   serializeToolChangeReport,
@@ -155,21 +149,12 @@ import {
   type AppSettingsState,
   type BackendCapabilities,
   type ChatMessage,
-  type CompanionMotionMode,
-  type CompanionSettings,
-  type CompanionSize,
   type ConversationSummary,
-  type ManagedModelConfig,
   type RuntimeAssetCategory,
   type RuntimeStartupStatus,
-  type ImportedThemeStyle,
   type ProjectItem,
   type SettingsSection,
-  type SkillSummary,
-  type SkillDetail,
-  type TerminalRuntime,
   type ThemePreference,
-  type ThemeMode,
   SUBAGENT_DISPATCH_EVENT_PROTOCOL,
 } from './types';
 import {
@@ -178,7 +163,6 @@ import {
 } from './shared/uiPerformanceTrace';
 import { cssEscape } from './shared/cssEscape';
 import { ChatPanel } from './features/chat/ChatPanel';
-import { TopBar } from './components/TopBar';
 import {
   inspectorTargetIdentity,
   isInspectorBrowserTarget,
@@ -190,8 +174,20 @@ import {
   type InspectorWebviewHandle,
   InspectorWebview,
 } from './features/inspector/InspectorWebview';
-
 import { DeferredModuleNotice, recoverableLazy } from './shared/recoverableLazy';
+import { TaskWorkspaceBar } from './features/chat/TaskWorkspaceBar';
+import { OPEN_AGENT_CONVERSATION, type AgentConversationTarget } from './features/agents/agentNavigation';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
+import { CopyToastHost } from './components/CopyToastHost';
+import { readInitialThemePreference, resolveTheme, systemPrefersDark } from './features/appearance/themePreferences';
+import { useInspectorWorkspace } from './features/inspector/useInspectorWorkspace';
+import { FeaturePanel, FeaturePanelLoading } from './features/panels/FeaturePanel';
+import { normalizeAppSettings, persistAppSettings, readInitialAppSettings } from './features/settings/appSettingsStore';
+import { clampSidebarWidth, persistDisabledSkillNames, persistVisualInputEnabled, readDisabledSkillNames, readInitialLanguageMode, readInitialSidebarWidth, readSystemLanguage, readVisualInputEnabled, resolveAppLanguage } from './features/settings/localPreferences';
+import { defaultModelConfigId, effectiveModels, mergeLegacyModelCredentials, modelConfigSignature, normalizeManagedModelConfigs, readManagedModelConfigs } from './features/settings/modelPreferences';
+import { ProjectRenameDialog } from './features/sidebar/ProjectRenameDialog';
+import { persistProjectItems, readProjectItems, stableProjectId } from './features/sidebar/projectStore';
+
 const LazyAgentsView = recoverableLazy('agents', async () => ({ default: (await import('./features/agents/AgentsView')).AgentsView }), (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
 
 let settingsViewModulePromise: Promise<typeof import('./features/SettingsView')> | null = null;
@@ -208,11 +204,6 @@ const LazySettingsView = recoverableLazy('settings', async () => {
   const module = await loadSettingsViewModule();
   return { default: module.SettingsView };
 }, (props, retry) => <SettingsModuleFallback {...props} retry={retry} />);
-
-const LazyFeatureContentPanel = recoverableLazy('feature-panel', async () => {
-  const module = await import('./features/panels');
-  return { default: module.FeatureContentPanel };
-}, (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
 
 function SettingsModuleFallback({ active, onReady, onBack, language, retry }: {
   active: boolean;
@@ -232,50 +223,6 @@ function SettingsModuleFallback({ active, onReady, onBack, language, retry }: {
   </main>;
 }
 
-type AppErrorBoundaryState = {
-  message: string;
-};
-
-class AppErrorBoundary extends Component<
-  { children: ReactNode },
-  AppErrorBoundaryState
-> {
-  state: AppErrorBoundaryState = { message: '' };
-
-  static getDerivedStateFromError(error: unknown): AppErrorBoundaryState {
-    return {
-      message: (error instanceof Error ? error.message : String(error)) || '未知渲染错误',
-    };
-  }
-
-  componentDidCatch(error: unknown, info: ErrorInfo) {
-    console.error('CardBush render error', error, info);
-    void window.cardbushDesktop?.writeDebugLog('renderer-lifecycle', {
-      stage: 'react-error-boundary',
-      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-      componentStack: info.componentStack,
-    }).catch(() => undefined);
-    void showUiError('CardBush 界面异常', `${this.state.message}\n应用未自动重新加载。请关闭窗口后手动重新打开。`);
-  }
-
-  render() {
-    if (!this.state.message) {
-      return this.props.children;
-    }
-    return (
-      <div className="app theme-dark">
-        <div className="render-failure-shell">
-          <section className="render-failure-card" role="alert" aria-label="CardBush 界面异常">
-            <h1>CardBush 渲染异常</h1>
-            <p>{this.state.message}</p>
-            <p>应用未自动重新加载。请关闭窗口后手动重新打开。</p>
-          </section>
-        </div>
-      </div>
-    );
-  }
-}
-
 type WallpaperAccent = {
   r: number;
   g: number;
@@ -288,53 +235,6 @@ type InspectorTabContextMenuState = {
   tabId: string;
   x: number;
   y: number;
-};
-
-const defaultSidebarWidth = 272;
-const minSidebarWidth = 220;
-const maxSidebarWidth = 420;
-const importedThemeStyleStorageKey = 'cardbush_imported_theme_style';
-
-const defaultAppSettings: AppSettingsState = {
-  conversationStyle: normalizeConversationStylePreferences(undefined),
-  individuation: normalizeIndividuation(undefined),
-  proxy: {
-    mode: 'none',
-    httpProxy: '',
-    httpsProxy: '',
-    noProxy: '127.0.0.1,localhost,::1',
-  },
-  browser: {
-    privacyMode: false,
-  },
-  thinking: {
-    visible: false,
-  },
-  guidance: {
-    deliveryMode: 'queue',
-  },
-  terminal: {
-    runtime: defaultHostTerminalRuntime(),
-  },
-  managedModelConfigs: [],
-  importedThemeStyle: null,
-  companionEnabled: true,
-  companion: {
-    size: 'normal',
-    opacity: 0.95,
-    motion: 'full',
-  },
-  font: {
-    family: '',
-    displayName: '',
-    filePath: '',
-  },
-  user: {
-    name: '访客',
-    membership: 'Free',
-    avatarEmoji: '🍃',
-    avatarImagePath: '',
-  },
 };
 
 export function App() {
@@ -780,76 +680,18 @@ function CardbushApp() {
   const inspectorTabContextTargetIndex = inspectorTabContextTarget
     ? inspectorTabs.findIndex((tab) => tab.id === inspectorTabContextTarget.id)
     : -1;
-  const [inspectorWidth, setInspectorWidthState] = useState(() => {
-    const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
-    return Number.isFinite(stored) ? Math.min(window.innerWidth, Math.max(380, stored)) : 620;
-  });
-  const inspectorWidthRef = useRef(inspectorWidth);
-  const [inspectorLayout, setInspectorLayout] = useState<PanelLayout | null>(null);
-  const [inspectorCover, setInspectorCover] = useState(false);
-  const [quickInputOpen, setQuickInputOpen] = useState(false);
   const [quickInputTarget, setQuickInputTarget] = useState<HTMLDivElement | null>(null);
   const [addPageOpen, setAddPageOpen] = useState(false);
-  const multiPageRestore = useRef<{ width: number; sidebar: boolean } | null>(null);
-  const coverRestore = useRef<{ section: AppSection; sidebar: boolean } | null>(null);
-  const setInspectorWidth = useCallback((width: number) => {
-    const next = Math.min(
-      inspectorMaximum(windowMaximized, window.innerWidth),
-      Math.max(380, Math.round(width)),
-    );
-    inspectorWidthRef.current = next;
-    setInspectorWidthState(next);
-    window.localStorage.setItem('cardbush.inspector_width', String(next));
-  }, [windowMaximized]);
-  const leaveInspectorCover = useCallback(() => {
-    setInspectorCover(false); setQuickInputOpen(false);
-    const previous = coverRestore.current; coverRestore.current = null;
-    if (previous) { setSidebarCollapsed(previous.sidebar); setSection(previous.section); }
-  }, [setSidebarCollapsed]);
-  const enterInspectorCover = useCallback(() => {
-    coverRestore.current ??= { section, sidebar: sidebarCollapsed };
-    setInspectorCover(true); setSidebarCollapsed(true); setInspectorOpen(true);
-  }, [section, sidebarCollapsed, setSidebarCollapsed]);
-  const leaveMultiPage = useCallback(() => {
-    setInspectorLayout(null);
-    const previous = multiPageRestore.current; multiPageRestore.current = null;
-    if (previous) { setInspectorWidth(previous.width); if (!coverRestore.current) setSidebarCollapsed(previous.sidebar); }
-  }, [setInspectorWidth, setSidebarCollapsed]);
-  const toggleMultiPage = () => {
-    if (inspectorLayout) { leaveMultiPage(); return; }
-    if (!window.confirm(language === 'zh'
-      ? '多页面 (Beta) 为大屏设计。DPI、缩放和多显示器可能影响页面尺寸、弹层及输入体验。请确认正在使用大屏，再开启两个并排页面。继续吗？'
-      : 'Multiple pages (Beta) is designed for large displays. DPI, scaling and multiple monitors may affect page sizes, popovers and input. Confirm you are using a large display to open at least two panes. Continue?')) return;
-    multiPageRestore.current = { width: inspectorWidthRef.current, sidebar: sidebarCollapsed };
-    const initial = [activeInspectorTab, ...inspectorTabs.filter(tab => tab.id !== activeInspectorTab?.id)].filter((tab): tab is InspectorTab => Boolean(tab)).slice(0, 2);
-    while (initial.length < 2) {
-      const tab: InspectorResourceTab = { id: `browser:${crypto.randomUUID()}`, kind: 'resource', detail: { target: 'about:blank', title: language === 'zh' ? '新页面' : 'New page' } };
-      openInspectorTab(tab); initial.push(tab);
-    }
-    setInspectorLayout(initial.reduce<PanelLayout | null>((tree, tab) => addPanel(tree, tab.id), null));
-    setSidebarCollapsed(true); setInspectorOpen(true);
-    setInspectorWidth(window.innerWidth - 340);
-    setInspectorAddMenuOpen(false); setInspectorTabsMenuOpen(false);
-  };
-  useEffect(() => {
-    if (!inspectorLayout) return;
-    const available = new Set(inspectorTabs.map(tab => tab.id));
-    let next = retainPanels(inspectorLayout, available);
-    if (activeInspectorTab && !panelIds(next).includes(activeInspectorTab.id)) next = addPanel(next, activeInspectorTab.id);
-    if (panelIds(next).length < 2) { leaveMultiPage(); return; }
-    if (JSON.stringify(next) !== JSON.stringify(inspectorLayout)) setInspectorLayout(next);
-  }, [inspectorTabs, activeInspectorTab, inspectorLayout, leaveMultiPage]);
-  useEffect(() => { if (!inspectorOpen && inspectorCover) leaveInspectorCover(); }, [inspectorOpen, inspectorCover, leaveInspectorCover]);
-  useEffect(() => {
-    if (!inspectorCover) return;
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open]')) return;
-      event.preventDefault();
-      if (quickInputOpen) setQuickInputOpen(false); else leaveInspectorCover();
-    };
-    window.addEventListener('keydown', escape);
-    return () => window.removeEventListener('keydown', escape);
-  }, [inspectorCover, quickInputOpen, leaveInspectorCover]);
+  const {
+    inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
+    inspectorCover, enterInspectorCover, leaveInspectorCover,
+    quickInputOpen, setQuickInputOpen, toggleMultiPage,
+  } = useInspectorWorkspace({
+    language, windowMaximized, compactLayout,
+    sidebarCollapsed, setSidebarCollapsed, section, setSection,
+    inspectorOpen, setInspectorOpen, inspectorTabs, activeInspectorTab, openInspectorTab,
+    setInspectorAddMenuOpen, setInspectorTabsMenuOpen,
+  });
   const openInspectorTarget = useCallback((detail: InspectorOpenDetail) => {
     const target = stripWrappingQuotes(detail.target.trim());
     if (!target) return;
@@ -1245,64 +1087,6 @@ function CardbushApp() {
     !sidebarCollapsed,
   );
   const inspectorPresence = useSoftPanelPresence(inspectorOpen);
-
-  useEffect(() => {
-    let previousLeft = window.screenX;
-    let previousOuterWidth = window.outerWidth;
-    let previousInnerWidth = window.innerWidth;
-    let pendingWidthDelta = 0;
-    let animationFrame = 0;
-    let resizeSettleTimer = 0;
-
-    const resizeInspectorFromWindowRightEdge = () => {
-      const nextLeft = window.screenX;
-      const nextOuterWidth = window.outerWidth;
-      const nextInnerWidth = window.innerWidth;
-      const innerWidthDelta = nextInnerWidth - previousInnerWidth;
-      const rightEdgeDelta = nextLeft + nextOuterWidth - (
-        previousLeft + previousOuterWidth
-      );
-      const leftEdgeStayedPut = Math.abs(nextLeft - previousLeft) <= 2;
-
-      previousLeft = nextLeft;
-      previousOuterWidth = nextOuterWidth;
-      previousInnerWidth = nextInnerWidth;
-
-      if (
-        !inspectorOpen || compactLayout ||
-        innerWidthDelta === 0 ||
-        !leftEdgeStayedPut ||
-        Math.sign(innerWidthDelta) !== Math.sign(rightEdgeDelta)
-      ) {
-        return;
-      }
-
-      document.body.classList.add('window-right-edge-resizing');
-      if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
-      resizeSettleTimer = window.setTimeout(() => {
-        resizeSettleTimer = 0;
-        document.body.classList.remove('window-right-edge-resizing');
-      }, 140);
-      pendingWidthDelta += innerWidthDelta;
-      if (animationFrame) return;
-      animationFrame = window.requestAnimationFrame(() => {
-        animationFrame = 0;
-        const widthDelta = pendingWidthDelta;
-        pendingWidthDelta = 0;
-        if (widthDelta !== 0) {
-          setInspectorWidth(inspectorWidthRef.current + widthDelta);
-        }
-      });
-    };
-
-    window.addEventListener('resize', resizeInspectorFromWindowRightEdge);
-    return () => {
-      window.removeEventListener('resize', resizeInspectorFromWindowRightEdge);
-      if (animationFrame) window.cancelAnimationFrame(animationFrame);
-      if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
-      document.body.classList.remove('window-right-edge-resizing');
-    };
-  }, [inspectorOpen, setInspectorWidth, compactLayout]);
 
   useEffect(() => {
     const handleOpenInspector = (event: Event) => {
@@ -3064,812 +2848,6 @@ function CardbushApp() {
   );
 }
 
-function ProjectRenameDialog({
-  language,
-  project,
-  onClose,
-  onRename,
-}: {
-  language: AppLanguage;
-  project: ProjectItem;
-  onClose: () => void;
-  onRename: (title: string, renameFolder: boolean) => Promise<string | null>;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const onCloseRef = useRef(onClose);
-  const [title, setTitle] = useState(project.title);
-  const [renameFolder, setRenameFolder] = useState(
-    () => project.title.trim() === basename(project.rootPath),
-  );
-  const [invalid, setInvalid] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const busyRef = useRef(false);
-  onCloseRef.current = onClose;
-  busyRef.current = busy;
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-    const closeWithKeyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busyRef.current) onCloseRef.current();
-    };
-    document.addEventListener('keydown', closeWithKeyboard);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener('keydown', closeWithKeyboard);
-    };
-  }, []);
-
-  const submit = async () => {
-    const nextTitle = title.trim();
-    if (!nextTitle) {
-      setInvalid(true);
-      inputRef.current?.focus();
-      return;
-    }
-    if (
-      nextTitle === project.title.trim() &&
-      (!renameFolder || nextTitle === basename(project.rootPath))
-    ) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    setError('');
-    const failure = await onRename(nextTitle, renameFolder).catch((caught) =>
-      caught instanceof Error ? caught.message : String(caught),
-    );
-    setBusy(false);
-    if (failure) {
-      setError(failure);
-      return;
-    }
-    onClose();
-  };
-
-  return (
-    <div
-      className="modal-backdrop project-rename-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (!busy && event.target === event.currentTarget) onClose();
-      }}
-    >
-      <form
-        className="project-rename-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="project-rename-title"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <header>
-          <Folder size={17} aria-hidden="true" />
-          <div>
-            <strong id="project-rename-title">
-              {language === 'zh' ? '重命名项目' : 'Rename project'}
-            </strong>
-            <span>{language === 'zh' ? '可同时重命名真实项目文件夹' : 'You can also rename the real project folder'}</span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            title={language === 'zh' ? '关闭' : 'Close'}
-            aria-label={language === 'zh' ? '关闭重命名' : 'Close rename dialog'}
-          >
-            <X size={15} />
-          </button>
-        </header>
-        <label>
-          <span>{language === 'zh' ? '项目名称' : 'Project name'}</span>
-          <input
-            ref={inputRef}
-            value={title}
-            maxLength={120}
-            disabled={busy}
-            aria-invalid={invalid}
-            onChange={(event) => {
-              setTitle(event.target.value);
-              setInvalid(false);
-            }}
-          />
-          {invalid && (
-            <small role="alert">
-              {language === 'zh' ? '项目名称不能为空' : 'Project name cannot be empty'}
-            </small>
-          )}
-        </label>
-        <div className="project-rename-path" title={project.rootPath}>
-          <Folder size={13} aria-hidden="true" />
-          <span>{project.rootPath}</span>
-        </div>
-        <label className="project-rename-folder-option">
-          <input
-            type="checkbox"
-            checked={renameFolder}
-            disabled={busy}
-            onChange={(event) => {
-              setRenameFolder(event.currentTarget.checked);
-              setError('');
-            }}
-          />
-          <span>
-            {language === 'zh'
-              ? '同时重命名项目文件夹（同一父目录）'
-              : 'Also rename the project folder (same parent directory)'}
-          </span>
-        </label>
-        {error ? <p className="project-rename-error" role="alert">{error}</p> : null}
-        <footer>
-          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>
-            {language === 'zh' ? '取消' : 'Cancel'}
-          </button>
-          <button type="submit" className="primary-button" disabled={!title.trim() || busy}>
-            {busy
-              ? language === 'zh' ? '处理中…' : 'Renaming…'
-              : language === 'zh' ? '重命名' : 'Rename'}
-          </button>
-        </footer>
-      </form>
-    </div>
-  );
-}
-
-function CopyToastHost({ language }: { language: AppLanguage }) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    let timer = 0;
-    const show = () => {
-      setVisible(true);
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => setVisible(false), 1500);
-    };
-    window.addEventListener(COPY_FEEDBACK_EVENT, show);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener(COPY_FEEDBACK_EVENT, show);
-    };
-  }, []);
-
-  if (!visible) {
-    return null;
-  }
-  return (
-    <div className="copy-toast" role="status" aria-live="polite">
-      <CheckCircle2 size={15} />
-      <span>{language === 'zh' ? '已复制到剪贴板' : 'Copied to clipboard'}</span>
-    </div>
-  );
-}
-
-function readInitialThemePreference(): ThemePreference {
-  const stored = window.localStorage.getItem('cardbush_theme_mode');
-  window.localStorage.removeItem('cardbush_light_theme_style');
-  if (
-    stored === 'system' ||
-    stored === 'light' ||
-    stored === 'dark'
-  ) {
-    return stored;
-  }
-  if (stored === 'cyberpunk') return 'dark';
-  if (stored === 'custom' && readImportedThemeStyle()) {
-    return readImportedThemeStyle()!.base;
-  }
-  // Retired or invalid selections fall back without reviving a stale legacy value.
-  if (stored) return 'system';
-  const legacy = window.localStorage.getItem('cardbush.theme');
-  if (legacy === 'dark' || legacy === 'cyberpunk') {
-    return 'dark';
-  }
-  if (legacy === 'bright') {
-    return 'light';
-  }
-  return 'system';
-}
-
-function readImportedThemeStyle(): ImportedThemeStyle | null {
-  const raw = window.localStorage.getItem(importedThemeStyleStorageKey);
-  if (!raw?.trim()) return null;
-  try {
-    return normalizeImportedThemeStyle(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-function readInitialLanguageMode(): AppLanguageMode {
-  const stored = window.localStorage.getItem('cardbush_language_mode');
-  if (stored === 'system' || stored === 'zh' || stored === 'en') {
-    return stored;
-  }
-  const legacy = window.localStorage.getItem('cardbush.language');
-  if (legacy === 'zh' || legacy === 'en') {
-    return legacy;
-  }
-  return 'system';
-}
-
-function readInitialSidebarWidth() {
-  const stored = window.localStorage.getItem('cardbush.sidebar_width');
-  if (stored) {
-    const width = Number(stored);
-    if (Number.isFinite(width)) {
-      return clampSidebarWidth(width);
-    }
-  }
-  return defaultSidebarWidth;
-}
-
-function readProjectItems(): ProjectItem[] {
-  const raw = window.localStorage.getItem('cardbush_projects');
-  if (!raw?.trim()) {
-    return [];
-  }
-  try {
-    const decoded: unknown = JSON.parse(raw);
-    if (!Array.isArray(decoded)) {
-      return [];
-    }
-    const result: ProjectItem[] = [];
-    for (const item of decoded) {
-      const value = item != null && typeof item === 'object'
-        ? (item as Record<string, unknown>)
-        : {};
-      const rootPath = String(value.rootPath ?? '').trim();
-      const id = String(value.id ?? '').trim() || stableProjectId(rootPath);
-      if (
-        !rootPath ||
-        result.some((project) => project.id === id || samePath(project.rootPath, rootPath))
-      ) {
-        continue;
-      }
-      const changedCount = Number(value.changedCount);
-      result.push({
-        id,
-        title: String(value.title ?? '').trim() || basename(rootPath),
-        rootPath,
-        missing: Boolean(value.missing),
-        pinned: Boolean(value.pinned),
-        archived: Boolean(value.archived),
-        branch: String(value.branch ?? '').trim(),
-        changedCount: Number.isFinite(changedCount) ? changedCount : 0,
-      });
-    }
-    return result;
-  } catch {
-    return [];
-  }
-}
-
-function persistProjectItems(value: ProjectItem[]) {
-  window.localStorage.setItem('cardbush_projects', JSON.stringify(value));
-}
-
-function stableProjectId(rootPath: string) {
-  return `project-${rootPath.startsWith('ssh://') ? rootPath : rootPath.replaceAll('\\', '/').toLowerCase()}`;
-}
-
-function readDisabledSkillNames() {
-  const raw = window.localStorage.getItem('cardbush_disabled_skills');
-  if (!raw?.trim()) {
-    return new Set<string>();
-  }
-  try {
-    const decoded: unknown = JSON.parse(raw);
-    return new Set(
-      Array.isArray(decoded)
-        ? decoded.map((item) => String(item)).filter((item) => item.trim())
-        : [],
-    );
-  } catch {
-    return new Set<string>();
-  }
-}
-
-function persistDisabledSkillNames(value: Set<string>) {
-  window.localStorage.setItem(
-    'cardbush_disabled_skills',
-    JSON.stringify([...value].sort()),
-  );
-}
-
-function readVisualInputEnabled() {
-  return window.localStorage.getItem('cardbush_visual_input_enabled') === 'true';
-}
-
-function persistVisualInputEnabled(value: boolean) {
-  window.localStorage.setItem('cardbush_visual_input_enabled', value ? 'true' : 'false');
-}
-
-function clampSidebarWidth(value: number) {
-  return Math.max(minSidebarWidth, Math.min(maxSidebarWidth, Math.round(value)));
-}
-
-function readCompanionSettings(): CompanionSettings {
-  return normalizeCompanionSettings({
-    size: window.localStorage.getItem('cardbush_cardling_size') as CompanionSize,
-    opacity: Number(window.localStorage.getItem('cardbush_cardling_opacity')),
-    motion: window.localStorage.getItem('cardbush_cardling_motion') as CompanionMotionMode,
-  });
-}
-
-function normalizeCompanionSettings(
-  value?: Partial<CompanionSettings>,
-): CompanionSettings {
-  const size = normalizeCompanionSize(value?.size);
-  const motion = normalizeCompanionMotion(value?.motion);
-  const opacity = Number(value?.opacity);
-  return {
-    size,
-    motion,
-    opacity: Number.isFinite(opacity)
-      ? Math.max(0.55, Math.min(1, Math.round(opacity * 100) / 100))
-      : defaultAppSettings.companion.opacity,
-  };
-}
-
-function normalizeCompanionSize(value?: string): CompanionSize {
-  return value === 'compact' || value === 'large' || value === 'normal'
-    ? value
-    : defaultAppSettings.companion.size;
-}
-
-function normalizeCompanionMotion(value?: string): CompanionMotionMode {
-  return value === 'full' || value === 'reduced' || value === 'off'
-    ? value
-    : defaultAppSettings.companion.motion;
-}
-
-function systemPrefersDark() {
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-}
-
-function readSystemLanguage(): AppLanguage {
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
-}
-
-function resolveTheme(
-  preference: ThemePreference,
-  prefersDark: boolean,
-): ThemeMode {
-  if (preference === 'dark') {
-    return 'dark';
-  }
-  if (preference === 'light') {
-    return 'bright';
-  }
-  return prefersDark ? 'dark' : 'bright';
-}
-
-function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) {
-  return mode === 'system' ? systemLanguage : mode;
-}
-
-function readInitialAppSettings(): AppSettingsState {
-  return normalizeAppSettings({
-    appearance: readAppearance(),
-    conversationStyle: readConversationStyle(),
-    individuation: readIndividuation(),
-    proxy: {
-      mode: proxyModeFromStorage(
-        window.localStorage.getItem('cardbush_proxy_mode'),
-        window.localStorage.getItem('cardbush_proxy_http') ?? '',
-        window.localStorage.getItem('cardbush_proxy_https') ?? '',
-      ),
-      httpProxy: window.localStorage.getItem('cardbush_proxy_http') ?? '',
-      httpsProxy: window.localStorage.getItem('cardbush_proxy_https') ?? '',
-      noProxy:
-        window.localStorage.getItem('cardbush_proxy_no_proxy') ??
-        '127.0.0.1,localhost,::1',
-    },
-    browser: {
-      privacyMode:
-        window.localStorage.getItem('cardbush_browser_privacy_mode') === 'true',
-    },
-    thinking: {
-      visible: window.localStorage.getItem('cardbush_thinking_visible') === 'true',
-    },
-    guidance: {
-      deliveryMode:
-        window.localStorage.getItem('cardbush_guidance_delivery_mode') === 'immediate'
-          ? 'immediate'
-          : 'queue',
-    },
-    terminal: {
-      runtime: terminalRuntimeFromStorage(
-        window.localStorage.getItem('cardbush_terminal_runtime'),
-      ),
-    },
-    managedModelConfigs: readManagedModelConfigs(),
-    importedThemeStyle: readImportedThemeStyle(),
-    companionEnabled:
-      window.localStorage.getItem('cardbush_cardling_enabled') !== 'false',
-    companion: readCompanionSettings(),
-    font: {
-      family: window.localStorage.getItem('cardbush_font_family') ?? '',
-      displayName: window.localStorage.getItem('cardbush_font_display_name') ?? '',
-      filePath: window.localStorage.getItem('cardbush_font_file_path') ?? '',
-    },
-    user: {
-      name:
-        window.localStorage.getItem('cardbush_user_name') ??
-        defaultAppSettings.user.name,
-      membership:
-        window.localStorage.getItem('cardbush_user_membership') ??
-        defaultAppSettings.user.membership,
-      avatarEmoji:
-        window.localStorage.getItem('cardbush_user_avatar') ??
-        defaultAppSettings.user.avatarEmoji,
-      avatarImagePath: window.localStorage.getItem('cardbush_user_avatar_image') ?? '',
-    },
-  });
-}
-
-function readManagedModelConfigs() {
-  const raw =
-    window.localStorage.getItem('cardbush_managed_model_configs') ??
-    window.localStorage.getItem('cardbush_managed_models');
-  if (!raw?.trim()) {
-    return [];
-  }
-  try {
-    const decoded: unknown = JSON.parse(raw);
-    if (!Array.isArray(decoded)) {
-      return [];
-    }
-    if (decoded.every((item) => typeof item === 'string')) {
-      return decoded.map((modelName) => ({
-        id: '',
-        provider: 'custom',
-        apiKey: '',
-        modelName,
-        baseUrl: '',
-        maxContextTokens: undefined,
-        maxCompletionTokens: undefined,
-      }));
-    }
-    return decoded
-      .filter((item): item is Record<string, unknown> => isRecord(item))
-      .map((item) => ({
-        id: String(item.id ?? ''),
-        provider: String(item.provider ?? ''),
-        apiKey: String(item.apiKey ?? ''),
-        hasApiKey: item.hasApiKey === true,
-        apiKeyMasked:
-          typeof item.apiKeyMasked === 'string' ? item.apiKeyMasked : undefined,
-        modelName: String(item.modelName ?? ''),
-        baseUrl: String(item.baseUrl ?? ''),
-        maxContextTokens: normalizeMaxContextTokens(
-          item.maxContextTokens ??
-            item.max_context_tokens ??
-            item.contextWindowTokens ??
-            item.context_window_tokens ??
-            item.maxInputTokens ??
-            item.max_input_tokens,
-        ),
-        maxCompletionTokens: normalizeMaxCompletionTokens(
-          item.maxCompletionTokens ??
-            item.max_completion_tokens ??
-            item.maxOutputTokens ??
-            item.max_output_tokens,
-        ),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
-  const httpProxy = settings.proxy.httpProxy.trim();
-  const httpsProxy = settings.proxy.httpsProxy.trim();
-  return {
-    appearance: normalizeAppearance(settings.appearance),
-    conversationStyle: normalizeConversationStylePreferences(settings.conversationStyle),
-    individuation: normalizeIndividuation(settings.individuation),
-    proxy: {
-      mode: normalizeProxyMode(settings.proxy.mode),
-      httpProxy,
-      httpsProxy,
-      noProxy:
-        settings.proxy.noProxy.trim() || defaultAppSettings.proxy.noProxy,
-    },
-    browser: {
-      privacyMode: settings.browser.privacyMode === true,
-    },
-    thinking: {
-      visible: settings.thinking?.visible === true,
-    },
-    guidance: {
-      deliveryMode:
-        settings.guidance?.deliveryMode === 'immediate' ? 'immediate' : 'queue',
-    },
-    terminal: {
-      runtime: normalizeTerminalRuntime(settings.terminal?.runtime),
-    },
-    managedModelConfigs: normalizeManagedModelConfigs(
-      settings.managedModelConfigs,
-    ),
-    importedThemeStyle: normalizeImportedThemeStyle(settings.importedThemeStyle),
-    companionEnabled: settings.companionEnabled !== false,
-    companion: normalizeCompanionSettings(settings.companion),
-    font: {
-      family: settings.font.family.trim(),
-      displayName: settings.font.displayName.trim(),
-      filePath: settings.font.filePath.trim(),
-    },
-    user: {
-      name: settings.user.name.trim() || defaultAppSettings.user.name,
-      membership:
-        settings.user.membership.trim() || defaultAppSettings.user.membership,
-      avatarEmoji:
-        settings.user.avatarEmoji.trim() || defaultAppSettings.user.avatarEmoji,
-      avatarImagePath: settings.user.avatarImagePath?.trim() ?? '',
-    },
-  };
-}
-
-function proxyModeFromStorage(
-  value: string | null,
-  httpProxy: string,
-  httpsProxy: string,
-): AppSettingsState['proxy']['mode'] {
-  if (value === 'system') {
-    return 'system';
-  }
-  if (value === 'manual') {
-    return httpProxy.trim() || httpsProxy.trim() ? 'manual' : 'none';
-  }
-  return value === 'none' ? 'none' : defaultAppSettings.proxy.mode;
-}
-
-function normalizeProxyMode(
-  value: AppSettingsState['proxy']['mode'],
-) {
-  if (value === 'system') {
-    return 'system';
-  }
-  if (value === 'manual') {
-    return 'manual';
-  }
-  return 'none';
-}
-
-function terminalRuntimeFromStorage(value: string | null): TerminalRuntime {
-  return normalizeTerminalRuntime(value as TerminalRuntime | undefined);
-}
-
-function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
-  return normalizeHostTerminalRuntime(value);
-}
-
-function persistAppSettings(settings: AppSettingsState) {
-  window.localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(normalizeAppearance(settings.appearance)));
-  saveConversationStyle(settings.conversationStyle);
-  saveIndividuation(settings.individuation);
-  window.localStorage.setItem('cardbush_proxy_mode', settings.proxy.mode);
-  window.localStorage.setItem('cardbush_proxy_http', settings.proxy.httpProxy);
-  window.localStorage.setItem('cardbush_proxy_https', settings.proxy.httpsProxy);
-  window.localStorage.setItem('cardbush_proxy_no_proxy', settings.proxy.noProxy);
-  window.localStorage.setItem(
-    'cardbush_browser_privacy_mode',
-    String(settings.browser.privacyMode),
-  );
-  window.localStorage.removeItem('cardbush_shadow_accent_color');
-  window.localStorage.setItem(
-    'cardbush_thinking_visible',
-    String(settings.thinking.visible),
-  );
-  window.localStorage.setItem(
-    'cardbush_guidance_delivery_mode',
-    settings.guidance.deliveryMode,
-  );
-  window.localStorage.removeItem('cardbush_thinking_accent_color');
-  window.localStorage.setItem(
-    'cardbush_terminal_runtime',
-    normalizeTerminalRuntime(settings.terminal.runtime),
-  );
-  window.localStorage.setItem(
-    'cardbush_managed_model_configs',
-    JSON.stringify(settings.managedModelConfigs.map((config) => ({
-      ...config,
-      apiKey: '',
-      hasApiKey: config.hasApiKey === true || Boolean(config.apiKey),
-      apiKeyMasked: config.apiKeyMasked,
-    }))),
-  );
-  window.localStorage.removeItem('cardbush_runtime_default_model_id');
-  window.localStorage.removeItem('cardbush_background_image_path');
-  if (settings.importedThemeStyle) {
-    window.localStorage.setItem(
-      importedThemeStyleStorageKey,
-      JSON.stringify(settings.importedThemeStyle),
-    );
-  } else {
-    window.localStorage.removeItem(importedThemeStyleStorageKey);
-  }
-  window.localStorage.setItem(
-    'cardbush_cardling_enabled',
-    String(settings.companionEnabled),
-  );
-  window.localStorage.setItem('cardbush_cardling_size', settings.companion.size);
-  window.localStorage.setItem(
-    'cardbush_cardling_opacity',
-    String(settings.companion.opacity),
-  );
-  window.localStorage.setItem('cardbush_cardling_motion', settings.companion.motion);
-  window.localStorage.setItem('cardbush_font_family', settings.font.family);
-  window.localStorage.setItem(
-    'cardbush_font_display_name',
-    settings.font.displayName,
-  );
-  window.localStorage.setItem('cardbush_font_file_path', settings.font.filePath);
-  window.localStorage.setItem('cardbush_user_name', settings.user.name);
-  window.localStorage.setItem('cardbush_user_membership', settings.user.membership);
-  window.localStorage.setItem('cardbush_user_avatar', settings.user.avatarEmoji);
-  window.localStorage.setItem(
-    'cardbush_user_avatar_image',
-    settings.user.avatarImagePath ?? '',
-  );
-}
-
-function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
-  const seen = new Set<string>();
-  const usedIds = new Set<string>();
-  const result: ManagedModelConfig[] = [];
-  for (const raw of source) {
-    const provider = normalizeProvider(raw.provider);
-    const modelName = raw.modelName.trim();
-    const apiKey = raw.apiKey.trim();
-    const baseUrl = raw.baseUrl.trim();
-    const maxContextTokens = normalizeMaxContextTokens(raw.maxContextTokens);
-    const maxCompletionTokens = normalizeMaxCompletionTokens(
-      raw.maxCompletionTokens,
-    );
-    if (!provider || !modelName) {
-      continue;
-    }
-    const key = raw.id.trim()
-      ? `id:${raw.id.trim().toLowerCase()}`
-      : `model:${provider.toLowerCase()}\u0000${modelName.toLowerCase()}\u0000${baseUrl.toLowerCase()}`;
-    if (!seen.add(key)) {
-      continue;
-    }
-    let id =
-      raw.id.trim() || stableModelConfigId(provider, modelName, apiKey, baseUrl);
-    let suffix = 2;
-    const baseId = id;
-    while (usedIds.has(id)) {
-      id = `${baseId}-${suffix}`;
-      suffix += 1;
-    }
-    usedIds.add(id);
-    result.push({
-      id,
-      provider,
-      apiKey,
-      hasApiKey: raw.hasApiKey === true || Boolean(apiKey),
-      apiKeyMasked: raw.apiKeyMasked?.trim() || undefined,
-      apiProtocol: raw.apiProtocol ?? 'openai_responses',
-      anthropicThinkingMode: raw.anthropicThinkingMode,
-      defaultHeaders: raw.defaultHeaders ?? {},
-      modelName,
-      baseUrl,
-      ...(maxContextTokens ? { maxContextTokens } : {}),
-      ...(maxCompletionTokens ? { maxCompletionTokens } : {}),
-    });
-  }
-  return result;
-}
-
-function mergeLegacyModelCredentials(
-  productHostModels: ManagedModelConfig[],
-  legacyModels: ManagedModelConfig[],
-) {
-  let changed = false;
-  const models = productHostModels.map((model) => {
-    if (model.hasApiKey === true || model.apiKey.trim()) {
-      return model;
-    }
-    const id = model.id.trim().toLowerCase();
-    const provider = normalizeProvider(model.provider);
-    const modelName = model.modelName.trim().toLowerCase();
-    const baseUrl = model.baseUrl.trim().toLowerCase();
-    const candidates = legacyModels.filter((legacy) =>
-      legacy.apiKey.trim() &&
-      normalizeProvider(legacy.provider) === provider &&
-      legacy.modelName.trim().toLowerCase() === modelName
-    );
-    const legacy = legacyModels.find((candidate) =>
-      id && candidate.id.trim().toLowerCase() === id && candidate.apiKey.trim()
-    ) ?? candidates.find((candidate) => candidate.baseUrl.trim().toLowerCase() === baseUrl)
-      ?? (candidates.length === 1 ? candidates[0] : undefined);
-    if (!legacy) {
-      return model;
-    }
-    changed = true;
-    return {
-      ...model,
-      apiKey: legacy.apiKey.trim(),
-      hasApiKey: true,
-    };
-  });
-  return { models, changed };
-}
-
-function normalizeProvider(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return normalized === 'google' ? 'gemini' : normalized;
-}
-
-function normalizeMaxContextTokens(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
-function stableModelConfigId(
-  provider: string,
-  modelName: string,
-  apiKey: string,
-  baseUrl: string,
-) {
-  const raw = `${provider}\u0000${modelName}\u0000${apiKey}\u0000${baseUrl}`.toLowerCase();
-  let hash = 2166136261;
-  for (let index = 0; index < raw.length; index += 1) {
-    hash ^= raw.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `mm-${(hash >>> 0).toString(36)}`;
-}
-
-function effectiveModels(configs: ManagedModelConfig[]) {
-  const seen = new Set<string>();
-  return configs
-    .filter((item) => item.id.trim() && seen.add(item.id.trim().toLowerCase()));
-}
-
-function defaultModelConfigId(configs: ManagedModelConfig[], selectedModel: string) {
-  const selected = selectedModel.trim().toLowerCase();
-  return (
-    configs.find((item) => item.id.trim().toLowerCase() === selected)?.id ??
-    configs.find((item) => item.modelName.trim().toLowerCase() === selected)?.id ??
-    configs[0]?.id ??
-    ''
-  );
-}
-
-function modelConfigSignature(configs: ManagedModelConfig[], defaultModelId: string) {
-  return JSON.stringify({
-    defaultModelId,
-    configs: normalizeManagedModelConfigs(configs),
-  });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function normalizeMaxCompletionTokens(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
-function FeaturePanelLoading({ language }: { language: AppLanguage }) {
-  return (
-    <div className="feature-content feature-loading">
-      <LoaderCircle size={18} />
-      <span>{language === 'zh' ? '正在加载...' : 'Loading...'}</span>
-    </div>
-  );
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -3890,69 +2868,3 @@ function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
 function snapshotRevertFallbackAllowed(error: unknown) {
   return isRuntimeWorkspaceSnapshotUnavailableError(error);
 }
-
-function FeaturePanel({
-  language,
-  backendCapabilities,
-  onOpenPluginPrompt,
-  section,
-  activeProjectDir,
-  workflowValidationAvailable,
-  inspectorOpen,
-  onToggleInspector,
-  skills,
-  disabledSkillNames,
-  onToggleSkill,
-  onReloadSkills,
-  onLoadSkillDetail,
-  onCreateAutomation,
-  onOpenConversation,
-}: {
-  language: AppLanguage;
-  backendCapabilities: BackendCapabilities;
-  onOpenPluginPrompt: (prompt: string) => void;
-  section: AppSection;
-  activeProjectDir?: string;
-  workflowValidationAvailable: boolean;
-  inspectorOpen: boolean;
-  onToggleInspector: () => void;
-  skills: SkillSummary[];
-  disabledSkillNames: Set<string>;
-  onToggleSkill: (skillName: string, enabled: boolean) => void;
-  onReloadSkills: () => Promise<SkillSummary[]>;
-  onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onCreateAutomation: () => void;
-  onOpenConversation: (conversationId: string) => void;
-}) {
-  const teamWorkspace = useRuntimeDelegationWorkspace();
-  const label = section === 'team' ? teamWorkspace.title || sectionLabels[section][language] : sectionLabels[section][language];
-  return (
-    <div className="feature-panel">
-      <TopBar
-        title={label}
-        language={language}
-        inspectorOpen={inspectorOpen}
-        onToggleInspector={onToggleInspector}
-      />
-      <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <LazyFeatureContentPanel
-          language={language}
-          backendCapabilities={backendCapabilities}
-          onOpenPluginPrompt={onOpenPluginPrompt}
-          section={section}
-          activeProjectDir={activeProjectDir}
-          workflowValidationAvailable={workflowValidationAvailable}
-          skills={skills}
-          disabledSkillNames={disabledSkillNames}
-          onToggleSkill={onToggleSkill}
-          onReloadSkills={onReloadSkills}
-          onLoadSkillDetail={onLoadSkillDetail}
-          onCreateAutomation={onCreateAutomation}
-          onOpenConversation={onOpenConversation}
-        />
-      </Suspense>
-    </div>
-  );
-}
-import { TaskWorkspaceBar } from './features/chat/TaskWorkspaceBar';
-import { OPEN_AGENT_CONVERSATION, type AgentConversationTarget } from './features/agents/agentNavigation';

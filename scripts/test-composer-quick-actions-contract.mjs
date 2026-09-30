@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,25 +14,25 @@ const composerPath = path.join(
   'composer',
   'Composer.tsx',
 );
-const source = fs.readFileSync(composerPath, 'utf8');
-const fileDropSource = fs.readFileSync(path.join(path.dirname(composerPath), 'useFileDropZone.ts'), 'utf8');
-const mainSource = fs.readFileSync(
+const source = readSourceFile(composerPath, 'utf8');
+const fileDropSource = readSourceFile(path.join(path.dirname(composerPath), 'useFileDropZone.ts'), 'utf8');
+const mainSource = readSourceFile(
   path.join(process.cwd(), 'electron', 'main.ts'),
   'utf8',
 );
-const preloadSource = fs.readFileSync(
+const preloadSource = readSourceFile(
   path.join(process.cwd(), 'electron', 'preload.ts'),
   'utf8',
 );
-const stylesSource = fs.readFileSync(
+const stylesSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
-const chatHookSource = fs.readFileSync(
+const chatHookSource = readSourceFile(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
-const messageBubbleSource = fs.readFileSync(
+const messageBubbleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
@@ -43,7 +44,7 @@ const slashBlock = source.match(
 assert.ok(slashBlock, 'slash quick-action block is missing');
 assert.deepEqual(
   [...slashBlock.matchAll(/id:\s*'([^']+)'/g)].map((match) => match[1]),
-  ['/model', '/goal', '/skill', '/collect', '/new'],
+  ['/style', '/model', '/goal', '/skill', '/collect', '/new'],
 );
 assert.match(slashBlock, /id: delegationCommand/);
 assert.match(slashBlock, /模型切换/);
@@ -94,22 +95,22 @@ assert.match(source, /value=\{composerInputValue\}/);
 assert.match(source, /onDraftChange\(`\/goal\$\{next \? ` \$\{next\}` : ' '\}`\)/);
 assert.match(chatHookSource, /splitExplicitAttachmentMentions\(content\)/);
 const attachmentExports = {};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/shared/localPaths.ts', 'utf8'), {
+vm.runInNewContext(ts.transpileModule(readSourceFile('src/shared/localPaths.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: attachmentExports });
 for (const content of ['/model', '/goal task', '/skill', '/collect', '/new', '[skill](<C:/skills/a/SKILL.md>)']) {
   assert.equal(attachmentExports.splitExplicitAttachmentMentions(content).paths.length, 0,
     'commands and skill links must remain prompt text, not file attachments');
 }
-assert.doesNotMatch(slashBlock.split('commands.push')[0], /title:\s*['"`]\//, 'built-in quick actions retain their descriptive labels');
+assert.match(slashBlock, /id: '\/style', title: '\/style', subtitle: language === 'zh' \? '选择当前会话的对话风格'/, 'the style command keeps its descriptive subtitle');
 assert.match(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.match(source, /referenceableUserMessages\(referenceContext.messages, referenceContext.sessionId\)/);
 assert.match(
   source,
-  /`\$\{selectedModelConfig\.modelName\} · \$\{selectedModelConfig\.provider\}`/,
-  'the compact model label must place the provider name last',
+  /selectedModelConfig\s*\? selectedModelConfig\.modelName/,
+  'the outer model label shows only the model name',
 );
-assert.match(source, /const \[fileAttachments, setFileAttachments\] = useState/);
+assert.match(source, /const \[fileAttachments, setFileAttachments\] = useConversationViewState/);
 assert.match(
   source,
   /const attachmentPaths = \[\.\.\.imageAttachments, \.\.\.fileAttachments\][\s\S]*?\.map\(\(item\) => `@\$\{item\.path\}`\)/,

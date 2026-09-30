@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { InspectorTab } from './inspectorTabs';
 import type { AppLanguage } from '../../types';
 import { panelDividers, panelRects, type PanelLayout } from './panelLayout';
@@ -15,9 +15,56 @@ export function InspectorTabPages({ tabs, activeId, children, layout = null, onR
   renderFrame?: (tab: InspectorTab) => ReactNode;
   onActivate?: (id: string) => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null), dragging = useRef<{ path: string; ratio: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const cancelDrag = useRef<((restore?: boolean) => void) | null>(null);
+  const resize = useRef(onResize);
+  resize.current = onResize;
   const rects = panelRects(layout);
-  useEffect(() => () => document.body.classList.remove('inspector-layout-resizing'), []);
+  useEffect(() => () => cancelDrag.current?.(false), []);
+  useEffect(() => { if (!layout) cancelDrag.current?.(false); }, [layout]);
+
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>, divider: ReturnType<typeof panelDividers>[number]) => {
+    if (event.button !== 0 || !onResize) return;
+    cancelDrag.current?.();
+    const bounds = ref.current?.getBoundingClientRect();
+    if (!bounds) return;
+    event.preventDefault();
+    const handle = event.currentTarget, pointerId = event.pointerId;
+    const horizontal = divider.axis === 'x';
+    const start = horizontal ? divider.rect.x : divider.rect.y;
+    const size = horizontal ? divider.rect.width : divider.rect.height;
+    const grabOffset = horizontal
+      ? event.clientX - bounds.left - (start + size * divider.ratio) * bounds.width
+      : event.clientY - bounds.top - (start + size * divider.ratio) * bounds.height;
+    const update = (next: PointerEvent) => {
+      if (next.pointerId !== pointerId) return;
+      const current = ref.current?.getBoundingClientRect();
+      if (!current || current.width <= 0 || current.height <= 0) return;
+      const position = horizontal ? (next.clientX - grabOffset - current.left) / current.width
+        : (next.clientY - grabOffset - current.top) / current.height;
+      resize.current?.(divider.path, (position - start) / size);
+    };
+    const finish = (restore = true) => {
+      cancelDrag.current = null;
+      document.body.classList.remove('inspector-layout-resizing');
+      window.removeEventListener('pointermove', update);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', blur);
+      if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+      if (restore) resize.current?.(divider.path, divider.ratio);
+    };
+    const release = (next: PointerEvent) => { if (next.pointerId === pointerId) { update(next); finish(false); } };
+    const cancel = (next: PointerEvent) => { if (next.pointerId === pointerId) finish(); };
+    const blur = () => finish();
+    cancelDrag.current = finish;
+    handle.setPointerCapture(pointerId);
+    document.body.classList.add('inspector-layout-resizing');
+    window.addEventListener('pointermove', update);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', blur);
+  };
   return <div ref={ref} className={`right-inspector-tab-pages${layout ? ' tiled' : ''}`}>
     {tabs.map(tab => {
       const active = layout ? Boolean(rects[tab.id]) : tab.id === activeId, rect = rects[tab.id];
@@ -37,16 +84,8 @@ export function InspectorTabPages({ tabs, activeId, children, layout = null, onR
       className={`inspector-tile-divider axis-${divider.axis}`}
       style={divider.axis === 'x' ? { left: `${(divider.rect.x + divider.rect.width * divider.ratio) * 100}%`, top: `${divider.rect.y * 100}%`, height: `${divider.rect.height * 100}%` }
         : { top: `${(divider.rect.y + divider.rect.height * divider.ratio) * 100}%`, left: `${divider.rect.x * 100}%`, width: `${divider.rect.width * 100}%` }}
-      onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); dragging.current = { path: divider.path, ratio: divider.ratio }; document.body.classList.add('inspector-layout-resizing'); }}
-      onPointerMove={event => { if (dragging.current?.path !== divider.path || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        const bounds = ref.current?.getBoundingClientRect(); if (!bounds) return;
-        const value = divider.axis === 'x' ? ((event.clientX - bounds.left) / bounds.width - divider.rect.x) / divider.rect.width
-          : ((event.clientY - bounds.top) / bounds.height - divider.rect.y) / divider.rect.height;
-        onResize?.(divider.path, value);
-      }}
-      onPointerUp={event => { dragging.current = null; document.body.classList.remove('inspector-layout-resizing'); event.currentTarget.releasePointerCapture(event.pointerId); }}
-      onPointerCancel={() => { if (dragging.current) onResize?.(dragging.current.path, dragging.current.ratio); dragging.current = null; document.body.classList.remove('inspector-layout-resizing'); }}
-      onLostPointerCapture={() => { dragging.current = null; document.body.classList.remove('inspector-layout-resizing'); }}
+      onPointerDown={event => beginResize(event, divider)}
+      onLostPointerCapture={() => cancelDrag.current?.()}
       onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); onResize?.(divider.path, divider.ratio + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -.025 : .025)); } }}
     />)}
   </div>;

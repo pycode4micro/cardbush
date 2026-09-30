@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import vm from 'node:vm';
 
 import ts from 'typescript';
 
-const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'utf8');
 const main = read('electron', 'main.ts');
 const preload = read('electron', 'preload.ts');
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
@@ -19,7 +20,7 @@ const guiRunner = read('scripts', 'run-electron-gui.mjs');
 const devRunner = read('scripts', 'run-electron-dev.mjs');
 const electronRuntime = read('scripts', 'cardbush-electron-runtime.mjs');
 const iconGenerator = read('scripts', 'generate-cardbush-icon.cjs');
-const windowsIcon = fs.readFileSync(path.join(process.cwd(), 'assets', 'cardbush.ico'));
+const windowsIcon = readSourceFile(path.join(process.cwd(), 'assets', 'cardbush.ico'));
 const windowAppearance = read('electron', 'windowAppearance.ts');
 
 assert.match(main, /Notification\.isSupported\(\)/);

@@ -16,6 +16,7 @@ import { InspectorWebview } from '${local('src/features/inspector/InspectorWebvi
 import { InspectorTabPages } from '${local('src/features/inspector/InspectorTabPages.tsx')}';
 import { addPanel, panelRects, resizePanelSplit, swapPanels } from '${local('src/features/inspector/panelLayout.ts')}';
 import { InspectorTileFrame } from '${local('src/features/inspector/InspectorTileFrame.tsx')}';
+import { RightInspectorResizer } from '${local('src/components/RightInspectorResizer.tsx')}';
 import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
 import { BrowserStartPageSettings } from '${local('src/features/browser/BrowserSettingsPanel.tsx')}';
 import { newBrowserTab } from '${local('src/features/browser/browserStartPage.ts')}';
@@ -28,17 +29,19 @@ function Harness() {
   const [settings,setSettings]=React.useState(false);
   const [layout,setLayout]=React.useState(null);
   const [covered,setCovered]=React.useState(false);
+  const [width,setWidth]=React.useState(820);
   const open=React.useCallback(detail=>{
     window.openedLinks.push(detail.target);
     tabs.openTab({id:detail.newTab ? crypto.randomUUID() : detail.target,kind:'resource',detail});
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
-  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered};
+  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth};
   const active=navigation[tabs.activeId];
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
-    <main className={'desktop-shell sidebar-is-collapsed'+(covered?' inspector-covered':'')} style={{'--conversation-pane-min-width':'0px'}}>
-    <section className="main-stage"/>
-    <aside className="right-inspector" style={{'--right-inspector-width':'820px'}}>
+    <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
+    <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/></div></section>
+    <aside className="right-inspector" style={{'--right-inspector-width':width+'px'}}>
+    <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} label="Resize workspace"/>
     <div className="right-inspector-viewport"><div className="right-inspector-content">
       <header>{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} onClick={()=>tabs.activateTab(tab.id)}>{navigation[tab.id]?.title||tab.id}</button>)}</header>
       <nav><button id="new-tab" onClick={async()=>{setSettings(false);open(await newBrowserTab());}}>新标签页</button>

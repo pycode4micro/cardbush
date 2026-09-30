@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -5,7 +6,7 @@ import path from 'node:path';
 import ts from 'typescript';
 
 const root = process.cwd();
-const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(root, ...parts), 'utf8');
 const types = read('src', 'types.ts');
 const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
 const runtimeProtocol = read('packages', 'bush-protocol', 'src', 'runtimeHost.ts');

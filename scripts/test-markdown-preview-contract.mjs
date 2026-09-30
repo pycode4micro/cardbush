@@ -1,9 +1,10 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'utf8');
 const app = readAppViewSources();
 const styles = read('src', 'styles', 'app.css');
 const main = read('electron', 'main.ts');
@@ -24,7 +25,7 @@ assert.match(app, /MessageFileReferenceScope workspaceRoot=\{parentDirectory\(pa
 assert.match(app, /setFilePreviewRevision\(\(value\) => value \+ 1\)/);
 assert.match(main, /ipcMain\.handle\('shell:read-text-preview'/);
 assert.match(main, /return readTextPreviewResult\(normalizedPath\)/);
-assert.match(main, /import \{ readTextPreviewResult, renderTextFilePreview \} from '\.\/textPreview'/);
+assert.match(main, /import \{[^}]*readTextPreviewResult, renderTextFilePreview \} from '\.\/textPreview'/);
 assert.match(textPreview, /const maxPreviewBytes = 2 \* 1024 \* 1024/);
 assert.match(textPreview, /Preview target is not a text file/);
 assert.doesNotMatch(main, /zeroBytes \/ bytes\.length/);

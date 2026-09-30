@@ -27,7 +27,9 @@ body.inspector-layout-resizing { user-select: none; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-body { padding-bottom: 70px; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-resizer { display: none; }
-body.right-inspector-resizing .desktop-shell > .right-inspector { --side-panel-width: min(var(--right-inspector-width), 100cqw); position: absolute; right: 0; top: 0; bottom: 0; z-index: 25; transition: none; }
+/* Keep the inspector in the same layout while dragging. Taking it out of flex
+   expands the conversation underneath it and changes the pointer's origin. */
+body.right-inspector-resizing .desktop-shell > .right-inspector { transition: none; }
 .desktop-shell { position: relative; }
 .inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
 .inspector-cover-capsule { display: flex; background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); border-radius: 28px; padding: 4px; box-shadow: 0 6px 25px var(--shadow); pointer-events: auto; }

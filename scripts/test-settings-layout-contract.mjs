@@ -1,9 +1,11 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
-const app = read('src', 'App.tsx');
+const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'utf8');
+const app = readAppViewSources();
 const types = read('src', 'types.ts');
 const settings = read('src', 'features', 'SettingsView.tsx');
 const navigation = read('src', 'features', 'settings', 'settingsNavigation.ts');
@@ -132,9 +134,9 @@ assert.match(
 );
 assert.match(css, /\.settings-card-body\s*\{/);
 assert.match(modelsPanel, /\[adding, setAdding\] = useState\(false\)/);
-assert.match(modelsPanel, /bodyHidden=\{!adding\}/);
-assert.match(modelsPanel, /aria-expanded=\{adding\}/);
-assert.match(modelsPanel, /className="secondary-button danger model-clear-all-button"[\s\S]*?if \(window\.confirm\([\s\S]*?void save\(\{ models: \[\], defaultModelId: '' \}\)/);
+assert.match(modelsPanel, /\(adding \|\| editing\) && <ModelFormDialog/);
+assert.match(modelsPanel, /setAdding\(true\); setEditing\(''\)/);
+assert.match(modelsPanel, /await confirmAction\([\s\S]*?void save\(\{ defaultModelId: '', models: \[\] \}\)/);
 assert.match(controls, /bodyHidden\?: boolean/);
 assert.match(controls, /!bodyHidden && <div className="settings-card-body">/);
 assert.match(css, /\.model-settings-stack\s*\{[\s\S]*?container-name:\s*model-settings/);

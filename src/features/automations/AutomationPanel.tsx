@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, CalendarDays, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare, Check, Mail, ChevronRight, Search } from 'lucide-react';
+import { CalendarClock, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare, Check, Mail, ChevronRight, Search } from 'lucide-react';
 import { isAutomationResult } from '@cardbush/bush-protocol';
 import { openAutomationRun } from './automationEvents';
 import type { AutomationCommand, AutomationDefinition, AutomationJob, AutomationOverview, AutomationRun } from '@cardbush/bush-protocol';
-import { AutomationCalendar } from './AutomationCalendar';
 import { usePageState } from '../navigation/PageNavigation';
 import { AutomationPlanCard } from './AutomationPlanCard';
-import type { AutomationCalendarEntry } from './automationCalendarModel';
 import './automations.css';
 
 const localInput = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
@@ -36,7 +34,8 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
-  const [view, setView] = usePageState<'calendar' | 'unread' | 'today' | 'all' | 'plans'>('automation-view', 'calendar');
+  const [savedView, setView] = usePageState<'calendar' | 'unread' | 'today' | 'all' | 'plans'>('automation-view', 'plans');
+  const view = savedView === 'calendar' ? 'plans' : savedView;
   const [form, setForm] = useState<{ id: string; revision: number; name: string; prompt: string; sessionId: string; executionMode: 'isolated' | 'conversation'; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
   const generation = useRef(0), mutation = useRef(false);
   const refresh = useCallback(async () => {
@@ -100,21 +99,14 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   }
   const triggerLabel = (job: AutomationJob) => job.trigger.kind === 'event' ? `${eventLabel(job.trigger.event)}${job.trigger.tool ? ` · ${job.trigger.tool}` : ''}`
     : job.trigger.kind === 'interval' ? (zh ? `每 ${job.trigger.seconds / 60} 分钟` : `Every ${job.trigger.seconds / 60} minutes`) : (zh ? '单次执行' : 'One-time');
-  const renderPlan = (job: AutomationJob, day?: AutomationCalendarEntry) => {
+  const renderPlan = (job: AutomationJob) => {
     const latest = job.runs.at(-1), active = latest?.status === 'running' || latest?.status === 'queued';
-    const runs = day?.runs ?? job.runs, dayLatest = day?.runs.at(-1);
-    let state: string = active ? latest.status : job.state;
-    let label = active ? runLabels[latest.status] : job.state === 'active' ? (zh ? '已启用' : 'Active') : job.state === 'paused' ? (zh ? '已暂停' : 'Paused') : (zh ? '已完成' : 'Completed');
-    if (day) {
-      state = dayLatest?.status ?? 'scheduled';
-      label = dayLatest ? runLabels[dayLatest.status] : day.overdue ? (zh ? '待执行' : 'Due') : (zh ? '已安排' : 'Scheduled');
-    }
-    const clock = (at: number) => new Date(at).toLocaleTimeString(zh ? 'zh-CN' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-    const hint = day ? [triggerLabel(job), day.runs.length ? (zh ? `已记录 ${day.runs.length} 次` : `${day.runs.length} recorded`) : '', day.scheduledCount ? (zh ? `预计 ${day.scheduledCount} 次` : `${day.scheduledCount} expected`) : ''].filter(Boolean).join(' · ')
-      : `${triggerLabel(job)}${job.state === 'active' && job.nextRunAt ? ` · ${time(job.nextRunAt)}` : ''}`;
+    const state = active ? latest.status : job.state;
+    const label = active ? runLabels[latest.status] : job.state === 'active' ? (zh ? '已启用' : 'Active') : job.state === 'paused' ? (zh ? '已暂停' : 'Paused') : (zh ? '已完成' : 'Completed');
+    const runs = job.runs;
+    const hint = `${triggerLabel(job)}${job.state === 'active' && job.nextRunAt ? ` · ${time(job.nextRunAt)}` : ''}`;
     const action = (action: AutomationCommand['action']) => void operate({ action, id: job.id, expectedRevision: job.revision }, job.id);
-    return <AutomationPlanCard key={job.id} job={job} label={label} state={state} hint={hint}
-      leading={day && <span className="automation-agenda-time">{clock(day.firstAt)}{day.lastAt !== day.firstAt && <small>– {clock(day.lastAt)}</small>}</span>}>
+    return <AutomationPlanCard key={job.id} job={job} label={label} state={state} hint={hint}>
       <p className="automation-prompt">{job.prompt}</p>
       <p className="automation-hint">{triggerLabel(job)}{job.state === 'active' && job.nextRunAt && ` · ${zh ? '下次：' : 'Next: '}${time(job.nextRunAt)}`}{job.plugin && ` · ${zh ? '插件：' : 'Plugin: '}${job.plugin.id}`}</p>
       <div className="automation-actions"><button type="button" disabled={!overview?.sessions.some(session => session.id === job.sessionId)} onClick={() => onOpenConversation(job.sessionId)}><MessageSquare size={14}/>{overview?.sessions.some(session => session.id === job.sessionId) ? (zh ? '返回来源会话' : 'Source conversation') : (zh ? '来源会话已删除' : 'Source deleted')}</button>
@@ -123,7 +115,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
         {active ? <button type="button" disabled={Boolean(busy)} onClick={() => action('stop')}><Square size={14}/>{zh ? '停止' : 'Stop'}</button>
           : <button type="button" disabled={Boolean(busy)} onClick={() => action(job.state === 'active' ? 'pause' : 'resume')}><Pause size={14}/>{job.state === 'active' ? (zh ? '暂停' : 'Pause') : (zh ? '启用' : 'Enable')}</button>}
         <button type="button" disabled={Boolean(busy) || latest?.status === 'running'} onClick={() => action('delete')}><Trash2 size={14}/>{zh ? '删除' : 'Delete'}</button></div>
-      {runs.length > 0 && <details><summary>{zh ? `${day ? '当天记录' : '执行记录'} · ${runLabels[runs.at(-1)!.status]}` : `${day ? 'Day history' : 'History'} · ${runLabels[runs.at(-1)!.status]}`}</summary><ol>{[...runs].reverse().map(run => <li key={run.id}>
+      {runs.length > 0 && <details><summary>{zh ? `执行记录 · ${runLabels[runs.at(-1)!.status]}` : `History · ${runLabels[runs.at(-1)!.status]}`}</summary><ol>{[...runs].reverse().map(run => <li key={run.id}>
         <button className="automation-history-open" type="button" onClick={() => openAutomationRun(job.id, run.id, job.name)}><strong>{runLabels[run.status]}</strong> · {time(run.queuedAt)}{!run.readAt && isAutomationResult(run) && ` · ${zh ? '未读' : 'Unread'}`}<ChevronRight size={14}/></button>{run.error && <p className="automation-error">{errorText(run.error, zh)}</p>}
       </li>)}</ol></details>}
     </AutomationPlanCard>;
@@ -131,13 +123,13 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   return <div className="feature-content automation-panel">
     <header className="automation-heading">
       <nav className="automation-tabs" aria-label={zh ? '定时视图' : 'Automation views'}>
-        {(['calendar', 'unread', 'today', 'all', 'plans'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
-          {tab === 'calendar' && <CalendarDays size={15}/>}{{ calendar: zh ? '日历' : 'Calendar', unread: zh ? '未读' : 'Unread', today: zh ? '今天' : 'Today', all: zh ? '全部结果' : 'All results', plans: zh ? '计划管理' : 'Plans' }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
+        {(['plans', 'unread', 'today', 'all'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
+          {{ unread: zh ? '未读' : 'Unread', today: zh ? '今天' : 'Today', all: zh ? '全部结果' : 'All results', plans: zh ? '计划管理' : 'Plans' }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
         </button>)}
       </nav>
     </header>
     <div className="automation-command-bar">
-      <label className="automation-search-field"><Search size={15}/><input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={view === 'calendar' ? (zh ? '搜索安排、节日或日期' : 'Search schedules, holidays or dates') : (zh ? '搜索自动化' : 'Search automations')} value={filter} onChange={event => setFilter(event.target.value)}/></label>
+      <label className="automation-search-field"><Search size={15}/><input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={zh ? '搜索自动化' : 'Search automations'} value={filter} onChange={event => setFilter(event.target.value)}/></label>
       <div className="automation-actions"><button type="button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} title={zh ? '刷新' : 'Refresh'} onClick={() => void refresh()}><RefreshCw size={15}/></button>
         <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={zh ? '在新会话中设置定时任务' : 'Set up a scheduled task in a new conversation'}><Plus size={15}/>{zh ? '新建自动化' : 'New automation'}</button></div>
     </div>
@@ -160,17 +152,15 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
         </div>
         <p className="automation-hint">{form.kind === 'event'
           ? (zh ? '由来源会话的事件触发；删除来源会话会暂停任务。' : 'Triggered by source conversation events; deleting the source pauses the plan.')
-          : (zh ? '每次在独立临时会话执行，结果显示在日历和未读列表。提示词需包含完整任务要求，不携带来源聊天记录；删除来源会话不影响执行。保存时使用所选来源的模型、工作区和权限；来源已删除时保留任务配置。' : 'Each run uses a temporary conversation, with results in Calendar and Unread. Include all task requirements in the prompt; source chat history is not included. Deleting the source does not stop execution. Saving uses the selected source’s model, workspace and permissions, or keeps saved settings if the source was deleted.')}</p>
+          : (zh ? '每次在独立临时会话执行，结果显示在未读和全部结果中。提示词需包含完整任务要求，不携带来源聊天记录；删除来源会话不影响执行。保存时使用所选来源的模型、工作区和权限；来源已删除时保留任务配置。' : 'Each run uses a temporary conversation, with results in Unread and All results. Include all task requirements in the prompt; source chat history is not included. Deleting the source does not stop execution. Saving uses the selected source’s model, workspace and permissions, or keeps saved settings if the source was deleted.')}</p>
         {form.kind === 'event' && <label>{zh ? '执行会话' : 'Execution conversation'}<select value={form.executionMode} onChange={event => setForm({ ...form, executionMode: event.target.value as typeof form.executionMode })}>
           <option value="isolated">{zh ? '每次新建会话' : 'New conversation for each run'}</option><option value="conversation">{zh ? '继续原会话' : 'Continue the original conversation'}</option>
         </select></label>}
         <div className="automation-actions"><button type="button" onClick={() => setForm(undefined)}>{zh ? '取消' : 'Cancel'}</button><button type="submit" className="primary-button">{busy === 'form' ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存自动化' : 'Save automation')}</button></div>
       </fieldset></form>}
     {!overview && !error && <p role="status">{zh ? '正在读取自动化…' : 'Loading automations…'}</p>}
-    {overview && !jobs.length && view !== 'calendar' && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.')}</p></div>}
-    {view === 'calendar' && overview && <AutomationCalendar jobs={overview.jobs} language={language} renderJob={renderPlan} onShowPlans={() => setView('plans')} query={filter}/>}
-    {view === 'calendar' && overview && !overview.jobs.length && !filter && <p className="automation-calendar-notice">{zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.'}</p>}
-    {view !== 'plans' && view !== 'calendar' && <section className="automation-inbox">
+    {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.')}</p></div>}
+    {view !== 'plans' && <section className="automation-inbox">
       {unreadIds.length > 0 && <div className="automation-inbox-heading automation-actions"><button disabled={Boolean(busy)} type="button" onClick={() => void operate({ action: 'mark_read', runIds: unreadIds }, 'read-batch')}><Check size={14}/>{zh ? `标记这 ${unreadIds.length} 条已读` : `Mark these ${unreadIds.length} read`}</button></div>}
       {overview && jobs.length > 0 && !entries.length && <div className="automation-empty"><Check size={28}/><p>{view === 'unread' ? (zh ? '未读结果已清空。下一次执行结束后会出现在这里。' : 'No unread results. New results will appear here after execution.') : (zh ? '暂时没有执行结果。' : 'No execution results yet.')}</p><button type="button" onClick={() => setView('plans')}>{zh ? '查看计划' : 'View plans'}</button></div>}
       {[...groups].map(([date, items]) => <section className="automation-day" key={date}><h2>{date}</h2>{items.map(({ job, run }) => <article key={run.id} className="automation-result" data-unread={!run.readAt && isAutomationResult(run)}>

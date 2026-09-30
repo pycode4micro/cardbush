@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import vm from 'node:vm';
 
 import ts from 'typescript';
 
-const kindSource = fs.readFileSync(
+const kindSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'skills', 'skillIconKind.ts'),
   'utf8',
 );
@@ -90,19 +91,19 @@ assert.equal(
   'web',
 );
 
-const iconSource = fs.readFileSync(
+const iconSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'skills', 'SkillIcon.tsx'),
   'utf8',
 );
-const composerSource = fs.readFileSync(
+const composerSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'composer', 'Composer.tsx'),
   'utf8',
 );
-const panelSource = fs.readFileSync(
+const panelSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'panels', 'FeatureContentPanel.tsx'),
   'utf8',
 );
-const styles = fs.readFileSync(
+const styles = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );

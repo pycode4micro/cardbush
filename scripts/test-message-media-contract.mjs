@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import vm from 'node:vm';
 
 import ts from 'typescript';
 
-const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'utf8');
 const localPaths = read('src', 'shared', 'localPaths.ts');
 const messageMedia = read('src', 'features', 'messageImages.ts');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');

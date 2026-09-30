@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ const modulePath = path.join(
   'backend',
   'historyToolAssociation.ts',
 );
-const source = fs.readFileSync(modulePath, 'utf8');
+const source = readSourceFile(modulePath, 'utf8');
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -37,7 +38,7 @@ const contextCompactionPresentationPath = path.join(
   'backend',
   'contextCompactionPresentation.ts',
 );
-const contextCompactionPresentationSource = fs.readFileSync(
+const contextCompactionPresentationSource = readSourceFile(
   contextCompactionPresentationPath,
   'utf8',
 );
@@ -484,7 +485,7 @@ const historyProjectionPath = path.join(
   'chat',
   'workSummaryHistory.ts',
 );
-const historyProjectionSource = fs.readFileSync(historyProjectionPath, 'utf8');
+const historyProjectionSource = readSourceFile(historyProjectionPath, 'utf8');
 const historyProjectionTranspiled = ts.transpileModule(historyProjectionSource, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -558,7 +559,7 @@ const guidedGroups = groupWorkSummaryHistoryByTurn([
 ]);
 assert.equal(guidedGroups[0].prompt, '检查并修复项目');
 
-const apiSource = fs.readFileSync(
+const apiSource = readSourceFile(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
@@ -584,7 +585,7 @@ assert.match(
   'Internal model-only messages must not enter the visible conversation transcript.',
 );
 
-const visibilitySource = fs.readFileSync(
+const visibilitySource = readSourceFile(
   path.join(process.cwd(), 'src', 'backend', 'runtimeMessageVisibility.ts'),
   'utf8',
 );
@@ -642,7 +643,7 @@ assert.equal(
   'User-authored turn guidance must remain visible.',
 );
 
-const bubbleSource = fs.readFileSync(
+const bubbleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
@@ -662,7 +663,7 @@ assert.match(
   /typeof filePath === 'string' \? filePath\.trim\(\) : ''/,
   'The review opener must reject non-string event payloads at its boundary.',
 );
-const chatHookSource = fs.readFileSync(
+const chatHookSource = readSourceFile(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
@@ -680,7 +681,7 @@ assert.equal(upgradedChange[0].toolExecutions.length, 1);
 assert.equal(upgradedChange[0].toolExecutions[0].output, 'full diff',
   'Historical Workspace Change details must upgrade the original Tool-call segment.');
 assert.equal(upgradedChange[1].toolExecutions, undefined);
-const stylesSource = fs.readFileSync(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
+const stylesSource = readSourceFile(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
 assert.match(
   bubbleSource,
   /<AssistantLoopHistoryBlock[\s\S]*?active=\{isActiveAssistantTurn\}/,
@@ -738,7 +739,7 @@ assert.match(
   'Functional execution spinners must remain visibly active when the OS reduces motion',
 );
 
-const disclosureSource = fs.readFileSync(
+const disclosureSource = readSourceFile(
   path.join(
     process.cwd(),
     'src',
@@ -797,7 +798,7 @@ writeToolExecutionDisclosure(storage, disclosureId, false);
 assert.equal(readToolExecutionDisclosure(storage, disclosureId), false);
 assert.ok(storageValues.has(toolExecutionDisclosureStorageKey));
 
-const toolBlockSource = fs.readFileSync(
+const toolBlockSource = readSourceFile(
   path.join(
     process.cwd(),
     'src',
@@ -836,7 +837,7 @@ assert.equal(
   false,
 );
 
-const pendingQueueSource = fs.readFileSync(
+const pendingQueueSource = readSourceFile(
   path.join(
     process.cwd(),
     'src',
@@ -879,7 +880,7 @@ assert.equal(
   'A background session permission must not replace the active session dialog.',
 );
 
-const runtimeChatSource = fs.readFileSync(
+const runtimeChatSource = readSourceFile(
   path.join(process.cwd(), 'src', 'backend', 'runtimeChat.ts'),
   'utf8',
 );
@@ -932,11 +933,11 @@ for (const callback of terminalCallbacks) {
   assert.match(callback, /clearConnectionRecovery\([^)]*\);\s*markSessionDone\(/,
     'Every done callback must clear recovery and finish the sidebar processing marker, even after checkpoint cleanup.');
 }
-const toolLogoSource = fs.readFileSync(
+const toolLogoSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolLogo.tsx'),
   'utf8',
 );
-const styleSource = fs.readFileSync(
+const styleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
@@ -1044,7 +1045,7 @@ assert.doesNotMatch(
   /revealCompletedDisclosureAboveComposer|requestAnimationFrame\(\(\) => \{\s*window\.requestAnimationFrame/,
   'Processed content must not schedule a delayed second scroll after clicking',
 );
-const preserveScrollSource = fs.readFileSync(
+const preserveScrollSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'preserveScrollPosition.ts'),
   'utf8',
 );
@@ -1059,7 +1060,7 @@ assert.match(
   'Disclosure anchoring must perform one synchronous correction and only clean up later',
 );
 
-const changeReportSource = fs.readFileSync(
+const changeReportSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'tools', 'toolChangeReports.ts'),
   'utf8',
 );
@@ -1300,7 +1301,7 @@ const nestedReviewReports = changeReportsFromMessages([
 assert.equal(nestedReviewReports.length, 1, 'Loop-history changes must reach conversation review');
 assert.equal(nestedReviewReports[0].files[0].path, 'src/nested.css');
 
-const sidebarReviewSource = fs.readFileSync(
+const sidebarReviewSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
   'utf8',
 );
@@ -1344,7 +1345,7 @@ assert.match(
   /<FileTypeIcon path=\{selectedPath\} \/>/,
   'The selected review file must use the shared extension-aware file icon',
 );
-const reviewFileTreeSource = fs.readFileSync(
+const reviewFileTreeSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ReviewFileTree.tsx'),
   'utf8',
 );

@@ -1,8 +1,9 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'utf8');
 
 const api = read('src', 'backend', 'api.ts');
 const app = read('src', 'App.tsx');

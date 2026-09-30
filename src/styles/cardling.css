@@ -1,0 +1,687 @@
+
+
+.cardling-badge,
+.cardling-panel {
+  pointer-events: auto;
+}
+
+.cardling-badge {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border-radius: 18px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.cardling-badge:active {
+  cursor: grabbing;
+}
+
+.cardling-orbit {
+  position: absolute;
+  inset: 5px;
+  border-radius: 18px;
+  background: radial-gradient(
+    circle at 50% 62%,
+    color-mix(in srgb, var(--accent) 22%, transparent),
+    transparent 66%
+  );
+  filter: blur(10px);
+  opacity: 0.7;
+}
+
+.cardling-card {
+  position: relative;
+  width: 40px;
+  height: 46px;
+  display: block;
+  overflow: visible;
+  background:
+    linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.04) 42%,
+      color-mix(in srgb, var(--accent) 36%, rgba(255, 255, 255, 0.08)) 100%
+    );
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, rgba(255, 255, 255, 0.18));
+  border-radius: 14px 14px 12px 12px;
+  box-shadow:
+    inset 0 0 16px color-mix(in srgb, var(--accent) 17%, transparent),
+    0 8px 22px color-mix(in srgb, var(--shadow) 120%, transparent);
+  transform-origin: 50% 80%;
+  animation: cardling-breathe 3.6s ease-in-out infinite;
+}
+
+.cardling-card::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  height: 19px;
+  border-radius: 0 0 10px 10px;
+  background: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--accent) 42%, transparent),
+    color-mix(in srgb, #ffffff 16%, transparent)
+  );
+  opacity: 0.42;
+}
+
+.cardling-stack {
+  position: absolute;
+  inset: 4px -5px 4px 9px;
+  z-index: -1;
+  display: block;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: 13px;
+  opacity: 0;
+  transform: translateX(0);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.cardling-leaf {
+  position: absolute;
+  top: -9px;
+  right: 6px;
+  width: 17px;
+  height: 12px;
+  display: block;
+  background: linear-gradient(135deg, #9df6b2, #34c789);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 100% 0 100% 20%;
+  transform: rotate(-22deg);
+  transform-origin: 0 100%;
+}
+
+.cardling-eye {
+  position: absolute;
+  top: 20px;
+  z-index: 2;
+  width: 5px;
+  height: 14px;
+  display: block;
+  background: #a8ffd1;
+  border-radius: 999px;
+  box-shadow: 0 0 9px #78e9bb;
+}
+
+.cardling-eye.left {
+  left: 13px;
+}
+
+.cardling-eye.right {
+  right: 13px;
+}
+
+.cardling-wave {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 11px;
+  height: 1px;
+  display: block;
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--accent) 55%, transparent) 0 1px,
+    transparent 1px 4px
+  );
+  opacity: 0;
+}
+
+.cardling-cursor {
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  width: 10px;
+  height: 10px;
+  display: block;
+  opacity: 0;
+  border-right: 3px solid #c5ffd9;
+  border-bottom: 3px solid #c5ffd9;
+  transform: rotate(-45deg);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 70%, transparent));
+}
+
+.cardling-error-corner {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  display: block;
+  opacity: 0;
+  background: #ff7676;
+  border-radius: 999px;
+  box-shadow: 0 0 10px rgba(255, 118, 118, 0.8);
+}
+
+.cardling-spark {
+  position: absolute;
+  z-index: 4;
+  width: 7px;
+  height: 7px;
+  display: block;
+  opacity: 0;
+  background: #fff5ad;
+  clip-path: polygon(50% 0, 62% 36%, 100% 50%, 62% 64%, 50% 100%, 38% 64%, 0 50%, 38% 36%);
+  filter: drop-shadow(0 0 7px rgba(255, 245, 173, 0.9));
+}
+
+.cardling-spark.one {
+  top: -7px;
+  left: 5px;
+}
+
+.cardling-spark.two {
+  right: -7px;
+  bottom: 11px;
+  transform: scale(0.74);
+}
+
+.cardling-count {
+  position: absolute;
+  right: 0;
+  top: 2px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  color: #111;
+  background: #a8ffd1;
+  border: 1px solid rgba(255, 255, 255, 0.54);
+  border-radius: 999px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 900;
+}
+
+.cardling-panel {
+  width: 276px;
+  padding: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--shadow) 145%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.theme-dark .cardling-panel {
+  background: rgba(30, 30, 30, 0.94);
+}
+
+.cardling-panel header {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.cardling-panel header strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.cardling-panel header strong em {
+  padding: 1px 6px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 999px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-style: normal;
+  font-weight: 900;
+}
+
+.cardling-panel header span {
+  color: var(--text-soft);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 700;
+}
+
+.cardling-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 9px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 10px;
+}
+
+.cardling-status-dot {
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.cardling-status-row b {
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+}
+
+.cardling-mini-chat {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 9px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 44%, transparent);
+  border-radius: 12px;
+}
+
+.cardling-mini-answer {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px;
+  color: var(--text);
+}
+
+.cardling-mini-answer svg {
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.cardling-mini-answer p,
+.cardling-mini-user,
+.cardling-mini-notice {
+  margin: 0;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.42;
+}
+
+.cardling-mini-answer p {
+  max-height: 70px;
+  overflow: hidden;
+  font-weight: 750;
+}
+
+.cardling-mini-user {
+  color: var(--text-soft);
+}
+
+.cardling-mini-form {
+  display: grid;
+  grid-template-columns: 1fr 32px;
+  gap: 7px;
+  align-items: end;
+}
+
+.cardling-mini-form textarea {
+  width: 100%;
+  min-height: 46px;
+  max-height: 86px;
+  resize: none;
+  padding: 8px 9px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  border-radius: 10px;
+  outline: 0;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.35;
+}
+
+.theme-dark .cardling-mini-form textarea {
+  background: rgba(44, 44, 44, 0.92);
+}
+
+.cardling-mini-form textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.cardling-mini-form button,
+.cardling-mini-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 9px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  font-weight: 850;
+}
+
+.cardling-mini-form button {
+  width: 32px;
+  height: 32px;
+  background: var(--text);
+  color: var(--surface);
+}
+
+.cardling-mini-form button:disabled,
+.cardling-mini-actions button:disabled {
+  opacity: 0.48;
+}
+
+.cardling-mini-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.cardling-mini-actions button {
+  height: 27px;
+  gap: 5px;
+  padding: 0 8px;
+  color: var(--text-mid);
+}
+
+.cardling-mini-actions button:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.cardling-mini-notice {
+  color: var(--text-soft);
+}
+
+.cardling-panel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.cardling-metric {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 7px;
+  padding: 8px;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border-radius: 9px;
+}
+
+.cardling-metric svg {
+  grid-row: span 2;
+  color: var(--text-soft);
+}
+
+.cardling-metric span,
+.cardling-metric b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardling-metric span {
+  color: var(--text-soft);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
+.cardling-metric b {
+  color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.cardling-error {
+  max-height: 64px;
+  margin: 9px 0 0;
+  overflow: hidden;
+  color: var(--danger);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+}
+
+.cardling-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.cardling-action {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 8px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 800;
+}
+
+.cardling-action:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.cardling-action:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.cardling-action .spin {
+  animation: button-spin 0.9s linear infinite;
+}
+
+.cardling-window-body {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+.cardling-desktop {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  color: var(--text);
+  background: transparent;
+  opacity: var(--cardling-opacity, 0.95);
+  overflow: hidden;
+  user-select: none;
+  contain: layout paint;
+}
+
+.cardling-desktop.open {
+  align-content: unset;
+}
+
+.cardling-desktop-panel {
+  position: absolute;
+  right: 10px;
+  bottom: 78px;
+  width: min(356px, calc(100vw - 20px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 110ms ease, transform 110ms ease;
+  will-change: opacity, transform;
+}
+
+.cardling-desktop.transitioning .cardling-desktop-panel {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cardling-desktop-badge {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  opacity: 1;
+  transform: scale(var(--cardling-scale, 1));
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.cardling-desktop[data-status="thinking"] .cardling-eye.left {
+  animation: cardling-eye-left 1.2s ease-in-out infinite;
+}
+
+.cardling-desktop[data-status="thinking"] .cardling-eye.right {
+  animation: cardling-eye-right 1.2s ease-in-out infinite;
+}
+
+.cardling-desktop[data-status="tool"] .cardling-wave,
+.cardling-desktop[data-status="tool"] .cardling-cursor {
+  opacity: 1;
+}
+
+.cardling-desktop[data-status="tool"] .cardling-wave {
+  animation: cardling-scan 1.1s linear infinite;
+}
+
+.cardling-desktop[data-status="waiting"] .cardling-leaf {
+  background: linear-gradient(135deg, #ffd78c, #ffad4f);
+  animation: cardling-leaf-alert 1.4s ease-in-out infinite;
+}
+
+.cardling-desktop[data-status="queued"] .cardling-stack {
+  opacity: 1;
+  transform: translateX(4px);
+}
+
+.cardling-desktop[data-status="error"] .cardling-error-corner {
+  opacity: 1;
+}
+
+.cardling-desktop[data-status="error"] .cardling-card {
+  border-color: rgba(255, 118, 118, 0.76);
+}
+
+.cardling-desktop[data-status="complete"] .cardling-eye {
+  height: 8px;
+  transform: translateY(3px);
+}
+
+.cardling-desktop[data-status="complete"] .cardling-spark {
+  opacity: 1;
+  animation: cardling-spark 1.1s ease-in-out 2;
+}
+
+.cardling-desktop[data-motion="reduced"][data-status="tool"] .cardling-wave,
+.cardling-desktop[data-motion="reduced"][data-status="waiting"] .cardling-leaf {
+  animation: none;
+}
+
+.cardling-desktop[data-motion="off"] .cardling-card,
+.cardling-desktop[data-motion="off"] .cardling-eye,
+.cardling-desktop[data-motion="off"] .cardling-wave,
+.cardling-desktop[data-motion="off"] .cardling-leaf,
+.cardling-desktop[data-motion="off"] .cardling-spark,
+.cardling-desktop[data-motion="off"] .cardling-action .spin {
+  animation: none !important;
+}
+
+.cardling-desktop[data-motion="off"] .cardling-spark {
+  opacity: 0;
+}
+
+@keyframes cardling-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-1px) scale(1.018);
+  }
+}
+
+@keyframes cardling-eye-left {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0.28;
+  }
+}
+
+@keyframes cardling-eye-right {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+
+@keyframes cardling-scan {
+  0% {
+    transform: translateY(-12px);
+  }
+  100% {
+    transform: translateY(12px);
+  }
+}
+
+@keyframes cardling-leaf-alert {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.35);
+  }
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cardling-spark {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(html:not([data-motion-preference="off"])) .message-list-item.user-message-entering .user-bubble,
+  :where(html:not([data-motion-preference="off"])) .cardling-card,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-label,
+  :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop,
+  :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop svg,
+  :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop::after,
+  :where(html:not([data-motion-preference="off"])) .cardling-action .spin {
+    animation: none;
+  }
+
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-label {
+    color: var(--text-soft);
+    -webkit-text-fill-color: var(--text-soft);
+  }
+
+  /* The reel is functional state continuity, not decorative motion. Keep the
+     same short vertical hand-off so status changes never become a flash. */
+  :where(html:not([data-motion-preference="off"])) .runtime-screen-track.rolling {
+    transition-duration: 420ms !important;
+  }
+
+  /* These spinners communicate live execution state rather than decoration.
+     Keep a slower, steady rotation when the OS reduces motion so they do not
+     become indistinguishable from a stalled task. */
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-model.fallback svg,
+  :where(html:not([data-motion-preference="off"])) .composer-runtime-screen.running .runtime-screen-line.processing > svg,
+  :where(html:not([data-motion-preference="off"])) .runtime-context-compaction-spinner {
+    animation-name: cardbush-spin !important;
+    animation-duration: 1.8s !important;
+    animation-timing-function: linear !important;
+    animation-iteration-count: infinite !important;
+  }
+}

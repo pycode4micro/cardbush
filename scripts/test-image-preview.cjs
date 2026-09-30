@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,13 +12,13 @@ app.whenReady().then(async () => {
   try {
     await window.loadURL('data:text/html,<div id="root"></div>');
     for (const file of ['theme.css', 'app.css', 'appearance.css']) {
-      await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles', file), 'utf8'));
+      await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles', file), 'utf8'));
     }
-    const code = fs.readFileSync(process.env.CARDBUSH_IMAGE_PREVIEW_MODULE, 'utf8');
-    const shared = Object.fromEntries(['localPaths', 'showUiError', 'fileContextMenu'].map(name => [name, ts.transpileModule(fs.readFileSync(path.join(root, 'src/shared', name + '.ts'), 'utf8'), {
+    const code = readSourceFile(process.env.CARDBUSH_IMAGE_PREVIEW_MODULE, 'utf8');
+    const shared = Object.fromEntries(['localPaths', 'showUiError', 'fileContextMenu'].map(name => [name, ts.transpileModule(readSourceFile(path.join(root, 'src/shared', name + '.ts'), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText]));
-    const shortcuts = Object.fromEntries(['keyboardShortcuts', 'useKeyboardShortcuts'].map(name => [name, ts.transpileModule(fs.readFileSync(path.join(root, 'src/features/shortcuts', name + '.ts'), 'utf8'), {
+    const shortcuts = Object.fromEntries(['keyboardShortcuts', 'useKeyboardShortcuts'].map(name => [name, ts.transpileModule(readSourceFile(path.join(root, 'src/features/shortcuts', name + '.ts'), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText]));
     const run = code => window.webContents.executeJavaScript(code, true);
@@ -230,7 +231,7 @@ app.whenReady().then(async () => {
     await run('document.querySelector(".image-preview-backdrop").dispatchEvent(new MouseEvent("mousedown",{bubbles:true}))'); await pause();
     assert.equal(await run('Boolean(document.querySelector(".image-preview-dialog"))'),false,'backdrop closes');
     if (process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE) {
-      const sample = {src:'data:image/png;base64,'+fs.readFileSync(process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE).toString('base64'),name:path.basename(process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE)};
+      const sample = {src:'data:image/png;base64,'+readSourceFile(process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE).toString('base64'),name:path.basename(process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE)};
       await run(`controls.setTheme('theme-dark'); controls.setImage(${JSON.stringify(sample)}); controls.setOpen(true)`); await pause(200);
       fs.writeFileSync(path.join(root,'tmp/image-preview-real-fit.png'),(await window.webContents.capturePage()).toPNG());
       await run(`flushSync(()=>document.querySelector('.image-preview-zoom-value').click())`); await pause(100);

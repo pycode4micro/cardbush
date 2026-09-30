@@ -20,7 +20,8 @@ assert.match(types, /export interface TurnTerminalSnapshot/);
 assert.match(api, /export interface StopTurnResult/);
 assert.match(api, /const receipt = await stopActiveRuntimeTurn\(normalized\)/);
 assert.match(api, /accepted: receipt\.accepted/);
-assert.match(runtimeBridge, /export async function stopActiveRuntimeTurn/);
+assert.match(runtimeBridge, /async function stopActiveRuntimeTurn/);
+assert.match(runtimeBridge, /export const \{[^}]*stopActiveRuntimeTurn[^}]*\} = defaultRuntimeInteractions/);
 assert.match(runtimeBridge, /return active\.stop\(\)/);
 assert.match(api, /onDone\?: \(terminal: TurnTerminalSnapshot\) => void/);
 assert.match(runtimeChat, /request\.onDone\?\.\(terminalSnapshot\(terminal\)\)/);
@@ -62,7 +63,7 @@ assert.match(bubble, /const stoppedAssistantRound = isStoppedAssistantMessage\(m
 assert.match(bubble, /const failedAssistantRound = isFailedAssistantMessage\(message\)/);
 assert.match(
   bubble,
-  /const freezeTerminalTranscript =\s*\(stoppedAssistantRound \|\| failedAssistantRound\) && loopHistory\.length > 0/,
+  /const freezeTerminalTranscript =\s*\(stoppedAssistantRound \|\| failedAssistantRound \|\| guidanceBoundaryRound\) && loopHistory\.length > 0/,
   'A stopped or failed multi-segment Turn must keep the continuous transcript presentation it had when the terminal event settled.',
 );
 assert.match(

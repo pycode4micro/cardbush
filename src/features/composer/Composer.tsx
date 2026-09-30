@@ -8,6 +8,9 @@ import { ApplicationIcon } from '../appCenter/AppCenter';
 import { ConversationHostContext } from '../conversationHost';
 import { ComposerPortalContext } from './ComposerPortalContext';
 import { ComposerPresentationContext } from './ComposerPresentationContext';
+import { useComponents } from '../components/componentStore';
+import { welcomeInputStyle } from '../components/componentModel';
+import './composerPresentation.css';
 import { ComposerCommandPortal } from './ComposerCommandPortal';
 import { useSshConnections } from '../ssh/SshConnectionsPanel';
 import { pickWorkspace } from '../ssh/WorkspaceLocationPicker';
@@ -430,10 +433,13 @@ export function Composer({
   const host = useContext(ConversationHostContext);
   const portalTarget = useContext(ComposerPortalContext);
   const presentation = useContext(ComposerPresentationContext);
-  const simple = presentation.style === 'simple';
+  const components = useComponents();
+  const simple = (presentation?.style ?? welcomeInputStyle(components)) === 'simple';
+  const initializePermissions = Boolean(presentation && !presentation.preview);
   const simplePermissionInitialized = useRef(false);
   useEffect(() => {
-    if (presentation.preview) return;
+    // Continuing a conversation changes presentation only, preserving its permissions.
+    if (!initializePermissions) return;
     if (!simple) {
       simplePermissionInitialized.current = false;
     } else if (!simplePermissionInitialized.current) {
@@ -441,7 +447,7 @@ export function Composer({
       simplePermissionInitialized.current = true;
       if (permissionMode !== 'all_free') onPermissionModeChange('all_free');
     }
-  }, [simple, presentation.preview, permissionMode, onPermissionModeChange]);
+  }, [simple, initializePermissions, permissionMode, onPermissionModeChange]);
   const runtimeStartup = useRuntimeStartupStatus(!host);
   const keyboardShortcuts = useKeyboardShortcuts();
   const immediatePendingRef = useRef(false);
@@ -451,10 +457,10 @@ export function Composer({
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
   useEffect(() => {
-    if (!portalTarget || presentation.preview) return;
+    if (!portalTarget || presentation?.preview) return;
     const frame = requestAnimationFrame(() => textareaRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [portalTarget, presentation.preview]);
+  }, [portalTarget, presentation?.preview]);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
@@ -1244,7 +1250,7 @@ export function Composer({
 
   const composer = (
     <div
-      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''} ${portalTarget ? 'input-only' : ''}`}
+      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''} ${portalTarget ? 'input-only' : simple ? 'simple' : ''}`}
       ref={composerStackRef}
       style={
         {
@@ -1498,7 +1504,7 @@ export function Composer({
           plugins={plugins}
           skills={skills}
           language={language}
-          autoFocus={autoFocus && !presentation.preview}
+          autoFocus={autoFocus && !presentation?.preview}
           value={composerInputValue}
           onChange={(next, caret) => {
             if (goalDraft) {

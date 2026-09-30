@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarDays, Upload, Trash2 } from 'lucide-react';
 import type { CalendarCommand, CalendarState } from '@cardbush/bush-protocol';
+import './calendarData.css';
 
 export function useCalendarData() {
   const [state, setState] = useState<CalendarState>({ datasets: [], chineseLunar: false });
@@ -29,8 +30,8 @@ export function useCalendarData() {
   };
   return { state, busy, error, notice, command };
 }
-export function CalendarDataControls({ data, zh }: { data: ReturnType<typeof useCalendarData>; zh: boolean }) {
-  return <><details className="calendar-data-controls">
+export function CalendarDataControls({ data, zh, expanded = false }: { data: ReturnType<typeof useCalendarData>; zh: boolean; expanded?: boolean }) {
+  return <><details className="calendar-data-controls" open={expanded || undefined}>
     <summary><CalendarDays size={14}/>{zh ? '日历数据' : 'Calendars'}{data.state.datasets.length > 0 && <span>{data.state.datasets.length}</span>}</summary>
     <div className="calendar-data-body">
       <div className="calendar-data-actions">
@@ -44,5 +45,5 @@ export function CalendarDataControls({ data, zh }: { data: ReturnType<typeof use
       </div>)}
       {data.notice && <p role="status">{zh ? '已导入：' : 'Imported: '}{data.notice}</p>}
     </div>
-  </details>{data.error && <p className="automation-error" role="alert">{data.error}</p>}</>;
+  </details>{data.error && <p className="calendar-data-error" role="alert">{data.error}</p>}</>;
 }

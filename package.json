@@ -106,6 +106,7 @@
     "test:conversation-switching": "node scripts/test-conversation-switching.mjs && node scripts/run-agents-ui-test.mjs --switching && node scripts/run-app-views-test.mjs session-scroll",
     "test:chat-transcript": "node scripts/test-chat-transcript.mjs && node --test scripts/test-task-plan-stream.mjs",
     "test:app-views": "node scripts/run-app-views-test.mjs",
+    "test:app-preferences": "node --test scripts/test-app-preferences.mjs",
     "test:compact-window": "tsc -p tsconfig.node.json && node scripts/run-app-views-test.mjs compact-window",
     "test:startup-presentation": "node scripts/run-app-views-test.mjs startup-presentation && node scripts/run-app-views-test.mjs startup && node scripts/run-window-appearance.mjs",
     "test:chat-tool-updates": "node scripts/run-app-views-test.mjs tool-update-stability",

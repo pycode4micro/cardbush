@@ -14,11 +14,11 @@ module.exports = async ({ run, until }) => {
     window.failStatus=false;window.statusSuccesses=0;
     window.beforeRecoveryCall=cardbushDesktop.agents.call;
     cardbushDesktop.agents.call=async(id,operation,input={})=>{
-      if(id==='a'&&operation==='chat.jobs'){
+      if(id==='a'&&operation==='chat.queue'&&input.action==='get'){
         if(input.sessionId==='a1'&&failStatus)throw Error('Fixture status socket closed [UND_ERR_SOCKET]');
         const result=await beforeRecoveryCall(id,operation,input);
         if(input.sessionId==='a1')statusSuccesses++;
-        return result.filter(job=>job.sessionId===input.sessionId);
+        return { ...result, jobs: result.jobs.filter(job=>job.sessionId===input.sessionId) };
       }
       return beforeRecoveryCall(id,operation,input);
     };undefined;

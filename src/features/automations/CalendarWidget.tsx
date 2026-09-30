@@ -1,6 +1,6 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useCalendarData } from './CalendarDataControls';
+import { CalendarDataControls, useCalendarData } from './CalendarDataControls';
 import { useCalendarJobs } from './useCalendarJobs';
 import { useCalendarDayDetails } from './useCalendarDayDetails';
 import { CalendarMonthGrid } from './CalendarMonthGrid';
@@ -9,6 +9,7 @@ import { calendarDayKey, calendarEntriesForDays, calendarMonthDays, importedEntr
 export function CalendarWidget({ language }: { language: 'zh' | 'en' }) {
   const zh = language === 'zh', locale = zh ? 'zh-CN' : 'en-US';
   const [now, setNow] = useState(Date.now), [selected, setSelected] = useState(() => localDay(new Date()));
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const data = useCalendarData(), { jobs, error } = useCalendarJobs();
   const days = useMemo(() => calendarMonthDays(selected), [selected]);
   const calendars = useMemo(() => data.state.datasets.filter(item => item.enabled).map(item => item.calendar), [data.state.datasets]);
@@ -30,6 +31,7 @@ export function CalendarWidget({ language }: { language: 'zh' | 'en' }) {
         <button type="button" aria-label={zh ? '上个月' : 'Previous month'} onClick={() => move(-1)}><ChevronLeft size={14}/></button>
         <button type="button" onClick={() => { details.close(); setNow(Date.now()); setSelected(localDay(new Date())); }}>{zh ? '今天' : 'Today'}</button>
         <button type="button" aria-label={zh ? '下个月' : 'Next month'} onClick={() => move(1)}><ChevronRight size={14}/></button>
+        <button type="button" aria-label={zh ? '日历设置' : 'Calendar settings'} title={zh ? '日历设置' : 'Calendar settings'} onClick={() => { details.close(); setSettingsOpen(true); }}><Settings2 size={14}/></button>
       </div>
     </div>
     <CalendarMonthGrid className="builtin-calendar-grid" days={days} month={selected.getMonth()} language={language} renderDay={day => {
@@ -46,5 +48,15 @@ export function CalendarWidget({ language }: { language: 'zh' | 'en' }) {
     }}/>
     {(error || data.error) && <small className="calendar-widget-error" role="status">{zh ? '部分日程暂时无法读取' : 'Some schedules are unavailable'}</small>}
     {details.popover}
+    {settingsOpen && <CalendarSettings data={data} zh={zh} onClose={() => setSettingsOpen(false)}/>}
   </div>;
+}
+
+function CalendarSettings({ data, zh, onClose }: { data: ReturnType<typeof useCalendarData>; zh: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
+  return <dialog ref={dialog} className="calendar-settings-dialog" aria-label={zh ? '日历设置' : 'Calendar settings'} onCancel={onClose}>
+    <header><strong>{zh ? '日历设置' : 'Calendar settings'}</strong><button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={onClose}><X size={16}/></button></header>
+    <CalendarDataControls data={data} zh={zh} expanded/>
+  </dialog>;
 }

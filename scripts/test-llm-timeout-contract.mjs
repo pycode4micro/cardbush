@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import ts from 'typescript';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const root = process.cwd();
-const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(root, ...parts), 'utf8');
 const api = read('src', 'backend', 'api.ts');
 const provider = read('packages', 'bush-provider-openai', 'src', 'responses.ts');
 const providerFailure = read('packages', 'bush-provider-openai', 'src', 'providerFailure.ts');

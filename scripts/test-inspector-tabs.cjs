@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Isolated Chromium regression test: no product profile, network or model calls.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
@@ -5,7 +6,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
-const compile = (file) => ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
+const compile = (file) => ts.transpileModule(readSourceFile(path.join(root, file), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const pause = (ms = 120) => new Promise(resolve => setTimeout(resolve, ms));
@@ -18,7 +19,7 @@ app.whenReady().then(async () => {
   });
   try {
     await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8'));
+    await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/app.css'), 'utf8'));
     await window.webContents.executeJavaScript(`
       const React = require(${JSON.stringify(require.resolve('react'))});
       const {createRoot} = require(${JSON.stringify(require.resolve('react-dom/client'))});
@@ -126,7 +127,7 @@ app.whenReady().then(async () => {
     }
     assert.equal(await run('guestClicks'),0,'dismiss click never activates content behind menu');
     assert.equal(await run('menuActions'),3,'inside menu actions execute once');
-    const appSource=fs.readFileSync(path.join(root,'src/App.tsx'),'utf8');
+    const appSource=readSourceFile(path.join(root,'src/App.tsx'),'utf8');
     assert.match(appSource,/useOutsideDismiss\(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus\)/);
     assert.match(appSource,/inspector-menu-dismiss-layer[\s\S]*?onPointerDown=\{dismissInspectorMenus\}/);
     assert.deepEqual(errors,[]);

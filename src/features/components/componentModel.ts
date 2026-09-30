@@ -28,6 +28,12 @@ export const defaultComponents: ComponentCollection = { version: 1, revision: 0,
   ...(def.builtin === 'input' ? { inputStyle: 'standard' as const } : {}),
 })) };
 
+export function welcomeInputStyle(collection: ComponentCollection): 'standard' | 'simple' {
+  const input = collection.items.find(item => isBuiltinComponent(item) && item.builtin === 'input');
+  if (!input || !isBuiltinComponent(input)) return 'standard';
+  return collection.welcomeLayout?.items.find(item => item.componentId === input.id)?.inputStyle ?? input.inputStyle ?? 'standard';
+}
+
 export function normalizeComponents(value: unknown): ComponentCollection {
   const input = value as Partial<ComponentCollection> | null;
   if (!input || input.version !== 1 || !Array.isArray(input.items)) return defaultComponents;

@@ -185,7 +185,7 @@ assert.match(
 );
 assert.match(
   hookSource,
-  /const finishLoading = beginHistoryLoading\(sessionId\);[\s\S]*?fetchSessionMessages\(sessionId,[\s\S]*?finally \{\s*finishLoading\(\)/,
+  /const finishLoading = beginHistoryLoading\(sessionId\);[\s\S]*?loadSessionHistory\(sessionId\)[\s\S]*?\.finally\(finishLoading\)/,
   'history fetch completion must only clear the loading marker for its own conversation',
 );
 
@@ -202,14 +202,15 @@ assert.match(
 );
 assert.match(
   appSource,
-  /const changeWelcomeProject[\s\S]*?const normalized = projectDir\?\.trim\(\) \|\| null;[\s\S]*?chat\.setConversationProject\(chat\.activeConversationId, normalized, projectId\)/,
+  /const changeWelcomeProject[\s\S]*?conversationId = chat\.activeConversationId,[\s\S]*?const normalized = projectDir\?\.trim\(\) \|\| null;[\s\S]*?let targetId = conversationId;[\s\S]*?chat\.setConversationProject\(targetId, normalized, projectId\)/,
   'associating or detaching a project must keep the current draft identity',
 );
 assert.match(
   appSource,
-  /<WelcomeProjectSwitcher[\s\S]*?disabled=\{sending\}[\s\S]*?if \(disabled\) setOpen\(false\)/,
+  /<WelcomeProjectSwitcher[\s\S]*?disabled=\{(?:chat\.)?sending\}/,
   'a project draft cannot change scope while its first Turn is being created or executed',
 );
+assert.match(fs.readFileSync(path.join(root, 'src/features/ssh/WorkspaceLocationPicker.tsx'), 'utf8'), /disabled=\{disabled \|\| busy\}/);
 assert.match(
   appSource,
   /const recoveredProjectConversation = chat\.conversations[\s\S]*?samePath\(projectDir, selected\)[\s\S]*?const projectId = conversationProjectId\(recoveredProjectConversation\)[\s\S]*?id: projectId \|\| stableProjectId\(selected\)/,
@@ -217,7 +218,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /historyLoading=\{!chat\.loading && chat\.messagesLoading\}/,
+  /historyLoading=\{chat\.messagesLoading\}/,
   'project conversation navigation must distinguish history loading from runtime startup',
 );
 
@@ -237,7 +238,7 @@ assert.match(
 );
 assert.match(
   messageBubbleSource,
-  /videoPaths\.map\(\(storedPathValue\)[\s\S]*?remapProjectPath\(storedPathValue, pathAliases\)[\s\S]*?audioPaths\.map\(\(storedPathValue\)[\s\S]*?remapProjectPath\(storedPathValue, pathAliases\)/,
+  /videoPaths\.map\(path => \(\{ path, kind: 'video'[\s\S]*?audioPaths\.map\(path => \(\{ path, kind: 'audio'[\s\S]*?remapProjectPath\(item\.path, pathAliases\)/,
   'historical video and audio attachments must resolve through project rename aliases',
 );
 

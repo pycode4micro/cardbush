@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Isolated native window: actual shell components and appearance hook, no
 // product profile, Runtime, model calls, or changes to desktop wallpaper.
 const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron');
@@ -89,7 +90,7 @@ app.whenReady().then(async () => {
   });
   await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
   const css = ['theme.css', 'app.css', 'windowMaterial.css', 'appearance.css']
-    .map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n');
+    .map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n');
   await win.webContents.insertCSS(css);
   await run(`
     const { ipcRenderer } = require('electron');

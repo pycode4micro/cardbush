@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Actual extracted views in isolated Chromium: no product profile, real files,
 // network requests, model calls or Runtime subscriptions.
 const { app, BrowserWindow, protocol } = require('electron');
@@ -31,7 +32,7 @@ async function buildViews() {
   for (const file of moved) {
     const dependencies = [];
     graph.set(file, dependencies);
-    const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const source = ts.createSourceFile(file, readSourceFile(file, 'utf8'), ts.ScriptTarget.Latest, true);
     for (const node of source.statements.filter(ts.isImportDeclaration)) {
       const spec = node.moduleSpecifier.text;
       if (!spec.startsWith('.')) continue;
@@ -52,10 +53,13 @@ async function buildViews() {
     for (const dependency of graph.get(file)) visit(dependency, new Set([...ancestors, file]));
   };
   for (const file of moved) visit(file);
-  const appSource = ts.createSourceFile('App.tsx', fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true);
+  const appSource = ts.createSourceFile('App.tsx', readSourceFile(path.join(root, 'src/App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true);
   const rootNames = new Set(appSource.statements.map(node =>
     (ts.isVariableStatement(node) ? node.declarationList.declarations[0].name : node.name)?.text));
-  for (const name of ['ChatPanel', 'WelcomeComposer', 'TopBar', 'InspectorWebview', 'InteractionCard']) {
+  for (const name of ['ChatPanel', 'WelcomeComposer', 'TopBar', 'InspectorWebview', 'InteractionCard',
+    'AppErrorBoundary', 'CopyToastHost', 'ProjectRenameDialog', 'FeaturePanel', 'useInspectorWorkspace',
+    'readInitialAppSettings', 'normalizeAppSettings', 'persistAppSettings', 'readManagedModelConfigs',
+    'normalizeManagedModelConfigs', 'readProjectItems', 'readInitialThemePreference']) {
     assert.ok(!rootNames.has(name), `${name} must have one owner outside App`);
   }
   const { build } = await import('vite');
@@ -76,6 +80,10 @@ async function buildViews() {
       'src/features/inspector/InspectorTabPages.tsx', 'src/features/inspector/InspectorTileFrame.tsx',
       'src/features/inspector/panelLayout.ts', 'src/features/inspector/BrowserBookmarkButton.tsx',
       'src/features/inspector/useBrowserBookmarks.ts', 'src/features/composer/ComposerPortalContext.ts',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-presentation' ? [
+      'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
+      'src/features/composer/ComposerPortalContext.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -210,10 +218,11 @@ app.whenReady().then(async () => {
       await window.loadFile(host);
       fs.unlinkSync(host);
     } else await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/theme.css'), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8')
-      + '\n' + fs.readFileSync(path.join(root, 'src/features/chatMessages/turn-artifacts.css'), 'utf8')
-      + '\n' + fs.readFileSync(path.join(root, 'src/features/components/components.css'), 'utf8')
-      + '\n' + fs.readFileSync(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8'));
+    await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/theme.css'), 'utf8') + '\n' + readSourceFile(path.join(root, 'src/styles/app.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/chatMessages/turn-artifacts.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/components/components.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/composer/composerPresentation.css'), 'utf8')
+      + '\n' + readSourceFile(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8'));
     await run(`
       window.failures = [];
       addEventListener('error', event => failures.push(event.message));
@@ -555,6 +564,10 @@ app.whenReady().then(async () => {
       await require('./helpers/inspector-cover.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no cover/composer renderer errors'); assert.deepEqual(errors, []); return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-presentation') {
+      await require('./helpers/composer-presentation.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no presentation renderer errors'); assert.deepEqual(errors, []); return;
+    }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'model-protocols') {
       await require('./helpers/composer-model-protocols.cjs')({ run, until, window, root });
     }
@@ -801,7 +814,7 @@ app.whenReady().then(async () => {
     await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root });
     await require('./helpers/chat-tool-packages.cjs')({ run, until, pause });
     await require('./helpers/chat-session-scroll.cjs')({ run, until, pause });
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8'));
+    await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/appearance.css'), 'utf8'));
     await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root, theme: 'theme-dark' });
     await require('./helpers/chat-tool-packages.cjs')({ run, until, pause, theme: 'theme-dark' });
     await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme: 'theme-dark' });
@@ -847,7 +860,7 @@ app.whenReady().then(async () => {
 
 function loadChatCallbackNames() {
   const file = path.join(root, 'src/features/chat/ChatPanel.tsx');
-  const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const source = ts.createSourceFile(file, readSourceFile(file, 'utf8'), ts.ScriptTarget.Latest, true);
   const chat = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name.text === 'ChatPanel');
   return chat.parameters[0].name.elements.map(element => element.name.text).filter(name => /^on[A-Z]/.test(name));
 }

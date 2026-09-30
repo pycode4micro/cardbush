@@ -1,20 +1,21 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const appSource = readAppViewSources();
-const styles = fs.readFileSync(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
-const spacerSource = fs.readFileSync(path.join(process.cwd(), 'src/features/chat/responseSpacer.ts'), 'utf8');
-const quickContextSource = fs.readFileSync(
+const styles = readSourceFile(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
+const spacerSource = readSourceFile(path.join(process.cwd(), 'src/features/chat/responseSpacer.ts'), 'utf8');
+const quickContextSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
   'utf8',
 );
-const backendApiSource = fs.readFileSync(
+const backendApiSource = readSourceFile(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-const chatScrollSource = fs.readFileSync(
+const chatScrollSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatScroll.tsx'),
   'utf8',
 );

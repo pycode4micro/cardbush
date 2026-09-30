@@ -1,10 +1,11 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
-const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'utf8');
 const app = readAppViewSources();
 const shadowWindow = read('src', 'ShadowWindow.tsx');
 const css = read('src', 'styles', 'app.css');
@@ -57,8 +58,8 @@ assert.match(
 );
 assert.match(
   css,
-  /calc\(100cqw - 2px - var\(--layout-sidebar-space\) - var\(--conversation-pane-min-width\)\)/,
-  'The inspector width must preserve the shared conversation-pane minimum instead of a separate hard-coded limit',
+  /calc\(100cqw - 2px - var\(--layout-sidebar-space\)\)/,
+  'The inspector can continuously shrink the conversation toward cover without switching positioning modes',
 );
 assert.match(
   rightInspectorResizer,
@@ -66,7 +67,7 @@ assert.match(
 );
 assert.match(
   rightInspectorResizer,
-  /mainWidth \+ currentWidth - minimumConversationPaneWidth/,
+  /mainWidth \/ scaleX \+ currentWidth - minimumConversationPaneWidth/,
   'Pointer resizing must use the same narrower conversation-pane limit as the flex layout',
 );
 assert.match(rightInspectorSizing, /maximizedConversationPaneMinimum = 340/);

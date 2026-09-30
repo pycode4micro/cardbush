@@ -27,7 +27,7 @@ run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-re
 run(['--test', 'scripts/test-release-privacy.mjs']);
 run(['--test', 'scripts/test-process-host-build.mjs']);
 run(['--test', 'scripts/test-notification-sound.mjs']);
-run(['--test', 'scripts/test-appearance-preferences.mjs', 'scripts/test-conversation-styles.mjs']);
+run(['--test', 'scripts/test-appearance-preferences.mjs', 'scripts/test-conversation-styles.mjs', 'scripts/test-app-preferences.mjs']);
 run(['--test', 'scripts/test-app-center.mjs', 'scripts/test-local-applications.mjs', 'scripts/test-calendar-import.mjs']);
 run(['scripts/test-local-applications-native.mjs']);
 run(['scripts/test-automation-calendar.mjs']);
@@ -62,6 +62,8 @@ if (!process.argv.includes('--no-ui')) {
   for (const script of ['run-app-views-test.mjs', 'test-source-memo-ui.mjs', 'test-subagent-conversation-ui.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
   for (const view of ['html-references', 'code-rendering', 'markdown-tables', 'status-indicators', 'loop-previews', 'startup-presentation', 'composer-resize', 'pasted-text', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
+  for (const view of ['html-components', 'inspector-cover', 'composer-presentation', 'page-navigation']) run(['scripts/run-app-views-test.mjs', view]);
+  run(['scripts/test-inspector-browser-navigation.mjs']);
   run(['scripts/test-automations-ui.mjs']);
   run(['scripts/test-plugin-uninstall-worker.cjs']);
   run(['scripts/test-window-menu.mjs']);

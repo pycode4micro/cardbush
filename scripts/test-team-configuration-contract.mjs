@@ -1,6 +1,7 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import { readFileSync } from 'node:fs';
 
-const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const app = readAppViewSources();
 const sidebar = readFileSync(new URL('../packages/cardbush-team-plugin/ui/TeamSidebar.tsx', import.meta.url), 'utf8');
 const panel = readFileSync(new URL('../packages/cardbush-team-plugin/ui/TeamWorkflowPanel.tsx', import.meta.url), 'utf8');
 const store = readFileSync(new URL('../packages/cardbush-team-plugin/ui/teamWorkspaceStore.ts', import.meta.url), 'utf8');

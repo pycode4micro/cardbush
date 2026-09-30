@@ -78,4 +78,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.ok(Math.abs(await run('document.querySelector(".right-inspector-content").getBoundingClientRect().width')-499)<2,'Back restores the original inspector width');
   assert.equal(await run('document.body.classList.contains("right-inspector-resizing")'),false);
   console.log('Inspector cover passed: real pointer drag, full inner/tile widths, single/multi-page, window resize and 125% renderer zoom, narrow drag handles, native bar retained, Composer and original-width restoration.');
+  await require('./inspector-workspace.cjs')({run,until,pause});
 };

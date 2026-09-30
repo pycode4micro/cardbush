@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Real welcome/composer views in isolated Chromium; history is a fixture and
 // there are no model calls, product-profile reads, or visible helper windows.
 const { app, BrowserWindow } = require('electron');
@@ -11,11 +12,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function bundle() {
   const { build } = await import('vite');
   const { default: react } = await import('@vitejs/plugin-react');
-  const appSource = ts.createSourceFile('App.tsx', fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const appSource = ts.createSourceFile('App.tsx', readSourceFile(path.join(root, 'src/App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const statements = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'CardbushApp').body.statements;
   const navigationCallbacks = ['createConversation', 'openConversationPrompt', 'openPluginPrompt', 'createAutomationConversation', 'openConversation', 'changeWelcomeProject', 'handleProjectAction', 'handleSidebarCreateConversation'].map(name => statements.find(node =>
     ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText(appSource) === name).getText(appSource));
-  const hookSource = ts.createSourceFile('useCardbushChat.ts', fs.readFileSync(path.join(root, 'src/hooks/useCardbushChat.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+  const hookSource = ts.createSourceFile('useCardbushChat.ts', readSourceFile(path.join(root, 'src/hooks/useCardbushChat.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
   const hookStatements = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useCardbushChat').body.statements;
   const draftCallbacks = ['prepareConversation', 'setConversationProject'].map(name => hookStatements.find(node =>
     ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText(hookSource) === name).getText(hookSource));
@@ -94,7 +95,7 @@ app.whenReady().then(async () => {
   };
   try {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await win.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/features/ssh/ssh.css'), 'utf8') + '\n' + ['theme.css', 'app.css', 'windowMaterial.css'].map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n'));
+    await win.webContents.insertCSS(readSourceFile(path.join(root, 'src/features/ssh/ssh.css'), 'utf8') + '\n' + ['theme.css', 'app.css', 'windowMaterial.css'].map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n'));
     await run(`
       window.failures = []; window.historyRequests = 0; window.sent = 0; window.workspaceSwitchCalls = []; window.workspaceErrors = [];
       window.cardbushDesktop = { showErrorDialog: async value => workspaceErrors.push(value) };

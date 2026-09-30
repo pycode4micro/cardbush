@@ -66,6 +66,7 @@ app.whenReady().then(async () => {
   const click = async (contents, selector, button = 'left') => {
     const point = await contents.executeJavaScript(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
     const zoom = contents.getZoomFactor(); point.x = Math.round(point.x * zoom); point.y = Math.round(point.y * zoom);
+    contents.sendInputEvent({ type: 'mouseMove', ...point });
     contents.sendInputEvent({ type: 'mouseDown', button, clickCount: 1, ...point });
     contents.sendInputEvent({ type: 'mouseUp', button, clickCount: 1, ...point });
   };
@@ -78,6 +79,8 @@ app.whenReady().then(async () => {
     const original = webContents.fromId(originalId);
     await until(() => original.executeJavaScript('!!document.querySelector("#blank")'), 'source page');
     await original.executeJavaScript('window.retainedState="search-state"');
+    await waitFor('!document.querySelector(".deferred-resize-preview[data-resizing]")');
+    await pause(200);
 
     await click(original, '#blank');
     await waitFor('browserFixture.tabs.length===2'); await activeReady();
@@ -98,6 +101,7 @@ app.whenReady().then(async () => {
       const drag=frame.querySelector('.inspector-tile-drag').getBoundingClientRect(),address=frame.querySelector('form').getBoundingClientRect();
       return Math.abs(drag.y+drag.height/2-address.y-address.height/2)<2 && frame.getBoundingClientRect().height<60;
     })`),true,'drag handle and address share a single row');
+    await require('./helpers/inspector-resize.cjs')({ window, read, waitFor, until, pause, original, guestIds });
     await read('browserFixture.setCovered(true);void 0');
     await waitFor('document.querySelector(".right-inspector-content").getBoundingClientRect().width>1000');
     const coverWidth=await read('document.querySelector(".right-inspector").getBoundingClientRect().width');
@@ -264,5 +268,8 @@ app.whenReady().then(async () => {
     await read('window.setTimeout=normalTimeout; void 0');
     assert.deepEqual(errors, []);
     console.log('Inspector browser: single-row chrome, real drag/cancel, full-cover guest sizing/restore, selected-page external action, preserved guests, navigation, home pages and loading recovery passed.');
+  } catch(error) {
+    require('node:fs').writeFileSync(path.resolve('tmp/inspector-browser-failure.png'),(await window.webContents.capturePage()).toPNG());
+    throw error;
   } finally { for (const response of [...delayedFrames, ...delayedDocuments]) response.end(); window.destroy(); server.close(); }
 }).then(() => app.exit(0), error => { console.error(error); app.exit(1); });

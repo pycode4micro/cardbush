@@ -18,7 +18,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture(scope) {
   const creation = deferred(), completion = deferred(), streams = [], inspected = [], running = new Set();
   const candidate = { id: 'new', title: 'New', preview: '', updatedAt: '' };
-  const state = { messages: {}, error: null, titles: [] };
+  const state = { messages: {}, error: null, titles: [], scheduled: [] };
   const context = {
     exports: {}, crypto: webcrypto, AbortController, console: { warn() {} },
     window: { cardbushDesktop: { inspectAttachments: async paths => { inspected.push(paths); return []; } }, setTimeout },
@@ -47,6 +47,7 @@ function fixture(scope) {
     markOptimisticChatRequestFailed: (all, id, userId, assistantId) => ({ ...all, [id]: all[id].filter(message => message.id !== assistantId)
       .map(message => message.id === userId ? { ...message, metadata: { message_delivery: 'failed' } } : message) }),
     dequeueMessageForConversation: () => undefined,
+    scheduleQueuedMessage: (...args) => state.scheduled.push(args),
   };
   vm.runInNewContext(code, context);
   return { ...context.exports, context, state, creation, completion, streams, inspected, running, candidate };
@@ -66,6 +67,8 @@ for (const scope of [undefined, 'remote-agent']) {
   assert.equal(f.streams[0].sourceEnabled, true);
   f.completion.resolve(); await sending;
   assert.equal(f.running.size, 0);
+  assert.equal(f.state.scheduled.length, 1);
+  assert.equal(f.state.scheduled[0][0], 'new', 'queue wakeup remains owned by the completed session');
 
   const failed = fixture(scope), failure = failed.send('保留失败的消息');
   await tick(); failed.creation.reject(Error('Creation failed')); await failure;

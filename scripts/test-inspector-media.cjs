@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Real React + Chromium media decoding with the production local resource handler.
 // Isolated window/profile; optional argv[2] is a read-only real-world video fixture.
 const { app, BrowserWindow, protocol } = require('electron');
@@ -17,14 +18,14 @@ const compile = (source) => ts.transpileModule(source, {
 }).outputText;
 const load = (file) => {
   const module = { exports: {} };
-  new Function('require', 'module', 'exports', compile(fs.readFileSync(path.join(root, file), 'utf8')))(require, module, module.exports);
+  new Function('require', 'module', 'exports', compile(readSourceFile(path.join(root, file), 'utf8')))(require, module, module.exports);
   return module.exports;
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==', 'base64');
 app.whenReady().then(async () => {
   // Extract actual functions without booting the user's runtime or main window.
-  const main = fs.readFileSync(path.join(root, 'electron/main.ts'), 'utf8');
+  const main = readSourceFile(path.join(root, 'electron/main.ts'), 'utf8');
   const ast = ts.createSourceFile('main.ts', main, ts.ScriptTarget.Latest, true);
   const names = ['registerLocalFileProtocol', 'normalizeShellPath', 'localPathFromProtocolUrl',
     'contentTypeForPath', 'imageMimeTypeForPath', 'audioMimeTypeForPath', 'videoMimeTypeForPath',
@@ -49,7 +50,7 @@ app.whenReady().then(async () => {
   };
   try {
     await window.loadURL('data:text/html,<html><body style="margin:0"><div class="app theme-dark" id="root" style="height:100vh;--surface:%23111517;--text:%23eeeeee;--muted:%23999999;--border:%23444444"></div></body></html>');
-    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8'));
+    await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/app.css'), 'utf8'));
     const modules = Object.fromEntries([
       'src/shared/localPaths.ts', 'src/shared/textPreview.ts',
       'src/shared/showUiError.ts',
@@ -63,7 +64,7 @@ app.whenReady().then(async () => {
       'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',
       'src/features/inspector/TextInspectorPreview.tsx', 'src/features/inspector/filePreviewRegistry.ts',
       'src/features/inspector/inspectorFilePreviewRenderers.tsx',
-    ].map(file => [path.join(root, file), compile(fs.readFileSync(path.join(root, file), 'utf8'))]));
+    ].map(file => [path.join(root, file), compile(readSourceFile(path.join(root, file), 'utf8'))]));
     await run(`
       const React = require(${JSON.stringify(require.resolve('react'))});
       const {createRoot} = require(${JSON.stringify(require.resolve('react-dom/client'))});

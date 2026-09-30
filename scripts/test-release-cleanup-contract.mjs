@@ -1,10 +1,11 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const read = (path) => readFileSync(resolve(root, path), 'utf8');
+const read = (path) => readSourceFile(resolve(root, path), 'utf8');
 const app = readAppViewSources();
 const chat = read('src/hooks/useCardbushChat.ts');
 const composer = read('src/features/composer/Composer.tsx');
@@ -157,7 +158,7 @@ if (process.argv.includes('--dist')) {
   assert(existsSync(assetsDir), 'dist/assets is missing; run the production build first');
   const productionJavaScript = readdirSync(assetsDir)
     .filter((name) => name.endsWith('.js'))
-    .map((name) => readFileSync(resolve(assetsDir, name), 'utf8'))
+    .map((name) => readSourceFile(resolve(assetsDir, name), 'utf8'))
     .join('\n');
   assert(
     !productionJavaScript.includes('cardbush_pre_test'),

@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import * as protocol from '@cardbush/bush-protocol';
 
-const fileReferenceSource = fs.readFileSync(
+const fileReferenceSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'fileReferences.ts'),
   'utf8',
 );
@@ -168,7 +169,7 @@ assert.equal(
   'Slash-formatted dates must not be promoted to local folder references',
 );
 
-const localReferenceLinkSource = fs.readFileSync(
+const localReferenceLinkSource = readSourceFile(
   path.join(
     process.cwd(),
     'src',
@@ -189,7 +190,7 @@ assert.match(localReferenceLinkSource, /<FileTypeIcon path=\{path\} \/>/);
 assert.match(localReferenceLinkSource, /if \(!inspectionComplete \|\| !metadata\)/);
 assert.doesNotMatch(localReferenceLinkSource, /fallbackDirectoryLike/);
 
-const fileTypeIconSource = fs.readFileSync(
+const fileTypeIconSource = readSourceFile(
   path.join(
     process.cwd(),
     'src',
@@ -204,7 +205,7 @@ assert.match(fileTypeIconSource, /typescript/);
 assert.match(fileTypeIconSource, /javascript/);
 assert.match(fileTypeIconSource, /function FileTypeIcon/);
 
-const stylesSource = fs.readFileSync(
+const stylesSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
@@ -217,7 +218,7 @@ assert.match(inlineCodeStyle, /background:\s*transparent/);
 assert.match(inlineCodeStyle, /padding:\s*0/);
 assert.doesNotMatch(inlineCodeStyle, /color-mix/);
 
-const electronMainSource = fs.readFileSync(
+const electronMainSource = readSourceFile(
   path.join(process.cwd(), 'electron', 'main.ts'),
   'utf8',
 );
@@ -229,7 +230,7 @@ const fileContextMenuHandler = electronMainSource.match(
 )?.[0] ?? '';
 assert.match(fileContextMenuHandler, /buildFileContextMenu/);
 const menuModule = { exports: {} };
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'electron/fileContextMenu.ts'), 'utf8'), {
+vm.runInNewContext(ts.transpileModule(readSourceFile(path.join(process.cwd(), 'electron/fileContextMenu.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { module: menuModule, exports: menuModule.exports });
 let copiedPath = false;

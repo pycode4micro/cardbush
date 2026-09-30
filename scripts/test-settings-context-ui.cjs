@@ -1,3 +1,4 @@
+const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Real components in isolated Chromium; no product profile or external requests.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
@@ -73,7 +74,7 @@ app.whenReady().then(async () => {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
     const componentCss = (Array.isArray(result) ? result : [result]).flatMap(item => item.output)
       .filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => String(item.source)).join('\n');
-    await win.webContents.insertCSS(componentCss + '\n' + ['src/styles/theme.css', 'src/styles/app.css', 'src/styles/appearance.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n'));
+    await win.webContents.insertCSS(componentCss + '\n' + ['src/styles/theme.css', 'src/styles/app.css', 'src/styles/appearance.css'].map(file => readSourceFile(path.join(root, file), 'utf8')).join('\n'));
     await run(`
       window.failures = []; window.usageReads = 0;
       crypto.randomUUID = require('node:crypto').randomUUID;

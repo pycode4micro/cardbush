@@ -1,27 +1,28 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const sidebarSource = fs.readFileSync(
+const sidebarSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
   'utf8',
 );
 const appSource = readAppViewSources();
-const workspaceLocationSource = fs.readFileSync('src/features/ssh/WorkspaceLocationPicker.tsx', 'utf8');
-const chatHookSource = fs.readFileSync(
+const workspaceLocationSource = readSourceFile('src/features/ssh/WorkspaceLocationPicker.tsx', 'utf8');
+const chatHookSource = readSourceFile(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
-const conversationWorkspaceSource = fs.readFileSync(
+const conversationWorkspaceSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'conversationWorkspace.ts'),
   'utf8',
 );
-const stylesSource = fs.readFileSync(
+const stylesSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
-const rightInspectorResizerSource = fs.readFileSync(
+const rightInspectorResizerSource = readSourceFile(
   path.join(process.cwd(), 'src', 'components', 'RightInspectorResizer.tsx'),
   'utf8',
 );
@@ -64,7 +65,7 @@ assert.doesNotMatch(
 );
 assert.match(
   rightInspectorResizerSource,
-  /readCurrentInspectorWidth\(scope, width\)/,
+  /const bounds = scope\.getBoundingClientRect\(\);[\s\S]*?const currentWidth = bounds\.width > 0 \? bounds\.width \/ scaleX : width/,
   'Right inspector resizing must start from its rendered width, matching the sidebar',
 );
 assert.match(
@@ -325,7 +326,7 @@ assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s
   'The shared picker retains an explicit choice to start without a project');
 assert.match(
   appSource,
-  /className="welcome-input-stack">\s*\{workspaceControl !== undefined \? workspaceControl : <WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
+  /className="builtin-workspace-control">\{workspaceControl !== undefined \? workspaceControl : <WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
   'The optional project selector must always be available above the welcome composer',
 );
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);
@@ -341,7 +342,7 @@ assert.match(
   /\.welcome-project-switcher\s*\{[\s\S]*?width:\s*calc\(100% - 30px\)[\s\S]*?margin:\s*0 15px -1px[\s\S]*?border-radius:\s*16px 16px 0 0/,
   'The project rail must be inset and visually joined to the welcome composer',
 );
-assert.match(appSource, /<StarWordmark\s*\/>/);
+assert.match(readSourceFile('src/features/components/WelcomePage.tsx', 'utf8'), /<StarWordmark\s*\/>/);
 assert.doesNotMatch(appSource, /<u>\{selectedProjectDir/);
 
 console.log('sidebar interaction contract tests passed');

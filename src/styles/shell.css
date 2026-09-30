@@ -1,0 +1,615 @@
+/* Keep one cursor while dragging across buttons, links and text. */
+body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) * {
+  cursor: col-resize !important;
+}
+
+/* These dimensions are local to the panel, not inherited by embedded views. */
+@property --right-inspector-width {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 620px;
+}
+
+@property --side-panel-width {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 272px;
+}
+
+/* Animate the reading column and composer together while the native scroll
+   viewport keeps reaching the outer edge of the conversation pane. */
+@property --work-summary-content-inset {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+.compact-sidebar-backdrop { display: none; }
+
+.app {
+  --window-frame-height: max(36px, env(titlebar-area-height, 36px));
+  /* Use the full window as the sizing container so fixed overlays retain
+     their viewport origin (the desktop shell starts below the title bar). */
+  container-type: inline-size;
+  --motion-fast: 110ms;
+  --motion-normal: 180ms;
+  --motion-slow: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0.72, 0.25, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --panel-motion-duration: 240ms;
+  --panel-motion-ease: cubic-bezier(0.22, 0.72, 0.25, 1);
+  --panel-resize-hit-width: 16px;
+  --scrollbar-thumb: color-mix(in srgb, var(--surface) 74%, var(--text) 26%);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--surface) 62%, var(--text) 38%);
+  --scrollbar-track: transparent;
+  --menu-surface: var(--surface-raised);
+  --menu-border: color-mix(in srgb, var(--text) 12%, var(--menu-surface));
+  --menu-secondary: color-mix(in srgb, var(--text) 92%, var(--menu-surface));
+  --menu-hover: color-mix(in srgb, var(--text) 9%, var(--menu-surface));
+  --menu-separator: color-mix(in srgb, var(--text) 27%, var(--menu-surface));
+  --menu-shadow: 0 8px 28px var(--shadow), 0 2px 8px var(--shadow);
+  --menu-radius: 10px;
+}
+
+.soft-panel-motion {
+  will-change: opacity, transform;
+}
+
+.soft-panel-hidden {
+  pointer-events: none !important;
+}
+
+.theme-dark.app {
+  --menu-surface: #202020;
+  --menu-border: #343434;
+  --scrollbar-thumb: #2b2b2b;
+  --scrollbar-thumb-hover: #353535;
+}
+
+.app * {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.app *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.app *::-webkit-scrollbar-track,
+.app *::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+.app *::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  background: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.app *::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle):not(.compact-sidebar-backdrop):not(.scroll-bottom) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, scale;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle):not(.compact-sidebar-backdrop):not(.scroll-bottom):active {
+  scale: 0.975;
+  transition-duration: 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(html:not([data-motion-preference="off"])) .app *,
+  :where(html:not([data-motion-preference="off"])) .app *::before,
+  :where(html:not([data-motion-preference="off"])) .app *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    /* A nonzero duration creates transitions on elements whose default
+       transition-property is all, delaying image size and visibility commits. */
+    transition-duration: 0s !important;
+  }
+}
+
+.window-drag {
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+/* Only controls inside native drag regions need exclusions. Registering every
+   scrolling button as no-drag can punch holes in the title bar on Electron 42
+   when Chromium reports an offscreen control's unclipped rectangle. */
+.window-drag .no-drag,
+.window-drag button,
+.window-drag select,
+.window-drag input,
+.window-drag textarea {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.window-frame {
+  position: relative;
+  z-index: 1000;
+  flex: 0 0 var(--window-frame-height);
+  height: var(--window-frame-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  user-select: none;
+  isolation: isolate;
+}
+
+.window-frame[data-native-controls="true"] {
+  /* Keep menu content out of native caption hit targets at any DPI / zoom. */
+  padding-left: calc(14px + env(titlebar-area-x, 0px));
+  padding-right: max(0px, calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%)));
+}
+
+.window-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 700;
+}
+
+.window-sidebar-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  height: 28px;
+  width: max-content;
+  min-width: 28px;
+  interpolate-size: allow-keywords;
+  transition: width 420ms cubic-bezier(0.22, 0.76, 0.28, 1);
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.window-sidebar-toggle[data-brand-visible="false"] {
+  width: 28px;
+}
+
+.window-sidebar-size {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.window-sidebar-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.window-sidebar-track,
+.window-sidebar-icon-track {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  transition: transform 420ms cubic-bezier(0.22, 0.76, 0.28, 1);
+  transform: translateX(0);
+}
+
+.window-sidebar-toggle[data-brand-visible="false"] .window-sidebar-track,
+.window-sidebar-toggle[data-collapsed="true"] .window-sidebar-icon-track {
+  transform: translateX(-100%);
+}
+
+.window-sidebar-screen,
+.window-sidebar-icon {
+  flex: 0 0 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.window-sidebar-screen {
+  overflow: hidden;
+}
+
+.window-sidebar-icon-viewport {
+  width: 28px;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  color: var(--text-mid);
+  background: transparent;
+}
+
+.window-sidebar-toggle:hover .window-sidebar-icon-viewport {
+  color: var(--text);
+}
+
+.window-sidebar-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.window-spacer {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 48px;
+  height: 100%;
+  pointer-events: auto;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.frame-chip,
+.window-button {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mid);
+  background: transparent;
+}
+
+.frame-chip {
+  width: 38px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.window-history-controls {
+  display: flex;
+  gap: 2px;
+}
+
+.window-history-controls .frame-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+}
+
+.window-history-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.window-history-controls button:not(:disabled):hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.window-menu-dismiss-layer {
+  position: fixed;
+  inset: var(--window-frame-height) 0 0;
+  z-index: 1090;
+}
+
+.window-frame-menu-group {
+  position: relative;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.window-frame-menu {
+  position: relative;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+}
+
+.frame-chip.window-frame-menu-trigger {
+  width: auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.window-frame-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.window-frame-menu-popover {
+  outline: none;
+  position: fixed;
+  z-index: 1100;
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - var(--window-frame-height) - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 6px 0;
+  color: var(--text);
+  background: var(--menu-surface);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-radius);
+  box-shadow: var(--menu-shadow);
+}
+
+.window-frame-menu-popover button {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  color: var(--text);
+  background: transparent;
+  border-radius: 0;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.window-frame-menu-popover button:focus {
+  outline: none;
+}
+
+.window-frame[data-menu-input="pointer"] .window-frame-menu-popover button:not(:disabled):hover,
+.window-frame[data-menu-input="keyboard"] .window-frame-menu-popover button:focus,
+.window-frame-menu-popover button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--menu-hover);
+}
+
+.window-frame-menu-popover button:disabled {
+  color: var(--text-soft);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.window-menu-label {
+  flex: 1;
+}
+
+.window-menu-check {
+  display: inline-flex;
+  flex: 0 0 16px;
+}
+
+.window-frame-menu-popover kbd {
+  margin-left: 8px;
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  color: var(--menu-secondary);
+  white-space: nowrap;
+}
+
+.window-menu-separator,
+.sidebar-menu-separator {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 10px 0;
+  background: var(--menu-separator);
+}
+
+.window-menu-separator {
+  margin: 5px 0;
+}
+
+.window-frame-menu-popover button > svg {
+  flex: 0 0 auto;
+  color: var(--menu-secondary);
+}
+
+.window-button {
+  width: 40px;
+  height: var(--window-frame-height, 36px);
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 0;
+  line-height: 0;
+}
+
+.window-button + .window-button {
+  margin-left: -8px;
+}
+
+.window-button:hover,
+.frame-chip:hover {
+  color: var(--text);
+}
+
+.window-button:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.frame-chip:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.window-button.danger:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.window-glyph {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+  color: currentColor;
+}
+
+.window-button svg {
+  width: 14px;
+  height: 14px;
+  color: currentColor;
+  stroke-width: 2;
+}
+
+.window-glyph.minimize::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: currentColor;
+  transform: translateY(-50%);
+}
+
+.window-glyph.maximize::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid currentColor;
+  box-sizing: border-box;
+}
+
+.window-glyph.restore::before,
+.window-glyph.restore::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+}
+
+.window-glyph.restore::before {
+  top: 0;
+  right: 0;
+}
+
+.window-glyph.restore::after {
+  left: 0;
+  bottom: 0;
+  background: var(--surface);
+}
+
+.window-button:hover .window-glyph.restore::after {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.window-button.danger:hover .window-glyph.restore::after {
+  background: #c42b1c;
+}
+
+.window-glyph.close::before,
+.window-glyph.close::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 10px;
+  height: 1px;
+  background: currentColor;
+}
+
+.window-glyph.close::before {
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.window-glyph.close::after {
+  transform: translateY(-50%) rotate(-45deg);
+}
+
+.desktop-shell,
+.settings-shell {
+  --layout-sidebar-space: var(--sidebar-width);
+  --conversation-pane-min-width: 440px;
+  position: relative;
+  height: calc(100vh - var(--window-frame-height));
+  display: flex;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-top: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.desktop-shell.window-maximized {
+  --conversation-pane-min-width: clamp(340px, 18vw, 440px);
+}
+
+.app > .settings-shell {
+  position: absolute;
+  inset: var(--window-frame-height) 0 0;
+  z-index: 100;
+}
+
+.desktop-shell.app-content-suspended {
+  opacity: 0.001;
+  pointer-events: none;
+  user-select: none;
+}
+
+.settings-shell.settings-inactive {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.desktop-shell.sidebar-is-collapsed,
+.settings-shell.sidebar-is-collapsed {
+  --layout-sidebar-space: 0px;
+}
+
+.settings-shell {
+  --text-soft: color-mix(in srgb, var(--text) 64%, transparent);
+  --text-mid: color-mix(in srgb, var(--text) 82%, transparent);
+}
+
+.render-failure-shell {
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.markdown-content .markdown-link-error {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.render-failure-card {
+  width: min(520px, 100%);
+  padding: 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px var(--shadow);
+}
+
+.render-failure-card h1 {
+  margin: 0 0 10px;
+  font-size: calc(18px * var(--ui-font-scale, 1));
+}
+
+.render-failure-card p {
+  margin: 0 0 18px;
+  color: var(--text-mid);
+  line-height: 1.5;
+}

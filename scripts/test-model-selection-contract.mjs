@@ -1,3 +1,5 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,7 +8,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 const hookPath = path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts');
-const hookSource = fs.readFileSync(hookPath, 'utf8');
+const hookSource = readSourceFile(hookPath, 'utf8');
 const transpiled = ts.transpileModule(hookSource, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -46,24 +48,24 @@ assert.equal(
 );
 assert.equal(selectedModelName(configs, 'volcengine-config'), 'deepseek-v4-flash');
 
-const settingsSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'features', 'SettingsView.tsx'),
+const settingsSource = readSourceFile(
+  path.join(process.cwd(), 'src', 'features', 'settings', 'ModelsSettingsPanel.tsx'),
   'utf8',
 );
-assert.match(settingsSource, /selected=\{selectedModel === config\.id\}/);
-assert.match(settingsSource, /onUseModel\(config\.id\)/);
-assert.match(settingsSource, /最大输出 token（可选）/);
-assert.match(settingsSource, /onSaveCompletionTokens/);
+assert.match(settingsSource, /selected=\{config\.defaultModelId === model\.id\}/);
+assert.match(settingsSource, /onSelect\(model\.id\)/);
+assert.match(settingsSource, /最大输出 tokens 必须小于上下文上限/);
+assert.match(settingsSource, /model.maxCompletionTokens/);
 
-const apiSource = fs.readFileSync(
+const apiSource = readSourceFile(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-const modelStoreSource = fs.readFileSync(
+const modelStoreSource = readSourceFile(
   path.join(process.cwd(), 'packages', 'cardbush-product-host', 'src', 'modelConfigStore.ts'),
   'utf8',
 );
-const runtimeChatSource = fs.readFileSync(
+const runtimeChatSource = readSourceFile(
   path.join(process.cwd(), 'src', 'backend', 'runtimeChat.ts'),
   'utf8',
 );
@@ -78,10 +80,7 @@ assert.match(apiSource, /kind: 'models\.get'/);
 assert.match(apiSource, /kind: 'models\.update'/);
 assert.doesNotMatch(apiSource, /cardbush_runtime_default_model_id/);
 
-const appSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'App.tsx'),
-  'utf8',
-);
+const appSource = readAppViewSources();
 assert.match(
   appSource,
   /JSON\.stringify\(settings\.managedModelConfigs\.map\(\(config\) => \(\{[\s\S]*?apiKey: ''/,
@@ -95,12 +94,12 @@ assert.match(
 );
 assert.match(appSource, /model\.hasApiKey === true \|\| model\.apiKey\.trim\(\)/);
 
-const composerSource = fs.readFileSync(
+const composerSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'composer', 'Composer.tsx'),
   'utf8',
 );
 assert.match(composerSource, /key=\{config\.id\}/);
-assert.match(composerSource, /<small>\{config\.provider\}<\/small>/);
+assert.match(composerSource, /className="model-picker-provider">\{config\.provider\}[\s\S]*?modelProtocolInfo\(config\.apiProtocol\)\.shortLabel/);
 assert.match(composerSource, /primary:\s*ordered\.slice\(primaryStart\)/);
 assert.match(composerSource, /secondary:\s*ordered\.slice\(0, primaryStart\)/);
 assert.match(composerSource, /className="model-reasoning-secondary-options"/);
@@ -116,7 +115,7 @@ assert.doesNotMatch(composerSource, /middle:\s*\{/);
 assert.match(apiSource, /reasoningLevels: \['none', 'low', 'medium', 'high', 'xhigh', 'max'\]/);
 assert.match(apiSource, /defaultReasoningLevel: 'high'/);
 
-const styleSource = fs.readFileSync(
+const styleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );

@@ -39,14 +39,16 @@ test('inherited child input extends the exact cached prefix with frozen definiti
   assert.deepEqual(child.prefixMessages.slice(0, parent.messages.length), parent.messages);
   assert.equal(child.prefixMessages.at(-1).name, 'plugin_agent_role');
   assert.deepEqual(child.tools, parent.tools);
-  assert.equal(child.inputMessages[0].message.content, '你当前处于子agent状态\n\n请验证修改；我将处理界面，接口结果稍后提供。');
+  assert.deepEqual(child.inputMessages[0].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
+    content: 'Individuation for this turn: habits disabled; next-step prediction disabled.' });
+  assert.equal(child.inputMessages[1].message.content, '你当前处于子agent状态\n\n请验证修改；我将处理界面，接口结果稍后提供。');
   const tracker = new CacheChainTracker();
   const baseline = tracker.observe(parent);
   const observation = tracker.observe({ ...child, messages: [...child.prefixMessages, ...child.inputMessages.map(item => item.message)] });
   assert.equal(observation.stableInputDigest, baseline.stableInputDigest);
   assert.equal(observation.frozenPrefixBreak, false);
   assert.equal(observation.sharedPrefixMessages, parent.messages.length);
-  assert.equal(observation.appendedMessages, 2);
+  assert.equal(observation.appendedMessages, 3);
   child.tools[0].description = 'child-local edit';
   child.prefixMessages[0].content = 'child-local edit';
   assert.deepEqual(parent, before, 'constructing or modifying the child must not change the parent chain');
@@ -143,5 +145,6 @@ test('runtime child receives a restriction result and finishes without starting 
   const parent = requests.find(req => req.sessionId === 'parent'), child = requests.find(req => req.metadata.agentRole === 'child');
   assert.deepEqual(child.tools, parent.tools);
   assert.deepEqual(child.messages.slice(0, parent.messages.length), parent.messages);
-  assert.ok(child.messages[parent.messages.length].content.startsWith('你当前处于子agent状态\n'));
+  assert.equal(child.messages[parent.messages.length].name, 'individuation_preference');
+  assert.ok(child.messages[parent.messages.length + 1].content.startsWith('你当前处于子agent状态\n'));
 });

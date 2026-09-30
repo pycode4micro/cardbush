@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,15 +18,15 @@ const sourcePath = path.join(
   'markdownFormat.ts',
 );
 
-const messageBubbleSource = fs.readFileSync(
+const messageBubbleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
-const quickContextSource = fs.readFileSync(
+const quickContextSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
   'utf8',
 );
-const appStyles = fs.readFileSync(
+const appStyles = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );

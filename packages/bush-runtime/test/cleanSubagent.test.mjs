@@ -52,7 +52,9 @@ test('ordinary dispatch defaults to fork and retains the exact parent prefix and
   assert.equal(outcome.result.mode, 'fork');
   assert.deepEqual(f.requests[0].prefixMessages, f.request.messages);
   assert.deepEqual(f.requests[0].tools, f.request.tools);
-  assert.match(f.requests[0].inputMessages[0].message.content, /^你当前处于子agent状态\n\n我继续实现/);
+  assert.deepEqual(f.requests[0].inputMessages[0].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
+    content: 'Individuation for this turn: habits disabled; next-step prediction disabled.' });
+  assert.match(f.requests[0].inputMessages[1].message.content, /^你当前处于子agent状态\n\n我继续实现/);
 });
 
 test('explicit clean supplies the actual system and user messages without inherited history or fallback policy', async () => {
@@ -63,7 +65,11 @@ test('explicit clean supplies the actual system and user messages without inheri
   assert.equal(outcome.result.inheritedMessageCount, 0);
   const child = f.requests[0];
   assert.deepEqual(child.prefixMessages, [{ role: 'system', content: clean.system_prompt }]);
-  assert.deepEqual(child.inputMessages.map(item => item.message), [{ role: 'user', content: `你当前处于子agent状态\n\n${clean.prompt}` }]);
+  assert.deepEqual(child.inputMessages.map(item => item.message), [
+    { role: 'user', name: 'individuation_preference', visibility: 'internal',
+      content: 'Individuation for this turn: habits disabled; next-step prediction disabled.' },
+    { role: 'user', content: `你当前处于子agent状态\n\n${clean.prompt}` },
+  ]);
   assert.deepEqual(child.tools, []);
   assert.deepEqual(child.metadata.childToolAllowlist, []);
   assert.equal(child.metadata.agentRole, 'child');

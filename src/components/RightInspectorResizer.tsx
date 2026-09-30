@@ -10,6 +10,7 @@ import {
 type InspectorDragState = {
   startX: number;
   startWidth: number;
+  scaleX: number;
   currentWidth: number;
   maximumWidth: number;
   pointerId: number;
@@ -58,12 +59,22 @@ export function RightInspectorResizer({
     if (!scope) {
       return;
     }
-    const currentWidth = readCurrentInspectorWidth(scope, width);
+    const bounds = scope.getBoundingClientRect();
+    const scaleX = bounds.width / scope.offsetWidth || 1;
+    const currentWidth = bounds.width > 0 ? bounds.width / scaleX : width;
+    const shell = scope.closest<HTMLElement>('.desktop-shell');
+    const compact = getComputedStyle(scope).position === 'absolute';
+    // Docked panes can shrink the conversation continuously down to the cover
+    // threshold. Compact overlays retain their existing 48px edge allowance.
+    const availableWidth = compact
+      ? (shell?.clientWidth ?? window.innerWidth) - 48
+      : currentWidth + (shell?.querySelector('.main-stage')?.getBoundingClientRect().width ?? 0) / scaleX;
     dragRef.current = {
       startX: event.clientX,
       startWidth: currentWidth,
+      scaleX,
       currentWidth,
-      maximumWidth: onExpand ? document.querySelector('.desktop-shell')?.getBoundingClientRect().width ?? window.innerWidth : readMaximumInspectorWidth(currentWidth, windowMaximized),
+      maximumWidth: onExpand ? availableWidth : readMaximumInspectorWidth(currentWidth, windowMaximized, scaleX),
       pointerId: event.pointerId,
       scope,
       animationFrame: 0,
@@ -71,6 +82,9 @@ export function RightInspectorResizer({
     };
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
+    // If the reveal animation is still running, freeze at the visible width
+    // before disabling transitions; otherwise the boundary jumps on press.
+    writePreviewWidth(scope, currentWidth);
     document.body.classList.add('right-inspector-resizing');
 
     const finish = (restoreWidth = false) => {
@@ -97,13 +111,13 @@ export function RightInspectorResizer({
       if (!state || moveEvent.pointerId !== state.pointerId) {
         return;
       }
-      if (onExpand && moveEvent.clientX <= (document.querySelector('.desktop-shell')?.getBoundingClientRect().left ?? 0) + 24) {
+      if (onExpand && moveEvent.clientX <= (shell?.getBoundingClientRect().left ?? 0) + 24 * state.scaleX) {
         finish(true);
         onExpand();
         return;
       }
       const nextWidth = clampPreviewWidth(
-        state.startWidth + state.startX - moveEvent.clientX,
+        state.startWidth + (state.startX - moveEvent.clientX) / state.scaleX,
         state.maximumWidth,
         Boolean(onCollapse),
       );
@@ -125,6 +139,8 @@ export function RightInspectorResizer({
       }
     };
     const handlePointerUp = (upEvent: PointerEvent) => {
+      // The final pointer location can arrive without a preceding move event.
+      handlePointerMove(upEvent);
       const state = dragRef.current;
       if (!state || upEvent.pointerId !== state.pointerId) {
         return;
@@ -165,14 +181,7 @@ export function RightInspectorResizer({
   );
 }
 
-function readCurrentInspectorWidth(scope: HTMLElement, fallbackWidth: number) {
-  const currentWidth = scope.getBoundingClientRect().width;
-  return Number.isFinite(currentWidth) && currentWidth > 0
-    ? currentWidth
-    : fallbackWidth;
-}
-
-function readMaximumInspectorWidth(currentWidth: number, windowMaximized: boolean) {
+function readMaximumInspectorWidth(currentWidth: number, windowMaximized: boolean, scaleX: number) {
   const minimumConversationPaneWidth = conversationPaneMinimum(
     windowMaximized,
     window.innerWidth,
@@ -183,7 +192,7 @@ function readMaximumInspectorWidth(currentWidth: number, windowMaximized: boolea
     inspectorMaximum(windowMaximized, window.innerWidth),
     Math.max(
       minimumInspectorWidth,
-      mainWidth + currentWidth - minimumConversationPaneWidth,
+      mainWidth / scaleX + currentWidth - minimumConversationPaneWidth,
     ),
   );
 }

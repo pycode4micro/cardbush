@@ -1,0 +1,24 @@
+.calendar-data-controls { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 8px; font-size: 12px; color: var(--text-mid); }
+.calendar-data-controls > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; width: fit-content; }
+.calendar-data-controls > summary::after { content: '+'; margin-left: 4px; }
+.calendar-data-controls[open] > summary::after { content: '−'; }
+.calendar-data-body { margin-top: 12px; color: var(--text); }
+.calendar-data-body p { color: var(--text-mid); line-height: 1.6; font-size: 11px; }
+.calendar-data-actions, .calendar-data-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.calendar-data-body label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.calendar-data-body input[type=checkbox] { width: 14px; height: 14px; padding: 0; flex: none; accent-color: var(--action); }
+.calendar-data-body button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: inherit; font: inherit; cursor: pointer; }
+.calendar-data-body button:disabled { opacity: .5; cursor: default; }
+.calendar-data-row { padding: 9px 0; border-top: 1px solid var(--border); }
+.calendar-data-builtin { flex: none; color: var(--text-mid); font-size: 10px; }
+.calendar-data-row label span { overflow-wrap: anywhere; }
+.calendar-data-row small { display: block; color: var(--text-mid); font-size: 10px; margin-top: 4px; }
+.calendar-data-row button { border: 0; }
+.calendar-data-error { color: var(--danger, #f06b79); overflow-wrap: anywhere; }
+.calendar-settings-dialog { width: min(400px, calc(100% - 32px)); max-height: calc(100% - 40px); box-sizing: border-box; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 16px; color: var(--text); background: var(--surface-raised, var(--surface)); font: inherit; font-size: 13px; box-shadow: 0 12px 36px var(--shadow); }
+.calendar-settings-dialog::backdrop { background: rgb(0 0 0 / .3); }
+.calendar-settings-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.calendar-settings-dialog > header button { display: flex; padding: 5px; border: 0; border-radius: 6px; color: inherit; background: transparent; cursor: pointer; }
+.calendar-settings-dialog > header button:hover { background: var(--hover, var(--surface-hover)); }
+.calendar-settings-dialog .calendar-data-controls { border: 0; padding: 0; margin: 0; }
+.calendar-settings-dialog .calendar-data-controls > summary { display: none; }

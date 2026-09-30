@@ -1,10 +1,11 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
+const read = (...parts) => readSourceFile(path.join(root, ...parts), 'utf8');
 const shadow = read('src', 'backend', 'shadowRuntime.ts');
 const api = read('src', 'backend', 'api.ts');
 const shadowWindow = read('src', 'ShadowWindow.tsx');
@@ -58,7 +59,7 @@ assert.match(shadowWindow, /shadow-window-mode-indicator/);
 assert.match(shadowWindow, /updateShadowConversationMode/);
 assert.match(shadowWindow, /busyRef\.current/);
 assert.match(shadowWindow, /normalizeChatMessagesForDisplay\(sourceMessages\)/);
-assert.match(shadowWindow, /normalizeChatMessagesForDisplay\(shadowMessages\)/);
+assert.match(shadowWindow, /normalizeChatMessagesForDisplay\(visibleShadowMessages\)/);
 assert.match(shadowWindow, /projectRenderableChatMessages/);
 assert.match(shadowWindow, /shadow-window-transcript message-list/);
 assert.match(shadowWindow, /shadow-window-transcript-content message-list-content/);

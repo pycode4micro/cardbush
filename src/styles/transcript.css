@@ -1,0 +1,541 @@
+
+
+.message-list {
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
+  overflow-anchor: auto;
+  transition: padding-right 180ms cubic-bezier(0.2, 0.72, 0.25, 1);
+}
+
+.message-list-content {
+  /* Keep short turns in the reading area after their response space is
+     released. Bottom alignment would push the whole conversation down. */
+  padding: clamp(56px, 12vh, 104px) var(--chat-inline-gutter, 16px) 0;
+  margin-right: var(--work-summary-content-inset);
+  overflow-anchor: auto;
+}
+
+.conversation-connection-notice {
+  width: min(100%, var(--chat-track-width));
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  margin: 2px auto 14px;
+  padding: 9px 11px;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--composer-surface, var(--surface-raised)) 84%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
+  border-radius: 11px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow) 28%, transparent);
+  animation: connection-notice-enter 160ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
+}
+
+.conversation-connection-notice > svg {
+  margin-top: 1px;
+  color: var(--text-soft);
+}
+
+.conversation-connection-notice.working > svg {
+  animation: cardbush-spin 900ms linear infinite;
+}
+
+.conversation-connection-notice.failed {
+  color: color-mix(in srgb, var(--danger) 80%, var(--text));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--danger) 26%, var(--border));
+}
+
+.conversation-connection-notice.failed > svg {
+  color: var(--danger);
+}
+
+.conversation-connection-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.conversation-connection-copy strong {
+  overflow: hidden;
+  color: currentColor;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-weight: 720;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-connection-copy span {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes connection-notice-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-list-item.first {
+  padding-top: 28px;
+}
+
+.message-list-item {
+  /* Measure the available reading pane, after gutters and docked panels.
+     Tables may borrow its spare width without changing the prose track. */
+  container: chat-message / inline-size;
+  overflow-anchor: auto;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 220px;
+}
+
+/* A growing turn must never collapse to the offscreen height estimate while
+   its transcript or tools are being appended. History keeps lazy layout. */
+.message-list-item.streaming,
+.message-list-item.live-turn,
+.message-list-item.user-message-entering {
+  content-visibility: visible;
+  contain-intrinsic-block-size: none;
+}
+
+/* Restore against actual message geometry before returning history to lazy
+   layout. Estimated offscreen heights must not replay a scroll on session entry. */
+.message-list[data-scroll-restoring] {
+  overflow-anchor: none;
+}
+
+.message-list[data-scroll-restoring] .message-list-item:not(.streaming) {
+  content-visibility: visible;
+  /* Keep auto's containment so child margins have the same geometry. */
+  contain: layout style paint;
+}
+
+.assistant-response-spacer {
+  height: 0;
+  flex-shrink: 0;
+  overflow-anchor: none;
+  pointer-events: none;
+}
+
+.message-list-item.user-message-entering .user-bubble {
+  transform-origin: right bottom;
+  animation: user-message-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform;
+}
+
+@keyframes user-message-enter {
+  from {
+    transform: translateY(4px);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+.message-list-footer {
+  height: calc(
+    var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) +
+    var(--stream-status-height, 0px) +
+    28px
+  );
+  pointer-events: none;
+}
+
+.quick-context-rail {
+  /* Measure the reading pane, including space taken by a docked summary.
+     Containment stays on the rail so other overlays keep their sizing origin. */
+  container: quick-context / inline-size;
+  position: absolute;
+  left: 20px;
+  right: calc(20px + var(--work-summary-content-inset, 0px));
+  top: 24px;
+  bottom: 24px;
+  z-index: 7;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+  transition: --work-summary-content-inset var(--panel-motion-duration) var(--panel-motion-ease);
+}
+
+.quick-context-handle {
+  position: absolute;
+  inset: 0;
+  width: 24px;
+  height: 100%;
+  min-width: 24px;
+  min-height: 120px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  opacity: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
+  background: transparent;
+  box-shadow: none;
+  transition: background 140ms ease, border-color 140ms ease;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.quick-context-ticks {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 1;
+  width: 100%;
+  max-height: 100%;
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.quick-context-tick {
+  position: relative;
+  width: 100%;
+  height: 9px;
+  min-width: 100%;
+  min-height: 9px;
+  padding: 0;
+  border: 0;
+  display: block;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.quick-context-tick::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 7px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-soft) 42%, transparent);
+  transform: translateY(-50%);
+  transition: width 120ms ease, background 120ms ease, opacity 120ms ease;
+}
+
+.quick-context-tick.current::before {
+  background: color-mix(in srgb, var(--accent) 72%, var(--text-soft));
+}
+
+.quick-context-handle:hover,
+.quick-context-handle:focus-visible,
+.quick-context-rail.panel-open .quick-context-handle {
+  outline: 0;
+  background: transparent;
+}
+
+.quick-context-tick:hover,
+.quick-context-tick:focus-visible {
+  outline: 0;
+}
+
+.quick-context-tick:hover::before,
+.quick-context-tick:focus-visible::before {
+  width: 15px;
+  background: color-mix(in srgb, var(--text) 88%, transparent);
+}
+
+.quick-context-popovers {
+  position: absolute;
+  inset: 0 0 max(0px, calc(var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) - 12px));
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
+/* 640px of usable conversation width, minus the rail's two 20px insets. */
+@container quick-context (width < 600px) {
+  .quick-context-handle,
+  .quick-context-popovers {
+    display: none;
+  }
+}
+
+.quick-context-panel {
+  position: absolute;
+  left: 36px;
+  top: 50%;
+  width: min(300px, max(0px, calc(100% - 36px)));
+  max-height: min(460px, 100%);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 9px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
+  backdrop-filter: blur(18px) saturate(112%);
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--shadow) 110%, transparent);
+  transform: translateY(-50%);
+  transform-origin: left center;
+  animation: quick-context-preview-in 140ms ease-out;
+  pointer-events: auto;
+}
+
+.quick-context-panel::before {
+  content: "";
+  position: absolute;
+  left: -24px;
+  top: 0;
+  width: 24px;
+  height: 100%;
+}
+
+.quick-context-panel.detail {
+  width: min(510px, max(0px, calc(100% - 48px)));
+}
+
+.quick-context-panel > header {
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.quick-context-panel > header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 700;
+}
+
+.quick-context-close {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  background: transparent;
+}
+
+.quick-context-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.quick-context-close {
+  margin-left: auto;
+}
+
+.quick-context-detail-loading {
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: 20px auto;
+  border-radius: 999px;
+  background: var(--text-soft);
+  animation: quick-context-breathe 900ms ease-in-out infinite alternate;
+}
+
+.quick-context-turn {
+  flex: 0 1 auto;
+  min-height: 0;
+  padding: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.quick-context-message {
+  padding: 7px 8px;
+  border-radius: 7px;
+  display: block;
+  color: var(--text-mid);
+}
+
+.quick-context-message + .quick-context-message {
+  margin-top: 2px;
+}
+
+.quick-context-message.user {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.quick-context-message > div {
+  min-width: 0;
+}
+
+.quick-context-message small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-soft);
+  font-size: calc(9.5px * var(--ui-font-scale, 1));
+  font-weight: 700;
+}
+
+.quick-context-message .markdown-content {
+  overflow-wrap: anywhere;
+}
+
+.quick-context-panel > footer {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 6px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.quick-context-panel > footer button {
+  min-height: 29px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-mid);
+  background: var(--surface-soft);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
+.quick-context-panel > footer button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.quick-context-panel > footer button:disabled {
+  opacity: 0.45;
+}
+
+@keyframes quick-context-breathe {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
+@keyframes quick-context-preview-in {
+  from { opacity: 0; transform: translate(-5px, -50%); }
+  to { opacity: 1; transform: translate(0, -50%); }
+}
+
+.quick-context-pre-test-header {
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quick-context-pre-test-header strong {
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.quick-context-pre-test-header small {
+  color: var(--text-soft);
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+
+.quick-context-pre-test-feed {
+  height: 100%;
+  padding: 28px max(38px, calc((100% - var(--chat-track-width)) / 2));
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.quick-context-pre-test-feed article {
+  width: min(72%, 680px);
+  margin-bottom: 18px;
+}
+
+.quick-context-pre-test-feed article.user {
+  margin-left: auto;
+  text-align: right;
+}
+
+.quick-context-pre-test-feed article small {
+  color: var(--text-soft);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 700;
+}
+
+.quick-context-pre-test-feed article p {
+  margin: 4px 0 0;
+  color: var(--text-mid);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.65;
+}
+
+.quick-context-pre-test-spacer {
+  height: 150px;
+}
+
+.quick-context-pre-test-composer {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  z-index: 3;
+  width: min(calc(100% - 52px), var(--chat-track-width));
+  min-height: 102px;
+  padding: 12px 14px 9px;
+  border: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  background: var(--surface-strong);
+  box-shadow: 0 18px 40px var(--shadow);
+  transform: translateX(-50%);
+}
+
+.quick-context-pre-test-composer textarea {
+  flex: 1;
+  min-height: 58px;
+  padding: 0;
+  resize: none;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.55;
+}
+
+.quick-context-pre-test-composer small {
+  color: var(--text-soft);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+}

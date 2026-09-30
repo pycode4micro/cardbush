@@ -1,3 +1,4 @@
+import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ const projectionPath = path.join(
   'composer',
   'thinkingNoticeProjection.ts',
 );
-const projectionSource = fs.readFileSync(projectionPath, 'utf8');
+const projectionSource = readSourceFile(projectionPath, 'utf8');
 const transpiled = ts.transpileModule(projectionSource, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -61,7 +62,7 @@ const messageProjectionPath = path.join(
   'chatMessages',
   'messageRenderProjection.ts',
 );
-const messageProjectionSource = fs.readFileSync(messageProjectionPath, 'utf8');
+const messageProjectionSource = readSourceFile(messageProjectionPath, 'utf8');
 const messageProjectionTranspiled = ts.transpileModule(messageProjectionSource, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -93,36 +94,36 @@ assert.deepEqual(
 );
 
 const appSource = readAppViewSources();
-const hookSource = fs.readFileSync(
+const hookSource = readSourceFile(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
-const mainSource = fs.readFileSync(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8');
-const streamBufferSource = fs.readFileSync(
+const mainSource = readSourceFile(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8');
+const streamBufferSource = readSourceFile(
   path.join(process.cwd(), 'src/features/chatMessages/transcript/assistantStreamBuffer.ts'), 'utf8',
 );
-const apiSource = fs.readFileSync(path.join(process.cwd(), 'src', 'backend', 'api.ts'), 'utf8');
-const runtimeHostSource = fs.readFileSync(
+const apiSource = readSourceFile(path.join(process.cwd(), 'src', 'backend', 'api.ts'), 'utf8');
+const runtimeHostSource = readSourceFile(
   path.join(process.cwd(), 'packages', 'bush-runtime', 'src', 'inMemoryRuntimeHost.ts'),
   'utf8',
 );
-const performanceTraceSource = fs.readFileSync(
+const performanceTraceSource = readSourceFile(
   path.join(process.cwd(), 'src', 'shared', 'uiPerformanceTrace.ts'),
   'utf8',
 );
-const toolExecutionBlockSource = fs.readFileSync(
+const toolExecutionBlockSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolExecutionBlock.tsx'),
   'utf8',
 );
-const toolChangeBlockSource = fs.readFileSync(
+const toolChangeBlockSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolChangeBlock.tsx'),
   'utf8',
 );
-const messageBubbleSource = fs.readFileSync(
+const messageBubbleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
-const styleSource = fs.readFileSync(
+const styleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
@@ -138,7 +139,7 @@ assert.match(
   'live reasoning should be scoped to the current transcript',
 );
 assert.match(
-  fs.readFileSync(path.join(process.cwd(), 'src/features/chatMessages/AssistantThinkingProcessLine.tsx'), 'utf8'),
+  readSourceFile(path.join(process.cwd(), 'src/features/chatMessages/AssistantThinkingProcessLine.tsx'), 'utf8'),
   /function AssistantThinkingProcessLine[\s\S]*?useLiveThinkingNotice\(scope\)/,
   'reasoning deltas should update only the isolated transcript tail',
 );
