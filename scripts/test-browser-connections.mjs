@@ -107,6 +107,49 @@ test('responses are correlated to their browser; disconnect returns promptly wit
   await assert.rejects(f.call(broker, 'a'), error => error.code === 'browser_unavailable');
 });
 
+test('an offline command waits for the same paired browser and dispatches exactly once after reconnect', async t => {
+  const f = fixture(t), broker = await f.create();
+  const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
+  chrome.socket.destroy(); await until(() => !broker.status().connections.find(c => c.id === chrome.id).connected);
+  let diagnostics;
+  const pending = requestChromeConnector('debugger.command', { scopeId: 'waiting', command: 'Input.dispatchMouseEvent', tabId: 42 },
+    { configPath: broker.configPath, timeoutMs: 4000, onDiagnostics: value => { diagnostics = value; } });
+  const routes = path.join(f.root, 'browser-connector/routes.json');
+  await until(() => fs.existsSync(routes) && JSON.parse(fs.readFileSync(routes, 'utf8')).bindings.some(([scope]) => scope === 'waiting'));
+  broker.setDefaultConnection(edge.id);
+  const reconnected = await f.connect(broker, 'chrome', chrome.code);
+  assert.equal((await pending).browser, 'chrome');
+  assert.equal(reconnected.calls.length, 1); assert.equal(edge.calls.length, 0);
+  assert.ok(diagnostics.reconnectAttempts >= 1);
+  assert.ok(diagnostics.stages.some(stage => stage.stage === 'waiting_for_browser'));
+});
+
+test('explicit selection while waiting cancels the old action instead of rerouting it', async t => {
+  const f = fixture(t), broker = await f.create();
+  const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
+  await f.call(broker, 'a'); chrome.socket.destroy();
+  await until(() => !broker.status().connections.find(c => c.id === chrome.id).connected);
+  const pending = f.call(broker, 'a', 'debugger.command', { command: 'Input.dispatchMouseEvent', tabId: 42 });
+  const rejected = assert.rejects(pending, error => error.code === 'browser_selection_changed');
+  await delay(100); await f.call(broker, 'a', 'browser.select', { connectionId: edge.id });
+  await rejected; assert.equal(edge.calls.length, 0); assert.equal(chrome.calls.length, 1);
+});
+
+test('waiting for reconnect honors cancellation and a finite deadline', async t => {
+  const f = fixture(t), broker = await f.create(), chrome = await f.connect(broker, 'chrome');
+  chrome.socket.destroy(); await until(() => !broker.status().extensionConnected);
+  const controller = new AbortController();
+  const pending = requestChromeConnector('tabs.list', { scopeId: 'a' }, { configPath: broker.configPath, timeoutMs: 4000, signal: controller.signal });
+  const rejected = assert.rejects(pending, error => error.name === 'AbortError');
+  await delay(100); controller.abort(); await rejected;
+  const start = Date.now();
+  await assert.rejects(requestChromeConnector('tabs.list', { scopeId: 'a' }, { configPath: broker.configPath, timeoutMs: 1000 }),
+    error => error.code === 'browser_unavailable' && error.details.diagnostics.reconnectAttempts >= 1);
+  assert.ok(Date.now() - start < 1500);
+  const reconnected = await f.connect(broker, 'chrome', chrome.code);
+  await delay(300); assert.equal(reconnected.calls.length, 0);
+});
+
 test('caller timeout does not unlock switching while the browser command is still unacknowledged', async t => {
   const f = fixture(t), broker = await f.create();
   const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge'); chrome.hold = true;

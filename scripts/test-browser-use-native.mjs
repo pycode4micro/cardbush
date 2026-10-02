@@ -133,6 +133,10 @@ try {
   }
   broker = createBroker();
   await broker.start();
+  const recoveryStarted = Date.now();
+  const recoveredPages = await call('chrome', 'list_pages');
+  assert.equal(recoveredPages.structuredContent.pages.length, 1, 'same session pages remain usable after app restart');
+  report.checks.push(`app restart: first tool request succeeds without intervention (${Date.now() - recoveryStarted} ms)`);
   await until(() => broker.status().connections.filter(connection => connection.connected).length === savedPairingCount, 'alarm reconnect after app restart without user action', 45000);
   assert.equal(broker.status().connections.length, savedPairingCount);
   report.checks.push('app restart: automatic reconnection using the same pairings and saved all-site permission');

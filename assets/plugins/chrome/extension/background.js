@@ -7,7 +7,6 @@ const CONTROL_IDLE_TIMEOUT_MS = 60_000;
 const SCREENSHOT_TIMEOUT_MS = 25_000;
 const RECONNECT_ALARM = 'cardbush-native-reconnect';
 const RECONNECT_DELAY_MINUTES = 0.5;
-const MAX_RECONNECT_DELAY_MINUTES = 2;
 const RECONNECT_STATE_KEY = 'cardbushNativeReconnect';
 const CONNECTOR_ENABLED_KEY = 'cardbushConnectorEnabled';
 let connectorEnabled = false;
@@ -27,6 +26,8 @@ let nativePort = null;
 let nativeReady = false;
 let lastError = '';
 let connectionFailures = 0;
+let fastReconnectTimer = null;
+let fastReconnectAttempts = 0;
 let pairingRequired = false;
 let activeScope = null;
 const attachedTabs = new Map();
@@ -89,13 +90,14 @@ async function connectNative(manual = false) {
     if (epoch !== connectionEpoch) return;
     connectorEnabled = true;
     connectionFailures = 0;
+    fastReconnectAttempts = 0;
     pairingRequired = false;
     void persistReconnectState();
   }
   if (!connectorEnabled || pairingRequired) return;
   if (nativePort) return;
   const epoch = connectionEpoch;
-  void chrome.alarms.clear(RECONNECT_ALARM);
+  clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
   try {
     await connectionCleanup;
     const saved = await chrome.storage.local.get([PAIRING_KEY]);
@@ -103,6 +105,7 @@ async function connectNative(manual = false) {
     let pairing;
     try { pairing = parseConnectorPairing(saved[PAIRING_KEY]); }
     catch (error) { pairingRequired = true; lastError = errorMessage(error); return; }
+    void chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: RECONNECT_DELAY_MINUTES, periodInMinutes: RECONNECT_DELAY_MINUTES });
     const port = createConnectorPort(pairing);
     nativePort = port;
     nativeReady = false;
@@ -123,6 +126,8 @@ async function connectNative(manual = false) {
         nativeReady = true;
         lastError = '';
         connectionFailures = 0;
+        fastReconnectAttempts = 0;
+        void chrome.alarms.clear(RECONNECT_ALARM);
         pairingRequired = false;
         void persistReconnectState();
         void publishStatus();
@@ -176,13 +181,21 @@ async function connectNative(manual = false) {
 }
 
 function scheduleReconnect() {
+  clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
   if (!connectorEnabled || pairingRequired) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
   // An offline app is normal. Bound retry frequency, not the lifetime of consent.
   connectionFailures = Math.min(connectionFailures + 1, 4);
   void persistReconnectState();
   void chrome.alarms.create(RECONNECT_ALARM, {
-    delayInMinutes: Math.min(MAX_RECONNECT_DELAY_MINUTES, RECONNECT_DELAY_MINUTES * 2 ** (connectionFailures - 1)),
+    delayInMinutes: RECONNECT_DELAY_MINUTES,
+    periodInMinutes: RECONNECT_DELAY_MINUTES,
   });
+  // Timers make a quick app restart responsive while the worker is alive. The
+  // persisted alarm remains armed if Chrome suspends the worker or a timer.
+  if (fastReconnectAttempts < 3) {
+    const delayMs = 1000 * 2 ** fastReconnectAttempts++;
+    fastReconnectTimer = setTimeout(() => { fastReconnectTimer = null; void connectNative(); }, delayMs);
+  }
 }
 
 function suspendDisconnectedControl() {
@@ -210,6 +223,8 @@ async function disableConnector(forgetPairing = false) {
   await reconnectReady;
   connectorEnabled = false;
   connectionEpoch++;
+  clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
+  fastReconnectAttempts = 0;
   nativeReady = false;
   const port = nativePort;
   nativePort = null;

@@ -10,12 +10,12 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 const pairingKey = 'cardbushConnectorPairingV2';
 const pairing = 'CB2.12345.' + 'a'.repeat(32) + '.' + 'b'.repeat(64);
 async function worker(saved = { cardbushConnectorEnabled: true }, local = { cardbushConnectorEnabled: true, [pairingKey]: pairing }) {
-  const ports = [], alarms = [], timers = new Map();
+  const ports = [], alarms = [], timers = new Map(), activeAlarms = new Map();
   const storage = values => ({ get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)) });
   const chrome = {
     runtime: { onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }),
       connectNative: () => { const port = { onMessage: event(), onDisconnect: event(), postMessage() {}, disconnect() {} }; ports.push(port); return port; } },
-    alarms: { onAlarm: event(), clear: async () => {}, create: (name, options) => alarms.push({ name, ...options }) },
+    alarms: { onAlarm: event(), clear: async name => activeAlarms.delete(name), create: (name, options) => { alarms.push({ name, ...options }); activeAlarms.set(name, options); } },
     storage: { session: storage(saved), local: storage(local) },
     tabs: { onRemoved: event(), query: async () => [] }, tabGroups: { onRemoved: event() }, debugger: { onDetach: event() },
   };
@@ -28,17 +28,18 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
     setTimeout: (fn, ms) => { const id = Symbol(); timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) });
   vm.runInContext(source, context);
   await flush();
-  return { chrome, ports, alarms, saved, local, context, state: () => vm.runInContext('({connectorEnabled, pairingRequired, connectionFailures, lastError})', context),
+  return { chrome, ports, alarms, timers, activeAlarms, saved, local, context, state: () => vm.runInContext('({connectorEnabled, pairingRequired, connectionFailures, lastError})', context),
     fail: async message => { chrome.runtime.lastError = { message }; ports.at(-1).onDisconnect.emit(); chrome.runtime.lastError = undefined; await flush(); },
     retry: async () => { chrome.alarms.onAlarm.emit({ name: 'cardbush-native-reconnect' }); await flush(); },
     manual: async () => { vm.runInContext('connectNative(true)', context); await flush(); } };
 }
 
-test('offline apps keep retrying with capped backoff and saved pairing, including formerly paused workers', async () => {
+test('offline apps keep a durable 30-second alarm and saved pairing, including formerly paused workers', async () => {
   const f = await worker();
-  for (const expectedDelay of [0.5, 1, 2, 2, 2, 2, 2, 2]) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     await f.fail('App is closed.');
-    assert.equal(f.alarms.at(-1).delayInMinutes, expectedDelay);
+    assert.equal(f.alarms.at(-1).delayInMinutes, 0.5);
+    assert.equal(f.alarms.at(-1).periodInMinutes, 0.5);
     await f.retry();
   }
   assert.equal(f.ports.length, 9);
@@ -47,6 +48,25 @@ test('offline apps keep retrying with capped backoff and saved pairing, includin
   const restarted = await worker({ cardbushNativeReconnect: { failures: 3, lastError: 'App is closed.' } }, f.local);
   assert.equal(restarted.ports.length, 1);
   assert.equal(restarted.state().pairingRequired, false);
+});
+
+test('short outages retry after 1, 2 and 4 seconds; successful handshake resets that bounded burst', async () => {
+  const f = await worker();
+  for (const ms of [1000, 2000, 4000]) {
+    await f.fail('App restarting');
+    assert.equal(f.timers.size, 1);
+    const [id, timer] = [...f.timers][0]; assert.equal(timer.ms, ms);
+    f.timers.delete(id); timer.fn(); await flush();
+    assert.equal(f.activeAlarms.size, 1, 'worker suspension during handshake still has a wake-up alarm');
+  }
+  await f.fail('Still offline'); assert.equal(f.timers.size, 0);
+  await f.retry();
+  f.ports.at(-1).onMessage.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
+  await flush(); assert.equal(f.activeAlarms.size, 0);
+  await f.fail('Another restart'); assert.equal([...f.timers.values()][0].ms, 1000);
+  await vm.runInContext('disableConnector()', f.context);
+  assert.equal(f.timers.size, 0); assert.equal(f.activeAlarms.size, 0);
+  const count = f.ports.length; await f.retry(); assert.equal(f.ports.length, count);
 });
 
 test('a delayed pairing read cannot connect after a newer disable', async () => {

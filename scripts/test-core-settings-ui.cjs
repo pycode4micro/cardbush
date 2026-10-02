@@ -50,6 +50,18 @@ app.whenReady().then(async () => {
     await read('document.querySelectorAll(".browser-connection-row")[1].querySelectorAll("button")[1].click(); void 0');
     await until('document.querySelectorAll(".browser-connection-row").length===1');
     assert.equal(await read('fixtureConnector.connections[0].browser'), 'chrome');
+    await read('connectorActions=[]; Object.assign(fixtureConnector,{connectorEnabled:true,bridgeRunning:false,extensionConnected:false,lifecycleState:"needs_repair",paired:true}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("启动失败不表示配对或网站授权已失效")');
+    await read('[...document.querySelectorAll("button")].find(button=>button.textContent==="重试连接").click(); void 0');
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("等待扩展")');
+    assert.deepEqual(await read('connectorActions'), ['enable'], 'retry must not disable, remove or re-pair');
+    await read('Object.assign(fixtureConnector,{bridgeRunning:false,lifecycleState:"needs_repair"}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器需要处理")');
+    await read('[...document.querySelectorAll("button")].find(button=>button.textContent==="关闭连接器").click(); void 0');
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
+    assert.deepEqual(await read('connectorActions'), ['enable', 'disable'], 'saved enable choice can still be explicitly disabled after a failure');
+    await read('Object.assign(fixtureConnector,{connectorEnabled:true,bridgeRunning:true,extensionConnected:true,lifecycleState:"enabled"}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
+    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("浏览器已连接")');
     await read('connectorActions=[]; void 0');
     assert.equal(await read('document.querySelector(".chrome-radio-setting input").checked'), true);
     assert.equal(await read('document.querySelector(".settings-field input").value'), 'https://www.google.com/');

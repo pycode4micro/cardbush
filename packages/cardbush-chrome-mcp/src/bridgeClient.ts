@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export const chromeConnectorProtocol = 'cardbush.chrome_connector.v1' as const;
 const maximumBridgeResponseCharacters = 64 * 1024 * 1024;
@@ -17,6 +18,7 @@ export type ChromeConnectorDiagnostics = {
   elapsedMs: number;
   stage: string;
   stages: Array<{ stage: string; elapsedMs: number }>;
+  reconnectAttempts?: number;
 };
 
 type BridgeConfig = {
@@ -37,10 +39,54 @@ export class ChromeConnectorError extends Error {
   }
 }
 
-export async function requestChromeConnector(
+type RequestOptions = {
+  configPath?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  onDiagnostics?: (diagnostics: ChromeConnectorDiagnostics) => void;
+};
+
+export async function requestChromeConnector(method: string, params: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<unknown> {
+  const startedAt = Date.now(), totalMs = options.timeoutMs ?? 30_000;
+  const reconnectDeadline = startedAt + Math.min(8000, totalMs / 2);
+  let attempts = 0, timing: ChromeConnectorDiagnostics | undefined;
+  let expectedConnectionId: string | undefined;
+  try {
+    while (true) {
+      options.signal?.throwIfAborted();
+      const offset = Date.now() - startedAt;
+      try {
+        return await requestChromeConnectorOnce(method, params, { ...options, expectedConnectionId, timeoutMs: Math.max(1, totalMs - offset),
+          onDiagnostics: value => { timing = { ...value, elapsedMs: Date.now() - startedAt,
+            stages: [...(attempts ? [{ stage: 'waiting_for_browser', elapsedMs: 0 }] : []),
+              ...value.stages.map(stage => ({ ...stage, elapsedMs: stage.elapsedMs + offset }))],
+            ...(attempts ? { reconnectAttempts: attempts } : {}) }; },
+        });
+      } catch (error) {
+        // Only the broker's explicit pre-dispatch offline response may be retried.
+        // Never replay timeouts, disconnects or a command already sent to a browser.
+        if (!(error instanceof ChromeConnectorError) || error.code !== 'browser_unavailable'
+          || error.details.retryable !== true || error.details.execution !== 'not_dispatched'
+          || typeof error.details.connectionId !== 'string'
+          || Date.now() + 250 >= reconnectDeadline) throw error;
+        expectedConnectionId ??= error.details.connectionId;
+        attempts++;
+        await delay(250, undefined, { signal: options.signal });
+      }
+    }
+  } catch (error) {
+    if (error instanceof ChromeConnectorError && timing) throw new ChromeConnectorError(error.code, error.message, { ...error.details, diagnostics: timing });
+    throw error;
+  } finally {
+    if (timing) { try { options.onDiagnostics?.(timing); } catch { /* Diagnostic subscribers do not affect delivery. */ } }
+  }
+}
+
+async function requestChromeConnectorOnce(
   method: string,
   params: Record<string, unknown> = {},
   options: {
+    expectedConnectionId?: string;
     configPath?: string;
     signal?: AbortSignal;
     timeoutMs?: number;
@@ -130,7 +176,7 @@ export async function requestChromeConnector(
         if (message.type === 'hello_ack' && !requestSent) {
           requestSent = true;
           mark('awaiting_extension');
-          socket.write(`${JSON.stringify({ type: 'request', id: requestId, method, params })}\n`);
+          socket.write(`${JSON.stringify({ type: 'request', id: requestId, method, params, expectedConnectionId: options.expectedConnectionId })}\n`);
           continue;
         }
         if (message.type === 'progress' && message.id === requestId && extensionStages.has(string(message.stage))) {

@@ -99,16 +99,20 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                   : (language === 'zh' ? '连接器未就绪' : 'Connector not ready')}</strong>
               <small>{status?.extensionConnected
                 ? `${status.activeTabTitle || (language === 'zh' ? '当前标签页' : 'Current tab')} · ${status.controlledTabCount} ${language === 'zh' ? '个受控标签页' : 'controlled tabs'}`
+                : status?.lifecycleState === 'needs_repair'
+                  ? (language === 'zh' ? '启动失败不表示配对或网站授权已失效。请先重试连接。' : 'A startup failure does not invalidate saved pairing or site permissions. Retry the connection first.')
                 : status?.paired
                   ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可打开扩展立即重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; open the extension to retry now. No new code or permission is needed.')
                   : (language === 'zh' ? '首次使用时选择浏览器并生成配对码，粘贴到对应浏览器的 Browser Use 扩展中。页面授权单独选择。' : 'For first use, choose a browser and paste its pairing code into the Browser Use extension. Page access is authorized separately.')}</small>
             </div>
           </div>
           <div className="chrome-connector-actions">
-            <button className="primary-button compact" type="button" disabled={working !== '' || !status || !connector?.setupChromeConnector || (!status.connectorEnabled && (!status.platformSupported || !status.nativeHostAvailable))} title={status?.setupMessage} onClick={() => void run('bridge', async () => status?.connectorEnabled ? connector?.disableChromeConnector() : connector?.setupChromeConnector())}>
+            <button className="primary-button compact" type="button" disabled={working !== '' || !status || !connector?.setupChromeConnector || (!status.connectorEnabled && (!status.platformSupported || !status.nativeHostAvailable))} title={status?.setupMessage} onClick={() => void run('bridge', async () => status?.connectorEnabled && status.lifecycleState !== 'needs_repair' ? connector?.disableChromeConnector() : connector?.setupChromeConnector())}>
               {working === 'bridge' ? <LoaderCircle className="spin" size={14} /> : null}
-              {status?.connectorEnabled ? (language === 'zh' ? '关闭连接器' : 'Disable connector') : (language === 'zh' ? '开启连接器' : 'Enable connector')}
+              {status?.lifecycleState === 'needs_repair' ? (language === 'zh' ? '重试连接' : 'Retry connection') : status?.connectorEnabled ? (language === 'zh' ? '关闭连接器' : 'Disable connector') : (language === 'zh' ? '开启连接器' : 'Enable connector')}
             </button>
+            {status?.connectorEnabled && status.lifecycleState === 'needs_repair' && <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.disableChromeConnector}
+              onClick={() => void run('disable', async () => connector?.disableChromeConnector())}>{language === 'zh' ? '关闭连接器' : 'Disable connector'}</button>}
             <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.removeChromeConnector || !status?.platformSupported} onClick={() => void run('remove', async () => connector?.removeChromeConnector())}>{language === 'zh' ? '移除连接器配置' : 'Remove connector configuration'}</button>
             <button className="primary-button compact" type="button" disabled={working !== '' || !connector?.openChromeConnectorInstaller} onClick={() => void run('extension', async () => connector?.openChromeConnectorInstaller())}>
               {working === 'extension' ? <LoaderCircle className="spin" size={14} /> : null}

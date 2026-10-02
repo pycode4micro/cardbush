@@ -364,11 +364,18 @@ export class ChromeConnectorBroker {
         if (!connectionId) {
           connectionId = this.#webSocket.defaultConnectionId;
           if (!connectionId) { this.#reply(peer, id, undefined, 'browser_selection_required', 'Call list_browsers then select_browser, or choose a default browser in Browser Use settings.'); return; }
-          if (this.#extensions.has(connectionId)) this.#bind(scopeId, connectionId);
+          if (this.#webSocket.connections().some(connection => connection.id === connectionId)) this.#bind(scopeId, connectionId);
+        }
+        if (string(message.expectedConnectionId) && message.expectedConnectionId !== connectionId) {
+          this.#reply(peer, id, undefined, 'browser_selection_changed', 'The selected browser changed while waiting for reconnection. This operation was not sent; observe the selected browser before trying again.'); return;
         }
         const extension = this.#extensions.get(connectionId);
         if (!extension) {
-          this.#reply(peer, id, undefined, 'browser_unavailable', 'This session’s browser is offline or its pairing was removed. Reconnect it, or explicitly use list_browsers and select_browser.'); return;
+          const paired = this.#webSocket.connections().some(connection => connection.id === connectionId);
+          this.#reply(peer, id, undefined, 'browser_unavailable', paired
+            ? 'The paired browser is offline. Open the same browser profile with its Browser Use extension; it will reconnect automatically. Pairing is retained and saved website permissions do not need to be granted again.'
+            : 'This session’s browser pairing was removed. Select another connected browser explicitly or pair this profile again.',
+          { retryable: paired, execution: 'not_dispatched', connectionId }); return;
         }
         const request = { ...message, clientId: peer.id };
         if (Buffer.byteLength(JSON.stringify(request), 'utf8') > maximumCommandBytes) {
@@ -410,8 +417,8 @@ export class ChromeConnectorBroker {
     }
   }
 
-  #reply(peer: Peer, id: string, result?: unknown, code?: string, message?: string): void {
-    writeLine(peer.socket, { type: 'response', id, ...(code ? { error: { code, message } } : { result }) });
+  #reply(peer: Peer, id: string, result?: unknown, code?: string, message?: string, details?: Record<string, unknown>): void {
+    writeLine(peer.socket, { type: 'response', id, ...(code ? { error: { code, message, ...(details ? { details } : {}) } } : { result }) });
   }
   #bind(scopeId: string, connectionId: string): void {
     const previous = this.#scopeBindings.get(scopeId);

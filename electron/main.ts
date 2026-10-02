@@ -100,6 +100,7 @@ import {
   chromeConnectorRegistryKey,
 } from './chromeConnectorRegistration';
 import { ChromeConnectorLifecycle } from './chromeConnectorLifecycle';
+import { installApplicationInstance } from './applicationInstance';
 import { connectorDataRoot } from './chromeConnectorFiles';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
@@ -302,6 +303,7 @@ if (process.platform === 'win32') {
   app.setName(cardbushDisplayName);
   app.setAppUserModelId(cardbushAppUserModelId);
 }
+const applicationInstance = installApplicationInstance(app, showMainWindow);
 let cardlingApplyingBoundsTimer: ReturnType<typeof setTimeout> | null = null;
 let cardlingDragState: {
   offsetX: number;
@@ -1941,6 +1943,9 @@ function publishSessionAttentionOpenAvailable() {
 }
 
 function showMainWindow() {
+  if (chromeConnectorLifecycle?.enabled && chromeConnectorLifecycle.state === 'needs_repair') {
+    void chromeConnectorLifecycle.setEnabled(true).catch(error => console.warn('[chrome-connector] resume failed', error));
+  }
   if (mainWindow == null || mainWindow.isDestroyed()) {
     createWindow();
     return;
@@ -3642,6 +3647,7 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  if (!applicationInstance.primary) return;
   if (process.platform === 'win32' && Number(os.release().split('.')[2]) < 22000) {
     dialog.showErrorBox('CardBush', 'CardBush requires Windows 11 or later. / CardBush 需要 Windows 11 或更高版本。');
     app.quit();
@@ -3684,6 +3690,7 @@ app.whenReady().then(async () => {
   await applyProxySettings({ mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' });
   createWindow();
   createTray();
+  applicationInstance.windowReady();
   appendDebugLog('startup', {
     stage: 'window-created',
     elapsedMs: Date.now() - desktopStartupStartedAt,
@@ -4309,12 +4316,25 @@ function isChromeRuntimeTool(toolName: string): boolean {
   return toolName.startsWith('mcp__browser_use__');
 }
 
+let lastConnectorLogState = '';
 function connectorLifecycle(): ChromeConnectorLifecycle {
   chromeConnectorLifecycle ??= new ChromeConnectorLifecycle({
     userDataPath: chromeConnectorDataRoot(), legacyUserDataPath: app.getPath('userData'),
     nativeHostPath: chromeConnectorNativeHostPath(), msixPackage: process.windowsStore === true,
   }, () => {
     chromeConnectorBroker = chromeConnectorLifecycle?.broker ?? null;
+    const status = chromeConnectorBroker?.status();
+    const summary = {
+      state: chromeConnectorLifecycle?.state, enabled: chromeConnectorLifecycle?.enabled,
+      bridgeRunning: status?.bridgeRunning ?? false, hasError: Boolean(chromeConnectorLifecycle?.error),
+      connections: status?.connections.map(connection => ({ browser: connection.browser, connected: connection.connected })) ?? [],
+    };
+    const serialized = JSON.stringify(summary);
+    if (serialized !== lastConnectorLogState) {
+      lastConnectorLogState = serialized;
+      // Only lifecycle transitions: never write pairing codes, URLs, titles or cookies.
+      try { appendDebugLog('chrome-connector', summary); } catch { /* Logging cannot interrupt reconnection. */ }
+    }
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
       sendToLiveRenderer(mainWindow, 'chrome-connector:status', currentChromeConnectorStatus());
     }

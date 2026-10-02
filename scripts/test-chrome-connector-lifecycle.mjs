@@ -120,6 +120,31 @@ test('failed broker startup rolls back registration and manifest and remains dis
   assert.equal(fs.existsSync(path.join(f.root, 'browser-connector/com.cardbush.browser_connector.json')), false);
 });
 
+test('restoring a saved connection survives startup and lease failures without losing intent or pairing', async t => {
+  const f = fixture(t), first = f.create(); await first.setEnabled(true);
+  const code = first.broker.createPairing().code, client = await pairedClient(code);
+  client.destroy(); first.dispose(); await delay(50);
+  const pairingPath = path.join(f.root, 'browser-connector/pairing.json');
+  const credentials = fs.readFileSync(pairingPath, 'utf8');
+  for (const overrides of [
+    { createBroker: () => ({ start: async () => { throw new Error('Temporary startup failure'); }, stop() {} }) },
+    { acquireLease: async () => { throw new Error('Temporary lease conflict'); } },
+  ]) {
+    const failed = f.create(overrides);
+    await assert.rejects(failed.restore(), /Temporary/);
+    assert.equal(failed.state, 'needs_repair'); assert.equal(failed.enabled, true);
+    assert.equal(failed.broker, null); assert.equal(f.state().enabled, true);
+    assert.equal(fs.readFileSync(pairingPath, 'utf8'), credentials);
+    failed.dispose();
+  }
+  const restored = f.create(); await restored.restore();
+  const reconnected = await pairedClient(code); t.after(() => reconnected.destroy());
+  assert.equal(restored.broker.status().extensionConnected, true);
+  assert.equal(restored.broker.status().connections.length, 1);
+  await restored.setEnabled(false); assert.equal(f.state().enabled, false);
+  assert.equal(fs.readFileSync(pairingPath, 'utf8'), credentials);
+});
+
 function legacy(f) {
   const registration = new ChromeConnectorRegistration(f.input, f.registry);
   fs.mkdirSync(registration.directory, { recursive: true });

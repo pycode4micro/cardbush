@@ -61,7 +61,10 @@ export class ChromeConnectorLifecycle {
     if (fs.existsSync(this.#statePath)) {
       const state = JSON.parse(fs.readFileSync(this.#statePath, 'utf8'));
       if (![1, 2].includes(state?.version) || typeof state.enabled !== 'boolean') throw new Error('Invalid connector preference. Enable or remove the connector to repair it.');
-      if (state.version === 2 && state.enabled === true) { await this.setEnabled(true); return; }
+      if (state.version === 2 && state.enabled === true) {
+        this.enabled = true;
+        await this.setEnabled(true); return;
+      }
     }
     // Old installations had implicit registration, not an explicit enable choice.
     // Clean only a verified legacy registration and leave foreign installs alone.
@@ -73,6 +76,7 @@ export class ChromeConnectorLifecycle {
     const operation = this.#queue.catch(() => {}).then(async () => {
       if (this.#disposed) throw new Error('Connector is shutting down.');
       if (!(this.dependencies.supported ?? chromeConnectorPlatformSupported)()) throw new Error('Browser Use requires Windows 11.');
+      const previousIntent = this.enabled;
       this.error = '';
       this.state = enabled ? 'enabling' : 'disabling'; this.changed();
       try {
@@ -91,7 +95,9 @@ export class ChromeConnectorLifecycle {
       } catch (error) {
         if (!enabled) { this.enabled = false; this.#stopBroker(); }
         if (!this.broker && this.#releaseLease) {
-          try { this.#persist(false, remove); } catch { /* Report the original repair error; never restart a broker here. */ }
+          // A temporary startup failure must not revoke a previously saved enable
+          // choice. Explicit disable/remove still persists false before cleanup.
+          try { this.#persist(enabled && previousIntent, remove); } catch { /* Preserve the original error. */ }
         }
         this.error = error instanceof Error ? error.message : String(error);
         this.state = 'needs_repair';
@@ -129,7 +135,7 @@ export class ChromeConnectorLifecycle {
       this.#unsubscribe = broker.onStatus(this.changed);
       this.state = 'enabled';
     } catch (error) {
-      try { broker.stop(); } finally { this.#persist(false); }
+      broker.stop();
       throw error;
     }
   }
