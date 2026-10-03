@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { McpHostOperation } from './mcpHostBridge';
+import { checkedExternalWebUrl } from './externalWebUrl';
 
 export interface McpUserRequest {
   id: string; serverId: string; sessionId: string; turnId: string;
@@ -19,6 +20,12 @@ export class McpDesktopHost {
   requests() { return [...this.pending.values()].map(item => structuredClone(item.request)); }
   async handle(operation: McpHostOperation, input: unknown, signal: AbortSignal): Promise<unknown> {
     const payload = object(input);
+    if (operation === 'browser.open-external') {
+      const url = checkedExternalWebUrl(payload.url);
+      signal.throwIfAborted();
+      await this.options.openUrl(url);
+      return { status: 'dispatched', url, browser: 'system_default', pageLoadVerified: false };
+    }
     if (operation === 'open-url') { await this.options.openUrl(checkedMcpUrl(payload.url)); return; }
     if (operation === 'credentials.read' || operation === 'credentials.write') {
       const key = String(payload.key);

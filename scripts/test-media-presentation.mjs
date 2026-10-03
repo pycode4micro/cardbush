@@ -12,10 +12,10 @@ const image = (path, extra = {}) => ({ id: path, name: 'apple.png', path, type: 
 const execution = artifacts => ({ id: 'present', name: 'present_artifact', state: 'completed', artifacts });
 
 test('local path spellings share an identity without merging distinct remote or POSIX resources', () => {
-  const local = 'C:\\Users\\EDY\\Pictures\\apple photo.png';
-  for (const path of [local, local.replaceAll('\\', '\\\\'), 'c:/users/edy/pictures/apple photo.png',
-    'file:///C:/Users/EDY/Pictures/apple%20photo.png', 'cardbush-file:///C:/Users/EDY/Pictures/apple%20photo.png',
-    'cardbush-file://c/Users/EDY/Pictures/apple%20photo.png']) {
+  const local = 'C:\\Users\\Fixture\\Pictures\\apple photo.png';
+  for (const path of [local, local.replaceAll('\\', '\\\\'), 'c:/users/fixture/pictures/apple photo.png',
+    'file:///C:/Users/Fixture/Pictures/apple%20photo.png', 'cardbush-file:///C:/Users/Fixture/Pictures/apple%20photo.png',
+    'cardbush-file://c/Users/Fixture/Pictures/apple%20photo.png']) {
     assert.equal(key(path), key(local), path);
   }
   assert.equal(key('\\\\server\\share\\apple.png'), key('file://server/share/apple.png'));

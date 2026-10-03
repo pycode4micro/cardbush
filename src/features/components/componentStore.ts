@@ -25,3 +25,14 @@ export function saveComponents(value: ComponentCollection, expectedRevision: num
   read(); window.dispatchEvent(new Event(eventName));
 }
 export function useComponents() { return useSyncExternalStore(subscribe, read, () => defaultComponents); }
+
+// Old layouts did not record their viewport. Adopt the first visible size once,
+// without moving anything, so reopening/maximizing no longer establishes a new
+// origin. An editor draft never writes through this compatibility path.
+export function adoptWelcomeViewport(collection: ComponentCollection, height: number) {
+  if (!collection.welcomeLayout || collection.welcomeLayout.viewportHeight || height <= 0) return;
+  const current = read();
+  if (current.revision !== collection.revision || JSON.stringify(current.welcomeLayout) !== JSON.stringify(collection.welcomeLayout)) return;
+  try { saveComponents({ ...current, welcomeLayout: { ...current.welcomeLayout!, viewportHeight: height } }, current.revision); }
+  catch { /* Keep the visible layout usable if storage is unavailable or another window saved first. */ }
+}

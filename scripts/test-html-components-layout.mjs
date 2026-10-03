@@ -12,6 +12,29 @@ const c = load('src/features/components/componentModel.ts');
 const { dispatchComponentMessage } = load('src/features/components/dispatchComponentMessage.ts');
 const g = load('src/features/components/welcomeLayoutGeometry.ts');
 const composer = load('src/features/components/composerLayoutGeometry.ts');
+const viewport = load('src/features/components/welcomeViewportGeometry.ts');
+
+test('welcome layouts retain aligned proportions through maximize, restore and editor rebasing', () => {
+  const layout = { viewportHeight: 700, items: [
+    { componentId: 'system-calendar', x: 10, y: 140, width: 36, height: 280 },
+    { componentId: 'system-digital-clock', x: 54, y: 140, width: 36, height: 280 },
+    { componentId: 'system-input', x: 10, y: 560, width: 80, height: 52 },
+    { componentId: 'system-brand', x: 10, y: 1000, width: 80, height: 200 },
+  ] };
+  const stored = c.normalizeComponents({ ...c.defaultComponents, welcomeLayout: layout }).welcomeLayout;
+  assert.equal(stored.viewportHeight, 700);
+  const enlarged = viewport.resolveWelcomeLayout(stored, 1050);
+  assert.equal(enlarged.items[0].y, 210); assert.equal(enlarged.items[0].height, 420);
+  assert.equal(enlarged.items[1].y, enlarged.items[0].y, 'aligned component edges remain aligned');
+  assert.equal(enlarged.items[2].y, 840); assert.equal(enlarged.items[2].height, 52, 'input height follows its contents');
+  assert.equal(enlarged.items[3].y, 1500, 'off-screen placements do not redefine the viewport');
+  assert.deepEqual(viewport.resolveWelcomeLayout(enlarged, 700), layout, 'rebasing and restoring does not accumulate drift');
+  for (const invalid of [undefined, 0, -10, NaN, Infinity, '700']) {
+    const legacy = c.normalizeComponents({ ...c.defaultComponents, welcomeLayout: { ...layout, viewportHeight: invalid } }).welcomeLayout;
+    assert.equal(legacy.viewportHeight, undefined);
+    assert.deepEqual(viewport.resolveWelcomeLayout(legacy, 700).items, layout.items, 'legacy placements remain unchanged until first measured');
+  }
+});
 
 test('composer is centered before storage and cannot move horizontally or resize its empty height', () => {
   const input = { componentId: 'system-input', x: 0, y: 150, width: 60, height: 52 };

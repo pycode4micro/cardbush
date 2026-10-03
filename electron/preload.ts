@@ -96,6 +96,23 @@ type ShadowWindowPayload = {
 };
 
 const desktopApi = {
+  voice: {
+    modelStatus: (kind?: 'recognition' | 'speech') => ipcRenderer.invoke('voice:model-status', kind),
+    installModel: (kind?: 'recognition' | 'speech') => ipcRenderer.invoke('voice:model-install', kind),
+    cancelModelInstall: (kind?: 'recognition' | 'speech') => ipcRenderer.invoke('voice:model-cancel', kind),
+    removeModel: (kind?: 'recognition' | 'speech') => ipcRenderer.invoke('voice:model-remove', kind),
+    settings: () => ipcRenderer.invoke('voice:settings'),
+    capabilities: () => ipcRenderer.invoke('voice:capabilities'),
+    saveSettings: (input: import('./voiceTypes').VoiceSettingsInput) => ipcRenderer.invoke('voice:save-settings', input),
+    transcribe: (input: Parameters<import('./voiceTypes').VoiceDesktopApi['transcribe']>[0]) => ipcRenderer.invoke('voice:transcribe', input),
+    speak: (input: Parameters<import('./voiceTypes').VoiceDesktopApi['speak']>[0]) => ipcRenderer.invoke('voice:speak', input),
+    cancel: (id: string) => ipcRenderer.invoke('voice:cancel', id),
+    onAudio: (callback: (chunk: import('./voiceTypes').VoiceAudioChunk) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, chunk: import('./voiceTypes').VoiceAudioChunk) => callback(chunk);
+      ipcRenderer.on('voice:audio', handler);
+      return () => ipcRenderer.removeListener('voice:audio', handler);
+    },
+  },
   agents: {
     syncCatalog: () => ipcRenderer.invoke('agents:command', 'sync-catalog'),
     syncConfiguration: (id: string) => ipcRenderer.invoke('agents:command', 'sync-configuration', id),
@@ -122,6 +139,9 @@ const desktopApi = {
   openMcpRequestUrl: (id: string) => ipcRenderer.invoke('mcp:open-request-url', id),
   mcpConnectionAction: (serverId: string, action: string) => ipcRenderer.invoke('mcp:connection-action', serverId, action),
   openAiAccountStatus: () => ipcRenderer.invoke('openai:account-status'),
+  siwcSnapshot: () => ipcRenderer.invoke('siwc:snapshot'),
+  siwcAction: (input: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SiwcAction) => ipcRenderer.invoke('siwc:action', input),
+  siwcModels: (accountId: string) => ipcRenderer.invoke('siwc:models', accountId),
   accountsSnapshot: () => ipcRenderer.invoke('accounts:snapshot'),
   accountsAction: (input: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).AccountCommand) => ipcRenderer.invoke('accounts:action', input),
   onAccountsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('accounts:changed', listener); return () => ipcRenderer.removeListener('accounts:changed', listener); },

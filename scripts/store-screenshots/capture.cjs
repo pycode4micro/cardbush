@@ -70,7 +70,7 @@ app.whenReady().then(async () => {
         const errors = await read('screenshotErrors');
         assert.deepEqual(errors, [], `${locale}/${scene} must have no renderer errors`);
         const text = await read('document.body.innerText');
-        assert.ok(!/fixture|CB2\.|sk-[A-Za-z0-9]|C:\\Users\\EDY/i.test(text), 'no credentials, test plumbing or personal paths');
+        assert.ok(!/fixture|CB2\.|sk-[A-Za-z0-9]|C:\\Users\\Fixture/i.test(text), 'no credentials, test plumbing or personal paths');
         if (language === 'en') assert.ok(!/[\u3400-\u9fff]/.test(text), 'English screenshot must have no Chinese text');
         const image = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
           format: 'png', fromSurface: true, captureBeyondViewport: true,

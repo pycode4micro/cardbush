@@ -1,0 +1,20 @@
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: deploy/agent/Dockerfile
+      target: service
+    ports:
+      - "127.0.0.1:${CARDBUSH_AGENT_PORT:-4780}:4780"
+    volumes:
+      - agent-data:/data
+    restart: unless-stopped
+    stop_grace_period: 45s
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 2
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  agent-data:

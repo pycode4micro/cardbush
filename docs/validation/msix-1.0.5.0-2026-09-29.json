@@ -1,11 +1,11 @@
 {
   "recordedAt": "2026-09-29T03:29:14.949Z",
   "artifact": "CardBush-1.0.5.0-x64.msix",
-  "sha256": "790ce319e3a74873ad22c7cc5250bcfd4a4327b25b0f62c9a04f0fffb54044ff",
+  "sha256": "[REDACTED]",
   "identity": {
-    "identityName": "cardbush.cardbush",
-    "publisher": "CN=3D022FD6-26C7-4164-802D-6684E6F2CCFB",
-    "publisherDisplayName": "cardbush",
+    "identityName": "[REDACTED]",
+    "publisher": "[REDACTED]",
+    "publisherDisplayName": "[REDACTED]",
     "displayName": "CardBush",
     "version": "1.0.5.0"
   },
@@ -39,8 +39,8 @@
       "AppxSignature.p7x"
     ],
     "uploadUnsigned": true,
-    "uploadSHA256": "790ce319e3a74873ad22c7cc5250bcfd4a4327b25b0f62c9a04f0fffb54044ff",
-    "testSignedSHA256": "b40d4694cf5e62c1a4aa87d8022cb6fb03990346450661a31a1f8276dbc8cb75"
+    "uploadSHA256": "[REDACTED]",
+    "testSignedSHA256": "[REDACTED]"
   },
   "releaseTests": {
     "tests": 1396,
@@ -136,7 +136,7 @@
         "old pairing rejected; fresh explicit pairing succeeds",
         "remove clears live bridge and pairing, retains disabled marker"
       ],
-      "processPackageIdentity": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+      "processPackageIdentity": "[PACKAGE_IDENTITY]",
       "processDpiAwareness": 2,
       "extensionVersion": "1.2.0",
       "chromeVersion": "Chrome/153.0.8010.53",
@@ -159,7 +159,7 @@
       ],
       "elevated": true,
       "ordinaryAccountValidation": false,
-      "processPackageIdentity": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+      "processPackageIdentity": "[PACKAGE_IDENTITY]",
       "processDpiAwareness": 2,
       "extensionVersion": "1.2.0",
       "chromeVersion": "Chrome/153.0.8010.53",
@@ -168,7 +168,7 @@
       "ordinaryAccountUninstall": false,
       "uninstall": {
         "startedAt": "2026-09-29T11:22:39.7853133+08:00",
-        "packageFullName": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+        "packageFullName": "[PACKAGE_IDENTITY]",
         "success": true,
         "elevated": true,
         "connectorFilesBefore": [
@@ -211,7 +211,7 @@
       ],
       "elevated": true,
       "ordinaryAccountValidation": false,
-      "processPackageIdentity": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+      "processPackageIdentity": "[PACKAGE_IDENTITY]",
       "processDpiAwareness": 2,
       "extensionVersion": "1.2.0",
       "chromeVersion": "Chrome/153.0.8010.53",
@@ -220,7 +220,7 @@
       "ordinaryAccountUninstall": false,
       "uninstall": {
         "startedAt": "2026-09-29T11:23:29.6011474+08:00",
-        "packageFullName": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+        "packageFullName": "[PACKAGE_IDENTITY]",
         "success": true,
         "elevated": true,
         "connectorFilesBefore": [
@@ -267,7 +267,7 @@
       ],
       "elevated": true,
       "ordinaryAccountValidation": false,
-      "processPackageIdentity": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+      "processPackageIdentity": "[PACKAGE_IDENTITY]",
       "processDpiAwareness": 2,
       "extensionVersion": "1.2.0",
       "chromeVersion": "Chrome/153.0.8010.53",
@@ -276,7 +276,7 @@
       "ordinaryAccountUninstall": false,
       "uninstall": {
         "startedAt": "2026-09-29T11:24:28.7873024+08:00",
-        "packageFullName": "cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2",
+        "packageFullName": "[PACKAGE_IDENTITY]",
         "success": true,
         "elevated": true,
         "connectorFilesBefore": [
@@ -524,11 +524,11 @@
         "result": "WARNING",
         "messages": [
           "未能处理二进制文件 [PACKAGE]\\app\\CardBush.exe。",
-          "应用 cardbush.cardbush_1.0.5.0_x64__4n55t5wh0acn2 不是 DPI 感知应用。"
+          "应用 [PACKAGE_IDENTITY] 不是 DPI 感知应用。"
         ]
       }
     ],
-    "rawReportSHA256": "925f3e5229f4c0c07164fa6620f97f969da5af5741db333c2f206177eb3db83d",
+    "rawReportSHA256": "[ARTIFACT_SHA256]",
     "dpiCorroboration": {
       "binaryManifestDpiAware": "true/pm",
       "runtimeGetProcessDpiAwareness": 2,
@@ -557,5 +557,6 @@
     "Notifications/taskbar and full native Computer Use interaction validation",
     "Store-signed delivery with Windows security protections enabled after certification",
     "Publisher must update remote listing/privacy/screenshots and provide an actual private model-testing method if needed"
-  ]
+  ],
+  "redaction": "Public validation summary. Publisher/package identifiers and artifact hashes are omitted; exact evidence remains in private release records. Test outcomes and limitations are unchanged."
 }

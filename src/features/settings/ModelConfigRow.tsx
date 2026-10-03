@@ -12,7 +12,7 @@ export function ModelConfigRow({ config, language, selected, onUse, onDelete, di
   return <div className="model-row model-row-compact">
     <button type="button" className="model-row-summary model-row-edit" disabled={disabled} aria-label={(zh ? '编辑 ' : 'Edit ') + config.modelName} onClick={onEdit}>
       <strong>{config.modelName}</strong>
-      <span>{protocol.label}{' · '}{zh ? '思考：' : 'Reasoning: '}{modelReasoningLabel(config.reasoningEffort ?? 'default', language)}{' · '}{config.apiKey || config.hasApiKey ? zh ? '凭证已保存' : 'Credential saved' : zh ? '未设置凭证' : 'No credential'}</span>
+      <span>{protocol.label}{' · '}{zh ? '思考：' : 'Reasoning: '}{modelReasoningLabel(config.reasoningEffort ?? 'default', language)}{' · '}{config.authentication?.kind === 'chatgpt' ? zh ? 'ChatGPT 套餐' : 'ChatGPT plan' : config.apiKey || config.hasApiKey ? zh ? '凭证已保存' : 'Credential saved' : zh ? '未设置凭证' : 'No credential'}</span>
       <small>{config.baseUrl || protocol.baseUrl}</small>
     </button>
     <div className="model-row-actions">

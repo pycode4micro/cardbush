@@ -31,8 +31,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await pause();
   assert.equal(await run('document.querySelector(".welcome-layout-bottom-hint").classList.contains("is-overflow")'),true,'warning remains when the scrollbar is hidden');
   window.setContentSize(1280,800);
-  await until(`Number(document.querySelector('.welcome-layout-bottom-hint').dataset.layoutOverflow)>${overflow}`, 'window height updates overflow');
+  await pause();
+  assert.ok(await run(`Number(document.querySelector('.welcome-layout-bottom-hint').dataset.layoutOverflow)>0 && Number(document.querySelector('.welcome-layout-bottom-hint').dataset.layoutOverflow)<${overflow}`), 'proportional canvas overflow follows the smaller viewport');
   window.setContentSize(1280,960);
+  await pause();
   await until(`Number(document.querySelector('.welcome-layout-bottom-hint').dataset.layoutOverflow)===${overflow}`, 'restored window restores overflow measurement');
   const clock = '[data-welcome-component=system-digital-clock]', calendar = '[data-welcome-component=system-calendar]';
   const first = await bounds(clock), start = await grab(clock, true), end = { x: start.x + 43, y: start.y + 61 };
@@ -41,7 +43,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   close(moved.x - first.x, 43, '125% zoom drag keeps horizontal grab point');
   close(moved.y - first.y, 61, '125% zoom drag keeps vertical grab point');
   const peer = await bounds(calendar), beforeSnap = moved, snapStart = await grab(clock);
-  const snapEnd = { x: snapStart.x + peer.x - beforeSnap.right + 3, y: snapStart.y + peer.y - beforeSnap.y + 3 };
+  // Stay closer to the peer edge than the canvas center, even when responsive
+  // heights bring those two valid snap targets within a few pixels.
+  const snapEnd = { x: snapStart.x + peer.x - beforeSnap.right + 3, y: snapStart.y + peer.y - beforeSnap.y + 1 };
   mouse('mouseMove', snapEnd); await pause();
   assert.equal(await run('document.querySelectorAll(".welcome-alignment-guide").length>=2'), true, 'guides appear during drag');
   moved = await bounds(clock); close(moved.right, peer.x, 'moving snaps right edge to peer left'); close(moved.y, peer.y, 'moving snaps top edges');

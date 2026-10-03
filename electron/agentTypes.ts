@@ -11,13 +11,13 @@ export type AgentJob = {
   status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted'; error?: string; input: AgentSendInput;
   goalContinuation?: boolean;
   manualRelease?: boolean;
-  guidance?: { turnId: string; messageId: string; createdAt: string; applied?: boolean };
+  guidance?: { turnId: string; messageId: string; createdAt: string; applied?: boolean; mode?: 'append_context' | 'interrupt_and_continue' };
   delegation?: { parentSessionId: string; parentTurnId: string };
 };
 export type AgentInfo = { protocol: 'cardbush.agent.v1'; apiVersion: 1; eventStreams: ['sse', 'ndjson']; id: string; name: string; platform: string; capabilities: {
   desktop: boolean; computerUse: boolean; browserUi: boolean; durableQueue: true; eventReplay: true; projects: true; models: true; plugins: true; delegation?: boolean; conversationUi?: boolean; conversationManagement?: boolean; sharedConversation?: boolean; sharedSettings?: boolean; sharedConfiguration?: boolean; sharedConfigurationVersion?: number; sandboxSettings?: boolean; pluginMarketplace?: boolean;
 } };
-export const agentOperations = ['info', 'projects.list', 'projects.save', 'projects.remove', 'projects.default',
+export const agentOperations = ['info', 'desktop.status', 'desktop.frame', 'desktop.take', 'desktop.release', 'desktop.input', 'projects.list', 'projects.save', 'projects.remove', 'projects.default',
   'sessions.list', 'sessions.create', 'sessions.get', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind',
   'chat.send', 'chat.queue', 'chat.jobs', 'chat.stop', 'chat.events', 'delegation.submit', 'conversation.catalog', 'conversation.extracts', 'files.read', 'files.list', 'files.upload', 'files.pasted-text', 'runtime.command', 'product.command',
   'plugins.install', 'plugins.uninstall', 'plugins.connections', 'plugins.connections.save', 'plugins.configure', 'plugins.marketplace',

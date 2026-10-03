@@ -1,0 +1,9 @@
+seccomp_profile.json is from microsoft/playwright v1.63.0:
+https://github.com/microsoft/playwright/blob/v1.63.0/utils/docker/seccomp_profile.json
+Copyright Microsoft Corporation. Licensed under Apache License 2.0.
+The full license is included in LICENSE.playwright.
+https://github.com/microsoft/playwright/blob/v1.63.0/LICENSE
+
+CardBush modification: allow chroot independently of the container's dropped
+CAP_SYS_CHROOT, so Chromium can chroot inside its own user namespace. The kernel
+capability check still applies; no capability is added to the container.

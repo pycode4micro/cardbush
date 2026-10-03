@@ -12,7 +12,7 @@ module.exports = async ({ run, until, pause }) => {
       const [addMenu,setInspectorAddMenuOpen]=React.useState(true),[tabsMenu,setInspectorTabsMenuOpen]=React.useState(true);
       const openInspectorTab=React.useCallback(tab=>setTabs(current=>[...current,tab]),[]);
       const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized:false,compactLayout:false,
-        section,setSection,sidebarCollapsed,setSidebarCollapsed,inspectorOpen,setInspectorOpen,
+        section,setSection,sidebarCollapsed,sidebarWidth:280,setSidebarCollapsed,inspectorOpen,setInspectorOpen,
         inspectorTabs,activeInspectorTab:inspectorTabs[0]||null,openInspectorTab,setInspectorAddMenuOpen,setInspectorTabsMenuOpen});
       window.workspaceFixture={...workspace,section,setSection,sidebarCollapsed,inspectorOpen,setInspectorOpen,inspectorTabs,setTabs,addMenu,tabsMenu};
       return h('div',null,'Workspace lifecycle');

@@ -240,9 +240,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('renderView(null)'); await pause();
   window.setSize(1200,800);
   await run(`
-    window.taskRoot='C:/Users/yusite/AppData/Roaming/cardbush/task-workspaces/task-a';
-    window.pluginRoot='C:/Users/yusite/AppData/Roaming/cardbush/plugins/volcengine-plugins';
-    window.otherTaskRoot='C:/Users/yusite/AppData/Roaming/cardbush/task-workspaces/task-b';
+    window.taskRoot='C:/Users/fixture/AppData/Roaming/cardbush/task-workspaces/task-a';
+    window.pluginRoot='C:/Users/fixture/AppData/Roaming/cardbush/plugins/volcengine-plugins';
+    window.otherTaskRoot='C:/Users/fixture/AppData/Roaming/cardbush/task-workspaces/task-b';
     window.externalReviewReads=[];
     cardbushDesktop.readWorkspaceDirectory=async ({directoryPath})=>{
       externalReviewReads.push(directoryPath);
@@ -258,7 +258,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('.change-review-file-item.active')?.dataset.path===pluginRoot+'/.mcp.json' && navOpen()", 'outside edit revealed from its containing folder');
   assert.equal(await run("document.querySelector('.change-review-tree-root span[title]').title"), await run('taskRoot'), 'task directory remains the tree root');
   assert.equal(await run("document.querySelector('.change-review-file-item.active').getAttribute('aria-level')"), '2', 'outside edit has only one folder above it');
-  assert.equal(await run("Array.from(document.querySelectorAll('.change-review-file-item')).some(row=>['C:/','C:/Users','C:/Users/yusite/AppData'].includes(row.dataset.path))"), false, 'drive and user-profile ancestors are absent');
+  assert.equal(await run("Array.from(document.querySelectorAll('.change-review-file-item')).some(row=>['C:/','C:/Users','C:/Users/fixture/AppData'].includes(row.dataset.path))"), false, 'drive and user-profile ancestors are absent');
   assert.equal(await run("Array.from(document.querySelectorAll('.change-review-file-item')).find(row=>row.dataset.path===pluginRoot).textContent"), 'volcengine-plugins · 其他位置');
   assert.equal(await run("document.querySelector('.change-review-file-item.active').title"), await run("pluginRoot+'/.mcp.json'"), 'full paths remain available in tooltips');
   await run("Array.from(document.querySelectorAll('.change-review-file-item')).find(row=>row.dataset.path===otherTaskRoot).click()");

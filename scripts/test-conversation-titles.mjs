@@ -19,7 +19,7 @@ function load(file) {
 
 const { conversationDisplayTitle: display, conversationTitleFromUserText: title } = load('src/shared/conversationTitle.ts');
 const { authoredPromptContent, promptReferenceMarkdown } = load('src/shared/promptReferences.ts');
-const skill = '[$video-face-stylizer](<C:/Users/EDY/My Skills/video-face-stylizer/SKILL.md>)';
+const skill = '[$video-face-stylizer](<C:/Users/Fixture/My Skills/video-face-stylizer/SKILL.md>)';
 
 test('skill, plugin, file and context links become readable names before title truncation', () => {
   assert.equal(title(skill + ' 现在已经可以使用了是么'), 'video-face-stylizer 现在已经可以使用了是么');
@@ -41,7 +41,7 @@ test('existing titles truncated inside a link recover the complete label', () =>
 });
 
 test('attachment paths do not crowd out the request and the title limit preserves Unicode', () => {
-  assert.equal(title('@"C:/Users/EDY/screenshot.png"\n优化这里的渲染\nD:/notes.txt'), '优化这里的渲染');
+  assert.equal(title('@"C:/Users/Fixture/screenshot.png"\n优化这里的渲染\nD:/notes.txt'), '优化这里的渲染');
   assert.equal(title('/skill video-face-stylizer'), '/skill video-face-stylizer');
   const emoji = '👩🏽‍💻';
   assert.equal(title(emoji.repeat(60)), emoji.repeat(45) + '...');
@@ -60,9 +60,9 @@ test('restored conversations use authored content and keep stored messages and c
   const source = ts.createSourceFile('api.ts', readFileSync('src/backend/api.ts', 'utf8'), ts.ScriptTarget.Latest, true);
   const functions = source.statements.filter(node => ts.isFunctionDeclaration(node) &&
     ['runtimeConversation', 'optionalString', 'defaultConversationTitle'].includes(node.name?.text)).map(node => node.getText(source)).join('\n');
-  const code = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const project = new Function('conversationDisplayTitle', 'conversationTitleFromUserText', 'authoredPromptContent', 'isInternalRuntimeMessage',
-    code + '\nreturn runtimeConversation;')(display, title, authoredPromptContent, () => false);
+  const code = ts.transpileModule(functions, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const project = new Function('exports', 'conversationDisplayTitle', 'conversationTitleFromUserText', 'authoredPromptContent', 'isInternalRuntimeMessage',
+    code + '\nreturn runtimeConversation;')({}, display, title, authoredPromptContent, () => false);
   const authored = skill + ' 验证连接';
   const snapshot = { sessionId: 'fixture', updatedAt: '2026-09-12T00:00:00Z', metadata: {}, supersededMessageIds: [],
     turns: [{ messages: [{ messageId: 'user-1', metadata: { composerReferenceContent: authored },

@@ -11,10 +11,10 @@
 | 下方八项回复 | 审核人员要求的完整架构说明，可作为补充材料 |
 | [英文操作指南](reviewer-guide.en.md) | 审核人员安装扩展、配对和验证用户控制的步骤 |
 | [商店介绍同步内容](listing-update.zh-CN.md) | 系统要求、浏览器功能和隐私／卸载说明的中英文替换段落 |
-| [本次准备记录](../../docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md) | 当前包、验证结果及仍待完成项目 |
+| [本次准备记录](../../docs/MSIX_STORE_RELEASE.md) | 当前包、验证结果及仍待完成项目 |
 | [1.0.4.0 历史安装证据](../../docs/MSIX_INSTALLED_VALIDATION_2026-09-29.md) | 仅证明旧包的安装、迁移和卸载，不能替代当前包验证 |
 
-原审核报告中的产品 ID 为 `9N7XNDD5WRGS`，审核日期为 2026-09-28。产品 ID 不是 MSIX 的 Publisher 或 Package/Identity/Name；构建必须使用 Partner Center 的精确包身份。当前最低版本为 `10.0.22000.0`，设备族为 `Windows.Desktop`，架构为 x64。
+私下提交审核材料时，将 `<STORE_PRODUCT_ID>` 替换为 Partner Center 的真实产品 ID，不回写公开仓库。原审核日期为 2026-09-28。产品 ID 不是 MSIX 的 Publisher 或 Package/Identity/Name；构建必须使用本地身份文件中的精确包身份。当前最低版本为 `10.0.22000.0`，设备族为 `Windows.Desktop`，架构为 x64。
 
 短说明对应本次 `1.0.5.0` 包。请完整替换旧 `1.0.3.0` 的 reconsideration 说明，不要保留“仅补充理由、没有修改代码”的旧结论。保存说明不会改变上传包解析出的受限能力；如仍列出 `unvirtualizedResources`，需另外核对该草稿中的实际包。
 

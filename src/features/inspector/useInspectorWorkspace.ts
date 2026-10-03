@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppLanguage, AppSection } from '../../types';
-import { inspectorMaximum } from '../../components/rightInspectorSizing';
+import { inspectorMaximum, minimumInspectorWidth } from '../../components/rightInspectorSizing';
+import { useInspectorRecovery } from './useInspectorRecovery';
 import type { InspectorTab, InspectorResourceTab } from './inspectorTabs';
 import { addPanel, panelIds, retainPanels, type PanelLayout } from './panelLayout';
 
@@ -9,6 +10,7 @@ type InspectorWorkspaceOptions = {
   windowMaximized: boolean;
   compactLayout: boolean;
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
   setSidebarCollapsed: (collapsed: boolean) => void;
   section: AppSection;
   setSection: (section: AppSection) => void;
@@ -24,7 +26,7 @@ type InspectorWorkspaceOptions = {
 /** Owns workspace geometry and its restore lifecycle; the app supplies navigation and tabs. */
 export function useInspectorWorkspace({
   language, windowMaximized, compactLayout,
-  sidebarCollapsed, setSidebarCollapsed, section, setSection,
+  sidebarCollapsed, sidebarWidth, setSidebarCollapsed, section, setSection,
   inspectorOpen, setInspectorOpen, inspectorTabs, activeInspectorTab, openInspectorTab,
   setInspectorAddMenuOpen, setInspectorTabsMenuOpen,
 }: InspectorWorkspaceOptions) {
@@ -36,8 +38,10 @@ export function useInspectorWorkspace({
   const [inspectorLayout, setInspectorLayout] = useState<PanelLayout | null>(null);
   const [inspectorCover, setInspectorCover] = useState(false);
   const [quickInputOpen, setQuickInputOpen] = useState(false);
+  const { mainStageRef, conversationCovered, splitWidthRef } = useInspectorRecovery({ open: inspectorOpen, covered: inspectorCover, width: inspectorWidth });
+  const inspectorControlsVisible = inspectorOpen && (inspectorCover || conversationCovered);
   const multiPageRestore = useRef<{ width: number; sidebar: boolean } | null>(null);
-  const coverRestore = useRef<{ section: AppSection; sidebar: boolean } | null>(null);
+  const coverRestore = useRef<{ section: AppSection; sidebar: boolean; width: number } | null>(null);
   const setInspectorWidth = useCallback((width: number) => {
     const next = Math.min(
       inspectorMaximum(windowMaximized, window.innerWidth),
@@ -51,11 +55,19 @@ export function useInspectorWorkspace({
     setInspectorCover(false); setQuickInputOpen(false);
     const previous = coverRestore.current; coverRestore.current = null;
     if (previous) { setSidebarCollapsed(previous.sidebar); setSection(previous.section); }
-  }, [setSidebarCollapsed, setSection]);
+    const collapsed = previous?.sidebar ?? sidebarCollapsed;
+    const available = (mainStageRef.current?.parentElement?.clientWidth ?? window.innerWidth) - (collapsed ? 0 : sidebarWidth);
+    const maximum = available - 340;
+    if (compactLayout || maximum < minimumInspectorWidth) {
+      setInspectorOpen(false);
+    } else {
+      setInspectorWidth(Math.min(previous?.width ?? splitWidthRef.current ?? 620, maximum));
+    }
+  }, [setSidebarCollapsed, setSection, sidebarCollapsed, sidebarWidth, compactLayout, setInspectorOpen, setInspectorWidth, mainStageRef, splitWidthRef]);
   const enterInspectorCover = useCallback(() => {
-    coverRestore.current ??= { section, sidebar: sidebarCollapsed };
+    coverRestore.current ??= { section, sidebar: sidebarCollapsed, width: conversationCovered ? splitWidthRef.current ?? 620 : inspectorWidthRef.current };
     setInspectorCover(true); setSidebarCollapsed(true); setInspectorOpen(true);
-  }, [section, sidebarCollapsed, setSidebarCollapsed, setInspectorOpen]);
+  }, [section, sidebarCollapsed, setSidebarCollapsed, setInspectorOpen, conversationCovered, splitWidthRef]);
   const leaveMultiPage = useCallback(() => {
     setInspectorLayout(null);
     const previous = multiPageRestore.current; multiPageRestore.current = null;
@@ -87,7 +99,7 @@ export function useInspectorWorkspace({
   }, [inspectorTabs, activeInspectorTab, inspectorLayout, leaveMultiPage]);
   useEffect(() => { if (!inspectorOpen && inspectorCover) leaveInspectorCover(); }, [inspectorOpen, inspectorCover, leaveInspectorCover]);
   useEffect(() => {
-    if (!inspectorCover) return;
+    if (!inspectorControlsVisible) { setQuickInputOpen(false); return; }
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open]')) return;
       event.preventDefault();
@@ -95,7 +107,7 @@ export function useInspectorWorkspace({
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
-  }, [inspectorCover, quickInputOpen, leaveInspectorCover]);
+  }, [inspectorControlsVisible, quickInputOpen, leaveInspectorCover]);
 
   useEffect(() => {
     let previousLeft = window.screenX;
@@ -157,6 +169,7 @@ export function useInspectorWorkspace({
   return {
     inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
     inspectorCover, enterInspectorCover, leaveInspectorCover,
+    mainStageRef, conversationCovered, inspectorControlsVisible,
     quickInputOpen, setQuickInputOpen, toggleMultiPage,
   };
 }

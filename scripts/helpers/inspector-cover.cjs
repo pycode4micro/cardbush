@@ -7,27 +7,37 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.insertCSS('.app { width:100%!important; --window-frame-height:46px; }');
   await run(`
     window.coverSent=[];window.coverStops=0;
-    function CoverFixture(){
-      const [covered,setCovered]=React.useState(false),[input,setInput]=React.useState(false),[target,setTarget]=React.useState(null),[width,setWidth]=React.useState(500);
+    localStorage.setItem('cardbush.inspector_width','500');
+    localStorage.removeItem('cardbush.inspector_split_width');
+    window.CoverFixture=function CoverFixture({startSidebarCollapsed=true}={}){
+      const [target,setTarget]=React.useState(null),[sidebarCollapsed,setSidebarCollapsed]=React.useState(startSidebarCollapsed);
+      const [section,setSection]=React.useState('chat'),[inspectorOpen,setInspectorOpen]=React.useState(true);
       const [tiled,setTiled]=React.useState(true);
-      const tabs=[{id:'first',kind:'resource',detail:{target:'https://first.example/'}},{id:'second',kind:'resource',detail:{target:'https://second.example/'}}];
+      const [tabs]=React.useState([{id:'first',kind:'resource',detail:{target:'https://first.example/'}},{id:'second',kind:'resource',detail:{target:'https://second.example/'}}]);
+      const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized:false,compactLayout:false,
+        section,setSection,sidebarCollapsed,sidebarWidth:280,setSidebarCollapsed,inspectorOpen,setInspectorOpen,
+        inspectorTabs:tabs,activeInspectorTab:tabs[0],openInspectorTab:()=>{},setInspectorAddMenuOpen:()=>{},setInspectorTabsMenuOpen:()=>{}});
+      const {inspectorCover:covered,inspectorControlsVisible,conversationCovered,mainStageRef,inspectorWidth:width,setInspectorWidth:setWidth,quickInputOpen:input,setQuickInputOpen:setInput}=workspace;
+      window.coverWorkspace={...workspace,setSidebarCollapsed,setInspectorOpen,inspectorOpen};
       window.coverLayout=setTiled;
       const [props,setProps]=React.useState({...chatProps,language:'zh',activeConversationId:'cover-session',loading:false,draft:'keep draft',
         messages:[{id:'user',role:'user',content:'Cover fixture',createdAt:'2026-09-30T00:00:00Z'}],availableModels:[{id:'fixture',provider:'fixture',modelName:'fixture',enabled:true}]});
       window.coverUpdate=patch=>setProps(current=>({...current,...patch}));
       return h(React.Fragment,null,h('div',{style:{height:46}},'Native action bar'),
-        h('main',{className:'desktop-shell sidebar-is-collapsed'+(covered?' inspector-covered':'')},
-          h('section',{className:'main-stage',inert:covered},h(views.ComposerPortalContext.Provider,{value:input?target:null},h(views.ChatPanel,{...props,
+        h('main',{className:'desktop-shell'+(sidebarCollapsed?' sidebar-is-collapsed':'')+(covered?' inspector-covered':conversationCovered?' inspector-conversation-covered':''),style:{'--sidebar-width':'280px'}},
+          h('aside',{className:'sidebar'+(sidebarCollapsed?' soft-panel-hidden':'')},'Conversation list'),
+          !sidebarCollapsed&&h('div',{className:'sidebar-resizer'}),
+          h('section',{className:'main-stage',ref:mainStageRef,inert:inspectorControlsVisible},h(views.ComposerPortalContext.Provider,{value:input?target:null},h(views.ChatPanel,{...props,
             onDraftChange:draft=>setProps(current=>({...current,draft})),onSend:async text=>{coverSent.push(text);setProps(current=>({...current,draft:'',sending:true,activeTurnId:'cover-turn'}));},onCancel:async()=>{coverStops++;setProps(current=>({...current,sending:false,activeTurnId:''}));}}))),
-          h('aside',{className:'right-inspector',style:{'--right-inspector-width':width+'px'}},
-            h(views.RightInspectorResizer,{width,windowMaximized:false,onWidthChange:setWidth,onExpand:()=>setCovered(true),label:'Expand workspace'}),
+          h('aside',{className:'right-inspector'+(inspectorOpen?'':' soft-panel-hidden'),style:{'--right-inspector-width':width+'px'}},
+            h(views.RightInspectorResizer,{width,windowMaximized:false,onWidthChange:setWidth,onExpand:workspace.enterInspectorCover,softVisible:inspectorOpen,label:'Expand workspace'}),
             h('div',{className:'right-inspector-viewport'},h('div',{className:'right-inspector-content'},
               h('header',{className:'right-inspector-toolbar'},'Browser tabs'),
               h('div',{className:'right-inspector-body'},h(views.InspectorTabPages,{tabs,activeId:'first',layout:tiled?views.addPanel(views.addPanel(null,'first'),'second'):null,
                 renderFrame:tab=>h(views.InspectorTileFrame,{tab,language:'zh',onSwap:()=>{}})},tab=>h('div',null,tab.detail.target)))))),
-          covered&&h('div',{className:'inspector-cover-controls'},input&&h('div',{className:'inspector-quick-input',ref:setTarget}),h('div',{className:'inspector-cover-capsule'},
-            h('button',{id:'cover-back',onClick:()=>{setInput(false);setCovered(false);}},'返回'),h('button',{id:'cover-input',onClick:()=>setInput(value=>!value)},'输入')))));
-    }
+          inspectorControlsVisible&&h('div',{className:'inspector-cover-controls'},input&&h('div',{className:'inspector-quick-input',ref:setTarget}),h('div',{className:'inspector-cover-capsule'},
+            h('button',{id:'cover-back',onClick:workspace.leaveInspectorCover},'返回'),h('button',{id:'cover-input',onClick:()=>setInput(value=>!value)},'输入')))));
+    };
     renderView(h(CoverFixture));
   `);
   await until('!!document.querySelector(".right-inspector-resizer")','inspector resizer');
@@ -77,6 +87,40 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelector(".main-stage textarea[data-composer-input]").value'),'return draft');
   assert.ok(Math.abs(await run('document.querySelector(".right-inspector-content").getBoundingClientRect().width')-499)<2,'Back restores the original inspector width');
   assert.equal(await run('document.body.classList.contains("right-inspector-resizing")'),false);
+  await run('coverWorkspace.setSidebarCollapsed(false);coverWorkspace.setInspectorWidth(innerWidth)');
+  await until('coverWorkspace.conversationCovered && !!document.querySelector("#cover-back")','oversized docked width exposes recovery capsule');
+  assert.equal(await run('coverWorkspace.inspectorCover'),false,'recovery also works without explicit cover mode');
+  assert.equal(await run(`(()=>{const p=document.querySelector('.right-inspector').getBoundingClientRect(),c=document.querySelector('.inspector-cover-capsule').getBoundingClientRect();return Math.abs((p.left+p.right-c.left-c.right)/2)<3;})()`),true,'capsule centered in pane, excluding sidebar');
+  await run('document.querySelector("#cover-input").click()');
+  await until('!!document.querySelector(".inspector-quick-input textarea")','recovered quick input');
+  assert.equal(await run('document.querySelector(".inspector-quick-input textarea").value'),'return draft','recovery keeps conversation draft');
+  fs.writeFileSync(path.join(root,'tmp','inspector-recovery-capsule.png'),(await window.webContents.capturePage()).toPNG());
+  await run('document.querySelector("#cover-back").click()');
+  await until('document.querySelector(".main-stage").clientWidth>=340 && !document.querySelector("#cover-back")','Back restores usable split');
+  assert.equal(await run('coverWorkspace.inspectorWidth'),500,'Back restores last usable width');
+  await run('coverWorkspace.setInspectorWidth(innerWidth)');
+  await until('!!document.querySelector("#cover-back")','cover again');
+  await run('coverWorkspace.setInspectorOpen(false)');
+  await until('!document.querySelector("#cover-back")','closed inspector has no stale capsule');
+  await run('coverWorkspace.setInspectorOpen(true)');
+  await until('!!document.querySelector("#cover-back")','opening with remembered large width offers recovery');
+  // Re-mounting reproduces application restart with an oversized saved width.
+  await run('renderView(h(CoverFixture,{key:"saved-width",startSidebarCollapsed:false}))');
+  await until('!!document.querySelector("#cover-back")','saved width recovery after mount');
+  const recoveryGrip=await run(`(()=>{const r=document.querySelector('.right-inspector-resizer').getBoundingClientRect();const x=Math.round(r.x+r.width/2),y=Math.round(r.y+100);return {x,y,hit:document.elementFromPoint(x,y)?.classList.contains('right-inspector-resizer')};})()`);
+  assert.equal(recoveryGrip.hit,true,'inspector resizer stays reachable next to sidebar resizer');
+  const recoveryPoint={x:recoveryGrip.x,y:recoveryGrip.y};
+  window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...recoveryPoint});
+  window.webContents.sendInputEvent({type:'mouseMove',button:'left',x:recoveryPoint.x+380,y:recoveryPoint.y});
+  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:recoveryPoint.x+380,y:recoveryPoint.y});
+  await until('document.querySelector(".main-stage").clientWidth>=340 && !document.querySelector("#cover-back")','dragging boundary restores conversation');
+  assert.equal(await run('document.querySelector(".main-stage textarea[data-composer-input]").value'),'keep draft');
+  await run('coverWorkspace.enterInspectorCover()'); await pause();
+  window.setSize(640,800); await pause();
+  await run('document.querySelector("#cover-back").click()');
+  await until('!coverWorkspace.inspectorOpen && !document.querySelector("#cover-back")','narrow Back closes pane when split cannot fit');
+  window.setSize(...originalSize); await pause();
+  console.log('Inspector recovery passed: persisted/clamped widths, real composer, sidebar hit testing, drag recovery, reopen, safe split restore and narrow-window return.');
   console.log('Inspector cover passed: real pointer drag, full inner/tile widths, single/multi-page, window resize and 125% renderer zoom, narrow drag handles, native bar retained, Composer and original-width restoration.');
   await require('./inspector-workspace.cjs')({run,until,pause});
 };

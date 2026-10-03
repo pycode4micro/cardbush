@@ -35,6 +35,8 @@ const expectedSections = [
   'mcp',
   'cache',
   'models',
+  'voice',
+  'summary_for_user',
   'diagnostics',
 ].sort();
 const navigationBlock = navigation.match(

@@ -1050,6 +1050,7 @@ function terminalToolDescription(): string {
       ? "To delay before rechecking an external task, use shell=powershell with a sleep command, e.g. Start-Sleep -Seconds 30. Reuse an existing running wait session when available."
       : "To delay before rechecking an external task, use shell=posix with a sleep command, e.g. sleep 30. Reuse an existing running wait session when available.",
     "Running sessions persist across Agent turns until terminal_stop, natural exit, or a host resource limit. On Windows the whole task tree shares host memory/CPU budgets; detached descendants end with the session. After a resource-limit failure, reduce the workload instead of bypassing the guard or repeating the same command.",
+    "Do not launch a browser for the user through this terminal (including Start-Process or shell start): a newly created browser can be killed when the command exits. Use open_external_url when available for a webpage the user wants to keep open; use Browser Use for page control. If neither is available, return the link instead of bypassing process cleanup.",
     `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
     "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",
   ].join(" ");

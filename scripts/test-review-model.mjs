@@ -40,7 +40,7 @@ test('tree paths respect directory boundaries and platform case rules', () => {
 });
 
 test('external edits start at their containing folders while task files stay in the task tree', () => {
-  const base = 'C:/Users/yusite/AppData/Roaming/cardbush';
+  const base = 'C:/Users/fixture/AppData/Roaming/cardbush';
   const task = base + '/task-workspaces/task-a';
   assert.deepEqual(reviewExternalRoots(task, [
     task + '/verify_launch.py',

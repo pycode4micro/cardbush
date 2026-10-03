@@ -461,7 +461,7 @@ export class ElectronProductHostController {
         'No Product model is configured.',
       );
     }
-    if (!selected.apiKey) {
+    if (!selected.apiKey && selected.authentication?.kind !== 'chatgpt') {
       throw new ProductHostProtocolError(
         'product_model_credential_missing',
         `Model ${selected.id} has no provider credential.`,
@@ -476,6 +476,7 @@ export class ElectronProductHostController {
           adapter: selected.apiProtocol ?? 'openai_responses',
           anthropicThinkingMode: selected.anthropicThinkingMode,
           apiKey: selected.apiKey,
+          authentication: selected.authentication,
           baseURL: selected.baseURL,
           defaultHeaders: selected.defaultHeaders ?? {},
         },

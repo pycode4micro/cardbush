@@ -22,3 +22,15 @@ packaging/windows/signing.local.json
 *.p12
 
 dist-cjs/
+
+# Local credentials, deployment state and private test inputs.
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local.json
+*.key
+id_rsa
+id_ed25519
+/deploy/agent/data/
+/private-release/

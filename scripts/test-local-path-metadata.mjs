@@ -36,7 +36,7 @@ const {
   markdownLocalFileReference,
   remarkLocalFileReferences,
 } = fileReferenceModule.exports;
-const absoluteDocument = 'C:\\Users\\wfang\\Documents\\report.docx';
+const absoluteDocument = 'C:\\Users\\fixture\\Documents\\report.docx';
 for (const destination of [
   'C:\\Users\\fixture\\拍摄脚本-3.mp4.md',
   'C:/Users/fixture/拍摄脚本-3.mp4.md',
@@ -53,7 +53,7 @@ for (const destination of ['', '#section', 'https://example.com/report.md', 'jav
 }
 assert.equal(markdownLocalFileReference('report.md', 'D:\\fixture').path, 'D:\\fixture\\report.md');
 const absoluteSkillDirectory =
-  'C:\\Users\\wfang\\AppData\\Roaming\\cardbush\\skills\\transport-delivery';
+  'C:\\Users\\fixture\\AppData\\Roaming\\cardbush\\skills\\transport-delivery';
 assert.equal(localFileReference(absoluteDocument)?.path, absoluteDocument);
 assert.equal(
   localFileReference(absoluteSkillDirectory)?.path,
@@ -187,7 +187,7 @@ assert.match(
 assert.match(localReferenceLinkSource, /inspectLocalReference/);
 assert.match(localReferenceLinkSource, /applicationLike[\s\S]*?openPath\?\.\(path\)/);
 assert.match(localReferenceLinkSource, /<FileTypeIcon path=\{path\} \/>/);
-assert.match(localReferenceLinkSource, /if \(!inspectionComplete \|\| !metadata\)/);
+assert.match(localReferenceLinkSource, /if \(!fileTarget \|\| !inspectionComplete \|\| !metadata\)/);
 assert.doesNotMatch(localReferenceLinkSource, /fallbackDirectoryLike/);
 
 const fileTypeIconSource = readSourceFile(

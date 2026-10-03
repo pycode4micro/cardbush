@@ -7,6 +7,7 @@ export interface McpImageInput {
   data: string;
   mimeType: string;
   detail?: 'low' | 'high';
+  original?: boolean;
 }
 
 export type ToolImageReceipt = { toolCallId: string; index: number; path?: string; code?: string; message?: string };
@@ -25,8 +26,9 @@ export async function snapshotMcpImages(result: unknown, toolCallId: string, sto
       sourceChars += item.data.length;
       if (sourceChars > maximumBatchCharacters) throw new ModelImageInputError('image_result_too_large', 'MCP image batch exceeds the source byte budget. Request fewer or smaller images.');
       const source = `data:${item.mimeType};base64,${item.data}`;
-      let snapshot = snapshots.get(source);
-      if (!snapshot) { snapshot = store.snapshot(source, signal); snapshots.set(source, snapshot); }
+      const key = `${item.original ? 'original' : 'compressed'}:${source}`;
+      let snapshot = snapshots.get(key);
+      if (!snapshot) { snapshot = store.snapshot(source, signal, { original: item.original }); snapshots.set(key, snapshot); }
       const url = await snapshot;
       observations.push({ image: { url, ...(item.detail ? { detail: item.detail } : {}) }, receipt: { ...receipt, path: url } });
     } catch (error) {
@@ -57,7 +59,10 @@ export function mcpImageInputs(result: unknown): McpImageInput[] {
     const audience = object(item.annotations)?.audience;
     if (Array.isArray(audience) && !audience.includes('assistant')) return [];
     const detail = object(item._meta)?.['codex/imageDetail'];
-    return [{ data, mimeType, ...(detail === 'low' || detail === 'high' ? { detail } : {}) }];
+    // Coordinate-bearing screenshots must keep their pixels. Provider detail
+    // and local image compression are independent; never silently downscale an original.
+    return [{ data, mimeType, ...(detail === 'original' ? { original: true, detail: 'high' as const }
+      : detail === 'low' || detail === 'high' ? { detail } : {}) }];
   });
 }
 

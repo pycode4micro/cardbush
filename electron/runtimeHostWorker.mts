@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { z } from 'zod';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { parentPort as nodeParentPort } from 'node:worker_threads';
 import {
@@ -51,6 +52,8 @@ import { ProxyFetchPool } from './proxyFetch.mjs';
 import { translateBrowserTexts } from './browserTranslationModel.mjs';
 import { openPluginAgentMcp } from './pluginAgentMcp.mjs';
 import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
+import { registerDesktopBrowserTools } from './desktopBrowserTools.mjs';
+import { registerAgentDesktopTools } from './agentDesktopTools.mjs';
 import {
   decodeProductSubagentConfig,
   defaultProductSubagentConfig,
@@ -316,6 +319,10 @@ async function executeRuntimeCommand(
   }
   if (command.kind === UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND) {
     return providers.upsert(runtimeProviderBindingConfigSchema.parse(command.payload));
+  }
+  if (command.kind === 'runtime.siwc_account_changed') {
+    providers.invalidateChatGptAccount(z.object({ accountId: z.string().uuid() }).parse(command.payload).accountId);
+    return { accepted: true };
   }
   if (command.kind === REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND) {
     return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
@@ -724,6 +731,10 @@ const providerCapabilityStore = runtimeStateRoot
   ? new FileProviderCapabilityStore(join(runtimeStateRoot, 'provider-capabilities.json'))
   : new InMemoryProviderCapabilityStore();
 providers = new ModelProviderRegistry({
+  ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SERVICE_ID ? {
+    chatGptAccess: (accountId: string, input: { rejectedToken?: string; signal?: AbortSignal }) =>
+      mcpHost.request<string>('siwc.access-token', { accountId, rejectedToken: input.rejectedToken }, input.signal),
+  } : {}),
   fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
   ...(process.env.CARDBUSH_SERVICE_ID ? { createProvider: config => createModelProvider({ ...config, fetch: agentModelFetch }) } : {}),
   capabilityStore: providerCapabilityStore,
@@ -734,6 +745,12 @@ const usageLedger = usageLedgerPath ? new UsageLedger(usageLedgerPath) : undefin
 process.once('exit', () => usageLedger?.close());
 
 const toolRegistry = new ToolRegistry();
+if (process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_AGENT_DESKTOP === '1') {
+  registerAgentDesktopTools(toolRegistry, mcpHost);
+}
+if (process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SERVICE_ID) {
+  registerDesktopBrowserTools(toolRegistry, mcpHost);
+}
 const loadSearchResultLimit = () => readCardbushSearchResultLimit(process.env.CARDBUSH_APPS_CONFIG_PATH?.trim());
 const skillRoots = skillRootsFromEnvironment();
 const pluginRoots = pluginRootsFromEnvironment();
@@ -863,6 +880,7 @@ host = new InMemoryRuntimeHost({
   },
   settleOrphanedTurns: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
+    'runtime.siwc_account_changed',
     AUTOMATION_COMMAND,
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,

@@ -82,7 +82,7 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
         </section>)}</div>}
     </SettingsCard>
     {(adding || editing) && <ModelFormDialog key={editing || 'new'} model={config.models.find(model => model.id === editing)} language={language} providerOptions={providerOptions}
-      busy={busy} error={error} discoverModels={discoverModels} onCancel={() => { setAdding(false); setEditing(''); }} onSave={async model => {
+      busy={busy} error={error} discoverModels={discoverModels} allowChatGpt={!scopeName} onCancel={() => { setAdding(false); setEditing(''); }} onSave={async model => {
         const saved = adding ? await save({ models: [...config.models, model], defaultModelId: config.defaultModelId || model.id }) : await update(model);
         if (saved) { setAdding(false); setEditing(''); }
       }}/>}

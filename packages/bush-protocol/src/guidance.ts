@@ -11,6 +11,8 @@ export const runtimeGuidanceRequestSchema = z.object({
   turnId: z.string().min(1),
   messageId: z.string().min(1),
   content: z.string().trim().min(1),
+  // Omission preserves the existing round-boundary delivery used by older clients.
+  mode: z.enum(['append_context', 'interrupt_and_continue']).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string().min(1),
 });
@@ -22,6 +24,7 @@ export const runtimeGuidanceReceiptSchema = z.object({
   messageId: z.string().min(1),
   accepted: z.boolean(),
   queueDepth: z.number().int().nonnegative(),
+  modelRequestInterrupted: z.boolean().optional(),
 });
 
 export type RuntimeGuidanceRequest = z.infer<typeof runtimeGuidanceRequestSchema>;

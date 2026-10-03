@@ -3,6 +3,7 @@ import type { ProviderCapabilityStore } from './providerCapabilities.js';
 
 /** Connection and transport settings, never Agent loop policy. */
 export interface ModelProviderConfig {
+  chatGpt?: { accountId: string; access: import('./siwc.js').ChatGptAccess; signal?: AbortSignal };
   adapter?: ModelApiProtocol;
   apiKey: string;
   fetch?: typeof fetch;

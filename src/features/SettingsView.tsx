@@ -5,6 +5,7 @@ import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
 import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
 import { SettingsSummaryPanel } from './settings/SettingsSummaryPanel';
+import { VoiceSettingsPanel } from './voice/VoiceSettingsPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
 import { SshConnectionsPanel } from './ssh/SshConnectionsPanel';
 import { BrowserConnectionSettings } from './browser/BrowserConnectionSettings';
@@ -36,6 +37,7 @@ import {
   Keyboard,
   LoaderCircle,
   Monitor,
+  Mic,
   Network,
   PackageOpen,
   Search,
@@ -121,6 +123,7 @@ const defaultFontSettings = {
   filePath: '',
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
+  voice: Mic,
   profile: SlidersHorizontal, summary_for_user: Clipboard, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
   models: Cpu, mcp: PluginIcon, browser: Monitor, 'computer-use': Keyboard,
   projects: PackageOpen, runtime: Container, ssh: Network, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
@@ -329,6 +332,7 @@ export function SettingsView({
   }, [updateSettings]);
 
   const content = (() => {
+    if (effectiveSection === 'voice') return <VoiceSettingsPanel language={language} />;
     if (effectiveSection === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
     if (effectiveSection === 'browser') return <BrowserSettingsPanel language={language} />;
     if (effectiveSection === 'ssh') return <SshConnectionsPanel language={language} projects={projects} />;
@@ -554,7 +558,7 @@ export function SettingsView({
       models={{ defaultModelId: selectedModel, models: settings.managedModelConfigs }}
       onSave={async config => {
         const merged = config.models.map(model => ({ ...model,
-          apiKey: model.apiKey || settings.managedModelConfigs.find(item => item.id === model.id)?.apiKey || '',
+          apiKey: model.authentication?.kind === 'chatgpt' ? '' : model.apiKey || settings.managedModelConfigs.find(item => item.id === model.id)?.apiKey || '',
         }));
         onSettingsChange(current => ({ ...current, managedModelConfigs: merged }));
         if (selectedModel !== config.defaultModelId) onUseModel(config.defaultModelId);
@@ -1876,7 +1880,7 @@ export function McpServersPanel({
               <SettingsInput
                 label={language === 'zh' ? '启动命令' : 'Command'}
                 value={draft.command}
-                placeholder="npx @modelcontextprotocol/server-filesystem C:\\Users\\wfang\\Desktop"
+                placeholder="npx @modelcontextprotocol/server-filesystem C:\\Users\\fixture\\Desktop"
                 onChange={(value) => updateDraft({ command: value })}
               />
             ) : (

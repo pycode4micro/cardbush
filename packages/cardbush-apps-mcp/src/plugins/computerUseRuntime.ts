@@ -15,6 +15,7 @@ import { computerUseVisualProgressScript, hasVisualProgress, type ProgressEviden
 import { prepareComputerUseNativeCode } from './computerUseNativeCode.js';
 import { collectComputerUseTimings, type ComputerUseTimings } from './computerUseTimings.js';
 import { computerUseImageScript, saveComputerUseImageScript } from './computerUseImage.js';
+import { computerUseDisplaysScript, computerUseDisplayGuardScript } from './computerUseDisplays.js';
 
 export interface ComputerUseArtifact {
   artifact_id: string;
@@ -71,6 +72,9 @@ export type ComputerUseObservationBinding = {
   elements: ComputerUseObservedElement[];
   ownerHwnd?: number;
   focusedBounds?: ComputerUseWindowBounds;
+  displaySignature?: string;
+  windowDpi?: number;
+  visualVerified?: boolean;
 };
 
 type ComputerUseSafetyState = {
@@ -462,8 +466,9 @@ async function executeComputerUseRequest(
         // Keep the desktop lease and cleanup until the capture actually settles.
         return await observeWindow(input, config, scopeId, target, signal);
       }
-      const windows = await listWindows(signal) as Array<Record<string, unknown>>;
-      if (action === 'observe') {
+      const desktop = await readDesktopState(signal);
+      const windows = desktop.windows as Array<Record<string, unknown>>;
+      if (action === 'observe' && !input.display_id) {
         const discoveryFingerprint = windowListFingerprint(windows);
         computerUseSafety.recordObservation(
           scopeId,
@@ -472,12 +477,14 @@ async function executeComputerUseRequest(
         );
         return plain({
           windows,
+          displays: desktop.displays,
+          display_signature: desktop.display_signature,
           actionable: false,
           capture_performed: false,
-          next_step: 'Choose exactly one window and observe its hwnd. Use include_text=true if accessibility elements are needed.',
+          next_step: 'Choose exactly one window and observe its hwnd. For a screen overview use screenshot with an exact display_id. Display bounds and window input use physical pixels.',
         });
       }
-      const capture = await captureDesktop(config.screenshotDirectory, signal);
+      const capture = await captureDesktop(config.screenshotDirectory, signal, optionalString(input.display_id));
       computerUseSafety.recordObservation(scopeId, capture.visualFingerprint, { source: 'desktop' });
       return {
         output: {
@@ -717,24 +724,24 @@ if ($exactShortcuts.Count -eq 1) {
 throw "Application '$requested' was not found as a path, executable, registered app, or Start menu shortcut."
 `;
 
-async function captureDesktop(configuredDirectory: string, signal?: AbortSignal) {
+async function captureDesktop(configuredDirectory: string, signal?: AbortSignal, displayId = '') {
   const directory = configuredDirectory || process.env.CARDBUSH_OWNED_CAPTURE_ROOT || join(tmpdir(), 'cardbush-apps', 'captures');
   await mkdir(directory, { recursive: true });
   const path = join(directory, `capture-${Date.now()}-${randomUUID()}.png`);
   const script = String.raw`
+${computerUseDisplaysScript}
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
-  Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class CardBushDesktopDpi {
-  [DllImport("user32.dll", EntryPoint="SetProcessDpiAwarenessContext")] private static extern bool SetDpiContext(IntPtr value);
-  [DllImport("user32.dll", EntryPoint="SetProcessDPIAware")] private static extern bool SetDpiAware();
-  public static void Enable(){try{if(SetDpiContext(new IntPtr(-4)))return;}catch(EntryPointNotFoundException){}try{SetDpiAware();}catch(EntryPointNotFoundException){}}
-}
-'@
-[CardBushDesktopDpi]::Enable()
   $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$displays = [CardBushDesktop]::Read()
+$displaySignature = [CardBushDesktop]::Signature($displays)
+if ($script:CARDBUSH_DISPLAY_ID) {
+  $selected = @($displays | Where-Object { $_.id -ceq $script:CARDBUSH_DISPLAY_ID })
+  if ($selected.Count -ne 1) { throw 'Display is no longer available. Observe connected displays again.' }
+  $b = $selected[0].bounds
+  $bounds = [Drawing.Rectangle]::new($b.x,$b.y,$b.width,$b.height)
+}
+if ([long]$bounds.Width*$bounds.Height -gt 64000000) { throw 'Desktop capture exceeds 64 megapixels. Select one display_id.' }
 $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 try {
@@ -743,6 +750,7 @@ try {
     if ($hiddenLayers.Length -gt 0) { [void][CardBushCaptureLayers]::DwmFlush() }
     $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
   } finally { [CardBushCaptureLayers]::Restore($hiddenLayers) }
+  [CardBushDesktop]::AssertUnchanged($displaySignature,[IntPtr]::Zero,0)
   $bitmap.Save($script:CARDBUSH_CAPTURE_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
   $sample = New-Object System.Drawing.Bitmap 16, 16
   $sampleGraphics = [System.Drawing.Graphics]::FromImage($sample)
@@ -756,7 +764,10 @@ try {
         $fingerprint[$y * 16 + $x] = [byte][Math]::Round(($pixel.R * 0.299) + ($pixel.G * 0.587) + ($pixel.B * 0.114))
       }
     }
-    [PSCustomObject]@{ path=$script:CARDBUSH_CAPTURE_PATH; x=$bounds.Left; y=$bounds.Top; width=$bounds.Width; height=$bounds.Height; visual_fingerprint=[Convert]::ToBase64String($fingerprint) } | ConvertTo-Json -Compress
+    [PSCustomObject]@{ path=$script:CARDBUSH_CAPTURE_PATH; x=$bounds.Left; y=$bounds.Top; width=$bounds.Width; height=$bounds.Height;
+      displays=$displays; display_id=$script:CARDBUSH_DISPLAY_ID; display_signature=$displaySignature;
+      image=@{origin=@{x=$bounds.Left;y=$bounds.Top};scale=1;width=$bounds.Width;height=$bounds.Height;coordinate_space='desktop'};
+      visual_fingerprint=[Convert]::ToBase64String($fingerprint) } | ConvertTo-Json -Depth 6 -Compress
   } finally {
     $sampleGraphics.Dispose()
     $sample.Dispose()
@@ -767,7 +778,7 @@ try {
 }`;
   const rawOutput = record(json(await powershell(
     `${computerUseCaptureLayersScript}\n${script}`,
-    { CARDBUSH_CAPTURE_PATH: path },
+    { CARDBUSH_CAPTURE_PATH: path, CARDBUSH_DISPLAY_ID: displayId },
     signal,
   )));
   const visualFingerprint = optionalString(rawOutput.visual_fingerprint);
@@ -883,15 +894,22 @@ async function captureWindowState(
     target_relation: optionalString(rawOutput.target_relation) || 'target',
     foreground_window: rawOutput.foreground_window,
     bounds,
+    displays: rawOutput.displays,
+    display_signature: rawOutput.display_signature,
+    display_id: rawOutput.display_id,
+    window_dpi: rawOutput.window_dpi,
     ...(options.includeScreenshot === false ? {} : { image: rawOutput.image }),
     capture_method: optionalString(rawOutput.capture_method) || 'unknown',
+    capture_quality: rawOutput.capture_quality,
+    visual_evidence_verified: rawOutput.visual_evidence_verified !== false,
     foreground_hwnd: foregroundHwnd,
     is_foreground: isForeground,
     capture_consistent: consistent,
-    actionable: consistent && isForeground,
+    actionable: consistent && isForeground && rawOutput.visual_evidence_verified !== false,
     window_action_available: consistent,
     ...(!consistent ? { next_step: 'Foreground changed during capture. Observe the intended target again before any action.' }
-      : !isForeground ? { next_step: 'The target is in the background. Use window/activate with its state_id and hwnd, then inspect the returned observation. Observe alone never activates a window.' } : {}),
+      : !isForeground ? { next_step: 'The target is in the background. Use window/activate with its state_id and hwnd, then inspect the returned observation. Observe alone never activates a window.' }
+      : rawOutput.visual_evidence_verified === false ? { next_step: 'The window image is uniformly blank and could not be verified while visible. Uncover the target and observe again before coordinate input; UIA actions require observed elements.' } : {}),
     ...(accessibility ? { accessibility } : {}),
   };
   const artifact: ComputerUseArtifact = {
@@ -917,6 +935,9 @@ async function captureWindowState(
     elements: elements.slice(0, publicElements.length),
     ownerHwnd: optionalInteger(window.owner_hwnd),
     focusedBounds,
+    displaySignature: optionalString(rawOutput.display_signature),
+    windowDpi: optionalInteger(rawOutput.window_dpi),
+    visualVerified: rawOutput.visual_evidence_verified !== false,
   };
   return {
     path,
@@ -1009,6 +1030,7 @@ async function observeAfterAction(
 }
 
 export const windowStateCaptureScript = String.raw`
+${computerUseDisplaysScript}
 ${computerUseImageScript}
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient
@@ -1074,6 +1096,11 @@ $processId = [int][CardBushWindowCapture]::WindowProcessId($h)
 $processName = ''
 try { $processName = [Diagnostics.Process]::GetProcessById($processId).ProcessName } catch {}
 $windowTitle = [CardBushWindowCapture]::WindowTitle($h)
+$displays = [CardBushDesktop]::Read()
+$displaySignature = [CardBushDesktop]::Signature($displays)
+$windowDpi = [CardBushDesktop]::WindowDpi($h)
+$displayId = [CardBushDesktop]::WindowDisplay($h)
+if ([long]$width*$height -gt 64000000) { throw 'Window capture exceeds 64 megapixels. Resize the window and observe again.' }
 
 $captureTimer = [Diagnostics.Stopwatch]::StartNew()
 $bitmap = New-Object System.Drawing.Bitmap $width, $height
@@ -1089,9 +1116,17 @@ try {
     finally { [CardBushCaptureLayers]::Restore($hiddenLayers) }
   }
   finally { $graphics.ReleaseHdc($hdc) }
-  if (-not $captured) {
-    throw 'Target window capture failed. A screen crop could contain another window, so no target observation was issued.'
+  $uniform = [CardBushDesktop]::Uniform($bitmap)
+  $visualVerified = $captured -and -not $uniform
+  if (-not $captured -or $uniform) {
+    $hiddenLayers = [CardBushCaptureLayers]::Hide($h)
+    try {
+      $visibleCapture = [CardBushDesktop]::CaptureVisible($h,$bitmap,$rect.Left,$rect.Top,$width,$height)
+    } finally { [CardBushCaptureLayers]::Restore($hiddenLayers) }
+    if ($visibleCapture) { $captureMethod='visible_window'; $visualVerified=$true; $uniform=[CardBushDesktop]::Uniform($bitmap) }
+    elseif (-not $captured) { throw 'Target window capture failed. Verified visible capture is unavailable; no target observation was issued.' }
   }
+  $captureQuality = if ($uniform) { 'uniform' } else { 'nonuniform' }
   if ($script:CARDBUSH_INCLUDE_SCREENSHOT -ne '0') {
     ${saveComputerUseImageScript}
   }
@@ -1114,6 +1149,7 @@ if (-not [CardBushWindowCapture]::GetWindowRect($h, [ref]$afterRect) -or $afterR
   throw 'The target window bounds changed during capture. Observe again.'
 }
 $finalForeground = [CardBushWindowCapture]::GetForegroundWindow()
+[CardBushDesktop]::AssertUnchanged($displaySignature,$h,$windowDpi)
 $foregroundRelation = 'unrelated'
 if ($finalForeground -eq $h) { $foregroundRelation = 'target' }
 elseif ([CardBushWindowCapture]::IsOwnedBy($finalForeground, $h)) { $foregroundRelation = 'owned_popup' }
@@ -1127,6 +1163,12 @@ elseif ([CardBushWindowCapture]::IsOwnedBy($h, $finalForeground)) { $foregroundR
   foreground_window = [PSCustomObject]@{ hwnd=$finalForeground.ToInt64(); process_id=[CardBushWindowCapture]::WindowProcessId($finalForeground); owner_hwnd=[CardBushWindowCapture]::GetWindow($finalForeground,4).ToInt64(); relation=$foregroundRelation }
   bounds = [PSCustomObject]@{ x=$rect.Left; y=$rect.Top; width=$width; height=$height }
   capture_method = $captureMethod
+  capture_quality = $captureQuality
+  visual_evidence_verified = [bool]$visualVerified
+  displays = $displays
+  display_id = $displayId
+  display_signature = $displaySignature
+  window_dpi = $windowDpi
   foreground_hwnd = $finalForeground.ToInt64()
   capture_consistent = $foreground -eq $finalForeground
   visual_fingerprint = [Convert]::ToBase64String($fingerprint)
@@ -1182,10 +1224,14 @@ public static class CardBushWindowList {
 `;
 
 async function listWindows(signal?: AbortSignal): Promise<unknown[]> {
-  const output = await powershell(`${windowListScript}\n@([CardBushWindowList]::Read()) | ConvertTo-Json -Compress`, {}, signal);
-  if (!output.trim()) return [];
-  const value = json(output);
-  return Array.isArray(value) ? value : [value];
+  return (await readDesktopState(signal)).windows;
+}
+
+async function readDesktopState(signal?: AbortSignal): Promise<{ windows: unknown[]; displays: unknown[]; display_signature: string }> {
+  return json(await powershell(`${computerUseDisplaysScript}\n${windowListScript}
+$displays=[CardBushDesktop]::Read()
+$windows=@([CardBushWindowList]::Read() | ForEach-Object { $_ | Add-Member -NotePropertyName display_id -NotePropertyValue ([CardBushDesktop]::WindowDisplay([IntPtr]$_.hwnd)) -PassThru })
+@{windows=$windows;displays=$displays;display_signature=[CardBushDesktop]::Signature($displays)} | ConvertTo-Json -Depth 6 -Compress`, {}, signal)) as { windows: unknown[]; displays: unknown[]; display_signature: string };
 }
 
 async function controlWindow(
@@ -1489,6 +1535,7 @@ if ([bool]$p.has_observed_state) {
 $usedPattern = $null
 $inputTimer = [Diagnostics.Stopwatch]::StartNew()
 [CardBushUiaWindow]::CheckTarget($h, [uint32]$p.observed_process_id)
+${computerUseDisplayGuardScript}
 if ($p.action -eq 'set_value') {
   $pattern = $null
   if ($target.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
@@ -1549,6 +1596,7 @@ async function runInput(
   signal?: AbortSignal,
   nativeAction?: NativeActionContext,
 ): Promise<Record<string, unknown>> {
+  if (observation.visualVerified === false) throw new ComputerUseFailure('observation_failed', 'Window pixels were not verified. Uncover the target and observe again before sending coordinate or keyboard input.');
   const payload = Buffer.from(JSON.stringify({
     action,
     ...input,
@@ -1592,6 +1640,9 @@ export async function validateClipboardInput(input: Record<string, unknown>): Pr
 async function runNativeAction(
   script: string, parameters: Record<string, string>, signal: AbortSignal | undefined, timeoutMs: number, context?: NativeActionContext,
 ): Promise<Record<string, unknown>> {
+  parameters = { ...parameters, CARDBUSH_DISPLAY_SIGNATURE: context?.previous.displaySignature ?? '',
+    CARDBUSH_DISPLAY_HWND: String(context?.previous.hwnd ?? 0), CARDBUSH_WINDOW_DPI: String(context?.previous.windowDpi ?? 0) };
+  script = `${computerUseDisplaysScript}\n${computerUseDisplayGuardScript}\n${script}`;
   if (!context || context.input.observe_after === false) return record(json(await powershell(script, parameters, signal, timeoutMs)));
   const { input, previous, config } = context;
   const request = prepareWindowCapture(config.screenshotDirectory, previous.hwnd,
@@ -1680,6 +1731,7 @@ if (
   [Math]::Abs(($rect.Bottom - $rect.Top) - $expectedHeight) -gt 2
 ) { throw 'The target window bounds changed after observation. Observe again.' }
 $inputTimer = [Diagnostics.Stopwatch]::StartNew()
+${computerUseDisplayGuardScript}
 switch ($op) {
   'focus' {
     [void][CardBushWindowControl]::ShowWindow($h,9)
@@ -1787,6 +1839,7 @@ public static class CardBushInput {
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint x,uint y,int d,UIntPtr e);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k,byte s,uint f,UIntPtr e);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
   [DllImport("user32.dll", EntryPoint="SetProcessDpiAwarenessContext")] private static extern bool SetDpiContext(IntPtr value);
@@ -1799,10 +1852,16 @@ public static class CardBushInput {
   public static readonly UIntPtr InputTag=new UIntPtr(0x43425553);
   public static IntPtr ExpectedWindow;
   public static uint ExpectedProcessId;
+  public static RECT ExpectedBounds;
+  public static uint ExpectedDpi;
   public static void CheckTarget(){
     uint pid; GetWindowThreadProcessId(ExpectedWindow,out pid);
     if(GetForegroundWindow()!=ExpectedWindow || pid==0 || (ExpectedProcessId!=0 && pid!=ExpectedProcessId))
       throw new InvalidOperationException("The target window or foreground changed during input. Input stopped; observe again before resuming.");
+    RECT rect;
+    if(ExpectedDpi>0 && (GetDpiForWindow(ExpectedWindow)!=ExpectedDpi || !GetWindowRect(ExpectedWindow,out rect) ||
+      rect.Left!=ExpectedBounds.Left || rect.Top!=ExpectedBounds.Top || rect.Right!=ExpectedBounds.Right || rect.Bottom!=ExpectedBounds.Bottom))
+      throw new InvalidOperationException("Window bounds changed or DPI changed during input. Input stopped; observe again.");
   }
   public static void Key(byte k,bool d){
     if(d)CheckTarget();
@@ -1923,6 +1982,9 @@ $expectedPointerX = $pointer.x
 $expectedPointerY = $pointer.y
 $inputTimer = [Diagnostics.Stopwatch]::StartNew()
 try {
+  ${computerUseDisplayGuardScript}
+  [CardBushInput]::ExpectedBounds=$currentBounds
+  [CardBushInput]::ExpectedDpi=[uint32]$script:CARDBUSH_WINDOW_DPI
   [CardBushInput]::CheckTarget()
   switch ($p.action) {
     'click' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;$b=if($p.button -eq 'right'){@(8,16)}elseif($p.button -eq 'middle'){@(32,64)}else{@(2,4)};$clicks=if($null -ne $p.clicks){[int]$p.clicks}else{1};[CardBushInput]::MovePointer($screenX,$screenY);1..$clicks|%{[CardBushInput]::mouse_event($b[0],0,0,0,[CardBushInput]::InputTag);[CardBushInput]::mouse_event($b[1],0,0,0,[CardBushInput]::InputTag)} }

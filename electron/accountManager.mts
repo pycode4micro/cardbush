@@ -2,6 +2,10 @@ import { accountCommandSchema, accountsSnapshotSchema, managedAccountSchema, acc
   type AccountAction, type AccountProvider, type ManagedAccount, type OpenAiAccountStatus } from '@cardbush/bush-protocol';
 
 export const accountProviders: AccountProvider[] = [
+  { id: 'chatgpt', name: 'ChatGPT', availability: 'available', category: 'models', methods: ['oauth'], experimental: true,
+    description: { zh: '通过 ChatGPT 套餐使用 Agent 模型。', en: 'Use your ChatGPT plan for Agent models.' },
+    detail: { zh: '使用官方 SIWC 授权，无需 API Key。账号仅保存在本机，与插件登录独立；可在模型设置中选择账号和可用模型。退出会停止该账号的请求并尝试撤销会话。', en: 'Official SIWC authorization without an API key. Accounts stay on this device, separately from plugin sign-in. Choose an account and available models in model settings. Sign-out stops requests and attempts to revoke the session.' },
+    documentationUrl: 'https://developers.openai.com/siwc/token-sharing-open-source' },
   { id: 'openai', name: 'OpenAI', availability: 'available', category: 'apps', methods: ['oauth'], experimental: true,
     description: { zh: '为通过 OpenAI 连接的应用提供共享登录。', en: 'Shared sign-in for apps connected through OpenAI.' },
     detail: { zh: '当前为实验性接入，授权页可能显示 Codex。应用仍需各自授权；模型 API 凭据单独配置。退出会断开使用此账号的 CardBush 插件，本机退出不会撤销 ChatGPT 中的应用授权。', en: 'Experimental connection; the consent page may say Codex. Apps need their own grants. Model API credentials are configured separately. Sign-out disconnects CardBush plugins using this account without revoking grants in ChatGPT.' },
@@ -70,4 +74,12 @@ export function openAiAccountSummary(status: OpenAiAccountStatus): ManagedAccoun
     actions: status.state === 'signing_in' ? ['cancel_login'] : status.state === 'unavailable' ? ['logout']
       : status.state === 'signed_in' ? ['login', 'manage_apps', 'reconnect', 'logout'] : status.state === 'reauth_required' ? ['login', 'manage_apps', 'logout'] : ['login', 'manage_apps'],
     ...(status.lastError ? { lastError: status.lastError } : {}) };
+}
+
+export function chatGptAccountSummaries(snapshot: import('@cardbush/bush-protocol').SiwcSnapshot): ManagedAccount[] {
+  return [...snapshot.accounts.map((account): ManagedAccount => ({ id: account.id, providerId: 'chatgpt', label: account.label,
+    state: account.state, lastError: account.lastError ?? (account.state === 'signed_in' && !account.planEnabled ? 'ChatGPT plan access is not enabled. Sign in again to grant access.' : undefined),
+    actions: account.state === 'signing_in' ? ['cancel_login'] : ['login', 'manage_apps', 'logout'],
+  })), { id: 'chatgpt:add', providerId: 'chatgpt', label: 'Continue with ChatGPT',
+    state: snapshot.signingIn ? 'signing_in' : 'signed_out', actions: snapshot.signingIn ? ['cancel_login'] : ['login'], lastError: snapshot.lastError }];
 }

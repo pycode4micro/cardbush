@@ -695,10 +695,11 @@ function CardbushApp() {
   const {
     inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
     inspectorCover, enterInspectorCover, leaveInspectorCover,
+    mainStageRef, conversationCovered, inspectorControlsVisible,
     quickInputOpen, setQuickInputOpen, toggleMultiPage,
   } = useInspectorWorkspace({
     language, windowMaximized, compactLayout,
-    sidebarCollapsed, setSidebarCollapsed, section, setSection,
+    sidebarCollapsed, sidebarWidth, setSidebarCollapsed, section, setSection,
     inspectorOpen, setInspectorOpen, inspectorTabs, activeInspectorTab, openInspectorTab,
     setInspectorAddMenuOpen, setInspectorTabsMenuOpen,
   });
@@ -2154,7 +2155,7 @@ function CardbushApp() {
       <PageNavigationScope.Provider value={`main:${section}`}>
       <ConversationInspectorContext.Provider value={{ open: openConversationInspector, close: closeInspectorTab, outlets: conversationInspectorOutlets, visible: inspectorOpen }}>
       <main
-        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${inspectorCover ? ' inspector-covered' : ''}`}
+        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${inspectorCover ? ' inspector-covered' : conversationCovered ? ' inspector-conversation-covered' : ''}`}
         aria-hidden={settingsVisible}
         inert={settingsVisible ? true : undefined}
       >
@@ -2206,7 +2207,7 @@ function CardbushApp() {
               />
             </>
           )}
-          <section className="main-stage" inert={inspectorCover || compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
+          <section ref={mainStageRef} className="main-stage" inert={inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
             {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView composerPortalTarget={section === 'agents' && quickInputOpen ? quickInputTarget : null} active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
                 draft: activeDraft, notice: chat.error || chat.notice || undefined,
@@ -2231,11 +2232,11 @@ function CardbushApp() {
                     queuedMessageCount={chat.queuedMessageCount} queuedMessages={chat.queuedMessages}
                     queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
                     onEditQueuedMessage={item => { chat.removeQueuedMessage(item.id); setActiveDraft(activeDraft.trim() ? `${activeDraft.trimEnd()}\n${item.text.trim()}` : item.text); }}
-                    onGuideQueuedMessage={id => chat.sendQueuedMessageAsGuidance(id, 'append_context')} onRemoveQueuedMessage={chat.removeQueuedMessage}
+                    onGuideQueuedMessage={id => chat.sendQueuedMessageAsGuidance(id, 'interrupt_and_continue')} onRemoveQueuedMessage={chat.removeQueuedMessage}
                     onSend={(text, options) => {
                       if (chat.sending && chat.activeTurnId && (options?.immediate || appSettings.guidance.deliveryMode === 'immediate')) {
                         return chat.sendTurnGuidance({ id: chat.activeTurnId, role: 'assistant', content: '', createdAt: new Date().toISOString(),
-                          conversationId: chat.activeConversationId, turnId: chat.activeTurnId }, text, 'append_context');
+                          conversationId: chat.activeConversationId, turnId: chat.activeTurnId }, text, 'interrupt_and_continue');
                       }
                       return chat.sendMessage(text);
                     }} onCancel={chat.cancelSending}/>
@@ -2325,6 +2326,7 @@ function CardbushApp() {
                 onToggleSkill={toggleSkillEnabled}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
+                onVoiceSend={chat.sendVoiceMessage}
                 onRetryMessage={chat.retryFailedUserMessage}
                 onRegenerate={chat.regenerateAssistantMessage}
                 onEditUserMessage={chat.editUserMessageAndRegenerate}
@@ -2823,7 +2825,7 @@ function CardbushApp() {
               </div>
             </aside>
           ) : null}
-          {inspectorCover && <div className="inspector-cover-controls">
+          {inspectorControlsVisible && <div className="inspector-cover-controls">
             {quickInputOpen && <div className="inspector-quick-input" ref={setQuickInputTarget}
               aria-label={language === 'zh' ? '快速输入' : 'Quick input'} />}
             <div className="inspector-cover-capsule">

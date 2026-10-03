@@ -8,7 +8,7 @@ import ts from 'typescript';
 import { packageScreenshots } from './store-screenshots/package.mjs';
 
 const root = process.cwd();
-const output = path.resolve(process.argv[2] ?? 'release-msix/1.0.5.0-13UXTU/store-screenshots');
+const output = path.resolve(process.argv[2] ?? 'release-msix/store-screenshots');
 await fs.mkdir(path.join(root, 'tmp'), { recursive: true });
 const directory = await fs.mkdtemp(path.join(root, 'tmp', 'store-screenshots-'));
 const source = ts.createSourceFile('ChatPanel.tsx', await fs.readFile('src/features/chat/ChatPanel.tsx', 'utf8'), ts.ScriptTarget.Latest, true);

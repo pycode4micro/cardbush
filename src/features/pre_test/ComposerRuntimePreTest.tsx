@@ -82,9 +82,9 @@ const permissionFixture: PendingInteraction = {
     actions: ['write'],
     targets: [{
       kind: 'filesystem_path',
-      value: 'C:\\Users\\wfang\\Desktop\\release-report.md',
+      value: 'C:\\Users\\fixture\\Desktop\\release-report.md',
     }],
-    requestedCapabilityIds: ['write:C:\\Users\\wfang\\Desktop\\release-report.md'],
+    requestedCapabilityIds: ['write:C:\\Users\\fixture\\Desktop\\release-report.md'],
     scope: { mode: 'task_free', roots: ['C:\\workspace'] },
   },
   questions: [{

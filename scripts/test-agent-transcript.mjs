@@ -264,10 +264,11 @@ test('unconfirmed guidance survives remount with its exact append identity and b
     if (received.length === 1) throw Error('acknowledgement lost');
     return { ...input.payload, accepted: true, queueDepth: 1 };
   };
-  const request = { sessionId, turnId, clientMessageId: 'restore-guidance', guidance: '保留原来的约束', createdAt: now };
+  const request = { sessionId, turnId, clientMessageId: 'restore-guidance', guidance: '保留原来的约束', createdAt: now, mode: 'interrupt_and_continue' };
   const first = api.createAgentConversationBackend(call, 'guidance-remount', watch);
   await assert.rejects(first.backend.sendGuidance(request), /acknowledgement lost/);
   assert.equal(received[0].payload.content, request.guidance);
+  assert.equal(received[0].payload.mode, 'interrupt_and_continue');
   assert.equal(received[0].payload.metadata.userTimeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
   assert.ok(received[0].payload.metadata.timeContext.includes(now));
   const restored = api.createAgentConversationBackend(call, 'guidance-remount', watch);
@@ -275,6 +276,7 @@ test('unconfirmed guidance survives remount with its exact append identity and b
   assert.equal(loaded.messages.length, 1);
   assert.equal(loaded.messages[0].content, request.guidance);
   assert.equal(loaded.messages[0].metadata.guidance_delivery, 'failed');
+  assert.equal(loaded.messages[0].metadata.guidance_mode, 'interrupt_and_continue');
   assert.equal(loaded.messages[0].createdAt, now);
   await restored.backend.sendGuidance({ ...request, createdAt: '2026-09-22T10:00:00.000Z' });
   assert.deepEqual(received[1], received[0], 'retry must not regenerate the timestamp, identity or resolved context');

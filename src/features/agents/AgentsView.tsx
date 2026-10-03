@@ -1,12 +1,13 @@
 import { createPortal } from 'react-dom';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Folder, LoaderCircle, Plus, RefreshCw, Server, Settings } from 'lucide-react';
+import { Folder, LoaderCircle, Monitor, Plus, RefreshCw, Server, Settings } from 'lucide-react';
 import type { AgentConnection, AgentInfo, AgentOperation, AgentProject } from '../../../electron/agentTypes';
 import type { AppLanguage, ManagedModelConfig, SettingsSection, ThemeMode } from '../../types';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import './agents.css';
 import { AgentConnectionForm } from './AgentConnectionForm';
 import { AgentConnectionStatus } from './AgentConnectionStatus';
+import { AgentDesktopView } from './AgentDesktopView';
 import type { AgentConnectionsController } from './useAgentConnections';
 import { TopBar } from '../../components/TopBar';
 import { ChatPanel } from '../chat/ChatPanel';
@@ -105,6 +106,10 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
 
 function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdit, active, ...appearance }: { active: boolean; connection: AgentConnection; info: AgentInfo; language: AppLanguage; agents: AgentConnectionsController; onReconnect: () => void; onEdit: () => void } & AgentChatAppearance) {
   const zh = language === 'zh';
+  const inspector = useContext(ConversationInspectorContext);
+  const inspectorRef = useRef(inspector); inspectorRef.current = inspector;
+  const desktopId = `agent-desktop:${connection.id}`;
+  useEffect(() => () => { inspectorRef.current?.close(desktopId); }, [desktopId]);
   const call = useCallback<Call>(async (operation, input) => await api().call(connection.id, operation, input) as never, [connection.id]);
   const { refreshSessions } = agents;
   const sessionId = agents.selectedSessions[connection.id] ?? '';
@@ -157,11 +162,13 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   const create = () => agents.createSession(connection.id, zh ? '新对话' : 'New conversation');
   const title = String(sessions.find(item => item.sessionId === sessionId)?.metadata?.title || connection.name);
   const headerActions = <div className="agent-header-actions">
+      {info.capabilities.desktop && inspector && <button className="topbar-inspector-action icon-only" title={zh ? '查看电脑' : 'View computer'} aria-label={zh ? '查看电脑' : 'View computer'} onClick={() => inspector.open(desktopId, zh ? `${connection.name} 的电脑` : `${connection.name}’s computer`)}><Monitor size={16}/></button>}
       <button className="topbar-inspector-action icon-only" title={zh ? '刷新连接' : 'Refresh connection'} aria-label={zh ? '刷新连接' : 'Refresh connection'} onClick={onReconnect}><RefreshCw size={15}/></button>
       <button className="topbar-inspector-action icon-only" title={zh ? '新建会话' : 'New chat'} aria-label={zh ? '新建会话' : 'New chat'} disabled={creating} onClick={() => void create()}><Plus size={16}/></button>
       <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '连接设置' : 'Connection settings'} aria-label={zh ? '连接设置' : 'Connection settings'} onClick={onEdit}><Settings size={15}/></button>
     </div>;
   return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
+    {info.capabilities.desktop && inspector?.outlets.get(desktopId) && createPortal(<AgentDesktopView call={call} name={connection.name} language={language} active={active && inspector.visible}/>, inspector.outlets.get(desktopId)!)}
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
     {active && connection.configurationError ? <div className="agents-config-notice" role="status"><p>{connection.configurationError}</p><button onClick={onEdit}>{zh ? '连接设置与同步' : 'Connection settings and sync'}</button></div> : null}
     {active && connection.configurationWarnings?.length ? <div className="agents-config-notice" role="status">{connection.configurationWarnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
@@ -314,10 +321,10 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
         referencePlanAvailable={enhanced} referencePlanMode={chat.referencePlanMode} onReferencePlanModeChange={chat.setReferencePlanMode}
         reasoningLevelAvailable={enhanced} reasoningLevel={chat.reasoningLevel} reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']} onReasoningLevelChange={chat.setReasoningLevel}
         skills={skills} disabledSkillNames={disabledSkills} onToggleSkill={(name, enabled) => onToggleSkill?.(name, enabled)}
-        onSend={sendComposerMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
+        onSend={sendComposerMessage} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={onCreate} onOpenConversation={onOpenSession}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
-        onGuideMessage={async (message, text, mode) => { await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); setDraft(''); }} onRetryGuidance={chat.retryTurnGuidance}
+        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(''); return accepted; }} onRetryGuidance={chat.retryTurnGuidance}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
       </ComposerPortalContext.Provider>

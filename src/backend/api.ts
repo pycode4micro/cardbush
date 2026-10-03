@@ -1,4 +1,5 @@
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
+import { modelAuthenticationSchema } from '@cardbush/bush-protocol';
 import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, reasoningEffortSchema, type ReasoningEffort } from '@cardbush/bush-protocol';
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
@@ -1064,6 +1065,7 @@ function managedModelConfigFromPayload(
     id: String(item.id ?? ''),
     provider,
     apiKey: String(item.apiKey ?? item.api_key ?? ''),
+    authentication: modelAuthenticationSchema.optional().parse(item.authentication),
     hasApiKey:
       item.hasApiKey === true ||
       item.has_api_key === true ||
@@ -2594,6 +2596,7 @@ export async function sendGuidance(request: SendGuidanceRequest,
   };
   trace('guidance-requested');
   const runtime = conversationRuntime(runtimeOverride);
+  let modelRequestInterrupted = false;
   try {
     const snapshot = promptReferenceParts(guidance).some(part => part.reference?.kind === 'user-turn')
       ? await runtime.client.getSession(sessionId, request.signal) : undefined;
@@ -2601,17 +2604,19 @@ export async function sendGuidance(request: SendGuidanceRequest,
       (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract);
     const createdAt = request.createdAt ?? new Date().toISOString();
     const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    await runtime.client.enqueueGuidance({
+    const receipt = await runtime.client.enqueueGuidance({
       protocol: 'bush.runtime_guidance.v1',
       sessionId,
       turnId,
       messageId: request.clientMessageId.trim(),
+      mode: request.mode,
       content: request.sourceEnabled === undefined ? referencedInput.content : `${referencedInput.content}\n\n${sourcePreferenceText(request.sourceEnabled)}`,
       metadata: { ...referencedInput.metadata, userTimeZone,
         ...(request.sourceEnabled === undefined ? {} : { sourceEnabled: request.sourceEnabled, composerReferenceContent: referencedInput.metadata?.composerReferenceContent ?? guidance }),
         timeContext: createTurnTimeContext({ createdAt, timeZone: userTimeZone }) },
       createdAt,
     }, request.signal);
+    modelRequestInterrupted = receipt.modelRequestInterrupted === true;
     trace('guidance-accepted');
   } catch (error) {
     trace('guidance-failed', { error: String(error) });
@@ -2621,10 +2626,10 @@ export async function sendGuidance(request: SendGuidanceRequest,
   }
   return {
     continuationQueued: true,
-    willContinueAfterCurrentRound: true,
+    willContinueAfterCurrentRound: !modelRequestInterrupted,
     guidance: {
       clientMessageId: request.clientMessageId.trim(),
-      mode: 'append_context',
+      mode: request.mode,
     },
   } satisfies SendGuidanceResponse;
 }

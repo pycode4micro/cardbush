@@ -2,9 +2,10 @@ import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
 import { useComponents } from '../components/componentStore';
 import { welcomeComposerFlow } from '../components/componentModel';
 import { composerHorizontalBounds, composerVerticalBounds } from '../components/composerLayoutGeometry';
+import { welcomeHeightScale } from '../components/welcomeViewportGeometry';
 
 const edge = 12, gap = 16;
-type Anchor = { y: number; documentY?: number; belowStart?: number; submission?: string };
+type Anchor = { y: number; viewportHeight: number; docked?: boolean; documentY?: number; belowStart?: number; submission?: string };
 type Clearance = { node: HTMLElement; padding: string; priority: string };
 const conversationAnchors = new Map<string, { configKey: string; anchor: Anchor }>();
 
@@ -16,8 +17,9 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
 }) {
   const collection = useComponents(), flow = welcomeComposerFlow(collection);
   const placement = collection.welcomeLayout?.items.find(item => item.componentId === 'system-input');
+  const referenceHeight = collection.welcomeLayout?.viewportHeight;
   const anchored = !embedded && (flow.afterSend === 'keep' || flow.output === 'below');
-  const configKey = JSON.stringify([flow, placement?.y, placement?.width, placement?.composerDock]);
+  const configKey = JSON.stringify([flow, placement?.y, placement?.width, placement?.composerDock, referenceHeight]);
   const anchors = useRef(conversationAnchors);
   const pending = useRef<{ scope: string; configKey: string; anchor: Anchor } | null>(null), clearance = useRef<Clearance | null>(null);
   const departure = useRef<{ scope: string; configKey: string; y: number } | null>(null);
@@ -46,7 +48,8 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     const bounds = body.getBoundingClientRect(), rect = input.getBoundingClientRect();
     if (!bounds.width || !body.clientHeight) return;
     const scale = bounds.height / body.clientHeight || 1;
-    const anchor = { y: (rect.top - bounds.top) / scale };
+    const anchor: Anchor = { y: (rect.top - bounds.top) / scale, viewportHeight: body.clientHeight,
+      docked: input.closest<HTMLElement>('.welcome-slot-input')?.dataset.composerDocked === 'true' };
     if (flow.afterSend === 'bottom') { departure.current = { scope, configKey, y: anchor.y }; return; }
     pending.current = { scope, configKey, anchor };
     anchors.current.set(scope, { configKey, anchor });
@@ -110,8 +113,10 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     const saved = anchors.current.get(scope);
     let anchor = saved?.configKey === configKey ? saved.anchor : null;
     if (!anchor) {
+      const vertical = composerVerticalBounds(height, dockHeight, placement ? placement.y * welcomeHeightScale(referenceHeight, height) : undefined,
+        flow.afterSend, placement?.composerDock === 'bottom');
       anchor = pending.current?.configKey === configKey ? pending.current.anchor : {
-        y: composerVerticalBounds(height, dockHeight, placement?.y, flow.afterSend, placement?.composerDock === 'bottom').top };
+        y: vertical.top, viewportHeight: height, docked: vertical.docked };
       pending.current = null;
       anchors.current.set(scope, { configKey, anchor });
       if (anchors.current.size > 128) anchors.current.delete(anchors.current.keys().next().value!);
@@ -135,7 +140,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
       pendingBottom.current = null;
     }
     const initialY = Math.max(edge, Math.min(Math.max(edge, height - Math.min(dockHeight, height - 2 * edge) - 20),
-      flow.afterSend === 'bottom' ? height - dockHeight - 20 : anchor.y - stackOffset));
+      flow.afterSend === 'bottom' || anchor.docked ? height - dockHeight - 20 : anchor.y * welcomeHeightScale(anchor.viewportHeight, height) - stackOffset));
     const y = anchor.documentY ?? initialY;
     geometry.current = { y, height: dockHeight };
     if (flow.output === 'below' && !anchor.submission) anchor.belowStart = initialY + dockHeight + gap;
@@ -177,7 +182,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     }
     position();
     animateArrival();
-  }, [anchored, embedded, welcome, loading, bodyRef, dockRef, scrollerRef, scope, configKey, placement, flow.afterSend, flow.output, clear, position, animateArrival]);
+  }, [anchored, embedded, welcome, loading, bodyRef, dockRef, scrollerRef, scope, configKey, placement, referenceHeight, flow.afterSend, flow.output, clear, position, animateArrival]);
 
   useLayoutEffect(() => () => {
     clear();

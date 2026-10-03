@@ -9,7 +9,7 @@ export type BuiltinKind = 'clock' | 'digital-clock' | 'calendar' | 'brand' | 'gr
 export type BuiltinComponent = ComponentLayout & ComposerFlowOptions & { kind: 'builtin'; builtin: BuiltinKind; inputStyle?: 'standard' | 'simple' };
 export type ComponentItem = HtmlComponent | BuiltinComponent;
 export type WelcomePlacement = ComposerFlowOptions & { componentId: string; x: number; y: number; width: number; height: number; inputStyle?: 'standard' | 'simple'; composerDock?: 'bottom' };
-export type WelcomeLayout = { items: WelcomePlacement[] };
+export type WelcomeLayout = { items: WelcomePlacement[]; viewportHeight?: number };
 export type ComponentCollection = { version: 1; revision: number; items: ComponentItem[]; welcomeLayout?: WelcomeLayout };
 export const defaultWelcomeIds = ['system-brand', 'system-greeting', 'system-suggestions', 'system-input'];
 const builtinDefinitions: { builtin: BuiltinKind; zh: string; en: string; width: number; height: number }[] = [
@@ -82,7 +82,8 @@ export function normalizeComponents(value: unknown): ComponentCollection {
 function normalizeWelcomeLayout(layout: WelcomeLayout, catalog: ComponentItem[]): WelcomeLayout {
   const seen = new Set<string>();
   const bounded = (value: unknown, fallback: number, min: number, max: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
-  return { items: layout.items.flatMap(item => {
+  return { ...(typeof layout.viewportHeight === 'number' && Number.isFinite(layout.viewportHeight) && layout.viewportHeight > 0
+    ? { viewportHeight: bounded(layout.viewportHeight, 1, 1, 10000) } : {}), items: layout.items.flatMap(item => {
     if (!item || seen.has(item.componentId) || !catalog.some(component => component.id === item.componentId)) return [];
     seen.add(item.componentId);
     const width = bounded(item.width, 50, 10, 100);

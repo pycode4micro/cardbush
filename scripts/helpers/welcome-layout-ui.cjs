@@ -14,7 +14,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
       selectedProjectDir:'',availableProjects:[],onProjectChange:async()=>{},skills:[],disabledSkillNames:new Set(),onToggleSkill:noop,onModelChange:noop,onReferencePlanModeChange:noop,onPermissionModeChange:noop,onSubagentPermissionRoutingChange:noop,onReasoningLevelChange:noop,onConfigureModels:noop,onOpenConversation:noop,onEditQueuedMessage:noop,onGuideQueuedMessage:async()=>{},onRemoveQueuedMessage:noop,onSend:async()=>{},onCancel:async()=>{}};
     window.welcomeHost={...componentHost,draft:welcomeArgs.draft,composer:h(views.Composer,{...welcomeArgs,compact:true,portalCommands:true})};
     window.showWelcomeLibrary=()=>renderView(h(views.HtmlComponentContext.Provider,{value:welcomeHost},h('section',{className:'main-stage',style:{height:'100%'}},h(views.ComponentsApp,{language:'zh'}))));
-    window.showWelcomePage=()=>renderView(h(views.HtmlComponentContext.Provider,{value:welcomeHost},h('section',{className:'main-stage',style:{height:'100%'}},h(views.WelcomeComposer,welcomeArgs))));
+    window.showWelcomePage=()=>renderView(h(views.HtmlComponentContext.Provider,{value:welcomeHost},h('section',{className:'main-stage',style:{height:'100%'}},
+      h('div',{className:'chat-panel'},h(views.TopBar,{title:'cardbush',language:'zh',inspectorOpen:false}),h('div',{className:'chat-body'},h(views.WelcomeComposer,welcomeArgs))))));
     showWelcomeLibrary();
   `);
   const click = text => run(`[...document.querySelectorAll('button')].find(button=>button.textContent===${JSON.stringify(text)}).click()`);

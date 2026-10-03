@@ -39,4 +39,4 @@ English:
 - 不沿用“Windows 10 兼容”“需要 Native Messaging 注册”“卸载总会保留对话和设置”等旧版 MSIX 说明。EXE 与 MSIX 的安装及卸载行为分开说明。
 - 现有截图若含配对码、API Key、个人网页或真实对话，重新取样后再上传。
 - [审核短说明](notes-for-certification.en.txt)说明模型配置要求；如需验证完整 AI 任务，发布者需在 Partner Center 私密审核信息中提供实际可用的测试方式。
-- 最终上传版本和验证边界见[提交准备记录](../../docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md)。这些文案不构成 Store 审核已通过的声明。
+- 最终上传版本和验证边界见[提交准备记录](../../docs/MSIX_STORE_RELEASE.md)。这些文案不构成 Store 审核已通过的声明。

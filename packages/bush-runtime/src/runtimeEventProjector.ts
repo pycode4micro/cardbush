@@ -135,6 +135,19 @@ export class RuntimeEventProjector {
     return events;
   }
 
+  /** Seal visible partial output as process text, never as a final answer. */
+  interrupt(): RuntimeEvent[] {
+    const activeAssistant = this.#active?.channel === 'assistant';
+    this.#finalResponse = false;
+    const events = this.completeOpenSegment();
+    const segment = this.#lastAssistantSegment;
+    if (!activeAssistant && segment) events.push(this.#eventLog.append(this.#identity, {
+      kind: 'assistant_segment_completed', payload: { messageId: this.#messageId,
+        segmentId: segment.segmentId, ordinal: segment.ordinal, content: segment.content, finalResponse: false },
+    }));
+    return events;
+  }
+
   #appendDelta(channel: SegmentChannel, delta: string): RuntimeEvent[] {
     if (this.#flushFailure) throw this.#flushFailure;
     if (!delta) return [];

@@ -24,7 +24,7 @@ if (process.platform === 'win32') {
 }
 run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
-run(['--test', 'scripts/test-release-privacy.mjs']);
+run(['--test', 'scripts/test-release-privacy.mjs', 'scripts/test-repository-privacy.mjs']);
 run(['--test', 'scripts/test-process-host-build.mjs']);
 run(['--test', 'scripts/test-notification-sound.mjs']);
 run(['--test', 'scripts/test-appearance-preferences.mjs', 'scripts/test-conversation-styles.mjs', 'scripts/test-app-preferences.mjs']);

@@ -51,6 +51,7 @@ const inputSchema = z.object({
   hwnd: z.number().int().positive().optional().describe(
     'Exact top-level window handle returned by observe. For input actions, rejects the action if the visible target changed.',
   ),
+  display_id: z.string().trim().min(1).max(128).optional().describe('Exact display ID returned by observe. For observe/screenshot without a window selector, capture this display in physical pixels. Screen images are read-only; select a window hwnd before input.'),
   operation: z.enum([
     'activate',
     'focus',
@@ -82,6 +83,9 @@ const inputSchema = z.object({
   observe_after: z.boolean().optional().describe('Automatically return a fresh observation and one-use state after a window/input action. Default true. False requires an explicit observe before further input.'),
   settle_ms: z.number().int().min(0).max(1000).optional().describe('Bounded delay before the post-action observation. Default 120 ms. Does not assert application readiness.'),
 }).superRefine((input, context) => {
+  if (input.display_id && (!['observe', 'screenshot'].includes(input.action) || input.hwnd != null || input.app || input.title_pattern || input.include_screenshot === false)) {
+    context.addIssue({ code: 'custom', path: ['display_id'], message: 'display_id requires a screenshot observation without a window selector.' });
+  }
   if (input.region || input.scale != null || input.grid != null) {
     if (input.hwnd == null || input.include_screenshot === false ||
         !['observe', 'screenshot', 'click', 'invoke', 'set_value', 'type', 'clipboard', 'key', 'scroll', 'drag', 'window'].includes(input.action) ||
@@ -205,6 +209,7 @@ export function registerComputerUsePlugin(
       "Observe and interact with the user's current desktop through visible application UI.",
       "Input shares the user's mouse and keyboard, yields while the user is active, and restores the pointer after mouse actions by default.",
       'Call observe once to discover windows, then observe an exact hwnd to receive a one-use state_id and a screenshot directly as an image. Set include_text=true to also receive accessibility elements.',
+      'Discovery also returns connected displays with physical bounds and scale. Request screenshot with an exact display_id for a single-screen overview. display_id is valid only for the current connected layout. Window/input coordinates remain physical window pixels; do not multiply them by Windows display scale. After a display layout or DPI change, observe again.',
       'Every action against an existing window must include that state_id and hwnd. The state is consumed after one action and becomes stale if another turn changes the desktop.',
       'Observation does not activate a window. actionable describes foreground input readiness; window_action_available allows window operations even in the background. If is_foreground is false, use window/activate with the observed state_id and hwnd, then check the returned observation. Do not retry activation blindly if Windows refuses it.',
       'For a desktop-control demo, discover existing windows first, use a verified empty editor window or new empty tab, and verify the displayed text; do not type demo commands into an existing terminal or existing user document.',
@@ -255,7 +260,7 @@ export async function computerUseMcpResult(native: ComputerUseResult, action: st
   const failures: string[] = [];
   for (const artifact of native.artifacts.filter(item => item.type === 'image').slice(0, 2)) {
     try {
-      if ((await stat(artifact.path)).size > 8 * 1024 * 1024) throw new Error('Screenshot exceeds the 8 MiB image delivery limit.');
+      if ((await stat(artifact.path)).size > 8 * 1024 * 1024) throw new Error('Screenshot exceeds the 8 MiB image delivery limit. Capture one display or a smaller window region; pixels were not resized.');
       const bytes = await readFile(artifact.path);
       if (bytes.length > 8 * 1024 * 1024) throw new Error('Screenshot exceeds the 8 MiB image delivery limit.');
       // The saved artifact supplies the UI preview; these bytes are model input only.

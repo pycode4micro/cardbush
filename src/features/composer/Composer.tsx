@@ -1,4 +1,5 @@
 import { useConversationSource } from '../settings/conversationSource';
+import { VoiceButton } from '../voice/VoiceConversation';
 import { useIndividuation } from '../settings/useIndividuation';
 import { useConversationStyle } from '../settings/useConversationStyle';
 import { conversationStyleName, conversationStylePresets } from '../settings/conversationStyle';
@@ -1670,7 +1671,8 @@ export function Composer({
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
-            <button
+            {(hasContent || sending) && !presentation?.preview && <VoiceButton language={language} callOnly className="voice-call-entry" disabled={!runtimeReady || inputReadOnly || submissionPending} />}
+            {!sending && !hasContent && runtimeReady && !presentation?.preview ? <VoiceButton language={language} disabled={inputReadOnly || submissionPending || attachmentUploads > 0} /> : <button
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={submissionPending || attachmentUploads > 0 || (!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
@@ -1690,7 +1692,7 @@ export function Composer({
               ) : (
                 <ArrowUp size={15} />
               )}
-            </button>
+            </button>}
           </div>
         </div>
       </div>
@@ -2167,7 +2169,7 @@ function ComposerPopover({
                   <small className="model-picker-meta" title={`${config.provider} · ${modelProtocolInfo(config.apiProtocol).label}`}>
                     <span className="model-picker-provider">{config.provider}</span>
                     <span className="model-picker-meta-separator" aria-hidden="true">·</span>
-                    <span className="model-picker-protocol">{modelProtocolInfo(config.apiProtocol).shortLabel}</span>
+                    <span className="model-picker-protocol">{modelProtocolInfo(config.apiProtocol).shortLabel}{config.authentication?.kind === 'chatgpt' ? ' · ChatGPT' : ''}</span>
                   </small>
                 </span>
                 {config.id === selectedModel && <Check size={16} />}

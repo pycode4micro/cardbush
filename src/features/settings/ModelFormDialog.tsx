@@ -9,13 +9,19 @@ import { SettingsInput } from './SettingsControls';
 import { SettingsDropdown } from './SettingsDropdown';
 import { agentErrorText } from '../agents/agentErrorText';
 import { modelProtocols, type DiscoverModels } from './modelProtocols';
+import { SiwcModelConnection } from './SiwcModelConnection';
+import { SIWC } from '@cardbush/bush-protocol';
 
-export function ModelFormDialog({ model, language, providerOptions, busy, error, onCancel, onSave, discoverModels }: {
+export function ModelFormDialog({ model, language, providerOptions, busy, error, onCancel, onSave, discoverModels, allowChatGpt = true }: {
   model?: ManagedModelConfig; language: AppLanguage; providerOptions: string[]; busy: boolean; error: string;
   onCancel: () => void; onSave: (model: ManagedModelConfig) => Promise<void>; discoverModels?: DiscoverModels;
+  allowChatGpt?: boolean;
 }) {
   const zh = language === 'zh', titleId = useId(), dialog = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState(model?.modelName ?? '');
+  const [authentication, setAuthentication] = useState<'api_key' | 'chatgpt'>(model?.authentication?.kind ?? 'api_key');
+  const [accountId, setAccountId] = useState(model?.authentication?.kind === 'chatgpt' ? model.authentication.accountId : '');
+  const chatGpt = authentication === 'chatgpt';
   const [providerSelection, setProviderSelection] = useState(normalizeProvider(model?.provider ?? 'openai'));
   const [customProvider, setCustomProvider] = useState('');
   const provider = normalizeProvider(providerSelection === customProviderValue ? customProvider : providerSelection);
@@ -46,12 +52,14 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   const submit = async () => {
     setFormError('');
     try {
-      modelApiBaseURL(apiProtocol, baseUrl);
-      await onSave({ ...model, id: model?.id ?? crypto.randomUUID(), modelName: name.trim(), provider,
-        apiProtocol, baseUrl: baseUrl.trim(), apiKey: key.trim(), defaultHeaders: readHeaders(),
+      if (!chatGpt) modelApiBaseURL(apiProtocol, baseUrl);
+      if (chatGpt && (!allowChatGpt || !accountId)) throw Error(zh ? '请先选择本机 ChatGPT 账号。' : 'Select a local ChatGPT account first.');
+      await onSave({ ...model, id: model?.id ?? crypto.randomUUID(), modelName: name.trim(), provider: chatGpt ? 'openai' : provider,
+        authentication: chatGpt ? { kind: 'chatgpt', accountId } : { kind: 'api_key' },
+        apiProtocol, baseUrl: chatGpt ? SIWC.resource : baseUrl.trim(), apiKey: chatGpt ? '' : key.trim(), defaultHeaders: chatGpt ? {} : readHeaders(),
         reasoningEffort: resolveModelReasoningEffort({ apiProtocol }, reasoning) ?? null,
         ...(apiProtocol === 'anthropic_messages' ? { anthropicThinkingMode } : {}),
-        maxContextTokens: context.trim() ? Number(context) : undefined, maxCompletionTokens: completion.trim() ? Number(completion) : undefined });
+        maxContextTokens: context.trim() ? Number(context) : undefined, maxCompletionTokens: !chatGpt && completion.trim() ? Number(completion) : undefined });
     } catch (failure) { setFormError(agentErrorText(failure)); }
   };
   return <dialog ref={dialog} className="model-config-dialog" aria-labelledby={titleId}
@@ -62,6 +70,11 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
     <form className="model-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <div className="model-dialog-body">
       <fieldset disabled={busy} className="agent-model-fields">
+        {(allowChatGpt && window.cardbushDesktop?.siwcSnapshot || chatGpt) && <label className="settings-field"><span>{zh ? '授权方式' : 'Authentication'}</span>
+          <SettingsDropdown label={zh ? '授权方式' : 'Authentication'} value={authentication} options={[{ value: 'api_key', label: 'API Key' }, { value: 'chatgpt', label: 'ChatGPT · SIWC', disabled: !allowChatGpt }]}
+            onChange={value => { setAuthentication(value as 'api_key' | 'chatgpt'); if (value === 'chatgpt') setApiProtocol('openai_responses'); changedConnection(); }}/></label>}
+        {chatGpt ? allowChatGpt ? <SiwcModelConnection language={language} accountId={accountId} onAccountChange={setAccountId} modelName={name} onModelChange={setName}/>
+          : <p className="model-connection-note">{zh ? 'ChatGPT 账号保存在本机。请为此远程 Agent 改用 API Key。' : 'ChatGPT accounts stay on this device. Choose API Key for this remote Agent.'}</p> : <>
         <div className="model-form-grid"><ModelProviderSelect language={language} value={providerSelection} options={providerOptions} onChange={value => {
           setProviderSelection(value);
           // Do not overwrite an existing connection when only changing its label.
@@ -76,8 +89,9 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
         <SettingsInput label={zh ? 'API 地址' : 'API base URL'} type="url" value={baseUrl} placeholder={protocol.baseUrl} onChange={value => { setBaseUrl(value); changedConnection(); }}/>
         <p className="model-field-hint">{zh ? `填写 API 根地址，请求会发送到 ${protocol.path}。` : `Enter the API root; requests will use ${protocol.path}.`}</p>
         <SettingsInput label="API Key" type="password" value={key} placeholder={hasKey ? zh ? '已保存，留空保留' : 'Saved; leave blank to keep' : zh ? '模型服务的 API Key' : 'Provider API key'} onChange={value => { setKey(value); changedConnection(); }}/>
+        </>}
         <div className="model-name-row"><SettingsInput label={zh ? '模型名称' : 'Model name'} value={name} placeholder={gateway === 'openrouter' ? 'provider/model-id' : apiProtocol === 'anthropic_messages' ? 'claude-sonnet-4-6' : 'gpt-6-luna'} onChange={setName}/>
-          {discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim()} title={hasKey && !key.trim() ? zh ? '获取列表需要重新输入 API Key' : 'Re-enter the API key to fetch models' : undefined}
+          {!chatGpt && discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim()} title={hasKey && !key.trim() ? zh ? '获取列表需要重新输入 API Key' : 'Re-enter the API key to fetch models' : undefined}
             onClick={async () => {
               const version = discoveryVersion.current; setDiscovering(true); setFormError('');
               try { const result = await discoverModels(modelApiBaseURL(apiProtocol, baseUrl), key.trim(), { apiProtocol, defaultHeaders: readHeaders() });
@@ -101,9 +115,9 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
               options={[{ value: 'adaptive', label: zh ? '自适应（较新模型）' : 'Adaptive (newer models)' }, { value: 'budget', label: zh ? 'Token 预算（旧模型）' : 'Token budget (older models)' }]}/>
             <small className="model-field-hint">{zh ? '选择推理强度时使用；未指定强度时遵循服务商默认。' : 'Used when a reasoning effort is selected; otherwise provider defaults apply.'}</small></label>}
           <div className="model-form-grid"><SettingsInput label={zh ? '上下文上限' : 'Context tokens'} type="number" value={context} onChange={setContext}/>
-            <SettingsInput label={zh ? '最大输出 tokens' : 'Maximum output tokens'} type="number" value={completion} placeholder={apiProtocol === 'anthropic_messages' ? '8192' : zh ? '供应商默认' : 'Provider default'} onChange={setCompletion}/></div>
-          <label className="settings-field"><span>{zh ? '自定义请求头（JSON）' : 'Custom headers (JSON)'}</span><textarea rows={4} value={headers} spellCheck={false} placeholder={'{\n  "x-session-id": "{{sessionId}}"\n}'} onChange={event => { setHeaders(event.currentTarget.value); changedConnection(); }}/></label>
-          <p className="model-field-hint">{zh ? '可使用 {{sessionId}} 引用当前对话 ID；同一对话的后续请求保持一致。' : 'Use {{sessionId}} for the stable ID of the current conversation.'}</p>
+            {!chatGpt && <SettingsInput label={zh ? '最大输出 tokens' : 'Maximum output tokens'} type="number" value={completion} placeholder={apiProtocol === 'anthropic_messages' ? '8192' : zh ? '供应商默认' : 'Provider default'} onChange={setCompletion}/>}</div>
+          {!chatGpt && <><label className="settings-field"><span>{zh ? '自定义请求头（JSON）' : 'Custom headers (JSON)'}</span><textarea rows={4} value={headers} spellCheck={false} placeholder={'{\n  "x-session-id": "{{sessionId}}"\n}'} onChange={event => { setHeaders(event.currentTarget.value); changedConnection(); }}/></label>
+          <p className="model-field-hint">{zh ? '可使用 {{sessionId}} 引用当前对话 ID；同一对话的后续请求保持一致。' : 'Use {{sessionId}} for the stable ID of the current conversation.'}</p></>}
         </div>}
         {(formError || error) && <p className="settings-inline-error" role="alert">{formError || error}</p>}
       </fieldset>

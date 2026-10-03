@@ -1,0 +1,10 @@
+# Explicit opt-in: docker compose -f compose.yaml -f compose.desktop.yaml up --build -d
+services:
+  agent:
+    build:
+      target: desktop
+    shm_size: 1gb
+    environment:
+      CARDBUSH_DESKTOP_SIZE: "1600x900"
+    security_opt:
+      - seccomp=./seccomp_profile.json

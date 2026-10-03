@@ -14,6 +14,8 @@ Browser Use 在 Windows 11 上连接用户正在使用的 Chrome 和 Microsoft E
 
 ## Browser Use 连接与路由
 
+- 用户仅需打开并保留网页时，桌面 Runtime 提供 `open_external_url`，通过私有宿主 RPC `browser.open-external` 交给主进程 `shell.openExternal`。浏览器不属于终端任务树，终端或 turn 结束不回收它；远程 Agent 服务不暴露此桌面能力。两端校验仅接受不含内嵌凭据的 HTTP(S)，不改变 OAuth 链接校验。返回 `dispatched` 只表示系统接受了打开请求，不证明页面已加载，也不提供配对、网站授权或页面控制。终端原有的子进程回收保持不变。
+- 回归入口：`npm run test:desktop-browser`。覆盖 URL/取消/失败边界，以及真实 Electron Runtime、模型工具循环和独立配置的 Chrome 在终端清理、turn 完成、Runtime 退出后继续运行；测试仅将系统默认浏览器选择替换为隔离 Chrome 启动器，不修改用户默认浏览器或现有窗口。
 - 对外名称统一为 **Browser Use**，模型工具命名空间为 `browser_use`。现有资源目录、内部配置身份 `chrome` 和私有 IPC 标识保留，避免重置已有启停选择；这些标识不代表仅支持 Chrome。
 - 仅支持 Windows 11；Chrome、Edge 使用同一份 MV3 扩展（1.2.2），分别在 `chrome://extensions` / `edge://extensions` 加载并配对。升级时重新加载原扩展，避免卸载导致已保存的扩展数据被清除。
 - 设置中选择浏览器、填写可选连接名称，再生成五分钟有效的配对码。每条配对具有独立凭据；Chrome、Edge 及不同浏览器用户配置可同时在线，最多保留八条。更换同一配置的配对后可移除旧记录。
@@ -76,6 +78,20 @@ Browser Use 在 Windows 11 上连接用户正在使用的 Chrome 和 Microsoft E
 | 完整 CDP | 保留需要用户主动配置的远程调试兼容路径 | 完整 CDP 与普通站点访问是不同授权，不能由新开页或安装插件自动开启 |
 
 Electron 的扩展支持是 Chrome 扩展 API 的子集，不能承诺任意 Chrome Web Store 扩展都在内置浏览器中运行。这也是连接外部浏览器的原因：[Electron 官方说明](https://www.electronjs.org/docs/latest/api/extensions)。内置站点权限、存储清理与下载入口可以利用 Electron 的会话接口逐项实现：[Session API](https://www.electronjs.org/docs/latest/api/session)。
+
+## Computer Use 多屏与截图坐标
+
+`observe` 的窗口发现结果包含 `displays`：屏幕 ID、物理像素范围、工作区和缩放比例，以及每个窗口所在的屏幕。`screenshot` / `observe` 可以传入返回的 `display_id` 获取单屏原图；不传则保留原有发现或整个扩展桌面截图行为。屏幕总览仅供观察，操作仍须绑定具体窗口的 `hwnd` 和一次性 `state_id`。
+
+- 原生截图和输入线程使用 Per-Monitor V2 DPI 感知。窗口操作坐标按物理像素计算，不再额外乘 Windows 缩放比例；主动指定的截图裁剪/缩放仍由已有 `image.origin`、`image.scale` 说明映射。
+- Runtime 尊重 MCP 的 `codex/imageDetail: original`，将原始字节存入不可变图片快照，不与普通压缩版本混用。原图大小超过现有限额时明确报错，建议单屏或局部截图，不静默缩图。此保证针对本地传递链路，模型服务自身的视觉预处理由服务商决定。
+- 每次观察记录屏幕布局签名和目标窗口 DPI；输入前重新检查。连接、移除、位置、缩放或工作区变化后，旧观察会被拒绝，要求重新观察。检查发生在工具调用与原生操作边界，不增加后台轮询；长文本和拖拽过程还会复查目标窗口范围与 DPI。
+- `PrintWindow` 失败或画面内部呈均匀颜色时，尝试经过验证的可见窗口截取：目标必须位于前台，完整落在真实屏幕范围内，且没有其他窗口遮挡。复制前后都复查目标、位置及屏幕布局，遵守窗口的禁止截屏设置。仅仅黑色或纯色不等于失败；无法验证的纯色图会标记 `visual_evidence_verified: false` 并阻止物理输入。
+- 此实现未引入 Windows Graphics Capture。`PrintWindow` 卡住仍受原生工作进程超时保护；受保护内容、被遮挡的截图失败和部分 GPU 窗口不能保证恢复。
+
+回归入口：`npm run test --workspace=@cardbush/apps-mcp`、`npm run test:native --workspace=@cardbush/apps-mcp`。新增 `computerUseDisplays.native.mjs` 使用临时测试窗口在实际连接的每块屏幕上移动并点击，通过窗口自身的计数回报验证命中；还覆盖指定屏幕截图、失败/纯色截图恢复、遮挡拒绝和失效屏幕 ID。负坐标、布局、缩放及移除变化由隔离数据注入测试覆盖，不改变测试机器的显示配置。
+
+2026-10-02：两块 1920×1080 屏幕（125% / 100%）的真实跨屏移动与点击、原图尺寸、单屏选择通过；多屏专项 12 项通过。Apps 工具自动测试 73 项、图片及缓存链相关测试 35 项通过。现有原生能力、UIA、流程、控制提示、对抗及终端用例均完成验证；被桌面接管或测试进程清理干扰的用例在清理后串行补测通过。未进行物理拔线或修改系统缩放；不能将注入的布局失效测试视为真实热插拔认证。
 
 ## 验证
 

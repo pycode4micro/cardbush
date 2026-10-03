@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { modelAuthenticationSchema, SIWC } from './siwc.js';
 
 export const modelApiProtocolSchema = z.enum(["openai_responses", "openai_chat_completions", "anthropic_messages"]);
 export type ModelApiProtocol = z.infer<typeof modelApiProtocolSchema>;
@@ -74,10 +75,18 @@ export const runtimeProviderBindingConfigSchema = z.object({
   bindingId: z.string().min(1),
   adapter: modelApiProtocolSchema,
   anthropicThinkingMode: anthropicThinkingModeSchema.optional(),
-  apiKey: z.string().min(1),
+  apiKey: z.string().default(''),
+  authentication: modelAuthenticationSchema.optional(),
   baseURL: z.string().min(1).optional(),
   defaultHeaders: modelHeadersSchema.default({}),
   timeoutMs: z.number().int().positive().optional(),
+}).superRefine((config, ctx) => {
+  if (config.authentication?.kind === 'chatgpt') {
+    if (config.adapter !== 'openai_responses' || config.apiKey ||
+        (config.baseURL && config.baseURL !== SIWC.resource) || Object.keys(config.defaultHeaders).length) {
+      ctx.addIssue({ code: 'custom', message: 'ChatGPT authorization requires the public Responses API without API keys or custom headers.' });
+    }
+  } else if (!config.apiKey) ctx.addIssue({ code: 'custom', message: 'API key is required.' });
 });
 
 export type RuntimeProviderBindingConfig = z.infer<

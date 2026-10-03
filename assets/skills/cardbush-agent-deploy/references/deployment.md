@@ -2,6 +2,8 @@
 
 本文件适用于当前 CardBush 独立 Node 服务。执行前以所部署版本的 `package.json`、CLI `--help` 和实际返回为准，不把桌面安装包当作服务器程序。
 
+默认保持无桌面的服务模式。用户明确选择 Personal Agent 可视化时，使用源码 `deploy/agent/compose.desktop.yaml` 覆盖配置；部署、沙盒要求、持久化边界与实机验收见源码 `deploy/agent/README.md`。不要在普通部署中默认安装或开启桌面。两种模式使用同一个 Agent HTTP/SSH 接入协议。
+
 ## 目录与构建
 
 示例约定：源码目录 `/opt/cardbush/releases/RELEASE_ID`，当前版本链接 `/opt/cardbush/current`，数据目录 `/srv/cardbush/agent-a`，服务账号 `cardbush-agent-a`。将这些值替换为已确定的目标，不原样使用版本占位符。

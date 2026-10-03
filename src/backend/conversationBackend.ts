@@ -26,7 +26,7 @@ export type ConversationBackend = typeof localConversationBackend & {
     enqueue(request: ChatStreamRequest): Promise<void>;
     remove(id: string): Promise<void>;
     reorder(id: string, targetId: string): Promise<void>;
-    guide(id: string, turnId: string): Promise<void>;
+    guide(id: string, turnId: string, mode?: 'append_context' | 'interrupt_and_continue'): Promise<void>;
     setLocked(sessionId: string, locked: boolean): Promise<{ locked: boolean; revision: number }>;
   };
   watchSession?: (sessionId: string, listener: (state: {

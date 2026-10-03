@@ -72,10 +72,11 @@ try{
   await check('UIA button invoke and toggle happen exactly once',async scope=>{
     let observed=await observe(scope);const before=(await fixture.command('inspect')).count;
     await act(scope,bound(observed,{action:'invoke',element_index:element(observed,'fixture-button').index}));
-    assert.equal((await fixture.command('inspect')).count,before+1);
+    // observe_after:false acknowledges dispatch, not the UI event-loop update.
+    await appState(actual=>actual.count===before+1,'invocation reaches the fixture button');
     observed=await observe(scope);
     await act(scope,bound(observed,{action:'click',element_index:element(observed,'fixture-toggle').index}));
-    assert.equal((await fixture.command('inspect')).toggled,true);
+    await appState(actual=>actual.toggled===true,'toggle reaches the fixture checkbox');
   });
   await check('read-only and password values are protected',async scope=>{
     let observed=await observe(scope);const password=element(observed,'fixture-password');

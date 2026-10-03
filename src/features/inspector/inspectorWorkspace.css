@@ -7,6 +7,10 @@
 .inspector-tile-frame button:hover { background: var(--hover); color: var(--text); }
 .inspector-tile-frame .inspector-tile-drag { flex: 0 0 24px; width: 24px; cursor: grab; touch-action: none; }
 .inspector-tile-frame .inspector-tile-drag:active { cursor: grabbing; }
+.inspector-tile-frame[data-tile-drag-source] { opacity: .4; }
+.inspector-tile-drag-preview { position: fixed; top: 0; left: 0; z-index: 1200; margin: 0; pointer-events: none; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 8px 28px #0005; will-change: transform; }
+.right-inspector-tab-page[data-tile-drop-target]::after { content: ''; position: absolute; inset: 1px; z-index: 15; pointer-events: none; border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+body.inspector-tile-dragging, body.inspector-tile-dragging * { cursor: grabbing !important; }
 .inspector-tile-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-tile-frame .right-inspector-navigation { padding: 5px; gap: 2px; }
 .inspector-tile-frame .right-inspector-address { min-width: 0; }
@@ -37,6 +41,9 @@ body.inspector-layout-resizing { user-select: none; }
 body.right-inspector-resizing .desktop-shell > .right-inspector { transition: none; }
 .desktop-shell { position: relative; }
 .inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
+.inspector-conversation-covered .inspector-cover-controls { left: calc(var(--layout-sidebar-space) + (100% - var(--layout-sidebar-space)) / 2); width: min(680px, calc(100% - var(--layout-sidebar-space) - 32px)); }
+.inspector-conversation-covered > .right-inspector .right-inspector-body { padding-bottom: 70px; }
+.inspector-conversation-covered > .right-inspector .right-inspector-resizer { left: calc(var(--panel-resize-hit-width) / 2); }
 .inspector-cover-capsule { display: flex; background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); border-radius: 28px; padding: 4px; box-shadow: 0 6px 25px var(--shadow); pointer-events: auto; }
 .inspector-cover-capsule button { border: 0; border-radius: 24px; padding: 8px 18px; display: flex; align-items: center; gap: 7px; background: transparent; color: var(--text); font: inherit; }
 .inspector-cover-capsule button + button { border-left: 1px solid var(--border); }

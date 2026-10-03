@@ -10,6 +10,7 @@ import { WelcomeComponentPreview } from './WelcomeComponentPreview';
 import { ComposerLayoutSettings } from './ComposerLayoutSettings';
 import { composerVerticalBounds } from './composerLayoutGeometry';
 import { useWelcomeEditorOverlays } from './useWelcomeEditorOverlays';
+import { resolveWelcomeLayout } from './welcomeViewportGeometry';
 
 type LayoutDrag = { pointerId: number; start: LayoutPoint; client: LayoutPoint; alt: boolean; moved: boolean } & (
   { kind: 'move' | 'resize'; id: string; before?: WelcomeLayout; basis: WelcomeLayout } |
@@ -39,7 +40,9 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
   const update = (next: WelcomeLayout | undefined) => { remember(layout); applyLayout(next); setError(''); };
   function snapshot(): WelcomeLayout {
     const element = canvas.current!, space = layoutSpace(element);
-    const next = layout ? structuredClone(layout) : { items: [...element.querySelectorAll<HTMLElement>('[data-welcome-component]')].map(slot => {
+    const next: WelcomeLayout = layout ? resolveWelcomeLayout({ ...layout,
+      viewportHeight: layout.viewportHeight ?? (Number(element.dataset.layoutViewportHeight) || undefined) }, space.height)
+      : { viewportHeight: space.height, items: [...element.querySelectorAll<HTMLElement>('[data-welcome-component]')].map(slot => {
       const bounds = slot.getBoundingClientRect(), point = layoutPoint(space, bounds.left, bounds.top);
       return { componentId: slot.dataset.welcomeComponent!, x: point.x / space.width * 100,
         y: point.y, width: bounds.width / space.scaleX / space.width * 100, height: bounds.height / space.scaleY };
@@ -131,7 +134,7 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
     if (state.kind === 'toolbar') { setToolbarPosition(toolbarBounds({ x: state.origin.x + delta.x, y: state.origin.y + delta.y })); return; }
     const selected = state.basis.items.find(item => item.componentId === state.id)!;
     const aligned = alignPlacement(selected, state.basis.items, state.kind, delta, space, !alt);
-    applyLayout({ items: state.basis.items.map(item => item.componentId === state.id ? aligned.placement : item) });
+    applyLayout({ ...state.basis, items: state.basis.items.map(item => item.componentId === state.id ? aligned.placement : item) });
     setGuides(aligned.guides);
   }
   function releaseDrag() {

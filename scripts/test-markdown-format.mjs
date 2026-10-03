@@ -37,8 +37,8 @@ const { normalizeExecutionNarrationForDisplay, normalizeMarkdownContentForDispla
 const cases = [
   {
     name: 'windows path fence opener becomes code content',
-    input: '文件路径:\n```C:\\Users\\wfang\\Desktop\\cardbush\\index.html\n```',
-    expected: '文件路径:\n```text\nC:\\Users\\wfang\\Desktop\\cardbush\\index.html\n```',
+    input: '文件路径:\n```C:\\Users\\fixture\\Desktop\\cardbush\\index.html\n```',
+    expected: '文件路径:\n```text\nC:\\Users\\fixture\\Desktop\\cardbush\\index.html\n```',
   },
   {
     name: 'relative html path fence opener becomes code content',
@@ -47,8 +47,8 @@ const cases = [
   },
   {
     name: 'file uri fence opener becomes code content',
-    input: '文件路径:\n~~~file:///C:/Users/wfang/Desktop/cardbush/index.html\n~~~',
-    expected: '文件路径:\n~~~text\nfile:///C:/Users/wfang/Desktop/cardbush/index.html\n~~~',
+    input: '文件路径:\n~~~file:///C:/Users/fixture/Desktop/cardbush/index.html\n~~~',
+    expected: '文件路径:\n~~~text\nfile:///C:/Users/fixture/Desktop/cardbush/index.html\n~~~',
   },
   {
     name: 'shell command after language moves onto next line',

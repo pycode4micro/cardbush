@@ -1,11 +1,12 @@
 import { ArrowLeft, ArrowRight, GripHorizontal, RefreshCw } from 'lucide-react';
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useState } from 'react';
 import type { AppLanguage } from '../../types';
 import type { InspectorNavigationState, InspectorWebviewHandle } from './InspectorWebview';
 import type { InspectorTab } from './inspectorTabs';
 import { inspectorTabLabel, isInspectorBrowserTarget } from './inspectorTargets';
 import { BrowserBookmarkButton } from './BrowserBookmarkButton';
 import { BrowserTranslateButton } from './BrowserTranslateButton';
+import { useInspectorTileDrag } from './useInspectorTileDrag';
 
 export function InspectorTileFrame({ tab, language, navigation, handle, onSwap }: {
   tab: InspectorTab; language: AppLanguage; navigation?: InspectorNavigationState; handle?: InspectorWebviewHandle;
@@ -15,46 +16,12 @@ export function InspectorTileFrame({ tab, language, navigation, handle, onSwap }
   const browser = resource && isInspectorBrowserTarget(resource.target, resource.mediaType);
   const title = resource ? navigation?.title || inspectorTabLabel(resource) : tab.kind !== 'resource' ? tab.title : '';
   const address = navigation?.url || resource?.target || '', [draft, setDraft] = useState(address);
-  const cancelDrag = useRef<(() => void) | null>(null);
-  const swapRef = useRef(onSwap); swapRef.current = onSwap;
+  const drag = useInspectorTileDrag(tab.id, onSwap);
   useEffect(() => setDraft(address === 'about:blank' ? '' : address), [address]);
-  useEffect(() => () => cancelDrag.current?.(), []);
 
-  const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    cancelDrag.current?.();
-    const handle = event.currentTarget, pointerId = event.pointerId;
-    const startX = event.clientX, startY = event.clientY;
-    const finish = () => {
-      cancelDrag.current = null;
-      document.body.classList.remove('inspector-layout-resizing');
-      window.removeEventListener('pointerup', release);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('blur', finish);
-      if (handle.isConnected && handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
-    };
-    // Native guests can change event targets while dragging; finish at window level.
-    const release = (upEvent: PointerEvent) => {
-      if (upEvent.pointerId !== pointerId) return;
-      finish();
-      if (Math.hypot(upEvent.clientX - startX, upEvent.clientY - startY) > 5) {
-        swapRef.current(tab.id, upEvent.clientX, upEvent.clientY);
-      }
-    };
-    const cancel = (cancelEvent: PointerEvent) => { if (cancelEvent.pointerId === pointerId) finish(); };
-    cancelDrag.current = finish;
-    handle.setPointerCapture(pointerId);
-    document.body.classList.add('inspector-layout-resizing');
-    window.addEventListener('pointerup', release);
-    window.addEventListener('pointercancel', cancel);
-    window.addEventListener('blur', finish);
-  };
-
-  return <div className="inspector-tile-frame">
+  return <div className="inspector-tile-frame" {...drag}>
     <div className="right-inspector-navigation">
-      <button type="button" className="inspector-tile-drag" aria-label={zh ? '拖动交换页面位置' : 'Drag to swap pages'} title={zh ? '拖动交换页面位置' : 'Drag to swap pages'}
-        onPointerDown={beginDrag} onLostPointerCapture={() => cancelDrag.current?.()}>
+      <button type="button" className="inspector-tile-drag" aria-label={zh ? '拖动交换页面位置' : 'Drag to swap pages'} title={zh ? '拖动交换页面位置' : 'Drag to swap pages'}>
         <GripHorizontal size={13}/>
       </button>
       {resource && <>

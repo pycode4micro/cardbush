@@ -13,6 +13,8 @@ export const appViewFiles = [
   'src/features/sidebar/ProjectRenameDialog.tsx',
   'src/features/panels/FeaturePanel.tsx',
   'src/features/inspector/useInspectorWorkspace.ts',
+  'src/features/inspector/useInspectorRecovery.ts',
+  'src/features/inspector/useInspectorTileDrag.ts',
   'src/features/chat/ChatPanel.tsx',
   'src/features/chat/TaskWorkspaceBar.tsx',
   'src/features/chat/ChatStatusViews.tsx',

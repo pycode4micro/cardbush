@@ -69,6 +69,21 @@ test('development startup can build the GUI while an unlaunchable host stays unp
   assert.equal(f.state.probes, 1);
 });
 
+test('GUI checks the speech helper against its own sources without endless renderer rebuilds', t => {
+  const f = fixture(t); f.build(true);
+  for (const name of ['native/voice/CardBushVoiceHost.cs', 'native/voice/WindowsVoices.cs', 'scripts/build-voice-native-host.mjs']) f.write(name, 'voice source');
+  assert.equal(guiBuildState(f.root, 'win32').current, false);
+  const output = f.write('dist-native/voice/CardBushVoiceHost.exe', 'built helper');
+  const now = Date.now(); fs.utimesSync(output, new Date(now + 1000), new Date(now + 1000));
+  const renderer = f.write('src/main.ts', 'new renderer');
+  fs.utimesSync(renderer, new Date(now + 2000), new Date(now + 2000));
+  assert.equal(guiBuildState(f.root, 'win32').current, true, 'renderer outputs already newer; native helper only depends on native sources');
+  const changed = path.join(f.root, 'native/voice/WindowsVoices.cs');
+  fs.utimesSync(changed, new Date(now + 3000), new Date(now + 3000));
+  assert.equal(guiBuildState(f.root, 'win32').current, false);
+  assert.equal(guiBuildState(f.root, 'linux').current, true);
+});
+
 test('startup failure preserves the previous manifest byte for byte', t => {
   const f = fixture(t);
   const old = '{"fileName":"CardBushProcessHost-0000000000000000.exe","sandboxVersion":1}\n';

@@ -44,6 +44,9 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
   const name = execution.name.toLowerCase();
   const labels: Record<string, [string, string]> = {
     terminal_exec: ['执行命令', 'Run command'], shell_command: ['执行命令', 'Run command'],
+    open_external_url: ['打开网页', 'Open webpage'],
+    linux_computer_use: ['操作云端电脑', 'Use cloud computer'],
+    linux_browser_use: ['操作云端浏览器', 'Use cloud browser'],
     terminal_poll: ['查看命令进度', 'Check command progress'], terminal_write: ['向终端输入', 'Write to terminal'],
     read_file: ['读取文件', 'Read file'], read_files: ['读取文件', 'Read files'],
     summary_for_user: ['准备最终回复', 'Prepare final reply'], check_habit: ['查看个性化记忆', 'Check personalization'], revise_memory: ['修正个性化记忆', 'Correct memory'],

@@ -1,5 +1,5 @@
 // Real Agent views, with isolated service fixtures and no real profile or network.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,6 +14,27 @@ async function toggleModelSettings(run, until) {
   await run("[...document.querySelectorAll('.model-picker-row')].find(button=>button.textContent.includes('管理模型')).click()");
 }
 app.whenReady().then(async () => {
+  const liveDesktop = process.argv.includes('--desktop-live');
+  if (liveDesktop) {
+    const endpoint = new URL(process.env.CARDBUSH_TEST_DESKTOP_URL);
+    assert.equal(endpoint.protocol, 'http:'); assert.equal(endpoint.hostname, '127.0.0.1');
+    const token = fs.readFileSync(process.env.CARDBUSH_TEST_DESKTOP_TOKEN_FILE, 'utf8').trim();
+    const request = async (operation, input) => {
+      const response = await fetch(new URL(operation ? '/api/agent/v1/call' : '/api/agent/v1/info', endpoint), {
+        method: operation ? 'POST' : 'GET',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        ...(operation ? { body: JSON.stringify({ operation, input }) } : {}),
+      });
+      const result = await response.json();
+      if (!response.ok) throw Error(result.error?.message || `HTTP ${response.status}`);
+      return operation ? result.result : result;
+    };
+    ipcMain.handle('desktop-live-info', () => request());
+    ipcMain.handle('desktop-live-call', (_event, operation, input) => {
+      assert.ok(['desktop.frame', 'desktop.take', 'desktop.release', 'desktop.input', 'desktop.status'].includes(operation));
+      return request(operation, input);
+    });
+  }
   const { build } = await import('vite'); const { default: react } = await import('@vitejs/plugin-react');
   const entry = '\0agents-ui.tsx';
   const result = await build({ configFile: false, logLevel: 'error', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [react(), {
@@ -54,7 +75,8 @@ app.whenReady().then(async () => {
         </aside>}</div></ConversationInspectorContext.Provider>};createRoot(document.getElementById('root')).render(<Fixture/>);` : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__agents_fixture__.tsx'), formats: ['iife'], name: 'AgentsFixture' }, rollupOptions: { output: { inlineDynamicImports: true } } } });
   const output = Array.isArray(result) ? result.flatMap(item => item.output) : result.output; const js = output.find(item => item.type === 'chunk').code; const css = output.filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => item.source).join('\n');
-  const win = new BrowserWindow({ show: false, width: 1100, height: 820, webPreferences: { contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: true } });
+  const win = new BrowserWindow({ show: false, width: 1100, height: 820, webPreferences: { contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: true,
+    ...(liveDesktop ? { preload: path.join(root, 'scripts/helpers/agent-desktop-live-preload.cjs') } : {}) } });
   const errors = []; win.webContents.on('console-message', event => { if (event.level === 'error') { errors.push(event.message); console.error(event.message); } });
   const run = source => win.webContents.executeJavaScript(source, true).catch(error => { console.error(source.slice(0, 500)); throw error; });
   const until = async (expression, label, timeout = 3500) => { for (let i=0;i<Math.ceil(timeout/35);i++) { if (await run(expression)) return; await pause(35); } console.error(await run("JSON.stringify({body:document.querySelector('.agents-view')?.innerText.slice(-6000),connections:connections.map(c=>({id:c.id,connected:c.connected,state:c.connectionState,error:c.connectionError})),alerts:[...document.querySelectorAll('.agents-view [role=alert]')].map(e=>({parent:e.parentElement.className,text:e.textContent})),calls:calls.slice(-10)})")); assert.fail(label); };
@@ -127,6 +149,10 @@ app.whenReady().then(async () => {
     if (!process.argv.includes('--images')) await run("localStorage.setItem('a:cardbush.permission_mode','user_free');localStorage.setItem('b:cardbush.permission_mode','all_free');undefined;");
     await run(js + '\n;undefined;');
     await until("document.querySelectorAll('.agents-card').length===3",'Agent overview renders');
+    if (process.argv.includes('--desktop') || liveDesktop) {
+      await require('./helpers/agent-desktop.cjs')({ run, until, pause, win, root, liveDesktop });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.argv.includes('--quick-input')) {
       await require('./helpers/agent-quick-input.cjs')({ run, until, pause });
       assert.deepEqual(errors, []); return;

@@ -12,6 +12,7 @@ export type SettingsSection =
   | 'instructions'
   | 'profile'
   | 'summary_for_user'
+  | 'voice'
   | 'appearance'
   | 'shortcuts'
   | 'usage'
@@ -180,6 +181,7 @@ export interface CapabilityCandidatesUpdate {
 }
 
 export interface ManagedModelConfig {
+  authentication?: import('@cardbush/bush-protocol').ModelAuthentication;
   id: string;
   provider: string;
   apiKey: string;

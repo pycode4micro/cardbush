@@ -3,8 +3,10 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, reasoningEffortSchema, protocolReasoningEffort, type ModelApiProtocol, type ReasoningEffort } from '@cardbush/bush-protocol';
 
 import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
+import { modelAuthenticationSchema, SIWC, type ModelAuthentication } from '@cardbush/bush-protocol';
 
 export interface ProductModelConfig {
+  authentication?: ModelAuthentication;
   id: string;
   provider: string;
   model: string;
@@ -73,7 +75,7 @@ export class ProductModelConfigStore {
     const credentials = decodeLegacyCredentials(input);
     let imported = 0;
     const models = existing.models.map((config) => {
-      if (config.apiKey) return config;
+      if (config.apiKey || config.authentication?.kind === 'chatgpt') return config;
       const credential = matchingLegacyCredential(config, credentials);
       if (!credential) return config;
       imported += 1;
@@ -102,6 +104,7 @@ export class ProductModelConfigStore {
       models: snapshot.models.map((config) => ({
         id: config.id,
         provider: config.provider,
+        authentication: config.authentication,
         modelName: config.model,
         apiKey: "",
         hasApiKey: Boolean(config.apiKey),
@@ -182,6 +185,7 @@ function decodeUpdate(
     const config = record(candidate, "Model configuration must be an object.");
     const id = requiredString(config.id, "id");
     const previous = prior.get(id);
+    const authentication = modelAuthenticationSchema.optional().parse(config.authentication ?? previous?.authentication);
     const suppliedApiKey = optionalString(config.apiKey ?? config.api_key);
     const maxContextTokens = positiveInteger(
       config.maxContextTokens ?? config.max_context_tokens,
@@ -194,7 +198,8 @@ function decodeUpdate(
       id,
       provider: requiredString(config.provider, "provider"),
       model: requiredString(config.model ?? config.modelName ?? config.model_name, "model"),
-      apiKey: suppliedApiKey ?? previous?.apiKey ?? "",
+      apiKey: authentication?.kind === 'chatgpt' ? '' : suppliedApiKey ?? previous?.apiKey ?? "",
+      authentication,
       apiProtocol: modelApiProtocolSchema.parse(config.apiProtocol ?? previous?.apiProtocol ?? 'openai_responses'),
       anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(config.anthropicThinkingMode ?? previous?.anthropicThinkingMode),
       reasoningEffort: decodeReasoning(config.reasoningEffort === undefined ? previous?.reasoningEffort : config.reasoningEffort,
@@ -207,6 +212,7 @@ function decodeUpdate(
   });
   const ids = new Set<string>();
   for (const config of models) {
+    validateAuthentication(config);
     if (ids.has(config.id)) throw new Error(`Duplicate model configuration: ${config.id}`);
     ids.add(config.id);
   }
@@ -231,6 +237,7 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
       provider: requiredString(config.provider, "provider"),
       model: requiredString(config.model, "model"),
       apiKey: optionalString(config.apiKey) ?? "",
+      authentication: modelAuthenticationSchema.optional().parse(config.authentication),
       apiProtocol: modelApiProtocolSchema.parse(config.apiProtocol ?? 'openai_responses'),
       anthropicThinkingMode: anthropicThinkingModeSchema.optional().parse(config.anthropicThinkingMode),
       reasoningEffort: decodeReasoning(config.reasoningEffort, modelApiProtocolSchema.parse(config.apiProtocol ?? 'openai_responses')),
@@ -241,6 +248,7 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
     };
   });
   const defaultModelId = optionalString(value.defaultModelId) ?? "";
+  for (const config of models) validateAuthentication(config);
   return {
     version: 1,
     defaultModelId: models.some((config) => config.id === defaultModelId)
@@ -252,6 +260,14 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
 
 function emptySnapshot(): ProductModelConfigSnapshot {
   return { version: 1, defaultModelId: "", models: [] };
+}
+
+function validateAuthentication(config: ProductModelConfig) {
+  if (config.authentication?.kind !== 'chatgpt') return;
+  if ((config.apiProtocol ?? 'openai_responses') !== 'openai_responses' || config.apiKey ||
+      (config.baseURL && config.baseURL !== SIWC.resource) || Object.keys(config.defaultHeaders ?? {}).length || config.maxOutputTokens !== undefined) {
+    throw new Error('ChatGPT models use the public Responses API without API keys, custom headers or an output-token limit.');
+  }
 }
 
 function decodeReasoning(value: unknown, protocol?: ModelApiProtocol): ReasoningEffort | undefined {

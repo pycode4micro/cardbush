@@ -13,7 +13,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.inputSavedProps = { ...chatProps }; window.inputSavedTheme = window.viewTheme;
     window.inputSent = [];
     window.inputSkill = { name: 'seedance-ecommerce-video', displayName: 'Seedance 电商视频', description: '根据素材制作视频',
-      path: 'C:/Users/EDY/AppData/Roaming/cardbush/skills/seedance-ecommerce-video/SKILL.md' };
+      path: 'C:/Users/Fixture/AppData/Roaming/cardbush/skills/seedance-ecommerce-video/SKILL.md' };
     window.inputSkillLink = '[seedance-ecommerce-video](<' + inputSkill.path + '>)';
     window.inputKey = (key, repeat = false, options = {}) => {
       const node = document.querySelector('[data-composer-input]'); node.focus();

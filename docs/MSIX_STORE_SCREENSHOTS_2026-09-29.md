@@ -2,10 +2,7 @@
 
 已准备简体中文 `zh-CN` 和英文 `en-US` 各 4 张，统一为 1920 × 1080 PNG。仅生成本地材料，尚未代为上传 Partner Center。
 
-- [完整预览](../release-msix/1.0.5.0-13UXTU/store-screenshots/index.html)
-- [8 张原图与说明 ZIP](../release-msix/1.0.5.0-13UXTU/store-screenshots/CardBush-1.0.5.0-store-screenshots-zh-CN-en-US.zip)
-- [中英文配图说明](../release-msix/1.0.5.0-13UXTU/store-screenshots/captions.tsv)
-- [文件尺寸与 SHA-256 清单](../release-msix/1.0.5.0-13UXTU/store-screenshots/screenshots.json)
+截图和清单保存在未跟踪的本地输出目录，不公开具体候选包路径。重新生成时默认输出到 `release-msix/store-screenshots/`，其中包含完整预览 `index.html`、原图 ZIP、中英文配图说明 `captions.tsv` 和尺寸/校验清单 `screenshots.json`。
 
 | 顺序 | 页面 | 内容 |
 | --- | --- | --- |

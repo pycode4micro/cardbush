@@ -80,7 +80,7 @@ test('conversation extracts resolve as readable Markdown paths, deduplicate, and
 });
 
 test('skill tokens preserve full paths, surrounding text and escaped labels without changing the prompt', () => {
-  const skill = { name: '中文 [技能] \\ 示例', displayName: '视频制作', path: 'C:\\Users\\EDY\\My Skills\\场景 #50% (test)\\SKILL.md' };
+  const skill = { name: '中文 [技能] \\ 示例', displayName: '视频制作', path: 'C:\\Users\\Fixture\\My Skills\\场景 #50% (test)\\SKILL.md' };
   const link = skillRefs.skillReference(skill);
   const content = `先用 ${link} 再补充 ${link}。`;
   const parts = skillRefs.skillPromptParts(content, [skill]);

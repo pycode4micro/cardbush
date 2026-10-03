@@ -105,6 +105,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { executeModelRound, isToolCallValidationFailure } from "./modelRound.js";
 import { abortError, settleAtAbort } from "./abortSettlement.js";
+import { ModelRequestInterruption, ModelRequestInterrupted } from './modelRequestInterruption.js';
 import {
   DEFAULT_SUBAGENT_PERMISSION_POLICY,
   type SubagentPermissionPolicy,
@@ -340,6 +341,7 @@ export class InMemoryRuntimeHost {
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #activeTurnControllers = new Map<string, AbortController>();
+  readonly #modelRequests = new ModelRequestInterruption();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
   readonly #solutions: RuntimeSolutionBroker;
   readonly #modelImages: ModelImageStore;
@@ -350,6 +352,7 @@ export class InMemoryRuntimeHost {
     content: string;
     createdAt: string;
     metadata?: Record<string, unknown>;
+    mode?: 'append_context' | 'interrupt_and_continue';
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
   readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
@@ -1159,6 +1162,7 @@ export class InMemoryRuntimeHost {
           throw new Error(`Turn ${guidance.turnId} is not accepting guidance.`);
         }
         const queue = this.#guidanceQueues.get(key) ?? [];
+        let modelRequestInterrupted = false;
         if (!queue.some((entry) => entry.messageId === guidance.messageId)) {
           const child = this.#recovery.cacheRoots().find(item => item.request.sessionId === guidance.sessionId && item.request.turnId === guidance.turnId)?.request;
           if (child?.metadata.agentRole === 'child') guidance.metadata = { ...guidance.metadata, subagentAuthor: 'user' };
@@ -1166,9 +1170,11 @@ export class InMemoryRuntimeHost {
             messageId: guidance.messageId,
             content: guidance.content,
             createdAt: guidance.createdAt,
-            ...(guidance.metadata ? { metadata: guidance.metadata } : {}),
+            mode: guidance.mode,
+            metadata: { ...guidance.metadata, guidance_mode: guidance.mode ?? 'append_context' },
           });
           this.#guidanceQueues.set(key, queue);
+          if (guidance.mode === 'interrupt_and_continue') modelRequestInterrupted = this.#modelRequests.interrupt(key);
           if (child?.metadata.agentRole === 'child' && typeof child.metadata.parentSessionId === 'string' && typeof child.metadata.subagentTaskId === 'string') {
             this.#notifyChildConversation(child.metadata.parentSessionId, child.metadata.subagentTaskId,
               `A direct user message was queued in the child conversation: ${JSON.stringify(guidance.content)}`);
@@ -1181,6 +1187,7 @@ export class InMemoryRuntimeHost {
           messageId: guidance.messageId,
           accepted: true,
           queueDepth: queue.length,
+          modelRequestInterrupted,
         };
       }
       case SHUTDOWN_RUNTIME_COMMAND:
@@ -1974,6 +1981,11 @@ export class InMemoryRuntimeHost {
         }
       }
       while (true) {
+        // Also drain at entry: guidance can arrive during preflight/retry recovery,
+        // before there is a model request to interrupt. Maintenance is atomic.
+        if (!compactionTransaction && !activeContextCompaction) {
+          messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
+        }
         if (!compactionTransaction && !activeContextCompaction) {
           try {
             const changes=await this.#memory.store.changedReferences(deliveredMemoryVersions(messages),normalizeIndividuation(request.metadata.individuation),input.signal);
@@ -2223,8 +2235,31 @@ export class InMemoryRuntimeHost {
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
         let retryAfterModelRecovery = false;
+        const hasImmediateGuidance = () => !contextCompactionRequired && !activeContextCompaction &&
+          this.#guidanceQueues.get(turnKey)?.some(item => item.mode === 'interrupt_and_continue');
+        const continueWithGuidance = (projector?: RuntimeEventProjector) => {
+          if (projector) {
+            projector.interrupt();
+            // No tool from this unfinished request ran. Replay only accepted
+            // prose; partial arguments, reasoning/replay tokens and response IDs
+            // cannot become a continuation anchor.
+            if (projector.assistantContent) {
+              const message: ModelMessage = { role: 'assistant', content: projector.assistantContent, toolCalls: [] };
+              generatedMessages.push({ messageId: projector.messageId, createdAt: this.#sessionNow(),
+                metadata: { interruptedByGuidance: true }, message });
+              messages = [...messages, message];
+            }
+            providerState = freshResponseChain();
+          }
+          messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages,
+            previousAssistantMessageId: projector?.messageId }).messages;
+          this.#recovery.save({ request, messages, nextRound: round + 1,
+            cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
+          retryAfterModelRecovery = true;
+        };
         for (let attempt = 1; this.#maxAttempts === null || attempt <= this.#maxAttempts; attempt += 1) {
           if (input.signal?.aborted) return await stop();
+          if (hasImmediateGuidance()) { continueWithGuidance(); break; }
           if (compactionTransaction && !compactionTransaction.beginAttempt()) {
             return await finalize({ status: 'failed', reason: 'context_compaction_failed',
               details: { message: 'The bounded checkpoint correction budget was exhausted. Original history is preserved.' } });
@@ -2277,6 +2312,7 @@ export class InMemoryRuntimeHost {
             Parameters<RuntimeEventProjector["accept"]>[0]
           > = [];
           let result;
+          let observedUsage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } = {};
           let dispatchedInputProjection: ProviderInputProjection | undefined;
           const archiveMaintenanceResponse = () => {
             if (!activeContextCompaction || !compactionJob) return;
@@ -2287,19 +2323,22 @@ export class InMemoryRuntimeHost {
             } });
           };
           try {
-            result = await settleAtAbort(
+            result = await this.#modelRequests.run(turnKey, input.signal, (signal, current) =>
               executeModelRound(
                 this.#provider,
                 roundRequest,
                 {
-                  signal: input.signal,
+                  signal,
                   onCompatibilityDiagnostic: payload => {
+                    if (!current()) return;
                     this.#eventLog.append(identity, { kind: "provider_compatibility", payload });
                   },
                   onStreamDiagnostic: payload => {
+                    if (!current()) return;
                     this.#eventLog.append(identity, { kind: 'provider_stream_diagnostic', payload: { ...payload, round, attempt } });
                   },
                   onInputProjection: projection => {
+                    if (!current()) return;
                     dispatchedInputProjection = structuredClone(projection);
                     this.#eventLog.append(identity, {
                       kind: "provider_input_observed",
@@ -2307,18 +2346,29 @@ export class InMemoryRuntimeHost {
                     });
                   },
                   onEvent: (event) => {
-                    if (input.signal?.aborted) {
-                      throw abortError("Runtime Turn was stopped.");
-                    }
+                    if (!current()) throw abortError('Model request is no longer active.');
+                    if (event.kind === 'usage') observedUsage = { inputTokens: event.inputTokens,
+                      outputTokens: event.outputTokens, cachedInputTokens: event.cachedInputTokens };
                     if (deferProviderProjection) deferredProviderEvents.push(event);
                     else projector.accept(event);
                   },
                 },
               ),
-              input.signal,
-              "Provider execution was cancelled.",
+              !contextCompactionRequired && !activeContextCompaction,
             );
           } catch (error) {
+            if (error instanceof ModelRequestInterrupted && !input.signal?.aborted) {
+              // Keep only provider-reported usage; cancellation does not imply
+              // that the discarded request was free or consumed zero tokens.
+              mergeUsage(usage, observedUsage);
+              if (observedUsage.inputTokens !== undefined) this.#eventLog.append(identity, {
+                kind: 'model_request_usage', payload: { round, attempt, model: request.model,
+                  inputTokens: observedUsage.inputTokens,
+                  ...(observedUsage.outputTokens !== undefined ? { outputTokens: observedUsage.outputTokens } : {}),
+                  ...(observedUsage.cachedInputTokens !== undefined ? { cachedInputTokens: observedUsage.cachedInputTokens } : {}) },
+              });
+              continueWithGuidance(projector); break;
+            }
             archiveMaintenanceResponse();
             projector.completeOpenSegment();
             if (input.signal?.aborted) {
@@ -2504,7 +2554,14 @@ export class InMemoryRuntimeHost {
                 diagnostics: result.error.diagnostics,
               },
             });
-            await this.#wait(nextRetryMs, input.signal);
+            if (hasImmediateGuidance()) { continueWithGuidance(); break; }
+            try {
+              await this.#modelRequests.run(turnKey, input.signal, signal => this.#wait(nextRetryMs, signal),
+                !contextCompactionRequired && !activeContextCompaction);
+            } catch (error) {
+              if (error instanceof ModelRequestInterrupted && !input.signal?.aborted) { continueWithGuidance(); break; }
+              if (!input.signal?.aborted) throw error;
+            }
             if (input.signal?.aborted) {
               return await stop(projector.finalMessageId);
             }

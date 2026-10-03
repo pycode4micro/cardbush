@@ -8,8 +8,12 @@ The current submission target is **Windows 11 x64 only** (minimum build 22000),
 with Browser Use for Chrome and Edge. This preparation does not build or publish
 Linux/macOS packages, an EXE release, or an extension-store listing. A Store MSIX
 does not require obtaining an independent public EXE signing certificate first.
-See the [current preparation record](MSIX_SUBMISSION_PREPARATION_2026-09-29.md)
-for actual artifact and validation status.
+Public summaries are available for [1.0.4.0](validation/msix-1.0.4.0-2026-09-29.json)
+and [1.0.5.0](validation/msix-1.0.5.0-2026-09-29.json). They omit publisher/package
+identifiers and artifact hashes. Keep exact submission records, identity files,
+signing material and private reviewer access in local release storage or Partner
+Center; never commit them to this repository. Public results describe historical
+builds and do not certify a newer build.
 
 ## Store identity
 
@@ -138,7 +142,7 @@ That report used extension 1.1.0 and is historical evidence for its named hash;
 it must not be relabeled as validation of a newer Browser Use package. WACK
 warnings and optional failures must be reported separately from required failures.
 
-The [current 1.0.5.0 preparation record](MSIX_SUBMISSION_PREPARATION_2026-09-29.md)
+The [public 1.0.5.0 validation summary](validation/msix-1.0.5.0-2026-09-29.json)
 includes installed Chrome/Edge, three system-uninstall scenarios and a complete
 WACK run against the new candidate, with the actual administrator/UAC-disabled
 test environment explicitly recorded. It does not replace outstanding standard-user,

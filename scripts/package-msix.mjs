@@ -78,6 +78,7 @@ export function createManifest(identity) {
   <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
   </Capabilities>
   <Applications>
     <Application Id="CardBush" Executable="app\\CardBush.exe" EntryPoint="Windows.FullTrustApplication" desktop4:SupportsMultipleInstances="true">

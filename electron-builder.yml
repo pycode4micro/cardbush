@@ -65,6 +65,9 @@ win:
   icon: assets/cardbush.ico
   artifactName: CardBush-${version}-windows-${arch}.${ext}
   extraResources:
+    - from: dist-native/voice
+      to: voice
+      filter: [CardBushVoiceHost.exe]
     - from: dist-native/process-guard
       to: process-guard
       filter: ['CardBushProcessHost-*.exe', current.json]

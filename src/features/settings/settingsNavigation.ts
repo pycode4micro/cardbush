@@ -4,6 +4,7 @@ export type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'sub
 type LocalizedText = { zh: string; en: string };
 
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
+  voice: { zh: '语音', en: 'Voice' },
   projects: { zh: '项目', en: 'Projects' },
   ssh: { zh: 'SSH 连接', en: 'SSH connections' },
   profile: { zh: '个性化', en: 'Personalization' },
@@ -22,6 +23,7 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
 };
 
 export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText> = {
+  voice: { zh: '配置录音转文字、语音通话和 Agent 音色。', en: 'Configure transcription, voice calls, and the Agent voice.' },
   projects: { zh: '管理当前 Agent 的项目目录和默认项目。', en: 'Manage this Agent’s project directories and default project.' },
   ssh: { zh: '管理远程主机，通过项目或 @ 引用接入。', en: 'Manage remote hosts for projects and @ references.' },
   profile: { zh: '调整对话语气、交互方式和长期偏好。', en: 'Set the conversation tone, interaction preferences, and shared instructions.' },
@@ -40,12 +42,13 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
 };
 
 export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
-  { label: { zh: '能力', en: 'Capabilities' }, sections: ['browser', 'computer-use', 'mcp', 'models'] },
+  { label: { zh: '能力', en: 'Capabilities' }, sections: ['browser', 'computer-use', 'mcp', 'models', 'voice'] },
   { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'summary_for_user', 'shortcuts', 'usage', 'appearance'] },
   { label: { zh: '系统', en: 'System' }, sections: ['ssh', 'runtime', 'proxy', 'cache', 'diagnostics'] },
 ];
 
 const keywords: Record<VisibleSettingsSection, string> = {
+  voice: '语音 通话 录音 转写 男声 女声 麦克风 音色 voice audio speech microphone transcription call TTS',
   summary_for_user: '习惯 记忆 预测 命中 总结 压缩 阈值 Token check_habit memory habit prediction summary threshold consolidation',
   projects: '项目 工作区 目录 project workspace directory',
   ssh: 'SSH 远程 连接 主机 服务器 私钥 项目 remote connection server key project',

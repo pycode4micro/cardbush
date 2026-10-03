@@ -11,6 +11,7 @@ import { GlobalInstructionsStore, readAgentInstructionDocuments } from './global
 import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
 import { BrowserTranslationService } from './browserTranslation';
+import { registerVoiceIpc, installVoiceMediaPermissions } from './voiceIpc';
 import { createBrowserTranslator } from './browserTranslationBridge';
 import type { BrowserTranslationRequest } from './browserTranslationTypes';
 import { McpDesktopHost } from './mcpDesktopHost';
@@ -604,6 +605,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
+  installVoiceMediaPermissions(window);
   windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
   window.setMenu(null);
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
@@ -1959,6 +1961,15 @@ function showMainWindow() {
   mainWindow.moveTop();
 }
 
+registerVoiceIpc(() => mainWindow, {
+  packaged: cardbushRuntimeIsPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath,
+}, {
+  // Use the shared download route: native net.fetch rejects manual redirects,
+  // but model archives must inspect every GitHub release redirect before following it.
+  download: async (input, init) => (await pluginNetworking()).fetch(input, init),
+  speech: (input, init) => session.fromPartition('cardbush-model-network').fetch(input instanceof URL ? input.toString() : input, init),
+});
+
 ipcMain.handle('window:minimize', () => {
   mainWindow?.minimize();
 });
@@ -2726,6 +2737,19 @@ function openAiDesktop() {
     changed: notifyAccountsChanged,
   }));
 }
+let siwcAccountsPromise: Promise<import('./siwcAccounts.mjs', { with: { 'resolution-mode': 'import' } }).SiwcAccounts> | undefined;
+function siwcDesktop() {
+  return siwcAccountsPromise ??= import('./siwcAccounts.mjs').then(({ SiwcAccounts, SIWC_CREDENTIAL_KEY }) => new SiwcAccounts({
+    read: () => mcpDesktop().handle('credentials.read', { key: SIWC_CREDENTIAL_KEY }, new AbortController().signal),
+    write: value => mcpDesktop().handle('credentials.write', { key: SIWC_CREDENTIAL_KEY, value }, new AbortController().signal),
+    fetch: pluginFetch, openUrl: url => shell.openExternal(url), changed: notifyAccountsChanged,
+    invalidated: accountId => { void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+      command: { kind: 'runtime.siwc_account_changed', payload: { accountId } } }).catch(() => {}); },
+  }));
+}
+ipcMain.handle('siwc:snapshot', async event => { assertMainWindowSender(event.sender.id); return (await siwcDesktop()).snapshot(); });
+ipcMain.handle('siwc:action', async (event, input: unknown) => { assertMainWindowSender(event.sender.id); return (await siwcDesktop()).action(input); });
+ipcMain.handle('siwc:models', async (event, accountId: string) => { assertMainWindowSender(event.sender.id); return (await siwcDesktop()).models(accountId); });
 async function refreshOpenAiRuntime() {
   if (!runtimeHostController) return;
   const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
@@ -2757,9 +2781,12 @@ async function performOpenAiAccountAction(action: string) {
 }
 let accountManagerPromise: Promise<import('./accountManager.mjs', { with: { 'resolution-mode': 'import' } }).AccountManager> | undefined;
 function accountsDesktop() {
-  return accountManagerPromise ??= import('./accountManager.mjs').then(({ AccountManager, openAiAccountSummary }) => new AccountManager([{ providerId: 'openai',
+  return accountManagerPromise ??= import('./accountManager.mjs').then(({ AccountManager, openAiAccountSummary, chatGptAccountSummaries }) => new AccountManager([{ providerId: 'openai',
     list: async () => [openAiAccountSummary(await (await openAiDesktop()).status())],
     action: async (_accountId, action) => { await performOpenAiAccountAction(action); },
+  }, { providerId: 'chatgpt', list: async () => chatGptAccountSummaries(await (await siwcDesktop()).snapshot()),
+    action: async (id, action) => { await (await siwcDesktop()).action({ action: action === 'manage_apps' ? 'manage_usage' : action,
+      ...(id !== 'chatgpt:add' ? { accountId: id } : {}) }); },
   }]));
 }
 ipcMain.handle('accounts:snapshot', async event => { assertMainWindowSender(event.sender.id); return (await accountsDesktop()).snapshot(); });
@@ -4127,6 +4154,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         }
         if (operation === 'openai.access-token') return (await openAiDesktop()).access({
           rejectedToken: typeof (payload as { rejectedToken?: unknown })?.rejectedToken === 'string' ? (payload as { rejectedToken: string }).rejectedToken : undefined, signal });
+        if (operation === 'siwc.access-token') return (await siwcDesktop()).accessPayload(payload, signal);
         return mcpDesktop().handle(operation, payload, signal);
       },
     }) as RuntimeHostController;
@@ -4638,6 +4666,7 @@ app.on('before-quit', (event) => {
     const processesClosed = closeHostProcesses();
     hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
       await (await openAiAccountPromise)?.close();
+      await (await siwcAccountsPromise)?.close();
       await (await pluginNetworkPromise)?.close();
       await productMcpManagement?.close();
       productMcpManagement = null;

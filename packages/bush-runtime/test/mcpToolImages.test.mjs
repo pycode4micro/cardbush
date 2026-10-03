@@ -95,6 +95,31 @@ test('embedded image resources work and user-only MCP images stay out of model i
   assert.ok(!messages[0].content.includes(png.toString('base64')));
 });
 
+test('original MCP screenshots retain exact pixels, high detail and separate compression identity', async t => {
+  const source = await sharp({ create: { width: 3840, height: 2160, channels: 3, background: '#173859' } }).png().toBuffer();
+  // The compressed variant appears first: deduplication must not reuse it for original mode.
+  const native = { content: [block(source), { ...block(source), _meta: { 'codex/imageDetail': 'original' } }] };
+  const { run } = await fixture(t, native);
+  const { messages } = await run();
+  const images = messages.at(-1).images;
+  assert.equal(images.length, 2);
+  const compressed = await sharp(images[0].url).metadata();
+  const original = await sharp(images[1].url).metadata();
+  assert.ok(compressed.width < 3840);
+  assert.equal(original.width, 3840); assert.equal(original.height, 2160);
+  assert.equal(images[1].detail, 'high');
+  assert.deepEqual(await readFile(images[1].url), source);
+});
+
+test('oversized original screenshots fail explicitly instead of changing screenshot coordinates', async t => {
+  const source = Buffer.concat([png, Buffer.alloc(9_000_001)]);
+  const { run } = await fixture(t, { content: [{ ...block(source), _meta: { 'codex/imageDetail': 'original' } }] });
+  const { messages } = await run();
+  assert.equal(messages.at(-1).images?.length ?? 0, 0);
+  assert.equal(deliveryReceipt(messages.at(-1)).imageReceipts[0].status, 'failed');
+  assert.equal(deliveryReceipt(messages.at(-1)).imageInputErrors[0].code, 'image_input_too_large');
+});
+
 test('MCP images use the existing resize budget and report excess attachments', async t => {
   const images = await Promise.all(Array.from({ length: 5 }, (_, index) => sharp({ create: {
     width: index ? 4 : 3200, height: index ? 4 : 2000, channels: 3, background: { r: 20 + index * 40, g: 100, b: 150 },

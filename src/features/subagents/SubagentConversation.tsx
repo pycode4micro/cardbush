@@ -175,10 +175,10 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         referencePlanAvailable referencePlanMode={chat.referencePlanMode} onReferencePlanModeChange={chat.setReferencePlanMode}
         reasoningLevelAvailable reasoningLevel={chat.reasoningLevel} reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']} onReasoningLevelChange={chat.setReasoningLevel}
         skills={chat.skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
-        onSend={send} submissionPending={submissionPending} onCancel={chat.cancelSending}
+        onSend={send} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={chat.cancelSending}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={nothing} onOpenConversation={nothing}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
-        onGuideMessage={async (message, text, mode) => { await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); setDraft(''); }} onRetryGuidance={chat.retryTurnGuidance}
+        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(''); return accepted; }} onRetryGuidance={chat.retryTurnGuidance}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
       {review && inspector?.outlets.get(reviewId) && createPortal(<ConversationChangeDialog embedded language={language}

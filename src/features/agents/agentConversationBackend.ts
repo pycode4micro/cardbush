@@ -90,12 +90,12 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   const saveGuidance = () => { try { sessionStorage.setItem(guidanceKey, JSON.stringify([...guidance.values()])); } catch { /* Retain in-memory identity if storage is full. */ } };
   const client = agentRuntimeClient(async <T,>(operation: AgentOperation, input?: Record<string, unknown>): Promise<T> => {
     if (operation !== 'runtime.command' || input?.kind !== 'runtime.enqueue_guidance') return call<T>(operation, input);
-    const payload = input.payload as { messageId: string; sessionId: string; turnId: string; content: string; createdAt: string; metadata?: Record<string, unknown> };
+    const payload = input.payload as { messageId: string; sessionId: string; turnId: string; content: string; createdAt: string; metadata?: Record<string, unknown>; mode?: 'append_context' | 'interrupt_and_continue' };
     const entry = guidance.get(payload.messageId) ?? { command: input, message: {
       id: payload.messageId, clientMessageId: payload.messageId, messageId: payload.messageId, role: 'user',
       conversationId: payload.sessionId, turnId: payload.turnId, createdAt: payload.createdAt,
       content: typeof payload.metadata?.composerReferenceContent === 'string' ? payload.metadata.composerReferenceContent : payload.content,
-      metadata: { ...payload.metadata, turn_guidance: true, guidance_delivery: 'pending', guidance_mode: 'append_context' },
+      metadata: { ...payload.metadata, turn_guidance: true, guidance_delivery: 'pending', guidance_mode: payload.mode ?? 'append_context' },
     } as ChatMessage };
     guidance.set(payload.messageId, entry); saveGuidance();
     try {
@@ -248,7 +248,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
       enqueue: async request => { await submit(request, { queueOnly: true }); },
       remove: async id => { await call('chat.queue', { action: 'remove', id }); },
       reorder: async (id, targetId) => { await call('chat.queue', { action: 'reorder', id, targetId }); },
-      guide: async (id, turnId) => { await call('chat.queue', { action: 'guide', id, ...(turnId ? { turnId } : {}) }); },
+      guide: async (id, turnId, mode = 'interrupt_and_continue') => { await call('chat.queue', { action: 'guide', id, mode, ...(turnId ? { turnId } : {}) }); },
       setLocked: (sessionId, locked) => call('chat.queue', { action: 'lock', sessionId, locked }),
     },
     watchSession: (sessionId, listener, onError) => {

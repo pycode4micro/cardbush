@@ -20,8 +20,8 @@
       "AppxSignature.p7x"
     ],
     "metadataChange": "[Content_Types].xml: signature/catalog types and XML formatting only",
-    "sourceSha256": "dc7cd569ad3a6bb702a77bee78e2674d22c1ed56fd64ebce71dae20969556116",
-    "signedSha256": "06bf483e8b6f32bb34e31d1455708b2e31952b600a99c9b45b8eff288af42dfb"
+    "sourceSha256": "[ARTIFACT_SHA256]",
+    "signedSha256": "[REDACTED]"
   },
   "scenarios": [
     {
@@ -29,7 +29,7 @@
       "startedAt": "2026-09-29T01:10:16.517Z",
       "completedAt": "2026-09-29T01:11:47.928Z",
       "success": true,
-      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "packageIdentity": "[PACKAGE_IDENTITY]",
       "checks": [
         "default connector disabled",
         "application paired with real Chrome extension",
@@ -47,7 +47,7 @@
       "startedAt": "2026-09-29T01:17:36.517Z",
       "completedAt": "2026-09-29T01:17:56.006Z",
       "success": true,
-      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "packageIdentity": "[PACKAGE_IDENTITY]",
       "checks": [
         "default connector disabled",
         "application paired with real Chrome extension",
@@ -84,7 +84,7 @@
       "startedAt": "2026-09-29T01:17:57.006Z",
       "completedAt": "2026-09-29T01:18:55.012Z",
       "success": true,
-      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "packageIdentity": "[PACKAGE_IDENTITY]",
       "checks": [
         "default connector disabled",
         "application paired with real Chrome extension",
@@ -125,7 +125,7 @@
       "startedAt": "2026-09-29T01:18:56.012Z",
       "completedAt": "2026-09-29T01:19:01.414Z",
       "success": true,
-      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "packageIdentity": "[PACKAGE_IDENTITY]",
       "checks": [
         "default connector disabled",
         "application paired with real Chrome extension",
@@ -167,7 +167,7 @@
       "startedAt": "2026-09-29T01:21:40.199Z",
       "completedAt": "2026-09-29T01:21:58.183Z",
       "success": true,
-      "packageIdentity": "cardbush.cardbush_1.0.3.0_x64__4n55t5wh0acn2",
+      "packageIdentity": "[PACKAGE_IDENTITY]",
       "checks": [
         "legacy installed application registered its actual Native Messaging host"
       ],
@@ -178,7 +178,7 @@
       "startedAt": "2026-09-29T01:23:15.475Z",
       "completedAt": "2026-09-29T01:24:46.877Z",
       "success": true,
-      "packageIdentity": "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2",
+      "packageIdentity": "[PACKAGE_IDENTITY]",
       "checks": [
         "upgrade reports existing external legacy registration",
         "default connector disabled",
@@ -474,7 +474,7 @@
         "result": "WARNING",
         "messages": [
           "未能处理二进制文件 [PACKAGE]\\app\\CardBush.exe。",
-          "应用 cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2 不是 DPI 感知应用。"
+          "应用 [PACKAGE_IDENTITY] 不是 DPI 感知应用。"
         ]
       }
     ],
@@ -491,7 +491,7 @@
     "temporaryTasksRemaining": 0,
     "currentUserLegacyRegistrationRemoved": true,
     "existingTestUserPackageRegistrations": [
-      "cardbush.cardbush_1.0.4.0_x64__4n55t5wh0acn2"
+      "[PACKAGE_IDENTITY]"
     ],
     "signingPrivateKeysDeleted": true,
     "temporaryCertificateTrustRemoved": 2
@@ -502,5 +502,6 @@
     "Store-signed distribution with system protection enabled",
     "WACK DPI parsing warning remains, despite manifest and runtime DPI evidence",
     "Old external registration requires the documented separate migration step"
-  ]
+  ],
+  "redaction": "Public validation summary. Publisher/package identifiers and artifact hashes are omitted; exact evidence remains in private release records. Test outcomes and limitations are unchanged."
 }

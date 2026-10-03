@@ -168,17 +168,17 @@ vm.runInNewContext(
 const { localFileSystemPathFromProtocolUrl } = localFileProtocolModule.exports;
 assert.equal(
   localFileSystemPathFromProtocolUrl(
-    'cardbush-file:///C:/Users/wfang/Pictures/a%20b.png',
+    'cardbush-file:///C:/Users/fixture/Pictures/a%20b.png',
     'win32',
   ),
-  'C:\\Users\\wfang\\Pictures\\a b.png',
+  'C:\\Users\\fixture\\Pictures\\a b.png',
 );
 assert.equal(
   localFileSystemPathFromProtocolUrl(
-    'cardbush-file://c/Users/wfang/Pictures/a.png',
+    'cardbush-file://c/Users/fixture/Pictures/a.png',
     'win32',
   ),
-  'C:\\Users\\wfang\\Pictures\\a.png',
+  'C:\\Users\\fixture\\Pictures\\a.png',
   'A Chromium-normalized single-letter host must remain a Windows drive',
 );
 assert.equal(

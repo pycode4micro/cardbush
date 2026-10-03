@@ -1,6 +1,6 @@
 # CardBush 浏览器连接器：MSIX 整改实施记录
 
-更新：2026-09-29。扩展连接已改为主动配对的本机 WebSocket，替代 9 月 28 日的 Native Messaging 单键排除方案。旧包 1.0.4.0 的历史验证保留在本文末尾；当前 Browser Use/Edge 已生成独立的 1.0.5.0 候选包，实际安装、浏览器与 WACK 的结果和环境边界见 [本次提交准备](MSIX_SUBMISSION_PREPARATION_2026-09-29.md)。
+更新：2026-09-29。扩展连接已改为主动配对的本机 WebSocket，替代 9 月 28 日的 Native Messaging 单键排除方案。旧包 1.0.4.0 的历史验证保留在本文末尾；当前 Browser Use/Edge 已生成独立的 1.0.5.0 候选包，实际安装、浏览器与 WACK 的结果和环境边界见 [本次提交准备](MSIX_STORE_RELEASE.md)。
 
 ## 当前实现
 
@@ -55,6 +55,6 @@ WebSocket 检查回环地址、精确 Host/path、固定扩展 Origin、一次�
 
 ## 2026-09-29 历史 1.0.4.0 包结果
 
-最终包为 `release-msix/1.0.4.0-dq67mA/CardBush-1.0.4.0-x64.msix`，SHA-256 为 `dc7cd569ad3a6bb702a77bee78e2674d22c1ed56fd64ebce71dae20969556116`。此包包含收尾时修复的窄栏工具按钮溢出，取代此前的 `1.0.4.0-VpXEB1` 暂存构建。生产构建、MakeAppx 校验、依赖/隐私检查和包内应用/运行时/工具/连接器烟测通过；暂存应用的全部 321 个文件与实际 MSIX 解包结果逐一 SHA-256 相同。报告位于同目录 `msix-build-report.json`。
+最终包版本为 1.0.4.0；具体构建路径和 SHA-256 仅保留在私有发布记录。此包包含收尾时修复的窄栏工具按钮溢出，取代此前的本地暂存构建。生产构建、MakeAppx 校验、依赖/隐私检查和包内应用/运行时/工具/连接器烟测通过；暂存应用的全部 321 个文件与实际 MSIX 解包结果逐一 SHA-256 相同。报告位于本地构建目录的 `msix-build-report.json`。
 
 原始包保持未签名，未上传或提交。2026-09-29 已对独立测试签名副本完成包身份下的真实 Chrome、升级迁移及三种系统卸载验证；WACK 完整运行并保留警告。详见 [实际安装验证](MSIX_INSTALLED_VALIDATION_2026-09-29.md)，其中列明第二账号、最低版本组合和 Store 签名环境的剩余边界；`releaseReady` 仍为 false。

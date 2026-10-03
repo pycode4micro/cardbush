@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowLeft, ExternalLink, RefreshCw, Search, UserRound, ShieldCheck } from 'lucide-react';
 import type { AccountAction, AccountProvider, ManagedAccount } from '@cardbush/bush-protocol';
 import { useAccounts } from './useAccounts';
+import { ChatGptWelcome } from './ChatGptWelcome';
 import './accounts.css';
 
 export function AccountsPanel({ language, onBack }: { language: 'zh' | 'en'; onBack?: () => void }) {
@@ -18,6 +19,7 @@ export function AccountsPanel({ language, onBack }: { language: 'zh' | 'en'; onB
     catch { setLinkError(zh ? '无法打开说明页面，请检查浏览器设置。' : 'Could not open the documentation. Check your browser settings.'); }
   };
   return <div className="accounts-page">
+    <ChatGptWelcome language={language}/>
     {onBack && <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={16}/>{zh ? '返回插件' : 'Back to plugin'}</button>}
     <header className="accounts-heading"><div><h2>{zh ? '账号' : 'Accounts'}</h2><p>{zh ? '管理登录状态，查看账号可用于哪些应用与功能。' : 'Manage sign-in and see which apps and features each account can access.'}</p></div>
       <button type="button" className="account-button" aria-label={zh ? '刷新账号' : 'Refresh accounts'} onClick={() => void refresh()}><RefreshCw size={17}/></button></header>
@@ -47,11 +49,11 @@ function AccountCard({ language, provider, account, busy, onAction }: { language
   const labels = zh ? { signed_out: '未登录', signing_in: '等待浏览器登录', signed_in: '已登录', reauth_required: '需要重新登录', unavailable: '账号存储不可用' }
     : { signed_out: 'Signed out', signing_in: 'Waiting for browser sign-in', signed_in: 'Signed in', reauth_required: 'Sign in again', unavailable: 'Credential storage unavailable' };
   const actionLabel = (action: AccountAction) => ({
-    login: zh ? `${connected || account.state === 'reauth_required' ? '重新登录' : '登录'} ${provider.name}` : `Sign in to ${provider.name}${connected ? ' again' : ''}`,
+    login: provider.id === 'chatgpt' ? 'Continue with ChatGPT' : zh ? `${connected || account.state === 'reauth_required' ? '重新登录' : '登录'} ${provider.name}` : `Sign in to ${provider.name}${connected ? ' again' : ''}`,
     cancel_login: zh ? `取消 ${provider.name} 登录` : `Cancel ${provider.name} sign-in`,
     logout: zh ? `退出 ${provider.name} 登录` : `Sign out of ${provider.name}`,
     reconnect: zh ? '刷新应用连接' : 'Refresh app connections',
-    manage_apps: provider.id === 'openai' ? (zh ? '在 ChatGPT 管理应用' : 'Manage apps in ChatGPT') : (zh ? '管理应用授权' : 'Manage app grants'),
+    manage_apps: provider.id === 'chatgpt' ? (zh ? '套餐用量与授权' : 'Plan usage and access') : provider.id === 'openai' ? (zh ? '在 ChatGPT 管理应用' : 'Manage apps in ChatGPT') : (zh ? '管理应用授权' : 'Manage app grants'),
   }[action]);
   const actions = account.actions.filter(action => action !== 'cancel_login' && (action !== 'login' || connected));
   return <section className="account-connection-card" data-provider={provider.id} aria-label={`${provider.name} ${zh ? '账号' : 'account'}`}>

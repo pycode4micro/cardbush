@@ -1,0 +1,14 @@
+.agent-desktop-view { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--text); background: var(--surface); }
+.agent-desktop-view header { display: flex; align-items: center; gap: 8px; padding: 15px 18px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.agent-desktop-view header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-desktop-view header span, .agent-desktop-view footer span { color: var(--text-soft); font-size: 12px; }
+.agent-desktop-screen { flex: 1; min-height: 120px; position: relative; overflow: hidden; margin: 16px; border-radius: 12px; background: #101114; }
+.agent-desktop-screen img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; outline: none; }
+.agent-desktop-screen img[data-controlling=true] { touch-action: none; cursor: crosshair; }
+.agent-desktop-screen:focus-within { outline: 2px solid var(--accent, #729fe3); }
+.agent-desktop-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: #bbb; font-size: 13px; overflow-wrap: anywhere; }
+.agent-desktop-view footer { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0 16px 18px; }
+.agent-desktop-view button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 999px; padding: 8px 14px; color: var(--surface); background: var(--text); cursor: pointer; font: inherit; font-size: 12px; border: 0; }
+.agent-desktop-view button:disabled { opacity: .45; cursor: default; }
+.agent-desktop-text { display: flex; margin: 0 16px 16px; gap: 8px; }
+.agent-desktop-text input { flex: 1; min-width: 0; background: var(--surface-strong); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; font: inherit; font-size: 13px; }

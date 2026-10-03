@@ -592,6 +592,7 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-layout') {
       await require('./helpers/composer-layout.cjs')({ run, until, pause, window, root });
       await require('./helpers/composer-centered-layout.cjs')({ run, until, pause, window, root });
+      await require('./helpers/welcome-responsive-layout.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no composer layout renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory') {

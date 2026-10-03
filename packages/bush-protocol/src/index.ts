@@ -7,6 +7,7 @@ export * from "./guidance.js";
 export * from "./mcp.js";
 export * from './mcpAppReference.js';
 export * from "./openai.js";
+export * from './siwc.js';
 export * from "./model.js";
 export * from "./providerBinding.js";
 export * from "./recovery.js";

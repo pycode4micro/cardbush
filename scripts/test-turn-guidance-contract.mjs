@@ -92,7 +92,7 @@ const appSource = readAppViewSources();
 assert.match(appSource, /guidanceDeliveryMode === 'immediate'/);
 assert.match(
   appSource,
-  /const guidanceAnchor: ChatMessage[\s\S]*?turnId: activeTurnId[\s\S]*?onGuideMessage\([\s\S]*?guidanceAnchor,[\s\S]*?text,[\s\S]*?'append_context'/,
+  /const guidanceAnchor: ChatMessage[\s\S]*?turnId: activeTurnId[\s\S]*?onGuideMessage\([\s\S]*?guidanceAnchor,[\s\S]*?text,[\s\S]*?'interrupt_and_continue'/,
 );
 assert.match(appSource, /guidanceDeliveryMode=\{appSettings\.guidance\.deliveryMode\}/);
 

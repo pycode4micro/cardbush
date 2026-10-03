@@ -140,16 +140,45 @@ app.whenReady().then(async () => {
     let swapPoints=await getSwapPoints();
     window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...swapPoints.from});
     await waitFor('document.body.classList.contains("inspector-layout-resizing")');
+    window.webContents.sendInputEvent({type:'mouseMove',button:'left',...swapPoints.to});
+    await waitFor('!!document.querySelector(".inspector-tile-drag-preview")');
     await read('window.dispatchEvent(new Event("blur"));void 0');
     window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...swapPoints.to});
     assert.equal(await read('document.body.classList.contains("inspector-layout-resizing")'),false,'focus loss cancels drag and restores interaction');
+    assert.equal(await read('document.querySelectorAll(".inspector-tile-drag-preview,[data-tile-drop-target],[data-tile-drag-source]").length'),0,'cancel removes entire drag preview');
     assert.equal(await read('document.querySelector(".right-inspector-tab-page").style.left'),'0%','cancelled drag does not swap pages');
+    // CSS scaling changes pointer-to-layout coordinates, as on scaled displays.
+    for(const zoom of [1,1.25]) {
+      await read(`document.querySelector('.app').style.zoom=${zoom};void 0`); await pause(150);
+      swapPoints=await getSwapPoints();
+      const target={x:swapPoints.from.x+200,y:swapPoints.from.y+45};
+      window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...swapPoints.from});
+      window.webContents.sendInputEvent({type:'mouseMove',button:'left',...target});
+      await waitFor('!!document.querySelector(".inspector-tile-drag-preview")'); await pause(40);
+      const preview=await read(`(()=>{const p=document.querySelector('.inspector-tile-drag-preview'),s=document.querySelector('[data-tile-drag-source]'),r=p.querySelector('.inspector-tile-drag').getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2,width:p.getBoundingClientRect().width,sourceWidth:s.getBoundingClientRect().width,address:p.querySelector('input').value,sourceAddress:s.querySelector('input').value,inert:p.inert};})()`);
+      assert.ok(Math.abs(preview.x-target.x)<3 && Math.abs(preview.y-target.y)<3,`whole toolbar follows grip at ${zoom}: ${JSON.stringify(preview)}`);
+      assert.ok(Math.abs(preview.width-preview.sourceWidth)<2,'preview uses full toolbar width');
+      assert.equal(preview.address,preview.sourceAddress,'preview includes current address');
+      assert.equal(preview.inert,true,'preview cannot steal address input focus');
+      await read('window.dragEscapeSeen=false;window.dragEscapeCheck=event=>{if(event.key==="Escape")window.dragEscapeSeen=event.defaultPrevented};window.addEventListener("keydown",window.dragEscapeCheck);void 0');
+      window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+      await waitFor('!document.querySelector(".inspector-tile-drag-preview")');
+      assert.equal(await read('dragEscapeSeen'),true,'Escape cancels drag before workspace navigation');
+      await read('window.removeEventListener("keydown",window.dragEscapeCheck);void 0');
+      window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...target});
+      assert.equal(await read('document.querySelector(".right-inspector-tab-page").style.left'),'0%','Escape leaves pane positions unchanged');
+    }
+    await read("document.querySelector('.app').style.zoom='';void 0"); await pause(150);
     swapPoints=await getSwapPoints();
     window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...swapPoints.from});
     window.webContents.sendInputEvent({type:'mouseMove',button:'left',...swapPoints.to});
+    await waitFor('!!document.querySelector("[data-tile-drop-target]")','swap target highlight');
+    require('node:fs').writeFileSync(path.resolve('tmp/inspector-toolbar-drag.png'),(await window.webContents.capturePage()).toPNG());
     window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...swapPoints.to});
     await waitFor('document.querySelector(".right-inspector-tab-page").style.left==="65%"');
     assert.equal(await read('document.body.classList.contains("inspector-layout-resizing")'),false,'drag releases page interaction');
+    assert.equal(await read('document.querySelectorAll(".inspector-tile-drag-preview,[data-tile-drop-target],[data-tile-drag-source]").length'),0,'drop cleans preview and highlighting');
     assert.deepEqual(await read('[...document.querySelectorAll("webview")].map(view=>view.getWebContentsId())'),guestIds, 'resize and swap preserve native guests');
     assert.equal(await original.executeJavaScript('retainedState'),'search-state', 'page state survives multi-page layout');
     await original.executeJavaScript('document.body.insertAdjacentHTML("beforeend","<input id=tile-draft style=position:fixed;top:5px;left:5px>");void 0');

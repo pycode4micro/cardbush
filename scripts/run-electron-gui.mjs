@@ -90,6 +90,10 @@ export function guiBuildState(projectRoot = path.resolve(import.meta.dirname, '.
       path.join(packagesRoot, entry.name, 'dist', 'index.js')
     ),
   ];
+  const voiceSources = ['native/voice/CardBushVoiceHost.cs', 'native/voice/WindowsVoices.cs', 'scripts/build-voice-native-host.mjs'].map(file => path.join(projectRoot, file));
+  const voiceRequired = platform === 'win32' && voiceSources.every(file => fs.existsSync(file));
+  const voiceOutput = path.join(projectRoot, 'dist-native/voice/CardBushVoiceHost.exe');
+  const voiceCurrent = !voiceRequired || oldestMtime([voiceOutput]) >= newestMtime(voiceSources);
   const newestSource = newestMtime(sources);
   const oldestOutput = oldestMtime(outputs);
   const nativeDirectory = path.join(projectRoot, 'dist-native', 'process-guard');
@@ -103,9 +107,10 @@ export function guiBuildState(projectRoot = path.resolve(import.meta.dirname, '.
   const nativeCurrent = platform !== 'win32' || Boolean(unavailableHost)
     || (nativeExecutablePresent && oldestMtime([nativeOutput]) >= newestMtime(processHostBuildInputs(projectRoot)));
   return {
-    current: oldestOutput >= newestSource && oldestOutput > 0 && nativeCurrent,
+    current: oldestOutput >= newestSource && oldestOutput > 0 && nativeCurrent && voiceCurrent,
     missingOutput: outputs.find((file) => !fs.existsSync(file))
-      ?? (platform === 'win32' && !unavailableHost && !fs.existsSync(nativeOutput) ? nativeOutput : undefined),
+      ?? (platform === 'win32' && !unavailableHost && !fs.existsSync(nativeOutput) ? nativeOutput : undefined)
+      ?? (voiceRequired && !fs.existsSync(voiceOutput) ? voiceOutput : undefined),
     newestSource,
     oldestOutput,
   };

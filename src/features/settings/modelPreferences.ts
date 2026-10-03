@@ -1,5 +1,5 @@
 import { type ManagedModelConfig } from '../../types';
-import { reasoningEffortSchema, resolveModelReasoningEffort } from '@cardbush/bush-protocol';
+import { reasoningEffortSchema, resolveModelReasoningEffort, modelAuthenticationSchema } from '@cardbush/bush-protocol';
 
 export function readManagedModelConfigs() {
   const raw =
@@ -29,6 +29,7 @@ export function readManagedModelConfigs() {
       .map((item) => ({
         id: String(item.id ?? ''),
         provider: String(item.provider ?? ''),
+        authentication: modelAuthenticationSchema.optional().parse(item.authentication),
         apiKey: String(item.apiKey ?? ''),
         hasApiKey: item.hasApiKey === true,
         apiKeyMasked:
@@ -66,7 +67,7 @@ export function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
   for (const raw of source) {
     const provider = normalizeProvider(raw.provider);
     const modelName = raw.modelName.trim();
-    const apiKey = raw.apiKey.trim();
+    const apiKey = raw.authentication?.kind === 'chatgpt' ? '' : raw.apiKey.trim();
     const baseUrl = raw.baseUrl.trim();
     const maxContextTokens = normalizeMaxContextTokens(raw.maxContextTokens);
     const maxCompletionTokens = normalizeMaxCompletionTokens(
@@ -93,9 +94,10 @@ export function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
     result.push({
       id,
       provider,
+      authentication: modelAuthenticationSchema.optional().parse(raw.authentication),
       apiKey,
-      hasApiKey: raw.hasApiKey === true || Boolean(apiKey),
-      apiKeyMasked: raw.apiKeyMasked?.trim() || undefined,
+      hasApiKey: raw.authentication?.kind === 'chatgpt' ? false : raw.hasApiKey === true || Boolean(apiKey),
+      apiKeyMasked: raw.authentication?.kind === 'chatgpt' ? undefined : raw.apiKeyMasked?.trim() || undefined,
       apiProtocol: raw.apiProtocol ?? 'openai_responses',
       anthropicThinkingMode: raw.anthropicThinkingMode,
       reasoningEffort: resolveModelReasoningEffort({ ...raw, reasoningEffort: reasoningEffortSchema.nullish().safeParse(raw.reasoningEffort).data }) ?? null,
@@ -115,7 +117,7 @@ export function mergeLegacyModelCredentials(
 ) {
   let changed = false;
   const models = productHostModels.map((model) => {
-    if (model.hasApiKey === true || model.apiKey.trim()) {
+    if (model.authentication?.kind === 'chatgpt' || model.hasApiKey === true || model.apiKey.trim()) {
       return model;
     }
     const id = model.id.trim().toLowerCase();

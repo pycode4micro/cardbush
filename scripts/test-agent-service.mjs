@@ -71,6 +71,35 @@ async function openService(t, name = 'fixture', delay = 80, tool, compatibility 
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
 
+for (const queued of [false, true]) test(`immediate guidance aborts remote inference and continues without releasing the old response (${queued ? 'queue' : 'direct'})`, async t => {
+  const release = Promise.withResolvers(); let dispatches = 0;
+  const f = await openService(t, 'immediate-guidance', () => ++dispatches === 1 ? release.promise : Promise.resolve());
+  try {
+    await f.service.call('sessions.create', { sessionId: 'immediate' });
+    const job = await f.service.call('chat.send', input('immediate', 'active-immediate'));
+    await until(() => f.model.calls.length, count => count === 1);
+    const command = queued ? { operation: 'chat.queue', payload: { action: 'guide', id: 'queued-immediate', turnId: job.turnId, mode: 'interrupt_and_continue' } } :
+      { operation: 'runtime.command', payload: { kind: 'runtime.enqueue_guidance', payload: {
+        protocol: 'bush.runtime_guidance.v1', sessionId: 'immediate', turnId: job.turnId, messageId: 'direct-immediate',
+        content: 'Use the new scope', createdAt: new Date().toISOString(), mode: 'interrupt_and_continue' } } };
+    if (queued) await f.service.call('chat.send', { ...input('immediate', 'queued-immediate', 'Use the new scope'), queueOnly: true });
+    await f.service.call(command.operation, command.payload);
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
+    await f.service.call(command.operation, command.payload); // retry after completion must only acknowledge
+    assert.equal(f.model.calls.length, 2);
+    assert.match(JSON.stringify(f.model.calls[1].input), /Use the new scope/);
+    assert.equal(f.model.calls[1].previous_response_id, undefined);
+    const history = await f.service.call('sessions.get', { sessionId: 'immediate' });
+    assert.equal(history.turns.length, 1);
+    assert.equal(history.turns[0].messages.filter(message => message.message.name === 'turn_guidance').length, 1);
+    assert.equal(history.turns[0].messages.some(message => message.message.content === 'answer-1'), false);
+    if (queued) {
+      const saved = (await f.service.call('chat.jobs')).find(item => item.id === 'queued-immediate');
+      assert.equal(saved.guidance.mode, 'interrupt_and_continue'); assert.equal(saved.guidance.applied, true);
+    }
+  } finally { release.resolve(); await f.service.close(); }
+});
+
 test('an Agent can delete an idle conversation while another task keeps running', async t => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });

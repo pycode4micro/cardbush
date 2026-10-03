@@ -7,7 +7,7 @@ test('account registry serves existing OpenAI state without owning or duplicatin
   let state = 'signed_out'; const calls = [];
   const manager = new AccountManager([{ providerId: 'openai', list: async () => [openAiAccountSummary({ state, experimental: true })],
     action: async (id, action) => { calls.push({ id, action }); state = action === 'login' ? 'signed_in' : 'signed_out'; } }]);
-  assert.equal((await manager.snapshot()).providers.length, 5);
+  assert.equal((await manager.snapshot()).providers.length, 6);
   const loggedIn = await manager.action({ providerId: 'openai', accountId: 'openai:default', action: 'login' });
   assert.equal(loggedIn.accounts[0].state, 'signed_in'); assert.equal(calls[0].id, 'openai:default');
   for (const providerId of ['claude','qq','wechat','bilibili']) await assert.rejects(manager.action({ providerId, accountId: 'default', action: 'login' }), /not connected/);

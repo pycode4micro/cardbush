@@ -1,16 +1,28 @@
 import { useLayoutEffect, type RefObject } from 'react';
-import type { ComposerFlow, WelcomePlacement } from './componentModel';
+import type { ComposerFlow, ComponentCollection, WelcomeLayout } from './componentModel';
 import { composerHorizontalBounds, composerVerticalBounds } from './composerLayoutGeometry';
+import { welcomeHeightScale } from './welcomeViewportGeometry';
+import { adoptWelcomeViewport } from './componentStore';
 
 // Measure the live input, including attachments and its project selector. A
 // stored component height must never create invisible padding around the input.
-export function useWelcomeComposerLayout(ref: RefObject<HTMLDivElement | null>, placement: WelcomePlacement | undefined,
-  flow: ComposerFlow, layoutKey: unknown) {
+export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: WelcomeLayout | undefined,
+  flow: ComposerFlow, collection: ComponentCollection, editing: boolean) {
   useLayoutEffect(() => {
     const canvas = ref.current, slot = canvas?.querySelector<HTMLElement>('.welcome-slot-input');
     const input = slot?.querySelector<HTMLElement>('.welcome-input-stack');
-    if (!canvas || !slot || !input) return;
+    if (!canvas) return;
+    const placement = layout?.items.find(item => item.componentId === 'system-input');
+    let referenceHeight = layout?.viewportHeight;
     const measure = () => {
+      if (!canvas.clientWidth || !canvas.clientHeight) return;
+      referenceHeight ??= canvas.clientHeight;
+      const scale = welcomeHeightScale(referenceHeight, canvas.clientHeight);
+      canvas.style.setProperty('--welcome-height-scale', String(scale));
+      // Expose the legacy reference for editor snapshots after a resize.
+      canvas.dataset.layoutViewportHeight = String(referenceHeight);
+      if (!editing && layout === collection.welcomeLayout) adoptWelcomeViewport(collection, referenceHeight);
+      if (!slot || !input) return;
       const viewportWidth = canvas.offsetWidth;
       const horizontal = composerHorizontalBounds(viewportWidth, placement?.width,
         parseFloat(getComputedStyle(canvas).getPropertyValue('--chat-track-width')) || 704);
@@ -19,7 +31,7 @@ export function useWelcomeComposerLayout(ref: RefObject<HTMLDivElement | null>, 
       slot.style.left = `${horizontal.left}px`;
       slot.style.width = `${horizontal.width}px`;
       const height = input.getBoundingClientRect().height / (canvas.getBoundingClientRect().height / canvas.offsetHeight || 1);
-      const vertical = composerVerticalBounds(canvas.clientHeight, height, placement?.y, flow.afterSend, placement?.composerDock === 'bottom');
+      const vertical = composerVerticalBounds(canvas.clientHeight, height, placement ? placement.y * scale : undefined, flow.afterSend, placement?.composerDock === 'bottom');
       slot.style.top = `${vertical.top}px`;
       slot.style.height = `${height}px`;
       slot.dataset.composerDocked = String(vertical.docked);
@@ -38,7 +50,7 @@ export function useWelcomeComposerLayout(ref: RefObject<HTMLDivElement | null>, 
     const observer = new ResizeObserver(() => {
       if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); });
     });
-    observer.observe(canvas); observer.observe(input);
+    observer.observe(canvas); if (input) observer.observe(input);
     return () => { observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame); };
-  }, [ref, placement, flow.afterSend, layoutKey]);
+  }, [ref, layout, flow.afterSend, collection, editing]);
 }

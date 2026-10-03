@@ -1,4 +1,5 @@
 import { ArrowDown, Sparkles } from 'lucide-react';
+import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { QueueActionsMenu } from '../composer/QueueActionsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
@@ -231,6 +232,7 @@ export function ChatPanel({
   onToggleSkill,
   onRefreshActiveSession,
   onSend,
+  onVoiceSend,
   onRetryMessage,
   onRegenerate,
   onEditUserMessage,
@@ -332,6 +334,7 @@ export function ChatPanel({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: string) => Promise<void | boolean>;
+  onVoiceSend?: (text: string) => Promise<boolean>;
   onRetryMessage: (message: ChatMessage) => Promise<void>;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
@@ -2427,7 +2430,7 @@ export function ChatPanel({
   );
 
   const handleComposerSend = useCallback(
-    async (text: string, options?: { immediate?: boolean }) => {
+    async (text: string, options?: { immediate?: boolean; acknowledge?: boolean }) => {
       captureComposerPosition(!sending);
       if (
         guidanceAvailable && sending &&
@@ -2447,7 +2450,7 @@ export function ChatPanel({
         return await onGuideMessage(
           guidanceAnchor,
           text,
-          'append_context',
+          'interrupt_and_continue',
         );
       }
       if (!sending) {
@@ -2464,7 +2467,7 @@ export function ChatPanel({
           setScrollBottomVisible(false);
         }
       }
-      return await onSend(text);
+      return await (options?.acknowledge && onVoiceSend ? onVoiceSend(text) : onSend(text));
     },
     [
       activeAssistantForRender,
@@ -2476,6 +2479,7 @@ export function ChatPanel({
       releaseAssistantStageReservation,
       onGuideMessage,
       onSend,
+      onVoiceSend,
       guidanceAvailable,
       sending,
       setScrollBottomVisible,
@@ -2588,6 +2592,10 @@ export function ChatPanel({
   }
 
   return (
+    <VoiceConversation language={language} disabled={readOnlyActions || inputReadOnly}
+      target={{ environment: host?.environmentId ?? 'local', sessionId: runtimeSessionId, messages,
+        sending, stopping, activeTurnId, language, waiting: hasInteraction,
+        send: (text, options) => handleComposerSend(text, { ...options, acknowledge: true }) }}>
     <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
     <div
       className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${composerAnchored ? ' composer-anchored' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
@@ -2711,7 +2719,7 @@ export function ChatPanel({
             onToggleSkill={onToggleSkill}
             onEditQueuedMessage={editQueuedMessage}
             onGuideQueuedMessage={(queuedId) =>
-              onGuideQueuedMessage(queuedId, 'append_context')
+              onGuideQueuedMessage(queuedId, 'interrupt_and_continue')
             }
             onRemoveQueuedMessage={onRemoveQueuedMessage}
             onSend={handleComposerSend}
@@ -2884,7 +2892,7 @@ export function ChatPanel({
                 onToggleQueueLock={onToggleQueueLock}
                 onEditQueuedMessage={editQueuedMessage}
                 onGuideQueuedMessage={(queuedId) =>
-                  onGuideQueuedMessage(queuedId, 'append_context')
+                  onGuideQueuedMessage(queuedId, 'interrupt_and_continue')
                 }
                 onRemoveQueuedMessage={onRemoveQueuedMessage}
                 onReorderQueuedMessage={onReorderQueuedMessage}
@@ -2911,7 +2919,7 @@ export function ChatPanel({
               queueLocked={queueLocked}
               queueLockPending={queueLockPending}
               onToggleQueueLock={onToggleQueueLock}
-              onGuideQueuedMessage={(queuedId) => onGuideQueuedMessage(queuedId, 'append_context')}
+              onGuideQueuedMessage={(queuedId) => onGuideQueuedMessage(queuedId, 'interrupt_and_continue')}
               selectedModel={selectedModel}
               availableModels={availableModels}
               teamAvailable={teamAvailable}
@@ -2969,5 +2977,6 @@ export function ChatPanel({
       </div>
     </div>
     </ComposerReferenceContext.Provider>
+    </VoiceConversation>
   );
 }

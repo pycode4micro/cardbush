@@ -1,4 +1,4 @@
-2026-09-29 | CardBush | 9N7XNDD5WRGS | MSIX 1.0.5.0 x64
+2026-09-29 | CardBush | <STORE_PRODUCT_ID> | MSIX 1.0.5.0 x64
 
 This resubmission includes code changes addressing the previous 10.6.3 finding and replaces the 1.0.3.0 reconsideration notes.
 

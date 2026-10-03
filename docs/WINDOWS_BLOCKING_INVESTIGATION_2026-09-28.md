@@ -8,7 +8,7 @@
 
 - 原先被拦截的 `CardBushProcessHost-b1ab6c67059faa5f.exe` 和当前 `f8ed893fc21d3109` 版本均通过 `--capabilities` 启动检查。
 - `CardBushBrowserHost.exe` 通过 Native Messaging 协议往返、重启恢复和来源拒绝测试。
-- 原先被拦截的 `CardBush-6fd8f6b20cb2077d7d0220ff27bdc04eb8f23951deba70d78673352588d6b2bb.dll` 成功由 Windows PowerShell 加载；其 SHA-256 与初次调查一致。
+- 原先被拦截的 `CardBush-[ARTIFACT_SHA256].dll` 成功由 Windows PowerShell 加载；其 SHA-256 与初次调查一致。
 - 上述验证期间没有新增 Code Integrity `3077` 事件，事件日志读取正常。
 - 记录保存在 Git 忽略的 `tmp/application-control/manual-toggle-baseline.json` 和 `manual-toggle-verification.json`。没有重新编译被拦截文件来改变其指纹，也没有安装或生成签名证书。
 
@@ -27,7 +27,7 @@
 
 | 组件 | 本机证据 | 结论 |
 | --- | --- | --- |
-| Computer Use | 加载 `CardBush-6fd8f6b20cb2077d7d0220ff27bdc04eb8f23951deba70d78673352588d6b2bb.dll` 返回 `0x800711C7`；02:19:11/12 的 3077 事件指向同一文件 | 原生库加载被 Windows 阻止，不是模型不会操作，也不是再次观察窗口可以修复 |
+| Computer Use | 加载 `CardBush-[ARTIFACT_SHA256].dll` 返回 `0x800711C7`；02:19:11/12 的 3077 事件指向同一文件 | 原生库加载被 Windows 阻止，不是模型不会操作，也不是再次观察窗口可以修复 |
 | Chrome 浏览器助手 | 3077 指向 `dist-native/chrome-connector/CardBushBrowserHost.exe`；HKCU 的 Native Messaging 注册清单指向的正是这个文件，扩展 origin 也匹配 | 桥接 EXE 在执行前被拦；注册路径存在，继续调整网页权限解决不了这个故障 |
 | 旧进程宿主 | 03:39:10 对 `CardBushProcessHost-b1ab6c67059faa5f.exe --capabilities` 的复现返回 Node `UNKNOWN/-4094`，同期 3077 指向该文件 | 用户原始构建报错有明确的系统策略证据，不能仅凭 `UNKNOWN` 猜成 Node 24 缺陷 |
 | 当前进程宿主 | `CardBushProcessHost-f8ed893fc21d3109.exe --capabilities` 返回 0，协议及 sandboxVersion 正确 | 当前这一份可以启动；它仍未签名，不能据此保证下一次构建或另一台电脑也能启动 |
@@ -36,10 +36,10 @@
 
 | 文件 | SHA-256 |
 | --- | --- |
-| Computer Use 的 `6fd8…dll` | `FAF488600EA553F68DBCC9051112C6C1F0E0234753F5CA32E490DC767C1820CD` |
-| `CardBushBrowserHost.exe` | `B24A58C10ADBA9EDE680DBE9779B79E78C0D445F522DD1DFF0BC3219BDFC1C76` |
-| 旧进程宿主 `b1ab…exe` | `FC1D3CA1D5624C65EF2EA0B29461D8EF0063DBDA03DD021533860D5FF8DC71A4` |
-| 当前进程宿主 `f8ed…exe` | `ABB5CB0437595DD6B502A9583159DA72C69B502551DA30F5B4BBECFAE2764828` |
+| Computer Use 的 `6fd8…dll` | `[ARTIFACT_SHA256]` |
+| `CardBushBrowserHost.exe` | `[ARTIFACT_SHA256]` |
+| 旧进程宿主 `b1ab…exe` | `[ARTIFACT_SHA256]` |
+| 当前进程宿主 `f8ed…exe` | `[ARTIFACT_SHA256]` |
 
 ## 为什么之前能用，现在失败
 
@@ -61,7 +61,7 @@
 
 ## 发布包检查发现
 
-检查对象：`release-msix/1.0.3.0-6oqMsF/extracted-msix`，即此前生成的未签名 Store 暂存包，未在本机安装。
+检查对象：`release-msix/<private-build>/extracted-msix`，即此前生成的未签名 Store 暂存包，未在本机安装。
 
 - 发现 42 处 Windows PE 文件：40 处 `NotSigned`，2 处有有效微软签名；40 处对应 30 个不同文件摘要，含重复副本。这不是 40 个已复现的故障。
 - 除自己的助手和 DLL，还包括 Electron 图形/媒体库、Sharp/libvips、ripgrep、SSH 的 Pageant 辅助程序等。只签最外层安装器不足以完成独立 EXE 的可信组件交付。

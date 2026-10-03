@@ -24,6 +24,8 @@ import type {
 import { isToolCallValidationFailure } from "@cardbush/bush-runtime";
 import { providerFailureEvent, ProviderToolCallError } from "./providerFailure.js";
 import type { ModelProviderConfig } from './providerConfig.js';
+import { siwcFailure, siwcFetch, siwcResponsesParams } from './siwc.js';
+import { SIWC } from '@cardbush/bush-protocol';
 import { namedMessageContent, resolveLocalImageInputs } from './modelInputs.js';
 import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from "./requestBodyBudget.js";
 import { historicalCompatibilityMode, isClientToolSearchCall, portableResponsesReplay, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
@@ -43,6 +45,7 @@ import {
 } from "./providerCapabilities.js";
 
 export interface ResponseCreateProjectionOptions {
+  chatGpt?: boolean;
   disableProviderState?: boolean;
   toolSearchMode?: ResponsesToolSearchMode;
   compatibilityMode?: boolean;
@@ -225,10 +228,10 @@ export function toResponsesCreateParams(
   options: ResponseCreateProjectionOptions = {},
 ): ResponseCreateParamsStreaming {
   const compatibilityMode = options.compatibilityMode ?? historicalCompatibilityMode(request);
-  const providerState = options.disableProviderState || compatibilityMode
+  const providerState = options.chatGpt || options.disableProviderState || compatibilityMode
     ? undefined
     : request.providerState;
-  const toolSearchMode = compatibilityMode ? "function" : options.toolSearchMode ?? historicalToolSearchMode(request) ?? "function";
+  const toolSearchMode = options.chatGpt || compatibilityMode ? "function" : options.toolSearchMode ?? historicalToolSearchMode(request) ?? "function";
   const inputMessageOffset = providerState?.previousResponseId
     ? providerState.inputMessageOffset!
     : 0;
@@ -243,7 +246,7 @@ export function toResponsesCreateParams(
     messageIndex,
     items: projectImages(projectDiscovery(messageIndex, toResponseInputItems(message, messageIndex, request, toolSearchMode))),
   })), responseTools(request, toolSearchMode), inputMessageOffset);
-  return {
+  const params = {
     model: request.model,
     input: projected.input,
     tools: projected.tools,
@@ -259,6 +262,7 @@ export function toResponsesCreateParams(
     store: Boolean(providerState),
     stream: true,
   } as ResponseCreateParamsStreaming;
+  return options.chatGpt ? siwcResponsesParams(params) : params;
 }
 
 export function toResponsesInputTokenCountParams(
@@ -368,9 +372,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
       throw new Error("maxRequestBodyBytes must be a positive safe integer.");
     }
     this.#client = new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-      fetch: config.fetch,
+      apiKey: config.chatGpt ? 'siwc-host-managed' : config.apiKey,
+      baseURL: config.chatGpt ? SIWC.resource : config.baseURL,
+      fetch: config.chatGpt ? siwcFetch(config.chatGpt.accountId, config.chatGpt.access, config.fetch, config.chatGpt.signal) : config.fetch,
       timeout: config.timeoutMs,
       maxRetries: 0,
     });
@@ -383,7 +387,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     options.signal?.throwIfAborted();
     const projection = await this.#project(request);
     options.signal?.throwIfAborted();
-    const full = toResponsesCreateParams(projection.request, { disableProviderState: true,
+    const full = toResponsesCreateParams(projection.request, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt),
       toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
     const fingerprint = responsesInputFingerprint(full, full, request.providerBinding);
     options.onInputProjection?.(fingerprint);
@@ -396,7 +400,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     options: ModelStreamOptions = {},
   ): Promise<ModelInputTokenCount | undefined> {
     options.signal?.throwIfAborted();
-    if (this.#compatibilityMode(request) || this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
+    if (this.#config.chatGpt || this.#compatibilityMode(request) || this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
       return undefined;
     }
     const projection = await this.#project(request);
@@ -447,7 +451,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
         options.onRequestBodyBudget?.(budget);
         assertRequestBodyBudget(budget);
         if (options.onInputProjection) {
-          const full = toResponsesCreateParams(resolvedRequest, { disableProviderState: true,
+          const full = toResponsesCreateParams(resolvedRequest, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt),
             toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
           options.onInputProjection(responsesInputFingerprint(full, params, request.providerBinding));
         }
@@ -500,8 +504,16 @@ export class OpenAIResponsesProvider implements ModelProvider {
             yield providerFailureEvent(request.requestId, state.sequence++, error, true);
             return;
           }
+          if (this.#config.chatGpt?.signal?.aborted) {
+            yield { protocol: BUSH_MODEL_EVENT_PROTOCOL, requestId: request.requestId, sequence: state.sequence++, createdAt: new Date().toISOString(),
+              kind: 'response_failed', code: 'chatgpt_account_changed', message: 'This ChatGPT account was signed out or authorized again. Start a new turn after signing in.', retryable: false };
+            return;
+          }
           const failure = error instanceof ResponseAttemptFailure ? error.failure
             : providerFailureEvent(request.requestId, state.sequence++, error, false);
+          // SIWC has a known protocol: entitlement/auth/transport errors must not
+          // rewrite the cache prefix or retry as a different API protocol.
+          if (this.#config.chatGpt) { yield siwcFailure(failure); return; }
           if (isToolCallValidationFailure(failure)) {
             // Runtime repairs the call by appending guidance. An invalid call
             // is not evidence to switch schemas and invalidate the cache prefix.
@@ -557,16 +569,17 @@ export class OpenAIResponsesProvider implements ModelProvider {
       resolvedRequest.providerState?.previousResponseId,
     );
     const usesProviderState = Boolean(
-      !compatibilityMode && resolvedRequest.providerState &&
+      !this.#config.chatGpt && !compatibilityMode && resolvedRequest.providerState &&
       (!hasPreviousResponse || continuation === "supported"),
     );
-    const toolSearchMode = compatibilityMode ? "function" : (hasMcpDiscovery(resolvedRequest)
+    const toolSearchMode = this.#config.chatGpt || compatibilityMode ? "function" : (hasMcpDiscovery(resolvedRequest)
       ? historicalToolSearchMode(resolvedRequest) ??
         (this.#readCapability(resolvedRequest.model, TOOL_SEARCH_CAPABILITY) === "unsupported" ? "function" : "native")
       : "function");
     return {
       request: resolvedRequest,
       params: toResponsesCreateParams(resolvedRequest, {
+        chatGpt: Boolean(this.#config.chatGpt),
         disableProviderState: !usesProviderState,
         toolSearchMode,
         compatibilityMode,

@@ -1,6 +1,7 @@
 import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
 import { adoptDraftConversationStyle } from '../features/settings/conversationStyle';
 import { useConversationViewState } from '../shared/conversationViewState';
+import { submissionReceipt } from '../shared/submissionReceipt';
 import { localConversationBackend, type ConversationBackend } from '../backend/conversationBackend';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { resolveModelReasoningEffort, type ReasoningEffort } from '@cardbush/bush-protocol';
@@ -328,7 +329,7 @@ export function useCardbushChat(
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
   const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
   const sendMessageRef = useRef<
-    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }) => Promise<void>
+    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => Promise<void>
   >(async () => undefined);
   const activeConversationIdForState = activeConversationId.trim();
   const messagesLoading = Boolean(
@@ -2297,7 +2298,7 @@ export function useCardbushChat(
   }, [reloadConversations, beginHistoryRead, isHistoryReadCurrent, applyHistoryRead]);
 
   const sendMessage = useCallback(
-    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }) => {
+    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => {
       const sourceEnabled = sourceSnapshot ?? resolveConversationSource(queuedConversation?.id ?? activeConversation?.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const trimmed = text.trim();
       if (!trimmed) {
@@ -2351,6 +2352,7 @@ export function useCardbushChat(
               files: attachments.files, images: attachments.images, attachments: optimisticAttachments,
               standardImageInputEnabled: requestContext.standardImageInputEnabled,
               disabledSkills: [...(requestContext.disabledSkillNames ?? [])] });
+            onAccepted?.();
             setError(null);
           } catch (caught) { setError(errorMessage(caught)); }
           return;
@@ -2364,6 +2366,7 @@ export function useCardbushChat(
           teamId: turnTeamId,
           teamName: turnTeamName,
         });
+        onAccepted?.();
         return;
       }
       if (queuedDelivery) removeQueuedMessage(queuedDelivery.item.id);
@@ -2472,6 +2475,7 @@ export function useCardbushChat(
           signal: controller.signal,
           onStart: (start) => {
             streamStarted = true;
+            onAccepted?.();
             markSessionRunning(sessionId, start.turnId);
             void refreshGoal(sessionId);
             setMessagesByConversation((current) =>
@@ -2819,6 +2823,9 @@ export function useCardbushChat(
       skills,
     ],
   );
+
+  const sendVoiceMessage = useCallback((text: string) => submissionReceipt(accepted =>
+    sendMessage(text, undefined, undefined, undefined, undefined, undefined, accepted)), [sendMessage]);
 
   const retryFailedUserMessage = useCallback(
     async (message: ChatMessage) => {
@@ -3630,7 +3637,7 @@ export function useCardbushChat(
       const sourceEnabled = resolveConversationSource(message.conversationId || activeConversationId, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const text = guidance.trim();
       if (!text) {
-        return;
+        return false;
       }
       const turnId = message.turnId?.trim() ?? '';
       const conversationId = message.conversationId?.trim() || activeConversationId;
@@ -3638,12 +3645,11 @@ export function useCardbushChat(
       if (!isSessionSending(conversationId)) {
         const conversation =
           conversations.find((item) => item.id === conversationId) ?? activeConversation;
-        await sendMessage(text, conversation);
-        return;
+        return submissionReceipt(accepted => sendMessage(text, conversation, undefined, undefined, undefined, undefined, accepted));
       }
       if (!conversationId || !turnId || !active || active !== turnId) {
         setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
-        return;
+        return false;
       }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
       const optimisticMessage = optimisticGuidanceMessage({
@@ -3685,6 +3691,7 @@ export function useCardbushChat(
           ),
         );
         setError(null);
+        return true;
       } catch (caught) {
         if (runtimeErrorCode(caught) === 'turn_not_active' || runtimeErrorCode(caught) === 'turn_guidance_closed') {
           setMessagesByConversation((current) =>
@@ -3694,10 +3701,10 @@ export function useCardbushChat(
             conversations.find((item) => item.id === conversationId) ?? activeConversation;
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            await sendMessageRef.current(text, conversation, undefined, undefined, sourceEnabled);
+            return submissionReceipt(accepted => sendMessageRef.current(text, conversation, undefined, undefined, sourceEnabled, undefined, accepted));
           }
           setError(null);
-          return;
+          return true;
         }
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
@@ -3706,6 +3713,7 @@ export function useCardbushChat(
           `引导发送失败: ${errorMessage(caught)}`,
           `Failed to send guidance: ${errorMessage(caught)}`,
         ));
+        return false;
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
       }
@@ -3726,7 +3734,7 @@ export function useCardbushChat(
   const sendQueuedMessageAsGuidance = useCallback(
     async (
       queuedId: string,
-      mode: 'append_context' | 'interrupt_and_continue' = 'append_context',
+      mode: 'append_context' | 'interrupt_and_continue' = 'interrupt_and_continue',
     ) => {
       const queued = queuedMessagesRef.current.find((item) => item.id === queuedId);
       const text = queued?.text.trim() ?? '';
@@ -3737,7 +3745,7 @@ export function useCardbushChat(
       }
       const active = activeTurnIdsRef.current[conversationId]?.trim() ?? '';
       if (backend.queue) {
-        try { await backend.queue.guide(queuedId, active); setError(null); }
+        try { await backend.queue.guide(queuedId, active, mode); setError(null); }
         catch (caught) { setError(errorMessage(caught)); }
         return;
       }
@@ -4260,6 +4268,7 @@ export function useCardbushChat(
     loadTeamFlow,
     submitTeamFlowAction,
     sendMessage,
+    sendVoiceMessage,
     retryFailedUserMessage,
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,

@@ -3,7 +3,7 @@ const maxErrorCharacters = 1600;
 export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
 export type ComputerUseErrorCode =
   | 'user_takeover' | 'user_stopped' | 'window_changed' | 'window_unavailable'
-  | 'stale_state' | 'observation_failed' | 'control_unavailable' | 'timeout'
+  | 'stale_state' | 'display_changed' | 'observation_failed' | 'control_unavailable' | 'timeout'
   | 'application_control_blocked' | 'policy_blocked' | 'observation_required' | 'progress_unverified' | 'invalid_action' | 'computer_use_failed';
 export interface ComputerUseFailureInfo {
   code: ComputerUseErrorCode;
@@ -19,6 +19,7 @@ const recovery: Record<ComputerUseErrorCode, string> = {
   window_changed: 'Inspect the returned observation or observe the exact target. A foreground change alone is not user input. Do not replay an action whose execution is unknown.',
   window_unavailable: 'Discover windows and select the intended target again. Do not assume a same-process window is the same task.',
   stale_state: 'Observe the exact target again and use the new one-use state_id.',
+  display_changed: 'The connected displays, their layout or DPI changed. Observe connected displays and the target window again; do not reuse earlier screenshot coordinates.',
   observation_failed: 'The action may already have run. Obtain a fresh observation before further input; do not repeat the action to recover its screenshot.',
   control_unavailable: 'Release conflicting control or report the unavailable native worker. Do not send input through another route to bypass control.',
   timeout: 'Observe the target to determine what completed before deciding whether to retry.',
@@ -51,6 +52,7 @@ export function computerUseFailure(error: unknown, execution?: ComputerUseExecut
   else if (/user.*(?:actively|taken over)|yielded.*user input/i.test(message)) code = 'user_takeover';
   else if (/stopped for this turn|ended desktop control for this turn/i.test(message)) code = 'user_stopped';
   else if (/timed out/i.test(message)) code = 'timeout';
+  else if (/display layout or DPI changed|DPI changed during input|display is no longer available/i.test(message)) code = 'display_changed';
   else if (/no longer (?:available|exists)|empty bounds/i.test(message)) code = 'window_unavailable';
   else if (/foreground|bounds changed|identity changed|covered by another window|desktop changed/i.test(message)) code = 'window_changed';
   else if (/state_id|state targets|fresh target-specific observe/i.test(message)) code = 'stale_state';

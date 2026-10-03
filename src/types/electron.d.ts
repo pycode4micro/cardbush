@@ -45,6 +45,7 @@ declare global {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
     __cardbushUiPerformance?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
+      voice?: import('../../electron/voiceTypes').VoiceDesktopApi;
       agents?: import('../../electron/agentTypes').AgentDesktopApi;
       conversationExtracts?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
       platform: string;
@@ -159,6 +160,9 @@ declare global {
       openMcpRequestUrl: (id: string) => Promise<void>;
       mcpConnectionAction: (serverId: string, action: 'login' | 'logout' | 'cancel_login' | 'reconnect') => Promise<unknown>;
       openAiAccountStatus: () => Promise<import('@cardbush/bush-protocol').OpenAiAccountStatus>;
+      siwcSnapshot: () => Promise<import('@cardbush/bush-protocol').SiwcSnapshot>;
+      siwcAction: (input: import('@cardbush/bush-protocol').SiwcAction) => Promise<import('@cardbush/bush-protocol').SiwcSnapshot>;
+      siwcModels: (accountId: string) => Promise<import('@cardbush/bush-protocol').SiwcModel[]>;
       accountsSnapshot: () => Promise<import('@cardbush/bush-protocol').AccountsSnapshot>;
       accountsAction: (input: import('@cardbush/bush-protocol').AccountCommand) => Promise<import('@cardbush/bush-protocol').AccountsSnapshot>;
       onAccountsChanged: (callback: () => void) => () => void;

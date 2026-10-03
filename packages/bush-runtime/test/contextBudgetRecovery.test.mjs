@@ -297,7 +297,7 @@ test('output truncation followed by compaction never repeats a completed tool si
   assert.equal(fixture.host.events('budget', 'current').filter(event => event.kind === 'tool_running').length, 1);
 });
 
-test('guidance arriving during staged compaction is appended after the atomic checkpoint', async t => {
+for (const mode of ['append_context', 'interrupt_and_continue']) test(`guidance arriving during staged compaction is appended after the atomic checkpoint (${mode})`, async t => {
   let unblock, started;
   const ready = new Promise(resolve => { started = resolve; });
   const release = new Promise(resolve => { unblock = resolve; });
@@ -310,7 +310,7 @@ test('guidance arriving during staged compaction is appended after the atomic ch
   await ready;
   const receipt = await fixture.host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: {
     protocol: 'bush.runtime_guidance.v1', sessionId: 'budget', turnId: 'current', messageId: 'new_scope',
-    content: 'Use the NEW_SCOPE for verification.', createdAt: now } });
+    content: 'Use the NEW_SCOPE for verification.', createdAt: now, mode } });
   assert.equal(receipt.queueDepth, 1);
   unblock();
   assert.equal((await running).payload.status, 'completed');

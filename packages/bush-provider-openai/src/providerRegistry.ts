@@ -20,6 +20,7 @@ import type {
 
 import { OpenAIResponsesProvider } from "./responses.js";
 import type { ModelProviderConfig } from './providerConfig.js';
+import type { ChatGptAccess } from './siwc.js';
 import {
   InMemoryProviderCapabilityStore,
   modelProviderCapabilityScope,
@@ -36,6 +37,7 @@ export function createModelProvider(config: ModelProviderConfig): ModelProvider 
 }
 
 export interface ModelProviderRegistryOptions {
+  chatGptAccess?: ChatGptAccess;
   fallbackProvider?: ModelProvider;
   createRevision?: (config: RuntimeProviderBindingConfig) => string;
   createProvider?: (config: ModelProviderConfig) => ModelProvider;
@@ -51,6 +53,8 @@ export interface ModelProviderRegistryOptions {
  * already-running Turns.
  */
 export class ModelProviderRegistry implements ModelProvider {
+  readonly #chatGptAccess?: ChatGptAccess;
+  readonly #accountLifetimes = new Map<string, AbortController>();
   readonly #providers = new Map<string, ModelProvider>();
   readonly #bindingKeys = new Map<string, Set<string>>();
   readonly #fallbackProvider?: ModelProvider;
@@ -61,6 +65,7 @@ export class ModelProviderRegistry implements ModelProvider {
   readonly #capabilityStore: ProviderCapabilityStore;
 
   constructor(options: ModelProviderRegistryOptions = {}) {
+    this.#chatGptAccess = options.chatGptAccess;
     this.#fallbackProvider = options.fallbackProvider;
     this.#createRevision = options.createRevision ?? bindingRevision;
     this.#createProvider =
@@ -71,11 +76,16 @@ export class ModelProviderRegistry implements ModelProvider {
 
   upsert(input: unknown): RuntimeProviderBindingResult {
     const config = runtimeProviderBindingConfigSchema.parse(input);
+    const accountId = config.authentication?.kind === 'chatgpt' ? config.authentication.accountId : undefined;
+    if (accountId && !this.#chatGptAccess) throw new Error('ChatGPT account access is available on the local desktop. Configure an API key for this remote Agent.');
+    if (accountId && !this.#accountLifetimes.has(accountId)) this.#accountLifetimes.set(accountId, new AbortController());
     const revision = this.#createRevision(config);
     const key = bindingKey(config.bindingId, revision);
     this.#providers.set(
       key,
-      this.#createProvider(toProviderConfig(config, this.#capabilityStore)),
+      this.#createProvider({ ...toProviderConfig(config, this.#capabilityStore), ...(accountId ? {
+        chatGpt: { accountId, access: this.#chatGptAccess!, signal: this.#accountLifetimes.get(accountId)!.signal },
+      } : {}) }),
     );
     const revisions = this.#bindingKeys.get(config.bindingId) ?? new Set<string>();
     revisions.add(key);
@@ -104,6 +114,11 @@ export class ModelProviderRegistry implements ModelProvider {
       status: "removed",
       bindingId,
     };
+  }
+
+  invalidateChatGptAccount(accountId: string): void {
+    this.#accountLifetimes.get(accountId)?.abort();
+    this.#accountLifetimes.delete(accountId);
   }
 
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number | undefined> {
@@ -157,7 +172,7 @@ function toProviderConfig(
     defaultHeaders: config.defaultHeaders,
     timeoutMs: config.timeoutMs,
     capabilityStore,
-    capabilityScope: modelProviderCapabilityScope(config),
+    capabilityScope: modelProviderCapabilityScope(config) + (config.authentication?.kind === 'chatgpt' ? `:chatgpt:${config.authentication.accountId}` : ''),
   };
 }
 
@@ -167,6 +182,7 @@ function bindingKey(bindingId: string, revision: string): string {
 
 function bindingRevision(config: RuntimeProviderBindingConfig): string {
   const canonical = JSON.stringify({
+    ...(config.authentication?.kind === 'chatgpt' ? { authentication: config.authentication } : {}),
     adapter: config.adapter,
     ...(config.anthropicThinkingMode ? { anthropicThinkingMode: config.anthropicThinkingMode } : {}),
     apiKey: config.apiKey,
