@@ -1,5 +1,7 @@
 # Microsoft Store MSIX release
 
+To install CardBush on Windows, use the public [Microsoft Store listing](https://apps.microsoft.com/detail/9N7XNDD5WRGS). The listing shows the version currently available. This document is for maintainers building and submitting packages; installation does not require the private identity or signing files below.
+
 CardBush can be packaged for the **MSIX or PWA app** submission path. This path
 uploads a package to Microsoft; the Store hosts, signs and distributes updates.
 The existing NSIS/EXE and Linux commands remain separate.

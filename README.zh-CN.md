@@ -1,54 +1,73 @@
+<p align="center">
+  <img src="docs/assets/readme-hero.svg" width="100%" alt="CardBush — 你的工作区，你的 Agent。从桌面到云端，用对话完成工作。" />
+</p>
+
+<p align="center">
+  <a href="https://apps.microsoft.com/detail/9N7XNDD5WRGS"><img src="https://img.shields.io/badge/Windows-Microsoft_Store-7868D8?style=for-the-badge&amp;logo=windows&amp;logoColor=white" alt="从 Microsoft Store 下载 Windows 版" /></a>
+  <a href="https://github.com/pycode4micro/cardbush/releases"><img src="https://img.shields.io/badge/Linux-AppImage-303342?style=for-the-badge&amp;logo=linux&amp;logoColor=white" alt="Linux AppImage 发行版" /></a>
+  <a href="https://github.com/pycode4micro/cardbush/stargazers"><img src="https://img.shields.io/github/stars/pycode4micro/cardbush?style=for-the-badge&amp;label=Star&amp;color=303342" alt="在 GitHub 为 CardBush 点 Star" /></a>
+  <a href="https://github.com/pycode4micro"><img src="https://img.shields.io/badge/Follow-%40pycode4micro-303342?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="在 GitHub 关注 pycode4micro" /></a>
+</p>
+
+<p align="center"><a href="README.md">English</a> · <strong>简体中文</strong> · <a href="#文档导航">文档导航</a> · <a href="https://github.com/pycode4micro/cardbush/issues">问题反馈</a></p>
+
 # CardBush
 
-[English](README.md) · **简体中文**
+**让对话变成行动的个人 AI 工作区。** 用文字或语音交流，处理文件和浏览器任务，编排自己的初始桌面，在本机或独立 Agent 服务上持续工作。
 
-面向对话、文件、编程、自动化和 MCP 插件的桌面 AI 工作区。可使用内置本地 Agent、SSH 项目，或通过 HTTPS / SSH 连接独立 Agent 服务。本地与远端对话共用界面，核心本地对话与命令工具不需要额外启动服务器或安装 Python。
+选择适合自己的模型，通过 MCP 和技能接入工具，在同一界面管理本地与远端任务。核心本地对话和命令工具不需要额外启动服务器或安装 Python。
+
+如果 CardBush 对你有帮助，欢迎 **[点一个 Star](https://github.com/pycode4micro/cardbush/stargazers)**，或 **[关注 @pycode4micro](https://github.com/pycode4micro)** 了解开发进展。也欢迎提交问题、想法和代码。
 
 ## 下载
 
-源码版本：**1.0.0-beta.5**。以下安装包在标签发布流程通过双平台验证后提供；发布完成前，请从[发行版页面](https://github.com/pycode4micro/cardbush/releases)选择最新已发布版本。
-
 | 系统 | 下载 | 适用电脑 |
 | --- | --- | --- |
-| Windows 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.5/CardBush-1.0.0-beta.5-windows-x64.exe) | Intel / AMD 64 位 |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.5/CardBush-1.0.0-beta.5-linux-x86_64.AppImage) | x86-64 桌面 Linux；CI 使用 Ubuntu 22.04 验证 |
+| **Windows 11** | **[从 Microsoft Store 下载 CardBush（MSIX）](https://apps.microsoft.com/detail/9N7XNDD5WRGS)** | Intel / AMD x64；build 22000 起 |
+| Linux | [从 Releases 下载 AppImage](https://github.com/pycode4micro/cardbush/releases) | x86-64 桌面 Linux；CI 使用 Ubuntu 22.04 验证 |
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-两个平台发布时均使用同一 Beta 5 源码标签构建。应用版本信息与当前文档已统一为 Beta 5，Beta 6 为下一版计划。详见[发布说明](docs/releases/1.0.0-beta.5.md)。SHA-256 校验文件和成品启动报告随包提供；主分支构建成功不等于已经发布发行版。
-
-当前 Windows 开发版本面向 Windows 11 x64（build 22000 起），包括商店 MSIX 与 Browser Use（Chrome / Edge）；历史下载版本可能有不同要求。无需按 Intel、AMD 或显卡型号区分。本次不支持 ARM64、32 位 Windows、Windows 7/8/10 或 macOS 安装包。Windows EXE 发行流程要求发布者签名证书；普通 CI 构建生成未签名的开发安装包。
-
-商店 MSIX 使用独立的四段版本号，由 Microsoft 在认证过程中签名；不能把仅用于本机验证的测试签名副本上传商店。维护者已确认 Beta 5 MSIX 上传至 Partner Center，上传不代表认证通过。包信息与审核材料见 [MSIX 提交记录](docs/MSIX_SUBMISSION_PREPARATION_2026-09-29.md)。
+本文介绍当前源码能力。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。MSIX 使用独立的四段版本号。目前不提供 macOS、ARM64 或 32 位安装包。
 
 ### 安装与开始使用
 
-**Windows EXE：** 打开安装程序，选择安装位置，完成后启动 CardBush。EXE 版卸载保留本地对话和设置。MSIX 由 Windows 管理包目录与应用数据，正常系统卸载会清理包所属数据；用户另外保存的工作区文件、浏览器配置和手动安装的扩展不会一并删除。
+**Windows：** 打开 [Microsoft Store 商店页](https://apps.microsoft.com/detail/9N7XNDD5WRGS)，安装后从开始菜单启动 CardBush。Windows 负责管理 MSIX 包及更新。卸载前请备份需要保留的对话和设置；正常 MSIX 卸载会清理包所属数据。
 
-**Linux：** 下载后赋予执行权限并启动：
+**Linux：** 下载已发布的 x86-64 AppImage，重命名为 `CardBush.AppImage`，赋予执行权限后启动：
 
 ```sh
-chmod +x CardBush-1.0.0-beta.5-linux-x86_64.AppImage
-./CardBush-1.0.0-beta.5-linux-x86_64.AppImage
+chmod +x CardBush.AppImage
+./CardBush.AppImage
 ```
 
 AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）。没有 FUSE 时可使用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。Chromium 需要正常的沙箱环境，不建议通过关闭沙箱解决安装问题。
 
-首次启动后，在 **应用中心 → 设置 → 模型管理** 中配置模型服务、模型名称和 API 密钥。设置页顶部可选择本机或已连接的 Agent。模型费用由所选服务商计收。插件可能需要自己的依赖或凭证，请按照插件说明安装。
+首次启动后，打开 **应用中心 → 设置 → 模型管理 → 添加模型**：
 
-模型编辑弹窗支持选择 **OpenAI Responses、Chat Completions 或 Anthropic Messages**，配置自定义 HTTP 请求头，并自动为 OpenCode Go 传入稳定的对话标识。详见[模型接入说明](docs/MODEL_CONNECTIONS.md)。
+- **API Key 接入：** 配置服务商，选择 OpenAI Responses、Chat Completions 或 Anthropic Messages；支持 OpenRouter、OpenCode Go。详见[模型接入说明](docs/MODEL_CONNECTIONS.md)。
+- **ChatGPT 账号接入：** 在本机选择 **ChatGPT · SIWC → Continue with ChatGPT**，在系统浏览器完成授权，再从账号返回的列表中选模型。能否使用取决于账号与服务端权限；本机账号凭据不会同步到远端 Agent。详见 [SIWC 接入与限制](docs/SIWC_INTEGRATION.md)。
+
+设置页顶部可选择本机或已连接的 Agent。模型用量按所选服务商或已授权套餐计算，插件可能需要单独的依赖或凭证。
 
 ## 主要功能
 
-- 本地与远端共用的流式对话、项目、图片附件、预览、消息排队和运行中引导。
-- 应用中心统一提供插件、定时和设置入口，支持拖拽快捷方式、应用链接、Windows 本地应用快捷方式与 `@` 应用引用。
-- 文件搜索、版本校验编辑、批量加载 MCP 工具定义、归档结果检索和终端完成通知。
-- **申请批准／完全访问** 两档权限，以及单独管理的 Windows / Linux 命令沙盒。
-- 会话持久化、子 Agent、自动化、日历视图和可选的离线中国／美国显示日历。
-- MCP 插件、技能、内置浏览器、对话提取和上下文恢复。内置技能包括 Agent 部署和 Blender 视频预演。
-- 页面前进后退、跟随主题的悬浮提示与快捷键、个性化和独立保存的使用统计。
+| 方向 | 可以做什么 |
+| --- | --- |
+| **文字与语音** | 流式回复、图片附件、消息排队与运行中引导。输入框为空时，单击麦克风录音转文字，长按进入会朗读 Agent 回复的语音通话。 |
+| **自己的初始桌面** | 编排时钟、日历、对话引导及两种输入框；导入自定义 HTML 组件，拖拽、缩放、辅助线吸附，通过事件和已授权动作交互，并自动跟随主题。 |
+| **浏览器工作区** | 收藏常用页面，使用多页面 Beta，展开右侧内容区并通过浮动的返回／输入胶囊继续交流。 |
+| **执行任务的工具** | 搜索和编辑文件、执行命令、调度子 Agent、安装 MCP 插件与技能、安排自动化；支持申请批准与完全访问。 |
+| **本地与远端** | 内置 Agent、SSH 项目、独立 Agent 服务；个人 Linux Agent 可选独立图形桌面、Computer Use 和 Browser Use。 |
+| **连续的工作上下文** | 会话持久化、上下文恢复、归档工具结果检索和使用记录；习惯记忆与下一步预测可选，默认关闭。 |
+
+语音采用语音识别、现有文字 Agent 和语音合成串联，只有语音通话自动朗读回复。可使用 Windows 系统语音，也可**自行选择安装 SenseVoice 识别模型和 Kokoro 语音模型**，支持男声／女声选择；这些模型不会预装。详见[本地语音安装、下载与平台限制](docs/LOCAL_VOICE_MODELS.md)。
+
+通过 **应用中心 → 组件** 编辑新会话页面。系统内置组件定义始终保留；自定义 HTML 在隔离框架中运行，动作需明确授权。日历通过悬浮展示节日和自动化详情。详见[组件、布局与多页面说明](docs/HTML_COMPONENTS_V1_2026-09-30.md)。
 
 通过 **Agents → +** 接入独立服务。服务拥有自己的模型配置、凭据、项目、插件和任务队列，桌面断开后已接收的任务仍可继续。**SSH 项目**则由桌面运行 Agent，将支持的文件和命令操作交给指定 SSH 主机。详见[独立 Agent 服务](docs/AGENT_SERVICES.md)与 [SSH 工作区](docs/SSH_WORKSPACES.md)。
+
+远端部署**默认无图形桌面**。可选的 [Docker 桌面配置](deploy/agent/README.md)为个人 Agent 增加独立 Linux 桌面、可见 Chromium 浏览器、桌面预览与用户接管；普通服务化部署无需开启。
 
 应用中心只显示实际可打开的页面和用户选择的应用；普通 MCP 连接仍在插件设置中管理。`@` 引用向 Agent 提供应用上下文，不代表已经执行或授予权限。详见[应用中心说明](assets/skills/cardbush-docs/references/app-center.md)。
 
@@ -56,7 +75,7 @@ Team 工作流作为独立插件安装，不包含在桌面安装包中，详见
 
 ### 平台能力
 
-| 功能 | Windows x64 | Linux x64 |
+| 桌面应用能力 | Windows x64 | Linux x64 |
 | --- | --- | --- |
 | 对话、文件、预览、MCP、内置浏览器 | 支持 | 支持 |
 | 终端命令 | PowerShell / cmd | POSIX Shell |
@@ -67,9 +86,22 @@ Team 工作流作为独立插件安装，不包含在桌面安装包中，详见
 | 进程 CPU / 内存原生限制 | Windows Job Objects | 尚未实现 |
 | 托管进程准入与所属进程清理 | 支持 | 支持 |
 
+Windows Browser Use 连接器与远端 Linux 桌面使用不同实现。Docker 桌面配置提供的是服务器上的 Linux Computer Use / Browser Use，不会使 Windows 专属插件变成跨平台插件。本地语音的平台范围见[语音指南](docs/LOCAL_VOICE_MODELS.md)。
+
 Linux 的 CPU／内存限制尚未与 Windows 完全一致。外部插件是独立程序，各自的平台要求仍需满足。远端服务提供自身主机的能力，不继承连接它的桌面能力。
 
 沙盒设置先检测环境，需要安装依赖时由用户点击。已安装且可用的沙盒默认启用，用户或管理员显式关闭的设置会保留。通常的 `auto` 策略下，**申请批准**隔离命令并在需要时申请额外权限，**完全访问**使用普通进程；管理员设定的 `required` 策略在两档模式下均有效。命令沙盒不覆盖全部 MCP、插件和浏览器行为。详见[权限说明](docs/PERMISSIONS.md)及[沙盒范围与限制](docs/EXECUTION_SANDBOX.md)。
+
+## 文档导航
+
+| 想了解什么 | 文档 |
+| --- | --- |
+| 接入模型 | [服务商、协议与 OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
+| 配置语音 | [本地识别与朗读模型](docs/LOCAL_VOICE_MODELS.md) |
+| 自定义工作区 | [HTML 组件、布局与多页面](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [应用中心](assets/skills/cardbush-docs/references/app-center.md) |
+| 部署远端 Agent | [服务部署](docs/AGENT_SERVICES.md) · [Docker 与可选 Linux 桌面](deploy/agent/README.md) · [SSH 项目](docs/SSH_WORKSPACES.md) |
+| 了解权限 | [权限说明](docs/PERMISSIONS.md) · [命令沙盒](docs/EXECUTION_SANDBOX.md) · [Computer Use / Browser Use](docs/CORE_BROWSER_COMPUTER_USE.md) |
+| 参与开发与发布 | [架构](docs/ARCHITECTURE.md) · [跨平台发布](docs/CROSS_PLATFORM_RELEASE.md) · [MSIX 维护指南](docs/MSIX_STORE_RELEASE.md) |
 
 ## 开发与打包
 
@@ -85,6 +117,7 @@ npm run dev
 npm run build
 npm run typecheck
 npm run test:release
+npm run package:msix    # 在 Windows 生成商店包，需先按 MSIX 维护指南配置
 npm run package:win     # 在 Windows 生成签名 NSIS 安装程序，需要发布者证书
 npm run package:linux   # 在 Linux 生成 AppImage
 npm run smoke:packaged
@@ -92,7 +125,7 @@ npm run smoke:packaged
 
 无桌面的 Linux 可使用 `xvfb-run -a npm run test:release`。产物位于 `release/`。运行 `test:release` 前先构建；它覆盖包测试、对抗场景、平台约束和 Electron 界面测试，避免为每个测试重复构建。更广的功能专项检查可运行 `npm run test:all`。模型协议测试使用本地模拟 HTTP 服务，不需要真实 API 密钥。
 
-无图形界面的 Agent 服务使用 `npm ci --ignore-scripts`、`npm run build:agent` 构建，然后运行 `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`。服务由 Node.js 运行，不启动 Electron。使用独立数据目录，并按[部署指南](docs/AGENT_SERVICES.md)配置鉴权及 SSH / HTTPS 接入。更新桌面安装包不会部署或更新这个服务。
+无图形界面的 Agent 服务使用 `npm ci --ignore-scripts`、`npm run build:agent` 构建，然后运行 `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`。服务由 Node.js 运行，不启动 Electron。使用独立数据目录，并按[部署指南](docs/AGENT_SERVICES.md)配置鉴权及 SSH / HTTPS 接入；容器和可选图形桌面见 [Docker 指南](deploy/agent/README.md)。更新桌面安装包不会部署或更新这个服务。
 
 Electron 默认从官方源下载，网络需要时可设置 `ELECTRON_MIRROR`。下载不完整时运行 `npm run fix:electron` 修复。
 
@@ -126,4 +159,4 @@ Electron 默认从官方源下载，网络需要时可设置 `ELECTRON_MIRROR`�
 
 ## 开源协议
 
-CardBush 原创代码使用 [Apache License 2.0](LICENSE)，另见 [NOTICE](NOTICE)。随包依赖、技能及外部插件保留各自的许可证。
+CardBush 原创代码使用 [Apache License 2.0](LICENSE)，另见 [NOTICE](NOTICE) 与[内置技能许可证](docs/BUNDLED_SKILL_LICENSES.md)。随包依赖、技能及外部插件保留各自的许可证。
