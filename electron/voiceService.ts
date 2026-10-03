@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { defaultVoiceSettings, type VoiceSettings, type VoiceSettingsInput, type VoiceAudioChunk } from './voiceTypes';
+import { CUSTOM_SPEECH_TIMEOUT_MS, defaultVoiceSettings, type VoiceSettings, type VoiceSettingsInput, type VoiceAudioChunk } from './voiceTypes';
 import type { LocalVoiceBackend } from './windowsVoice';
 import type { SpeakerLock } from './speakerLock';
 import type { SpeakerLockMode, SpeakerSampleInput } from './voiceTypes';
@@ -108,7 +108,10 @@ export class VoiceService {
     if (engine === 'kokoro' && !this.deps.speech) throw Error('请先安装本地自然音色。');
     if ((engine === 'custom' || engine === 'qwen') && !this.deps.customSpeech) throw Error('自定义本地语音组件不可用。');
     const controller = new AbortController(); this.jobs.set(jobId, controller);
-    const timer = setTimeout(() => controller.abort(), 90_000);
+    // Allow cold local-model startup, then let its owned process finish cleanup
+    // before the outer request deadline. ASR and ordinary engines keep their limit.
+    const timeoutMs = engine === 'qwen' || engine === 'custom' ? CUSTOM_SPEECH_TIMEOUT_MS + 10_000 : 90_000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try { return await run(saved.settings, engine === 'cloud' ? this.deps.decrypt(saved.secret) : '', controller.signal); }
     catch (error) {
       if (controller.signal.aborted && controller.signal.reason === 'voice-cancelled') throw Object.assign(Error('语音请求已取消。'), { name: 'VoiceCancelledError' });

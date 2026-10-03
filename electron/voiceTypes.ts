@@ -1,3 +1,6 @@
+// Qwen's cold Python/model startup can itself approach the ordinary voice timeout.
+export const CUSTOM_SPEECH_TIMEOUT_MS = 180_000;
+
 /** Audio transport is local to the desktop, independent of the Agent's provider. */
 export interface VoiceSettings {
   recognitionEngine: 'system' | 'sensevoice' | 'cloud';

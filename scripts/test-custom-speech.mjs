@@ -116,3 +116,43 @@ test('primary Qwen persists at natural speed, keeps ASR and credentials, and rou
   assert.throws(() => service.save(service.settings()), /模型目录/);
   service.save({ ...service.settings(), engine: 'system' }); assert.equal(service.settings().engine, 'system');
 });
+
+for (const engine of ['qwen', 'custom']) {
+  test(`${engine} can finish cold synthesis beyond the ordinary 90-second deadline`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let signal;
+    const chunks = [];
+    const service = new VoiceService(path.join(root, `cold-${engine}.json`), { fetch: noNetwork, encrypt: noNetwork, decrypt: noNetwork,
+      customSpeech: { validate: () => {}, speak: (input, _settings, active, emit) => new Promise((resolve, reject) => {
+        signal = active;
+        const timer = setTimeout(() => { emit({ id: input.id, pcm: 'AAA=', sampleRate: 24000 }); resolve(); }, 95_000);
+        active.addEventListener('abort', () => { clearTimeout(timer); reject(Error('aborted')); }, { once: true });
+      }) } });
+    service.save({ ...config(root), engine });
+    const pending = service.speak(1, { id: 'cold', text: '你好' }, chunk => chunks.push(chunk));
+    t.mock.timers.tick(91_000);
+    assert.equal(signal.aborted, false, 'cold startup is not mistaken for cancellation');
+    t.mock.timers.tick(4_000);
+    await pending; assert.equal(chunks.length, 1);
+  });
+}
+
+test('long local synthesis remains bounded, cancellable and separate from ASR deadlines', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const signals = [];
+  const hold = active => new Promise((_resolve, reject) => {
+    signals.push(active); active.addEventListener('abort', () => reject(Error('aborted')), { once: true });
+  });
+  const service = new VoiceService(path.join(root, 'cold-bounds.json'), { fetch: noNetwork, encrypt: noNetwork, decrypt: noNetwork,
+    customSpeech: { validate: () => {}, speak: (_input, _config, active) => hold(active) },
+    local: { transcribe: (_input, _config, active) => hold(active) } });
+  service.save({ ...config(root), engine: 'qwen' });
+  const expired = assert.rejects(service.speak(1, { id: 'timeout', text: '你好' }, noNetwork), /aborted/);
+  t.mock.timers.tick(4 * 60_000); await expired; assert.equal(signals[0].aborted, true);
+  const cancelled = assert.rejects(service.speak(1, { id: 'cancel', text: '你好' }, noNetwork), { name: 'VoiceCancelledError' });
+  service.cancel(1, 'cancel'); await cancelled;
+  const transcription = assert.rejects(service.transcribe(1, { id: 'asr', audio: new ArrayBuffer(44), mimeType: 'audio/wav' }), /aborted/);
+  await Promise.resolve(); // Transcription awaits the optional speaker check before calling ASR.
+  t.mock.timers.tick(91_000); await transcription;
+  assert.equal(signals[2].aborted, true, 'Qwen choice does not extend recognition timeouts');
+});

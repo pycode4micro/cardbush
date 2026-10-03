@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import type { KokoroVoice } from './kokoroVoice';
 import { inspectCustomSpeechModel, validateCustomSpeech } from './customSpeechModel';
-import type { VoiceSettings, VoiceAudioChunk } from './voiceTypes';
+import { CUSTOM_SPEECH_TIMEOUT_MS, type VoiceSettings, type VoiceAudioChunk } from './voiceTypes';
 
 const errors: Record<string, string> = {
   dependencies: '所选 Python 环境缺少 Qwen3-TTS 依赖，请先按官方说明安装 qwen-tts 和 PyTorch。',
@@ -64,7 +64,7 @@ export class CustomSpeech {
         }) : Promise.resolve().then(() => { child.kill(); });
       };
       const abort = () => stop('语音合成已取消。');
-      const timer = setTimeout(() => stop('本地模型合成超时，请缩短文本或检查计算设备。'), 85_000);
+      const timer = setTimeout(() => stop('本地模型合成超时，请缩短文本或检查计算设备。'), CUSTOM_SPEECH_TIMEOUT_MS);
       signal.addEventListener('abort', abort, { once: true });
       child.stdin.on('error', () => {});
       child.stdout.setEncoding('utf8');
