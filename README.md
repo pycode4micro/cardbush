@@ -28,7 +28,7 @@ If CardBush is useful to you, **[give it a star](https://github.com/pycode4micro
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-This README describes the current source. The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. MSIX has its own four-part version number. There are currently no macOS, ARM64 or 32-bit packages.
+This README describes source version **1.0.0-beta.5**. The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. MSIX has its own four-part version number. There are currently no macOS, ARM64 or 32-bit packages.
 
 ### Install and start
 
@@ -61,7 +61,7 @@ The settings environment selector chooses the local host or a connected Agent. M
 | **Local or remote** | Use the built-in Agent, an SSH project or an independent Agent service. Optionally give a personal Linux Agent its own graphical desktop, Computer Use and Browser Use. |
 | **Continuity** | Persistent conversations, context recovery, searchable archived tool results and usage records. Habit memory and next-step predictions are optional and off by default. |
 
-Voice uses speech recognition, the existing text Agent and speech synthesis. Only voice conversations read replies aloud automatically. Windows system speech is available; **SenseVoice recognition and Kokoro voices are optional local downloads**, with male/female voice choices. They are not preinstalled. See [voice setup, downloads and platform limits](docs/LOCAL_VOICE_MODELS.md).
+Voice uses speech recognition, the existing text Agent and speech synthesis. Only voice conversations read replies aloud automatically. **SenseVoice recognition and Qwen3-TTS CustomVoice speech are the recommended local options**, with separate female/male voices at a natural speaking rate. Models are optional, not preinstalled; Qwen uses your selected local model folder and Python environment. Windows speech and legacy Kokoro remain available. Windows x64 also offers an optional local voice lock: enroll your voice to reduce other speakers triggering messages or interrupting playback. See [voice setup, downloads and platform limits](docs/LOCAL_VOICE_MODELS.md).
 
 Open **App Center → Components** to edit the new-conversation layout. Built-in component definitions stay available; custom HTML uses an isolated frame and explicitly granted actions. The calendar shows holidays and automation details on hover. See [components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md).
 

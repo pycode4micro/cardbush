@@ -1,0 +1,61 @@
+.speaker-lock { --speaker-accent: var(--accent, #9abaff); }
+:where(.speaker-lock) button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; color: var(--text); border: 1px solid var(--border); border-radius: 20px; background: transparent; padding: 8px 12px; cursor: pointer; }
+:where(.speaker-lock) button:disabled { opacity: .45; cursor: default; }
+:where(.speaker-lock) button:focus-visible, .speaker-lock input:focus-visible, .speaker-lock textarea:focus-visible, .speaker-lock summary:focus-visible { outline: 2px solid var(--speaker-accent); outline-offset: 3px; }
+.speaker-lock .speaker-primary { background: var(--text); color: var(--surface); border-color: transparent; }
+.speaker-lock .speaker-danger { color: var(--danger, #d35c5c); }
+.speaker-lock-summary { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 16px; border: 1px solid var(--border); border-radius: 16px; margin-bottom: 24px; }
+.speaker-lock-summary > div { flex: 1; min-width: 160px; }
+.speaker-lock-summary strong, .speaker-lock-summary small { display: block; overflow-wrap: anywhere; }
+.speaker-lock-summary small { margin-top: 5px; color: var(--text-soft); font-size: 12px; line-height: 1.6; }
+.speaker-lock-summary.is-enabled > svg { color: var(--speaker-accent); }
+.speaker-section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 16px 0 12px; }
+.speaker-section-heading > div:first-child { flex: 1; min-width: 140px; }
+.speaker-section-heading strong { overflow-wrap: anywhere; }
+.speaker-section-heading small { display: block; color: var(--text-soft); margin-top: 5px; font-size: 12px; line-height: 1.6; }
+.speaker-people { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 8px; margin: 14px 0 20px; }
+.speaker-lock .speaker-person { min-width: 0; padding: 14px; border-radius: 14px; justify-content: start; text-align: left; }
+.speaker-person > span:first-of-type { flex: 1; min-width: 0; }
+.speaker-person strong { display: block; overflow-wrap: anywhere; }
+.speaker-person small { display: block; color: var(--text-soft); font-size: 11px; margin-top: 5px; }
+.speaker-person.is-viewed { border-color: var(--speaker-accent); background: color-mix(in srgb, var(--speaker-accent) 7%, transparent); }
+.speaker-person-tag { color: var(--text-soft); white-space: nowrap; font-size: 10px; }
+.speaker-person-actions { display: flex; gap: 6px; }
+.speaker-profile-detail { padding-top: 2px; border-top: 1px solid var(--border); }
+.speaker-empty { text-align: center; padding: 28px 14px; color: var(--text-soft); border: 1px dashed var(--border); border-radius: 16px; margin: 16px 0; }
+.speaker-empty > svg { display: block; margin: 0 auto 12px; }
+.speaker-empty p { margin: 8px 0 0; font-size: 12px; }
+.speaker-name-form { padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.speaker-name-form label, .speaker-prompt { display: grid; gap: 8px; font-size: 12px; color: var(--text-soft); }
+.speaker-name-form input, .speaker-prompt textarea { box-sizing: border-box; width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.speaker-prompt textarea { resize: vertical; line-height: 1.8; min-height: 90px; font-size: 14px; }
+.speaker-lock .speaker-enrollment { padding: 0; margin: 0; border: none; background: none; }
+.speaker-steps { display: flex; gap: 6px; color: var(--speaker-accent); }
+.speaker-samples { display: grid; gap: 8px; margin: 14px 0; }
+.speaker-sample { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 13px; }
+.speaker-sample > svg { flex-shrink: 0; color: var(--speaker-accent); }
+.speaker-sample > div { flex: 1; min-width: 0; }
+.speaker-sample strong { font-size: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.speaker-sample small { color: var(--text-soft); font-weight: normal; }
+.speaker-enrollment .speaker-sample p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 12px; margin: 6px 0 0; }
+.speaker-lock .speaker-sample button { flex-shrink: 0; padding: 6px; border: none; min-height: 30px; }
+.speaker-lock .speaker-add-clip { width: 100%; border-style: dashed; padding: 12px; border-radius: 12px; }
+.speaker-recorder { margin-top: 16px; padding: 18px; border: 1px solid var(--border); border-radius: 18px; background: color-mix(in srgb, var(--speaker-accent) 4%, var(--surface)); }
+.speaker-recorder.is-recording { border-color: var(--speaker-accent); }
+.speaker-recorder .speaker-section-heading { margin-top: 0; }
+.speaker-timer { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-soft); }
+.speaker-recording-status { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 18px 0 8px; }
+.speaker-recording-status > svg { flex-shrink: 0; color: var(--speaker-accent); }
+.speaker-meter { display: flex; align-items: center; justify-content: center; gap: 5px; height: 42px; margin-bottom: 14px; }
+.speaker-meter i { width: 4px; height: 32px; border-radius: 4px; background: var(--speaker-accent); transition: transform .08s linear; }
+.speaker-recorder audio { display: block; width: 100%; margin-top: 14px; height: 36px; }
+.speaker-success { display: flex; gap: 8px; color: var(--text-soft); font-size: 12px; line-height: 1.7; }
+.speaker-success svg { flex-shrink: 0; margin-top: 2px; color: var(--speaker-accent); }
+.speaker-preferences { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 16px 0; margin-top: 20px; border-top: 1px solid var(--border); font-size: 12px; }
+.speaker-preference-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.speaker-preferences > span { color: var(--text-soft); }
+.speaker-model-details { border-top: 1px solid var(--border); }
+.speaker-model-details > summary { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; cursor: pointer; font-size: 12px; color: var(--text-soft); list-style: none; }
+.speaker-model-details[open] > summary > svg { transform: rotate(180deg); }
+.speaker-spinner { animation: voice-working 1.4s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .speaker-spinner { animation: none; } .speaker-meter i { transition: none; } }

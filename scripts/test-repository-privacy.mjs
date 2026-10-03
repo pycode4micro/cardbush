@@ -11,10 +11,11 @@ const text = path => readFileSync(path, 'utf8');
 const tlsFixture = 'scripts/fixtures/plugin-proxy-tls/key.pem';
 
 test('publishable files exclude local credentials and deployment state', () => {
-  const privatePath = /(?:^|\/)(?:\.env(?:\.|$)|id_rsa$|id_ed25519$)|\.local\.json$|\.(?:pfx|p12|key)$|^(?:private-release|deploy\/agent\/data|release-msix)\//i;
+  const privatePath = /(?:^|\/)(?:\.env(?:\.|$)|id_rsa$|id_ed25519$|voice-speaker-profile\.json(?:\..*)?$)|\.local\.json$|\.(?:pfx|p12|key)$|^(?:private-release|deploy\/agent\/data|release-msix)\//i;
   assert.deepEqual(paths.filter(path => privatePath.test(path) && !/\.env(?:\.[\w-]+)?\.example$/.test(path)), []);
   const inputs = ['.env', '.env.production', 'packaging/msix/identity.local.json', 'packaging/windows/signing.local.json',
-    'deploy/agent/data/accounts.json', 'private-release/report.json', 'release-msix/private.msix', 'private.pfx'];
+    'deploy/agent/data/accounts.json', 'private-release/report.json', 'release-msix/private.msix', 'private.pfx',
+    'voice-speaker-profile.json', 'voice-speaker-profile.json.fixture.tmp'];
   const ignored = execFileSync('git', ['check-ignore', '--no-index', '--stdin'], { input: inputs.join('\n'), encoding: 'utf8' }).trim().split('\n');
   assert.deepEqual(ignored, inputs);
 });

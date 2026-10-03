@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { defaultVoiceSettings, type VoiceSettings, type VoiceCapabilities } from '../../../electron/voiceTypes';
+import { defaultVoiceSettings, defaultQwenSpeechSettings, type VoiceSettings, type VoiceCapabilities, type CustomSpeechModelInfo } from '../../../electron/voiceTypes';
 import { SettingsCard, SettingsInput, SettingsSelect } from '../settings/SettingsControls';
 import { VoicePlayback } from './voiceAudio';
+import { kokoroPresets } from './kokoroPresets';
 import { VoiceModelPanel } from './VoiceModelPanel';
+import { SpeakerLockPanel } from './SpeakerLockPanel';
+import { CustomSpeechPanel } from './CustomSpeechPanel';
 import './voice.css';
 
 export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
   const zh = language === 'zh', api = window.cardbushDesktop?.voice;
   const [settings, setSettings] = useState<VoiceSettings>(defaultVoiceSettings);
   const [capabilities, setCapabilities] = useState<VoiceCapabilities | null>(null);
+  const [customKind, setCustomKind] = useState<CustomSpeechModelInfo['kind'] | null>(null);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [key, setKey] = useState(''), [removeKey, setRemoveKey] = useState(false);
   const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [preview, setPreview] = useState(false), [error, setError] = useState(''), [saved, setSaved] = useState(false);
@@ -28,7 +32,11 @@ export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
     devices(); navigator.mediaDevices?.addEventListener('devicechange', devices);
     return () => { alive.current = false; player.current?.close(); navigator.mediaDevices?.removeEventListener('devicechange', devices); };
   }, [api, zh]);
-  const update = (field: keyof VoiceSettings, value: string | number) => { setSettings(current => ({ ...current, [field]: value })); setSaved(false); };
+  const update = (field: keyof VoiceSettings, value: string | number) => {
+    setSettings(current => ({ ...current, [field]: value,
+      ...(field === 'engine' && value === 'qwen' ? { speed: 1, customSpeech: current.customSpeech ?? { ...defaultQwenSpeechSettings } } : {}) }));
+    setSaved(false);
+  };
   const system = settings.engine === 'system';
   const voices = capabilities?.voices.filter(voice => voice.language === settings.language) ?? [];
   const languages = [...new Set([settings.language, ...(capabilities?.voices.map(voice => voice.language) ?? []), ...(capabilities?.recognizers.map(item => item.language) ?? [])])];
@@ -48,7 +56,7 @@ export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
     if (preview) { const previous = player.current; player.current = undefined; previous?.close(); setPreview(false); return; }
     if (!await save()) return;
     setPreview(true); const playback = new VoicePlayback(api); player.current = playback;
-    try { await playback.speak((system ? settings.language.startsWith('zh') : zh) ? '你好，我是你的语音助手。我们可以从当前的话题继续聊。' : 'Hello, I am your voice assistant. We can continue our conversation here.', settings.voice); }
+    try { await playback.speak((system ? settings.language.startsWith('zh') : zh) ? '我在听。别着急，我们一起把这件事理清楚。你现在感觉怎么样？能迈出这一步，已经很不容易了。' : 'I am listening. Take your time. We can work through this together. How are you feeling now? Taking that first step matters.', settings.voice); }
     catch (error) { if (alive.current && player.current === playback) setError(error instanceof Error ? error.message : String(error)); }
     finally { playback.close(); if (player.current === playback) { player.current = undefined; if (alive.current) setPreview(false); } }
   };
@@ -58,6 +66,10 @@ export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
         <option value="">{zh ? '系统默认麦克风' : 'System default microphone'}</option>
         {settings.microphoneId && !microphones.some(item => item.deviceId === settings.microphoneId) && <option value={settings.microphoneId}>{zh ? '原麦克风不可用，请重新选择' : 'Previous microphone unavailable; select another'}</option>}
         {microphones.map((item, index) => <option key={item.deviceId} value={item.deviceId}>{item.label || `${zh ? '麦克风' : 'Microphone'} ${index + 1}`}</option>)}
+      </SettingsSelect>
+      <SettingsSelect name="voice-turn-wait" title={zh ? '通话停顿等待' : 'Pause before sending'} value={settings.turnEndPause ?? 'normal'} disabled={!loaded || busy || preview} onChange={value => update('turnEndPause', value)}
+        subtitle={zh ? '继续说话会合并为同一条消息；Agent 执行中至少等待 5 秒。点「说完了」可立即结束等待。' : 'Continued speech joins the same message. Waits at least 5 seconds while the Agent works. Tap Finished speaking to send sooner.'}>
+        <option value="normal">{zh ? '正常 · 3 秒' : 'Normal · 3 seconds'}</option><option value="patient">{zh ? '耐心 · 6 秒' : 'Patient · 6 seconds'}</option>
       </SettingsSelect>
       <SettingsSelect name="voice-recognition" title={zh ? '识别方式' : 'Recognizer'} value={settings.recognitionEngine} disabled={!loaded || busy || preview} onChange={value => update('recognitionEngine', value)}>
         <option value="system">{zh ? 'Windows 系统听写' : 'Windows dictation'}</option>
@@ -84,6 +96,7 @@ export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
         <div className="voice-actions"><button type="button" disabled={!capabilities || busy} onClick={() => void detect()}>{zh ? '重新检测' : 'Detect again'}</button></div>
       </>}
     </SettingsCard>
+    <SpeakerLockPanel language={language} microphoneId={settings.microphoneId} disabled={!loaded || busy || preview} />
     {(settings.recognitionEngine === 'cloud' || settings.engine === 'cloud') && <SettingsCard title={zh ? '云端语音接口' : 'Cloud voice API'}>
       <p className="voice-help">{zh ? '仅选择云端处理的录音或朗读文本会发送到此服务。语音 API 独立于对话模型及 ChatGPT 登录。' : 'Only recordings or speech text selected for cloud processing are sent here. Voice credentials are separate from your conversation model and ChatGPT sign-in.'}</p>
       <SettingsInput label={zh ? 'API 根地址' : 'API base URL'} value={settings.baseUrl} disabled={!loaded || busy} onChange={value => update('baseUrl', value)} />
@@ -95,17 +108,32 @@ export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
     </SettingsCard>}
     <SettingsCard title={zh ? 'Agent 的声音' : 'Agent voice'} subtitle={zh ? '仅在语音通话中自动朗读。声音由 AI 生成。' : 'Automatic speech only during a voice call. Voices are AI-generated.'}>
       <SettingsSelect name="voice-engine" title={zh ? '朗读方式' : 'Speech engine'} value={settings.engine} disabled={!loaded || busy || preview} onChange={value => update('engine', value)}>
+        <option value="qwen">{zh ? 'Qwen3-TTS（推荐，需本地模型）' : 'Qwen3-TTS (recommended, local model required)'}</option>
         <option value="system">{zh ? 'Windows 本地语音' : 'Windows local speech'}</option>
-        <option value="kokoro">{zh ? 'Kokoro 本地自然音色（需安装，CPU 合成较慢）' : 'Kokoro neural voices (install required, slower on CPU)'}</option>
+        <option value="custom">{zh ? '自定义本地模型' : 'Custom local model'}</option>
         <option value="cloud">{zh ? '云端语音接口（可选）' : 'Cloud voice API (optional)'}</option>
+        <option value="kokoro">{zh ? 'Kokoro（旧版兼容）' : 'Kokoro (legacy)'}</option>
       </SettingsSelect>
-      <VoiceModelPanel kind="speech" language={language} disabled={!loaded || busy || preview} selected={settings.engine === 'kokoro'} select={() => update('engine', 'kokoro')} />
+      {(settings.engine === 'qwen' || settings.engine === 'custom') && <CustomSpeechPanel language={language} value={settings.customSpeech} qwenOnly={settings.engine === 'qwen'} disabled={!loaded || busy || preview} onModel={setCustomKind}
+        onChange={customSpeech => { setSettings(current => ({ ...current, customSpeech })); setSaved(false); }} />}
+      {(settings.engine === 'kokoro' || settings.engine === 'custom' && customKind === 'kokoro') && <VoiceModelPanel kind="speech" language={language} disabled={!loaded || busy || preview} selected select={() => update('engine', 'kokoro')} />}
       <SettingsSelect name="voice-preset" title={zh ? '音色' : 'Voice'} value={settings.voice} onChange={value => update('voice', value)}>
         <option value="female">{zh ? '女声' : 'Female'}</option><option value="male">{zh ? '男声' : 'Male'}</option>
       </SettingsSelect>
-      <SettingsSelect name="voice-speed" title={zh ? '语速' : 'Speed'} value={String(settings.speed)} onChange={value => update('speed', Number(value))}>
-        {[.75, 1, 1.25, 1.5].map(value => <option key={value} value={String(value)}>{value}×</option>)}
-      </SettingsSelect>
+      {settings.engine === 'qwen' || settings.engine === 'custom' && customKind !== 'kokoro' ? <p className="voice-help">{zh ? 'Qwen 使用模型自然语速（1×），不进行播放加速。' : 'Qwen uses its natural speaking rate (1×), without playback acceleration.'}</p> : <SettingsSelect name="voice-speed" title={zh ? '语速' : 'Speed'} value={String(settings.speed)} onChange={value => update('speed', Number(value))}>
+        {[...new Set([.75, .9, .95, 1, 1.1, 1.25, 1.5, settings.speed])].sort((a,b) => a-b).map(value => <option key={value} value={String(value)}>{value}×{value === 1 ? zh ? ' · 正常' : ' · Normal' : ''}</option>)}
+      </SettingsSelect>}
+      {settings.engine === 'kokoro' && <>
+        <SettingsSelect name="kokoro-style" title={zh ? '说话节奏' : 'Delivery'} value={settings.kokoroStyle ?? 'warm'} disabled={!loaded || busy || preview} onChange={value => update('kokoroStyle', value)}
+          subtitle={zh ? '连贯自然会衔接已经生成的短句，保留正常语速和音色起伏；男女声均适用。' : 'Connected delivery joins available short phrases, preserving the selected speed and the voice’s natural inflection.'}>
+          <option value="warm">{zh ? '连贯自然（推荐）' : 'Connected and natural (recommended)'}</option><option value="neutral">{zh ? '逐句朗读' : 'Separate sentences'}</option>
+        </SettingsSelect>
+        <SettingsSelect name="kokoro-voice" title={zh ? '本地音色' : 'Local voice'} value={String(settings.voice === 'female' ? settings.kokoroFemaleVoice ?? 3 : settings.kokoroMaleVoice ?? 58)} disabled={!loaded || busy || preview}
+          subtitle={zh ? '同一模型内的音色无需另行下载，可保存并试听，选择更符合你偏好的声音。' : 'These voices are already in the installed model. Save and preview to choose your preferred timbre.'}
+          onChange={value => update(settings.voice === 'female' ? 'kokoroFemaleVoice' : 'kokoroMaleVoice', Number(value))}>
+          {kokoroPresets[settings.voice].map((preset,index) => <option key={preset.value} value={String(preset.value)}>{zh ? settings.voice === 'female' ? '女声' : '男声' : settings.voice === 'female' ? 'Female' : 'Male'} {index + 1} · {preset.name}</option>)}
+        </SettingsSelect>
+      </>}
       {system ? <>
         {(['female', 'male'] as const).map(gender => {
           const field = gender === 'female' ? 'systemFemaleVoice' : 'systemMaleVoice';

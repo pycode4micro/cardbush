@@ -4,6 +4,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import type { VoiceModelStore } from './voiceModelStore';
 import type { VoiceSettings, VoiceAudioChunk } from './voiceTypes';
+import { kokoroModelFile } from './customSpeechModel';
 
 /** Decode only the bounded mono PCM format emitted by the pinned native engine. */
 export function kokoroPcm(wav: Buffer) {
@@ -29,24 +30,34 @@ export class KokoroVoice {
     const run = this.serial.catch(() => {}).then(() => this.synthesize(input, config, signal, emit));
     this.serial = run; return run;
   }
-  private async synthesize(input: { id: string; text: string; voice?: 'female' | 'male' }, config: VoiceSettings, signal: AbortSignal, emit: (chunk: VoiceAudioChunk) => void) {
+  speakDirectory(input: { id: string; text: string; voice?: 'female' | 'male' }, config: VoiceSettings, signal: AbortSignal,
+    emit: (chunk: VoiceAudioChunk) => void, model: { directory: string; sid: number }) {
+    const run = this.serial.catch(() => {}).then(() => this.synthesize(input, config, signal, emit, model));
+    this.serial = run; return run;
+  }
+  private async synthesize(input: { id: string; text: string; voice?: 'female' | 'male' }, config: VoiceSettings, signal: AbortSignal, emit: (chunk: VoiceAudioChunk) => void,
+    custom?: { directory: string; sid: number }) {
     signal.throwIfAborted();
     const lease = await this.store.acquire(); let temporary: string | undefined;
     try {
       signal.throwIfAborted();
       await fs.promises.mkdir(this.temporaryRoot, { recursive: true, mode: 0o700 });
       temporary = await fs.promises.mkdtemp(path.join(this.temporaryRoot, 'speech-'));
-      const output = path.join(temporary, 'speech.wav'), file = (name: string) => path.join(lease.directory, name);
-      const sid = (input.voice ?? config.voice) === 'male' ? 58 : 3;
-      const args = [`--kokoro-model=${file('model.int8.onnx')}`, `--kokoro-voices=${file('voices.bin')}`,
+      const output = path.join(temporary, 'speech.wav'), file = (name: string) => path.join(custom?.directory ?? lease.directory, name);
+      const sid = custom?.sid ?? ((input.voice ?? config.voice) === 'male' ? config.kokoroMaleVoice ?? 58 : config.kokoroFemaleVoice ?? 3);
+      // Delivery controls phrase grouping in the renderer, never the chosen rate.
+      // In particular, 1x must stay the model's natural speed for every voice.
+      const speed = config.speed;
+      const args = [`--kokoro-model=${file(custom ? kokoroModelFile(custom.directory) : 'model.int8.onnx')}`, `--kokoro-voices=${file('voices.bin')}`,
         `--kokoro-tokens=${file('tokens.txt')}`, `--kokoro-data-dir=${file('espeak-ng-data')}`,
         `--kokoro-lexicon=${file('lexicon-us-en.txt')},${file('lexicon-zh.txt')}`,
         `--tts-rule-fsts=${file('date-zh.fst')},${file('number-zh.fst')},${file('phone-zh.fst')}`,
-        `--num-threads=${Math.min(2, os.availableParallelism())}`, '--provider=cpu', `--sid=${sid}`, `--speed=${config.speed}`,
+        `--num-threads=${Math.min(2, os.availableParallelism())}`, '--provider=cpu', `--sid=${sid}`, `--speed=${speed}`,
         `--output-filename=${output}`, ' ' + input.text.replace(/\x00/g, '')];
       await new Promise<void>((resolve, reject) => {
         // No shell and no native transcript logging. A leading space prevents text from being parsed as options.
-        const child = spawn(file('sherpa-onnx-offline-tts.exe'), args, { windowsHide: true, shell: false,
+        // Execute only our pinned runtime, never binaries in an imported model folder.
+        const child = spawn(path.join(lease.directory, 'sherpa-onnx-offline-tts.exe'), args, { windowsHide: true, shell: false,
           cwd: lease.directory, signal, timeout: 85_000, stdio: 'ignore' });
         let failure: Error | undefined;
         child.once('error', () => { failure = Error(signal.aborted ? '语音合成已取消。' : '本地自然音色无法启动，请重新安装。'); });

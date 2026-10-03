@@ -25,3 +25,10 @@ if (!fs.existsSync(output) || fs.statSync(output).mtimeMs < Math.max(...[source,
   if (result.status !== 0) throw Error(result.stderr || result.stdout || 'Voice host build failed.');
 }
 console.log('Windows local voice host ready.');
+const speakerSource = path.join(root, 'native/voice/CardBushSpeakerHost.cs');
+const speakerOutput = path.join(directory, 'CardBushSpeakerHost.exe');
+if (!fs.existsSync(speakerOutput) || fs.statSync(speakerOutput).mtimeMs < Math.max(fs.statSync(speakerSource).mtimeMs, fs.statSync(import.meta.filename).mtimeMs)) {
+  const result = spawnSync(compiler, ['/nologo', '/optimize+', '/platform:x64', '/target:exe', `/out:${speakerOutput}`, '/reference:System.Web.Extensions.dll', speakerSource], { encoding: 'utf8', windowsHide: true });
+  if (result.status !== 0) throw Error(result.stderr || result.stdout || 'Speaker host build failed.');
+}
+console.log('Windows local speaker host ready.');

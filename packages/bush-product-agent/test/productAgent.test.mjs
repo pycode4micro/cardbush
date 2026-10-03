@@ -134,13 +134,16 @@ test("time snapshots append as internal user inputs across midnight without chan
     "turn_after_midnight",
   );
   assert.deepEqual(second.prefixMessages, first.prefixMessages);
+  assert.deepEqual(second.inputMessages.slice(1).map(item => item.message), first.inputMessages.slice(1).map(item => item.message),
+    'crossing midnight changes only the clock context, not preferences or the human request');
   assert.deepEqual(first, create("2026-08-29T15:59:59Z", "turn_before_midnight"), 'replaying the same input never refreshes its clock');
   for (const request of [first, second]) {
     assert.equal(request.inputMessages.length, 4);
     assert.deepEqual(request.inputMessages.map(item => item.message.name),
       ['turn_runtime_context', 'source_preference', 'individuation_preference', undefined]);
-    assert.deepEqual(request.inputMessages[2].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
-      content: 'Individuation for this turn: habits disabled; next-step prediction disabled.' });
+    const { content: individuationContent, ...individuationMessage } = request.inputMessages[2].message;
+    assert.deepEqual(individuationMessage, { role: 'user', name: 'individuation_preference', visibility: 'internal' });
+    assert.match(individuationContent, /^Individuation for this turn: habits disabled; next-step prediction disabled\./);
     assert.equal(request.inputMessages[0].message.role, 'user');
     assert.equal(request.inputMessages[0].message.name, 'turn_runtime_context');
     assert.equal(request.inputMessages[0].message.visibility, 'internal');

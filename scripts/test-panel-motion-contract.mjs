@@ -289,30 +289,32 @@ assert.match(runtimeRail, /context-visible/);
 assert.match(runtimeRail, /className="runtime-screen-viewport"/);
 assert.doesNotMatch(runtimeRail, /setTimeout|rollingToKind|screenKind|thinkingNotice|changeSummary|taskPlan|onCancelGoal/,
   'The composer rail is only a guidance queue, with no rotation or execution state');
-assert.match(runtimeRail, /queuedMessageCount <= 0\) return null/);
+assert.match(runtimeRail, /queuedMessageCount <= 0 && !queueLocked\) return null/,
+  'An empty locked queue must keep its unlock control visible');
 assert.match(runtimeRail, /queuedMessages\.map\(\(item, index\) =>/);
 assert.match(runtimeRail, /guideQueuedMessage\(item\.id\)/);
-assert.match(runtimeRail, /onEditQueuedMessage\?\.\(item\)/);
+assert.match(runtimeRail, /onEdit=\{onEditQueuedMessage \? \(\) => onEditQueuedMessage\(item\) : undefined\}/);
 assert.match(runtimeRail, /onRemoveQueuedMessage\?\.\(item\.id\)/);
 assert.match(runtimeRail, /className="runtime-screen-queue-actions"/);
 assert.match(runtimeRail, /CornerDownLeft/);
 assert.match(composer, /CornerDownLeft/);
 assert.doesNotMatch(composer, /<Sparkles size=\{12\} \/>/);
-assert.match(runtimeRail, /className="runtime-queue-drag-handle"/);
+assert.match(runtimeRail, /onPointerDown=\{\(event\) => queueDrag\.onPointerDown\(item\.id, event\)\}/,
+  'The whole queue item initiates drag; interactive children are excluded by the drag hook');
 assert.match(queueDrag, /setPointerCapture\(event\.pointerId\)/);
 assert.match(runtimeRail, /data-queue-item-id=\{item\.id\}/);
 assert.match(runtimeRail, /useQueueReorder\(queuedMessages, onReorderQueuedMessage/);
 assert.match(chatHook, /reorderScopedQueue\([\s\S]*?queuedMessagesRef\.current/);
 assert.match(app, /onReorderQueuedMessage=\{chat\.reorderQueuedMessage\}/);
 assert.match(app, /onReorderQueuedMessage=\{onReorderQueuedMessage\}/);
-assert.match(app, /queuedMessageCount > 0 && \(\s*<ComposerRuntimeRail/);
+assert.match(app, /\(queuedMessageCount > 0 \|\| queueLocked\) && \(\s*<ComposerRuntimeRail/);
 assert.match(app, /onShowQueue=\{\(\) => runtimeRailRef\.current\?\.showQueue\(\)\}/);
 assert.match(app, /<TurnRuntimeDetails/);
 assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?scrollbar-gutter:\s*stable/);
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?overflow-y:\s*auto/);
-assert.match(css, /\.runtime-queue-item\s*\{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/);
+assert.match(css, /\.runtime-queue-item\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
 assert.match(css, /\.runtime-screen-queue-actions\s*\{[\s\S]*?position:\s*absolute[\s\S]*?right:\s*8px/);
 assert.match(css, /\.composer-queue-actions\s*\{[\s\S]*?opacity:\s*1/);
 assert.doesNotMatch(

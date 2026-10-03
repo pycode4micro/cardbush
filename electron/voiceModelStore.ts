@@ -76,7 +76,12 @@ export class VoiceModelStore {
         this.progress.state = 'downloading';
         await downloadVoiceFile(archive, downloaded, this.fetcher, signal, bytes => { this.progress.downloadedBytes = completed + bytes; });
         this.progress.state = 'verifying';
-        if (archive.allFilesInOrder) await extractVoiceFiles(downloaded, staging, archive.files, signal);
+        if (archive.format === 'raw') {
+          if (archive.files.length !== 1 || !/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$/.test(archive.files[0].name)) throw Error('Invalid raw model file.');
+          await verifyVoiceFile(downloaded, archive.files[0]);
+          await fs.promises.copyFile(downloaded, path.join(staging, archive.files[0].name));
+        }
+        else if (archive.allFilesInOrder) await extractVoiceFiles(downloaded, staging, archive.files, signal);
         else for (const file of archive.files) await extractVoiceFile(downloaded, file.entry, path.join(staging, file.name), file, signal);
         await fs.promises.unlink(downloaded); completed += archive.bytes;
       }

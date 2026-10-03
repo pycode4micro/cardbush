@@ -49,18 +49,21 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
     if (!open || disabled || !trigger.current || !menu.current) return;
     const rect = trigger.current.getBoundingClientRect();
     const gap = 6, margin = 12;
-    const width = Math.min(Math.max(rect.width, minMenuWidth), window.innerWidth - margin * 2);
+    const width = Math.max(0, Math.min(Math.max(rect.width, minMenuWidth), window.innerWidth - margin * 2));
+    // Measure wrapped labels at the actual width before choosing a side.
+    Object.assign(menu.current.style, { width: `${width}px`, maxHeight: '336px' });
+    menu.current.showPopover();
     const below = window.innerHeight - rect.bottom - gap - margin;
     const above = rect.top - gap - margin;
-    const upwards = below < Math.min(options.length * 34 + 12, 220) && above > below;
-    const height = Math.min(336, Math.max(60, upwards ? above : below));
+    const wanted = Math.min(336, menu.current.scrollHeight + 2);
+    const upwards = below < wanted && above > below;
+    const height = Math.max(0, Math.min(336, upwards ? above : below));
     Object.assign(menu.current.style, {
       left: `${Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin)}px`,
       top: `${upwards ? rect.top - gap : rect.bottom + gap}px`,
       width: `${width}px`, maxHeight: `${height}px`,
       translate: upwards ? '0 -100%' : 'none',
     });
-    menu.current.showPopover();
   }, [open, disabled, options.length, minMenuWidth]);
 
   useEffect(() => {
@@ -98,7 +101,7 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
       disabled={disabled} onClick={() => open ? close() : show()}
       onKeyDown={event => {
         if (event.key === 'Tab') { if (open) close(); return; }
-        if (event.key === 'Escape') { if (open) { event.preventDefault(); close(true); } return; }
+        if (event.key === 'Escape') { if (open) { event.preventDefault(); event.stopPropagation(); close(true); } return; }
         if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
           event.preventDefault();
           if (event.key === 'Home') return show(enabledIndices[0]);

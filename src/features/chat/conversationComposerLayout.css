@@ -5,8 +5,29 @@
   padding-left: 0;
   padding-right: 0;
   padding-bottom: 20px;
-  /* The dock is composer-width, so the surface alone should paint its background. */
+  /* Keep the input's saved width; its backdrop extends to the reading pane edges. */
+  --composer-backdrop-outset: var(--flow-composer-left, 12px);
   background: none;
+}
+.chat-panel:not(.composer-anchored) .composer-dock:not(.interaction-only) {
+  --composer-backdrop-fade: 32px;
+  padding-top: var(--composer-backdrop-fade);
+  background: none;
+}
+.chat-panel:not(.composer-anchored) .composer-dock:not(.interaction-only)::before {
+  content: '';
+  position: absolute;
+  inset: 0 calc(0px - var(--composer-backdrop-outset, 0px));
+  z-index: -1;
+  pointer-events: none;
+  /* Match the top padding so text is fully covered before the controls,
+     including their side and bottom gaps, at every window size. */
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--surface) var(--composer-backdrop-fade),
+    var(--surface) 100%
+  );
 }
 .chat-panel.composer-layout-managed .composer-dock .composer-stack { width: 100%; }
 .chat-panel.composer-anchored .composer-dock:not(.interaction-only) {

@@ -1,7 +1,7 @@
 import type { VoiceDownload } from './voiceModelDownload';
 
 export interface VoiceModelFile extends Pick<VoiceDownload, 'bytes' | 'sha256'> { entry: string; name: string }
-export interface VoiceModelArchive extends VoiceDownload { files: VoiceModelFile[]; allFilesInOrder?: boolean }
+export interface VoiceModelArchive extends VoiceDownload { files: VoiceModelFile[]; allFilesInOrder?: boolean; format?: 'raw' }
 // Archive digests are pinned from the upstream GitHub Release API. File digests
 // were derived only after those archives passed verification (2026-10-03).
 export const voiceModelVersion = 'sensevoice-2024-07-17-sherpa-1.13.8';

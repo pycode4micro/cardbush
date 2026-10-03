@@ -3,6 +3,7 @@ import test from 'node:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import ts from 'typescript';
+import { turnClock } from './voice-turn-fixtures.mjs';
 import { VoiceService, validateVoiceSettings } from '../dist-electron/voiceService.js';
 import { defaultVoiceSettings as systemVoiceSettings } from '../dist-electron/voiceTypes.js';
 const defaultVoiceSettings = { ...systemVoiceSettings, engine: 'cloud', recognitionEngine: 'cloud' };
@@ -113,18 +114,68 @@ test('history, internal messages, superseded text and duplicate updates are not 
   assert.deepEqual(transcript.update([history, { ...current, content: current.content + '已打断。' }], 'new-turn', true), []);
 });
 
-function sessionFixture(overrides = {}, playback = {}) {
-  let callbacks; const sent = [], spoken = [], cancelled = []; let stopped = 0, closed = 0;
+function sessionFixture(overrides = {}, playback = {}, clock, captureOverrides = {}) {
+  let callbacks; const sent = [], spoken = [], cancelled = [], mutes = []; let stopped = 0, closed = 0;
   const api = { settings: async () => ({ ...defaultVoiceSettings, hasApiKey: true }), saveSettings: async value => value,
-    transcribe: async () => ({ text: '请继续' }), cancel: async id => { cancelled.push(id); }, ...overrides };
+    transcribe: async () => ({ text: '请继续', speakerVerified: true }), cancel: async id => { cancelled.push(id); }, ...overrides };
   const session = new VoiceSession(api, {
-    capture: (_mode, value) => { callbacks = value; return { start: async () => {}, finish: () => value.clip(new Blob(['audio'], { type: 'audio/webm' })), close: () => { closed++; }, mute() {} }; },
+    clock: clock ?? (() => { let now = 100000; return { now: () => now, later: (callback, ms) => setImmediate(() => { now += ms; callback(); }), cancel: clearImmediate }; })(),
+    capture: (_mode, value) => { callbacks = value; return { start: async () => {}, finish: () => { value.clip(new Blob(['audio'], { type: 'audio/webm' })); return true; }, close: () => { closed++; }, mute(value) { mutes.push(value); }, ...captureOverrides }; },
     playback: () => ({ prepare: async () => {}, speak: async (text, voice) => { spoken.push([text, voice]); }, stop: () => { stopped++; }, close() {}, ...playback }),
   });
   const target = { environment: 'local', sessionId: 'chat', messages: [], sending: false, activeTurnId: null, send: async (...args) => { sent.push(args); return true; } };
   session.update(target);
-  return { session, target, sent, spoken, cancelled, get callbacks() { return callbacks; }, get stopped() { return stopped; }, get closed() { return closed; } };
+  return { session, target, sent, spoken, cancelled, mutes, get callbacks() { return callbacks; }, get stopped() { return stopped; }, get closed() { return closed; } };
 }
+
+test('unlocked calls merge pending clips for one review, pause capture and preserve playback', async () => {
+  const response = deferred(), playing = deferred(); let calls = 0;
+  const f = sessionFixture({ transcribe: async () => { calls++; return response.promise; } }, { speak: () => playing.promise });
+  try {
+    await f.session.start('call');
+    f.session.update({ ...f.target, sending: true, activeTurnId: 'turn', messages: [{ id: 'reply', role: 'assistant', turnId: 'turn', content: '继续处理。' }] });
+    const before = f.stopped;
+    for (let i = 0; i < 3; i++) f.callbacks.clip(new Blob(['external audio'], { type: 'audio/webm' }));
+    await pause(); response.resolve({ text: '背景视频里的声音' }); await pause(); await pause();
+    assert.equal(calls, 3); assert.equal(f.sent.length, 0); assert.equal(f.stopped, before);
+    assert.equal(f.session.snapshot().reviewText, '背景视频里的声音 背景视频里的声音 背景视频里的声音'); assert.equal(f.session.snapshot().queuedClips, 0);
+    assert.equal(f.mutes.at(-1), true); assert.equal(f.session.snapshot().speakerLocked, false);
+    f.callbacks.clip(new Blob(['more noise'])); f.session.finishUtterance(); await pause(); assert.equal(calls, 3);
+    f.session.review('我确认发送的内容'); f.session.review('重复点击'); await pause(); await pause();
+    assert.deepEqual(f.sent, [['我确认发送的内容', { immediate: true }]]); assert.equal(f.stopped, before + 1);
+    assert.equal(f.mutes.at(-1), false);
+  } finally { playing.resolve(); f.session.end(); }
+});
+
+test('a previously verified caller requires review again when the host no longer verifies this clip', async () => {
+  let verified = true;
+  const f = sessionFixture({ transcribe: async () => ({ text: '完整的一句话', ...(verified ? { speakerVerified: true } : {}) }) });
+  await f.session.start('call'); f.session.finishUtterance(); await pause(); await pause();
+  assert.equal(f.sent.length, 1); assert.equal(f.session.snapshot().speakerLocked, true);
+  verified = false; f.session.finishUtterance(); await pause(); await pause();
+  assert.equal(f.sent.length, 1); assert.equal(f.session.snapshot().speakerLocked, false);
+  f.session.mute(); f.session.review(''); assert.equal(f.mutes.at(-1), true, 'dismiss respects explicit mute');
+  f.session.end();
+});
+
+test('Kokoro warm delivery joins available short sentences without delaying the first reply', async () => {
+  const f = sessionFixture({ settings: async () => ({ ...defaultVoiceSettings, hasApiKey: true, engine: 'kokoro', kokoroStyle: 'warm' }), modelStatus: async () => ({ state: 'installed' }) });
+  await f.session.start('call');
+  f.session.update({ ...f.target, sending: true, activeTurnId: 'turn', messages: [{ id: 'reply', role: 'assistant', turnId: 'turn', content: '我在听。你可以慢慢说。' }] });
+  await pause(); assert.deepEqual(f.spoken, [['我在听。 你可以慢慢说。', 'female']]); f.session.end();
+});
+
+test('local voice presets persist independently, validate bank bounds and migrate old settings', () => {
+  const { instance } = service(fetch);
+  const legacy = { ...systemVoiceSettings, kokoroFemaleVoice: undefined, kokoroMaleVoice: undefined, kokoroStyle: undefined };
+  assert.equal(validateVoiceSettings(legacy).kokoroStyle, 'warm');
+  instance.save({ ...legacy, kokoroFemaleVoice: 33, kokoroMaleVoice: 70, kokoroStyle: 'neutral' });
+  assert.equal(instance.settings().kokoroFemaleVoice, 33); assert.equal(instance.settings().kokoroMaleVoice, 70);
+  for (const patch of [{ kokoroFemaleVoice: 58 }, { kokoroFemaleVoice: 3.2 }, { kokoroMaleVoice: 57 }, { kokoroMaleVoice: 103 }, { kokoroStyle: 'invented' }]) assert.throws(() => validateVoiceSettings({ ...legacy, ...patch }));
+  const { kokoroPresets } = compile('src/features/voice/kokoroPresets.ts');
+  assert.deepEqual(kokoroPresets.female[0], { value: 3, name: 'zf_001' });
+  assert.deepEqual(kokoroPresets.male.at(-1), { value: 102, name: 'zm_100' });
+});
 
 test('optional local recognition checks availability without downloading and works with system TTS without a key', async () => {
   let installs = 0;
@@ -204,6 +255,30 @@ test('noise, empty ASR, uncertain fragments, playback echo and ASR failure prese
   }
 });
 
+test('foreign and uncertain speakers never interrupt, enter review, retry text or steer a running Agent', async () => {
+  for (const speaker of ['rejected', 'uncertain']) {
+    const playing = deferred(); let stops = 0;
+    const f = sessionFixture({ transcribe: async () => ({ text: '', speaker }) }, { speak: () => playing.promise, stop: () => { stops++; } });
+    try {
+      await f.session.start('call');
+      f.session.update({ ...f.target, sending: true, activeTurnId: 'turn', messages: [{ id: 'reply', role: 'assistant', turnId: 'turn', content: '我会继续处理你的任务。' }] });
+      await pause(); const before = stops;
+      f.callbacks.clip(new Blob(['foreign voice'], { type: 'audio/webm' })); await pause(); await pause();
+      assert.equal(stops, before); assert.equal(f.session.snapshot().speaking, true); assert.equal(f.session.snapshot().muted, false);
+      assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().reviewText, ''); assert.equal(f.session.snapshot().retryAvailable, false);
+      assert.ok(f.session.snapshot().speakerNotice); f.session.retry(); f.session.review('旁人的命令'); await pause(); assert.equal(f.sent.length, 0);
+      f.session.end(); await f.session.start('call'); assert.equal(f.session.snapshot().speakerNotice, undefined);
+    } finally { playing.resolve(); f.session.end(); }
+  }
+});
+test('rejected dictation cannot bypass identity verification through retry', async () => {
+  let attempts = 0;
+  const f = sessionFixture({ transcribe: async () => { attempts++; return { text: '', speaker: 'rejected' }; } });
+  await f.session.start('recording'); f.session.finishRecording(); await pause(); await pause();
+  assert.equal(f.sent.length, 0); assert.ok(f.session.snapshot().error.includes('声纹'));
+  f.session.retry(); await pause(); await pause(); assert.equal(attempts, 2); assert.equal(f.sent.length, 0); f.session.end();
+});
+
 test('activity gate rejects taps, hum, pure tones and broadband noise but accepts sustained speech bands', () => {
   const spectrum = pairs => { const values = new Float32Array(1024).fill(-100); for (const [bin, db] of pairs) values[bin] = db; return values; };
   const voice = spectrum([[7, -30], [14, -33], [21, -32], [28, -34], [35, -36], [42, -36], [49, -38]]);
@@ -251,7 +326,7 @@ test('task stop and revised assistant text stop queued audio without ending the 
 });
 test('failed send retains transcript, pauses call and retries once without another transcription', async () => {
   let transcriptions = 0, attempts = 0;
-  const f = sessionFixture({ transcribe: async () => { transcriptions++; return { text: '保留这句话' }; } });
+  const f = sessionFixture({ transcribe: async () => { transcriptions++; return { text: '保留这句话', speakerVerified: true }; } });
   f.target.send = async () => ++attempts > 1; f.session.update(f.target);
   await f.session.start('call'); f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause();
   assert.match(f.session.snapshot().error, /未发送/); assert.equal(f.session.snapshot().muted, true);
@@ -260,7 +335,7 @@ test('failed send retains transcript, pauses call and retries once without anoth
 
 test('failed transcription retains audio and exposes retry before any transcript exists', async () => {
   let attempts = 0;
-  const f = sessionFixture({ transcribe: async () => { if (++attempts === 1) throw Error('服务暂不可用'); return { text: '重试成功' }; } });
+  const f = sessionFixture({ transcribe: async () => { if (++attempts === 1) throw Error('服务暂不可用'); return { text: '重试成功', speakerVerified: true }; } });
   await f.session.start('call'); f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause();
   assert.equal(f.session.snapshot().transcript, ''); assert.equal(f.session.snapshot().retryAvailable, true);
   assert.equal(f.session.snapshot().muted, true); assert.equal(f.sent.length, 0);
@@ -299,36 +374,32 @@ test('ASR backpressure resumes on drain and respects explicit microphone mute', 
   const f = sessionFixture({ transcribe: () => gates[at++].promise }); await f.session.start('call');
   for (let i = 0; i < 3; i++) f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' }));
   await pause(); assert.equal(f.session.snapshot().capturePaused, true); assert.equal(f.session.snapshot().queuedClips, 3);
-  f.session.mute(); gates[0].resolve({ text: '第一条' }); await pause(); await pause();
-  gates[1].resolve({ text: '第二条' }); await pause(); await pause();
+  f.session.mute(); gates[0].resolve({ text: '第一条', speakerVerified: true }); await pause(); await pause();
+  gates[1].resolve({ text: '第二条', speakerVerified: true }); await pause(); await pause();
   assert.equal(f.session.snapshot().capturePaused, false); assert.equal(f.session.snapshot().muted, true);
-  gates[2].resolve({ text: '第三条' }); await pause(); await pause();
-  assert.equal(f.session.snapshot().queuedClips, 0); assert.equal(f.sent.length, 3); f.session.end();
+  gates[2].resolve({ text: '第三条', speakerVerified: true }); await pause(); await pause();
+  assert.equal(f.session.snapshot().queuedClips, 0); assert.equal(f.sent.length, 0, 'explicit mute holds the collected turn');
+  f.session.mute(); await pause(); await pause();
+  assert.equal(f.sent.length, 1); assert.equal(f.sent[0][0], '第一条 第二条 第三条'); f.session.end();
 });
 
 const progressMessage = (id, title, extra = {}) => ({ id: 'm-'+id, role: 'assistant', turnId: 't', content: '', toolExecutions: [{ id, name: 'browser', state: 'running', metadata: { displayTitles: { zh: title, en: 'Checking the page' } }, arguments: 'secret arguments', ...extra }] });
-test('public tool reasons include loop history, exclude hidden/tools arguments, throttle and never repeat old events', () => {
-  const p = new VoiceProgress(), old = progressMessage('old', '旧状态'); p.reset([old]);
+test('tool progress remains visual and exposes no speech announcement', () => {
+  const p = new VoiceProgress(), old = progressMessage('old', '旧状态');
   const a = progressMessage('a', '核对行情'), hidden = { ...progressMessage('hidden', '隐藏内容'), metadata: { visibility: 'internal' } };
   const silent = progressMessage('s', '记录习惯', { name: 'summary_for_user' });
   const messages = [old, hidden, silent, { id: 'final', role: 'assistant', content: '', turnId: 't', loopHistory: [a] }];
-  assert.deepEqual(p.update(messages, 't', 'zh', 10000), { activity: '核对行情', announcement: '核对行情' });
-  assert.equal(p.update(messages, 't', 'zh', 17000).announcement, '');
-  const b = progressMessage('b', '截图确认');
-  assert.equal(p.update([...messages,b], 't', 'zh', 12000).announcement, '');
-  assert.equal(p.update([...messages,b], 't', 'zh', 22000).announcement, '');
-  const c = progressMessage('c', '查询失败', { state: 'failed' });
-  assert.equal(p.update([c], 't', 'zh', 23000).announcement, '');
-  assert.deepEqual(p.update(messages, 'other', 'zh', 30000), { activity: '', announcement: '' });
+  assert.deepEqual(p.update(messages, 't', 'zh'), { activity: '核对行情' });
+  assert.deepEqual(p.update(messages, 'other', 'zh'), { activity: '' });
 });
 
-test('loop commentary is flushed at a tool boundary and public action progress is spoken during a call', async () => {
+test('loop commentary is flushed at a tool boundary but tool progress stays silent', async () => {
   const f = sessionFixture(); await f.session.start('call');
   const first = progressMessage('a', '核对行情');
   f.session.update({ ...f.target, activeTurnId: 't', sending: true, messages: [first] }); await pause();
-  assert.deepEqual(f.spoken, [['核对行情','female']]); assert.equal(f.session.snapshot().activity, '核对行情');
+  assert.deepEqual(f.spoken, []); assert.equal(f.session.snapshot().activity, '核对行情');
   f.session.update({ ...f.target, activeTurnId: 't', sending: true, waiting: true, messages: [first] }); await pause();
-  assert.equal(f.spoken.length, 1); assert.equal(f.session.snapshot().agentWaiting, true);
+  assert.equal(f.spoken.length, 0); assert.equal(f.session.snapshot().agentWaiting, true);
   const transcript = new SpokenTranscript(); transcript.reset([]);
   const loop = { ...first, content: '我来查一下', id: 'commentary' };
   assert.deepEqual(transcript.update([{ id:'answer',role:'assistant',turnId:'t',content:'',loopHistory:[loop] }],'t',true), ['我来查一下']);
@@ -353,4 +424,100 @@ test('a prior tool boundary does not flush every token of the following streamed
  assert.deepEqual(transcript.update([message],'t',true),['先核对']);
  assert.deepEqual(transcript.update([{...message,content:'先核对结果'}],'t',true),[]);
  assert.deepEqual(transcript.update([{...message,content:'先核对结果如下。'}],'t',true),['结果如下。']);
+});
+
+const clip = (f, clock, reason = 'silence') => f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' }), { lastSpeechAt: clock.now(), reason });
+const settle = async () => { await pause(); await pause(); };
+test('thinking pauses and resumed speech combine as one turn after three seconds of final silence', async () => {
+  const clock = turnClock(), lines = ['我想了解', '这个问题的原因'];
+  const f = sessionFixture({ transcribe: async () => ({ text: lines.shift(), speakerVerified: true }) }, {}, clock);
+  await f.session.start('call'); f.callbacks.speech(); clip(f, clock); await settle();
+  clock.advance(2800); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().draftTranscript, '我想了解');
+  f.callbacks.speech(); clock.advance(5000); assert.equal(f.sent.length, 0, 'old text cannot submit while capture contains new speech');
+  clip(f, clock); await settle(); clock.advance(2999); assert.equal(f.sent.length, 0);
+  clock.advance(1); await settle(); assert.deepEqual(f.sent, [['我想了解 这个问题的原因', { immediate: true }]]);
+  assert.equal(f.session.snapshot().inputPending, false); f.session.end();
+});
+test('an onset just before the deadline postpones submission before VAD confirms speech', async () => {
+  const clock = turnClock(), f = sessionFixture({}, {}, clock);
+  await f.session.start('call'); clip(f, clock); await settle(); clock.advance(2900);
+  f.callbacks.activity(clock.now()); clock.advance(200); assert.equal(f.sent.length, 0);
+  clock.advance(2800); await settle(); assert.equal(f.sent.length, 1); f.session.end();
+});
+test('late first ASR waits for continuing speech and all later queued transcriptions', async () => {
+  const clock = turnClock(), gates = [deferred(), deferred()]; let i = 0;
+  const f = sessionFixture({ transcribe: () => gates[i++].promise }, {}, clock);
+  await f.session.start('call'); clip(f, clock); await settle();
+  clock.advance(2000); f.callbacks.speech(); clock.advance(8000);
+  gates[0].resolve({ text: '先检查配置', speakerVerified: true }); await settle(); clock.advance(1000);
+  assert.equal(f.sent.length, 0);
+  clip(f, clock); await settle(); clock.advance(8000); assert.equal(f.sent.length, 0, 'ASR must finish before commit');
+  gates[1].resolve({ text: '然后告诉我结果', speakerVerified: true }); await settle(); clock.advance(0); await settle();
+  assert.deepEqual(f.sent.map(v => v[0]), ['先检查配置 然后告诉我结果']); f.session.end();
+});
+test('loop guidance waits five seconds and patient mode waits six; only committed input interrupts', async () => {
+  for (const [patient, sending, delay] of [[false, true, 5000], [true, false, 6000], [true, true, 6000]]) {
+    const clock = turnClock(), f = sessionFixture({ settings: async () => ({ ...defaultVoiceSettings, hasApiKey: true, turnEndPause: patient ? 'patient' : 'normal' }) }, {}, clock);
+    f.session.update({ ...f.target, sending }); await f.session.start('call');
+    const before = f.stopped; clip(f, clock); await settle(); clock.advance(delay - 1);
+    assert.equal(f.sent.length, 0); assert.equal(f.stopped, before);
+    clock.advance(1); await settle(); assert.equal(f.sent.length, 1); assert.equal(f.stopped, before + 1); f.session.end();
+  }
+});
+test('45 second recording rotation remains part of the same utterance', async () => {
+  const clock = turnClock(); let i = 0;
+  const f = sessionFixture({ transcribe: async () => ({ text: ++i === 1 ? '很长的第一部分' : '继续说明的第二部分', speakerVerified: true }) }, {}, clock);
+  await f.session.start('call'); f.callbacks.speech(); clock.advance(45000); clip(f, clock, 'limit'); await settle();
+  clock.advance(100); f.callbacks.speech(); clock.advance(10000); assert.equal(f.sent.length, 0);
+  clip(f, clock); await settle(); clock.advance(3000); await settle();
+  assert.deepEqual(f.sent.map(v => v[0]), ['很长的第一部分 继续说明的第二部分']); f.session.end();
+});
+test('Finished speaking during ASR waits for the result then bypasses silence, without duplicate sends', async () => {
+  const clock = turnClock(), gate = deferred();
+  const f = sessionFixture({ transcribe: () => gate.promise }, {}, clock, { finish: () => false });
+  await f.session.start('call'); clip(f, clock); await settle(); f.session.finishUtterance(); f.session.finishUtterance();
+  clock.advance(0); assert.equal(f.sent.length, 0);
+  gate.resolve({ text: '完整的话', speakerVerified: true }); await settle(); clock.advance(0); await settle();
+  assert.deepEqual(f.sent.map(v => v[0]), ['完整的话']); assert.equal(f.mutes.at(-1), false); f.session.end();
+});
+test('unverified fragments require one review of the complete turn even if another fragment is verified', async () => {
+  const clock = turnClock(); let i = 0;
+  const f = sessionFixture({ transcribe: async () => ++i === 1 ? { text: '前半句' } : { text: '后半句', speakerVerified: true } }, {}, clock);
+  await f.session.start('call'); clip(f, clock); await settle(); clock.advance(2000);
+  f.callbacks.speech(); clip(f, clock); await settle(); assert.equal(f.session.snapshot().reviewText, '');
+  clock.advance(3000); await settle(); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().reviewText, '前半句 后半句');
+  assert.equal(f.mutes.at(-1), true); f.session.review('前半句 后半句'); await settle();
+  assert.equal(f.sent.length, 1); f.session.end();
+});
+test('drafts survive a failed continuation and retry without resending the first fragment separately', async () => {
+  const clock = turnClock(); let i = 0;
+  const f = sessionFixture({ transcribe: async () => { if (++i === 2) throw Error('temporary'); return { text: i === 1 ? '保留前半句' : '重试后半句', speakerVerified: true }; } }, {}, clock);
+  await f.session.start('call'); clip(f, clock); await settle(); clock.advance(1000); clip(f, clock); await settle();
+  clock.advance(10000); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().retryAvailable, true);
+  f.session.retry(); await settle(); clock.advance(0); await settle();
+  assert.deepEqual(f.sent.map(v => v[0]), ['保留前半句 重试后半句']); f.session.end();
+});
+test('disconnect, settings, hangup and switching conversations prevent pending automatic submissions', async () => {
+  for (const action of ['disconnect', 'settings', 'end', 'switch']) {
+    const clock = turnClock(), f = sessionFixture({}, {}, clock);
+    await f.session.start('call'); clip(f, clock); await settle();
+    if (action === 'disconnect') f.callbacks.error('麦克风断开');
+    if (action === 'settings') f.session.setSettingsOpen(true);
+    if (action === 'end') f.session.end();
+    if (action === 'switch') f.session.update({ ...f.target, sessionId: 'other' });
+    clock.advance(20000); await settle(); assert.equal(f.sent.length, 0, action); f.session.end(); assert.equal(clock.pending, 0);
+  }
+});
+test('only verified standalone interruption commands bypass the normal pause', async () => {
+  for (const [text, verified, immediate] of [['先停一下', true, true], ['stop speaking', true, true], ['等一下再打开页面', true, false], ['停一下', false, false]]) {
+    const clock = turnClock(), f = sessionFixture({ transcribe: async () => ({ text, speakerVerified: verified }) }, {}, clock);
+    await f.session.start('call'); clip(f, clock); await settle(); clock.advance(0); await settle();
+    assert.equal(f.sent.length, immediate ? 1 : 0); f.session.end();
+  }
+});
+test('voice pause preference persists and existing profiles migrate to normal', () => {
+  const { instance } = service(fetch);
+  assert.equal(validateVoiceSettings({ ...defaultVoiceSettings, turnEndPause: undefined }).turnEndPause, 'normal');
+  instance.save({ ...defaultVoiceSettings, turnEndPause: 'patient' }); assert.equal(instance.settings().turnEndPause, 'patient');
+  assert.throws(() => validateVoiceSettings({ ...defaultVoiceSettings, turnEndPause: 'instant' }));
 });

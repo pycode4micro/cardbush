@@ -11,15 +11,15 @@ if (typeof electron === 'string') {
   import('./cardbush-electron-runtime.mjs').then(({ resolveCardbushElectronExecutable, cardbushElectronEnvironment }) => {
     const executable = resolveCardbushElectronExecutable(path.resolve(__dirname, '..'));
     const env = cardbushElectronEnvironment({ CARDBUSH_DEVELOPMENT_RUNTIME: '1' }); delete env.ELECTRON_RUN_AS_NODE;
-    const result = spawnSync(executable, [__filename, ...process.argv.slice(2)], { env, windowsHide: true, stdio: 'inherit', timeout: process.argv.includes('--local-model') || process.argv.includes('--speech-model') ? 240000 : 90000 });
+    const result = spawnSync(executable, [__filename, ...process.argv.slice(2)], { env, windowsHide: true, stdio: 'inherit', timeout: process.argv.includes('--local-model') || process.argv.includes('--speech-model') || process.argv.includes('--speaker-model') ? 240000 : 90000 });
     if (result.error) console.error(result.error); process.exit(result.status ?? 1);
   }).catch(error => { console.error(error); process.exit(1); });
   return;
 }
 const { app, BrowserWindow, net } = electron;
-const testLocalModel = process.argv.includes('--local-model'), testSpeechModel = process.argv.includes('--speech-model');
+const testLocalModel = process.argv.includes('--local-model'), testSpeechModel = process.argv.includes('--speech-model'), testSpeakerModel = process.argv.includes('--speaker-model');
 let artifactRequests = 0;
-if (testLocalModel || testSpeechModel) {
+if (testLocalModel || testSpeechModel || testSpeakerModel) {
   // Explicit integration test only: official archives already present in the dev
   // cache go through the production installer and all of its integrity checks.
   // Never download large assets or modify the user's real model/settings here.
@@ -29,6 +29,10 @@ if (testLocalModel || testSpeechModel) {
     const url = String(input);
     if (url.startsWith('https://github.com/k2-fsa/sherpa-onnx/releases/download/')) {
       artifactRequests++;
+      if (testSpeakerModel && (url.endsWith('3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx') || url.includes('win-x64-shared-MT-Release-no-tts'))) {
+        const artifact = path.resolve('tmp/voice-speaker-research', url.endsWith('.onnx') ? 'campplus.onnx' : 'runtime.tar.bz2');
+        return Promise.resolve(new Response(Readable.toWeb(fs.createReadStream(artifact)), { headers: { 'content-length': String(fs.statSync(artifact).size) } }));
+      }
       const isSpeech = url.includes('kokoro') || url.includes('win-x64-shared-MT-Release.tar');
       const archive = isSpeech ? path.resolve('tmp/kokoro-upstream', url.includes('tts-models') ? 'model.tar.bz2' : 'runtime.tar.bz2') : path.resolve('tmp/sensevoice-upstream', url.includes('2024-07-17') ? 'model-2024.tar.bz2' : process.platform === 'win32' ? 'runtime.tar.bz2' : 'linux-runtime.tar.bz2');
       return Promise.resolve(new Response(Readable.toWeb(fs.createReadStream(archive)), { headers: { 'content-length': String(fs.statSync(archive).size) } }));
@@ -40,19 +44,20 @@ const directory = fs.mkdtempSync(path.resolve('tmp/voice-ui-'));
 app.setPath('userData', path.join(directory, 'profile')); app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// A deterministic microphone: a speech-band harmonic signal followed by silence.
+// A deterministic microphone: two phrases separated by a thinking pause, then silence.
 // A single pure tone is intentionally rejected by the activity gate.
-const rate = 48000, frames = rate * 3, wav = Buffer.alloc(44 + frames * 2);
+// Two seconds between phrases must not create two turns. The final gap permits one review.
+const rate = 48000, frames = rate * 12, wav = Buffer.alloc(44 + frames * 2);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
 wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(frames * 2, 40);
 for (let i = 0; i < frames; i++) {
-  const sample = i < rate ? [1, 2, 3, 4, 5, 6, 7].reduce((sum, harmonic) => sum + Math.sin(i * 2 * Math.PI * 170 * harmonic / rate) / Math.sqrt(harmonic), 0) * 2400 : 0;
+  const sample = i < rate || i >= rate * 3 && i < rate * 4 ? [1, 2, 3, 4, 5, 6, 7].reduce((sum, harmonic) => sum + Math.sin(i * 2 * Math.PI * 170 * harmonic / rate) / Math.sqrt(harmonic), 0) * 2400 : 0;
   wav.writeInt16LE(Math.round(sample), 44 + i * 2);
 }
 const microphone = path.join(directory, 'microphone.wav'); fs.writeFileSync(microphone, wav);
 app.commandLine.appendSwitch('use-file-for-fake-audio-capture', microphone);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const deadline = setTimeout(() => { console.error('Voice UI fixture timed out'); app.exit(1); }, testLocalModel || testSpeechModel ? 230000 : 80000);
+const deadline = setTimeout(() => { console.error('Voice UI fixture timed out'); app.exit(1); }, testLocalModel || testSpeechModel || testSpeakerModel ? 230000 : 80000);
 
 app.whenReady().then(async () => {
   const { build } = await import('vite');
@@ -131,6 +136,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('(async()=> (await cardbushDesktop.voice.settings()).engine)()'), 'system');
     assert.equal((await read('cardbushDesktop.voice.modelStatus()')).state, 'not-installed');
     assert.equal(fs.existsSync(path.join(app.getPath('userData'), 'voice-models')), false);
+    assert.equal(await read('typeof cardbushDesktop.voice.chooseSpeechPath'), 'function');
+    assert.equal(await read('typeof cardbushDesktop.voice.inspectSpeechModel'), 'function');
+    assert.match(await read('cardbushDesktop.voice.inspectSpeechModel("relative-folder").then(()=>"unexpected",e=>e.message)'), /完整模型/);
     // Actual decoded speech must survive the noise gate, including bilingual audio.
     for (const relative of ['mixed.wav','sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs/zh.wav','sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs/en.wav']) {
       const sample=path.resolve('tmp/sensevoice-upstream',relative);if(!fs.existsSync(sample))continue;
@@ -208,13 +216,26 @@ app.whenReady().then(async () => {
     assert.equal(await read('fixture.sent[0].options===undefined'),true); assert.ok(requests[0].body.length>500); assert.equal(requests[0].authorization,'Bearer fixture-key');
     await until('!document.querySelector(".voice-overlay") && !document.querySelector(".voice-mini")');
     // Actual pointer hold and release: one call, never a second recording overlay.
+    const transcriptionsBeforeCall=requests.filter(r=>r.url.endsWith('/transcriptions')).length;
     const position=await point('.send-button'); win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...position});
     await pause(650); win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...position});
     await until('document.querySelector(".voice-mini") && !document.querySelector(".voice-dialog")');
     await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在聆听")');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.resolve('tmp/voice-call.png'),(await win.webContents.capturePage()).toPNG());
-    await until('fixture.sent.length>=2'); // Real MediaRecorder + local VAD + IPC + multipart upload.
+    // Real MediaRecorder + VAD + IPC, but an unlocked microphone needs review.
+    await until('document.querySelector(".voice-mini-status")?.textContent.includes("还在听，可以继续")');
+    assert.equal(await read('fixture.sent.length'),1,'a live utterance does not interrupt or submit');
+    await until('document.querySelector(".voice-mini-status")?.textContent.includes("识别待确认")',10000);
+    assert.equal(requests.filter(r=>r.url.endsWith('/transcriptions')).length-transcriptionsBeforeCall,2,'both recording segments are transcribed');
+    assert.equal(await read('fixture.sent.length'),1,'external audio cannot auto-steer an unlocked call');
+    assert.equal(await read('fixture.tracks.filter(t=>t.readyState==="live").every(t=>!t.enabled)'),true);
+    await click('展开语音通话');await until('document.querySelector(".voice-review textarea")');
+    assert.equal(await read('document.querySelector(".voice-review textarea").value'),'这是麦克风转写测试 这是麦克风转写测试','thinking pause preserves one complete turn');
+    assert.ok(await read('document.querySelector(".voice-lock-status").textContent.includes("未开启")'));
+    await read('document.querySelector(".voice-review button").click();void 0');
+    await until('fixture.sent.length>=2');
+    await click('收起为悬浮按钮');
     assert.equal(await read('fixture.sent[1].options.immediate'),true);
     await read('document.querySelector("button[aria-label=麦克风静音]").click()');
     await read('fixture.sending(true);fixture.messages([{id:"answer",role:"assistant",turnId:"turn",content:"第一句话。后半句"}]);void 0');
@@ -223,7 +244,9 @@ app.whenReady().then(async () => {
     assert.equal(JSON.parse(requests.find(v=>v.url.endsWith('/speech')).body).voice,'nova');
     await until('!document.querySelector(".voice-mini-status")?.textContent.includes("正在播报")');
     await click('展开语音通话'); await until('document.querySelector(".voice-dialog")');
-    await read('document.querySelector("select[aria-label=音色]").value="male";document.querySelector("select[aria-label=音色]").dispatchEvent(new Event("change",{bubbles:true}));void 0');
+    await read('document.querySelector("[role=combobox][aria-label=音色]").click();void 0');
+    await until('document.querySelector("[role=listbox][aria-label=音色]").matches(":popover-open")');
+    await read('document.querySelector("[role=listbox][aria-label=音色] [value=male]").click();void 0');
     await until('(async()=> (await window.cardbushDesktop.voice.settings()).voice==="male")()');
     await read('fixture.messages([{id:"answer",role:"assistant",turnId:"turn",content:"第一句话。后半句。"}]);void 0');
     for(let i=0;i<100&&speechCount()<2;i++)await pause(30); assert.equal(speechCount(),2);
@@ -241,8 +264,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('fixture.tracks.some(track=>track.readyState==="live")'),true);
     await read('fixture.messages([{id:"progress",role:"assistant",turnId:"turn",content:"",toolExecutions:[{id:"browser-call",name:"browser",state:"running",metadata:{displayTitles:{zh:"核对最新行情",en:"Check the latest market"}}}]}]);void 0');
     await until('document.querySelector(".voice-mini")?.textContent.includes("正在播报") || document.querySelector(".voice-mini")?.textContent.includes("Agent 正在执行")');
-    for(let i=0;i<100&&speechCount()<3;i++)await pause(30);assert.equal(speechCount(),3);
-    assert.equal(JSON.parse(requests.filter(v=>v.url.endsWith('/speech'))[2].body).input,'核对最新行情');
+    await pause(250);assert.equal(speechCount(),2,'tool reasons must stay silent');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await pause(100);
     fs.writeFileSync(path.resolve('tmp/voice-mini.png'),(await win.webContents.capturePage()).toPNG());
     await read('document.querySelector("button[aria-label=展开语音通话]").click();void 0');await until('document.querySelector(".voice-agent-progress")?.textContent.includes("核对最新行情")');
@@ -260,7 +282,7 @@ app.whenReady().then(async () => {
     assert.equal(artifactRequests, 0, 'opening settings and starting voice never install a model');
     assert.equal(await read('!!document.querySelector("input[name=voice-microphone]")'), true);
     assert.equal(await read('document.querySelector("input[type=password]").value'), '');
-    await click('保存并试听'); for(let i=0;i<100&&speechCount()<4;i++)await pause(30); assert.equal(speechCount(),4);
+    await click('保存并试听'); for(let i=0;i<100&&speechCount()<3;i++)await pause(30); assert.equal(speechCount(),3);
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await pause(180);
     fs.writeFileSync(path.resolve('tmp/voice-settings.png'),(await win.webContents.capturePage()).toPNG());
     win.setSize(500,800);await pause(150);
@@ -314,6 +336,95 @@ app.whenReady().then(async () => {
       await read('(async()=>{const s=await cardbushDesktop.voice.settings();await cardbushDesktop.voice.saveSettings({...s,engine:"system"});return cardbushDesktop.voice.removeModel("speech")})()');
       assert.equal((await read('cardbushDesktop.voice.modelStatus("speech")')).state,'not-installed');
       console.log('Kokoro UI/IPC passed: optional isolated installation, explicit selection, offline real PCM and protected uninstall.');
+    }
+    if (testSpeakerModel) {
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).enabled, false);
+      const beforeInstall = artifactRequests;
+      await read(`Array.from(document.querySelectorAll('.voice-model-panel')).find(p=>p.textContent.includes('CAMPPlus')).querySelector('button').click();void 0`);
+      await until('(async()=> (await cardbushDesktop.voice.modelStatus("speaker")).state==="installed")()', 60000);
+      assert.equal(artifactRequests, beforeInstall + 2);
+      // Enroll from the live call's settings too: releasing its microphone must
+      // not unmount the settings panel or cancel the new enrollment recording.
+      await read('fixture.settings(false);fixture.sending(false);fixture.messages([]);fixture.session("created");void 0');await pause(30);
+      await click('语音通话');await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在聆听")');
+      await click('展开语音通话');await click('语音设置');
+      await until('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="保存").disabled');
+      const fillName = async name => { await read(`(()=>{const input=document.querySelector('.speaker-name-form input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(name)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`); };
+      await click('添加人员'); await fillName('测试本人'); await click('保存人员');
+      await until('document.querySelector(".speaker-person")?.textContent.includes("测试本人")');
+      const ownerId = (await read('cardbushDesktop.voice.speakerStatus()')).activeProfileId;
+      await click('准备第一段');
+      assert.ok((await read('document.querySelector(".speaker-recorder").innerText')).includes('不会自动录音'));
+      await click('开始本段录音'); await until('document.querySelector(".speaker-recorder.is-recording")');
+      await pause(120);
+      assert.equal(await read('!!document.querySelector(".voice-settings-dialog .speaker-enrollment")'),true);
+      assert.equal(await read('fixture.tracks.filter(track=>track.readyState==="live").length'),1);
+      await click('取消本段'); await until('!document.querySelector(".speaker-recorder")');
+      assert.equal(await read('fixture.tracks.every(track=>track.readyState==="ended")'),true);
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).enrolled, false);
+      await click('关闭');await until('!document.querySelector(".voice-overlay")');
+      await read('fixture.settings(true);void 0');await until('document.querySelector(".voice-settings")');
+      const sample = name => fs.readFileSync(path.resolve('tmp/voice-speaker-research', name));
+      const pcm = wav => { for(let at=12;at+8<=wav.length;){const n=wav.readUInt32LE(at+4);if(wav.toString('ascii',at,at+4)==='data')return wav.subarray(at+8,at+8+n);at+=8+n+n%2;}throw Error('No PCM'); };
+      const joined = names => {const data=Buffer.concat(names.map(name=>pcm(sample(name)))),wav=Buffer.alloc(44+data.length);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(data.length,40);data.copy(wav,44);return wav.toString('base64');};
+      // Public upstream samples only. Join short enrollment clips to meet our
+      // minimum duration; the verification clip is separate from enrollment.
+      const clips = [['fangjun-sr-1.wav','fangjun-sr-2.wav'],['fangjun-sr-2.wav','fangjun-sr-3.wav'],['fangjun-sr-3.wav','fangjun-sr-1.wav']].map(joined);
+      // Feed public speech through the real browser capture / preview / save UI,
+      // without opening a physical microphone or persisting captured user audio.
+      await read(`window.speakerBytes=value=>Uint8Array.from(atob(value),c=>c.charCodeAt(0)).buffer;
+        navigator.mediaDevices.getUserMedia=async()=>{const context=new AudioContext();const source=context.createBufferSource();source.buffer=await context.decodeAudioData(speakerBytes(fixture.enrollmentAudio));const destination=context.createMediaStreamDestination();source.connect(destination);source.start();for(const track of destination.stream.getTracks()){const stop=track.stop.bind(track);track.stop=()=>{stop();source.stop();void context.close();};fixture.tracks.push(track);}return destination.stream;};void 0`);
+      const snapshot = async name => { await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await pause(180);fs.writeFileSync(path.resolve(`tmp/${name}.png`),(await win.webContents.capturePage()).toPNG()); };
+      win.setSize(850,950);
+      const theme = async dark => read(`(()=>{const s=document.body.style;s.setProperty('--surface',${JSON.stringify(dark ? '#222' : '#fff')});s.setProperty('--text',${JSON.stringify(dark ? '#eee' : '#222')});s.setProperty('--text-soft',${JSON.stringify(dark ? '#aaa' : '#666')});s.setProperty('--text-mid',${JSON.stringify(dark ? '#bbb' : '#666')});s.setProperty('--border',${JSON.stringify(dark ? '#444' : '#ddd')});s.color=${JSON.stringify(dark ? '#eee' : '#222')};s.background=${JSON.stringify(dark ? '#181818' : '#f5f3ef')};})()`);
+      await theme(true);
+      for(let index=0;index<clips.length;index++) {
+        await read(`fixture.enrollmentAudio=${JSON.stringify(clips[index])};void 0`);
+        await click(index===0?'准备第一段':'录制下一段');
+        await click('开始本段录音'); await until('document.querySelector(".speaker-recorder.is-recording")');
+        if(index===0) await snapshot('voice-speaker-recording');
+        await until('document.querySelector(".speaker-recorder.is-preview")',18000);
+        assert.equal(await read('fixture.tracks.every(track=>track.readyState==="ended")'),true);
+        assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).profiles[0].samples.length,index,'preview is not saved automatically');
+        if(index===0) {
+          await snapshot('voice-speaker-preview');
+          assert.equal(await read('Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="使用这一段").getBoundingClientRect().bottom<=innerHeight'),true,'save action stays visible after preview grows');
+        }
+        await click('使用这一段');
+        await until(`document.querySelectorAll('.speaker-sample').length===${index+1}`,15000);
+        assert.equal(await read('!!document.querySelector(".speaker-recorder")'),false,'no automatic next clip');
+      }
+      const stored=fs.readFileSync(path.join(app.getPath('userData'),'voice-speaker-profile.json'),'utf8');assert.ok(!stored.includes('vectors'));assert.ok(!stored.includes('campplus'));assert.ok(!stored.includes('测试本人'));assert.ok(!stored.includes('今天'));
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).enabled,false);
+      await read('fixture.settings(false);void 0');await pause(30);await read('fixture.settings(true);void 0');
+      await until('Array.from(document.querySelectorAll("button")).some(b=>b.textContent==="开启声纹锁定"&&!b.disabled)');
+      await click('开启声纹锁定');await until('(async()=> (await cardbushDesktop.voice.speakerStatus()).enabled)()');
+      await click('添加人员');await fillName('另一位使用者');await click('保存人员');
+      await until('document.querySelectorAll(".speaker-person").length===2');
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).activeProfileId,ownerId,'browsing another person never authorizes them');
+      assert.equal(await read('Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="使用此人").disabled'),true,'incomplete person cannot be selected');
+      await read('document.querySelector(".speaker-lock").scrollIntoView({block:"start"});void 0');await snapshot('voice-speaker-profiles');
+      win.setSize(500,800);await theme(false);
+      await snapshot('voice-speaker-profiles-narrow');
+      assert.equal(await read('document.querySelector(".voice-settings").scrollWidth<=document.querySelector(".voice-settings").clientWidth'),true,'no horizontal overflow in narrow settings');
+      await read('window.confirm=()=>true;void 0');await click('删除人员');await until('document.querySelectorAll(".speaker-person").length===1');
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).enabled,true,'deleting an inactive person preserves lock');
+      await click('管理第 2 段');await click('收起');
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).profiles[0].samples.length,3,'cancelled replacement keeps all samples');
+      win.setSize(850,950);await theme(true);await read('document.querySelector(".speaker-lock").scrollIntoView({block:"start"});void 0');await snapshot('voice-speaker-lock');
+      const beforeForeign=requests.length;
+      for(const name of ['leijun-test-sr-1.wav','liudehua-test-sr-1.wav']) {
+        const result=await read(`cardbushDesktop.voice.transcribe({id:crypto.randomUUID(),audio:speakerBytes(${JSON.stringify(sample(name).toString('base64'))}),mimeType:'audio/wav'})`);
+        assert.deepEqual(result,{text:'',speaker:'rejected'});
+      }
+      assert.equal(requests.length,beforeForeign,'foreign speech must never reach the cloud API');
+      const accepted=await read(`cardbushDesktop.voice.transcribe({id:'speaker-allowed',audio:speakerBytes(${JSON.stringify(sample('fangjun-test-sr-1.wav').toString('base64'))}),mimeType:'audio/wav'})`);
+      assert.equal(accepted.text,'这是麦克风转写测试');assert.equal(requests.length,beforeForeign+1);
+      await click('删除人员');await until('(async()=> !(await cardbushDesktop.voice.speakerStatus()).enrolled)()');
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).enabled,false);
+      assert.equal((await read('cardbushDesktop.voice.speakerStatus()')).profiles.length,0);
+      await read('cardbushDesktop.voice.removeModel("speaker")');
+      console.log('Speaker UI/IPC passed: optional installation, live-call microphone cleanup, manual per-clip capture/preview/save, encrypted named profiles, single-person authorization, narrow layout, real owner/foreign verification and deletion.');
     }
     assert.deepEqual(errors.filter(value=>!/Permissions policy|permissions policy/.test(value)),[]);
     console.log('Voice UI passed: local mode without a key, browser audio conversion and native Chinese dictation, system/cloud playback, fake-device microphone/VAD, click/hold, cancellation, settings and frame permissions.');

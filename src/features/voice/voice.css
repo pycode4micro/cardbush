@@ -2,9 +2,10 @@
 .voice-call-overlay { pointer-events: none; background: none; align-items: flex-end; padding-bottom: 24px; }
 .voice-dialog { pointer-events: auto; width: min(440px, 100%); max-height: calc(100dvh - 80px); overflow: auto; background: var(--surface, #222); color: var(--text, #eee); border: 1px solid var(--border, #444); border-radius: 22px; padding: 18px; box-shadow: 0 12px 50px #0005; }
 .voice-dialog-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.voice-dialog button, .voice-actions button, .voice-actions select { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; border: 1px solid var(--border, #555); border-radius: 18px; color: inherit; background: var(--surface, #222); padding: 6px 12px; cursor: pointer; }
-.voice-dialog button:disabled, .voice-actions button:disabled { opacity: .45; cursor: default; }
-.voice-dialog button:focus-visible, .voice-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Style voice actions, not the triggers and options of nested settings controls. */
+:where(.voice-dialog-title, .voice-window-actions, .voice-actions, .voice-review) > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; border: 1px solid var(--border, #555); border-radius: 18px; color: inherit; background: var(--surface, #222); padding: 6px 12px; cursor: pointer; }
+:where(.voice-dialog-title, .voice-window-actions, .voice-actions, .voice-review) > button:disabled { opacity: .45; cursor: default; }
+:where(.voice-dialog-title, .voice-window-actions, .voice-actions, .voice-review) > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .voice-level { height: 50px; display: flex; justify-content: center; align-items: center; gap: 5px; }
 .voice-level i { width: 5px; border-radius: 3px; background: var(--accent, #9abaff); transition: height .08s linear; }
 .voice-status { text-align: center; font-size: 13px; }
@@ -15,6 +16,7 @@
 .voice-error { color: var(--danger, #ed7373); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .voice-settings-dialog { width: min(680px, 100%); }
 .voice-settings-dialog .voice-settings { margin-top: 16px; }
+.voice-settings { container-type: inline-size; container-name: settings-page; }
 .voice-settings .settings-field { margin-bottom: 12px; }
 .voice-key-remove { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 12px; }
 .voice-advanced { margin-top: 14px; }
@@ -51,7 +53,17 @@
 .voice-recording-mark { color: var(--accent, #9abaff); }
 .voice-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; margin-top: 14px; }
 .voice-review label { flex: 1; min-width: 120px; font-size: 12px; color: var(--text-soft); }
-.voice-review input { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 8px; }
+.voice-review textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 8px; resize: vertical; min-height: 70px; max-height: 200px; font: inherit; line-height: 1.6; }
+.voice-lock-status { text-align: center; }
 @keyframes voice-working { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .voice-level i { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .voice-agent-status svg { animation: none; } }
+.speaker-enrollment { padding: 14px; margin: 12px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.speaker-enrollment p { margin: 8px 0 0; line-height: 1.7; }
+.voice-custom-model { min-width: 0; padding: 14px; margin: 12px 0; border: 1px solid var(--border); border-radius: 12px; }
+.voice-custom-model .voice-help, .voice-custom-model .voice-error { overflow-wrap: anywhere; }
+.voice-custom-path { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.voice-custom-path .settings-field { flex: 1 1 220px; min-width: 0; margin: 0; }
+.voice-custom-path .settings-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+.voice-custom-path > button { flex-shrink: 0; min-height: 38px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); cursor: pointer; }
+.voice-custom-path > button:disabled { opacity: .5; cursor: default; }

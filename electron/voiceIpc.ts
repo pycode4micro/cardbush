@@ -1,4 +1,4 @@
-import { app, ipcMain, safeStorage, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { app, dialog, ipcMain, safeStorage, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { VoiceService } from './voiceService';
 import { WindowsVoice } from './windowsVoice';
@@ -6,6 +6,10 @@ import { VoiceModelStore } from './voiceModelStore';
 import { SenseVoice } from './senseVoice';
 import { KokoroVoice } from './kokoroVoice';
 import { kokoroDefinition } from './kokoroManifest';
+import { speakerDefinition } from './speakerManifest';
+import { SpeakerEmbedding } from './speakerEmbedding';
+import { SpeakerLock } from './speakerLock';
+import { CustomSpeech } from './customSpeech';
 
 async function completeOrCancel<T>(operation: Promise<T>, cancelled: T): Promise<T> {
   try { return await operation; }
@@ -18,8 +22,23 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
   const recognition = new SenseVoice(models, path.join(app.getPath('temp'), 'cardbush-voice'));
   const speechModels = new VoiceModelStore(path.join(app.getPath('userData'), 'voice-models'), network.download, kokoroDefinition());
   const speech = new KokoroVoice(speechModels, path.join(app.getPath('temp'), 'cardbush-voice'));
-  const model = (kind: unknown) => { if (kind === 'speech') return speechModels; if (kind === undefined || kind === 'recognition') return models; throw Error('Invalid voice model kind.'); };
-  app.once('before-quit', () => { void models.cancelInstall(); void speechModels.cancelInstall(); });
+  const customSpeech = new CustomSpeech(speech, () => speechModels.status().state === 'installed', runtime.packaged
+    ? path.join(runtime.resourcesPath, 'voice', 'custom_tts.py') : path.join(runtime.appPath, 'native', 'voice', 'custom_tts.py'));
+  const speakerModels = new VoiceModelStore(path.join(app.getPath('userData'), 'voice-models'), network.download, speakerDefinition());
+  const crypto = {
+    encrypt: (value: string) => {
+      if (!safeStorage.isEncryptionAvailable() || process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') throw Error('系统安全凭据存储不可用。');
+      return safeStorage.encryptString(value).toString('base64');
+    }, decrypt: (value: string) => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  };
+  const speaker = new SpeakerLock(path.join(app.getPath('userData'), 'voice-speaker-profile.json'), new SpeakerEmbedding(speakerModels,
+    runtime.packaged ? path.join(runtime.resourcesPath, 'voice', 'CardBushSpeakerHost.exe') : path.join(runtime.appPath, 'dist-native', 'voice', 'CardBushSpeakerHost.exe')), crypto,
+    () => speakerModels.status().state === 'installed');
+  const model = (kind: unknown) => { if (kind === 'speaker') return speakerModels; if (kind === 'speech') return speechModels; if (kind === undefined || kind === 'recognition') return models; throw Error('Invalid voice model kind.'); };
+  app.once('before-quit', () => {
+    for (const owner of watched) service?.cancelOwner(owner);
+    void models.cancelInstall(); void speechModels.cancelInstall(); void speakerModels.cancelInstall();
+  });
   const watched = new Set<number>();
   const authorized = (event: IpcMainInvokeEvent) => {
     const window = mainWindow();
@@ -30,28 +49,47 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
       event.sender.on('render-process-gone', () => service?.cancelOwner(owner));
     }
     return service ??= new VoiceService(path.join(app.getPath('userData'), 'voice-settings.json'), {
-      recognition, speech,
+      recognition, speech, speaker, customSpeech,
       local: new WindowsVoice(runtime.packaged ? path.join(runtime.resourcesPath, 'voice', 'CardBushVoiceHost.exe')
         : path.join(runtime.appPath, 'dist-native', 'voice', 'CardBushVoiceHost.exe')),
       fetch: network.speech,
-      encrypt: value => {
-        if (!safeStorage.isEncryptionAvailable() || process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') throw Error('系统安全凭据存储不可用。');
-        return safeStorage.encryptString(value).toString('base64');
-      },
-      decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+      ...crypto,
     });
   };
   ipcMain.handle('voice:settings', event => authorized(event).settings());
+  ipcMain.handle('voice:choose-speech-path', async (event, kind) => {
+    authorized(event);
+    if (kind !== 'model' && kind !== 'python') throw Error('Invalid speech path kind.');
+    const result = await dialog.showOpenDialog(mainWindow()!, {
+      title: kind === 'model' ? '选择本地语音模型目录' : '选择已安装 qwen-tts 的 Python 解释器',
+      properties: [kind === 'model' ? 'openDirectory' : 'openFile'],
+      ...(kind === 'python' && process.platform === 'win32' ? { filters: [{ name: 'Python', extensions: ['exe'] }] } : {}),
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle('voice:inspect-speech-model', (event, directory) => { authorized(event); return customSpeech.inspect(directory); });
   ipcMain.handle('voice:capabilities', event => authorized(event).capabilities());
   ipcMain.handle('voice:model-status', (event, kind) => { authorized(event); return model(kind).status(); });
   ipcMain.handle('voice:model-install', (event, kind) => { authorized(event); return model(kind).install(); });
   ipcMain.handle('voice:model-cancel', (event, kind) => { authorized(event); return model(kind).cancelInstall(); });
   ipcMain.handle('voice:model-remove', (event, kind) => {
     const settings = authorized(event).settings();
-    if (kind === 'speech' ? settings.engine === 'kokoro' : settings.recognitionEngine === 'sensevoice') throw Error('请先选择并保存其他语音方式，再卸载本地模型。');
+    let customKokoro = false;
+    if (kind === 'speech' && settings.engine === 'custom') {
+      try { customKokoro = customSpeech.inspect(settings.customSpeech?.directory ?? '').kind === 'kokoro'; } catch { /* A removed directory must not trap the user in an unusable setup. */ }
+    }
+    if (kind === 'speaker' ? speaker.status().enabled : kind === 'speech' ? settings.engine === 'kokoro' || customKokoro : settings.recognitionEngine === 'sensevoice') throw Error('请先关闭声纹锁定或选择并保存其他语音方式，再卸载本地模型。');
     return model(kind).remove();
   });
   ipcMain.handle('voice:save-settings', (event, input) => authorized(event).save(input));
+  ipcMain.handle('voice:speaker-status', event => authorized(event).speakerStatus());
+  ipcMain.handle('voice:speaker-enroll', (event, input) => authorized(event).enrollSpeaker(event.sender.id, input));
+  ipcMain.handle('voice:speaker-configure', (event, input) => authorized(event).configureSpeaker(input));
+  ipcMain.handle('voice:speaker-remove', (event, profileId) => authorized(event).removeSpeaker(profileId));
+  ipcMain.handle('voice:speaker-profile-save', (event, input) => authorized(event).saveSpeakerProfile(input));
+  ipcMain.handle('voice:speaker-profile-select', (event, profileId) => authorized(event).selectSpeakerProfile(profileId));
+  ipcMain.handle('voice:speaker-sample-save', (event, input) => authorized(event).saveSpeakerSample(event.sender.id, input));
+  ipcMain.handle('voice:speaker-sample-remove', (event, input) => authorized(event).removeSpeakerSample(input));
   ipcMain.handle('voice:transcribe', (event, input) => completeOrCancel(authorized(event).transcribe(event.sender.id, input), { text: '' }));
   ipcMain.handle('voice:speak', (event, input) => completeOrCancel(authorized(event).speak(event.sender.id, input, chunk => {
     if (!event.sender.isDestroyed()) event.sender.send('voice:audio', chunk);

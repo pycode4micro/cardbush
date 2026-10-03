@@ -48,6 +48,8 @@ files:
   - '!**/identity.local.json'
   - '!**/signing.local.json'
 extraResources:
+  - from: native/voice/custom_tts.py
+    to: voice/custom_tts.py
   - from: assets/connector-maintenance
     to: connector-maintenance
     filter: ['*.ps1']
@@ -67,7 +69,7 @@ win:
   extraResources:
     - from: dist-native/voice
       to: voice
-      filter: [CardBushVoiceHost.exe]
+      filter: [CardBushVoiceHost.exe, CardBushSpeakerHost.exe]
     - from: dist-native/process-guard
       to: process-guard
       filter: ['CardBushProcessHost-*.exe', current.json]

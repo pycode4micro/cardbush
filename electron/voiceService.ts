@@ -2,11 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { defaultVoiceSettings, type VoiceSettings, type VoiceSettingsInput, type VoiceAudioChunk } from './voiceTypes';
 import type { LocalVoiceBackend } from './windowsVoice';
+import type { SpeakerLock } from './speakerLock';
+import type { SpeakerLockMode, SpeakerSampleInput } from './voiceTypes';
+import type { CustomSpeech } from './customSpeech';
+import { validateCustomSpeech } from './customSpeechModel';
 
 interface Dependencies {
   local?: LocalVoiceBackend;
   recognition?: Pick<LocalVoiceBackend, 'transcribe'>;
   speech?: Pick<LocalVoiceBackend, 'speak'>;
+  customSpeech?: Pick<CustomSpeech, 'speak' | 'validate'>;
+  speaker?: SpeakerLock;
   fetch: typeof fetch;
   encrypt(value: string): string;
   decrypt(value: string): string;
@@ -18,20 +24,26 @@ const textField = (value: unknown, max = 200): string => {
 };
 export function validateVoiceSettings(input: VoiceSettingsInput): Omit<VoiceSettings, 'hasApiKey'> {
   const engine = input.engine ?? 'system', language = input.language ?? 'zh-CN';
-  const recognitionEngine = input.recognitionEngine ?? (engine === 'kokoro' ? 'system' : engine), recognitionLanguage = input.recognitionLanguage ?? 'auto';
+  const recognitionEngine = input.recognitionEngine ?? (engine === 'kokoro' || engine === 'custom' || engine === 'qwen' ? 'system' : engine), recognitionLanguage = input.recognitionLanguage ?? 'auto';
   const recognitionFormatting = input.recognitionFormatting ?? 'verbatim';
+  const turnEndPause = input.turnEndPause ?? 'normal';
+  if (!['normal', 'patient'].includes(turnEndPause)) throw Error('Invalid voice turn wait setting.');
   if (!['verbatim', 'formatted'].includes(recognitionFormatting)) throw Error('Invalid recognition formatting.');
   if (!['system', 'sensevoice', 'cloud'].includes(recognitionEngine) || !['auto', 'zh', 'en'].includes(recognitionLanguage)) throw Error('Invalid recognition settings.');
-  if (!['system', 'kokoro', 'cloud'].includes(engine) || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)) throw Error('Invalid voice engine or language.');
+  if (!['system', 'qwen', 'kokoro', 'custom', 'cloud'].includes(engine) || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)) throw Error('Invalid voice engine or language.');
   const baseUrl = textField(input.baseUrl, 2048).replace(/\/+$/, ''), url = new URL(baseUrl);
   if (url.username || url.password || url.search || url.hash ||
     !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
     throw Error('语音服务需要 HTTPS 地址，本机服务可使用 HTTP。');
   }
   if (!['female', 'male'].includes(input.voice) || !Number.isFinite(input.speed) || input.speed < .5 || input.speed > 2) throw Error('Invalid voice selection or speed.');
-  return { engine, recognitionEngine, recognitionLanguage, recognitionFormatting, microphoneId: input.microphoneId ? textField(input.microphoneId, 512) : '', language, systemFemaleVoice: input.systemFemaleVoice ? textField(input.systemFemaleVoice) : '',
+  const kokoroFemaleVoice = input.kokoroFemaleVoice ?? 3, kokoroMaleVoice = input.kokoroMaleVoice ?? 58, kokoroStyle = input.kokoroStyle ?? 'warm';
+  if (!Number.isInteger(kokoroFemaleVoice) || kokoroFemaleVoice < 3 || kokoroFemaleVoice > 57 ||
+      !Number.isInteger(kokoroMaleVoice) || kokoroMaleVoice < 58 || kokoroMaleVoice > 102 || !['warm', 'neutral'].includes(kokoroStyle)) throw Error('Invalid local voice preset.');
+  return { engine, recognitionEngine, recognitionLanguage, recognitionFormatting, turnEndPause, microphoneId: input.microphoneId ? textField(input.microphoneId, 512) : '', language, systemFemaleVoice: input.systemFemaleVoice ? textField(input.systemFemaleVoice) : '',
     systemMaleVoice: input.systemMaleVoice ? textField(input.systemMaleVoice) : '', baseUrl, transcriptionModel: textField(input.transcriptionModel), speechModel: textField(input.speechModel),
-    femaleVoice: textField(input.femaleVoice), maleVoice: textField(input.maleVoice), voice: input.voice, speed: input.speed };
+    femaleVoice: textField(input.femaleVoice), maleVoice: textField(input.maleVoice), voice: input.voice, speed: engine === 'qwen' ? 1 : input.speed, kokoroFemaleVoice, kokoroMaleVoice, kokoroStyle,
+    ...(input.customSpeech ? { customSpeech: validateCustomSpeech(input.customSpeech) } : {}) };
 }
 
 /** Credentials never return to the renderer. Audio is bounded; local model scratch files are owned by its backend. */
@@ -44,13 +56,35 @@ export class VoiceService {
     // Preserve an explicitly configured legacy cloud account. New installations default to Windows.
     return { settings: { ...validateVoiceSettings({ ...saved, engine: saved.engine ?? (saved.secret ? 'cloud' : 'system') }), hasApiKey: Boolean(saved.secret) }, secret: saved.secret || '' };
   }
-  settings(): VoiceSettings { return this.read().settings; }
+  settings(): VoiceSettings { return { ...this.read().settings, ...(this.deps.speaker ? { speakerLockEnabled: this.deps.speaker.enabled() } : {}) }; }
+  speakerStatus() { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.status(); }
+  configureSpeaker(input: { enabled: boolean; mode: SpeakerLockMode }) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.configure(input); }
+  removeSpeaker(profileId?: string) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.remove(profileId); }
+  saveSpeakerProfile(input: { profileId?: string; name: string }) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.saveProfile(input); }
+  selectSpeakerProfile(profileId: string) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.selectProfile(profileId); }
+  removeSpeakerSample(input: { profileId: string; sampleId: string }) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.removeSample(input); }
+  saveSpeakerSample(owner: number, input: SpeakerSampleInput) {
+    return this.request(owner, input?.id, 'speaker', async (_config, _key, signal) => {
+      if (!this.deps.speaker) throw Error('声纹组件不可用。');
+      return this.deps.speaker.saveSample(input, signal);
+    });
+  }
+  enrollSpeaker(owner: number, input: { id: string; clips: ArrayBuffer[] }) {
+    return this.request(owner, input.id, 'speaker', async (_config, _key, signal) => {
+      if (!this.deps.speaker) throw Error('声纹组件不可用。');
+      return this.deps.speaker.enroll(input.clips, signal);
+    });
+  }
   async capabilities() {
     if (!this.deps.local) return { available: false, voices: [], recognizers: [], error: '本地语音组件不可用。' };
     return this.deps.local.capabilities(AbortSignal.timeout(15_000));
   }
   save(input: VoiceSettingsInput): VoiceSettings {
     const next = validateVoiceSettings(input), old = this.read();
+    if (next.engine === 'custom' || next.engine === 'qwen') {
+      if (!this.deps.customSpeech) throw Error('自定义本地语音组件不可用。');
+      this.deps.customSpeech.validate({ ...next, hasApiKey: false });
+    }
     // A retained key must never follow a changed destination silently.
     if (next.baseUrl !== old.settings.baseUrl && input.apiKey === undefined && old.secret) throw Error('更换语音服务地址时，请重新填写 API Key。');
     const secret = input.apiKey === undefined ? old.secret : input.apiKey.trim() ? this.deps.encrypt(textField(input.apiKey, 4096)) : '';
@@ -58,20 +92,21 @@ export class VoiceService {
     const tmp = this.file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify({ ...next, secret }), { mode: 0o600 });
     fs.renameSync(tmp, this.file);
-    return { ...next, hasApiKey: Boolean(secret) };
+    return this.settings();
   }
   cancel(owner: number, id: string) { this.jobs.get(`${owner}:${id}`)?.abort('voice-cancelled'); }
   cancelOwner(owner: number) { for (const [key, job] of this.jobs) if (key.startsWith(`${owner}:`)) job.abort('voice-cancelled'); }
-  private async request<T>(owner: number, id: string, operation: 'transcribe' | 'speak', run: (settings: VoiceSettings, key: string, signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async request<T>(owner: number, id: string, operation: 'transcribe' | 'speak' | 'speaker', run: (settings: VoiceSettings, key: string, signal: AbortSignal) => Promise<T>): Promise<T> {
     if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) throw Error('Invalid audio request ID.');
     const jobId = `${owner}:${id}`;
     if (this.jobs.has(jobId) || [...this.jobs.keys()].filter(key => key.startsWith(`${owner}:`)).length >= 4) throw Error('语音请求过多，请稍后重试。');
     const saved = this.read();
-    const engine = operation === 'transcribe' ? saved.settings.recognitionEngine : saved.settings.engine;
+    const engine = operation === 'speaker' ? 'speaker' : operation === 'transcribe' ? saved.settings.recognitionEngine : saved.settings.engine;
     if (engine === 'cloud' && !saved.secret) throw Error('请先在「设置 → 语音」配置云端 API Key，或选择本地语音。');
     if (engine === 'system' && !this.deps.local) throw Error('本地语音组件不可用。');
     if (engine === 'sensevoice' && !this.deps.recognition) throw Error('请先安装本地识别模型。');
     if (engine === 'kokoro' && !this.deps.speech) throw Error('请先安装本地自然音色。');
+    if ((engine === 'custom' || engine === 'qwen') && !this.deps.customSpeech) throw Error('自定义本地语音组件不可用。');
     const controller = new AbortController(); this.jobs.set(jobId, controller);
     const timer = setTimeout(() => controller.abort(), 90_000);
     try { return await run(saved.settings, engine === 'cloud' ? this.deps.decrypt(saved.secret) : '', controller.signal); }
@@ -86,10 +121,16 @@ export class VoiceService {
     const extension = ({ 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav' } as Record<string, string>)[mime];
     if (!extension || !(input.audio instanceof ArrayBuffer) || !input.audio.byteLength || input.audio.byteLength > MAX_AUDIO) throw Error('录音格式不支持或超过 12 MB，请缩短录音。');
     return this.request(owner, input.id, 'transcribe', async (config, key, signal) => {
+      // Enforce identity at the host boundary, before ANY local/cloud transcription.
+      // Returning no text keeps other voices out of retries, review and Agent input.
+      const decision = await this.deps.speaker?.check(input.audio, signal);
+      if (decision && !decision.allowed) return { text: '', speaker: decision.reason ?? 'rejected' as const };
+      const finish = (text: string) => decision && !this.deps.speaker!.current(decision)
+        ? { text: '', speaker: 'rejected' as const } : { text: text.trim(), ...(decision?.verified ? { speakerVerified: true } : {}) };
       if (config.recognitionEngine !== 'cloud') {
         if (mime !== 'audio/wav') throw Error('本地语音识别需要 WAV 录音，请重新开始录音。');
         const result = await (config.recognitionEngine === 'sensevoice' ? this.deps.recognition! : this.deps.local!).transcribe(input.audio, config, signal);
-        return { text: result.text.trim() };
+        return finish(result.text);
       }
       const body = new FormData();
       body.set('model', config.transcriptionModel); body.set('response_format', 'json');
@@ -102,12 +143,13 @@ export class VoiceService {
       const bytes = await boundedBody(response, 256 * 1024);
       const result = JSON.parse(Buffer.from(bytes).toString('utf8'));
       if (typeof result.text !== 'string') throw Error('语音服务未返回转写文本。');
-      return { text: result.text.trim() as string };
+      return finish(result.text);
     });
   }
   async speak(owner: number, input: { id: string; text: string; voice?: 'female' | 'male' }, emit: (chunk: VoiceAudioChunk) => void) {
     if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 3000 || input.voice && !['female', 'male'].includes(input.voice)) throw Error('Invalid speech request.');
     return this.request(owner, input.id, 'speak', async (config, key, signal) => {
+      if (config.engine === 'custom' || config.engine === 'qwen') return this.deps.customSpeech!.speak(input, config, signal, emit);
       if (config.engine === 'kokoro') return this.deps.speech!.speak(input, config, signal, emit);
       if (config.engine === 'system') return this.deps.local!.speak(input, config, signal, emit);
       const voice = (input.voice ?? config.voice) === 'male' ? config.maleVoice : config.femaleVoice;

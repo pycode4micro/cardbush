@@ -34,3 +34,5 @@ id_rsa
 id_ed25519
 /deploy/agent/data/
 /private-release/
+voice-speaker-profile.json
+voice-speaker-profile.json.*.tmp

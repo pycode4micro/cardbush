@@ -28,7 +28,7 @@
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-本文介绍当前源码能力。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。MSIX 使用独立的四段版本号。目前不提供 macOS、ARM64 或 32 位安装包。
+本文介绍源码版本 **1.0.0-beta.5** 的能力。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。MSIX 使用独立的四段版本号。目前不提供 macOS、ARM64 或 32 位安装包。
 
 ### 安装与开始使用
 
@@ -61,7 +61,7 @@ AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）�
 | **本地与远端** | 内置 Agent、SSH 项目、独立 Agent 服务；个人 Linux Agent 可选独立图形桌面、Computer Use 和 Browser Use。 |
 | **连续的工作上下文** | 会话持久化、上下文恢复、归档工具结果检索和使用记录；习惯记忆与下一步预测可选，默认关闭。 |
 
-语音采用语音识别、现有文字 Agent 和语音合成串联，只有语音通话自动朗读回复。可使用 Windows 系统语音，也可**自行选择安装 SenseVoice 识别模型和 Kokoro 语音模型**，支持男声／女声选择；这些模型不会预装。详见[本地语音安装、下载与平台限制](docs/LOCAL_VOICE_MODELS.md)。
+语音采用语音识别、现有文字 Agent 和语音合成串联，只有语音通话自动朗读回复。**本地识别推荐 SenseVoice，主要播报模型为 Qwen3-TTS CustomVoice**，男女声音色可独立设置，使用正常语速。模型可选安装、不会预装；Qwen 通过选择本地模型目录和 Python 环境接入，Windows 语音及旧版 Kokoro 仍可选用。Windows x64 还提供可选本地声纹锁定，录入后验证说话人，减少旁人讲话触发发送或打断播报。详见[本地语音安装、下载与平台限制](docs/LOCAL_VOICE_MODELS.md)。
 
 通过 **应用中心 → 组件** 编辑新会话页面。系统内置组件定义始终保留；自定义 HTML 在隔离框架中运行，动作需明确授权。日历通过悬浮展示节日和自动化详情。详见[组件、布局与多页面说明](docs/HTML_COMPONENTS_V1_2026-09-30.md)。
 

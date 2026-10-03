@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import yaml from 'js-yaml';
 import { WindowsVoice } from '../dist-electron/windowsVoice.js';
 import { VoiceService } from '../dist-electron/voiceService.js';
 import { defaultVoiceSettings } from '../dist-electron/voiceTypes.js';
@@ -17,9 +18,12 @@ function wave(pcm, sampleRate) {
   audio.write('data', 36); audio.writeUInt32LE(pcm.length, 40); pcm.copy(audio, 44); return audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.length);
 }
 
-test('packaging includes the Windows speech helper and builds it for development and release', () => {
-  const packaging = readFileSync('electron-builder.yml', 'utf8');
-  assert.match(packaging, /from: dist-native\/voice\s+to: voice\s+filter: \[CardBushVoiceHost.exe\]/);
+test('packaging includes both Windows voice helpers and builds them for development and release', () => {
+  const packaging = yaml.load(readFileSync('electron-builder.yml', 'utf8'));
+  const resource = packaging.win.extraResources.find(item => item.from === 'dist-native/voice');
+  assert.equal(resource?.to, 'voice');
+  assert.deepEqual(resource.filter, ['CardBushVoiceHost.exe', 'CardBushSpeakerHost.exe']);
+  assert.ok(packaging.extraResources.some(item => item.from === 'native/voice/custom_tts.py' && item.to === 'voice/custom_tts.py'), 'custom Python helper is available outside asar on supported desktop platforms');
   const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts;
   for (const task of ['predev', 'build', 'test:voice']) assert.ok(scripts[task].includes('build-voice-native-host.mjs'));
 });

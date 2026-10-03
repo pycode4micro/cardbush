@@ -2591,7 +2591,7 @@ export async function sendGuidance(request: SendGuidanceRequest,
   const trace = (stage: string, details: Record<string, unknown> = {}) => {
     void window.cardbushDesktop?.writeDebugLog?.('renderer-lifecycle', {
       stage, sessionId, turnId, clientMessageId: request.clientMessageId,
-      characters: guidance.length, ...details,
+      characters: guidance.length, mode: request.mode, ...details,
     }).catch(() => undefined);
   };
   trace('guidance-requested');
@@ -2617,7 +2617,7 @@ export async function sendGuidance(request: SendGuidanceRequest,
       createdAt,
     }, request.signal);
     modelRequestInterrupted = receipt.modelRequestInterrupted === true;
-    trace('guidance-accepted');
+    trace('guidance-accepted', { modelRequestInterrupted });
   } catch (error) {
     trace('guidance-failed', { error: String(error) });
     throw error;

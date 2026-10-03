@@ -49,7 +49,11 @@ export class VoicePlayback {
   close() { this.stop(); const context = this.context; this.context = undefined; void context?.close().catch(() => {}); }
 }
 
-interface CaptureCallbacks { level(value: number): void; speech(): void; clip(blob: Blob): void; error(message: string): void }
+export interface VoiceClipTiming { lastSpeechAt: number; reason: 'silence' | 'limit' | 'manual' }
+interface CaptureCallbacks {
+  level(value: number): void; speech(): void; activity?(at: number): void; discarded?(): void;
+  clip(blob: Blob, timing?: VoiceClipTiming): void; error(message: string): void;
+}
 /** Local VAD segments a continuous call and discards silence; microphone constraints request echo cancellation. */
 export class VoiceCapture {
   private stream?: MediaStream;
@@ -64,6 +68,7 @@ export class VoiceCapture {
   private speaking = false;
   private activity = new VoiceActivity();
   private lastSpeech = 0;
+  private lastSpeechAt = 0;
   constructor(private mode: 'recording' | 'call', private callbacks: CaptureCallbacks, private microphoneId = '') {}
   async start() {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error('当前环境不支持录音。');
@@ -92,9 +97,11 @@ export class VoiceCapture {
       const now = performance.now();
       analyser.getFloatFrequencyData(spectrum);
       const activity = this.activity.update(rms, spectrum, this.context!.sampleRate, now);
-      if (activity.voiced) this.lastSpeech = now;
+      if (activity.voiced) { this.lastSpeech = now; this.lastSpeechAt = Date.now(); this.callbacks.activity?.(this.lastSpeechAt); }
       if (activity.started && !this.speaking) { this.speaking = true; this.callbacks.speech(); }
-      if (this.mode === 'call' && this.speaking && now - this.lastSpeech > 1250 || now - this.started > (this.mode === 'call' ? 45_000 : 120_000)) this.finish();
+      // Cut audio for ASR, but only VoiceTurnBuffer decides when the user has finished.
+      if (this.mode === 'call' && this.speaking && now - this.lastSpeech > 1250) this.rotate(true, 'silence');
+      else if (now - this.started > (this.mode === 'call' ? 45_000 : 120_000)) this.rotate(this.mode === 'recording' || this.speaking, 'limit');
       else if (this.mode === 'call' && !this.speaking && now - this.started > 15_000) this.rotate(false);
     }, 60);
   }
@@ -108,15 +115,19 @@ export class VoiceCapture {
     recorder.onerror = () => this.callbacks.error('录音失败，请检查麦克风。');
     recorder.start(250);
   }
-  private rotate(deliver: boolean) {
+  private rotate(deliver: boolean, reason: VoiceClipTiming['reason'] = 'manual'): boolean {
     const recorder = this.recorder;
-    if (!recorder || recorder.state !== 'recording') return;
+    if (!recorder || recorder.state !== 'recording') return this.rotating;
     this.recorder = undefined;
     this.rotating = true;
+    const timing = { lastSpeechAt: this.lastSpeechAt, reason };
     recorder.onstop = () => {
       const blob = new Blob(this.chunks, { type: recorder.mimeType }); this.chunks = [];
       this.rotating = false;
-      if (!this.closed && deliver && blob.size > 0) this.callbacks.clip(blob);
+      if (!this.closed) {
+        if (deliver && blob.size > 0) this.callbacks.clip(blob, timing);
+        else this.callbacks.discarded?.();
+      }
       if (this.mode === 'call') this.begin();
     };
     recorder.stop();
@@ -127,8 +138,9 @@ export class VoiceCapture {
       this.stream?.getTracks().forEach(track => track.stop()); this.stream = undefined;
       void this.context?.close().catch(() => {}); this.context = undefined;
     }
+    return deliver;
   }
-  finish() { this.rotate(this.mode === 'recording' || this.speaking); }
+  finish() { return this.rotate(this.mode === 'recording' || this.speaking); }
   mute(value: boolean) {
     this.muted = value; this.stream?.getAudioTracks().forEach(track => { track.enabled = !value; });
     if (value) this.callbacks.level(0);

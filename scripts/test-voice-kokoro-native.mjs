@@ -7,6 +7,8 @@ import {kokoroDefinition} from '../dist-electron/kokoroManifest.js';
 import {KokoroVoice} from '../dist-electron/kokoroVoice.js';
 import {SenseVoice} from '../dist-electron/senseVoice.js';
 import {defaultVoiceSettings} from '../dist-electron/voiceTypes.js';
+import {defaultCustomSpeechSettings} from '../dist-electron/voiceTypes.js';
+import {CustomSpeech} from '../dist-electron/customSpeech.js';
 // Explicit native regression: no automatic download. Use already-verified upstream cache.
 if(process.platform!=='win32'||process.arch!=='x64'){console.log('SKIP Kokoro native regression: Windows x64 only.');process.exit(0);}
 const cache=path.resolve('tmp/kokoro-upstream');
@@ -32,5 +34,15 @@ for(const voice of ['female','male']){
 }
 const cancel=new AbortController();const running=backend.speak({id:'cancel',text:'取消这次播放。'},config,cancel.signal,()=>assert.fail('cancelled speech emitted'));
 setTimeout(()=>cancel.abort(),200);await assert.rejects(running);assert.deepEqual(fs.readdirSync(scratch),[]);
+// An external model folder contains only data plus a deliberately invalid executable.
+// Successful synthesis proves the adapter still executes the verified installed runtime.
+const imported=fs.mkdtempSync(path.resolve('tmp/custom-kokoro-'));
+for(const name of ['model.int8.onnx','voices.bin','tokens.txt','lexicon-us-en.txt','lexicon-zh.txt','date-zh.fst','number-zh.fst','phone-zh.fst']) fs.linkSync(path.join(store.directory,name),path.join(imported,name));
+fs.symlinkSync(path.join(store.directory,'espeak-ng-data'),path.join(imported,'espeak-ng-data'),'junction');
+fs.writeFileSync(path.join(imported,'sherpa-onnx-offline-tts.exe'),'not executable');
+const custom=new CustomSpeech(backend,()=>true,'unused'),customChunks=[];
+await custom.speak({id:'custom-kokoro',text:'你好，我在听。',voice:'male'}, {...config,engine:'custom',customSpeech:{...defaultCustomSpeechSettings,directory:imported}}, AbortSignal.timeout(60000), chunk=>customChunks.push(Buffer.from(chunk.pcm,'base64')));
+assert.ok(Buffer.concat(customChunks).length>48000);assert.equal(fs.readFileSync(path.join(imported,'sherpa-onnx-offline-tts.exe'),'utf8'),'not executable');
+assert.deepEqual(fs.readdirSync(scratch),[]);console.log('Custom Kokoro uses imported data with the verified runtime; imported files stay intact.');
 fs.writeFileSync('tmp/voice-kokoro-benchmark.json',JSON.stringify(reports,null,2));
 console.log('Pinned install, female/male real PCM, cancellation and scratch cleanup passed. User engine selection unchanged.');
