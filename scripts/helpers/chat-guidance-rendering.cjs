@@ -68,6 +68,28 @@ module.exports = async ({ run, until, pause, window, root }) => {
         frame.gap >= 0 && frame.gap < 80),
       'queued guidance stays below prior output in every rendered frame: ' + JSON.stringify(pendingFrames));
       await fs.writeFile(path.join(root, 'tmp/chat-guidance-queued-' + theme + '.png'), (await window.capturePage()).toPNG());
+      // A persisted receipt can arrive before the assistant-segment boundary.
+      // Both rows then belong to the same Turn, but only the actual running
+      // assistant should subscribe to its live reasoning.
+      await run(`
+        guidanceFixture = guidanceFixture.map(message => message.id === 'guide-user'
+          ? { ...message, sequence: 5, status: 'sent', metadata: { ...message.metadata, guidance_delivery: 'sent' } }
+          : message);
+        showGuidanceFixture();
+        updateChat({ thinkingVisible: true, selectedModel: 'deepseek-v4' });
+      `);
+      await until("!!document.querySelector('.guidance-activity[data-guidance-state=sent]')", 'receipt before boundary');
+      await run(`window.dispatchEvent(new CustomEvent('cardbush:thinking', { detail: {
+        sessionId: 'guide-session', turnId: 'guide-turn', id: 'before-boundary-reasoning', phase: 'delta',
+        delta: 'seedance_create_task '.repeat(30) + 'guidance_live_tail'
+      } })); void 0;`);
+      await until("[...document.querySelectorAll('.assistant-thinking-process')].some(row => row.textContent.includes('guidance_live_tail'))", 'reasoning before boundary');
+      assert.equal(await run("[...document.querySelectorAll('.assistant-thinking-process')].filter(row => row.textContent.includes('guidance_live_tail')).length"), 1,
+        'a guidance receipt must not mirror live reasoning above and below the user message');
+      assert.equal(await run("document.querySelector('.guidance-activity .turn-thinking-detail')?.getAttribute('open')"), null);
+      await run(`window.dispatchEvent(new CustomEvent('cardbush:thinking', { detail: {
+        sessionId: 'guide-session', turnId: 'guide-turn', id: 'before-boundary-reasoning', phase: 'end'
+      } })); void 0;`);
       await run(`
         guidancePendingFrames = [];
         samplePendingGuidance();
@@ -83,6 +105,34 @@ module.exports = async ({ run, until, pause, window, root }) => {
         sessionId: 'guide-session', turnId: 'guide-turn', id: 'guide-reasoning', phase: 'delta', delta: 'Checking the resource limits.'
       } })); void 0;`);
       await until("document.querySelector('.guidance-activity')?.textContent.includes('Checking the resource limits.')", 'reasoning is visible without assistant text');
+      await run(`window.dispatchEvent(new CustomEvent('cardbush:thinking', { detail: {
+        sessionId: 'guide-session', turnId: 'guide-turn', id: 'guide-reasoning', phase: 'delta',
+        delta: ' long_unbroken_tool_identifier'.repeat(45) + '。下一轮仍需等待确认。'
+      } })); void 0;`);
+      await until("document.querySelector('.guidance-activity small')?.textContent.includes('下一轮')", 'long reasoning preview');
+      const assertThinkingBounds = async () => {
+        const geometry = await run(`(()=>{
+          const row=document.querySelector('.guidance-activity'), detail=row.querySelector('.turn-thinking-detail');
+          const summary=detail.querySelector('summary'), small=summary.querySelector('small');
+          const box=row.getBoundingClientRect(), content=detail.getBoundingClientRect();
+          return {rowWidth:box.width,detailWidth:content.width,inside:content.left>=box.left-1&&content.right<=box.right+1,
+            summaryOverflow:summary.scrollWidth-summary.clientWidth, previewOverflow:small.scrollWidth-small.clientWidth,
+            ellipsis:getComputedStyle(small).textOverflow};
+        })()`);
+        assert.equal(geometry.inside, true, JSON.stringify(geometry));
+        assert.ok(geometry.summaryOverflow <= 1, JSON.stringify(geometry));
+        assert.ok(geometry.previewOverflow > 0, 'long preview is clipped rather than widening the row');
+        assert.equal(geometry.ellipsis, 'ellipsis');
+      };
+      await assertThinkingBounds();
+      await run("document.querySelector('.guidance-activity summary').click(); void 0;");
+      await until("!!document.querySelector('.guidance-activity .turn-thinking-content')", 'reasoning expands');
+      assert.ok(await run("document.querySelector('.guidance-activity .turn-thinking-content').textContent.includes('Checking the resource limits.')"), 'full reasoning is retained');
+      assert.ok(await run("(()=>{const content=document.querySelector('.guidance-activity .turn-thinking-content');return content.scrollWidth-content.clientWidth<=1})()"), 'expanded text wraps inside the track');
+      await run("document.querySelector('.guidance-activity summary').click(); document.querySelector('.chat-panel').style.width='340px'; void 0;");
+      await pause(80);
+      await assertThinkingBounds();
+      await run("document.querySelector('.chat-panel').style.width=''; void 0;");
       await pause(150);
       await fs.writeFile(path.join(root, 'tmp/chat-guidance-thinking-' + theme + '.png'), (await window.capturePage()).toPNG());
       await run('updateChat({ thinkingVisible: false });');
@@ -96,6 +146,16 @@ module.exports = async ({ run, until, pause, window, root }) => {
       `);
       await until("document.querySelector('.message-row.streaming')?.textContent.includes('Continue with the plugin diagnosis.')", 'post-guidance response');
       assert.equal(await run("document.querySelectorAll('.guidance-activity,.guidance-delivery-status').length"), 0, 'real assistant output replaces the waiting row');
+      await run(`window.dispatchEvent(new CustomEvent('cardbush:thinking', { detail: {
+        sessionId: 'guide-session', turnId: 'guide-turn', id: 'after-guidance-reasoning', phase: 'delta', delta: 'new-tail-only'
+      } })); void 0;`);
+      // Re-enable reasoning after the explicit-off and stopping checks above.
+      await run("updateChat({ thinkingVisible: true }); void 0;");
+      await pause(30);
+      await run(`window.dispatchEvent(new CustomEvent('cardbush:thinking', { detail: {
+        sessionId: 'guide-session', turnId: 'guide-turn', id: 'after-guidance-reasoning', phase: 'delta', delta: 'new-tail-only'
+      } })); void 0;`);
+      await until("[...document.querySelectorAll('.assistant-thinking-process')].filter(row=>row.textContent.includes('new-tail-only')).length===1", 'real assistant owns the only live tail after handoff');
       const rows = await run("[...document.querySelectorAll('.message-row')].map(row => row.textContent)");
       assert.equal(rows.length, 4);
       assert.ok(rows[1].includes('First, measure the audio.') && rows[1].includes('The diagnosis is ready.'));
@@ -136,5 +196,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   } finally {
     await run('cancelAnimationFrame(window.guidancePendingFrame); viewTheme = guidanceOriginal.theme; updateChat(guidanceOriginal.props);');
   }
-  console.log('Guidance rendering passed: accepted and empty interrupted request anchors, stable frames in both themes, and completion/Stop-only file summaries.');
+  console.log('Guidance rendering passed: one reasoning owner before/after handoff, bounded previews and expanded text at normal/narrow widths in both themes, stable anchors, and completion/Stop-only file summaries.');
 };

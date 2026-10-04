@@ -2801,6 +2801,7 @@ export function ChatPanel({
                     {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
                       conversationId={activeConversationId} turnId={activeTurnId} language={language}
                       model={selectedModelConfig?.modelName ?? selectedModel} thinkingVisible={thinkingVisible}
+                      reasoningActive={!activeAssistantForRender}
                       stopping={stopping} retryAvailable={guidanceAvailable} onRetry={onRetryGuidance} />}
                     {(activeAssistantForRender?.message.id === message.id || goalMessageId === message.id) && (
                       <TurnRuntimeDetails
