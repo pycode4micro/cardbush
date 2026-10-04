@@ -88,3 +88,18 @@ test('a missing command reports its launch error rather than only a closed conne
   assert.match(result.servers[0].lastError, /ENOENT/);
   assert.equal(result.servers[0].restartAttempts, 0);
 });
+
+test('native exit receipts retain the exit code and resource limits', { timeout: 15_000 }, async t => {
+  const transport = new ManagedStdioClientTransport({ command: process.execPath, args: ['-e', 'process.exitCode=17'] });
+  t.after(() => transport.close());
+  let failure;
+  const closed = new Promise(resolve => { transport.onclose = resolve; });
+  transport.onerror = error => { failure = error; };
+  await transport.start(); await closed;
+  assert.equal(failure.code, 'MCP_PROCESS_EXITED');
+  assert.equal(failure.details.exitCode, 17);
+  if (process.platform === 'win32') {
+    assert.ok(failure.details.resource.taskMemoryBytes > 0);
+    assert.ok(failure.details.resource.totalMemoryBytes >= failure.details.resource.taskMemoryBytes);
+  }
+});

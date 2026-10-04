@@ -76,7 +76,7 @@ test('deleting a session clears all owned journals, memory and unused automation
   assert.deepEqual(JSON.parse(await readFile(join(f.root, 'scheduler', 'automations.json'), 'utf8')).contexts, {});
 });
 
-for (const scheme of ['file', 'source']) test(`restart collection preserves cross-session ${scheme} memo references, shared images and redo; drops other orphans`, async t => {
+for (const scheme of ['file', 'source', 'source-v2']) test(`restart collection preserves cross-session ${scheme} memo references, shared images and redo; drops other orphans`, async t => {
   const f = await fixture(t);
   const image = join(f.root, 'model-images', `${hash('image')}.png`), unused = join(f.root, 'model-images', `${hash('unused')}.png`);
   await mkdir(dirname(image), { recursive: true }); await writeFile(image, 'referenced image'); await writeFile(unused, 'unused');
@@ -84,8 +84,12 @@ for (const scheme of ['file', 'source']) test(`restart collection preserves cros
   await redo.save(revision, Buffer.from('after')); await redo.save(hash('other'), Buffer.from('other'));
   await f.runtime.runSessionTurn(request('source'));
   record(f.toolExecutionStore, 'source', { image, revision });
-  const number = f.toolExecutionStore.reserveFileMemoReference({ sessionId: 'source', turnId: 'source-turn', toolCallId: 'tool-1' });
-  const reference = scheme === 'file' ? `cardbush-memo:${number}` : sourceMemoReference({ number, sessionId: 'source', turnId: 'source-turn', toolCallId: 'tool-1' });
+  const identity = { sessionId: 'source', turnId: 'source-turn', toolCallId: 'tool-1' };
+  if (scheme === 'source-v2') f.toolExecutionStore.reserveFileMemoReference({ sessionId: 'unused', turnId: 't', toolCallId: 'file' });
+  const locator = scheme === 'source-v2' ? f.toolExecutionStore.reserveSourceMemoReference(identity)
+    : { ...identity, number: f.toolExecutionStore.reserveFileMemoReference(identity) };
+  const number = locator.number;
+  const reference = scheme === 'file' ? `cardbush-memo:${number}` : sourceMemoReference(locator);
   await f.runtime.runSessionTurn(request('live', `Retain [evidence](${reference})`));
   await f.runtime.runSessionTurn(request('orphan')); record(f.toolExecutionStore, 'orphan');
   f.sessionStore.deleteSession('source'); f.sessionStore.deleteSession('orphan');

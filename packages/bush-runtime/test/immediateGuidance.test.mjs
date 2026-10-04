@@ -78,6 +78,68 @@ for (const mode of [undefined, 'append_context']) test(`ordinary append still wa
   assert.equal(requests.length, 2); assert.equal(requests[1].messages.at(-1).content, 'Correction append');
 });
 
+for (const stage of ['waiting', 'reasoning', 'text', 'partial-tool']) test(`guidance during ${stage} anchors to accepted history after earlier tool rounds`, {timeout:6000}, async t => {
+  const ready=Promise.withResolvers(),release=Promise.withResolvers(),finish=Promise.withResolvers();
+  const definition={name:'read_fixture',description:'Read fixture',inputSchema:{type:'object',properties:{}}};
+  const registry=new ToolRegistry();let executions=0,requests=0;
+  registry.register({definition,manifest:{effect_kind:'observation',operation:'fixture.read',risk:'low',owner:'test',dispatch_scope:'turn',mutating:false},
+    decodeInput:value=>value,execute(){executions++;return {ok:true};}});
+  const host=new InMemoryRuntimeHost({toolRegistry:registry,provider:{async *stream(input){
+    const round=++requests;
+    if(round===1){
+      yield event(input.requestId,0,'text_delta',{delta:'Earlier explanation.'});
+      yield event(input.requestId,1,'tool_call_delta',{index:0,toolCallId:'read-once',nameDelta:definition.name,argumentsDelta:'{}'});
+      yield event(input.requestId,2,'response_completed',{finishReason:'tool_calls'});
+    }else if(round===2){
+      if(stage==='reasoning')yield event(input.requestId,0,'reasoning_delta',{delta:'Still thinking'});
+      if(stage==='text')yield event(input.requestId,0,'text_delta',{delta:'Partial continuation.'});
+      if(stage==='partial-tool')yield event(input.requestId,0,'tool_call_delta',{index:0,toolCallId:'do-not-run',nameDelta:definition.name,argumentsDelta:'{'});
+      ready.resolve();await release.promise;
+      yield event(input.requestId,1,'response_completed',{finishReason:'stop'});
+    }else{
+      await finish.promise;
+      yield event(input.requestId,0,'text_delta',{delta:'After correction.'});
+      yield event(input.requestId,1,'response_completed',{finishReason:'stop'});
+    }
+  }}});
+  const running=host.runSessionTurn({...request(),tools:[definition]});
+  t.after(async()=>{release.resolve();finish.resolve();await running;await host.sendCommand({kind:'runtime.shutdown',payload:{}});});
+  await ready.promise;assert.equal((await guide(host)).modelRequestInterrupted,true);
+  await waitFor(()=>requests===3);finish.resolve();assert.equal((await running).payload.status,'completed');
+  const applied=facts(host).find(e=>e.kind==='guidance_applied');
+  const messages=(await snapshot(host)).turns[0].messages;
+  const guidanceIndex=messages.findIndex(item=>item.message.name==='turn_guidance');
+  const preceding=messages.slice(0,guidanceIndex).findLast(item=>item.message.role==='assistant');
+  assert.equal(applied.payload.previousAssistantMessageId,preceding.messageId,'the boundary must not use an uncommitted request ID');
+  assert.equal(preceding.message.content,stage==='text'?'Partial continuation.':'Earlier explanation.');
+  assert.equal(executions,1);
+});
+
+test('consecutive interruptions without new output do not anchor across earlier guidance', { timeout: 6000 }, async t => {
+  const ready = [Promise.withResolvers(), Promise.withResolvers()];
+  const release = Promise.withResolvers(); let requests = 0;
+  const host = new InMemoryRuntimeHost({ provider: { async *stream(input) {
+    const index = requests++;
+    if (index < 2) {
+      if (index === 0) yield event(input.requestId, 0, 'text_delta', { delta: 'Before guidance.' });
+      ready[index].resolve(); await release.promise;
+    } else {
+      yield event(input.requestId, 0, 'text_delta', { delta: 'After both corrections.' });
+    }
+    yield event(input.requestId, 1, 'response_completed', { finishReason: 'stop' });
+  } } });
+  const running = host.runSessionTurn(request());
+  t.after(async () => { release.resolve(); await running; await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); });
+  await ready[0].promise; await guide(host, 'first');
+  await ready[1].promise; await guide(host, 'second');
+  assert.equal((await running).payload.status, 'completed');
+  const applied = facts(host).filter(e => e.kind === 'guidance_applied');
+  const messages = (await snapshot(host)).turns[0].messages;
+  assert.equal(applied[0].payload.previousAssistantMessageId, messages.find(item => item.message.content === 'Before guidance.').messageId);
+  assert.equal(applied[1].payload.previousAssistantMessageId, undefined);
+  assert.deepEqual(messages.filter(item => item.message.name === 'turn_guidance').map(item => item.message.content), ['Correction first', 'Correction second']);
+});
+
 test('guidance does not cancel an in-flight tool or repeat its effect after interrupting the next model request', async t => {
   const releaseTool = Promise.withResolvers(), releaseModel = Promise.withResolvers(); let executions = 0, toolSignal; const requests = [];
   const definition = { name: 'fixture', description: 'Test action', inputSchema: { type: 'object', properties: {} } };
@@ -155,8 +217,9 @@ test('guidance during preflight reaches the first dispatched request instead of 
 
 test('interruption retains reported token usage without accepting a cancelled response as replay', async t => {
   const release = Promise.withResolvers(); let calls = 0;
-  const host = new InMemoryRuntimeHost({ provider: { async *stream(input) {
+  const host = new InMemoryRuntimeHost({ provider: { async *stream(input, options) {
     calls++;
+    options.onInputProjection?.({ format: 'guidance-fixture', transport: 'full', parameterDigests: {}, inputDigests: [`dispatch-${calls}`] });
     yield event(input.requestId, 0, 'usage', { inputTokens: 100, outputTokens: calls === 1 ? 12 : 3 });
     if (calls === 1) await release.promise;
     yield event(input.requestId, 1, 'text_delta', { delta: 'Answer' });
@@ -167,6 +230,8 @@ test('interruption retains reported token usage without accepting a cancelled re
   const history = await snapshot(host);
   assert.equal(history.turns[0].usage.inputTokens, 200); assert.equal(history.turns[0].usage.outputTokens, 15);
   assert.equal(facts(host).filter(e => e.kind === 'model_request_usage').length, 2);
+  assert.deepEqual(facts(host).filter(e => e.kind === 'model_request_usage').map(e => e.payload.providerInputSequence),
+    facts(host).filter(e => e.kind === 'provider_input_observed').map(e => e.sequence));
 });
 
 test('guidance in one session never aborts another concurrent model request', async t => {

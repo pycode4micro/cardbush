@@ -9,7 +9,7 @@ const rateLimit = (until, status = 429) => error => {
   assert.ok(error instanceof MarketplaceRateLimitError);
   assert.equal(error.retryAt, until);
   assert.match(error.message, new RegExp(`HTTP ${status}`));
-  assert.match(error.message, new RegExp(`\\[market-rate-limit:${until}\\]`));
+  assert.match(error.message, new RegExp(`\\[market-rate-limit:${until ?? 'unknown'}\\]`));
   return true;
 };
 
@@ -56,9 +56,9 @@ test('server dates, long Retry-After values, API reset headers and plain 403 are
     [{ date: new Date(epoch + 30_000).toUTCString(), 'retry-after': new Date(epoch + 150_000).toUTCString() }, 429, epoch + 120_000],
     [{ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(epoch / 1000 + 300) }, 403, epoch + 300_000],
     [{ 'retry-after': '60', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(epoch / 1000 + 300) }, 403, epoch + 60_000],
-    [{ 'retry-after': 'invalid' }, 429, epoch + 60_000],
-    [{ 'retry-after': '-1' }, 429, epoch + 60_000],
-    [{ 'retry-after': '0' }, 429, epoch + 1000],
+    [{ 'retry-after': 'invalid' }, 429, undefined],
+    [{ 'retry-after': '-1' }, 429, undefined],
+    [{ 'retry-after': '0' }, 429, epoch],
   ];
   for (const [headers, status, until] of cases) {
     const client = new PluginMarketDownloads(async () => new Response('', { status, headers }), () => epoch);
@@ -71,15 +71,62 @@ test('server dates, long Retry-After values, API reset headers and plain 403 are
   assert.equal(reads, 2, 'permission failures do not invent a rate limit');
 });
 
-test('missing Retry-After backs off across repeated rate limits and resets after recovery', async () => {
-  let now = epoch, limited = true;
-  const client = new PluginMarketDownloads(async () => new Response('ok', { status: limited ? 429 : 200 }), () => now);
-  await assert.rejects(client.bytes(archive('a'), 100), rateLimit(now + 60_000));
-  now += 60_000;
-  await assert.rejects(client.bytes(archive('a'), 100), rateLimit(now + 120_000));
-  now += 120_000; limited = false; await client.bytes(archive('a'), 100);
-  limited = true;
-  await assert.rejects(client.bytes(archive('b'), 100), rateLimit(now + 60_000));
+test('missing server deadlines never invent or accumulate a client penalty or trigger automatic retries', async () => {
+  let reads = 0;
+  const client = new PluginMarketDownloads(async () => { reads++; return new Response('', { status: 429 }); }, () => epoch);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await assert.rejects(client.bytes(archive('a'), 100), rateLimit(undefined));
+    assert.equal(reads, attempt + 1);
+  }
+});
+
+test('repeated server deadlines use the latest response without increasing the delay', async () => {
+  let now = epoch;
+  const client = new PluginMarketDownloads(async () => new Response('', { status: 429, headers: { 'retry-after': '2' } }), () => now);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await assert.rejects(client.bytes(archive('a'), 100), rateLimit(now + 2000));
+    now += 2000;
+  }
+});
+
+test('changing the network exit does not reuse a previous route cooldown or pending request', async () => {
+  let route = 'old'; const reads = [], release = Promise.withResolvers();
+  const client = new PluginMarketDownloads(() => assert.fail('route-bound fetch expected'), () => epoch, async () => {
+    const key = route;
+    return { key, fetch: async () => {
+      reads.push(key);
+      if (key === 'old') { await release.promise; return new Response('', { status: 403, headers: { 'retry-after': '3600' } }); }
+      return new Response('new exit');
+    } };
+  });
+  const old = assert.rejects(client.bytes(archive('a'), 100), rateLimit(epoch + 3_600_000, 403));
+  await delay(0); route = 'new';
+  assert.equal((await client.bytes(archive('a'), 100)).toString(), 'new exit');
+  release.resolve(); await old;
+  assert.equal((await client.bytes(archive('b'), 100)).toString(), 'new exit');
+  route = 'old'; await assert.rejects(client.bytes(archive('b'), 100), rateLimit(epoch + 3_600_000, 403));
+  assert.deepEqual(reads, ['old', 'new', 'new']);
+});
+
+test('queueing and the bounded transient retry share one deadline', async () => {
+  const release = Promise.withResolvers(); let reads = 0;
+  const client = new PluginMarketDownloads(async () => { reads++; await release.promise; return new Response('ok'); });
+  const active = ['a', 'b', 'c'].map(id => client.bytes(archive(id), 100));
+  const releaseTimer = setTimeout(() => release.resolve(), 500);
+  try {
+    await assert.rejects(client.bytes(archive('d'), 100, 40), /timeout/i);
+    assert.equal(reads, 3, 'timed out queue entries must never start a download');
+  } finally { clearTimeout(releaseTimer); release.resolve(); await Promise.all(active); }
+  let retries = 0;
+  const retry = new PluginMarketDownloads(async () => { retries++; return new Response('', { status: 503 }); });
+  await assert.rejects(retry.bytes(archive('a'), 100, 40), /abort|timeout/i);
+  assert.equal(retries, 1, 'backoff cannot extend the original request deadline');
+});
+
+test('resolving a network route is covered by the same timeout', async () => {
+  const client = new PluginMarketDownloads(() => assert.fail('never fetch after route timeout'), Date.now,
+    async () => { await delay(80); return { key: '', fetch }; });
+  await assert.rejects(client.bytes(archive('a'), 100, 20), /timeout/i);
 });
 
 test('queued downloads check the cooldown before fetching, and an older success cannot clear it', async () => {
@@ -90,6 +137,7 @@ test('queued downloads check the cooldown before fetching, and an older success 
   }, () => epoch);
   const requests = Array.from({ length: 8 }, (_, index) => client.bytes(archive(String(index)), 100));
   const outcomes = Promise.allSettled(requests);
+  await delay(0);
   assert.equal(reads.length, 3, 'only three requests can run concurrently');
   releases[0](new Response('', { status: 429, headers: { 'retry-after': '60' } }));
   await delay(0);
@@ -116,7 +164,7 @@ test('failures, truncated bodies and oversized responses never become cached suc
   await client.bytes(archive('a'), 5, 1000, true); assert.equal(reads, 4);
 });
 
-test('archive cache has a 64 MiB budget and evicts the least recently used entry', async () => {
+test('metadata byte cache has a 64 MiB budget and evicts the least recently used entry', async () => {
   let reads = 0;
   const client = new PluginMarketDownloads(async () => { reads++; return new Response(Buffer.alloc(16 * 1024 * 1024)); });
   for (const revision of ['a', 'b', 'c', 'd']) await client.bytes(archive(revision), 32 * 1024 * 1024, 1000, true);

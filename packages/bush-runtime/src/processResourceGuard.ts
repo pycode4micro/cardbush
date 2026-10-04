@@ -115,11 +115,22 @@ export class ProcessResourceGovernor {
     for (const [id, lease] of this.#leases) {
       pendingMemory += Math.max(0, lease.reservation - (sample?.jobs.find(job => job.id === id)?.memoryBytes ?? 0));
     }
-    const available = Math.min(this.#availableMemory(), sample?.availableCommitBytes ?? Infinity)
+    const availableMemoryBytes = this.#availableMemory();
+    const applicationMemoryBytes = this.#applicationMemory();
+    const available = Math.min(availableMemoryBytes, sample?.availableCommitBytes ?? Infinity)
       - this.limits.memoryReserveBytes - pendingMemory;
-    const sharedAvailable = this.limits.totalMemoryBytes - (sample?.totalMemoryBytes ?? 0) - pendingMemory - this.#applicationMemory();
+    const sharedAvailable = this.limits.totalMemoryBytes - (sample?.totalMemoryBytes ?? 0) - pendingMemory - applicationMemoryBytes;
     if (Math.min(available, sharedAvailable) < reservation) {
-      throw resourceError("resource_memory_pressure", "The host is low on available memory. No command was started. Wait for memory to be released before retrying; do not bypass the resource guard with another launcher.");
+      const limitingBudget = sharedAvailable < available ? 'managed_group' :
+        (sample?.availableCommitBytes ?? Infinity) < availableMemoryBytes ? 'system_commit' : 'system_memory';
+      throw resourceError('resource_memory_pressure',
+        `Process admission blocked by ${limitingBudget}: ${Math.max(0, Math.floor(Math.min(available, sharedAvailable) / MiB))} MiB headroom after reserves; ${Math.ceil(reservation / MiB)} MiB required to start. No process was started. Wait for memory to be released before retrying; do not bypass the resource guard with another launcher.`,
+        { lifetime, limitingBudget, availableMemoryBytes, availableCommitBytes: sample?.availableCommitBytes ?? null,
+          applicationMemoryBytes, managedMemoryBytes: sample?.totalMemoryBytes ?? 0,
+          pendingMemoryBytes: pendingMemory, memoryReserveBytes: this.limits.memoryReserveBytes,
+          startupMemoryBytes: reservation, systemHeadroomBytes: Math.max(0, available),
+          groupHeadroomBytes: Math.max(0, sharedAvailable), totalMemoryBytes: this.limits.totalMemoryBytes,
+          taskMemoryBytes: this.limits.taskMemoryBytes });
     }
     const id = randomUUID();
     if (!this.#leases.size) this.#startedAt = Date.now();
@@ -128,7 +139,11 @@ export class ProcessResourceGovernor {
     let released = false;
     return {
       id, groupName: this.groupName, limits: this.limits,
-      taskMemoryBytes: Math.min(this.limits.taskMemoryBytes, Math.floor(available), Math.floor(sharedAvailable)),
+      // Services may start work hours after admission. A startup free-memory
+      // snapshot must not become their permanent limit; live system pressure
+      // and the shared native job still constrain their later allocations.
+      taskMemoryBytes: lifetime === 'service' ? this.limits.taskMemoryBytes
+        : Math.min(this.limits.taskMemoryBytes, Math.floor(available), Math.floor(sharedAvailable)),
       // A persistent service cannot freeze the shared ceiling at yesterday's
       // free-memory low point. Admission uses live usage; Windows caps the group.
       totalMemoryBytes: this.limits.totalMemoryBytes,
@@ -382,8 +397,8 @@ function manageLifecycle(child: ChildProcessWithoutNullStreams, protectedTree: b
   return { stop, exited };
 }
 
-function resourceError(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+function resourceError(code: string, message: string, details?: Record<string, unknown>): Error & { code: string } {
+  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
 }
 
 async function removeReceiptDirectory(directory: string): Promise<void> {

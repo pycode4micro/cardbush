@@ -21,11 +21,12 @@ export function AssistantThinkingProcessLine(props: {
   return <AssistantThinkingDetail {...props} notice={notice} />;
 }
 
-export function AssistantThinkingDetail({ language, model, execution, notice }: {
+export function AssistantThinkingDetail({ language, model, execution, notice, statusLabel }: {
   language: AppLanguage;
   model: string;
   execution?: ChatToolExecution;
   notice?: ThinkingNotice | null;
+  statusLabel?: string;
 }) {
   const logo = modelLogoFor(model);
   const thinking = execution ? null : notice;
@@ -52,7 +53,7 @@ export function AssistantThinkingDetail({ language, model, execution, notice }: 
           </span>
         )}
         <span className="assistant-thinking-label">
-          {execution ? activeToolStatusLabel(execution, language) : language === 'zh' ? '思考中' : 'Thinking'}
+          {statusLabel ?? (execution ? activeToolStatusLabel(execution, language) : language === 'zh' ? '思考中' : 'Thinking')}
         </span>
         {thinking && <>
           <small>{thinking.preview}</small>

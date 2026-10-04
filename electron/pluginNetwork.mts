@@ -21,6 +21,7 @@ export class PluginNetwork {
   constructor(private readonly configPath: string, private readonly createSession: (partition: string) => ProxySession) {}
 
   setModel(value: unknown) { this.model = networkProxySchema.parse(value); }
+  modelConfiguration() { return resolvePluginProxy(this.model); }
 
   async configuration() {
     let stored: { proxy?: unknown; plugins?: Array<{ id: string; config?: { proxy?: unknown } }> } = {};
@@ -56,6 +57,19 @@ export class PluginNetwork {
   readonly fetch: typeof fetch = async (input, init) => {
     const config = await this.configuration();
     return this.fetches.forEndpoint(await this.endpoint(config.default))(input, init);
+  };
+
+  readonly fetchModel: typeof fetch = async (input, init) =>
+    this.fetches.forEndpoint(await this.endpoint(this.modelConfiguration()))(input, init);
+
+  /** Bind a download and its rate-limit scope to the actual configured exit. */
+  readonly downloadRoute = async (url: string) => {
+    const config = (await this.configuration()).default;
+    const endpoint = await this.endpoint(config);
+    const route = endpoint ? await this.routes.get(JSON.stringify(config)) : undefined;
+    const upstream = route ? await route.resolve(url) : '';
+    const key = createHash('sha256').update(upstream).digest('hex');
+    return { key, fetch: this.fetches.forEndpoint(endpoint, key) };
   };
 
   async close() {

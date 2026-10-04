@@ -5,7 +5,7 @@ import { RuntimePluginWorkspace } from '../../plugins/runtimeWorkspaces';
 import { PluginMcpSettings } from './PluginMcpSettings';
 import { pluginPrompt } from './pluginPrompts';
 import { pluginPresentation } from './pluginPresentation';
-import { PluginProxySettings, proxyLabel } from './PluginProxySettings';
+import { NetworkProxySettings, proxyLabel } from '../settings/NetworkProxySettings';
 import { PluginSearchSettings } from './PluginSearchSettings';
 import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, type PluginProxySettings as ProxySettings } from '@cardbush/bush-protocol';
 import { AccountsPanel } from '../accounts/AccountsPanel';
@@ -408,9 +408,9 @@ export function PluginManagementPanel({
     {onOpenNetwork && presentation !== 'network' ? <button type="button" className="settings-link-row" onClick={onOpenNetwork}>
       <span><strong>{language === 'zh' ? '网络代理' : 'Network proxy'}</strong><small>{language === 'zh' ? '管理插件市场、插件与 MCP 的代理。' : 'Manage proxies for the marketplace, plugins, and MCP.'}</small></span><ChevronRight size={17} />
     </button> : <>
-    <SettingsCard title={language === 'zh' ? '插件代理' : 'Plugin proxy'}
-      subtitle={language === 'zh' ? '全局代理用于插件市场、插件和 MCP。选择后自动保存；手动代理填写完成后保存。点击“一键应用”可将当前设置应用到全部，之后仍可单独修改。' : 'The global proxy covers the marketplace, plugins and MCP. Choices save automatically; save manual addresses when ready. Apply to all to use the current settings everywhere, then adjust exceptions below.'}>
-    {configuration && <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
+    <SettingsCard title={language === 'zh' ? '市场与插件默认' : 'Marketplace and plugin default'}
+      subtitle={language === 'zh' ? '默认跟随应用代理，覆盖插件市场、下载和插件页面；插件与 MCP 可在下方单独覆盖。“一键应用”会清除这些单项覆盖。' : 'Follows the app default unless overridden here. Covers the marketplace, downloads and plugin pages. Set plugin and MCP exceptions below; Apply to all clears those exceptions.'}>
+    {configuration && <NetworkProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
       onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())}
       applyToAll={{ formId: 'plugin-proxy-global', save: proxy => saveGlobalProxy(proxy, true) }} />}
     </SettingsCard>
@@ -419,10 +419,10 @@ export function PluginManagementPanel({
       <label className="plugin-search"><Search size={17}/><input aria-label={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} placeholder={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} value={proxyQuery} onChange={event => setProxyQuery(event.target.value)}/></label>
       <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError}/>
       {plugins.filter(item => item.installed).map(plugin => <div key={`plugin:${plugin.id}`} hidden={!proxyMatches(plugin.name, plugin.id)} data-proxy-scope={`plugin:${plugin.id}`}>
-        <PluginProxySettings compact individual language={language} label={plugin.name} caption={language === 'zh' ? '插件' : 'Plugin'} value={plugin.config.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => savePluginProxy(plugin.id, proxy)}/>
+        <NetworkProxySettings compact individual language={language} label={plugin.name} caption={language === 'zh' ? '插件' : 'Plugin'} value={plugin.config.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => savePluginProxy(plugin.id, proxy)}/>
       </div>)}
       {(mcpOverview?.servers ?? []).map(server => <div key={`mcp:${server.id}`} hidden={!proxyMatches(server.name, server.id)} data-proxy-scope={`mcp:${server.id}`}>
-        <PluginProxySettings compact individual language={language} label={server.name} caption={`MCP · ${server.transport}`} value={server.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => saveStandaloneProxy(server.id, proxy)}/>
+        <NetworkProxySettings compact individual language={language} label={server.name} caption={`MCP · ${server.transport}`} value={server.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => saveStandaloneProxy(server.id, proxy)}/>
       </div>)}
       {!plugins.some(item => item.installed && proxyMatches(item.name, item.id)) && !mcpOverview?.servers.some(item => proxyMatches(item.name, item.id)) && <p className="plugin-proxy-help">{language === 'zh' ? '没有匹配的插件或 MCP' : 'No matching plugins or MCP servers'}</p>}
     </section>
@@ -445,8 +445,8 @@ export function PluginManagementPanel({
         setLocalSkills(await onReloadSkills());
         void loadConnections();
       }} />{marketProxyOpen && configuration && <dialog className="plugin-proxy-dialog" ref={node => { if (node && !node.open) node.showModal(); }} onCancel={() => setMarketProxyOpen(false)}>
-        <header><h3>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h3><button type="button" className="plugin-back" onClick={() => setMarketProxyOpen(false)}>{language === 'zh' ? '关闭代理设置' : 'Close proxy settings'}</button></header>
-        <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
+        <header><h3>{language === 'zh' ? '市场与插件默认' : 'Marketplace and plugin default'}</h3><button type="button" className="plugin-back" onClick={() => setMarketProxyOpen(false)}>{language === 'zh' ? '关闭代理设置' : 'Close proxy settings'}</button></header>
+        <NetworkProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
           onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())} />
         {error && <p className="plugin-market-error" role="alert">{error}</p>}
       </dialog>}</>;
@@ -954,7 +954,7 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
       {plugin.removalPending && <p className="plugin-market-error">{language === 'zh' ? '卸载尚未完成，可点击卸载重试。' : 'Uninstall is incomplete. Click Uninstall to retry.'}</p>}
       {plugin.installed && !plugin.removalPending && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
       {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{language === 'zh' ? '网络代理' : 'Network proxy'} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language === 'zh')}</summary>
-        <PluginProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
+        <NetworkProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
       </details>}
       {plugin.installed && <PluginHookTrust plugin={plugin} language={language} busy={busy} onPersist={onPersist} />}
       <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>

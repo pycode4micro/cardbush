@@ -58,16 +58,19 @@ test('persistent service slots do not consume terminal slots and retain the shar
   replacement.release(); first.release(); terminal.release();
 });
 
-test('persistent services do not freeze the shared ceiling and new tasks use recovered memory', () => {
+test('persistent services do not freeze either ceiling at a temporary low-memory startup', () => {
   let free = 2 * 1024 ** 3;
   const budget = new ProcessResourceGovernor({ limits: defaults, availableMemory: () => free });
   const first = budget.acquire('service');
   assert.equal(first.totalMemoryBytes, defaults.totalMemoryBytes);
-  assert.equal(first.taskMemoryBytes, free - defaults.memoryReserveBytes);
+  assert.equal(first.taskMemoryBytes, defaults.taskMemoryBytes);
+  const constrainedTask = budget.acquire();
+  assert.ok(constrainedTask.taskMemoryBytes < first.taskMemoryBytes);
+  constrainedTask.release();
   free = 6 * 1024 ** 3;
   const second = budget.acquire();
   assert.equal(second.totalMemoryBytes, first.totalMemoryBytes);
-  assert.ok(second.taskMemoryBytes > first.taskMemoryBytes);
+  assert.equal(second.taskMemoryBytes, first.taskMemoryBytes);
   first.release(); second.release();
   const fresh = budget.acquire();
   assert.equal(fresh.totalMemoryBytes, defaults.totalMemoryBytes);
@@ -90,10 +93,23 @@ test('simultaneous startups reserve memory; measured allocations replace rather 
 test('admission includes application memory and commit headroom', () => {
   const budget = governor();
   budget.setApplicationMemoryProvider(() => 510 * MiB);
-  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' });
+  assert.throws(() => budget.acquire(), error => {
+    assert.equal(error.code, 'resource_memory_pressure');
+    assert.equal(error.details.limitingBudget, 'managed_group');
+    assert.equal(error.details.applicationMemoryBytes, 510 * MiB);
+    assert.equal(error.details.groupHeadroomBytes, 2 * MiB);
+    assert.equal(error.details.startupMemoryBytes, 8 * MiB);
+    assert.match(error.message, /2 MiB.*8 MiB/);
+    return true;
+  });
   budget.setApplicationMemoryProvider(() => 0);
   budget.observe({ availableMemoryBytes: 4 * 1024 ** 3, availableCommitBytes: 1, totalMemoryBytes: 0, jobs: [] });
-  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' });
+  assert.throws(() => budget.acquire(), error => {
+    assert.equal(error.details.limitingBudget, 'system_commit');
+    assert.equal(error.details.availableCommitBytes, 1);
+    assert.equal(error.details.systemHeadroomBytes, 0);
+    return true;
+  });
 });
 
 test('process resource host is built and included outside asar', { skip: process.platform !== 'win32' }, () => {

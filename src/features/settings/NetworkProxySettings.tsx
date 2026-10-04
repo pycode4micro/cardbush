@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { defaultPluginProxy, pluginProxySchema, type PluginProxySettings } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
-import { SettingsDropdown } from '../settings/SettingsDropdown';
+import { SettingsDropdown } from './SettingsDropdown';
 
 export function proxyLabel(mode: string, zh: boolean): string {
-  return ({ inherit: zh ? '使用默认' : 'Use default', model: zh ? '跟随模型代理' : 'Follow model proxy',
+  return ({ inherit: zh ? '使用默认' : 'Use default', model: zh ? '跟随应用默认' : 'Follow app default',
     none: zh ? '无代理' : 'No proxy', system: zh ? '跟随系统' : 'Follow system', manual: zh ? '手动代理' : 'Manual proxy' })[mode] ?? mode;
 }
 
-export function PluginProxySettings({ language, value, defaults, individual = false, busy = false, onSave, label, caption, compact = false, resetRevision = 0, applyToAll }: {
+export function NetworkProxySettings({ language, value, defaults, scope = 'plugins', individual = false, busy = false, onSave, label, caption, compact = false, resetRevision = 0, applyToAll }: {
   language: AppLanguage; value?: PluginProxySettings; defaults?: PluginProxySettings; individual?: boolean; busy?: boolean;
+  scope?: 'application' | 'plugins';
   label?: string; caption?: string; compact?: boolean; resetRevision?: number;
   onSave: (value: PluginProxySettings | undefined) => Promise<boolean>;
   applyToAll?: { formId: string; save: (value: PluginProxySettings) => Promise<boolean> };
@@ -61,16 +62,16 @@ export function PluginProxySettings({ language, value, defaults, individual = fa
           // stay editable until the complete configuration is saved/applied.
           if (!individual && mode !== 'manual') void save(next, false);
         } else { setDirty(true); setError(''); }
-      }} options={(individual ? ['inherit', 'model', 'none', 'system', 'manual'] : ['model', 'none', 'system', 'manual']).map(mode => ({ value: mode, label: mode === 'inherit'
+      }} options={(scope === 'application' ? ['none', 'system', 'manual'] : individual ? ['inherit', 'model', 'none', 'system', 'manual'] : ['model', 'none', 'system', 'manual']).map(mode => ({ value: mode, label: mode === 'inherit'
           ? `${proxyLabel(mode, zh)}${zh ? '（' : ' ('}${proxyLabel(defaults?.mode ?? 'model', zh)}${zh ? '）' : ')'}`
           : proxyLabel(mode, zh) }))} />
     </label>
     {!compact && <p className="plugin-proxy-help">{inherit
       ? `${zh ? '当前插件默认：' : 'Current plugin default: '}${proxyLabel(defaults?.mode ?? 'model', zh)}`
-      : mode === 'model' ? (zh ? '使用设置中的模型代理；模型代理变化时自动跟随。' : 'Uses the proxy in model settings and follows changes automatically.')
+      : mode === 'model' ? (zh ? '使用“网络代理 → 应用默认”的设置，修改后自动跟随。' : 'Uses Network proxy → App default and follows changes automatically.')
       : mode === 'system' ? (zh ? '按目标地址使用操作系统的代理和绕过规则。' : 'Uses the operating system proxy and bypass rules for each destination.')
-      : mode === 'none' ? (zh ? '直接连接，并清除插件进程继承的代理环境。' : 'Connects directly and clears inherited proxy environment values.')
-      : (zh ? '仅作用于此处的插件范围，支持 HTTP、HTTPS 和 SOCKS。' : 'Applies to this plugin scope. Supports HTTP, HTTPS and SOCKS.')}</p>}
+      : mode === 'none' ? (zh ? '直接连接，不继承环境中的代理。' : 'Connects directly without inheriting environment proxies.')
+      : (zh ? '支持 HTTP、HTTPS 和 SOCKS；未填写的协议直连。填写完成后保存。' : 'Supports HTTP, HTTPS and SOCKS. An empty protocol field connects directly. Save when ready.')}</p>}
     {mode === 'manual' && <div className="plugin-proxy-fields">{(['httpProxy', 'httpsProxy', 'noProxy'] as const).map(field =>
       <label key={field}><span>{field === 'httpProxy' ? 'HTTP_PROXY' : field === 'httpsProxy' ? 'HTTPS_PROXY' : 'NO_PROXY'}</span>
         <input value={draft[field]} disabled={busy || saving} autoComplete="off" spellCheck={false}

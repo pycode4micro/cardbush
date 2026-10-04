@@ -122,20 +122,21 @@ export class IndividuationStore {
     const result=run();db.prepare('INSERT INTO memory_receipts VALUES(?,?,?,?)').run(key,fingerprint,JSON.stringify(result),now);
     db.exec('DELETE FROM memory_receipts WHERE id NOT IN (SELECT id FROM memory_receipts ORDER BY created DESC LIMIT 10000)');return result;
   }
-  private search(db: DatabaseSync, query:string, settings:IndividuationSettings,now=this.now()): MemoryRow[] & {capped?:boolean} {
+  private search(db: DatabaseSync, query:string, settings:IndividuationSettings,now=this.now(),kind?:CheckHabitInput['kind']): MemoryRow[] & {capped?:boolean} {
     const enabled=mask(settings), terms=memoryTerms(query);
     if(query && !terms.length) return [];
-    if(!query) return db.prepare("SELECT * FROM memory_records WHERE kind!='evidence' AND state='active' AND (expires IS NULL OR expires>?) AND (scope & ?)=scope ORDER BY kind='habit' DESC,updated DESC,id LIMIT 64").all(now,enabled) as MemoryRow[];
+    if(!query) return db.prepare("SELECT * FROM memory_records WHERE kind!='evidence' AND state='active' AND (expires IS NULL OR expires>?) AND (scope & ?)=scope AND (? IS NULL OR kind=?) ORDER BY kind='habit' DESC,updated DESC,id LIMIT 64").all(now,enabled,kind??null,kind??null) as MemoryRow[];
     const rows=db.prepare(`SELECT r.*,COUNT(DISTINCT t.term) relevance FROM memory_records r JOIN memory_terms t ON r.id=t.record_id
-      WHERE t.term IN (${terms.map(()=>'?').join(',')}) AND r.kind!='evidence' AND r.state='active' AND (r.expires IS NULL OR r.expires>?) AND (r.scope & ?)=r.scope
-      GROUP BY r.id ORDER BY relevance DESC,r.kind='habit' DESC,r.updated DESC,r.id LIMIT 64`).all(...terms,now,enabled) as Array<MemoryRow & {relevance:number}>;
+      WHERE t.term IN (${terms.map(()=>'?').join(',')}) AND r.kind!='evidence' AND r.state='active' AND (r.expires IS NULL OR r.expires>?) AND (r.scope & ?)=r.scope AND (? IS NULL OR r.kind=?)
+      GROUP BY r.id ORDER BY relevance DESC,r.kind='habit' DESC,r.updated DESC,r.id LIMIT 64`).all(...terms,now,enabled,kind??null,kind??null) as Array<MemoryRow & {relevance:number}>;
     return Object.assign(rows.filter(row=>row.relevance>=Math.min(2,terms.length) || terms.some(term=>term.length>=3 && (row.text+' '+row.applies_when).toLocaleLowerCase().includes(term))),{capped:rows.length>=64});
   }
   async read(input:CheckHabitInput,settings:IndividuationSettings,excluded:readonly string[]=[],budget=1000,signal?:AbortSignal):Promise<MemoryRead> {
     signal?.throwIfAborted();
     const base:MemoryRead={status:!mask(settings)?'disabled':input.ids?'not_found':'no_match',memories:[],matched_count:0,count_capped:false,
       disabled_categories:[...(!settings.habits?['habit' as const]:[]),...(!settings.predictions?['prediction' as const]:[])]};
-    if(!mask(settings))return base;
+    if(input.mode==='list')base.next_cursor=null;
+    if(!mask(settings)||input.kind==='habit'&&!settings.habits||input.kind==='prediction'&&!settings.predictions)return {...base,status:'disabled'};
     if(!existsSync(this.path))return {...base,...(input.ids?{omitted:input.ids.map(id=>({id,reason:'not_found' as const}))}:{})};
     return this.transaction((db,now)=>{
       if(input.ids) {
@@ -148,9 +149,10 @@ export class IndividuationStore {
         }
         return {...base,status:base.memories.length?'ok':omitted.some(r=>r.reason==='disabled')?'disabled':'not_found',matched_count:base.memories.length,omitted};
       }
+      if(input.mode==='list' || input.count_only&&!input.topics) return this.readPage(db,now,input,settings,base,budget);
       const candidates=new Map<string,{row:MemoryRow;score:number}>();
       for(const topic of input.topics??['']) {
-        const found=this.search(db,topic,settings,now);base.count_capped ||= found.capped===true||found.length>=64;
+        const found=this.search(db,topic,settings,now,input.kind);base.count_capped ||= found.capped===true||found.length>=64;
         found.forEach((row,index)=>candidates.set(row.id,{row,score:(candidates.get(row.id)?.score??0)+1/(index+1)}));
       }
       const rows=[...candidates.values()].sort((a,b)=>b.score-a.score||a.row.id.localeCompare(b.row.id)).map(value=>value.row);
@@ -172,6 +174,45 @@ export class IndividuationStore {
       }
       return {...base,status:base.memories.length?'ok':rows.length?rows.every(row=>excluded.includes(row.id)||hashes.has(`${row.kind}:${memoryHash(row.text)}`))?'already_supplied':'budget_limited':'no_match'};
     },signal);
+  }
+  private readPage(db:DatabaseSync,now:number,input:CheckHabitInput,settings:IndividuationSettings,base:MemoryRead,budget:number):MemoryRead {
+    const kind=input.kind??null,enabled=mask(settings);
+    let ceiling=Number(db.prepare('SELECT COALESCE(MAX(seq),0) n FROM memory_records').get()!.n),before=ceiling+1;
+    if(input.cursor) {
+      try {
+        const cursor=JSON.parse(Buffer.from(input.cursor,'base64url').toString('utf8'));
+        if(cursor.v!==1 || cursor.kind!==kind || cursor.enabled!==enabled ||
+          !Number.isSafeInteger(cursor.ceiling)||cursor.ceiling<0 ||
+          !Number.isSafeInteger(cursor.before)||cursor.before<1||cursor.before>cursor.ceiling+1)throw Error('Invalid cursor');
+        ceiling=cursor.ceiling;before=cursor.before;
+      } catch { return {...base,status:'invalid_cursor',next_cursor:null}; }
+    }
+    // Stable keyset pagination: new writes do not shift later pages or repeat
+    // earlier records. Category settings and active/expiry checks still apply.
+    const where="kind!='evidence' AND state='active' AND (expires IS NULL OR expires>?) AND (scope & ?)=scope AND (? IS NULL OR kind=?) AND seq<=?";
+    const params=[now,enabled,kind,kind,ceiling];
+    const count=Number(db.prepare(`SELECT COUNT(*) n FROM memory_records WHERE ${where}`).get(...params)!.n);
+    if(input.count_only)return {...base,status:count?'ok':'no_match',matched_count:count};
+    const rows=db.prepare(`SELECT * FROM memory_records WHERE ${where} AND seq<? ORDER BY seq DESC LIMIT 6`).all(...params,before) as MemoryRow[];
+    const continuation=(seq:number)=>Buffer.from(JSON.stringify({v:1,kind,enabled,ceiling,before:seq})).toString('base64url');
+    const envelope={...base,status:'budget_limited',matched_count:count,next_cursor:continuation(before)};
+    let remaining=budget-memoryTokens(JSON.stringify(envelope))-10,lastSeq=before,consumed=0;
+    for(const row of rows.slice(0,5)) {
+      const overhead=memoryTokens(JSON.stringify(memoryView(row,now,'')));
+      if(remaining-overhead<24)break;
+      const text=boundedMemoryText(row.text,Math.min(180,remaining-overhead-8));
+      const entry=memoryView(row,now,text),cost=memoryTokens(JSON.stringify(entry));
+      if(cost>remaining)break;
+      base.memories.push(entry);remaining-=cost+1;lastSeq=row.seq;consumed++;
+    }
+    // An oversized legacy record must not stall the scan or disappear silently.
+    // Return its ID for an explicit full read, then allow the next page to advance.
+    if(rows.length && !consumed)return {...base,status:'budget_limited',matched_count:count,
+      omitted:[{id:rows[0]!.id,reason:'budget_limited'}],
+      next_cursor:rows.length>1?continuation(rows[0]!.seq):null};
+    const more=rows.length>consumed;
+    return {...base,status:base.memories.length?'ok':rows.length?'budget_limited':'no_match',matched_count:count,
+      next_cursor:more&&consumed>0?continuation(lastSeq):null};
   }
   async check(query:string,settings:IndividuationSettings,excluded:readonly string[]=[],budget=1000,signal?:AbortSignal) {
     return (await this.read({...(query?{topics:[query.slice(0,4000)]}:{})},settings,excluded,budget,signal)).memories;

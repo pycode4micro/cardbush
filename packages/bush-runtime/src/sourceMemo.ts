@@ -1,16 +1,38 @@
 import { createHash } from 'node:crypto';
-import { sourceMemoInputSchema, sourceMemoSchema, parseSourceMemoReference,
-  type SourceEvidence, type SourceMemoResolution } from '@cardbush/bush-protocol';
+import { sourceMemoInputSchema, sourceMemoSchema, parseSourceMemoIdentity, parseSourceMemoReference,
+  type SourceEvidence, type SourceMemoResolution, type SourceReferencesRequest, type SourceReferences } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
-import type { ToolExecutionStore } from './toolExecutionStore.js';
+import type { FileMemoLocator, ToolExecutionStore } from './toolExecutionStore.js';
 import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
 import type { ToolPermissionRequest } from './toolRegistry.js';
 
 const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
-export function sourceMemoReference(identity: { number: number; sessionId: string; turnId: string; toolCallId: string }): string {
+/** Repair display shorthand only from successful notes in this conversation/turn.
+ * Never infer a guarded identity from the display number alone or read evidence files. */
+export function resolveSourceReferences(store: ToolExecutionStore, input: SourceReferencesRequest): SourceReferences {
+  const requested = new Set(input.numbers), found = new Map<number, Set<string>>();
+  for (const record of store.listByTool(input.sessionId, 'remember_source', input.turnId)) {
+    if (record.outcome !== 'returned') continue;
+    const memo = sourceMemoSchema.safeParse(record.result);
+    if (!memo.success) continue;
+    const parsed = parseSourceMemoIdentity(memo.data.reference)!;
+    if (!requested.has(parsed.number)) continue;
+    const identity = store.getFileMemoReference(parsed.locator);
+    // Forked tool history keeps the original guarded link, not a new identity.
+    if (!identity || identity.turnId !== record.turnId || identity.toolCallId !== record.toolCall.id || memo.data.reference !== sourceMemoReference(identity)) continue;
+    const references = found.get(parsed.number) ?? new Set<string>();
+    references.add(memo.data.reference); found.set(parsed.number, references);
+  }
+  return [...requested].flatMap(number => {
+    const references = found.get(number);
+    return references?.size === 1 ? [{ number, reference: [...references][0]! }] : [];
+  });
+}
+export function sourceMemoReference(identity: FileMemoLocator): string {
   const guard = createHash('sha256').update(JSON.stringify([identity.sessionId, identity.turnId, identity.toolCallId])).digest('hex').slice(0, 16);
-  return `cardbush-source:${identity.number}-${guard}`;
+  return identity.sourceNumber === undefined ? `cardbush-source:${identity.number}-${guard}`
+    : `cardbush-source:v2:${identity.sourceNumber}:${identity.number}-${guard}`;
 }
 async function snapshot(input: { target: string; label?: string; locator?: SourceEvidence['locator'] }, signal?: AbortSignal, remote?: RemoteWorkspaceBridge): Promise<SourceEvidence> {
   if (/^https?:\/\//i.test(input.target)) {
@@ -34,9 +56,9 @@ async function snapshot(input: { target: string; label?: string; locator?: Sourc
 }
 
 export async function resolveSourceMemo(store: ToolExecutionStore, reference: string, remote?: RemoteWorkspaceBridge): Promise<SourceMemoResolution> {
-  const number = parseSourceMemoReference(reference);
-  if (!number) return { status: 'unresolved', reason: 'invalid_reference' };
-  const identity = store.getFileMemoReference(number);
+  const parsedReference = parseSourceMemoIdentity(reference);
+  if (!parsedReference) return { status: 'unresolved', reason: 'invalid_reference' };
+  const identity = store.getFileMemoReference(parsedReference.locator);
   const record = identity && store.get(identity.sessionId, identity.turnId, identity.toolCallId);
   if (!record || record.toolCall.name !== 'remember_source' || record.outcome !== 'returned') return { status: 'unresolved', reason: 'reference_not_found' };
   const parsed = sourceMemoSchema.safeParse(record.result);
@@ -94,10 +116,10 @@ export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecu
       const sources: SourceEvidence[] = [];
       for (const source of context.input.sources) sources.push(await snapshot(source, context.signal, remote));
       context.signal?.throwIfAborted();
-      const number = store.reserveFileMemoReference({ sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id });
-      // The locator number is host-local. Guard it with the immutable execution
-      // identity so a copied remote link can never resolve to an unrelated note.
-      const reference = sourceMemoReference({ number, sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id });
+      const identity = store.reserveSourceMemoReference({ sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id });
+      // The display number is conversation-local; the host locator and immutable
+      // execution guard keep copied links from resolving to unrelated notes.
+      const reference = sourceMemoReference(identity), number = parseSourceMemoReference(reference)!;
       return sourceMemoSchema.parse({ protocol: 'bush.source_memo.v1', reference, markdown: `[${number}](${reference})`,
         explanation: context.input.explanation, sources, createdAt: new Date().toISOString() });
     },

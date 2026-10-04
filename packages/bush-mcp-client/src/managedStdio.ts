@@ -22,9 +22,11 @@ export function stdioEnvironment(overrides: Record<string, string> = {}): Record
 }
 
 export class McpProcessError extends Error {
-  constructor(message: string, readonly code: string, options?: ErrorOptions) {
+  readonly details?: Record<string, unknown>;
+  constructor(message: string, readonly code: string, options?: ErrorOptions & { details?: Record<string, unknown> }) {
     super(message, options);
     this.name = 'McpProcessError';
+    this.details = options?.details;
   }
 }
 
@@ -112,7 +114,8 @@ export class ManagedStdioClientTransport implements Transport {
             const reason = report?.code ? report.message
               : `MCP process exited ${signal ? `with signal ${signal}` : `with code ${code ?? 'unknown'}`}.`;
             this.onerror?.(new McpProcessError(this.#stderrTail.trim() ? `${reason}\n${this.#stderrTail.trim()}` : reason,
-              report?.code || 'MCP_PROCESS_EXITED'));
+              report?.code || 'MCP_PROCESS_EXITED', { details: { exitCode: code, signal,
+                ...(report ? { resource: report } : {}) } }));
           }
           this.#finish();
         });

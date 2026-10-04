@@ -16,6 +16,7 @@ or disable the host's budgets.
 | Processes | 64 per task tree; 256 across the shared job |
 | Concurrent managed commands | At most 8 across desktop main and Runtime; shared across sessions, forks, subagents, hooks and terminals |
 | Persistent MCP services | At most 32, separate from command slots. A serialized replacement may transfer its old service slot; it still reserves startup memory before retiring the old tree |
+| Service memory | Whole service tree capped at 25% of physical RAM, without permanently narrowing it to free memory at startup. Shared cap and live pressure checks still apply |
 | Memory admission reserve | 10% of physical RAM, bounded to 512 MiB–1 GiB. Tasks reserve 256 MiB and services 128 MiB for startup (clamped to their granted cap); this is not an estimate or limit of the plugin's total demand |
 | Critical memory backstop | Sample every 2 seconds. After two critical physical/commit-memory samples, first relieve a substantial local preview, otherwise one substantial managed task (then service); remeasure for at least 6 seconds before another intervention |
 | Disk pressure backstop | Every 2 seconds, check the working and temporary volumes; stop when free space is below 512 MiB and has fallen by over 8 MiB during the task |
@@ -36,7 +37,15 @@ native notification thread handles task memory/process-limit violations.
 The native shared ceiling is fixed to physical RAM, rather than an old free-memory
 sample. New admissions subtract live usage and reservations, so persistent MCP
 connections no longer freeze all later tasks at the initial low-memory budget.
-Each running tree retains its granted individual ceiling for its lifetime.
+Each running tree retains its granted individual ceiling for its lifetime. Short
+tasks narrow that ceiling using admission headroom. Persistent services use the
+configured individual ceiling because their later jobs may start after memory
+recovers. This does not preallocate or reserve the whole service ceiling.
+Admission failures report `limitingBudget` (`system_memory`, `system_commit`, or
+`managed_group`), measured memory, application/managed usage, startup reservations,
+required startup bytes, reserve and individual/shared caps. These details survive
+the desktop/Runtime RPC into tool execution receipts. A group-budget failure must
+not be described as proof that physical RAM is exhausted.
 Native executables have immutable content-versioned names. An atomically updated
 manifest selects a complete version for a new Runtime; an existing Runtime pins
 its selected version. Protected builds and updates do not overwrite a live helper.
@@ -132,10 +141,22 @@ A failed replacement is unavailable until reconnected; it cannot keep an old
 process alive as an atomic rollback. HTTP/SSE connections retain their existing
 connection-only behavior and never terminate an external server.
 
+New optional services can publish their tools while a turn is active. Existing
+connections are retained until idle for replacements/removals; required-service
+transactions remain atomic. Ordinary product conversations opt into additive MCP
+scope refresh at model round boundaries. Discovery can load those new schemas
+without altering the frozen provider tool list or bypassing normal tool approvals.
+Child/plugin Agent and scheduled-task scopes do not expand automatically.
+
 Automatic recovery uses exponential backoff, capped at three actual restart attempts
 until a connection stays healthy for 60 seconds. Manual reconnect creates a fresh
 budget. Waiting for resources does not consume restart attempts. This only recovers
 the connection; completed or interrupted business/tool calls are never replayed.
+Native exit codes and resource receipts (including peak usage and granted limits)
+are retained in connection failures and service-state diagnostics. A later native
+receipt can refine an earlier generic EOF without triggering a second restart.
+The MCP snapshot retains timestamped `lastFailure` after recovery, so a newly
+healthy connection does not erase the cause of an interrupted background job.
 Closing the owner cancels recovery, including its backoff wait. Ordinary
 turns share their application's connections. Explicit plugin-Agent MCP scopes
 retain separate sessions; closing one scope never closes a sibling, while closing

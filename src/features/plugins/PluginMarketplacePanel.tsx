@@ -1,11 +1,11 @@
 import { PluginMarketCard } from './PluginMarketCard';
 import { ArrowLeft, Check, Download, FolderOpen, LoaderCircle, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PluginMarketCatalog, PluginMarketPreview, PluginMarketSource } from '../../../electron/pluginMarketplaceTypes';
+import type { PluginMarketCatalog, PluginMarketPreview, PluginMarketSource, PluginMarketInstallProgress } from '../../../electron/pluginMarketplaceTypes';
 import type { AppLanguage } from '../../types';
-import { marketError, marketRetryAt, networkError } from './pluginMarketErrors';
+import { marketError, marketRetryAt, marketRateLimited, networkError } from './pluginMarketErrors';
 import { useSettingsHost } from '../settings/SettingsHostContext';
-import { usePageState, usePageBack } from '../navigation/PageNavigation';
+import { usePageState } from '../navigation/PageNavigation';
 
 export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onNotify, onOpenNetwork }: {
   language: AppLanguage;
@@ -20,7 +20,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const bridge = host.marketplace;
   const [sources, setSources] = useState<PluginMarketSource[]>([]);
   const [sourceId, setSourceId] = usePageState('market-source', 'builtin');
-  const [previewTarget, setPreviewTarget] = usePageState<{ sourceId: string; name: string } | null>('market-preview', null);
+  const [previewTarget, setPreviewTarget, returnToPreview] = usePageState<{ sourceId: string; name: string } | null>('market-preview', null);
   const [previewAttempt, setPreviewAttempt] = useState(0);
   const [catalog, setCatalog] = useState<PluginMarketCatalog | null>(null);
   const [preview, setPreview] = useState<PluginMarketPreview | null>(null);
@@ -33,13 +33,27 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const [clock, setClock] = useState(Date.now);
   const [installedId, setInstalledId] = useState('');
   const [activated, setActivated] = useState(false);
+  const [installProgress, setInstallProgress] = useState<PluginMarketInstallProgress | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const generation = useRef(0);
   const selectedSource = sources.find(source => source.id === sourceId);
   const retryAt = marketRetryAt(error || catalog?.error || '');
   const now = Math.max(clock, Date.now());
-  const retrySeconds = Math.max(0, Math.ceil(((retryAt ?? now) - now) / 1000));
   const needsConfiguration = Boolean(preview?.warnings?.some(warning => warning.code === 'variables'));
+
+  useEffect(() => {
+    if (busy !== 'install' || !preview || !bridge?.pluginMarketInstallProgress) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { const value = await bridge.pluginMarketInstallProgress!(preview.token); if (active && value) setInstallProgress(value); }
+      catch { /* The install request reports its own failure; progress is advisory. */ }
+      if (active) timer = setTimeout(() => void poll(), 400);
+    };
+    void poll();
+    return () => { active = false; clearTimeout(timer); };
+  }, [busy, preview?.token, bridge]);
 
   useEffect(() => {
     if (retryAt === undefined || retryAt <= Date.now()) return;
@@ -108,44 +122,56 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     }).catch(caught => {
       if (revision === generation.current) {
         setError(message(caught));
-        if (marketRetryAt(message(caught)) !== undefined || /HTTP 429\b/.test(message(caught))) setRetryPreview({ sourceId, name });
+        if (marketRateLimited(message(caught)) || networkError(message(caught))) setRetryPreview({ sourceId, name });
       }
     }).finally(() => { if (revision === generation.current) setBusy(''); });
     return () => { generation.current++; };
   }, [bridge, previewTarget, previewAttempt]);
-  const navigateBack = usePageBack(() => { if (previewTarget) setPreviewTarget(null); else onBack(); });
+  const navigateBack = () => { if (previewTarget) returnToPreview(null); else onBack(); };
   const install = async () => {
     if (!bridge || !preview || busy || preview.issues.length) return;
-    setBusy('install'); setError('');
+    setBusy('install'); setError(''); setInstallProgress(null); setCancelling(false);
     let id = installedId;
+    let configurationNeeded = needsConfiguration;
     try {
       if (!id) {
         const result = await bridge.installMarketPlugin(preview.token);
         id = result.id; setInstalledId(id);
+        if (result.warnings) {
+          configurationNeeded = result.warnings.some(warning => warning.code === 'variables');
+          setPreview(value => value ? { ...value, warnings: result.warnings, validation: 'complete' } : value);
+        }
       }
-      await onInstalled(id, !needsConfiguration); setActivated(true);
+      await onInstalled(id, !configurationNeeded); setActivated(true);
       if (preview.authentication === 'ON_INSTALL') onOpenBundled(id);
-      onNotify(needsConfiguration ? (zh ? '插件已安装，配置所需环境变量后可启用。' : 'Plugin installed. Configure the required environment variables before enabling it.')
+      onNotify(configurationNeeded ? (zh ? '插件已安装，配置所需环境变量后可启用。' : 'Plugin installed. Configure the required environment variables before enabling it.')
         : (zh ? '插件已安装，可在已添加列表查看状态。' : 'Plugin installed. Check its status in Added.'));
     } catch (caught) {
-      setError(`${id ? (needsConfiguration ? (zh ? '插件文件已安装，状态保存未完成：' : 'Plugin files installed; saving state incomplete: ') : (zh ? '插件文件已安装，启用未完成：' : 'Plugin files installed; activation incomplete: ')) : ''}${message(caught)}`);
-    } finally { setBusy(''); }
+      if (message(caught).includes('[market-cancelled]')) onNotify(zh ? '安装已取消。' : 'Installation cancelled.');
+      else setError(`${id ? (configurationNeeded ? (zh ? '插件文件已安装，状态保存未完成：' : 'Plugin files installed; saving state incomplete: ') : (zh ? '插件文件已安装，启用未完成：' : 'Plugin files installed; activation incomplete: ')) : ''}${message(caught)}`);
+    } finally { setBusy(''); setCancelling(false); }
+  };
+  const cancelInstall = async () => {
+    if (!preview || !bridge?.cancelMarketPluginInstall || cancelling) return;
+    setCancelling(true);
+    try { if (!await bridge.cancelMarketPluginInstall(preview.token)) setCancelling(false); }
+    catch (caught) { setCancelling(false); setError(message(caught)); }
   };
   const entries = catalog?.entries.filter(entry => [entry.name, entry.description, entry.category].join(' ').toLowerCase().includes(query.trim().toLowerCase())) ?? [];
   return <div className="plugin-market-page plugin-catalog-page">
     <button className="plugin-back" type="button" disabled={busy === 'install'} onClick={() => {
       generation.current++;
       setError(''); navigateBack();
-    }}><ArrowLeft size={17} />{preview || busy.startsWith('preview:') ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
+    }}><ArrowLeft size={17} />{previewTarget ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
       <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>
       {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen}><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
     {host.remote && <p className="plugin-market-hint">{zh ? '插件安装到当前 Agent；市场来源、运行依赖和网络设置均使用该 Agent 的环境。' : 'Plugins install on the selected Agent, using its marketplace sources, dependencies and network settings.'}</p>}
     {error && <div className="plugin-market-error" role="alert"><p>{marketError(error, zh, now)}</p>
-      {retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy) || retrySeconds > 0} onClick={() => void openPlugin(retryPreview.name)}>
-        <RefreshCw size={15} />{retrySeconds > 0 ? (zh ? `${retrySeconds} 秒后可重试` : `Retry in ${retrySeconds}s`) : (zh ? '重试获取插件' : 'Retry download')}
+      {retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void openPlugin(retryPreview.name)}>
+        <RefreshCw size={15} />{zh ? '重试获取插件' : 'Retry download'}
       </button>}
-      {networkError(error) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15} />{zh ? '代理设置' : 'Proxy settings'}</button>}
+      {(networkError(error) || marketRateLimited(error)) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15} />{zh ? '代理设置' : 'Proxy settings'}</button>}
       <details><summary>{zh ? '错误详情' : 'Error details'}</summary><code>{error}</code></details></div>}
     {preview ? <div className="plugin-market-detail">
       <dl><dt>{zh ? '来源' : 'Source'}</dt><dd>{preview.source}</dd>
@@ -153,15 +179,17 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         <dt>{zh ? '版本' : 'Version'}</dt><dd>{preview.version}</dd>
         <dt>{zh ? '开发者' : 'Developer'}</dt><dd>{preview.developerName}</dd>
         <dt>{zh ? '内容版本' : 'Content revision'}</dt><dd>{preview.revision === 'local' ? (zh ? '本地快照' : 'Local snapshot') : preview.revision.slice(0, 12)}</dd></dl>
-      <h3>{zh ? '包含的能力' : 'Included capabilities'}</h3>
+      <h3>{preview.validation === 'metadata' ? (zh ? '清单声明的能力' : 'Declared capabilities') : (zh ? '包含的能力' : 'Included capabilities')}</h3>
       {preview.components.map((component, index) => <div className="plugin-component-row" key={`${component.kind}:${index}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'agent' ? 'A' : component.kind === 'hook' ? 'H' : 'M'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div></div>)}
-      {!preview.components.length && <p>{zh ? '未发现可加载的能力。' : 'No loadable capabilities found.'}</p>}
+      {!preview.components.length && <p>{preview.validation === 'metadata' ? (zh ? '安装时将检查插件目录中的能力。' : 'Capabilities in the package will be checked during installation.') : (zh ? '未发现可加载的能力。' : 'No loadable capabilities found.')}</p>}
       {preview.components.some(component => component.kind === 'command') && <p className="plugin-market-hint">{zh ? 'Commands 原生加载，启用后可在输入框通过 /插件名:命令名 调用。参数和动态上下文由宿主处理，执行遵循当前权限设置。' : 'Commands load natively. Invoke /plugin:command from the composer; the host handles arguments and dynamic context under the current permissions.'}</p>}
       {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{zh ? 'Hooks 可运行命令和 MCP 工具；Claude 格式还支持 HTTP、提示词评估和只读 Agent 验证。安装后需在插件详情中审核并信任具体定义。' : 'Hooks run commands and MCP tools. Claude plugins also support HTTP, prompt evaluation and read-only Agent verification. Review and trust each definition after installation.'}</p>}
       {preview.notes?.length ? <div className="plugin-market-notes"><strong>{zh ? '适配说明' : 'Adaptation notes'}</strong><ul>{preview.notes.map((note, index) => <li key={index}>{adaptationNote(note, zh)}</li>)}</ul></div> : null}
       {preview.requirements.length > 0 && <p className="plugin-market-hint">{host.remote ? (zh ? '需要 Agent 主机可运行：' : 'Requires executables on the Agent host: ') : (zh ? '需要本机可运行：' : 'Requires local executables: ')}{preview.requirements.join(', ')}</p>}
       {preview.issues.length > 0 ? <div className="plugin-market-issues" role="status"><strong>{zh ? '当前暂不能完整加载' : 'Not fully supported yet'}</strong><ul>{preview.issues.map((issue, index) => <li key={index}>{issueText(issue.code, zh)}{issue.detail && `：${issue.detail}`}</li>)}</ul></div>
-        : !needsConfiguration && <p className="plugin-market-hint">{zh ? '结构检查通过。安装后启用插件；MCP 是否连接成功以运行状态为准。' : 'Structure checks passed. Installation enables the plugin; MCP connection health is shown separately.'}</p>}
+        : <p className="plugin-market-hint">{preview.validation === 'metadata'
+          ? (zh ? '当前仅加载插件清单。点击安装后下载此版本，并检查完整插件；下载支持取消。' : 'Only plugin metadata has been loaded. Install downloads this revision and validates the full package. Downloads can be cancelled.')
+          : (zh ? '结构检查通过。安装后启用插件；MCP 是否连接成功以运行状态为准。' : 'Structure checks passed. Installation enables the plugin; MCP connection health is shown separately.')}</p>}
       {!!preview.warnings?.length && <div className="plugin-market-notes" role="status"><strong>{zh ? '可安装，使用前需配置' : 'Ready to install; configuration needed before use'}</strong>
         <ul>{preview.warnings.map((warning, index) => <li key={index}>{issueText(warning.code, zh)}{warning.detail && `：${warning.detail}`}</li>)}</ul>
         <p>{zh ? '可以先安装文件，补齐配置后再启用插件。' : 'Install the files now, then enable the plugin after configuration.'}</p></div>}
@@ -169,6 +197,14 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         {busy === 'install' ? <LoaderCircle className="spin" size={16} /> : activated ? <Check size={16} /> : <Download size={16} />}
         {busy === 'install' ? (zh ? '正在安装…' : 'Installing…') : activated ? (zh ? '已安装' : 'Installed') : needsConfiguration ? (installedId ? (zh ? '重试保存状态' : 'Retry saving state') : preview.updating ? (zh ? '更新，稍后配置' : 'Update, configure later') : (zh ? '安装，稍后配置' : 'Install, configure later')) : installedId ? (zh ? '重试启用' : 'Retry activation') : preview.updating ? (zh ? '更新并启用' : 'Update and enable') : (zh ? '安装并启用' : 'Install and enable')}
       </button>
+      {busy === 'install' && <div className="plugin-market-install-progress" role="status">
+        <p>{installPhase(installProgress?.phase, zh)}{installProgress?.phase === 'downloading' && ` · ${downloadSize(installProgress.downloadedBytes)}${installProgress.totalBytes ? ` / ${downloadSize(installProgress.totalBytes)}` : ''}`}</p>
+        {installProgress?.phase === 'downloading' && <progress aria-label={zh ? '下载进度' : 'Download progress'}
+          max={installProgress.totalBytes || 1} value={installProgress.totalBytes ? installProgress.downloadedBytes : undefined} />}
+        {installProgress?.cancellable && bridge?.cancelMarketPluginInstall && <button className="plugin-back" type="button" disabled={cancelling} onClick={() => void cancelInstall()}>
+          <X size={15} />{cancelling ? (zh ? '正在取消…' : 'Cancelling…') : (zh ? '取消安装' : 'Cancel installation')}
+        </button>}
+      </div>}
       {activated && <button className="plugin-back" type="button" onClick={() => onOpenBundled(installedId)}>{zh ? '配置连接与权限' : 'Configure connections and approval'}</button>}
     </div> : <>
       {addOpen && <section className="plugin-market-source-form"><div className="plugin-market-source-title"><strong>{zh ? '添加市场来源' : 'Add a marketplace source'}</strong><button className="plugin-back" type="button" disabled={Boolean(busy)} aria-label={zh ? '关闭添加来源' : 'Close add source'} onClick={() => setAddOpen(false)}><X size={16} /></button></div>
@@ -191,7 +227,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         {selectedSource && !selectedSource.builtin && <button className="plugin-back" type="button" title={zh ? '移除来源，保留已安装插件' : 'Remove source; keep installed plugins'} disabled={Boolean(busy)} onClick={() => void removeSource()}><Trash2 size={16} /></button>}
       </div><label className="plugin-search"><Search size={18} /><input aria-label={zh ? '搜索市场插件' : 'Search marketplace plugins'} placeholder={zh ? '搜索插件名称或功能' : 'Search plugins or capabilities'} value={query} onChange={event => setQuery(event.currentTarget.value)} /></label></div>
       {catalog?.cached && <p className="plugin-market-hint" role="status">{zh ? '当前显示缓存目录，刷新未成功：' : 'Showing cached catalog; refresh failed: '}{marketError(catalog.error ?? '', zh, now)}</p>}
-      {busy && busy !== 'source' && <p className="plugin-market-progress" role="status"><LoaderCircle className="spin" size={16} />{busy.startsWith('preview:') ? (zh ? '正在获取插件并检查兼容性…' : 'Downloading plugin and checking compatibility…') : (zh ? '正在读取市场…' : 'Loading marketplace…')}</p>}
+      {busy && busy !== 'source' && <p className="plugin-market-progress" role="status"><LoaderCircle className="spin" size={16} />{busy.startsWith('preview:') ? (zh ? '正在读取插件信息…' : 'Loading plugin details…') : (zh ? '正在读取市场…' : 'Loading marketplace…')}</p>}
       {catalog && <div className="plugin-section-title"><h3>{catalog.source.builtin ? (zh ? 'CardBush 精选' : 'CardBush featured') : catalog.displayName}</h3><span>{zh ? `${entries.length} 个插件` : `${entries.length} plugins`}</span></div>}
       <div className="plugin-market-grid">
         {bridge && entries.map(entry => <PluginMarketCard bridge={bridge} key={`${sourceId}:${catalog?.fetchedAt}:${entry.name}`} entry={entry} sourceId={sourceId} busy={Boolean(busy)} zh={zh} onOpen={() => void openPlugin(entry.name)} />)}
@@ -202,6 +238,12 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
 }
 
 function message(value: unknown) { return value instanceof Error ? value.message : String(value); }
+function downloadSize(value: number) { return `${(value / 1024 / 1024).toFixed(1)} MiB`; }
+function installPhase(phase: PluginMarketInstallProgress['phase'] | undefined, zh: boolean) {
+  const labels = { queued: ['等待安装…', 'Waiting to install…'], downloading: ['正在下载', 'Downloading'], extracting: ['正在提取插件文件…', 'Extracting plugin files…'],
+    validating: ['正在检查插件…', 'Validating plugin…'], installing: ['正在完成安装…', 'Finishing installation…'], completed: ['安装完成', 'Installation completed'], cancelled: ['已取消', 'Cancelled'], failed: ['安装失败', 'Installation failed'] };
+  return labels[phase ?? 'queued'][zh ? 0 : 1];
+}
 function adaptationNote(note: string, zh: boolean) {
   if (!zh) return note;
   if (note.startsWith('Command ') && note.includes('model inherits')) return `${note.split(':')[0]}：模型沿用当前会话配置。`;

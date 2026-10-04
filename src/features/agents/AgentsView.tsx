@@ -324,7 +324,8 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
         onSend={sendComposerMessage} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={onCreate} onOpenConversation={onOpenSession}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
-        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(''); return accepted; }} onRetryGuidance={chat.retryTurnGuidance}
+        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === text.trim() ? '' : current); return accepted; }}
+        onRetryGuidance={message => chat.retryTurnGuidance(message, () => setDraft(current => current.trim() === message.content.trim() ? '' : current))}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
       </ComposerPortalContext.Provider>

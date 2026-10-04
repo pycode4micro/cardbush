@@ -106,7 +106,7 @@ void app.whenReady().then(async () => {
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('CARDBUSH_')));
     controller = new RuntimeUtilityProcessController({ modulePath: resolve('dist-electron/runtimeHostWorker.mjs'), env: { ...env, CARDBUSH_MCP_DESKTOP_BRIDGE: '1', CARDBUSH_RUNTIME_STATE_ROOT: join(root, 'runtime'), CARDBUSH_APPS_CONFIG_PATH: file, CARDBUSH_RUNTIME_SKILL_ROOTS: '[]', CARDBUSH_RUNTIME_PLUGIN_ROOTS: '[]' },
       onMcpHostRequest: async (operation, payload) => {
-        if (operation === 'network.configuration') return network.configuration();
+        if (operation === 'network.configuration') return payload?.model === true ? network.modelConfiguration() : network.configuration();
         if (operation === 'network.route') return network.endpoint(payload);
         throw Error(`Unexpected fixture operation: ${operation}`);
       } });
@@ -129,6 +129,46 @@ void app.whenReady().then(async () => {
     assert.deepEqual(JSON.parse(tools.find(tool => tool.name === 'mcp__stdio_fixture__env').description), { upper: '', lower: '', bypass: '*', keep: 'retained' });
     assert.ok(state.revision > 1, 'effective network change creates a new MCP revision even when source MCP config is unchanged');
     console.log('Utility process proxy passed: stdio startup, private network bridge and async route replacement.');
+    const modelCalls = [];
+    const modelProxy = tag => listen(createServer(async (req, res) => {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      modelCalls.push({ tag, url: req.url, headers: req.headers });
+      assert.equal(req.headers['proxy-authorization'], undefined);
+      if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":1000}'); return; }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const emit = event => res.write(`${event.type ? `event: ${event.type}\n` : ''}data: ${JSON.stringify(event)}\n\n`);
+      if (req.url.endsWith('/chat/completions')) {
+        emit({ id: 'c1', model: body.model, choices: [{ index: 0, delta: { content: tag }, finish_reason: 'stop' }] });
+        res.end('data: [DONE]\n\n');
+      } else if (req.url.endsWith('/messages')) {
+        emit({ type: 'message_start', message: { id: 'm1', model: body.model, role: 'assistant', content: [], usage: { input_tokens: 1000, output_tokens: 1 } } });
+        emit({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: tag } });
+        emit({ type: 'content_block_stop', index: 0 });
+        emit({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 10 } });
+        emit({ type: 'message_stop' }); res.end();
+      } else {
+        emit({ type: 'response.completed', response: { id: 'r1', model: body.model, status: 'completed', store: false, output: [
+          { type: 'message', id: 'text1', role: 'assistant', content: [{ type: 'output_text', text: tag, annotations: [] }] },
+        ] } }); res.end();
+      }
+    }));
+    const exitA = await modelProxy('model-A'), exitB = await modelProxy('model-B');
+    for (const adapter of ['openai_responses', 'openai_chat_completions', 'anthropic_messages']) {
+      const configured = await send('runtime.upsert_provider_binding', { protocol: 'bush.provider_binding_config.v1',
+        bindingId: adapter, adapter, apiKey: 'fixture-key', baseURL: 'http://model.invalid/v1', timeoutMs: 2000 });
+      for (const [url, tag] of [[exitA, 'model-A'], [exitB, 'model-B']]) {
+        network.setModel({ mode: 'manual', httpProxy: url });
+        const prior = modelCalls.length;
+        const result = await send('runtime.run_model_turn', { protocol: 'bush.model_request.v1',
+          requestId: randomUUID(), sessionId: 'proxy-model', turnId: randomUUID(), model: 'fixture',
+          providerBinding: configured.binding, messages: [{ role: 'user', content: 'Say hello' }], tools: [] });
+        assert.equal(result.payload.status, 'completed', JSON.stringify(result));
+        assert.ok(modelCalls.length > prior && modelCalls.slice(prior).every(call => call.tag === tag), 'existing provider follows the current app proxy');
+      }
+    }
+    assert.deepEqual((await network.configuration()).default.mode, 'none', 'model routing never changes plugin overrides');
+    console.log('Desktop model proxy passed: Responses, Chat Completions and Messages share the host route and follow saved changes.');
   } finally {
     window?.destroy(); uiNetwork?.dispose();
     await controller?.stop(); await pool.close(); await network.close();

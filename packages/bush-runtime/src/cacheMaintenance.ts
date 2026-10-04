@@ -143,7 +143,7 @@ export function temporaryCacheEntries(root: string) {
 }
 
 /** Mark all references first, then sweep. Failure to read any retained source aborts the sweep. */
-export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string; turnId?: string; toolCallId?: string }> = [], signal?: AbortSignal): Promise<CacheMaintenanceResult> {
+export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string; turnId?: string; toolCallId?: string; sourceNumber?: number }> = [], signal?: AbortSignal): Promise<CacheMaintenanceResult> {
   signal?.throwIfAborted();
   const byKey = new Map<string, Set<CacheEntry>>();
   const add = (key: string, entry: CacheEntry) => { let values = byKey.get(key); if (!values) byKey.set(key, values = new Set()); values.add(entry); };

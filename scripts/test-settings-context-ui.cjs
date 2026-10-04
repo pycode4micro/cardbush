@@ -95,8 +95,9 @@ app.whenReady().then(async () => {
       const views = module.exports, h = React.createElement, reactRoot = createRoot(document.getElementById('root'));
       window.archiveFixture = { setArchived: views.setConversationsArchived, storageKey: views.conversationArchivesStorageKey };
       window.file = { path: 'C:/Users/fixture/AppData/Roaming/cardbush/AGENTS.md', content: '请使用中文，并核对交付结果。', revision: 'one' };
-      window.failSave = false; window.checkouts = [];
+      window.failSave = false; window.checkouts = []; window.proxyWrites = []; window.proxyFail = false;
       window.cardbushDesktop = {
+        setProxy: async value => { if (proxyFail) throw Error('fixture proxy apply failed'); proxyWrites.push(structuredClone(value)); },
         productHostCommand: async command => {
           if (!command.kind.startsWith('sandbox.')) throw Error('Unexpected fixture command: ' + command.kind);
           sandboxCalls.push(command.kind);
@@ -119,7 +120,7 @@ app.whenReady().then(async () => {
       const noop = () => {};
       window.fixtureModel = { id: 'fixture', provider: 'deepseek', modelName: 'deepseek-v4.1-flash-expires-on-0910', baseUrl: 'https://api.deepseek.com', apiKey: '', hasApiKey: true, maxContextTokens: 400000, maxCompletionTokens: 128000 };
       window.settingsProps = { active: true, onReady: noop, language: 'zh', languageMode: 'zh', systemLanguage: 'zh', themePreference: 'dark',
-        settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: {}, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {}, companion: {} },
+        settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: { mode:'none', httpProxy:'', httpsProxy:'', noProxy:'' }, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {}, companion: {} },
         selectedModel: 'fixture', availableModels: [fixtureModel], backendCapabilities: {terminalRuntimes:['powershell','wsl'], runtimeAssetResetCategories:[], browserPrivacyMode:false, reasoningStream:true}, runtimeBusy: false, conversations: [], skills: [], disabledSkillNames: new Set(),
         initialSection: 'instructions', initialPluginTab: 'plugins', onBack: noop,
         onThemePreferenceChange: value => { settingsProps.themePreference = value; renderSettings(); }, onLanguageModeChange: noop,
@@ -306,7 +307,7 @@ app.whenReady().then(async () => {
     await run('renderSettings()');
     await until("!!document.querySelector('.settings-content')");
 
-    const expectedSettingsSections = ['browser', 'computer-use', 'mcp', 'models', 'profile', 'shortcuts', 'usage', 'appearance', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics'];
+    const expectedSettingsSections = ['browser', 'computer-use', 'mcp', 'models', 'voice', 'profile', 'summary_for_user', 'shortcuts', 'usage', 'appearance', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics'];
     assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'each supported local setting page has one navigation entry');
     await click('快捷键');
     await until("document.querySelectorAll('[data-shortcut-row]').length === views.shortcutDefinitions.length");
@@ -324,14 +325,42 @@ app.whenReady().then(async () => {
     await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection === 'mcp'");
     assert.equal(await run("document.querySelector('.settings-search input').value"), '');
     await click('网络代理');
-    await until("!!document.querySelector('[name=proxy-mode]')");
+    await until("!!document.querySelector('#proxy-panel-models .settings-dropdown-trigger')");
+    await choose('#proxy-panel-models .settings-dropdown-trigger', 'manual');
+    await edit('#proxy-panel-models .plugin-proxy-fields input', 'http://127.0.0.1:7890');
+    assert.equal(await run('proxyWrites.length'), 0, 'editing manual addresses cannot switch the live route');
+    await run('proxyFail=true'); await click('保存代理设置');
+    await until("document.querySelector('#proxy-panel-models [role=alert]')?.textContent.includes('fixture proxy apply failed')");
+    assert.equal(await run('settingsProps.settings.proxy.mode'), 'none', 'failed application cannot be shown as saved');
+    await run('proxyFail=false'); await click('保存代理设置');
+    await until("settingsProps.settings.proxy.mode==='manual'");
+    assert.equal(await run('proxyWrites.length'), 1);
+    assert.equal(await run('proxyWrites[0].httpProxy'), 'http://127.0.0.1:7890');
+    await until("document.querySelector('#proxy-panel-models .settings-dropdown-trigger')?.value==='manual'");
+    await until("document.querySelector('#proxy-panel-models .plugin-proxy-fields input')?.value==='http://127.0.0.1:7890'");
+    await pause(120);
+    fs.writeFileSync(path.join(root, 'tmp/network-proxy-default.png'), (await win.webContents.capturePage()).toPNG());
     assert.equal(await run("document.querySelector('.settings-content').textContent.includes('Cookie')"), false, 'browser privacy is not part of proxy settings');
     assert.equal(await run("document.querySelectorAll('.settings-page-tabs button').length"), 2, 'models and plugins share the network entry');
     await run("document.querySelector('#proxy-tab-models').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight', bubbles:true}))");
     await until("!!document.querySelector('#proxy-panel-plugins .plugin-network-page')");
     assert.equal(await run("document.querySelector('#proxy-panel-plugins .plugin-search-settings, #proxy-panel-plugins .plugin-back')"), null, 'network settings have no duplicate plugin navigation');
     await run("document.querySelector('#proxy-tab-plugins').dispatchEvent(new KeyboardEvent('keydown', {key:'Home', bubbles:true}))");
-    await until("!!document.querySelector('#proxy-panel-models [name=proxy-mode]')");
+    await until("!!document.querySelector('#proxy-panel-models .settings-dropdown-trigger')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'network') {
+      assert.equal(await run("document.querySelector('#proxy-panel-models .settings-dropdown-trigger').value"), 'manual', 'saved route survives leaving the page');
+      await run("settingsProps.language='en'; settingsTheme='bright'; renderSettings()");
+      win.setContentSize(760, 850);
+      await until("document.querySelector('#proxy-tab-models')?.textContent==='App default'");
+      await run("document.querySelector('.window-sidebar-toggle').click()");
+      await until("!document.querySelector('.settings-sidebar')");
+      await pause(150);
+      assert.equal(await run("document.querySelector('#proxy-panel-models').scrollWidth <= document.querySelector('#proxy-panel-models').clientWidth + 1"), true, 'proxy editor fits the narrow English layout');
+      fs.writeFileSync(path.join(root, 'tmp/network-proxy-default-en.png'), (await win.webContents.capturePage()).toPNG());
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log('Network settings UI passed: draft isolation, failed-save retention, host application, persisted fields, tabs and narrow English layout.');
+      win.destroy(); app.exit(0); return;
+    }
     await click('外观与语言');
     await until("!!document.querySelector('[name=theme-mode]')");
     assert.equal(await run("document.querySelector('[name=language-mode]') !== null"), true);

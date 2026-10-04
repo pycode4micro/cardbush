@@ -10,6 +10,9 @@ small { color: #829493; }
 .connection { padding: 9px 10px; margin-bottom: 12px; color: #d9f700; border-left: 3px solid #d9f700; background: #10191b; }
 .connection.offline { color: #ff637d; border-color: #ff637d; }
 .connection.waiting { color: #c5cfce; border-color: #829493; }
+.extension-update { margin-bottom: 12px; }
+.extension-update .hint { margin-top: 0; }
+.extension-update button { width: 100%; }
 .hint { margin: 10px 0; color: #a8b9b7; font-size: 12px; line-height: 1.5; }
 details { margin-bottom: 12px; }
 summary { color: #a8b9b7; font-size: 12px; cursor: pointer; }

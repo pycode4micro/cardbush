@@ -107,7 +107,7 @@ SSH 不代表 Linux。同步选择不按连接方式或插件名称过滤；启�
 
 可添加 GitHub 简写（例如 `pycode4micro/cardbush-plugins`）、HTTP(S) / SSH Git 仓库地址，或 **Agent 主机上的市场目录**。目录必须是服务器上的绝对路径，Git 认证和依赖命令也使用服务器环境。没有内置插件的 Agent 初始市场为空，可以直接添加来源。安装预览使用固定快照，更新复用插件停服与替换流程；移除市场来源会保留已安装插件。
 
-来源与缓存保存在数据目录的 `plugin-marketplaces`，插件保存在 `plugins`，启用状态保存在 `config`。备份时也应保留市场来源文件 `plugin-marketplaces/sources.json`。每个 Agent 独立保存这些数据。市场下载使用该 Agent 的插件代理设置；无桌面界面的“系统代理”读取服务进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 与 `NO_PROXY` 环境变量，“跟随模型”在服务端沿用该环境。设置直连可显式绕过代理。
+来源与缓存保存在数据目录的 `plugin-marketplaces`，插件保存在 `plugins`，启用状态保存在 `config`。备份时也应保留市场来源文件 `plugin-marketplaces/sources.json`。每个 Agent 独立保存这些数据。市场下载使用该 Agent 的插件代理设置；“跟随应用默认”读取该 Agent 的 `config/network.json`，缺少配置时使用服务进程的系统环境。“系统代理”读取服务进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 与 `NO_PROXY`，直连显式绕过代理。服务与桌面复用同一解析和限流规则；限流按实际网络出口隔离，不累计本地等待时间。
 
 客户端通过已有、受访问令牌保护的 `plugins.marketplace` 操作访问市场，支持 `sources`、`add`、`addLocal`、`remove`、`catalog`、`presentation`、`preview` 和 `install`，不需要额外端口。服务通过 `pluginMarketplace` 能力标记声明支持；预览凭证只在生成它的实例内有效。
 

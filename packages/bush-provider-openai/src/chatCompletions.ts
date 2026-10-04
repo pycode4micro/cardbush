@@ -8,6 +8,7 @@ import { providerToolName } from './toolNames.js';
 import { providerFailureEvent } from './providerFailure.js';
 import { eventWriter, incompleteStream, recordProjection, toolCallEvents, type PortableCall } from './portableProvider.js';
 import { OpenRouterReasoning } from './openRouterReasoning.js';
+import { sessionPromptCacheKey } from './promptCache.js';
 
 const FORMAT = 'openai.chat_completions.v1';
 const OPENROUTER_FORMAT = 'openrouter.chat_completions.v1';
@@ -44,7 +45,9 @@ export function toChatCompletionsParams(request: ModelRequest, baseURL?: string)
     }
   }
   flush();
+  const cacheKey = sessionPromptCacheKey(request, baseURL);
   return { model: request.model, messages, stream: true, stream_options: { include_usage: true },
+    ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     ...(request.tools.length ? { tools: request.tools.map(tool => ({ type: 'function' as const,
       function: { name: providerToolName(tool.name), description: tool.description, parameters: withToolDisplayTitle(tool).inputSchema, strict: false } })) } : {}),
     max_completion_tokens: request.maxOutputTokens, temperature: request.temperature, top_p: request.topP,

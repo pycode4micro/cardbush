@@ -33,6 +33,7 @@ export interface PluginMarketCatalog {
 }
 
 export interface PluginMarketPreview {
+  validation?: 'metadata' | 'complete';
   token: string;
   id: string;
   name: string;
@@ -49,4 +50,17 @@ export interface PluginMarketPreview {
   updating: boolean;
   format: 'agent-plugins' | 'openai' | 'claude';
   authentication?: 'ON_INSTALL' | 'ON_USE';
+}
+
+export interface PluginMarketInstallProgress {
+  phase: 'queued' | 'downloading' | 'extracting' | 'validating' | 'installing' | 'completed' | 'cancelled' | 'failed';
+  downloadedBytes: number;
+  totalBytes?: number;
+  cancellable: boolean;
+}
+
+export interface PluginMarketInstallResult {
+  id: string;
+  manifestPath: string;
+  warnings?: Array<{ code: string; detail: string }>;
 }

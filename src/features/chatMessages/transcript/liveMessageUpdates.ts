@@ -190,11 +190,7 @@ export function applyAssistantSegmentBoundary(
     (nextSegmentIndex != null && nextSegmentIndex > 1
       ? nextSegmentIndex - 1
       : undefined);
-  const previousIndex = assistantStreamTargetIndex(messages, fallbackAssistantId, {
-    messageId: update.previousAssistantMessageId ?? '',
-    assistantSegmentIndex: previousSegmentIndex,
-    turnId: update.turnId,
-  });
+  const previousIndex = guidanceBoundaryTargetIndex(messages, fallbackAssistantId, update, previousSegmentIndex);
   if (previousIndex >= 0 && messages[previousIndex].role === 'assistant') {
     const previous = messages[previousIndex];
     messages[previousIndex] = {
@@ -243,6 +239,41 @@ export function applyAssistantSegmentBoundary(
     });
   }
   return { ...current, [sessionId]: messages };
+}
+
+function guidanceBoundaryTargetIndex(
+  messages: ChatMessage[], fallbackAssistantId: string, update: StreamExecutionUpdate,
+  previousSegmentIndex: number | undefined,
+) {
+  const turnId = update.turnId?.trim();
+  const sameTurn = (message: ChatMessage) => !turnId || chatMessageTurnId(message) === turnId;
+  const previousId = update.previousAssistantMessageId?.trim();
+  if (previousId) {
+    const exact = messages.findIndex(message => sameTurn(message) && assistantMessageMatchesRoute(message, previousId));
+    if (exact >= 0) return exact;
+  }
+  // Replayed events from an interrupted empty request may name no rendered
+  // message. Its event sequence still gives an exact cutoff within this Turn;
+  // do not seal newer output or move across another applied guidance message.
+  const boundary = optionalFiniteNumber(update.sequence);
+  if (turnId && boundary != null) {
+    const precedingGuidance = messages.reduce((latest, message) => {
+      const sequence = optionalFiniteNumber(message.sequence);
+      return sameTurn(message) && message.role === 'user' && message.metadata?.guidance_delivery === 'sent' &&
+        sequence != null && sequence < boundary ? Math.max(latest, sequence) : latest;
+    }, -Infinity);
+    let selected = -1, latest = precedingGuidance;
+    messages.forEach((message, index) => {
+      const sequence = optionalFiniteNumber(message.sequence);
+      if (message.role === 'assistant' && sameTurn(message) && sequence != null && sequence < boundary && sequence > latest) {
+        selected = index; latest = sequence;
+      }
+    });
+    return selected;
+  }
+  return assistantStreamTargetIndex(messages, fallbackAssistantId, {
+    messageId: previousId ?? '', assistantSegmentIndex: previousSegmentIndex, turnId: update.turnId,
+  });
 }
 
 /** A canonical text correction is not a new loop or a tool revision. */

@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { Parser } from 'tar';
 import JSZip from 'jszip';
+import { openPromise } from 'yauzl';
 import { safePackagePath } from './pluginPackagePaths';
 import { archiveLinkError, archivePath, materializePluginArchive, pluginArchiveLimits, type PluginArchiveEntry } from './pluginArchiveTree';
 
@@ -20,6 +21,64 @@ export async function extractPluginArchive(archive: Buffer, pluginPath: string, 
   if (roots.size !== 1) throw new Error('Expected a GitHub repository archive.');
   const prefix = `${[...roots][0]}/${pluginPath ? safePackagePath(pluginPath) + '/' : ''}`;
   await extractEntries(entries, prefix, destination);
+}
+
+/** Read the ZIP directory from disk and inflate only the selected plugin. The
+ * repository's compressed size and unrelated entries do not count as plugin content. */
+export async function extractPluginArchiveFile(file: string, pluginPath: string, destination: string, signal?: AbortSignal) {
+  const zip = await openPromise(file, { autoClose: false, strictFileNames: true });
+  const unpacked: PluginArchiveEntry[] = [];
+  const suffix = pluginPath ? `${safePackagePath(pluginPath)}/` : '';
+  let root = '', files = 0, total = 0;
+  try {
+    for await (const entry of zip.eachEntry()) {
+      signal?.throwIfAborted();
+      const separator = entry.fileName.indexOf('/');
+      if (separator < 1) throw new Error('Expected a GitHub repository archive.');
+      const name = entry.fileName.slice(0, separator);
+      if (root && root !== name) throw new Error('Expected a GitHub repository archive.');
+      root = name;
+      const prefix = `${root}/${suffix}`;
+      if (!entry.fileName.startsWith(prefix) || entry.fileName.length === prefix.length) continue;
+      const path = archivePath(entry.fileName.slice(prefix.length));
+      if (unpacked.length >= pluginArchiveLimits.entries) throw new Error('Selected plugin exceeds the 10000 entry limit.');
+      const directory = entry.fileName.endsWith('/'), mode = entry.externalFileAttributes >>> 16, type = mode & 0o170000;
+      const link = type === 0o120000 && !directory;
+      if (!link && type && type !== (directory ? 0o040000 : 0o100000)) throw new Error(`Unsupported plugin archive entry ${JSON.stringify(path)}: special file.`);
+      if (directory) { unpacked.push({ path, kind: 'directory' }); continue; }
+      if (++files > pluginArchiveLimits.files) throw new Error('Selected plugin exceeds the 2000 file limit.');
+      const limit = Math.min(link ? pluginArchiveLimits.linkBytes : pluginArchiveLimits.fileBytes, pluginArchiveLimits.expandedBytes - total);
+      if (entry.uncompressedSize > limit) throw expandedSizeError(path);
+      const stream = await zip.openReadStreamPromise(entry);
+      const abort = () => stream.destroy(signal!.reason);
+      signal?.addEventListener('abort', abort, { once: true });
+      const chunks: Buffer[] = []; let size = 0;
+      try {
+        signal?.throwIfAborted();
+        for await (const chunk of stream) {
+          size += chunk.length;
+          if (size > limit) throw expandedSizeError(path);
+          chunks.push(chunk);
+        }
+      } finally { signal?.removeEventListener('abort', abort); stream.destroy(); }
+      total += size;
+      const data = Buffer.concat(chunks);
+      if (link) {
+        let linkpath: string;
+        try { linkpath = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data); }
+        catch { throw new Error(`Plugin link ${JSON.stringify(path)} has an invalid UTF-8 target.`); }
+        unpacked.push({ path, kind: 'symlink', linkpath });
+      } else unpacked.push({ path, kind: 'file', data, mode });
+    }
+    signal?.throwIfAborted();
+    await materializePluginArchive(unpacked, destination, signal);
+  } finally {
+    await new Promise<void>(resolve => { zip.once('close', resolve); zip.close(); });
+  }
+}
+
+function expandedSizeError(path: string) {
+  return new Error(`Selected plugin exceeds the extracted size limit (16 MiB per file / 64 MiB total) at ${JSON.stringify(path)}. [market-expanded-size]`);
 }
 
 /** Local packages can be flat or include enclosing folders; manifests decide their identity. */

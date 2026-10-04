@@ -8,6 +8,8 @@ import { BrowserConfigStore } from '@cardbush/product-host';
 import { DEFAULT_BROWSER_START_PAGE } from '@cardbush/bush-protocol';
 import { BrowserArtifacts, digest, exportedImage, type BrowserArtifact } from './imageArtifacts.js';
 import { prepareCapture, captureClip, setViewport, evaluate, canvasExportExpression, type Viewport } from './pageCapture.js';
+import { dispatchPointer } from './pagePointer.js';
+import { PageSnapshots, snapshotSchema } from './pageSnapshot.js';
 
 import {
   ChromeConnectorError,
@@ -50,9 +52,11 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       'Call release_browser when browser work is complete; it detaches and collapses only the current session groups.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
       'For actual file downloads use download_file and then download_status with its taskId. A pending task is not a failed download; reuse it instead of clicking or starting another download.',
+      'take_snapshot returns a bounded page of accessibility text only once, with a nextCursor when more is available. Prefer rootUid/query/roles to narrow the page; continue only as needed. Click receipts confirm checked targeting and dispatched input, not that the page completed the requested operation; observe the relevant state afterwards.',
     ].join(' '),
   });
   const selectedPageIds = new Map<string, number>();
+  const snapshots = new PageSnapshots();
   const requestedViewports = new Map<string, Viewport>();
   const artifacts = new BrowserArtifacts(options.artifactsDirectory);
   const viewportKey = (context: ToolContext, tabId: number) => JSON.stringify([scopeFromContext(context).id, tabId]);
@@ -87,6 +91,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       throw error;
     });
     if (['tabs.navigate', 'tabs.close', 'debugger.detachScope'].includes(method)) clearScreenshotFailures(scope.id, params.tabId);
+    if (['tabs.navigate', 'tabs.close', 'debugger.detachScope'].includes(method)) snapshots.clear(scope.id, params.tabId);
     if (method === 'tabs.close') requestedViewports.delete(JSON.stringify([scope.id, params.tabId]));
     if (method === 'debugger.detachScope') for (const key of requestedViewports.keys()) {
       if (key.startsWith(`[${JSON.stringify(scope.id)},`)) requestedViewports.delete(key);
@@ -150,6 +155,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const result = record(await request('browser.select', input, context));
     const scopeId = scopeFromContext(context).id;
     selectedPageIds.delete(scopeId); clearScreenshotFailures(scopeId);
+    snapshots.clear(scopeId);
     for (const key of requestedViewports.keys()) if (key.startsWith(`[${JSON.stringify(scopeId)},`)) requestedViewports.delete(key);
     return { text: 'Browser selected. Use list_pages or new_page, then take a fresh snapshot.', structured: result };
   }));
@@ -243,70 +249,25 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('take_snapshot', toolDefinition(
     'Take page snapshot',
-    'Return an accessibility snapshot of the selected browser tab. Use uid values from this output with click, fill, and hover.',
-    z.object({}),
+    'Read a bounded accessibility snapshot (default 60 rows, about 7000 escaped characters). Use returned uids with click/fill/hover. Narrow with rootUid, query, or roles. Continue with cursor and optional limit; a cursor reads the same captured snapshot for up to 3 minutes, not live updates. Navigation or a fresh snapshot invalidates it. Long fields are marked previews; use rootUid with fullText:true to read their text in chunks with offsets, then continue the cursor. Page text appears only in content; structuredContent contains pagination metadata.',
+    snapshotSchema,
     true,
-  ), async (_input, context) => withToolResult(async () => {
+  ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
-    await request('debugger.command', {
-      tabId: target,
-      command: 'Accessibility.enable',
-      commandParams: {},
-    }, context);
-    const result = record(await request('debugger.command', {
-      tabId: target,
-      command: 'Accessibility.getFullAXTree',
-      commandParams: {},
-    }, context));
-    const nodes = Array.isArray(result.nodes) ? result.nodes : [];
-    const lines = nodes.flatMap((candidate) => snapshotLine(candidate));
-    return {
-      text: lines.join('\n') || 'The page accessibility tree is empty.',
-      structured: { pageId: target, nodeCount: nodes.length, snapshot: lines },
-    };
+    return snapshots.read(commandFor(target, context), scopeFromContext(context).id, target, input);
   }));
 
   server.registerTool('click', toolDefinition(
     'Click page element',
-    'Click an element by uid from take_snapshot.',
+    'Send a real mouse click to a uid from take_snapshot after checking visible area, enabled state, and actual hit target, including after hover. A zero-area control may use its explicitly associated visible label. Covered or stale targets return an error; no JavaScript click or Enter fallback is used. input_dispatched does not prove submission/navigation/task completion: observe the resulting page state before continuing or retrying.',
     z.object({ uid: z.string().regex(/^cb_\d+$/), doubleClick: z.boolean().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
-    const point = await elementCenter(target, input.uid, context, request);
-    await request('debugger.command', {
-      tabId: target,
-      command: 'Input.dispatchMouseEvent',
-      commandParams: { type: 'mouseMoved', x: point.x, y: point.y },
-    }, context);
-    const clicks = input.doubleClick === true ? 2 : 1;
-    for (let clickCount = 1; clickCount <= clicks; clickCount += 1) {
-      await request('debugger.command', {
-        tabId: target,
-        command: 'Input.dispatchMouseEvent',
-        commandParams: {
-          type: 'mousePressed',
-          x: point.x,
-          y: point.y,
-          button: 'left',
-          clickCount,
-        },
-      }, context);
-      await request('debugger.command', {
-        tabId: target,
-        command: 'Input.dispatchMouseEvent',
-        commandParams: {
-          type: 'mouseReleased',
-          x: point.x,
-          y: point.y,
-          button: 'left',
-          clickCount,
-        },
-      }, context);
-    }
+    const result = await dispatchPointer(commandFor(target, context), input.uid, 'click', input.doubleClick);
     return {
-      text: `Clicked ${input.uid}.`,
-      structured: { pageId: target, uid: input.uid, x: point.x, y: point.y, clicks },
+      text: `Click input dispatched to ${input.uid}${result.target === 'associated_label' ? ` via associated label ${result.targetUid}` : ''}. Hit target checked; page outcome not verified. Observe the page to confirm the intended result.`,
+      structured: { pageId: target, ...result },
     };
   }));
 
@@ -379,13 +340,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     false,
   ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
-    const { x, y } = await elementCenter(target, input.uid, context, request);
-    await request('debugger.command', {
-      tabId: target,
-      command: 'Input.dispatchMouseEvent',
-      commandParams: { type: 'mouseMoved', x, y },
-    }, context);
-    return { text: `Hovered ${input.uid}.`, structured: { pageId: target, uid: input.uid, x, y } };
+    const result = await dispatchPointer(commandFor(target, context), input.uid, 'hover');
+    return { text: `Pointer moved to ${input.uid}; page outcome not verified.`, structured: { pageId: target, ...result } };
   }));
 
   server.registerTool('resize_page', toolDefinition(
@@ -669,40 +625,6 @@ async function resolveObjectId(
   return objectId;
 }
 
-async function elementCenter(
-  tabId: number,
-  uid: string,
-  context: ToolContext,
-  request: (method: string, params: Record<string, unknown>, context: ToolContext) => Promise<unknown>,
-): Promise<{ x: number; y: number }> {
-  const objectId = await resolveObjectId(tabId, uid, context, request);
-  await request('debugger.command', {
-    tabId,
-    command: 'Runtime.callFunctionOn',
-    commandParams: {
-      objectId,
-      functionDeclaration: `function() {
-        this.scrollIntoView({ block: 'center', inline: 'center' });
-      }`,
-      returnByValue: true,
-    },
-  }, context);
-  const model = record(await request('debugger.command', {
-    tabId,
-    command: 'DOM.getBoxModel',
-    commandParams: { objectId },
-  }, context));
-  const candidate = record(model.model).content;
-  const content = Array.isArray(candidate) ? candidate.map(Number) : [];
-  if (content.length < 8 || content.slice(0, 8).some((value) => !Number.isFinite(value))) {
-    throw new ChromeConnectorError('element_box_missing', `Unable to locate ${uid}.`);
-  }
-  return {
-    x: (content[0] + content[2] + content[4] + content[6]) / 4,
-    y: (content[1] + content[3] + content[5] + content[7]) / 4,
-  };
-}
-
 async function callOnNode(
   tabId: number,
   uid: string,
@@ -726,33 +648,6 @@ async function callOnNode(
   }, context));
   if (result.exceptionDetails) throw new ChromeConnectorError('page_action_failed', JSON.stringify(result.exceptionDetails));
   return record(result.result).value;
-}
-
-function snapshotLine(value: unknown): string[] {
-  const node = record(value);
-  if (node.ignored === true) return [];
-  const backendNodeId = integer(node.backendDOMNodeId);
-  const role = string(record(node.role).value) || 'generic';
-  const name = string(record(node.name).value);
-  const description = string(record(node.description).value);
-  const valueText = String(record(node.value).value ?? '').trim();
-  const properties = Array.isArray(node.properties)
-    ? node.properties.flatMap((candidate) => {
-        const property = record(candidate);
-        const propertyValue = record(property.value).value;
-        return typeof propertyValue === 'boolean' && propertyValue
-          ? [string(property.name)]
-          : [];
-      }).filter(Boolean)
-    : [];
-  return [[
-    backendNodeId == null ? '' : `uid=cb_${backendNodeId}`,
-    `role=${role}`,
-    name ? `name=${JSON.stringify(name)}` : '',
-    valueText ? `value=${JSON.stringify(valueText)}` : '',
-    description ? `description=${JSON.stringify(description)}` : '',
-    properties.length > 0 ? `state=${properties.join(',')}` : '',
-  ].filter(Boolean).join(' ')];
 }
 
 function keyboardDescriptor(input: string): Record<string, unknown> {

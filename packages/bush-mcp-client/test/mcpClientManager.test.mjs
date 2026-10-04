@@ -12,6 +12,46 @@ import {
 } from "@cardbush/bush-runtime";
 
 import { McpClientManager, McpAuthenticationRequired } from "../dist/index.js";
+import { McpProcessError } from '../dist/managedStdio.js';
+
+test('resource exits preserve measured limits in tool errors and service recovery diagnostics without replay', async t => {
+  const registry = new ToolRegistry(), states = [];
+  const resource = { code: 'resource_memory_limit', peakMemoryBytes: 512, taskMemoryBytes: 256, totalMemoryBytes: 1024 };
+  const failure = new McpProcessError('Managed service memory limit reached.', resource.code,
+    { details: { resource, exitCode: 1, signal: null } });
+  const gate = Promise.withResolvers();
+  const first = fakeClient(() => { first.onerror(failure); throw failure; });
+  const recovered = fakeClient(successfulToolResult), clients = [first, recovered];
+  const manager = new McpClientManager({ registry, createClient: () => clients.shift(), createTransport: () => ({ async send() {} }),
+    wait: () => gate.promise, onServiceStateChange: state => states.push(state) });
+  t.after(async () => { gate.resolve(); await manager.close(); });
+  await manager.apply(snapshot({ permission: 'allow' }));
+  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected permission'); } } });
+  const outcome = await executeEcho(coordinator, 'resource_failure');
+  assert.equal(outcome.kind, 'failed');
+  assert.equal(outcome.error.code, 'mcp_service_connection_lost');
+  assert.deepEqual(outcome.error.details.failure.details.resource, resource);
+  assert.equal(outcome.error.details.interruptedCallReplayed, false);
+  assert.match(outcome.error.message, /does not resume interrupted background jobs/);
+  gate.resolve(); await waitFor(() => manager.snapshot().servers[0].health === 'ready');
+  assert.equal(recovered.calls.length, 0);
+  assert.deepEqual(states.at(-1).failure.details.resource, resource);
+  assert.deepEqual(manager.snapshot().servers[0].lastFailure.details.resource, resource);
+  assert.ok(Number.isFinite(Date.parse(manager.snapshot().servers[0].lastFailure.occurredAt)));
+});
+
+test('native exit information supersedes generic EOF during the same recovery', async t => {
+  const gate = Promise.withResolvers(), states = [], first = fakeClient(successfulToolResult);
+  const clients = [first, fakeClient(successfulToolResult)];
+  const manager = new McpClientManager({ registry: new ToolRegistry(), createClient: () => clients.shift(),
+    createTransport: () => ({ async send() {} }), wait: () => gate.promise, onServiceStateChange: s => states.push(s) });
+  t.after(async () => { gate.resolve(); await manager.close(); });
+  await manager.apply(snapshot());
+  first.onclose(); first.onerror(new McpProcessError('Memory backstop stopped this service', 'resource_memory_pressure'));
+  assert.equal(states.at(-1).failure.code, 'resource_memory_pressure');
+  gate.resolve(); await waitFor(() => manager.snapshot().servers[0].health === 'ready');
+  assert.equal(manager.snapshot().servers[0].restartAttempts, 1);
+});
 
 test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   const registry = new ToolRegistry();
@@ -570,7 +610,7 @@ test("drains stdio stderr so MCP diagnostics cannot backpressure the child proce
   await manager.close();
 });
 
-test("queues snapshot mutation during a Turn and rejects conflicting revision reuse", async () => {
+test("accepts an unchanged catalog revision during a Turn and rejects conflicting revision reuse", async () => {
   const registry = new ToolRegistry();
   let canApply = true;
   const manager = new McpClientManager({
@@ -583,10 +623,9 @@ test("queues snapshot mutation during a Turn and rejects conflicting revision re
 
   canApply = false;
   const pending = await manager.apply({ ...snapshot(), revision: 2 });
-  assert.equal(pending.applicationState, 'pending');
-  assert.equal(pending.applicationPhase, 'waiting_for_idle');
-  assert.equal(pending.revision, 1);
-  assert.equal(pending.pendingRevision, 2);
+  assert.equal(pending.applicationState, 'applied');
+  assert.equal(pending.revision, 2);
+  assert.equal(pending.pendingRevision, undefined);
   assert.ok(registry.resolve("mcp__server__echo_tool"));
 
   canApply = true;
@@ -656,7 +695,7 @@ test('coalesces busy updates and does not resurrect pending connections after cl
   assert.equal(manager.snapshot(), undefined);
 });
 
-test('defers commit if a turn starts while an MCP connection is opening', async () => {
+test('publishes optional tools if a turn starts while an MCP connection is opening', async () => {
   let idle = true;
   let release;
   const waiting = new Promise(resolve => { release = resolve; });
@@ -672,9 +711,10 @@ test('defers commit if a turn starts while an MCP connection is opening', async 
   await new Promise(resolve => setTimeout(resolve, 0));
   idle = false;
   release();
-  assert.equal((await update).applicationState, 'pending');
-  assert.equal(registry.resolve('mcp__server__echo_tool'), undefined);
-  assert.equal(clients[0].closeCalls, 0, 'keep a completed transport until the active turn finishes');
+  await update;
+  await waitFor(() => !!registry.resolve('mcp__server__echo_tool'));
+  assert.equal(manager.snapshot().applicationState, 'applied');
+  assert.equal(clients[0].closeCalls, 0, 'additive publication keeps the live transport');
   idle = true;
   await new Promise(resolve => setTimeout(resolve, 350));
   assert.ok(registry.resolve('mcp__server__echo_tool'));

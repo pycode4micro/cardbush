@@ -6,7 +6,8 @@ import { safePackagePath, withinPackage } from './pluginPackagePaths';
 import { extractNpmPluginArchive, pluginArchiveLimits } from './pluginArchives';
 
 export interface NpmPluginSource { kind: 'npm'; package: string; version?: string; registry?: string }
-export type AcquisitionCommand = (command: string, args: string[], cwd: string) => Promise<string>;
+export type AcquisitionCommand = (command: string, args: string[], cwd: string, signal?: AbortSignal) => Promise<string>;
+const defaultCommand: AcquisitionCommand = (command, args, cwd, signal) => runAcquisitionCommand(command, args, cwd, {}, signal);
 
 export function gitSource(input: string): { url: string; ref: string } {
   const value = input.trim();
@@ -42,7 +43,8 @@ export function npmSource(source: Record<string, unknown>): NpmPluginSource {
 
 /** Bare Git acquisition never checks out a project or runs package hooks. */
 export async function withGitSnapshot<T>(url: string, ref: string, dataRoot: string,
-  read: (repository: string, revision: string, run: AcquisitionCommand) => Promise<T>, run: AcquisitionCommand = runAcquisitionCommand): Promise<T> {
+  read: (repository: string, revision: string, run: AcquisitionCommand) => Promise<T>, command: AcquisitionCommand = defaultCommand, signal?: AbortSignal): Promise<T> {
+  const run: AcquisitionCommand = (name, args, cwd) => { signal?.throwIfAborted(); return command(name, args, cwd, signal); };
   gitSource(url); gitRef(ref);
   const base = resolve(dataRoot, 'acquisitions');
   await mkdir(base, { recursive: true });
@@ -78,13 +80,18 @@ export async function gitCatalogFile(repository: string, revision: string, path:
   return run('git', ['-C', repository, 'show', `${revision}:${path}`], dirname(repository));
 }
 export async function gitPluginArchive(repository: string, revision: string, path: string, run: AcquisitionCommand) {
-  const file = join(dirname(repository), 'plugin.zip');
-  await run('git', ['-C', repository, 'archive', '--format=zip', '--prefix=plugin/', '-o', file, revision, '--', ...(path ? [`:(literal)${safePackagePath(path)}`] : [])], dirname(repository));
-  if ((await stat(file)).size > pluginArchiveLimits.compressedBytes) throw new Error('Plugin archive exceeds the size limit.');
+  const file = await gitPluginArchiveFile(repository, revision, path, run);
+  if ((await stat(file)).size > pluginArchiveLimits.compressedBytes) throw new Error('Plugin presentation exceeds the size limit.');
   return readFile(file);
 }
 
-export async function acquireNpmPlugin(source: NpmPluginSource, stage: string, destination: string, run: AcquisitionCommand = runAcquisitionCommand) {
+export async function gitPluginArchiveFile(repository: string, revision: string, path: string, run: AcquisitionCommand) {
+  const file = join(dirname(repository), 'plugin.zip');
+  await run('git', ['-C', repository, 'archive', '--format=zip', '--prefix=plugin/', '-o', file, revision, '--', ...(path ? [`:(literal)${safePackagePath(path)}`] : [])], dirname(repository));
+  return file;
+}
+
+export async function acquireNpmPlugin(source: NpmPluginSource, stage: string, destination: string, run: AcquisitionCommand = defaultCommand) {
   const pack = join(stage, 'npm');
   await mkdir(pack);
   const [command, prefix] = await npmCommand();
@@ -108,8 +115,8 @@ async function npmCommand(): Promise<[string, string[]]> {
   throw new Error('npm is required to download registry plugins. Install Node.js with npm.');
 }
 
-export async function runAcquisitionCommand(command: string, args: string[], cwd: string, networkEnv: NodeJS.ProcessEnv = {}): Promise<string> {
-  const result = await runHostCommand({ executable: command, args, cwd, timeoutMs: 60_000, maxOutputBytes: 4 * 1024 * 1024,
+export async function runAcquisitionCommand(command: string, args: string[], cwd: string, networkEnv: NodeJS.ProcessEnv = {}, signal?: AbortSignal): Promise<string> {
+  const result = await runHostCommand({ executable: command, args, cwd, signal, timeoutMs: signal ? 600_000 : 60_000, maxOutputBytes: 4 * 1024 * 1024,
     env: { ...process.env, ...networkEnv, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', SSH_ASKPASS_REQUIRE: 'never',
       npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false' } });
   if (result.exitCode !== 0) throw Object.assign(new Error(`${command} failed (${result.exitCode}): ${result.stderr.slice(-4000)}`), { exitCode: result.exitCode });

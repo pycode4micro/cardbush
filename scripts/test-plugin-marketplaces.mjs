@@ -40,6 +40,10 @@ const fetcher=async input=>{
  if(url.startsWith('https://codeload.github.com/'))return new Response(archiveBytes);
  if(url.includes('/fixture/native/')&&url.endsWith('/.agents/plugins/marketplace.json'))return Response.json(nativeMarket);
  if(url.includes('/fixture/claude/')&&url.endsWith('/.claude-plugin/marketplace.json'))return Response.json(claudeMarket);
+ if(url.startsWith('https://raw.githubusercontent.com/')){
+  const file=archive.file('fixture/'+new URL(url).pathname.split('/').slice(4).join('/'));
+  if(file)return new Response(await file.async('nodebuffer'));
+ }
  return new Response('',{status:404});
 };
 const options={dataRoot:join(root,'markets'),userPluginRoot:join(root,'installed'),bundledPluginRoot:resolve('assets/plugins'),fetch:fetcher};
@@ -72,7 +76,9 @@ try{
  assert.equal(rawAttempts,2,'network retries are bounded');
  assert.deepEqual(await loadProductPluginCatalog([{path:options.userPluginRoot,source:'user'}]),[]);
  const [preview,duplicatePreview]=await Promise.all([service.preview(source.id,native.name),service.preview(source.id,native.name)]);
- assert.equal(preview.token,duplicatePreview.token,'simultaneous previews share one staged snapshot');
+ assert.equal(preview.token,duplicatePreview.token,'simultaneous previews share one pinned metadata result');
+ assert.equal(preview.validation,'metadata');
+ assert.equal(requests.filter(url=>url.startsWith('https://codeload.github.com/')).length,0,'preview only reads small metadata files');
  assert.equal(preview.format,'openai');assert.equal(preview.revision,sha);assert.equal(preview.issues.length,0);
  assert.equal(preview.components.filter(item=>item.kind==='skill').length,1);
  assert.equal(preview.components.filter(item=>item.kind==='mcp').length,1);
@@ -82,7 +88,7 @@ try{
  const installed=await service.install(preview.token);
  assert.equal(installed.id,native.name);
  assert.equal(await readFile(join(options.userPluginRoot,native.name,'.editor/skills/greet/SKILL.md'),'utf8'),await readFile(join(options.userPluginRoot,native.name,'skills/greet/SKILL.md'),'utf8'));
- assert.equal(requests.length,readsBeforeInstall,'install uses reviewed snapshot without refetching a moved branch');
+ assert.deepEqual(requests.slice(readsBeforeInstall),[`https://codeload.github.com/fixture/native/zip/${sha}`],'install downloads the pinned snapshot without looking up a moved branch');
  assert.equal(JSON.parse(await readFile(join(options.userPluginRoot,native.name,'.cardbush-marketplace.json'),'utf8')).revision,sha);
  await assert.rejects(service.install(preview.token),/expired/);
  assert.deepEqual(replacements,[],'first installation does not stop any existing service');
@@ -100,7 +106,7 @@ try{
  assert.equal(claudeCatalog.entries[0].available,true,'Claude catalogs need not declare OpenAI installation policies');
  const adapted=await service.preview(other.id,claude.name);
  assert.equal(adapted.format,'claude');assert.equal(adapted.issues.length,0);
- assert.equal(adapted.components.filter(item=>item.kind==='skill').length,2,'Claude custom skill paths add to the default skills directory');
+ assert.equal(adapted.components.filter(item=>item.kind==='skill').length,1,'metadata reports declared skill paths; directory discovery happens during installation');
  await service.install(adapted.token);
  const adaptedManifest=JSON.parse(await readFile(join(options.userPluginRoot,claude.name,'.claude-plugin/plugin.json'),'utf8'));
  assert.equal(adaptedManifest.name,claude.name);
@@ -111,18 +117,18 @@ try{
  const blocked=await service.preview(other.id,'hook-example');
  assert.equal(blocked.issues.length,0,'prompt hooks are parsed and skipped under the OpenAI contract');
  await service.install(blocked.token);
- assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/claude/zip/${sha}`).length,1,'different plugins in the same repository reuse the immutable archive');
+ assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/claude/zip/${sha}`).length,2,'archives are streamed to disk per installation, not retained in the memory cache');
  assert.ok((await readdir(options.userPluginRoot)).includes('hook-example'));
  // Same name from a second source is reviewable but cannot replace the first plugin.
  const conflictSource=await service.addGitHub('fixture/native@v1');
  const conflict=await service.preview(conflictSource.id,native.name);
- assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/native/zip/${sha}`).length,1,'the same commit is reused across source aliases and repeat previews');
+ assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/native/zip/${sha}`).length,2,'repeat and conflicting previews never download another archive');
  assert.ok(conflict.issues.some(issue=>issue.code==='collision'));
  await assert.rejects(service.install(conflict.token),/not compatible/);
  currentSha=newerSha;
  await Promise.all([service.catalog(source.id),service.catalog(source.id,true)]);
  assert.equal((await service.preview(source.id,native.name)).revision,newerSha);
- assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/native/zip/${newerSha}`).length,1,'refreshing to a new commit downloads a distinct snapshot');
+ assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/native/zip/${newerSha}`).length,0,'refreshing previews a new commit without downloading its archive');
  currentSha=sha;
  // Rate limiting is not a connectivity failure: do not fan out to another endpoint.
  let limitedReads=0;

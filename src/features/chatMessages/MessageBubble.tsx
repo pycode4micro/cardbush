@@ -4,7 +4,6 @@ import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { WorkspaceRevertAvailability } from '../tools/workspaceRevertAvailability';
 import {
   ArrowUp,
-  Check,
   CheckCircle2,
   CircleAlert,
   ChevronDown,
@@ -98,6 +97,8 @@ import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { MarkdownReference, parseMarkdownReference, UnavailableMarkdownReference } from './MarkdownReference';
 import { ConversationFileReference } from './ConversationFileReference';
 import { FileMemoScope } from './FileMemoScope';
+import { useSourceMemoReferences } from './useSourceMemoReferences';
+import { remarkSourceMemoShorthand } from './sourceMemoShorthand';
 import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
 import {
   copyText,
@@ -134,8 +135,6 @@ import { McpActivationStatus } from './McpActivationStatus';
 import { TurnArtifactsMenu, type TurnArtifactEntry } from './TurnArtifactsMenu';
 import { coalesceAssistantTranscript } from './assistantTranscriptPresentation';
 
-type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
-
 type UserMessageDeliveryState = 'pending' | 'failed';
 
 function userMessageDeliveryState(message: ChatMessage): UserMessageDeliveryState | null {
@@ -145,38 +144,6 @@ function userMessageDeliveryState(message: ChatMessage): UserMessageDeliveryStat
   }
   const delivery = String(metadata.message_delivery ?? '').trim().toLowerCase();
   return delivery === 'pending' || delivery === 'failed' ? delivery : null;
-}
-
-function guidanceDeliveryState(message: ChatMessage): GuidanceDeliveryState | null {
-  const metadata = message.metadata ?? {};
-  const isGuidance =
-    metadata.turn_guidance === true ||
-    metadata.name === 'turn_guidance' ||
-    typeof metadata.guidance_delivery === 'string';
-  if (!isGuidance) {
-    return null;
-  }
-
-  const delivery =
-    typeof metadata.guidance_delivery === 'string'
-      ? metadata.guidance_delivery.trim().toLowerCase()
-      : message.status?.trim().toLowerCase();
-  if (delivery === 'pending' || delivery === 'queued' || delivery === 'failed') {
-    return delivery;
-  }
-  return 'sent';
-}
-
-function guidanceDeliveryLabel(
-  state: Exclude<GuidanceDeliveryState, 'pending'>,
-  language: AppLanguage,
-): string {
-  const labels = {
-    queued: language === 'zh' ? '已排队' : 'Queued',
-    failed: language === 'zh' ? '发送失败' : 'Failed to send',
-    sent: language === 'zh' ? '已作为引导发送' : 'Sent as guidance',
-  } satisfies Record<Exclude<GuidanceDeliveryState, 'pending'>, string>;
-  return labels[state];
 }
 
 function userGoalCommandPresentation(
@@ -525,12 +492,14 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     referenceMode,
   }: MarkdownRenderSettings & { content: string }) {
     const richFileReferences = useContext(RichFileReferencesContext);
+    const sourceReferences = useSourceMemoReferences(content, richFileReferences);
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode }), [workspaceRoot, pathAliases, language, referenceMode]);
     const remarkPlugins = useMemo(() => {
       const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkAutolinkBoundaries];
+      if (sourceReferences.size) plugins.push([remarkSourceMemoShorthand, { references: sourceReferences }]);
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       return plugins;
-    }, [workspaceRoot, richFileReferences, referenceMode]);
+    }, [workspaceRoot, richFileReferences, referenceMode, sourceReferences]);
     const urlTransform = useCallback((url: string, key: string) => {
       if (parseMarkdownReference(url)) return url;
       if (key === 'src' && /^(?:data:(?:image|audio|video)\/|blob:|cardbush-file:\/\/)/i.test(url)) return mediaResourceUrl(url);
@@ -673,13 +642,11 @@ function MessageBubbleView({
   keepActionsVisible = false,
   selectedModel = '',
   readOnlyActions = false,
-  guidanceAvailable = !readOnlyActions,
   canRevertWorkspace = true,
   goalObjective = '',
   onRegenerate,
   onEditUserMessage,
   onRetryMessage = async () => undefined,
-  onRetryGuidance,
   onRevertChangeReport,
   onOpenScene,
 }: {
@@ -799,8 +766,6 @@ function MessageBubbleView({
     sending &&
     activeAssistantId === message.id &&
     (!activeTurn || !activeMessageTurn || activeTurn === activeMessageTurn);
-  const guidanceDelivery =
-    message.role === 'user' ? guidanceDeliveryState(message) : null;
   const messageDelivery =
     message.role === 'user' ? userMessageDeliveryState(message) : null;
   const messageTeamId = String(message.metadata?.team_id ?? message.metadata?.teamId ?? '').trim();
@@ -986,29 +951,6 @@ function MessageBubbleView({
             <MarkdownContent content={goalCommand?.content ?? text} language={language} />
           )}
           <AutomationReminderCard value={message.metadata?.automationReminder} language={language}/>
-          {guidanceDelivery && guidanceDelivery !== 'pending' && (
-            <div
-              className={`guidance-delivery-status ${guidanceDelivery}`}
-              role="status"
-              aria-live="polite"
-            >
-              {guidanceDelivery === 'queued' && <Clock3 size={12} />}
-              {guidanceDelivery === 'failed' && <X size={12} />}
-              {guidanceDelivery === 'sent' && <Check size={12} />}
-              <span>{guidanceDeliveryLabel(guidanceDelivery, language)}</span>
-              {guidanceDelivery === 'failed' && (
-                <button
-                  type="button"
-                  className="guidance-retry-button"
-                  hidden={!guidanceAvailable}
-                  onClick={() => void onRetryGuidance(message)}
-                >
-                  <RefreshCw size={11} />
-                  {language === 'zh' ? '重试' : 'Retry'}
-                </button>
-              )}
-            </div>
-          )}
           {messageDelivery === 'failed' && (
             <div
               className="message-delivery-status failed"
@@ -1057,20 +999,25 @@ function MessageBubbleView({
       : [];
   const stoppedAssistantRound = isStoppedAssistantMessage(message);
   const failedAssistantRound = isFailedAssistantMessage(message);
+  // Final-display intent is independent of turn completion. Keep stop/actions
+  // and task state live, but archive the process as soon as final text streams.
+  const streamingFinalResponse = isActiveAssistantTurn &&
+    String(message.metadata?.transcript_kind ?? message.metadata?.transcriptKind ?? '') === 'assistant_final';
+  const showActiveProcess = isActiveAssistantTurn && !streamingFinalResponse;
   const guidanceBoundaryRound =
     !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
   const freezeTerminalTranscript =
     (stoppedAssistantRound || failedAssistantRound || guidanceBoundaryRound) && loopHistory.length > 0;
   const visibleLoopHistory =
-    isActiveAssistantTurn || freezeTerminalTranscript ? [] : loopHistory;
-  const activeTranscriptMessages = isActiveAssistantTurn || freezeTerminalTranscript
+    showActiveProcess || freezeTerminalTranscript ? [] : loopHistory;
+  const activeTranscriptMessages = showActiveProcess || freezeTerminalTranscript
     ? activeAssistantTranscriptMessages(
         loopHistory,
         message,
       )
     : [];
   const renderActiveTranscript =
-    isActiveAssistantTurn ||
+    showActiveProcess ||
     activeTranscriptMessages.length > 1 ||
     (freezeTerminalTranscript && activeTranscriptMessages.length > 0);
   const preserveTerminalExecutionRecord =
@@ -1108,7 +1055,7 @@ function MessageBubbleView({
     taskPlan && !taskPlan.active && visibleLoopHistory.length > 0,
   );
   const finalAssistantRound =
-    !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
+    (!isActiveAssistantTurn || streamingFinalResponse) && isFinalAssistantDisplayMessage(message);
   const showFinalAnswer = finalAssistantRound &&
     !guidanceBoundaryRound && !stoppedAssistantRound && !failedAssistantRound;
   const showAssistantActions = !isActiveAssistantTurn && !guidanceBoundaryRound &&
@@ -1244,7 +1191,7 @@ function MessageBubbleView({
         <div className="assistant-bubble">
           {activations.map(target => <McpActivationStatus key={target.serverId}
             target={target} isActive={isActiveAssistantTurn} language={language} />)}
-          {showAssistantProgress && isActiveAssistantTurn && (
+          {showAssistantProgress && showActiveProcess && (
             <AssistantRunHeader
               executions={assistantProgressExecutions}
               isActive={isActiveAssistantTurn}
@@ -1252,7 +1199,7 @@ function MessageBubbleView({
               language={language}
             />
           )}
-          {isActiveAssistantTurn ? (
+          {showActiveProcess ? (
             assistantBody
           ) : guidanceBoundaryRound ? (
             assistantBody
@@ -1277,6 +1224,7 @@ function MessageBubbleView({
                   message={message}
                   executions={assistantProgressExecutions}
                   language={language}
+                  active={isActiveAssistantTurn}
                 >
                   {completedHistory.length > 0 ? <AssistantLoopHistoryBlock
                     history={completedHistory}
@@ -1289,7 +1237,7 @@ function MessageBubbleView({
               ) : showAssistantProgress && (
                 <AssistantRunHeader
                   executions={assistantProgressExecutions}
-                  isActive={false}
+                  isActive={isActiveAssistantTurn}
                   message={message}
                   language={language}
                 />
@@ -1944,11 +1892,13 @@ function AssistantCompletedDisclosure({
   message,
   executions,
   language,
+  active = false,
   children,
 }: {
   message: ChatMessage;
   executions: ChatToolExecution[];
   language: AppLanguage;
+  active?: boolean;
   children: ReactNode;
 }) {
   const disclosureId = assistantMessageDisclosureId(message);
@@ -1962,7 +1912,7 @@ function AssistantCompletedDisclosure({
   const label = assistantProgressLabel({
     message,
     executions,
-    isActive: false,
+    isActive: active,
     now: Date.now(),
     language,
   });
@@ -2998,7 +2948,7 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubbleVie
   const running = isActiveMessageBubble(props);
   const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running }),
     [activeConversationId, activeTurnId, enabled, running]);
-  return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId}>
+  return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId} sourceReferences={props.message.role === 'assistant'}>
     <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
       <AssistantThinkingScope.Provider value={thinkingScope}>
         <MessageBubbleView {...props} />

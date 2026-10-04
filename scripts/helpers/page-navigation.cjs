@@ -78,5 +78,73 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("navClick('chat')"); await route('chat');
   await back(); await until("document.querySelector('#fixture-app-action')?.checkVisibility()", 'app survives workspace remount');
   await back(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'remount does not replay launcher request');
-  console.log('Page navigation UI passed: real plugin details, shared Back/Forward, automation tabs, local/remote routes, shortcuts, StrictMode, remounts and refresh isolation.');
+  await run(`
+    window.navMarketSources=[{id:'builtin',kind:'local',location:'bundled',builtin:true},{id:'custom',kind:'github',location:'fixture/plugins',ref:'HEAD'}];
+    navHost.marketplace={
+      pluginMarketSources:async()=>navMarketSources,
+      pluginMarketCatalog:async id=>({source:navMarketSources.find(source=>source.id===id),name:id,fetchedAt:'2026-10-04',entries:[{name:id==='builtin'?'fixture':'external',description:'Fixture package',category:'Tools',available:true}]}),
+      pluginMarketPresentation:async()=>({}),
+      previewMarketPlugin:async(sourceId,name)=>{
+        if(window.navPreviewFails)throw Error('fixture preview failed');
+        const value={token:'fixture-token',id:name,name,description:'External fixture',version:'1',revision:'a'.repeat(40),source:'fixture/plugins',format:'codex',components:[],requirements:[],issues:[],updating:false};
+        if(window.navPreviewSlow)return new Promise(resolve=>{window.navFinishPreview=()=>resolve(value)});
+        return value;
+      },
+    };
+    renderView(h(NavigationFixture,{key:'market-navigation'}));
+  `);
+  await route('chat');
+  await run("navClick('plugins')"); await until("document.querySelector('.plugin-hub')?.checkVisibility()", 'plugins');
+  await run("navClick('市场')"); await until("document.querySelector('.plugin-market-grid button')&&!document.querySelector('.plugin-market-grid button').disabled", 'market catalog');
+  await run("document.querySelector('.plugin-market-grid button').click()");
+  await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'market plugin');
+  await run("navClick('chat')"); await route('chat');
+  await run("navClick('plugins')"); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 're-enter plugin detail');
+  await run("navClick('返回市场')");
+  await until("document.querySelector('[data-plugin-page=marketplace]')?.checkVisibility()", 'named return stays in marketplace after re-entry');
+  assert.equal(await run("JSON.parse(document.querySelector('#current-route').textContent).section"), 'plugins');
+  await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'Forward preserves the plugin detail');
+  await run("navClick('返回市场')"); await until("document.querySelector('[data-plugin-page=marketplace]')?.checkVisibility()", 'market again');
+  await run(`
+    const select=document.querySelector('.plugin-market-controls select');
+    select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));
+  `);
+  await until("document.querySelector('.plugin-market-grid button')?.textContent.includes('external')&&!document.querySelector('.plugin-market-grid button').disabled", 'custom market');
+  await run(`
+    const input=document.querySelector('.plugin-market-page .plugin-search input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'external');
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    window.navPreviewFails=true;
+  `);
+  await run("document.querySelector('.plugin-market-grid button').click()");
+  await until("document.querySelector('.plugin-market-error')?.textContent.includes('fixture preview failed')", 'failed preview');
+  assert.equal(await run("document.querySelector('.plugin-market-page > .plugin-back').textContent"), '返回市场', 'failed preview keeps its parent label');
+  await run("navClick('返回市场')");
+  await until("!document.querySelector('.plugin-market-error')&&!document.querySelector('.plugin-market-grid button').disabled", 'return after failed preview');
+  assert.equal(await run("document.querySelector('.plugin-market-controls select').value"), 'custom');
+  assert.equal(await run("document.querySelector('.plugin-market-page .plugin-search input').value"), 'external');
+  await run("navPreviewFails=false;navPreviewSlow=true;document.querySelector('.plugin-market-grid button').click()");
+  await until("typeof navFinishPreview==='function'", 'pending preview');
+  await run("navClick('返回市场')");
+  await until("!document.querySelector('.plugin-market-grid button').disabled", 'leave pending preview');
+  await run("navFinishPreview();navPreviewSlow=false"); await pause(50);
+  assert.equal(await run("!!document.querySelector('.plugin-market-detail')"), false, 'late detail cannot navigate after returning');
+  await run("document.querySelector('.plugin-market-grid button').click()");
+  await until("!!document.querySelector('.plugin-market-detail')", 'successful preview');
+  await run("navClick('chat')"); await route('chat');
+  await run("navClick('plugins')"); await until("!!document.querySelector('.plugin-market-detail')", 're-enter external preview');
+  await run("navClick('返回市场')");
+  await until("!document.querySelector('.plugin-market-detail')&&document.querySelector('.plugin-market-grid button')&&!document.querySelector('.plugin-market-grid button').disabled", 'external preview returns to its market');
+  assert.equal(await run("document.querySelector('.plugin-market-controls select').value"), 'custom');
+  await run("navClick('返回插件')");
+  await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'named return bypasses source and preview history');
+  await run("document.querySelector('button[title=管理]').click()");
+  await until("document.querySelector('[data-plugin-page=manage]')?.checkVisibility()", 'plugin management');
+  await run("document.querySelector('.plugin-manage-list .plugin-featured-main').click()");
+  await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'management detail');
+  await run("navClick('chat')"); await route('chat');
+  await run("navClick('plugins')"); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 're-enter management detail');
+  await run("navClick('返回管理')");
+  await until("document.querySelector('[data-plugin-page=manage]')?.checkVisibility()", 'returns to management');
+  console.log('Page navigation UI passed: real plugin details, scoped returns, shared Back/Forward, automation tabs, local/remote routes, shortcuts, StrictMode, remounts and refresh isolation.');
 };

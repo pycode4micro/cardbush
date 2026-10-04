@@ -2,25 +2,27 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, lstat, realpath, writeFile, rm, rename } from 'node:fs/promises';
 import { dirname, join, resolve, relative, isAbsolute, basename } from 'node:path';
 import JSZip from 'jszip';
-import { extractPluginArchive, pluginArchiveLimits } from './pluginArchives';
+import { extractPluginArchiveFile, pluginArchiveLimits } from './pluginArchives';
 export { extractPluginArchive } from './pluginArchives';
 import { installProductPlugin, inspectProductPlugin, type ProductPluginReplacement } from './productPlugins';
 import { resolvePluginManifest } from './pluginManifest';
 import { safePackagePath as safeRelative, withinPackage as within } from './pluginPackagePaths';
-import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPluginArchive, acquireNpmPlugin, type NpmPluginSource, type AcquisitionCommand } from './pluginAcquisition';
-import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, PluginMarketSource } from './pluginMarketplaceTypes';
+import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPluginArchive, gitPluginArchiveFile, acquireNpmPlugin, type NpmPluginSource, type AcquisitionCommand } from './pluginAcquisition';
+import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, PluginMarketSource, PluginMarketInstallProgress, PluginMarketInstallResult } from './pluginMarketplaceTypes';
+import { readMarketMetadata } from './pluginMarketMetadata';
 import { readPluginPresentation } from './pluginPresentation';
 import { pluginChild } from './pluginExtensions';
 import { missingPluginVariables } from './pluginEnvironment';
-import { PluginMarketDownloads, MarketplaceRateLimitError } from './pluginMarketDownloads';
+import { PluginMarketDownloads, MarketplaceRateLimitError, type MarketplaceDownloadRoute } from './pluginMarketDownloads';
 import { collectTemporaryDirectories, leaseTemporaryDirectory, removeTemporaryDirectory, mergeCleanup, type CleanupResult } from './cacheMaintenance';
 
 type Json = Record<string, unknown>;
 type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: string };
-type Prepared = { sourceId: string; root: string; stage: string; preview: PluginMarketPreview; expiresAt: number };
+type Prepared = { sourceId: string; root: string; stage: string; preview: PluginMarketPreview; expiresAt: number;
+  download?: ({ kind: 'github'; repo: string } | { kind: 'git'; url: string }) & { path: string; entry: Json } };
+type InstallTask = { controller: AbortController; progress: PluginMarketInstallProgress; promise?: Promise<PluginMarketInstallResult> };
 const reserved = new Set(['computer-use', 'chrome', 'browser-use']);
 const idPattern = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
-const maxArchiveBytes = pluginArchiveLimits.compressedBytes;
 const maxExpandedBytes = pluginArchiveLimits.expandedBytes;
 
 /** OpenAI-format catalog acquisition is separate from the installed plugin catalog. */
@@ -31,6 +33,7 @@ export class PluginMarketplaceService {
   private readonly previewRequests = new Map<string, Promise<PluginMarketPreview>>();
   private readonly catalogRequests = new Map<string, Promise<PluginMarketCatalog>>();
   private readonly downloads: PluginMarketDownloads;
+  private readonly installs = new Map<string, InstallTask>();
   private mutation: Promise<unknown> = Promise.resolve();
   private readonly stageLeases = new Map<string, () => void>();
   constructor(private readonly options: {
@@ -38,9 +41,10 @@ export class PluginMarketplaceService {
     userPluginRoot: string;
     bundledPluginRoot: string;
     fetch: typeof fetch;
+    downloadRoute?: (url: string) => Promise<MarketplaceDownloadRoute>;
     runAcquisition?: AcquisitionCommand;
     replacePlugin?: ProductPluginReplacement;
-  }) { this.downloads = new PluginMarketDownloads(options.fetch); }
+  }) { this.downloads = new PluginMarketDownloads(options.fetch, Date.now, options.downloadRoute); }
 
   async sources(): Promise<PluginMarketSource[]> {
     let saved: PluginMarketSource[] = [];
@@ -185,6 +189,25 @@ export class PluginMarketplaceService {
     const summary = catalog.view.entries.find(item => item.name === name);
     if (!entry || !summary?.available) throw new Error(summary?.unavailableReason ?? 'Plugin is not available in this marketplace.');
     const origin = pluginSource(entry.source, source);
+    if (origin.kind === 'github' || origin.kind === 'git') {
+      const metadataPath = (file: string) => [origin.path, file].filter(Boolean).join('/');
+      const { revision, metadata } = origin.kind === 'github'
+        ? await (async () => {
+          const revision = origin.sameRepository ? catalog.revision : await this.commit(origin.repo, origin.ref);
+          return { revision, metadata: await readMarketMetadata(file => this.catalogFile(origin.repo, revision, metadataPath(file)), entry) };
+        })()
+        : await withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot,
+          async (repository, revision, run) => ({ revision, metadata: await readMarketMetadata(file => gitCatalogFile(repository, revision, metadataPath(file), run), entry) }), this.options.runAcquisition);
+      if (reserved.has(name)) metadata.issues.push({ code: 'reserved', detail: name });
+      const installed = await lstat(join(this.options.userPluginRoot, name)).catch(error => { if (missing(error)) return null; throw error; });
+      if (installed && (await this.receipt(name))?.sourceId !== sourceId) metadata.issues.push({ code: 'collision', detail: name });
+      const token = randomUUID();
+      const view: PluginMarketPreview = { ...metadata, token, revision, source: origin.kind === 'github' ? `https://github.com/${origin.repo}` : origin.url, updating: Boolean(installed),
+        authentication: object(entry.policy).authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE' };
+      this.prepared.set(token, { sourceId, root: '', stage: '', preview: view, expiresAt: Date.now() + 30 * 60_000,
+        download: { ...origin, entry } });
+      return view;
+    }
     const stageBase = join(this.options.dataRoot, 'previews');
     await mkdir(stageBase, { recursive: true });
     const stage = await mkdtemp(join(stageBase, 'preview-'));
@@ -200,19 +223,6 @@ export class PluginMarketplaceService {
         await portableTree(from);
         await cp(from, root, { recursive: true, errorOnExist: true });
         revision = 'local';
-      } else if (origin.kind === 'github') {
-        revision = origin.sameRepository ? catalog.revision : await this.commit(origin.repo, origin.ref);
-        const archiveUrl = `https://codeload.github.com/${origin.repo.toLowerCase()}/zip/${revision}`;
-        const archive = await this.bytes(archiveUrl, maxArchiveBytes, 60_000, true);
-        try { await extractPluginArchive(archive, origin.path, root); }
-        catch (error) { this.downloads.invalidate(archiveUrl); throw error; }
-        sourceLabel = `https://github.com/${origin.repo}`;
-      } else if (origin.kind === 'git') {
-        await withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot, async (repository, sha, run) => {
-          revision = sha;
-          await extractPluginArchive(await gitPluginArchive(repository, sha, origin.path, run), origin.path, root);
-        }, this.options.runAcquisition);
-        sourceLabel = origin.url;
       } else {
         const acquired = await acquireNpmPlugin(origin, stage, root, this.options.runAcquisition);
         revision = acquired.revision; sourceLabel = acquired.source;
@@ -242,8 +252,33 @@ export class PluginMarketplaceService {
     } catch (error) { await this.cleanStage(stage); throw error; }
   }
 
-  install(token: string): Promise<{ id: string; manifestPath: string }> {
-    return this.serial(async () => {
+  installProgress(token: string): PluginMarketInstallProgress | null {
+    const value = this.installs.get(token)?.progress;
+    return value ? { ...value } : null;
+  }
+
+  cancelInstall(token: string): boolean {
+    const task = this.installs.get(token);
+    if (!task?.promise || !task.progress.cancellable) return false;
+    task.controller.abort(new Error('Plugin installation cancelled. [market-cancelled]'));
+    task.progress.cancellable = false;
+    return true;
+  }
+
+  cancelPendingInstalls() {
+    for (const token of this.installs.keys()) this.cancelInstall(token);
+  }
+
+  install(token: string): Promise<PluginMarketInstallResult> {
+    const active = this.installs.get(token)?.promise;
+    if (active) return active;
+    for (const [id, task] of this.installs) if (!task.promise && this.installs.size >= 64) this.installs.delete(id);
+    const task: InstallTask = { controller: new AbortController(), progress: { phase: 'queued', downloadedBytes: 0, cancellable: true } };
+    this.installs.set(token, task);
+    const { signal } = task.controller;
+    const phase = (value: PluginMarketInstallProgress['phase']) => { task.progress = { ...task.progress, phase: value, cancellable: !['installing', 'completed', 'cancelled', 'failed'].includes(value) }; };
+    const pending = this.serial(async () => {
+      signal.throwIfAborted();
       const prepared = this.prepared.get(token);
       if (!prepared || prepared.expiresAt < Date.now()) throw new Error('Preview expired. Open the plugin details again.');
       await this.source(prepared.sourceId);
@@ -252,11 +287,58 @@ export class PluginMarketplaceService {
       const installed = await lstat(target).catch(error => { if (missing(error)) return null; throw error; });
       const receipt = await this.receipt(prepared.preview.id);
       if (installed && receipt?.sourceId !== prepared.sourceId) throw new Error('An installed plugin from another source uses this name.');
-      const result = await installProductPlugin(prepared.root, this.options.userPluginRoot, this.options.replacePlugin);
-      this.prepared.delete(token);
-      await this.cleanStage(prepared.stage).catch(() => undefined);
-      return result;
-    });
+      let stage = prepared.stage, root = prepared.root;
+      try {
+        if (prepared.download) {
+          const base = join(this.options.dataRoot, 'previews');
+          await mkdir(base, { recursive: true });
+          stage = await mkdtemp(join(base, 'preview-'));
+          this.stageLeases.set(stage, await leaseTemporaryDirectory(stage));
+          root = join(stage, prepared.preview.id);
+          const { path, entry } = prepared.download;
+          phase('downloading');
+          if (prepared.download.kind === 'github') {
+            const archive = join(stage, 'repository.zip');
+            await this.downloads.file(`https://codeload.github.com/${prepared.download.repo.toLowerCase()}/zip/${prepared.preview.revision}`, archive, {
+              signal, onProgress: progress => { task.progress = { ...task.progress, ...progress }; },
+            });
+            phase('extracting');
+            await extractPluginArchiveFile(archive, path, root, signal);
+            await rm(archive);
+          } else {
+            const acquisitionSignal = AbortSignal.any([signal, AbortSignal.timeout(600_000)]);
+            await withGitSnapshot(prepared.download.url, prepared.preview.revision, this.options.dataRoot, async (repository, revision, run) => {
+              const archive = await gitPluginArchiveFile(repository, revision, path, run);
+              acquisitionSignal.throwIfAborted(); phase('extracting');
+              await extractPluginArchiveFile(archive, path, root, acquisitionSignal);
+            }, this.options.runAcquisition, acquisitionSignal);
+          }
+          await writeFile(join(root, '.cardbush-marketplace.json'), JSON.stringify({ sourceId: prepared.sourceId, name: prepared.preview.id,
+            revision: prepared.preview.revision, source: prepared.preview.source, entry }, null, 2));
+        }
+        signal.throwIfAborted(); phase('validating');
+        const resolved = await resolvePluginManifest(root);
+        if (resolved.manifest.name !== prepared.preview.id || resolved.manifest.version !== prepared.preview.version) throw new Error('Downloaded plugin does not match the previewed manifest.');
+        const issues = [...resolved.issues, ...await compatibilityIssues(root, resolved.manifest)];
+        const plugin = await inspectProductPlugin(root);
+        if (!plugin.components.some(component => ['skill', 'mcp', 'app', 'agent', 'hook', 'command'].includes(component.kind))) issues.push({ code: 'empty', detail: 'No loadable capabilities found.' });
+        if (issues.length) throw new Error(`This plugin is not compatible with CardBush: ${issues.map(issue => issue.detail || issue.code).join('; ')}`);
+        const variables = missingPluginVariables(await mcpConfig(root, resolved.manifest));
+        signal.throwIfAborted(); phase('installing');
+        const result = await installProductPlugin(root, this.options.userPluginRoot, this.options.replacePlugin);
+        this.prepared.delete(token);
+        phase('completed');
+        return { ...result, warnings: variables.length ? [{ code: 'variables', detail: variables.join(', ') }] : [] };
+      } finally {
+        // Remote packages are transient; cancellation/failure retains the pinned
+        // preview for retry, but never retains a partial download or installation.
+        if (stage && (prepared.download || !this.prepared.has(token))) await this.cleanStage(stage).catch(() => undefined);
+      }
+    }).catch(error => {
+      phase(signal.aborted ? 'cancelled' : 'failed'); throw signal.aborted ? signal.reason : error;
+    }).finally(() => { task.promise = undefined; });
+    task.promise = pending;
+    return pending;
   }
 
   private async readCatalog(source: PluginMarketSource): Promise<StoredCatalog> {
@@ -360,8 +442,9 @@ export class PluginMarketplaceService {
   private async expirePreviews() {
     const results: CleanupResult[] = [];
     for (const [token, prepared] of this.prepared) {
+      if (this.installs.get(token)?.promise) continue;
       if (prepared.expiresAt > Date.now() && this.prepared.size < 8) continue;
-      this.prepared.delete(token); results.push(await this.cleanStage(prepared.stage));
+      this.prepared.delete(token); if (prepared.stage) results.push(await this.cleanStage(prepared.stage));
     }
     results.push(await collectTemporaryDirectories(resolve(this.options.dataRoot, 'previews'), 'preview-', 30 * 60_000,
       new Set([...this.prepared.values()].map(prepared => prepared.stage))));

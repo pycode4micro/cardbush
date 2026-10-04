@@ -100,14 +100,15 @@ const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
-assert.match(bubbleSource, /guidance-delivery-status/);
+const guidanceActivitySource = fs.readFileSync(path.join(process.cwd(), 'src/features/chatMessages/GuidanceActivity.tsx'), 'utf8');
+assert.doesNotMatch(bubbleSource, /guidance-delivery-status|已作为引导发送/);
 assert.doesNotMatch(bubbleSource, /发送中/);
-assert.match(bubbleSource, /已排队/);
-assert.match(bubbleSource, /发送失败/);
-assert.match(bubbleSource, /guidance-retry-button/);
+assert.match(guidanceActivitySource, /等待当前步骤完成/);
+assert.match(guidanceActivitySource, /引导发送失败/);
+assert.match(guidanceActivitySource, /guidance-retry-button/);
 assert.match(bubbleSource, /isGuidanceBoundaryAssistantMessage\(message\)/);
 assert.match(bubbleSource, /guidanceBoundaryRound \? \([\s\S]*?assistantBody/);
-assert.match(bubbleSource, /onRetryGuidance\(message\)/);
+assert.match(guidanceActivitySource, /onRetry\(message\)/);
 assert.doesNotMatch(bubbleSource, /message-guidance-action|插入引导|Guide this turn|GuidanceDialog/);
 assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);
 assert.doesNotMatch(
@@ -1214,6 +1215,30 @@ assert.deepEqual(plain(multipleQueued.map(message => message.id)), originalQueue
 assertQueuedOrder(queuedState[queuedSession].map(message => message.id === queuedInput.id
   ? { ...message, status: 'failed', metadata: { ...message.metadata, guidance_delivery: 'failed' } }
   : message), 'failed guidance must not move earlier output either');
+
+// Immediate interruption can name a request with no assistant text at all.
+// Event order must still seal earlier tool output, even during replay with
+// later output already present, and without touching a concurrent Turn.
+for (const previousAssistantMessageId of [undefined, 'interrupted-empty-request']) {
+  const update={kind:'loop_transition',reason:'turn_guidance_applied',turnId:queuedTurn,
+    messageId:'',guidanceMessageId:queuedInput.id,previousAssistantMessageId,
+    sequence:30,createdAt:'2026-09-18T10:00:04Z'};
+  let interrupted=appendAssistantDelta(queuedState,queuedSession,'queued-assistant-1','After immediate guidance',{
+    turnId:queuedTurn,messageId:'immediate-after',sequence:40,createdAt:'2026-09-18T10:00:05Z',
+  });
+  interrupted={...interrupted,[queuedSession]:[...interrupted[queuedSession],{
+    id:'concurrent-output',role:'assistant',turnId:'concurrent-turn',content:'Other work',sequence:29,
+  }]};
+  interrupted=applyAssistantSegmentBoundary(interrupted,queuedSession,'queued-assistant-1',update);
+  const visible=displayQueued(interrupted[queuedSession]);
+  assert.deepEqual(plain(visible.map(message=>message.id)),
+    ['queued-user','queued-assistant-2',queuedInput.id,'immediate-after','concurrent-output']);
+  assert.equal(visible[1].metadata.segment_boundary,'turn_guidance');
+  assert.equal(visible[3].metadata?.segment_boundary,undefined);
+  assert.equal(visible[4].metadata?.segment_boundary,undefined);
+  assert.deepEqual(plain(displayQueued(applyAssistantSegmentBoundary(interrupted,queuedSession,'queued-assistant-1',update)[queuedSession]).map(message=>message.id)),
+    plain(visible.map(message=>message.id)),'replayed guidance retains its original cutoff');
+}
 
 queuedState = applyAssistantSegmentBoundary(queuedState, queuedSession, 'queued-assistant-1', {
   kind: 'loop_transition', reason: 'turn_guidance_applied', turnId: queuedTurn,

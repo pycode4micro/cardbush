@@ -1,4 +1,7 @@
-importScripts('downloads.js', 'connector-transport.js');
+importScripts('build-info.js', 'downloads.js', 'connector-transport.js');
+// Capture the loaded worker's build. getManifest() alone cannot identify a
+// stale service worker after the unpacked extension files change on disk.
+const runtimeBuild = globalThis.CARDBUSH_CONNECTOR_BUILD;
 const PAIRING_KEY = 'cardbushConnectorPairingV2';
 const CONNECTOR_PROTOCOL = 'cardbush.chrome_connector.v1';
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
@@ -888,6 +891,7 @@ async function popupState(preferredScopeId = '') {
     : null;
   const managedTab = selectedScope && tab ? await isTabManaged(selectedScope, tab) : false;
   return {
+    runtimeBuild,
     connectorEnabled,
     nativeConnected: nativePort != null && nativeReady,
     hasPairing,

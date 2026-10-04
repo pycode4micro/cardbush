@@ -11,6 +11,7 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {MarkdownContent} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {SourceMemoReference} from '${local('src/features/chatMessages/SourceMemoReference.tsx')}';
+import {FileMemoScope} from '${local('src/features/chatMessages/FileMemoScope.tsx')}';
 import {ImagePreviewDialog} from '${local('src/features/chatMessages/ImagePreviewDialog.tsx')}';
 import {InlineAudio,InlineVideo} from '${local('src/features/chatMessages/InlineMedia.tsx')}';
 import {LocalFileReferenceLink} from '${local('src/features/chatMessages/LocalFileReferenceLink.tsx')}';
@@ -67,6 +68,42 @@ window.showResourceRegression=(remote=false)=>{
   </ConversationHostContext.Provider></div>);
 };
 window.showInvalidImageDialog=()=>root.render(<div className="app theme-dark"><ImagePreviewDialog image={{src:regressionReference,path:regressionReference,name:'Invalid image'}} language="en" onClose={()=>{}}/></div>);
+const shorthandReference='cardbush-source:21-57a1734f57d1ab1a';
+const shorthandMemo={...memo,reference:shorthandReference,markdown:'[21]('+shorthandReference+')'};
+window.shorthandLookups=[];
+const shorthandRuntime={client:{command:async(command,decode)=>{
+  window.shorthandLookups.push(command);
+  if(command.kind==='runtime.resolve_source_references')return decode(command.payload.sessionId==='short-session'&&command.payload.turnId==='short-turn'
+    ? command.payload.numbers.filter(number=>number===21).map(number=>({number,reference:shorthandReference})):[]);
+  if(command.kind==='runtime.resolve_source_memo')return decode({status:'resolved',memo:shorthandMemo,evidenceStatus:['changed','link','unavailable']});
+  throw Error('Unexpected shorthand request '+command.kind);
+}},dispose(){}};
+const shorthandHost={...host,id:'shorthand-host',runtime:shorthandRuntime};
+const shorthandContent='**插件到位了。**\\n\\n- 已确认工具契约。[21]\\n- 服务等待激活。[21]\\n- 未知编号。[99]\\n\\n查看 https://example.org/path，再看说明。\\n\\n代码：'+String.fromCharCode(96)+'[21]'+String.fromCharCode(96)+'；数组 arr[21]。\\n\\n转义：'+String.fromCharCode(92)+'[21]\\n\\n[网页标签 [21]](https://example.org/keep)\\n\\n'+String.fromCharCode(96).repeat(3)+'text\\n[21]\\n'+String.fromCharCode(96).repeat(3);
+window.showShorthand=(remote=false,sessionId='short-session',turnId='short-turn',allowed=true)=>{
+  window.cardbushDesktop={runtime:{command:async request=>({protocol:request.protocol,type:'command_response',operationId:request.operationId,ok:true,
+    result:await shorthandRuntime.client.command(request.command,value=>value)}),onStreamFrame:()=>()=>{},cancelOperation:async()=>{},stopStream:async()=>{}}};
+  root.render(<div className="app theme-dark" style={{padding:30}}><ConversationHostContext.Provider value={remote?shorthandHost:null}>
+    <FileMemoScope sessionId={sessionId} turnId={turnId} sourceReferences={allowed}><MarkdownContent content={shorthandContent} language="zh"/></FileMemoScope>
+  </ConversationHostContext.Provider></div>);
+};
+const scopedReferences={a:'cardbush-source:v2:1:401-1111111111111111',b:'cardbush-source:v2:1:402-2222222222222222'};
+const scopedMemos=Object.fromEntries(Object.entries(scopedReferences).map(([session,reference])=>[reference,{...memo,reference,markdown:'[1]('+reference+')',explanation:'会话 '+session+' 的独立备注',sources:[]}]));
+window.scopedLookups=[];
+const scopedRuntime={client:{command:async(command,decode)=>{
+  window.scopedLookups.push(command);
+  if(command.kind==='runtime.resolve_source_references'){
+    const reference=scopedReferences[command.payload.sessionId];
+    return decode(reference&&command.payload.numbers.includes(1)?[{number:1,reference}]:[]);
+  }
+  if(command.kind==='runtime.resolve_source_memo')return decode({status:'resolved',memo:scopedMemos[command.payload.reference],evidenceStatus:[]});
+  throw Error('Unexpected scoped reference request '+command.kind);
+}},dispose(){}};
+const scopedHost={...host,id:'scoped-reference-host',runtime:scopedRuntime};
+window.showScoped=session=>root.render(<div className="app theme-dark" style={{padding:30}}><ConversationHostContext.Provider value={scopedHost}>
+  <FileMemoScope sessionId={session} turnId="same-turn" sourceReferences={true}><MarkdownContent language="zh"
+    content={'当前会话：[1]'+String.fromCharCode(10,10)+'复制来的引用：[1]('+scopedReferences[session==='a'?'b':'a']+')'}/></FileMemoScope>
+</ConversationHostContext.Provider></div>);
 window.show();
 `;
 const result = await build({ configFile:false,logLevel:'warn',esbuild:{jsx:'automatic'},define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'source-fixture',resolveId(id){if(id.endsWith('__source_fixture__.tsx'))return '\0source-fixture.tsx';},load(id){if(id==='\0source-fixture.tsx')return source;}}],build:{outDir:directory,emptyOutDir:false,minify:false,lib:{entry:resolve('__source_fixture__.tsx'),formats:['es'],fileName:()=> 'fixture.js'}}});

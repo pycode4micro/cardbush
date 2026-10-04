@@ -21,6 +21,9 @@ description: 在 Windows 11 上通过 Browser Use 操作用户已配对的 Chrom
 - `list_pages` 只列本会话标签组。`new_page` 创建隔离标签；未指定网址时使用宿主主页设置。
 - 个人标签页必须由用户在扩展面板中选择目标 CardBush 会话、授权并复制进组。配对不等于网站授权，不绕过授权或搜索其他会话标签。
 - 优先使用 `take_snapshot` 返回的元素 ID 配合 click / fill / type_text；页面变化后重新观察。
+- `take_snapshot` 默认渐进返回，正文只在 `content` 中出现一次；`structuredContent` 给出数量和续读游标。优先用 `rootUid`、`query`、`roles` 缩小范围，需要更多时传 `cursor`，不必自动读完整页。游标沿用同一次采集，最多保留三分钟；导航、重新采集、释放连接或缓存回收后会明确报失效。它不是实时更新的页面状态。
+- 长字段明确标为预览；需要原文时传 `rootUid` 和 `fullText:true`，按返回的字段、字符偏移及游标渐进读取。超出采集预算会说明遗漏数量，进一步缩小范围或用 `evaluate_script` 按指定偏移读取相关文本，避免整页输出。
+- `click` 会检查面积、可见性、禁用状态和实际命中目标，并在鼠标移入后复查。零面积控件仅可经明确关联的可见 label 点击，不绕过遮挡强行执行 JavaScript click。回执 `input_dispatched` 表示输入已发出，`outcomeVerified:false` 表示尚未确认提交、跳转等结果；按任务观察相关状态后再继续。失败若提示点击可能已生效，先观察，不能盲目重试或自动换成 Enter。
 - 截图使用 `take_screenshot`，图片提取使用 `export_image`；结果自动附图并保存，无需通过下载来查看图片。
 - 文件下载使用 `download_file`，保留 taskId 后用 `download_status` 查询或 `cancel_download` 取消。pending 不代表失败，不重复提交同一下载。
 - 完成浏览器工作后调用 `release_browser`；它只释放本会话组的控制，不关闭用户浏览器。

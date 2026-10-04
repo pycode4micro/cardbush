@@ -1,5 +1,5 @@
 export {};
-import type { PluginMarketSource, PluginMarketCatalog, PluginMarketPreview, PluginMarketPresentation } from '../../electron/pluginMarketplaceTypes';
+import type { PluginMarketSource, PluginMarketCatalog, PluginMarketPreview, PluginMarketPresentation, PluginMarketInstallProgress, PluginMarketInstallResult } from '../../electron/pluginMarketplaceTypes';
 
 import type {
   CardlingDesktopAction,
@@ -188,7 +188,9 @@ declare global {
       pluginMarketCatalog: (id: string, refresh?: boolean) => Promise<PluginMarketCatalog>;
       pluginMarketPresentation: (id: string, name: string) => Promise<PluginMarketPresentation>;
       previewMarketPlugin: (sourceId: string, name: string) => Promise<PluginMarketPreview>;
-      installMarketPlugin: (token: string) => Promise<{ id: string; manifestPath: string }>;
+      installMarketPlugin: (token: string) => Promise<PluginMarketInstallResult>;
+      pluginMarketInstallProgress: (token: string) => Promise<PluginMarketInstallProgress | null>;
+      cancelMarketPluginInstall: (token: string) => Promise<boolean>;
       setProxy: (proxy: {
         mode: 'none' | 'system' | 'manual';
         httpProxy: string;

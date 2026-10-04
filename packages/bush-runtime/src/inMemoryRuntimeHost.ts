@@ -1,9 +1,9 @@
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
-import { registerSourceMemoTools, resolveSourceMemo } from "./sourceMemo.js";
+import { registerSourceMemoTools, resolveSourceMemo, resolveSourceReferences } from "./sourceMemo.js";
 import { deliveredMemoryIds, deliveredMemoryVersions, hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
 import { IndividuationMemory } from './individuationMemory.js';
 import { PERSONALIZATION_COMMAND, normalizeIndividuation, individuationSettingsSchema, modelRequestSchema as memoryModelSchema } from '@cardbush/bush-protocol';
-import { RESOLVE_SOURCE_MEMO_COMMAND } from "@cardbush/bush-protocol";
+import { RESOLVE_SOURCE_MEMO_COMMAND, RESOLVE_SOURCE_REFERENCES_COMMAND, sourceReferencesRequestSchema } from "@cardbush/bush-protocol";
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { canonicalStoragePath } from '@cardbush/platform';
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
@@ -153,7 +153,7 @@ import { PluginTerminalHooks } from './pluginToolHooks.js';
 import { registerPluginCommandTools, parsePluginCommandInvocation } from './pluginCommandTools.js';
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools } from './pluginExtensions.js';
-import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
+import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import { omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
 import type { SearchResultLimitProvider } from './searchResultLimit.js';
@@ -670,6 +670,7 @@ export class InMemoryRuntimeHost {
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         RESOLVE_FILE_MEMO_COMMAND,
         RESOLVE_SOURCE_MEMO_COMMAND,
+        RESOLVE_SOURCE_REFERENCES_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
         LIST_RUNTIME_TURN_EVENTS_COMMAND,
@@ -1059,6 +1060,8 @@ export class InMemoryRuntimeHost {
         if (typeof reference !== "string") throw new Error("Source reference is required.");
         return resolveSourceMemo(this.#toolExecutions, reference, this.#remoteWorkspace);
       }
+      case RESOLVE_SOURCE_REFERENCES_COMMAND:
+        return resolveSourceReferences(this.#toolExecutions, sourceReferencesRequestSchema.parse(command.payload));
       case RESOLVE_FILE_MEMO_COMMAND: {
         const payload = command.payload as { reference?: unknown; sessionId?: unknown; turnId?: unknown; fileName?: unknown };
         const reference = payload?.reference;
@@ -1981,6 +1984,7 @@ export class InMemoryRuntimeHost {
         }
       }
       while (true) {
+        synchronizeMcpCatalog(this.#toolRegistry, request);
         // Also drain at entry: guidance can arrive during preflight/retry recovery,
         // before there is a model request to interrupt. Maintenance is atomic.
         if (!compactionTransaction && !activeContextCompaction) {
@@ -2251,8 +2255,7 @@ export class InMemoryRuntimeHost {
             }
             providerState = freshResponseChain();
           }
-          messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages,
-            previousAssistantMessageId: projector?.messageId }).messages;
+          messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
           this.#recovery.save({ request, messages, nextRound: round + 1,
             cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
           retryAfterModelRecovery = true;
@@ -2314,6 +2317,7 @@ export class InMemoryRuntimeHost {
           let result;
           let observedUsage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } = {};
           let dispatchedInputProjection: ProviderInputProjection | undefined;
+          let providerInputSequence: number | undefined;
           const archiveMaintenanceResponse = () => {
             if (!activeContextCompaction || !compactionJob) return;
             this.#eventLog.append(identity, { kind: 'model_maintenance_response', payload: {
@@ -2340,10 +2344,10 @@ export class InMemoryRuntimeHost {
                   onInputProjection: projection => {
                     if (!current()) return;
                     dispatchedInputProjection = structuredClone(projection);
-                    this.#eventLog.append(identity, {
+                    providerInputSequence = this.#eventLog.append(identity, {
                       kind: "provider_input_observed",
                       payload: cacheChain.observeProviderInput(projection),
-                    });
+                    }).sequence;
                   },
                   onEvent: (event) => {
                     if (!current()) throw abortError('Model request is no longer active.');
@@ -2363,6 +2367,7 @@ export class InMemoryRuntimeHost {
               mergeUsage(usage, observedUsage);
               if (observedUsage.inputTokens !== undefined) this.#eventLog.append(identity, {
                 kind: 'model_request_usage', payload: { round, attempt, model: request.model,
+                  ...(providerInputSequence !== undefined ? { providerInputSequence } : {}),
                   inputTokens: observedUsage.inputTokens,
                   ...(observedUsage.outputTokens !== undefined ? { outputTokens: observedUsage.outputTokens } : {}),
                   ...(observedUsage.cachedInputTokens !== undefined ? { cachedInputTokens: observedUsage.cachedInputTokens } : {}) },
@@ -2417,6 +2422,7 @@ export class InMemoryRuntimeHost {
                 round,
                 attempt,
                 model: request.model,
+                ...(providerInputSequence !== undefined ? { providerInputSequence } : {}),
                 ...(usage.contextWindowTokens !== undefined
                   ? { contextWindowTokens: usage.contextWindowTokens }
                   : {}),
@@ -2757,15 +2763,10 @@ export class InMemoryRuntimeHost {
               }
               if (compactStart.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: compactStart.stopTurn } });
             }
-            const previousAssistantMessageId = [...generatedMessages]
-              .reverse()
-              .find((item) => item.message.role === "assistant")
-              ?.messageId;
             messages = this.#appendQueuedTurnGuidance({
               turnKey,
               identity,
               round,
-              previousAssistantMessageId,
               messages,
               generatedMessages,
             }).messages;
@@ -2876,7 +2877,6 @@ export class InMemoryRuntimeHost {
             turnKey,
             identity,
             round,
-            previousAssistantMessageId: completedProjector.messageId,
             messages,
             generatedMessages,
           });
@@ -3061,7 +3061,6 @@ export class InMemoryRuntimeHost {
           turnKey,
           identity,
           round,
-          previousAssistantMessageId: completedProjector.messageId,
           messages,
           generatedMessages,
         });
@@ -3373,13 +3372,24 @@ export class InMemoryRuntimeHost {
     turnKey: string;
     identity: RuntimeEventIdentity;
     round: number;
-    previousAssistantMessageId?: string;
     messages: ModelMessage[];
     generatedMessages: GeneratedMessageFact[];
   }): { messages: ModelMessage[]; count: number } {
     const queued = this.#guidanceQueues.get(input.turnKey);
     if (!queued || queued.length === 0) {
       return { messages: input.messages, count: 0 };
+    }
+    // A cancelled request can own an ID without having produced a transcript
+    // message. Anchor guidance to accepted history, just as session rehydration
+    // does, and never reach back across an earlier visible user message.
+    let previousAssistantMessageId: string | undefined;
+    for (let index = input.generatedMessages.length - 1; index >= 0; index--) {
+      const item = input.generatedMessages[index]!;
+      if (item.message.role === 'user' && item.message.visibility !== 'internal') break;
+      if (item.message.role === 'assistant' && item.metadata?.runtimeMaintenance !== 'context_compaction') {
+        previousAssistantMessageId = item.messageId;
+        break;
+      }
     }
     this.#guidanceQueues.delete(input.turnKey);
     const guidanceMessages = queued.flatMap((guidance) => {
@@ -3412,8 +3422,8 @@ export class InMemoryRuntimeHost {
           messageId: guidance.messageId,
           queueDepth: queued.length - index - 1,
           afterRound: input.round,
-          ...(input.previousAssistantMessageId
-            ? { previousAssistantMessageId: input.previousAssistantMessageId }
+          ...(previousAssistantMessageId
+            ? { previousAssistantMessageId }
             : {}),
         },
       });

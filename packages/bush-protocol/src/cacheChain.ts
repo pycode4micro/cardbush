@@ -3,11 +3,19 @@ import { z } from "zod";
 export const BUSH_CACHE_CHAIN_STATE_PROTOCOL =
   "bush.cache_chain_state.v1" as const;
 
+const cacheRoutingSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('provider_default') }),
+  z.object({ mode: z.literal('session'), keyDigest: z.string().min(1) }),
+]);
+
 export const providerInputProjectionSchema = z.object({
   format: z.string().min(1),
   inputDigests: z.array(z.string().min(1)),
   parameterDigests: z.record(z.string(), z.string().min(1)),
   transport: z.enum(["full", "continuation"]),
+  // Diagnostic only: no image bytes, URLs, session keys or prompt content.
+  images: z.object({ digests: z.array(z.string().min(1)), remoteCount: z.number().int().nonnegative() }).optional(),
+  cacheRouting: cacheRoutingSchema.optional(),
   // Local estimate of this full projection, never a provider usage fact.
   tokenEstimate: z.object({
     method: z.string().min(1),
@@ -52,5 +60,14 @@ export const providerInputObservationSchema = cacheChainObservationPayloadSchema
   transport: z.enum(["full", "continuation"]),
   previousProjectionAvailable: z.boolean(),
   changedParameters: z.array(z.string()),
+  cacheRouting: cacheRoutingSchema.optional(),
+  images: z.object({
+    count: z.number().int().nonnegative(),
+    remoteCount: z.number().int().nonnegative(),
+    comparisonAvailable: z.boolean(),
+    previousCount: z.number().int().nonnegative().optional(),
+    addedCount: z.number().int().nonnegative().optional(),
+    removedCount: z.number().int().nonnegative().optional(),
+  }).optional(),
 });
 export type ProviderInputObservation = z.infer<typeof providerInputObservationSchema>;

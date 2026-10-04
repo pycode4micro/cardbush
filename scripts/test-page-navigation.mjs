@@ -53,3 +53,53 @@ test('equal state and repeated mount observations do not create navigation; firs
   history.update('tab', 'plugins', 'skills'); await settle(); history.back();
   assert.equal(history.read('tab', 'wrong'), 'plugins'); history.forward(); assert.equal(history.read('tab', 'wrong'), 'skills');
 });
+
+test('named return finds the parent in the same app route after re-entry and preserves Forward', async () => {
+  const restores = [], history = new PageHistory('chat', route => { restores.push(route); history.observe(route); });
+  history.observe('plugins'); await settle();
+  history.update('plugins:page', 'catalog', 'market'); await settle();
+  history.update('plugins:page', 'catalog', 'details'); await settle();
+  history.observe('chat'); await settle(); history.observe('plugins'); await settle();
+  history.returnToView('plugins:page', 'catalog', 'market');
+  assert.equal(restores.at(-1), 'plugins');
+  assert.equal(history.read('plugins:page', ''), 'market');
+  assert.equal(history.canGoForward, true);
+  history.forward(); assert.equal(history.read('plugins:page', ''), 'details');
+});
+
+test('named return skips child selections, retains parent filters and uses its captured scroll', async () => {
+  const history = new PageHistory('plugins', route => history.observe(route));
+  const root = [{ id: 0, scrollTop: 0 }], market = [...root, { id: 1, scrollTop: 0 }];
+  history.update('stack', root, market); await settle();
+  history.update('source', 'builtin', 'custom'); await settle();
+  history.update('stack', root, [...root, { id: 1, scrollTop: 420 }, { id: 2, scrollTop: 0 }]); await settle();
+  history.returnToView('stack', root, entries => entries.slice(0, -1), (left, right) => left.map(item => item.id).join() === right.map(item => item.id).join());
+  assert.equal(history.read('stack', root).at(-1).scrollTop, 420);
+  assert.equal(history.read('source', ''), 'custom');
+  history.returnToView('stack', root, root);
+  assert.deepEqual(history.read('stack', []), root);
+  history.forward(); assert.equal(history.read('stack', root).at(-1).id, 1);
+});
+
+test('missing or evicted parent stays on the current route instead of falling back to global Back', async () => {
+  const restores = [], history = new PageHistory('chat', route => { restores.push(route); history.observe(route); });
+  history.observe('plugins'); await settle();
+  history.update('page', 'catalog', 'details'); await settle();
+  for (let index = 0; index < 85; index++) { history.update('selection', 0, index); await settle(); }
+  history.returnToView('page', 'catalog', 'catalog'); await settle();
+  assert.equal(history.read('page', ''), 'catalog');
+  assert.deepEqual(restores, []);
+  history.back(); assert.equal(restores.at(-1), 'plugins'); assert.equal(history.read('page', ''), 'details');
+});
+
+test('named return flushes a pending child visit and never matches another route or scope', async () => {
+  const restores = [], history = new PageHistory('settings', route => { restores.push(route); history.observe(route); });
+  history.update('page', 'catalog', 'market'); await settle();
+  history.observe('plugins'); history.update('page', 'catalog', 'catalog'); await settle();
+  history.update('other:page', 'catalog', 'market'); await settle();
+  history.update('page', 'catalog', 'details');
+  history.returnToView('page', 'catalog', 'market'); await settle();
+  assert.equal(history.read('page', ''), 'market');
+  assert.deepEqual(restores, [], 'no parent visit in this route, so it is a new local navigation');
+  history.back(); assert.equal(restores.at(-1), 'plugins'); assert.equal(history.read('page', ''), 'details');
+});

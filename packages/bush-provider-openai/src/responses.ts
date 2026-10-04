@@ -37,6 +37,7 @@ import { compatibleToolImageProjection, RESPONSES_COMPATIBILITY_CAPABILITY } fro
 import { providerToolAliases, providerToolName } from "./toolNames.js";
 import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
 import { responsesInputFingerprint } from "./responsesInputFingerprint.js";
+import { sessionPromptCacheKey } from './promptCache.js';
 import {
   InMemoryProviderCapabilityStore,
   modelProviderCapabilityScope,
@@ -46,6 +47,7 @@ import {
 
 export interface ResponseCreateProjectionOptions {
   chatGpt?: boolean;
+  baseURL?: string;
   disableProviderState?: boolean;
   toolSearchMode?: ResponsesToolSearchMode;
   compatibilityMode?: boolean;
@@ -246,8 +248,10 @@ export function toResponsesCreateParams(
     messageIndex,
     items: projectImages(projectDiscovery(messageIndex, toResponseInputItems(message, messageIndex, request, toolSearchMode))),
   })), responseTools(request, toolSearchMode), inputMessageOffset);
+  const cacheKey = options.chatGpt ? undefined : sessionPromptCacheKey(request, options.baseURL);
   const params = {
     model: request.model,
+    ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     input: projected.input,
     tools: projected.tools,
     max_output_tokens: request.maxOutputTokens,
@@ -387,7 +391,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     options.signal?.throwIfAborted();
     const projection = await this.#project(request);
     options.signal?.throwIfAborted();
-    const full = toResponsesCreateParams(projection.request, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt),
+    const full = toResponsesCreateParams(projection.request, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt), baseURL: this.#client.baseURL,
       toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
     const fingerprint = responsesInputFingerprint(full, full, request.providerBinding);
     options.onInputProjection?.(fingerprint);
@@ -451,7 +455,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
         options.onRequestBodyBudget?.(budget);
         assertRequestBodyBudget(budget);
         if (options.onInputProjection) {
-          const full = toResponsesCreateParams(resolvedRequest, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt),
+          const full = toResponsesCreateParams(resolvedRequest, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt), baseURL: this.#client.baseURL,
             toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
           options.onInputProjection(responsesInputFingerprint(full, params, request.providerBinding));
         }
@@ -580,6 +584,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
       request: resolvedRequest,
       params: toResponsesCreateParams(resolvedRequest, {
         chatGpt: Boolean(this.#config.chatGpt),
+        baseURL: this.#client.baseURL,
         disableProviderState: !usesProviderState,
         toolSearchMode,
         compatibilityMode,

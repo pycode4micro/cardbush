@@ -629,18 +629,17 @@ app.whenReady().then(async()=>{
   await read('marketPreviewReads=0;marketRateLimitUntil=Date.now()+2000');
   await open('claude-example');
   await until('document.querySelector(".plugin-market-error p")?.textContent.includes("秒后可重试")');
-  assert.equal(await read('document.querySelector(".plugin-market-error button").disabled'),true,'rate-limit retry is disabled during the cooldown');
+  assert.equal(await read('document.querySelector(".plugin-market-error button").disabled'),false,'retry remains available after changing network exits; the host enforces server deadlines');
   assert.equal(await read('document.querySelector(".plugin-market-error details").open'),false);
   assert.equal(await read('document.querySelector(".plugin-market-error p").textContent.includes("market-rate-limit")'),false,'IPC metadata is hidden from the normal message');
   assert.equal(await read('!!document.querySelector(".plugin-market-progress")'),false,'rate limiting does not leave the loading spinner active');
   assert.equal(await read('document.querySelector(".plugin-search input").disabled'),false,'the marketplace remains browsable');
-  assert.equal(await read('document.querySelector(".plugin-market-error").textContent.includes("代理设置")'),false,'429 is distinguished from proxy connection errors');
-  await read('document.querySelector(".plugin-market-error button").click()');
-  assert.equal(await read('marketPreviewReads'),1,'disabled retry never sends another request');
+  assert.equal(await read('document.querySelector(".plugin-market-error").textContent.includes("代理设置")'),true,'a rate-limited network can be changed without abandoning the marketplace');
+  assert.equal(await read('marketPreviewReads'),1,'rate limiting does not automatically retry');
   win.setSize(430,820);await until('window.innerWidth<450');
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'rate-limit details fit narrow windows');
   await capture('plugin-marketplace-rate-limit.png');
-  await until('document.querySelector(".plugin-market-error button")?.textContent.includes("重试获取插件")&&!document.querySelector(".plugin-market-error button").disabled');
+  await read('marketRateLimitUntil=0');
   assert.equal(await read('marketPreviewReads'),1,'expiry offers a retry without automatically downloading');
   await click('重试获取插件');await until('document.querySelector(".plugin-market-detail")');
   assert.equal(await read('marketPreviewReads'),2);
@@ -648,6 +647,22 @@ app.whenReady().then(async()=>{
   win.setSize(1000,820);await until('window.innerWidth>900');
   await new Promise(r=>setTimeout(r,150));
   writeFileSync(resolve('tmp/plugin-marketplace-detail.png'),(await win.webContents.capturePage()).toPNG());
+  await read('marketInstallSlow=true');await click('安装并启用');
+  await until('document.querySelector(".plugin-market-install-progress")?.textContent.includes("36.0 MiB / 60.0 MiB")');
+  assert.equal(await read('document.querySelector("progress").getAttribute("value")'),String(36*1024*1024));
+  assert.equal(await read('document.querySelector(".plugin-back").disabled'),true,'installation keeps the active details page in place');
+  win.setSize(430,820);await until('window.innerWidth<450');
+  await read('document.querySelector(".plugin-market-install-progress").scrollIntoView({block:"center"})');
+  assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'download progress fits narrow windows');
+  await capture('plugin-marketplace-download-dark.png');
+  await read('document.querySelector(".app").classList.replace("theme-dark","theme-bright")');
+  await capture('plugin-marketplace-download-light.png');
+  await read('document.querySelector(".app").classList.replace("theme-bright","theme-dark")');
+  await click('取消安装');await until('!document.querySelector(".plugin-market-install-progress")');
+  assert.equal(await read('marketInstalls'),0,'cancelled downloads never install or activate files');
+  assert.equal(await read('document.querySelector(".plugin-detail-primary").disabled'),false,'cancellation leaves the pinned preview available for a retry');
+  assert.equal(await read('!!document.querySelector(".plugin-market-error")'),false,'cancellation is not reported as a failure');
+  await read('marketInstallSlow=false');win.setSize(1000,820);await until('window.innerWidth>900');
   await read('marketSaveFails=true');await click('安装并启用');
   await until('document.body.innerText.includes("插件文件已安装，启用未完成")');
   assert.equal(await read('marketInstalls'),1);
@@ -671,6 +686,10 @@ app.whenReady().then(async()=>{
   await read('finishMarketPreview()');
   await until('document.querySelectorAll(".plugin-added-card").length===6');
   assert.equal(await read('!!document.querySelector(".plugin-market-detail")'),false,'late preview does not reopen marketplace after navigating away');
+  if (process.env.CARDBUSH_PLUGIN_NETWORK_ONLY === '1') {
+    console.log('Marketplace network UI passed: server deadlines, manual retry after route changes, proxy access, retained input and narrow layout.');
+    clearTimeout(deadline); win.destroy(); app.exit(0); return;
+  }
   await read('showComposer()');await until('!!document.querySelector("textarea")');
   const draft=value=>read(`(()=>{const input=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.setSelectionRange(input.value.length,input.value.length);input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await draft('/');await until('document.body.innerText.includes("原生命令审查")');

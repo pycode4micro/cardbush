@@ -3838,7 +3838,7 @@ export function useCardbushChat(
   );
 
   const retryTurnGuidance = useCallback(
-    async (message: ChatMessage) => {
+    async (message: ChatMessage, onAccepted?: () => void) => {
       const clientMessageId =
         message.clientMessageId?.trim() ||
         String(message.metadata?.client_message_id ?? '').trim() ||
@@ -3892,6 +3892,7 @@ export function useCardbushChat(
           ),
         );
         setError(null);
+        onAccepted?.();
       } catch (caught) {
         const shouldFallback = runtimeErrorCode(caught) === 'turn_not_active' ||
           runtimeErrorCode(caught) === 'turn_guidance_closed';

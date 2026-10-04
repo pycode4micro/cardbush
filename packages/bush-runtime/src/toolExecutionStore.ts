@@ -4,6 +4,8 @@ import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
   WORKSPACE_REVIEW_TURN_LIMIT,
+  parseSourceMemoReference,
+  sourceMemoSchema,
   toolExecutionRecordSchema,
   type ToolCall,
   type ToolExecutionRecord,
@@ -24,7 +26,8 @@ export interface ToolExecutionPersistence {
   appendFileMemoReference?(reference: FileMemoLocator): void;
 }
 
-export interface FileMemoLocator { number: number; sessionId: string; turnId: string; toolCallId: string }
+export interface FileMemoLocator { number: number; sessionId: string; turnId: string; toolCallId: string; sourceNumber?: number }
+type MemoIdentity = Omit<FileMemoLocator, 'number' | 'sourceNumber'>;
 
 export class ToolExecutionStore {
   readonly #coldWorkspaceRecords = new WeakSet<ToolExecutionRecord>();
@@ -129,8 +132,8 @@ export class ToolExecutionStore {
   }
 
   /** Filter before cloning: a small tool-owned index must not copy unrelated logs. */
-  listByTool(sessionId: string, toolName: string): ToolExecutionRecord[] {
-    return this.#fullRecords(sessionId, this.#load(sessionId).filter(record => record.toolCall.name === toolName))
+  listByTool(sessionId: string, toolName: string, turnId?: string): ToolExecutionRecord[] {
+    return this.#fullRecords(sessionId, this.#load(sessionId).filter(record => record.toolCall.name === toolName && (turnId === undefined || record.turnId === turnId)))
       .map(record => structuredClone(record));
   }
 
@@ -142,19 +145,40 @@ export class ToolExecutionStore {
   }
 
   /** Reserve before returning the Tool result. Gaps after cancellation are never reused. */
-  reserveFileMemoReference(identity: Omit<FileMemoLocator, 'number'>): number {
+  reserveFileMemoReference(identity: MemoIdentity): number {
+    return this.#reserveMemoReference(identity, false).number;
+  }
+
+  reserveSourceMemoReference(identity: MemoIdentity): FileMemoLocator {
+    return this.#reserveMemoReference(identity, true);
+  }
+
+  #reserveMemoReference(identity: MemoIdentity, source: boolean): FileMemoLocator {
     if (this.#persistence && (!this.#persistence.loadFileMemoReferences || !this.#persistence.appendFileMemoReference)) {
       throw new Error('File memo references require durable locator storage.');
     }
     const references = this.#loadFileMemoReferences();
     const existing = references.find(item => item.sessionId === identity.sessionId && item.turnId === identity.turnId && item.toolCallId === identity.toolCallId);
-    if (existing) return existing.number;
-    const reference = { ...identity, number: (references.at(-1)?.number ?? 0) + 1 };
+    if (existing) return { ...existing };
+    const reference: FileMemoLocator = { ...identity, number: (references.at(-1)?.number ?? 0) + 1 };
     if (reference.number > 999_999_999) throw new Error('File reference number limit reached.');
+    if (source) {
+      // Persist reservations, including cancelled writes, and continue inherited
+      // or legacy display numbers without rewriting their immutable references.
+      let previous = 0;
+      for (const item of references) if (item.sessionId === identity.sessionId) previous = Math.max(previous, item.sourceNumber ?? 0);
+      for (const record of this.#load(identity.sessionId)) {
+        if (record.toolCall.name !== 'remember_source' || record.outcome !== 'returned') continue;
+        const memo = sourceMemoSchema.safeParse(record.result);
+        if (memo.success) previous = Math.max(previous, parseSourceMemoReference(memo.data.reference)!);
+      }
+      reference.sourceNumber = previous + 1;
+      if (reference.sourceNumber > 999_999_999) throw new Error('Source number limit reached.');
+    }
     try { this.#persistence?.appendFileMemoReference?.(reference); }
     catch (error) { this.#fileMemoReferences = undefined; throw error; }
     references.push(reference);
-    return reference.number;
+    return { ...reference };
   }
 
   getFileMemoReference(number: number): FileMemoLocator | undefined {
@@ -167,11 +191,17 @@ export class ToolExecutionStore {
     const references = this.#persistence?.loadFileMemoReferences?.() ?? [];
     let previous = 0;
     const seen = new Set<string>();
+    const sourceNumbers = new Map<string, number>();
     for (const reference of references) {
       const identity = JSON.stringify([reference.sessionId, reference.turnId, reference.toolCallId]);
       if (!Number.isSafeInteger(reference.number) || reference.number <= previous || reference.number > 999_999_999
           || [reference.sessionId, reference.turnId, reference.toolCallId].some(value => typeof value !== 'string' || !value)
           || seen.has(identity)) throw new Error('File reference index is invalid.');
+      if (reference.sourceNumber !== undefined) {
+        if (!Number.isSafeInteger(reference.sourceNumber) || reference.sourceNumber <= (sourceNumbers.get(reference.sessionId) ?? 0)
+            || reference.sourceNumber > 999_999_999) throw new Error('Source number index is invalid.');
+        sourceNumbers.set(reference.sessionId, reference.sourceNumber);
+      }
       previous = reference.number; seen.add(identity);
     }
     return this.#fileMemoReferences = structuredClone(references);

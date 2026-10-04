@@ -150,7 +150,7 @@ test('a busy same-revision reconnect stays pending until the turn is idle', asyn
   assert.equal(attempts, 2); assert.equal(manager.snapshot().applicationState, 'applied');
 });
 
-test('completed discoveries are retained if a turn starts before catalog commit', async t => {
+test('optional additions publish even if a turn starts during connection', async t => {
   const gates = [deferred(), deferred()], registry = new ToolRegistry(), clients = [];
   let idle = true;
   const manager = new McpClientManager({ registry, canApply: () => idle, createTransport: () => ({ async send() {} }),
@@ -158,11 +158,45 @@ test('completed discoveries are retained if a turn starts before catalog commit'
   t.after(async () => { gates.forEach(gate => gate.resolve()); await manager.close(); });
   const update = manager.apply(snapshot([server('first'), server('second')]));
   await until(() => clients.length === 2); idle = false; gates.forEach(gate => gate.resolve());
-  assert.equal((await update).applicationPhase, 'waiting_for_idle');
-  assert.equal(registry.definitions().length, 0); assert.deepEqual(clients.map(c => c.closeCalls), [0, 0]);
+  await update;
+  await until(() => registry.definitions().length === 2);
+  assert.equal(manager.snapshot().applicationState, 'applied');
+  assert.deepEqual(clients.map(c => c.closeCalls), [0, 0]);
   idle = true; await manager.apply(snapshot([server('first'), server('second')]));
   assert.equal(clients.length, 2, 'publication reuses completed transports');
   assert.equal(registry.definitions().length, 2);
+});
+
+test('busy additive publication preserves removed and replaced services until idle', async t => {
+  let idle = true; const registry = new ToolRegistry();
+  const clients = {};
+  const manager = new McpClientManager({ registry, canApply: () => idle, createTransport: () => ({ async send() {} }),
+    createClient: s => { const c = client(); (clients[s.id] ??= []).push(c); return c; } });
+  t.after(() => manager.close());
+  const old = server('old'), removed = server('removed');
+  await manager.apply(snapshot([old, removed])); idle = false;
+  const desired = snapshot([{ ...old, transport: { ...old.transport, command: 'replacement' } }, server('added')], 2);
+  manager.submit(desired);
+  await until(() => !!registry.resolve('mcp__added__echo'));
+  assert.ok(registry.resolve('mcp__old__echo')); assert.ok(registry.resolve('mcp__removed__echo'));
+  assert.equal(clients.old[0].closeCalls, 0); assert.equal(clients.removed[0].closeCalls, 0);
+  assert.equal(manager.snapshot().applicationState, 'pending');
+  idle = true; await manager.apply(desired);
+  assert.equal(registry.resolve('mcp__removed__echo'), undefined);
+  assert.equal(clients.old[0].closeCalls, 1); assert.equal(clients.removed[0].closeCalls, 1);
+});
+
+test('required catalog transactions still wait for idle even when all additions are ready', async t => {
+  let idle = true; const registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, canApply: () => idle, createTransport: () => ({ async send() {} }), createClient: () => client() });
+  t.after(() => manager.close());
+  await manager.apply(snapshot([server('old')])); idle = false;
+  const desired = snapshot([server('old'), server('required', { required: true }), server('optional')], 2);
+  manager.submit(desired);
+  await until(() => manager.snapshot().applicationPhase === 'waiting_for_idle');
+  assert.deepEqual(registry.definitions().map(tool => tool.name), ['mcp__old__echo']);
+  idle = true; await manager.apply(desired);
+  assert.equal(registry.definitions().length, 3);
 });
 
 test('background submission returns before connection and publishes each optional service independently', async t => {

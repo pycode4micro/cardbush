@@ -17,7 +17,7 @@ Browser Use 在 Windows 11 上连接用户正在使用的 Chrome 和 Microsoft E
 - 用户仅需打开并保留网页时，桌面 Runtime 提供 `open_external_url`，通过私有宿主 RPC `browser.open-external` 交给主进程 `shell.openExternal`。浏览器不属于终端任务树，终端或 turn 结束不回收它；远程 Agent 服务不暴露此桌面能力。两端校验仅接受不含内嵌凭据的 HTTP(S)，不改变 OAuth 链接校验。返回 `dispatched` 只表示系统接受了打开请求，不证明页面已加载，也不提供配对、网站授权或页面控制。终端原有的子进程回收保持不变。
 - 回归入口：`npm run test:desktop-browser`。覆盖 URL/取消/失败边界，以及真实 Electron Runtime、模型工具循环和独立配置的 Chrome 在终端清理、turn 完成、Runtime 退出后继续运行；测试仅将系统默认浏览器选择替换为隔离 Chrome 启动器，不修改用户默认浏览器或现有窗口。
 - 对外名称统一为 **Browser Use**，模型工具命名空间为 `browser_use`。现有资源目录、内部配置身份 `chrome` 和私有 IPC 标识保留，避免重置已有启停选择；这些标识不代表仅支持 Chrome。
-- 仅支持 Windows 11；Chrome、Edge 使用同一份 MV3 扩展（1.2.2），分别在 `chrome://extensions` / `edge://extensions` 加载并配对。升级时重新加载原扩展，避免卸载导致已保存的扩展数据被清除。
+- 仅支持 Windows 11；Chrome、Edge 使用同一份 MV3 扩展（1.2.3），分别在 `chrome://extensions` / `edge://extensions` 加载并配对。升级时重新加载原扩展，避免卸载导致已保存的扩展数据被清除。替换磁盘文件不代表 Chrome 已更新正在运行的 service worker；弹窗比较构建内容指纹与后台加载时的指纹，发现旧后台（含没有指纹的旧版本）时明确提示更新尚未生效，并提供「重新加载扩展」。重新加载不清空配对、启用意图或网站授权；连接和控制中先关闭应用端连接器，避免中断在途操作。构建、开发启动自动生成指纹，避免仅手改版本号漏掉更新。
 - 设置中选择浏览器、填写可选连接名称，再生成五分钟有效的配对码。每条配对具有独立凭据；Chrome、Edge 及不同浏览器用户配置可同时在线，最多保留八条。更换同一配置的配对后可移除旧记录。
 - 扩展通过固定扩展 Origin 和双向 HMAC 验证本机 WebSocket；握手确认浏览器类型。凭据不出现在模型工具、连接状态或诊断中。仍只监听 `127.0.0.1`，不引入外部注册表项或新的 MSIX capability。
 - `list_browsers` 返回连接名称、浏览器类型、在线状态、默认连接和当前会话选择；`select_browser` 显式绑定目标连接。未选择时，首次页面调用使用默认连接。绑定保存在受保护的 `browser-connector/routes.json`，重启不改变归属。
@@ -30,6 +30,18 @@ Browser Use 在 Windows 11 上连接用户正在使用的 Chrome 和 Microsoft E
 - 默认加载 Browser Use 自有 skill。原厂 Chrome DevTools MCP 和资源保留为用户主动选择的高级远程调试模式，此路径仍仅面向 Chrome，不作为连接器失败时的自动回退。
 - 许可按来源区分：CardBush 自有连接器、适配层与技能遵循仓库 Apache-2.0；高级模式的 Google MCP 及其依赖保留上游许可。分发说明与 axe-core 对应源码入口见 `assets/plugins/chrome/THIRD_PARTY_NOTICES.md`。
 - 本次不增加 Linux/macOS 支持，也不改变 Windows Computer Use 的实现。
+
+## Browser Use 点击与渐进快照
+
+连接器的 `click` / `hover` 使用 `pagePointer.ts`：先检查节点仍存在、可见、非 inert，点击时另查原控件和祖先的禁用状态。零面积控件仅允许使用 HTML 明确关联且可见的 label；坐标取自视口内的内容四边形，通过 CDP 实际命中节点复核，支持子节点、Shadow DOM、iframe 的坐标与遮挡检查，也检查 iframe 容器的可见性。鼠标移入后、双击的第二下前再次复核；失效或被遮挡就停止，不偷偷换 JavaScript click、Enter 或重放已发出的点击。
+
+回执改为 `status: input_dispatched`、`hitTargetVerified: true`、`outcomeVerified: false`，只承诺输入已发送且发送前命中检查通过。网页提交、跳转和业务成功仍需观察确认；检查和浏览器事件之间不是原子操作。中途失败返回已尝试按下次数、已完成点击次数，并明确提示可能已经生效，避免重复提交。
+
+`take_snapshot` 默认最多 60 行、正文约 7,000 个转义后字符。正文只放 `content`，`structuredContent` 保留计数、预览/遗漏信息与 `nextCursor`，不再复制整份快照。支持 `rootUid` 子树、`query` 关键词、`roles` 角色过滤；忽略无内容通用节点和重复 InlineTextBox。长字段默认预览，`rootUid + fullText:true` 可按字段/字符偏移分段读原始 AX 文本，续读相同游标结果稳定，不消耗或屏蔽已读节点。
+
+分页固定在同次采集；导航、重新采集和会话/浏览器不匹配会明确返回失效原因，不伪装成无匹配。保留的紧凑文本单份最多 512 KiB / 4,000 行，全局最多 2 MiB / 8 份，三分钟自动清理，释放连接时立即清理。超限明确报告遗漏，允许继续用过滤器读取；不保留完整原始 AX 树，不新增常驻服务。首次采集仍需浏览器读取 AX 树，分页主要减少模型返回、重复传输和后续重复采集。
+
+回归：`npm run test:chrome-actions`。使用独立隐藏 Electron 窗口和真实 CDP，不操作用户浏览器。覆盖零尺寸提交控件三次实际提交、遮挡/禁用/移入变化、Shadow DOM、iframe、点击中断及快照分页、原文续读、失效与预算。
 
 ## 已落实
 

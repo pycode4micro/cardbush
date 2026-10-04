@@ -18,6 +18,8 @@ const request = z.discriminatedUnion('action', [
   z.object({ action: z.literal('preview'), sourceId: name, name }).strict(),
   z.object({ action: z.literal('presentation'), sourceId: name, name }).strict(),
   z.object({ action: z.literal('install'), token: z.string().uuid() }).strict(),
+  z.object({ action: z.literal('installProgress'), token: z.string().uuid() }).strict(),
+  z.object({ action: z.literal('cancelInstall'), token: z.string().uuid() }).strict(),
 ]);
 
 /** Host adapter only: acquisition, validation, preview tokens and replacement are shared with desktop. */
@@ -35,10 +37,10 @@ export class AgentPluginMarketplaces {
     this.network.setModel({ mode: 'system' });
     this.market = new PluginMarketplaceService({
       dataRoot: this.dataRoot, userPluginRoot: join(root, 'plugins'), bundledPluginRoot: join(bundledRoot, 'plugins'),
-      fetch: this.network.fetch, replacePlugin,
-      runAcquisition: async (command, args, cwd) => {
+      fetch: this.network.fetch, downloadRoute: this.network.downloadRoute, replacePlugin,
+      runAcquisition: async (command, args, cwd, signal) => {
         const proxyEnv = await this.network.environment();
-        return runAcquisitionCommand(command, command === 'git' ? ['-c', `http.proxy=${proxyEnv.HTTPS_PROXY}`, ...args] : args, cwd, { ...env, ...proxyEnv });
+        return runAcquisitionCommand(command, command === 'git' ? ['-c', `http.proxy=${proxyEnv.HTTPS_PROXY}`, ...args] : args, cwd, { ...env, ...proxyEnv }, signal);
       },
     });
   }
@@ -59,10 +61,12 @@ export class AgentPluginMarketplaces {
       case 'preview': return this.market.preview(input.sourceId, input.name);
       case 'presentation': return this.market.presentation(input.sourceId, input.name);
       case 'install': return this.market.install(input.token);
+      case 'installProgress': return this.market.installProgress(input.token);
+      case 'cancelInstall': return this.market.cancelInstall(input.token);
     }
   }
   async collectCache() {
     return mergeCleanup(await this.market.collectCache(), await collectPluginAcquisitionCache(this.dataRoot));
   }
-  async close() { await Promise.allSettled([...this.pending]); await this.network.close(); }
+  async close() { this.market.cancelPendingInstalls(); await Promise.allSettled([...this.pending]); await this.network.close(); }
 }

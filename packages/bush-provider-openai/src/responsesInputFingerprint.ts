@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { ModelRequest, ProviderInputProjection } from "@cardbush/bush-protocol";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses";
 import { estimateResponsesInputTokens } from "./responsesInputEstimate.js";
+import { cacheRoutingFingerprint } from './promptCache.js';
+import { imageInputFingerprint } from './imageInputFingerprint.js';
 
 /** No prompt text, credentials, or tool results are written to diagnostics. */
 export function responsesInputFingerprint(
@@ -17,6 +19,8 @@ export function responsesInputFingerprint(
   return {
     format: "openai.responses.input.v1",
     transport: sent.previous_response_id ? "continuation" : "full",
+    images: imageInputFingerprint(full.input),
+    cacheRouting: cacheRoutingFingerprint(sent.prompt_cache_key),
     parameterDigests: Object.fromEntries(Object.entries(parameters).map(([key, value]) => [key, hash(value)])),
     inputDigests: (Array.isArray(full.input) ? full.input : [full.input]).map(hash),
     tokenEstimate: { method: "responses-input-chars-v1", tokens: estimateResponsesInputTokens(full),

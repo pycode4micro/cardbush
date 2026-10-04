@@ -157,6 +157,20 @@ export function synchronizeMcpDiscovery(registry: ToolRegistry, request: ModelRe
   remember(registry, request, loaded);
 }
 
+/** Add host-published optional MCP tools at a product turn's round boundary. */
+export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequest): void {
+  // Only ordinary product conversations opt in. Child roles and scheduled
+  // tasks retain their explicit, inherited tool scope.
+  if (request.metadata.mcpCatalogUpdates !== 'additions' || !request.metadata.mcpToolDiscovery ||
+    request.metadata.agentRole === 'child' || request.metadata.pluginAgentId || request.metadata.automationRunId) return;
+  const known = new Set(request.tools.map(tool => tool.name));
+  for (const definition of registry.definitions()) {
+    const registration = registry.resolve(definition.name)!;
+    if (!known.has(definition.name) && registration.registrationOwner === 'runtime_mcp' &&
+      registration.mcpHook && registration.mcpHook.modelVisible !== false) request.tools.push(definition);
+  }
+}
+
 /** Freeze only the provider projection. Execution always checks the authoritative live scope. */
 export function modelToolDefinitions(registry: ToolRegistry, request: ModelRequest): ToolDefinition[] {
   const saved = request.metadata.mcpModelToolSnapshot as { identity?: string; tools?: unknown[] } | undefined;

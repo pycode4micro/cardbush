@@ -934,7 +934,6 @@
   word-break: break-word;
 }
 
-.guidance-delivery-status,
 .message-delivery-status {
   width: fit-content;
   display: inline-flex;
@@ -951,13 +950,16 @@
   animation: cardbush-spin 900ms linear infinite;
 }
 
-.guidance-delivery-status.queued {
-  color: color-mix(in srgb, var(--accent) 78%, var(--text-soft));
-}
-
-.guidance-delivery-status.failed,
+.guidance-activity-error,
 .message-delivery-status.failed {
   color: var(--danger);
+}
+
+.guidance-activity-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .guidance-retry-button,
@@ -978,10 +980,6 @@
 .guidance-retry-button:hover,
 .message-retry-button:hover {
   background: color-mix(in srgb, var(--danger) 16%, transparent);
-}
-
-.guidance-delivery-status.sent {
-  color: color-mix(in srgb, #2f9e62 82%, var(--text-soft));
 }
 
 .assistant-bubble {

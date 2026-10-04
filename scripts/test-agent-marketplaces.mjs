@@ -50,6 +50,8 @@ test('remote marketplace uses shared preview/install/update/activation with host
     await assert.rejects(other.call('plugins.marketplace', { action: 'install', token: preview.token }), /expired|invalid/i, 'preview tokens cannot cross Agents');
     await version('2.0.0'); // Install must use the reviewed snapshot, not the mutable market source.
     assert.equal((await market('install', { token: preview.token })).id, 'market-fixture');
+    assert.equal((await market('installProgress', { token: preview.token })).phase, 'completed');
+    assert.equal(await market('cancelInstall', { token: preview.token }), false, 'finished installations cannot be cancelled');
     await assert.rejects(market('install', { token: preview.token }), /expired/);
     let apps = await client.call('product.command', { kind: 'apps.get' });
     assert.equal(apps.plugins[0].version, '1.0.0');

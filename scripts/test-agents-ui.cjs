@@ -123,7 +123,15 @@ app.whenReady().then(async () => {
         {sessionId:'archived-child-'+id,revision:1,metadata:{title:'Pinned archived child '+id,agentRole:'child',parentSessionId:'same-session',pinned:true,archived:true},turns:[]},
         {sessionId:'hidden-'+id,revision:1,metadata:{title:'Hidden internal '+id,hidden:true},turns:[]},
       ]]));
+      window.agentModels={};
       cardbushDesktop.agents.call=async(id,operation,input={})=>{
+        if(operation==='product.command'&&input.kind==='model.reasoning.update'){
+          calls.push({id,operation,input});
+          const config=structuredClone(agentModels[id]??models);
+          config.models=config.models.map(model=>model.id===input.modelId?{...model,reasoningEffort:input.reasoningEffort}:model);
+          agentModels[id]=config;return structuredClone(config);
+        }
+        if(operation==='product.command'&&input.kind==='models.get'&&agentModels[id]){calls.push({id,operation,input});return structuredClone(agentModels[id])}
         if(id==='c'&&operation==='chat.send'&&('visionEnabled' in input||'conversationStyle' in input))throw Error('Unrecognized key: visionEnabled');
         if(operation==='conversation.extracts'&&input.action==='list'){calls.push({id,operation,input});return {permanent:[],pending:[]}}
         if(operation==='runtime.command'){
@@ -267,7 +275,7 @@ app.whenReady().then(async () => {
     await run("document.querySelector('.agent-chat .model-select').click()");
     await until("!!document.querySelector('.model-reasoning-primary-options button:last-child')",'cloud reasoning uses the shared picker');
     await run("document.querySelector('.model-reasoning-primary-options button:last-child').click()");
-    await until("localStorage.getItem('a:cardbush.reasoning_level')==='max'",'reasoning choice persists on A');
+    await until("agentModels.a?.models.find(model=>model.id==='model')?.reasoningEffort==='max'",'reasoning choice persists on A’s model');
     await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await setDraft('A 的工作');
     await run("failSend=true;document.querySelector('.agent-chat .composer-stack .send-button').click()");
@@ -281,7 +289,7 @@ app.whenReady().then(async () => {
     await until("document.querySelector('.agent-chat .permission-center-button')?.textContent.trim()==='完全访问'",'B permission controls ready after session hydration');
     assert.equal(await run("document.querySelector('.agent-chat .permission-center-button')?.textContent.trim()"),'完全访问','existing full access survives on another Agent');
     assert.equal(await run("document.querySelector('.agent-chat .composer-stack textarea').value"),'','same session ID cannot share drafts across Agents');
-    assert.equal(await run("localStorage.getItem('b:cardbush.reasoning_level')||'medium'"),'medium','Agents keep independent reasoning preferences');
+    assert.equal(await run("agentModels.b?.models.find(model=>model.id==='model')?.reasoningEffort"),undefined,'Agents keep independent model reasoning preferences');
     assert.equal(await run("JSON.parse(localStorage.getItem('cardbush-agent-preferences:b'))?.visionEnabled"),undefined,'B keeps inheriting the global default instead of A’s override');
     await setDraft('B 的草稿');
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select A').click()");
@@ -360,13 +368,13 @@ app.whenReady().then(async () => {
     assert.equal(await run("calls.filter(c=>c.operation==='chat.send').length"),sendsBeforeGuidance,'immediate guidance cannot silently become another queued turn');
     const originalGuidance=await run("calls.find(c=>c.input?.kind==='runtime.enqueue_guidance').input.payload");
     await run("document.querySelector('.guidance-retry-button').click()");
-    await until("!!document.querySelector('.guidance-delivery-status.queued')",'guidance is accepted by the remote Runtime');
+    await until("!!document.querySelector('.guidance-activity[data-guidance-state=queued]')",'guidance is accepted by the remote Runtime');
     assert.deepEqual(await run("calls.filter(c=>c.input?.kind==='runtime.enqueue_guidance').at(-1).input.payload"),originalGuidance,'retry retains message identity, timestamp, turn and content');
-    assert.equal(await run("document.querySelector('.agent-chat .composer-stack textarea').value"),'','successful guidance retry clears only its matching draft');
+    await until("document.querySelector('.agent-chat .composer-stack textarea').value === ''",'successful guidance retry clears only its matching draft');
     await run(`readers.at(-1).listener({type:'event',event:{kind:'guidance_applied',sequence:27,payload:{messageId:${JSON.stringify(originalGuidance.messageId)},previousAssistantMessageId:'msg-second',queueDepth:0,afterRound:2}}});readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:28,payload:{messageId:'msg-after-guide',segmentId:'after-guide',ordinal:1,content:'已按引导调整'}}});undefined;`);
-    await until("!!document.querySelector('.guidance-delivery-status.sent')&&document.querySelector('.agent-chat .message-list').textContent.includes('已按引导调整')",'applied guidance renders between assistant rounds');
+    await until("!document.querySelector('.guidance-activity')&&document.querySelector('.agent-chat .message-list').textContent.includes('已按引导调整')",'applied guidance renders between assistant rounds');
     assert.ok(await run("var content=document.querySelector('.agent-chat .message-list').textContent;content.indexOf('第二轮正文')<content.indexOf('请调整执行方向')&&content.indexOf('请调整执行方向')<content.indexOf('已按引导调整')"), await run("document.querySelector('.agent-chat .message-list').textContent"));
-    assert.equal(await run("document.querySelectorAll('.guidance-delivery-status').length"),1,'guidance receipt and applied event do not duplicate the user bubble');
+    assert.equal(await run("[...document.querySelectorAll('.user-bubble')].filter(row => row.textContent.includes('请调整执行方向')).length"),1,'guidance receipt and applied event do not duplicate the user bubble');
 
     await toggleModelSettings(run, until);
     await until("!!document.querySelector('.settings-shell')",'leave active guided conversation');
@@ -383,8 +391,13 @@ app.whenReady().then(async () => {
     await until(`readers.length>${readersBeforeReplay} && readers.at(-1).id==='a'`, 'transport interruption still reconnects after switching Agents');
     assert.equal(await run('readers.at(-1).request.afterSequence'), 28, 'reconnection retains the cursor across navigation');
     await run(`readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:25,payload:{messageId:'msg-second',segmentId:'second',ordinal:1,content:'第二轮正文'}}});readers.at(-1).listener({type:'event',event:{kind:'tool_returned',sequence:26,payload:{assistantMessageId:'msg-second',toolCallId:'second-tool',toolName:'terminal_exec'}}});readers.at(-1).listener({type:'event',event:{kind:'guidance_applied',sequence:27,payload:{messageId:${JSON.stringify(originalGuidance.messageId)},previousAssistantMessageId:'msg-second',queueDepth:0,afterRound:2}}});readers.at(-1).listener({type:'event',event:{kind:'assistant_segment_completed',sequence:28,payload:{messageId:'msg-after-guide',segmentId:'after-guide',ordinal:1,content:'已按引导调整'}}});undefined;`);
-    await until("document.querySelector('.agent-chat .message-list').textContent.includes('请调整执行方向')&&!!document.querySelector('.guidance-delivery-status.sent')",'replay restores the applied guidance body from the remote service without local storage');
+    await until("document.querySelector('.agent-chat .message-list').textContent.includes('请调整执行方向')&&!document.querySelector('.guidance-delivery-status')",'replay restores the applied guidance body from the remote service without local storage');
     assert.equal(await run("calls.filter(c=>c.input?.kind==='runtime.enqueue_guidance').length"),2,'history reconstruction never resubmits guidance');
+    if (process.argv.includes('--guidance')) {
+      assert.deepEqual(errors, []);
+      console.log('Remote guidance UI passed: immediate feedback, failed retry, scoped draft clearing, applied ordering and replay.');
+      return;
+    }
 
     fs.writeFileSync(path.join(root,'tmp/agents-chat-sidebar.png'),(await win.webContents.capturePage()).toPNG());
     assert.equal(await run("document.querySelectorAll('.agent-conversations,.agent-tabs,.lucide-bot').length"),0,'no nested sidebar, duplicate navigation or robot avatar');

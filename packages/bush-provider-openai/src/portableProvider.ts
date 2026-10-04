@@ -4,6 +4,8 @@ import type { ModelStreamOptions } from '@cardbush/bush-runtime';
 import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from './requestBodyBudget.js';
 import { providerToolAliases } from './toolNames.js';
 import { ProviderToolCallError } from './providerFailure.js';
+import { cacheRoutingFingerprint } from './promptCache.js';
+import { imageInputFingerprint } from './imageInputFingerprint.js';
 
 type Payload = ModelEvent extends infer E ? E extends ModelEvent ? Omit<E, 'protocol' | 'requestId' | 'sequence' | 'createdAt'> : never : never;
 export function eventWriter(requestId: string) {
@@ -24,13 +26,15 @@ export function recordProjection(format: string, request: ModelRequest, params: 
     return value;
   }).length;
   const tokens = Math.ceil(chars / 4) + images * 1024;
-  const { messages, ...parameters } = params;
+  // Routing is not prompt content and must not invalidate token calibration.
+  const { messages, prompt_cache_key, ...parameters } = params;
   // Messages combines adjacent user messages. Appending a runtime notice to
   // that content array preserves the cached block prefix, not the message hash.
   const items = (Array.isArray(messages) ? messages : []).flatMap(message =>
     format === 'anthropic.messages.v1' && Array.isArray(message.content)
       ? message.content.map((block: unknown) => ({ role: message.role, block })) : [message]);
   options.onInputProjection?.({ format, transport: 'full',
+    images: imageInputFingerprint(messages), cacheRouting: cacheRoutingFingerprint(prompt_cache_key),
     parameterDigests: Object.fromEntries(Object.entries({ ...parameters, providerBinding: request.providerBinding }).map(([key, value]) => [key, hash(value)])),
     inputDigests: items.map(hash),
     tokenEstimate: { method: `${format}-chars-v1`, tokens, inputParametersDigest: hash({ ...input, messages: undefined, model: request.model, providerBinding: request.providerBinding }) } });

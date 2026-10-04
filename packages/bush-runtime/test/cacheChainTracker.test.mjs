@@ -127,3 +127,35 @@ function request(overrides = {}) {
     ...overrides,
   });
 }
+
+test('image observations count additions/removals by occurrence and survive tracker persistence', () => {
+  const projection = (digests, inputDigests = ['prefix']) => ({ format: 'images-fixture', transport: 'full', parameterDigests: {}, inputDigests,
+    images: { digests, remoteCount: 0 }, cacheRouting: { mode: 'session', keyDigest: 'hashed-key' } });
+  const first = new CacheChainTracker(); first.observe(request());
+  assert.deepEqual(first.observeProviderInput(projection(['one'])).images, { count: 1, remoteCount: 0, comparisonAvailable: false });
+  const tracker = new CacheChainTracker(JSON.parse(JSON.stringify(first.snapshot())));
+  tracker.observe(request());
+  const appended = tracker.observeProviderInput(projection(['one', 'one', 'two'], ['prefix', 'append']));
+  assert.deepEqual(appended.images, { count: 3, remoteCount: 0, comparisonAvailable: true, previousCount: 1, addedCount: 2, removedCount: 0 });
+  assert.equal(appended.frozenPrefixBreak, false);
+  assert.deepEqual(appended.cacheRouting, { mode: 'session', keyDigest: 'hashed-key' });
+  const retry = tracker.observeProviderInput(projection(['one', 'one', 'two'], ['prefix', 'append']));
+  assert.equal(retry.images.addedCount, 0); assert.equal(retry.images.removedCount, 0);
+  const replaced = tracker.observeProviderInput(projection(['one', 'changed'], ['rewritten']));
+  assert.equal(replaced.images.addedCount, 1); assert.equal(replaced.images.removedCount, 2);
+  assert.equal(replaced.frozenPrefixBreak, true);
+  const compacted = tracker.observeProviderInput(projection([], ['summary']));
+  assert.equal(compacted.images.addedCount, 0); assert.equal(compacted.images.removedCount, 2);
+});
+
+test('legacy state and protocol switches do not misclassify historical images as new', () => {
+  const tracker = new CacheChainTracker(); tracker.observe(request());
+  const legacy = { format: 'legacy', transport: 'full', parameterDigests: {}, inputDigests: ['prefix'] };
+  tracker.observeProviderInput(legacy);
+  const current = { ...legacy, images: { digests: ['old-image'], remoteCount: 1 } };
+  assert.deepEqual(tracker.observeProviderInput(current).images, { count: 1, remoteCount: 1, comparisonAvailable: false });
+  const switched = tracker.observeProviderInput({ ...current, format: 'another-protocol' });
+  assert.equal(switched.images.comparisonAvailable, false);
+  assert.equal(switched.images.addedCount, undefined);
+  assert.equal(switched.frozenPrefixBreak, true);
+});

@@ -15,6 +15,7 @@ import { ArchivedItemsPanel } from './settings/ArchivedItemsPanel';
 import { AgentDataSettings } from './settings/AgentDataSettings';
 import type { AgentConnection } from '../../electron/agentTypes';
 import { SettingsDropdown } from './settings/SettingsDropdown';
+import { NetworkProxySettings } from './settings/NetworkProxySettings';
 import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
 import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
 import { SettingsCard, SettingsDivider, SettingsRadio, SettingsInput, InfoRow } from './settings/SettingsControls';
@@ -464,7 +465,7 @@ export function SettingsView({
               document.getElementById(`proxy-tab-${next}`)?.focus();
             }}
             aria-selected={networkTab === tab} aria-controls={`proxy-panel-${tab}`} onClick={() => setNetworkTab(tab)}>
-            {tab === 'models' ? language === 'zh' ? '模型请求' : 'Model requests' : language === 'zh' ? '插件与 MCP' : 'Plugins & MCP'}
+            {tab === 'models' ? language === 'zh' ? '应用默认' : 'App default' : language === 'zh' ? '市场与插件' : 'Marketplace & plugins'}
           </button>)}
         </div>
         <div role="tabpanel" id={`proxy-panel-${networkTab}`} aria-labelledby={`proxy-tab-${networkTab}`}>
@@ -473,82 +474,19 @@ export function SettingsView({
           onToggleSkill={onToggleSkill} onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail}
           onOpenMcp={serverId => { setSection('mcp'); setPluginMcpTarget({ serverId }); }} onNotify={notify} /> :
         <SettingsCard
-          title={language === 'zh' ? '模型代理' : 'Model proxy'}
-          subtitle={
-            language === 'zh'
-              ? '插件选择“跟随模型代理”时，也会使用这里的设置。'
-              : 'Plugins use this configuration when set to follow the model proxy.'
-          }
+          title={language === 'zh' ? '应用默认代理' : 'App default proxy'}
+          subtitle={language === 'zh'
+            ? '用于模型请求、模型列表、账号登录和云端语音。市场与插件默认跟随，也可在另一页单独设置。'
+            : 'Used for model requests, model lists, account sign-in and cloud speech. The marketplace and plugins follow by default; override them in the other tab.'}
         >
-          <SettingsRadio
-            name="proxy-mode"
-            value="none"
-            title={language === 'zh' ? '不使用代理' : 'No proxy'}
-            subtitle={
-              language === 'zh'
-                ? '模型请求直接连接，不继承环境代理。'
-                : 'Model requests connect directly without inheriting environment proxies.'
-            }
-            checked={settings.proxy.mode === 'none'}
-            onChange={() => updateProxy({ mode: 'none' })}
-          />
-          <SettingsRadio
-            name="proxy-mode"
-            value="manual"
-            title={language === 'zh' ? '手动代理' : 'Manual proxy'}
-            subtitle={
-              language === 'zh'
-                ? '使用下方 HTTP_PROXY / HTTPS_PROXY，并保留 NO_PROXY 绕过列表。'
-                : 'Use the HTTP_PROXY / HTTPS_PROXY values below with the NO_PROXY bypass list.'
-            }
-            checked={settings.proxy.mode === 'manual'}
-            onChange={() => updateProxy({ mode: 'manual' })}
-          />
-          <SettingsRadio
-            name="proxy-mode"
-            value="system"
-            title={language === 'zh' ? '跟随系统代理' : 'Follow system proxy'}
-            subtitle={
-              language === 'zh'
-                ? '使用操作系统或 Chromium 会话代理配置。'
-                : 'Use the operating system or Chromium session proxy configuration.'
-            }
-            checked={settings.proxy.mode === 'system'}
-            onChange={() => updateProxy({ mode: 'system' })}
-          />
-          {settings.proxy.mode === 'manual' && <>
-          <SettingsDivider />
-          <SettingsInput
-            label="HTTP_PROXY"
-            value={settings.proxy.httpProxy}
-            disabled={settings.proxy.mode !== 'manual'}
-            placeholder={
-              language === 'zh'
-                ? '127.0.0.1:7890 或 http://127.0.0.1:7890'
-                : '127.0.0.1:7890 or http://127.0.0.1:7890'
-            }
-            onChange={(value) => updateProxy({ httpProxy: value })}
-          />
-          <SettingsInput
-            label="HTTPS_PROXY"
-            value={settings.proxy.httpsProxy}
-            disabled={settings.proxy.mode !== 'manual'}
-            placeholder={
-              language === 'zh'
-                ? '127.0.0.1:7890 或 http://127.0.0.1:7890'
-                : '127.0.0.1:7890 or http://127.0.0.1:7890'
-            }
-            onChange={(value) => updateProxy({ httpsProxy: value })}
-          />
-          <SettingsInput
-            label="NO_PROXY"
-            value={settings.proxy.noProxy}
-            disabled={settings.proxy.mode !== 'manual'}
-            placeholder="127.0.0.1,localhost,::1,.internal"
-            onChange={(value) => updateProxy({ noProxy: value })}
-          />
-          </>}
-
+          <NetworkProxySettings scope="application" language={language} value={settings.proxy}
+            onSave={async proxy => {
+              if (!proxy || proxy.mode === 'model') return false;
+              const saved = { ...proxy, mode: proxy.mode };
+              await window.cardbushDesktop?.setProxy?.(saved);
+              updateProxy(saved);
+              return true;
+            }} />
         </SettingsCard>}
         </div>
         </div>

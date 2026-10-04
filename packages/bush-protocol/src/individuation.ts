@@ -37,10 +37,16 @@ export const summaryForUserInputSchema = z.object({
   prediction: memoryNoteSchema.optional(),
 }).strict();
 export const checkHabitInputSchema = z.object({
+  mode: z.enum(['search', 'list']).optional(),
+  kind: z.enum(['habit', 'prediction', 'note']).optional(),
+  cursor: z.string().min(1).max(400).optional(),
   topics: z.array(z.string().trim().min(1).max(180)).min(1).max(3).optional(),
   ids: z.array(z.string().trim().min(1).max(120)).min(1).max(3).optional(),
   count_only: z.boolean().optional(),
-}).strict().refine(value => !value.ids || !value.topics && !value.count_only, 'Use ids alone to read full records.');
+}).strict()
+  .refine(value => !value.ids || !value.topics && !value.count_only && !value.mode && !value.kind && !value.cursor, 'Use ids alone to read full records.')
+  .refine(value => value.mode !== 'list' || !value.topics, 'List mode enumerates records without topics.')
+  .refine(value => !value.cursor || value.mode === 'list' && !value.count_only, 'Use cursors only to continue a list.');
 export type SummaryForUserInput = z.infer<typeof summaryForUserInputSchema>;
 export type CheckHabitInput = z.infer<typeof checkHabitInputSchema>;
 export type MemoryNote = z.infer<typeof memoryNoteSchema>;
@@ -68,10 +74,11 @@ export type MemoryList=z.infer<typeof memoryListSchema>;
 export const memoryMutationSchema=z.object({status:z.string(),reason:z.string().optional(),change_id:z.string().optional(),id:z.string().optional(),replacement_id:z.string().optional()});
 export type MemoryMutation=z.infer<typeof memoryMutationSchema>;
 export const memoryReadSchema = z.object({
-  status:z.enum(['ok','no_match','disabled','unavailable','already_supplied','budget_limited','not_found']),
+  status:z.enum(['ok','no_match','disabled','unavailable','already_supplied','budget_limited','not_found','invalid_cursor']),
   memories:z.array(memoryRecordSchema),matched_count:z.number(),count_capped:z.boolean(),
   disabled_categories:z.array(z.enum(['habit','prediction'])),
-  omitted:z.array(z.object({id:z.string(),reason:z.enum(['not_found','disabled'])})).optional(),
+  omitted:z.array(z.object({id:z.string(),reason:z.enum(['not_found','disabled','budget_limited'])})).optional(),
+  next_cursor:z.string().nullable().optional(),
 });
 export type MemoryRead = z.infer<typeof memoryReadSchema>;
 export const memoryHistorySchema = z.object({

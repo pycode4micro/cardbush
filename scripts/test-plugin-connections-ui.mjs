@@ -75,6 +75,7 @@ window.showMcpRequests=value=>{window.mcpRequests=value;for(const fn of mcpListe
 window.marketSources=[{id:'builtin',kind:'local',location:'bundled',builtin:true}];
 window.marketInstalls=0;window.marketSaveFails=false;window.marketSlow=false;window.marketCached=false;window.marketAddFails=false;
 window.marketRateLimitUntil=0;window.marketPreviewReads=0;window.marketMissingVariables=false;
+window.marketInstallSlow=false;window.marketProgress=null;
 Object.assign(window.cardbushDesktop,{
  pluginMarketSources:async()=>marketSources,
  addPluginMarket:async value=>{if(marketAddFails)throw Error("Error invoking remote method 'plugins:market-add': Error: net::ERR_CONNECTION_RESET");const source={id:'remote',kind:'github',location:value,ref:'HEAD'};marketSources.push(source);return source},
@@ -83,8 +84,10 @@ Object.assign(window.cardbushDesktop,{
  {name:'claude-example',description:'Claude Skills 与 MCP',category:'Tools',available:true},
  {name:'hook-example',description:'依赖 Hooks 的插件',category:'Tools',available:true},
  {name:'unavailable',description:'发布者未开放安装',category:'Tools',available:false,unavailableReason:'policy'}]}),
- previewMarketPlugin:async(id,name)=>{marketPreviewReads++;if(marketRateLimitUntil>Date.now())throw Error("Error invoking remote method 'plugins:market-preview': Error: codeload.github.com: Marketplace requests are temporarily rate limited (HTTP 429). [market-rate-limit:"+marketRateLimitUntil+"]");const value={token:'token-'+name,id:name,name,description:'示例插件',version:'1.0.0',developerName:'Fixture',source:'https://github.com/fixture/plugins',revision:'a'.repeat(40),format:'claude',components:[{kind:'skill',name:'Example',description:'示例技能'},{kind:'mcp',name:'Echo',description:'MCP service'}],requirements:['node'],issues:name==='hook-example'?[{code:'components',detail:'hooks'}]:[],warnings:marketMissingVariables?[{code:'variables',detail:'FIXTURE_API_KEY'}]:[],updating:false};if(marketSlow)return new Promise(resolve=>{window.finishMarketPreview=()=>resolve(value)});return value},
- installMarketPlugin:async token=>{marketInstalls++;if(!fixtureApps.plugins.some(item=>item.id==='claude-example'))fixtureApps={...fixtureApps,plugins:[...fixtureApps.plugins,plugin('claude-example','Claude Example','echo','user')]};return{id:'claude-example',manifestPath:'fixture'}},
+ previewMarketPlugin:async(id,name)=>{marketPreviewReads++;if(marketRateLimitUntil>Date.now())throw Error("Error invoking remote method 'plugins:market-preview': Error: codeload.github.com: Marketplace requests are temporarily rate limited (HTTP 429). [market-rate-limit:"+marketRateLimitUntil+"]");const value={token:'token-'+name,id:name,name,description:'示例插件',version:'1.0.0',developerName:'Fixture',source:'https://github.com/fixture/plugins',revision:'a'.repeat(40),format:'claude',validation:'metadata',components:[{kind:'skill',name:'Example',description:'示例技能'},{kind:'mcp',name:'Echo',description:'MCP service'}],requirements:['node'],issues:name==='hook-example'?[{code:'components',detail:'hooks'}]:[],warnings:marketMissingVariables?[{code:'variables',detail:'FIXTURE_API_KEY'}]:[],updating:false};if(marketSlow)return new Promise(resolve=>{window.finishMarketPreview=()=>resolve(value)});return value},
+ installMarketPlugin:async token=>{if(marketInstallSlow){marketProgress={phase:'downloading',downloadedBytes:36*1024*1024,totalBytes:60*1024*1024,cancellable:true};await new Promise((resolve,reject)=>{window.finishMarketInstall=resolve;window.failMarketInstall=reject})}marketInstalls++;marketProgress={phase:'completed',downloadedBytes:60*1024*1024,cancellable:false};if(!fixtureApps.plugins.some(item=>item.id==='claude-example'))fixtureApps={...fixtureApps,plugins:[...fixtureApps.plugins,plugin('claude-example','Claude Example','echo','user')]};return{id:'claude-example',manifestPath:'fixture'}},
+ pluginMarketInstallProgress:async()=>marketProgress,
+ cancelMarketPluginInstall:async()=>{marketProgress={...marketProgress,phase:'cancelled',cancellable:false};window.failMarketInstall?.(Error('Plugin installation cancelled. [market-cancelled]'));return true},
 });
 window.refreshFixture=()=>{for(const fn of listeners)fn()};
 window.fixtureCatalogReads=0;window.inspectedPaths=[];
@@ -167,6 +170,7 @@ try {
   await writeFile(join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8">${css.map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
   const require=createRequire(import.meta.url),env={...process.env};
   if (process.argv.includes('--settings-only')) env.CARDBUSH_PLUGIN_SETTINGS_ONLY = '1';
+  if (process.argv.includes('--network-only')) env.CARDBUSH_PLUGIN_NETWORK_ONLY = '1';
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
   const worker = localization ? 'scripts/test-plugin-localization-ui.cjs' : coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
   const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});

@@ -10,6 +10,10 @@
     <main>
       <header><img class="mark" src="icons/cardbush-48.png" alt="" /><div><strong>CardBush</strong><small>Browser Use · Chrome / Edge</small></div></header>
       <div id="connection" class="connection">正在读取连接状态…</div>
+      <div id="extension-update" class="extension-update" hidden>
+        <p id="extension-update-message" class="hint" role="status"></p>
+        <button id="reload-extension">重新加载扩展</button>
+      </div>
       <details id="pairing-details" open><summary>首次配对 / 更换连接</summary>
       <label class="scope-picker"><span>与 CardBush 配对</span>
         <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 CardBush 设置中的配对码" />
@@ -39,6 +43,7 @@
       </footer>
       <p class="hint">首次配对后自动重连，无需每次生成码。配对不授予页面访问权限；个人标签需明确复制进会话隔离组。移除配对或扩展后才需重新配对。</p>
     </main>
+    <script src="build-info.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

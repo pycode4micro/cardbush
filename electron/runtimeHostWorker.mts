@@ -109,7 +109,7 @@ if (process.env.CARDBUSH_RESOURCE_COORDINATION === 'desktop') {
 }
 const pluginFetches = new ProxyFetchPool();
 const hostNetworkAvailable = process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' || Boolean(process.env.CARDBUSH_SERVICE_ID);
-const agentModelFetch: typeof fetch = async (input, init) => {
+const hostModelFetch: typeof fetch = async (input, init) => {
   const config = await mcpHost.request<NetworkProxySettings>('network.configuration', { model: true }, init?.signal ?? undefined);
   const endpoint = await mcpHost.request<string>('network.route', config, init?.signal ?? undefined);
   return pluginFetches.forEndpoint(endpoint)(input, init);
@@ -271,7 +271,7 @@ function createEnvironmentProvider(
   };
   return createModelProvider({
     ...config,
-    ...(process.env.CARDBUSH_SERVICE_ID ? { fetch: agentModelFetch } : {}),
+    ...(hostNetworkAvailable ? { fetch: hostModelFetch } : {}),
     capabilityStore,
     capabilityScope: modelProviderCapabilityScope(config),
   });
@@ -736,7 +736,7 @@ providers = new ModelProviderRegistry({
       mcpHost.request<string>('siwc.access-token', { accountId, rejectedToken: input.rejectedToken }, input.signal),
   } : {}),
   fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
-  ...(process.env.CARDBUSH_SERVICE_ID ? { createProvider: config => createModelProvider({ ...config, fetch: agentModelFetch }) } : {}),
+  ...(hostNetworkAvailable ? { createProvider: config => createModelProvider({ ...config, fetch: hostModelFetch }) } : {}),
   capabilityStore: providerCapabilityStore,
 });
 const usageLedgerPath = process.env.CARDBUSH_USAGE_LEDGER_PATH?.trim();

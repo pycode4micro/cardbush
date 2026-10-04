@@ -105,6 +105,8 @@ export class CacheChainTracker {
       requestOrdinal: this.#state.requestOrdinal,
       format: projection.format, transport: projection.transport,
       previousProjectionAvailable: Boolean(previous), changedParameters,
+      ...(projection.cacheRouting ? { cacheRouting: projection.cacheRouting } : {}),
+      ...(projection.images ? { images: imageObservation(previous, projection) } : {}),
       messageCount: projection.inputDigests.length,
       previousMessageCount: previous?.inputDigests.length ?? 0,
       sharedPrefixMessages: shared, appendedMessages: projection.inputDigests.length - shared,
@@ -118,6 +120,25 @@ export class CacheChainTracker {
   snapshot(): CacheChainState {
     return structuredClone(this.#state);
   }
+}
+
+function imageObservation(previous: ProviderInputProjection | undefined, current: ProviderInputProjection): ProviderInputObservation['images'] {
+  const images = current.images!;
+  // Older persisted projections have no image metadata. Do not report their
+  // entire history as newly added images on the first request after an upgrade.
+  const priorImages = previous?.format === current.format ? previous.images : undefined;
+  const common = { count: images.digests.length, remoteCount: images.remoteCount, comparisonAvailable: Boolean(priorImages) };
+  if (!priorImages) return common;
+  const remaining = new Map<string, number>();
+  for (const digest of priorImages.digests) remaining.set(digest, (remaining.get(digest) ?? 0) + 1);
+  let addedCount = 0;
+  for (const digest of images.digests) {
+    const count = remaining.get(digest) ?? 0;
+    if (count) remaining.set(digest, count - 1);
+    else addedCount++;
+  }
+  return { ...common, previousCount: priorImages.digests.length, addedCount,
+    removedCount: [...remaining.values()].reduce((sum, count) => sum + count, 0) };
 }
 
 function digest(value: string): string {

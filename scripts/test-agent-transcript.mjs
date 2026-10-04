@@ -146,8 +146,8 @@ test('content block ordinals reset per response; late tool completions retain or
   assert.equal(rows[0].toolExecutions[0].sequence, 4); assert.equal(rows[1].toolExecutions[0].sequence, 5);
 });
 
-test('applied guidance is restored from durable facts at the correct boundary without local storage', async () => {
-  const events = [text(1, 'm1', 'before'), tool(2, 'm1', 'a'), event(3, 'guidance_applied', { messageId: 'g1', previousAssistantMessageId: 'm1', queueDepth: 0, afterRound: 1 }), text(4, 'm2', 'after'), tool(5, 'm2', 'b')];
+for (const anchor of ['m1', 'interrupted-empty-request', undefined]) test(`applied guidance restores the correct local and remote boundary (${anchor ?? 'missing anchor'})`, async () => {
+  const events = [text(1, 'm1', 'before'), tool(2, 'm1', 'a'), event(3, 'guidance_applied', { messageId: 'g1', ...(anchor ? { previousAssistantMessageId: anchor } : {}), queueDepth: 0, afterRound: 1 }), text(4, 'm2', 'after'), tool(5, 'm2', 'b')];
   const guidance = [{ messageId: 'g1', createdAt: now, message: { role: 'user', name: 'turn_guidance', content: 'change direction' } }];
   const remote = await project(events, 'remote', { guidance });
   assert.deepEqual(remote, await project(events, 'local', { guidance }));

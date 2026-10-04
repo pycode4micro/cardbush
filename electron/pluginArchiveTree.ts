@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { safePackagePath, withinPackage } from './pluginPackagePaths';
+import { requireDiskSpace } from './pluginStorage';
 
 export const pluginArchiveLimits = { compressedBytes: 32 * 1024 * 1024, expandedBytes: 64 * 1024 * 1024,
   fileBytes: 16 * 1024 * 1024, files: 2000, entries: 10000, linkBytes: 4096, linkDepth: 64 } as const;
@@ -25,12 +26,13 @@ export function archiveLinkError(path: string, target: string, reason: string): 
 }
 
 /** Resolve only archive entries, never filesystem links. Windows receives ordinary files/directories. */
-export async function materializePluginArchive(entries: PluginArchiveEntry[], destination: string) {
+export async function materializePluginArchive(entries: PluginArchiveEntry[], destination: string, signal?: AbortSignal) {
   const root: Directory = { kind: 'directory', path: '', children: new Map() };
   const conflict = (path: string) => new Error(`Plugin archive contains conflicting paths at ${quote(path)}.`);
   let files = 0, bytes = 0, nodes = 0;
   if (entries.length > pluginArchiveLimits.entries) throw new Error('Plugin archive exceeds the entry limit.');
   for (const entry of entries) {
+    signal?.throwIfAborted();
     const path = archivePath(entry.path), parts = path.split('/');
     if (entry.kind !== 'directory' && ++files > pluginArchiveLimits.files) throw new Error('Plugin archive exceeds the 2000 file limit.');
     if (entry.kind === 'file') {
@@ -95,6 +97,7 @@ export async function materializePluginArchive(entries: PluginArchiveEntry[], de
   const stack: ({ kind: 'visit'; node: ArchiveNode; path: string } | { kind: 'leave'; node: Directory })[] = [{ kind: 'visit', node: root, path: '' }];
   files = 0; bytes = 0;
   while (stack.length) {
+    signal?.throwIfAborted();
     const step = stack.pop()!;
     if (step.kind === 'leave') { ancestors.delete(step.node); continue; }
     const source = step.node;
@@ -122,7 +125,9 @@ export async function materializePluginArchive(entries: PluginArchiveEntry[], de
   await mkdir(destination, { recursive: true });
   const info = await lstat(destination);
   if (info.isSymbolicLink() || !info.isDirectory() || (await readdir(destination)).length) throw new Error('Plugin extraction requires an empty staging directory.');
+  await requireDiskSpace(destination, bytes);
   for (const { path, node } of plan) {
+    signal?.throwIfAborted();
     const target = withinPackage(destination, path);
     if (node.kind === 'directory') await mkdir(target);
     else await writeFile(target, node.data, { flag: 'wx', mode: node.mode & 0o111 ? 0o755 : 0o644 });

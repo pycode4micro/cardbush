@@ -1,6 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { buildBrowserExtension } from './build-browser-extension.mjs';
+
+buildBrowserExtension();
 
 const root = path.resolve(import.meta.dirname, '..');
 const source = path.join(root, 'native', 'chrome-connector', 'CardBushBrowserHost.cs');

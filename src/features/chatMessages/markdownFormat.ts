@@ -92,6 +92,7 @@ type MarkdownNode = {
   url?: string;
   children?: MarkdownNode[];
   position?: { start: { offset?: number }; end: { offset?: number } };
+  data?: { originalLiteral?: string };
 };
 
 type MarkdownParser = (content: string) => MarkdownNode;
@@ -118,7 +119,7 @@ export function remarkAutolinkBoundaries(this: { parse: MarkdownParser }) {
       parsed = parse(source);
     }
     repairAutolinkBoundaries(parsed, source, parse);
-    if (parsed !== tree) clearMarkdownPositions(parsed);
+    if (parsed !== tree) clearMarkdownPositions(parsed, source);
     return parsed;
   };
 }
@@ -177,7 +178,7 @@ function repairAutolinkBoundaries(
           return [{ type: 'text', value: part }];
         }
         // Fragment offsets do not refer to the original message.
-        clearMarkdownPositions(paragraph);
+        clearMarkdownPositions(paragraph, part);
         return paragraph.children ?? [];
       });
     }
@@ -204,9 +205,13 @@ function bareAutolinkLiteral(node: MarkdownNode, source: string) {
   return value;
 }
 
-function clearMarkdownPositions(node: MarkdownNode) {
+function clearMarkdownPositions(node: MarkdownNode, source: string) {
+  const start = node.position?.start.offset, end = node.position?.end.offset;
+  if (node.type === 'text' && start !== undefined && end !== undefined) {
+    node.data = { ...node.data, originalLiteral: source.slice(start, end) };
+  }
   delete node.position;
-  node.children?.forEach(clearMarkdownPositions);
+  node.children?.forEach(child => clearMarkdownPositions(child, source));
 }
 
 function transformMarkdownProse(

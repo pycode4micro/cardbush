@@ -3,11 +3,13 @@ import test from 'node:test';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createServer, request } from 'node:http';
-import { createServer as createTcpServer } from 'node:net';
+import { createServer as createHttpsServer } from 'node:https';
+import { connect, createServer as createTcpServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { PluginNetwork } from '../dist-electron/pluginNetwork.mjs';
 import { ProxyFetchPool } from '../dist-electron/proxyFetch.mjs';
+import { PluginMarketDownloads } from '../dist-electron/pluginMarketDownloads.js';
 import { defaultPluginProxy, pluginProxySchema, networkProxySchema, resolvePluginProxy, pluginProxyEnvironment } from '../packages/bush-protocol/dist/index.js';
 import { CardbushAppsConfigStore, ProductMcpConfigStore, ProductHost } from '../packages/cardbush-product-host/dist/index.js';
 import { mergeMcpServer } from '../dist-electron/productMcpManagement.mjs';
@@ -60,6 +62,76 @@ async function tunnel(endpoint, authority) {
   assert.equal(res.statusCode, 200);
   socket.write('echo'); const [bytes] = await once(socket, 'data'); socket.destroy(); return bytes.toString();
 }
+
+test('model and marketplace routing share resolution while plugin overrides stay independent', async t => {
+  const first = await proxy(t, 'first'), second = await proxy(t, 'second');
+  const { network, file } = await setup(t);
+  network.setModel(config('manual', { httpProxy: first.url }));
+  const target = 'http://fixture.invalid';
+  const readTag = async fetch => (await (await fetch(target)).json()).tag;
+  assert.equal(await readTag(network.fetchModel), 'first');
+  assert.equal(await readTag(network.fetch), 'first');
+  await writeFile(file, JSON.stringify({ proxy: config('manual', { httpProxy: second.url }) }));
+  assert.equal(await readTag(network.fetch), 'second');
+  assert.equal(await readTag(network.fetchModel), 'first');
+  network.setModel(config('manual', { httpProxy: second.url }));
+  assert.equal(await readTag(network.fetchModel), 'second', 'an existing caller follows the saved app setting');
+  assert.equal(network.modelConfiguration().httpProxy, second.url);
+});
+
+test('marketplace cooldown follows the resolved network exit including system PAC changes', async t => {
+  let limitedReads = 0;
+  const limited = await listen(createServer((_req, res) => { limitedReads++; res.writeHead(403, { 'retry-after': '3600' }); res.end(); }), t);
+  const available = await proxy(t, 'available');
+  let resolved = `PROXY ${new URL(limited).host}`;
+  const { network } = await setup(t, async () => resolved);
+  network.setModel(config('system'));
+  const downloads = new PluginMarketDownloads(network.fetch, Date.now, network.downloadRoute);
+  for (let i = 0; i < 2; i++) await assert.rejects(downloads.bytes('http://fixture.invalid/catalog', 4096), /market-rate-limit/);
+  assert.equal(limitedReads, 1);
+  resolved = `PROXY ${new URL(available.url).host}`;
+  assert.equal(JSON.parse(await downloads.bytes('http://fixture.invalid/catalog', 4096)).tag, 'available');
+  assert.equal(limitedReads, 1, 'changing routes neither waits for nor retries the old exit');
+});
+
+test('HTTPS marketplace connections follow a changed system proxy without reusing an old tunnel', async t => {
+  if (!process.env.CARDBUSH_PROXY_TLS_FIXTURE) {
+    // Trust only the checked-in loopback fixture certificate, in an isolated child.
+    const env = { ...process.env, CARDBUSH_PROXY_TLS_FIXTURE: '1', NODE_EXTRA_CA_CERTS: resolve('scripts/fixtures/plugin-proxy-tls/cert.pem') };
+    delete env.NODE_TEST_CONTEXT;
+    const child = spawn(process.execPath, ['--test', '--test-name-pattern=HTTPS marketplace connections', resolve('scripts/test-plugin-proxy.mjs')], {
+      env,
+      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000,
+    });
+    let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { output += bytes; });
+    const [code] = await once(child, 'close'); assert.equal(code, 0, output); assert.match(output, /pass 1/); return;
+  }
+  const key = await readFile('scripts/fixtures/plugin-proxy-tls/key.pem'), cert = await readFile('scripts/fixtures/plugin-proxy-tls/cert.pem');
+  const exit = async tag => {
+    const origin = await listen(createHttpsServer({ key, cert }, (_req, res) => res.end(tag)), t);
+    const server = createServer();
+    server.on('connect', (_req, client, head) => {
+      const upstream = connect(Number(new URL(origin).port), '127.0.0.1', () => {
+        client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head.length) upstream.write(head);
+        client.pipe(upstream).pipe(client);
+      });
+      client.on('close', () => upstream.destroy()); upstream.on('close', () => client.destroy());
+      client.on('error', () => upstream.destroy()); upstream.on('error', () => client.destroy());
+    });
+    return listen(server, t);
+  };
+  const first = await exit('first'), second = await exit('second');
+  let resolved = `PROXY ${new URL(first).host}`;
+  const { network } = await setup(t, async () => resolved);
+  network.setModel(config('system'));
+  const downloads = new PluginMarketDownloads(network.fetch, Date.now, network.downloadRoute);
+  const url = 'https://127.0.0.1/catalog';
+  assert.equal((await downloads.bytes(url, 100)).toString(), 'first');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  resolved = `PROXY ${new URL(second).host}`;
+  assert.equal((await downloads.bytes(url, 100)).toString(), 'second');
+});
 
 test('proxy precedence, defaults, stable effective identity and address validation', () => {
   const model = config('manual', { httpProxy: '127.0.0.1:8181', httpsProxy: '127.0.0.1:8282' });

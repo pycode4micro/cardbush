@@ -39,7 +39,7 @@ test('optional free text tools keep compact receipts and do not open a database 
   assert.equal(f.registry.isParallelSafe('summary_for_user'),true);
   assert.deepEqual(Object.keys(f.registry.definitions().find(t=>t.name==='summary_for_user').inputSchema.properties),['habit','prediction']);
   assert.equal(summaryForUserInputSchema.safeParse({summary:'mixed note'}).success,false,'the public API no longer accepts a mixed summary');
-  assert.deepEqual(Object.keys(f.registry.definitions().find(t=>t.name==='check_habit').inputSchema.properties),['topics','ids','count_only']);
+  assert.deepEqual(Object.keys(f.registry.definitions().find(t=>t.name==='check_habit').inputSchema.properties),['mode','kind','cursor','topics','ids','count_only']);
   assert.deepEqual(result(await f.run('summary_for_user',{habit:'用户关注 A 股走势。',prediction:'用户可能还需要 XLSX 报表。'})),{status:'ok',final_response:true,saved:false,writes:[{category:'habit',status:'skipped',reason:'category_disabled'},{category:'prediction',status:'skipped',reason:'category_disabled'}]});
   assert.equal(result(await f.run('check_habit',{})).status,'disabled');
   assert.deepEqual(result(await f.run('summary_for_user',{},on)),{status:'ok',final_response:true,saved:false,writes:[]},

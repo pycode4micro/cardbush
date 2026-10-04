@@ -373,6 +373,8 @@ const desktopApi = {
   pluginMarketPresentation: (id: string, name: string) => ipcRenderer.invoke('plugins:market-presentation', id, name),
   previewMarketPlugin: (sourceId: string, name: string) => ipcRenderer.invoke('plugins:market-preview', sourceId, name),
   installMarketPlugin: (token: string) => ipcRenderer.invoke('plugins:market-install', token),
+  pluginMarketInstallProgress: (token: string) => ipcRenderer.invoke('plugins:market-install-progress', token),
+  cancelMarketPluginInstall: (token: string) => ipcRenderer.invoke('plugins:market-install-cancel', token),
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   sshConnections: {

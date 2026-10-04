@@ -124,6 +124,38 @@ app.whenReady().then(async()=>{
     await until(`document.body.innerText.includes('Image preview unavailable')`);
     assert.equal(await read(`document.querySelectorAll('img').length`),0);
     assert.deepEqual(await read('window.resourceReads'),[],'opening an invalid image cannot enter filesystem fallback');
+    for(const remote of [false,true]) {
+      await read(`window.showShorthand(${remote})`);
+      await until(`document.querySelectorAll('.source-memo-marker').length===2`);
+      assert.match(await read('document.body.innerText'),/\[99\]/,'unresolved numbers remain ordinary text');
+      assert.match(await read('document.body.innerText'),/arr\[21\]/);
+      assert.equal(await read(`document.querySelectorAll('code .source-memo-marker, a .source-memo-marker').length`),0,'code and existing links are never rewritten');
+      assert.equal(await read(`Array.from(document.querySelectorAll('p')).find(p=>p.textContent.startsWith('转义：')).textContent`),'转义：[21]');
+      await read(`document.querySelector('.source-memo-marker').click()`);
+      await until(`document.querySelector('.source-memo-card')?.textContent.includes('Source 21')`);
+      assert.match(await read(`document.querySelector('.source-memo-card').textContent`),/保留已完成/);
+      writeFileSync(resolve('tmp/source-memo-shorthand.png'),(await win.webContents.capturePage()).toPNG());
+      await read(`window.showShorthand(${remote},'other-session','short-turn')`);
+      await until(`document.querySelectorAll('.source-memo-marker').length===0`);
+      await pause();
+      assert.equal(await read(`document.querySelectorAll('.source-memo-marker').length`),0,'changing sessions cannot reuse another conversation’s numeric reference');
+      await read(`window.showShorthand(${remote},'short-session','other-turn')`);await pause();
+      assert.equal(await read(`document.querySelectorAll('.source-memo-marker').length`),0,'numbers from other turns remain plain');
+      await read(`window.showShorthand(${remote},'short-session','short-turn',false)`);await pause();
+      assert.equal(await read(`document.querySelectorAll('.source-memo-marker').length`),0,'user text is not enriched with inferred Source links');
+    }
+    for(const session of ['a','b','a']) {
+      await read(`window.showScoped('${session}')`);
+      await until(`document.querySelectorAll('.source-memo-marker').length===2`);
+      assert.deepEqual(await read(`Array.from(document.querySelectorAll('.source-memo-marker'),e=>e.textContent)`),['1','1'],'display numbers stay local despite different durable locator IDs');
+      await read(`document.querySelectorAll('.source-memo-marker')[0].click()`);
+      await until(`document.querySelector('.source-memo-card')?.textContent.includes('会话 ${session} 的独立备注')`);
+      assert.match(await read(`document.querySelector('.source-memo-heading').textContent`),/Source 1/);
+      await read(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await pause();
+      await read(`document.querySelectorAll('.source-memo-marker')[1].click()`);
+      await until(`document.querySelector('.source-memo-card')?.textContent.includes('会话 ${session==='a'?'b':'a'} 的独立备注')`);
+      await read(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await pause();
+    }
     assert.deepEqual(errors,[]);
     console.log('Source UI passed: file/web/memo links and source popovers; malformed image/audio/video/file references in local/remote conversations never read files or mount broken media.');
     win.destroy();app.exit(0);

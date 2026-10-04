@@ -31,6 +31,86 @@ async function fixture(t){
 const firstId=receipt=>receipt.writes.find(row=>row.id).id;
 const loaded=(memories)=>[{role:'user',name:'habit_reference',visibility:'internal',content:JSON.stringify({memories})}];
 
+test('all habits use small repeatable category pages instead of guessed topic searches',async t=>{
+  const f=await fixture(t),expected=new Set();
+  for(let i=0;i<7;i++)expected.add(firstId(await f.store.summarize({habit:{text:`用户习惯 ${i}：希望针对不同任务保留清晰的记录。`}},on,{...owner,operationId:`habit-${i}`})));
+  await f.store.summarize({prediction:{text:'可能需要后续报表。'}},on,{...owner,operationId:'prediction'});
+  const first=await f.tool('check_habit',{mode:'list',kind:'habit'});
+  assert.equal(first.matched_count,7);assert.equal(first.count_capped,false);
+  assert.ok(first.memories.length>0&&first.memories.length<=5&&first.next_cursor);
+  assert.deepEqual(await f.tool('check_habit',{mode:'list',kind:'habit'},loaded(first.memories)),first);
+  const seen=first.memories.map(row=>row.id),bytes=await readFile(f.path);
+  let cursor=first.next_cursor,pages=1;
+  while(cursor){
+    const input={mode:'list',kind:'habit',cursor};
+    const page=await f.tool('check_habit',input,loaded(first.memories));
+    assert.deepEqual(await f.tool('check_habit',input),page);
+    assert.equal(page.matched_count,7);assert.ok(page.memories.length<=5);
+    assert.ok(page.memories.every(row=>row.kind==='habit'));
+    assert.ok(memoryTokens(JSON.stringify(page))<=1000,'each page includes metadata and cursor in its token bound');
+    seen.push(...page.memories.map(row=>row.id));cursor=page.next_cursor;assert.ok(++pages<8);
+  }
+  assert.equal(seen.length,expected.size);assert.deepEqual(new Set(seen),expected);
+  assert.deepEqual(await readFile(f.path),bytes,'listing does not mark entries consumed');
+});
+
+test('list cursors tolerate new writes without repeats and reject changed filters or invalid cursors',async t=>{
+  const f=await fixture(t);
+  for(let i=0;i<8;i++)await f.store.summarize({habit:{text:`分页记录 ${i}。`}},on,{...owner,operationId:`page-${i}`});
+  const page=await f.tool('check_habit',{mode:'list',kind:'habit'});
+  const added=firstId(await f.store.summarize({habit:{text:'分页过程中新增的记录。'}},on,{...owner,operationId:'later'}));
+  const rest=await f.tool('check_habit',{mode:'list',kind:'habit',cursor:page.next_cursor});
+  assert.equal(rest.matched_count,8);assert.ok(!rest.memories.some(row=>row.id===added||page.memories.some(first=>first.id===row.id)));
+  assert.equal((await f.tool('check_habit',{mode:'list',kind:'prediction',cursor:page.next_cursor})).status,'invalid_cursor');
+  assert.equal((await f.tool('check_habit',{mode:'list',cursor:'garbage'})).status,'invalid_cursor');
+  assert.equal((await f.tool('check_habit',{mode:'list',kind:'prediction'},[],habits)).status,'disabled');
+  assert.equal(checkHabitInputSchema.safeParse({mode:'list',topics:['x']}).success,false);
+  assert.equal(checkHabitInputSchema.safeParse({cursor:page.next_cursor}).success,false);
+  assert.equal(checkHabitInputSchema.safeParse({ids:['x'],mode:'list'}).success,false);
+});
+
+test('list counts are exact beyond the search candidate cap while content stays bounded',async t=>{
+  const f=await fixture(t);
+  for(let i=0;i<70;i++)await f.store.summarize({habit:{text:`不同习惯 ${i}：按任务编号 ${i} 处理。`}},on,{...owner,operationId:`count-${i}`});
+  const count=await f.tool('check_habit',{kind:'habit',count_only:true});
+  assert.equal(count.matched_count,70);assert.equal(count.count_capped,false);assert.deepEqual(count.memories,[]);
+  const page=await f.tool('check_habit',{kind:'habit',mode:'list'});
+  assert.equal(page.matched_count,70);assert.ok(page.next_cursor);assert.ok(page.memories.length<=5);
+  assert.ok(memoryTokens(JSON.stringify(page))<=1000);
+  const search=await f.tool('check_habit',{kind:'prediction',topics:['不同习惯']});assert.equal(search.matched_count,0);
+});
+
+test('long list records stay bounded including cursor overhead and remain readable by ID',async t=>{
+  const f=await fixture(t),expected=[];
+  for(let i=0;i<7;i++)expected.push(firstId(await f.store.summarize({habit:{text:`记录 ${i}：`+'需要简短说明。'.repeat(15)}},on,{...owner,operationId:`long-${i}`})));
+  let cursor,seen=[];
+  do {
+    const page=await f.tool('check_habit',{mode:'list',kind:'habit',...(cursor?{cursor}:{})});
+    assert.equal(page.status,'ok');assert.ok(memoryTokens(JSON.stringify(page))<=1000);
+    assert.ok(page.memories.length>0&&page.memories.length<=5);
+    seen.push(...page.memories.map(row=>row.id));cursor=page.next_cursor;
+    assert.ok(seen.length<=expected.length);
+  } while(cursor);
+  assert.deepEqual(new Set(seen),new Set(expected));
+  const full=await f.tool('check_habit',{ids:[expected[0]]});assert.equal(full.memories[0].truncated,false);
+});
+
+test('oversized legacy metadata defers an explicit ID without blocking later pages',async t=>{
+  const f=await fixture(t),ids=[];
+  for(let i=0;i<3;i++)ids.push(firstId(await f.store.summarize({habit:{text:`独立习惯 ${i}。`}},on,{...owner,operationId:`oversized-${i}`})));
+  const appliesWhen='旧版记录中的适用条件。'.repeat(500),db=new DatabaseSync(f.path);
+  try{db.prepare('UPDATE memory_records SET applies_when=? WHERE id=?').run(appliesWhen,ids[2]);}finally{db.close();}
+  const first=await f.tool('check_habit',{mode:'list',kind:'habit'});
+  assert.equal(first.status,'budget_limited');assert.equal(first.matched_count,3);
+  assert.deepEqual(first.memories,[]);assert.deepEqual(first.omitted,[{id:ids[2],reason:'budget_limited'}]);
+  assert.ok(first.next_cursor);assert.ok(memoryTokens(JSON.stringify(first))<=1000);
+  const rest=await f.tool('check_habit',{mode:'list',kind:'habit',cursor:first.next_cursor});
+  assert.deepEqual(new Set(rest.memories.map(row=>row.id)),new Set(ids.slice(0,2)));
+  assert.equal(rest.next_cursor,null);assert.ok(memoryTokens(JSON.stringify(rest))<=1000);
+  const full=await f.tool('check_habit',{ids:[ids[2]]});
+  assert.equal(full.memories[0].applies_when,appliesWhen);assert.equal(full.memories[0].truncated,false);
+});
+
 test('the deployed pre-journal database upgrades without losing original note IDs, text or dates',async t=>{
   const f=await fixture(t),created=f.now()-86400000,id='note_97dc490978f6137e8ac08aa9',text='用户偏好核查原始调用记录，并保留预测验证的证据。';
   const db=new DatabaseSync(f.path);

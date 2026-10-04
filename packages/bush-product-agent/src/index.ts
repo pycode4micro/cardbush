@@ -193,6 +193,7 @@ function createBaseProductAgentTurnRequest(
     permissionMode: input.permissionMode,
     metadata: {
       source: "cardbush_product_agent",
+      mcpCatalogUpdates: 'additions',
       individuation: normalizeIndividuation(input.individuation),
       ...(input.uiLanguage ? { uiLanguage: input.uiLanguage } : {}),
       ...(workspaceDir ? { workspaceDir } : {}),

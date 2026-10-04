@@ -13,9 +13,16 @@ const calls = [];
 const save = async (path, value) => { await mkdir(join(path, '..'), { recursive: true }); await writeFile(path, typeof value === 'string' ? value : JSON.stringify(value)); };
 const manifest = name => ({ $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', name, version: '1.0.0', description: name });
 const policy = { installation: 'AVAILABLE', authentication: 'ON_INSTALL' };
-let npmArchive;
-const run = async (command, args, cwd) => {
-  calls.push({ command, args: [...args] });
+let npmArchive, pauseAcquisition = false, acquisitionStarted;
+const run = async (command, args, cwd, signal) => {
+  calls.push({ command, args: [...args], cancellable: Boolean(signal) });
+  if (pauseAcquisition && args.includes('fetch')) {
+    acquisitionStarted();
+    return new Promise((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  }
   if (args.includes('pack')) {
     assert.ok(args.includes('--ignore-scripts'));
     assert.ok(args.includes('fixture-plugin@^1.0.0'));
@@ -27,7 +34,7 @@ const run = async (command, args, cwd) => {
   // Only this test runner substitutes the remote and permits a local transport.
   let local = args.map(arg => arg === 'protocol.file.allow=never' ? 'protocol.file.allow=always' : arg);
   if (args.includes('remote') && args.includes('add')) local = [...local.slice(0, -1), repository];
-  return runAcquisitionCommand(command, local, cwd);
+  return runAcquisitionCommand(command, local, cwd, {}, signal);
 };
 const git = args => runAcquisitionCommand('git', ['-C', repository, '-c', 'core.hooksPath=', '-c', 'commit.gpgsign=false', ...args], root);
 try {
@@ -71,8 +78,20 @@ try {
   const preview = await service.preview(source.id, 'git-plugin');
   assert.equal(preview.revision, original);
   assert.equal(preview.format, 'agent-plugins');
+  assert.equal(preview.validation, 'metadata');
+  assert.ok(!calls.some(call => call.args.includes('archive')), 'Git previews only inspect metadata; they never acquire a plugin archive');
   assert.deepEqual(preview.issues, []);
+  pauseAcquisition = true;
+  const started = new Promise(resolve => { acquisitionStarted = resolve; });
+  const cancelled = assert.rejects(service.install(preview.token), /market-cancelled/);
+  await started;
+  assert.equal(service.cancelInstall(preview.token), true);
+  await cancelled;
+  assert.deepEqual(await readdir(join(options.dataRoot, 'acquisitions')), [], 'cancelled Git acquisition removes its temporary bare repository');
+  assert.deepEqual(await readdir(join(options.dataRoot, 'previews')), [], 'cancelled Git installation removes its staging directory');
+  pauseAcquisition = false;
   await service.install(preview.token);
+  assert.ok(calls.some(call => call.args.includes('archive') && call.cancellable), 'installation forwards cancellation to Git acquisition');
   assert.match(await readFile(join(options.userPluginRoot, 'git-plugin/skills/greet/SKILL.md'), 'utf8'), /Original revision/);
   assert.ok(calls.some(call => call.args.includes('fetch') && call.args.at(-1) === original));
   assert.ok(!calls.some(call => call.args.includes('checkout')), 'acquisition never checks out or runs repository hooks');

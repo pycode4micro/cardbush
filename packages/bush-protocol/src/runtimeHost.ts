@@ -318,6 +318,8 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: z.object({
       round: z.number().int().positive(),
       attempt: z.number().int().positive(),
+      // Exact dispatch observation in this turn, including adapter fallbacks.
+      providerInputSequence: z.number().int().positive().optional(),
       model: z.string().min(1),
       contextWindowTokens: z.number().int().positive().optional(),
       inputTokens: z.number().int().nonnegative(),

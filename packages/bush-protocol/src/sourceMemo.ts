@@ -2,9 +2,17 @@ import { z } from 'zod';
 
 export const SOURCE_MEMO_SCHEME = 'cardbush-source:';
 export const RESOLVE_SOURCE_MEMO_COMMAND = 'runtime.resolve_source_memo';
+export const RESOLVE_SOURCE_REFERENCES_COMMAND = 'runtime.resolve_source_references';
+/** The visible conversation number is separate from the durable host locator.
+ * Legacy references used the same number for both; keep them readable unchanged. */
+export function parseSourceMemoIdentity(value: string): { number: number; locator: number } | undefined {
+  const scoped = /^cardbush-source:v2:([1-9]\d{0,8}):([1-9]\d{0,8})-[a-f0-9]{16}$/.exec(value);
+  if (scoped) return { number: Number(scoped[1]), locator: Number(scoped[2]) };
+  const legacy = /^cardbush-source:([1-9]\d{0,8})-[a-f0-9]{16}$/.exec(value);
+  return legacy ? { number: Number(legacy[1]), locator: Number(legacy[1]) } : undefined;
+}
 export function parseSourceMemoReference(value: string): number | undefined {
-  const match = /^cardbush-source:([1-9]\d{0,8})-([a-f0-9]{16})$/.exec(value);
-  return match ? Number(match[1]) : undefined;
+  return parseSourceMemoIdentity(value)?.number;
 }
 const text = z.string().trim().min(1);
 export const sourceLocatorSchema = z.object({
@@ -35,3 +43,14 @@ export const sourceMemoResolutionSchema = z.discriminatedUnion('status', [
 export type SourceMemo = z.infer<typeof sourceMemoSchema>;
 export type SourceEvidence = z.infer<typeof sourceEvidenceSchema>;
 export type SourceMemoResolution = z.infer<typeof sourceMemoResolutionSchema>;
+
+export const sourceReferencesRequestSchema = z.object({
+  sessionId: text.max(512), turnId: text.max(512),
+  numbers: z.array(z.number().int().min(1).max(999_999_999)).min(1).max(32),
+}).strict();
+export const sourceReferencesSchema = z.array(z.object({
+  number: z.number().int().min(1).max(999_999_999),
+  reference: text.refine(value => parseSourceMemoReference(value) !== undefined),
+}).refine(value => parseSourceMemoReference(value.reference) === value.number)).max(32);
+export type SourceReferencesRequest = z.infer<typeof sourceReferencesRequestSchema>;
+export type SourceReferences = z.infer<typeof sourceReferencesSchema>;

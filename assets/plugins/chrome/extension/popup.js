@@ -6,6 +6,10 @@ const title = document.querySelector('#tab-title');
 const origin = document.querySelector('#tab-origin');
 const siteAccess = document.querySelector('#site-access');
 const pairingDetails = document.querySelector('#pairing-details');
+const extensionUpdate = document.querySelector('#extension-update');
+const extensionUpdateMessage = document.querySelector('#extension-update-message');
+const reloadExtension = document.querySelector('#reload-extension');
+const popupBuild = globalThis.CARDBUSH_CONNECTOR_BUILD;
 const buttons = [...document.querySelectorAll('button[data-action]')];
 let selectedScopeId = '';
 let lastPairingState;
@@ -14,6 +18,36 @@ let refreshing = false;
 let revision = 0;
 let actionError = '';
 let lastScopeOptions = '';
+
+function needsReload(state) {
+  // Older workers have no build ID. They must also be reloaded, even when
+  // getManifest() in a freshly opened popup already reports the new version.
+  return Boolean(popupBuild) && state.runtimeBuild !== popupBuild;
+}
+
+reloadExtension.addEventListener('click', async () => {
+  if (busy) return;
+  busy = true;
+  revision++;
+  actionError = '';
+  reloadExtension.disabled = true;
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const state = await chrome.runtime.sendMessage({ action: 'status' });
+    if (state?.ok === false) throw new Error(state.error?.message || '无法读取连接状态');
+    if (!needsReload(state)) return;
+    if (state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0) {
+      throw new Error('连接或控制仍在进行。请先在 CardBush 中关闭连接器，再重新加载扩展。');
+    }
+    // Reload the existing installation. Never clear storage or replace pairing.
+    chrome.runtime.reload();
+  } catch (error) {
+    actionError = error instanceof Error ? error.message : String(error);
+  } finally {
+    busy = false;
+    await refresh();
+  }
+});
 
 scopeSelect.addEventListener('change', () => {
   revision++;
@@ -26,6 +60,7 @@ buttons.forEach((button) => button.addEventListener('click', async () => {
   revision++;
   actionError = '';
   buttons.forEach((candidate) => { candidate.disabled = true; });
+  reloadExtension.disabled = true;
   try {
     const result = await chrome.runtime.sendMessage({
       action: button.dataset.action,
@@ -55,9 +90,16 @@ async function refresh(reconnect = false) {
     });
     if (busy || requestRevision !== revision) return;
     if (state?.ok === false) throw new Error(state.error?.message || '无法读取连接状态');
-    if (lastPairingState !== state.hasPairing) {
-      pairingDetails.open = !state.hasPairing;
-      lastPairingState = state.hasPairing;
+    const staleWorker = needsReload(state);
+    extensionUpdate.hidden = !staleWorker;
+    reloadExtension.disabled = state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0;
+    extensionUpdateMessage.textContent = reloadExtension.disabled
+      ? '新版扩展尚未生效。请先在 CardBush 中关闭连接器，再重新加载扩展并开启连接器。已保存的配对与网站授权会保留。'
+      : '新版扩展尚未生效。重新加载后将使用已保存的配对和网站授权，无需重新生成配对码。';
+    const pairingState = staleWorker ? 'outdated' : Boolean(state.hasPairing);
+    if (lastPairingState !== pairingState) {
+      pairingDetails.open = !staleWorker && !state.hasPairing;
+      lastPairingState = pairingState;
     }
     const candidates = Array.isArray(state.scopeCandidates) ? state.scopeCandidates : [];
     if (selectedScopeId && !candidates.some((candidate) => candidate.id === selectedScopeId)) {
@@ -80,7 +122,9 @@ async function refresh(reconnect = false) {
       lastScopeOptions = scopeOptions;
     }
     scopePicker.hidden = candidates.length <= 1;
-    connection.textContent = actionError || (state.pairingRequired
+    connection.textContent = actionError || (staleWorker
+      ? '扩展后台仍在运行旧版本，需要重新加载。'
+      : state.pairingRequired
       ? '尚未配对，或配对已被移除。请填写 CardBush 设置中的配对码。'
       : !state.connectorEnabled
       ? '扩展连接已关闭，配对与网站授权已保留。点击「连接 CardBush」即可恢复。'
@@ -91,9 +135,11 @@ async function refresh(reconnect = false) {
       : state.nativeConnecting
         ? '正在使用已保存的配对连接 CardBush…'
         : `CardBush 暂时离线，将自动重连。请确认应用和连接器已开启；无需重复授权。${state.lastError ? `\n${state.lastError}` : ''}`);
-    connection.classList.toggle('offline', Boolean(actionError) || state.pairingRequired);
-    connection.classList.toggle('waiting', !state.nativeConnected && !state.pairingRequired && !actionError);
-    siteAccess.textContent = state.allowAllSites
+    connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
+    connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
+    siteAccess.textContent = staleWorker
+      ? '已保存的授权不会因重新加载而清除；完整授权状态将在新版后台加载后显示。'
+      : state.allowAllSites
       ? '已保存：允许隔离组访问全部网站。退出或重启后仍有效，可随时撤销。'
       : state.allowedSiteCount > 0
         ? `已保存 ${state.allowedSiteCount} 个网站的授权。退出或重启后仍有效。`
@@ -110,6 +156,7 @@ async function refresh(reconnect = false) {
       button.disabled = permissionAction && (!state.nativeConnected || !state.activeScope || !state.origin);
       if (button.dataset.action === 'disable_connector') button.disabled = !state.connectorEnabled;
       if (button.dataset.action === 'reconnect') button.disabled = !state.hasPairing || state.nativeConnected || state.nativeConnecting;
+      if (staleWorker && ['pair', 'reconnect', 'allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action)) button.disabled = true;
       if (button.dataset.action === 'allow_all') button.textContent = state.allowAllSites
         ? '复制当前页 · 已允许全部网站'
         : '复制并允许隔离组访问全部网站';

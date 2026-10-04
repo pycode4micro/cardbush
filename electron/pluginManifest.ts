@@ -22,24 +22,22 @@ export async function findPluginPackageRoot(root: string): Promise<string> {
   }
 }
 
-/** One read model for preview, installation and execution. Never rewrites the package. */
-export async function resolvePluginManifest(root: string, platform: string = process.platform) {
-  const portable = await jsonIfPresent(join(root, manifestFiles.portable));
+/** Share manifest precedence and marketplace overlays with metadata-only previews. */
+export async function readPluginManifestHeader(read: (file: string) => Promise<Json | null>, entry: Json = {}) {
+  const portable = await read(manifestFiles.portable);
   if (portable?.$schema && String(portable.$schema).startsWith('https://agent-plugins.org/') && portable.$schema !== pluginSchema) {
     throw new Error(`Unsupported Agent Plugins schema: ${portable.$schema}`);
   }
   const recognized = portable?.$schema === pluginSchema;
-  const receipt = await jsonIfPresent(join(root, '.cardbush-marketplace.json'));
-  const entry = object(receipt?.entry);
   const inline = object(portable?.extensions)['com.openai'];
   // An inline OpenAI object completely replaces the compatibility overlay.
-  const native = recognized && isObject(inline) ? null : await jsonIfPresent(join(root, manifestFiles.openai));
-  const claude = recognized || native ? null : await jsonIfPresent(join(root, manifestFiles.claude));
+  const native = recognized && isObject(inline) ? null : await read(manifestFiles.openai);
+  const claude = recognized || native ? null : await read(manifestFiles.claude);
   const entryOnly = !recognized && !native && !claude && entry.strict === false && typeof entry.name === 'string';
   if (!recognized && !native && !claude && !entryOnly) throw Object.assign(new Error('No supported plugin.json, .codex-plugin/plugin.json or .claude-plugin/plugin.json was found.'), { code: 'ENOENT' });
   const format: PluginFormat = recognized ? 'agent-plugins' : native ? 'openai' : 'claude';
-  const manifestPath = recognized ? join(root, manifestFiles.portable) : native ? join(root, manifestFiles.openai)
-    : claude ? join(root, manifestFiles.claude) : join(root, '.cardbush-marketplace.json');
+  const manifestFile = recognized ? manifestFiles.portable : native ? manifestFiles.openai
+    : claude ? manifestFiles.claude : '.cardbush-marketplace.json';
   const overlay = recognized ? object(isObject(inline) ? inline : native) : native ?? claude ?? { name: entry.name };
   const manifest: Json = recognized ? { ...portable, interface: overlay.interface, hooks: overlay.hooks, apps: overlay.apps }
     : { ...overlay };
@@ -55,6 +53,15 @@ export async function resolvePluginManifest(root: string, platform: string = pro
     manifest.interface = { ...object(manifest.interface), category: entry.category || 'Other' };
   }
   manifest.version ||= '0.0.0';
+  return { manifest, format, manifestFile, issues };
+}
+
+/** One read model for installation and execution. Never rewrites the package. */
+export async function resolvePluginManifest(root: string, platform: string = process.platform) {
+  const receipt = await jsonIfPresent(join(root, '.cardbush-marketplace.json'));
+  const entry = object(receipt?.entry);
+  const { manifest, format, manifestFile, issues } = await readPluginManifestHeader(file => jsonIfPresent(join(root, file)), entry);
+  const manifestPath = join(root, manifestFile), recognized = format === 'agent-plugins';
   if (recognized) {
     // Portable components have fixed locations. Overlays cannot add or replace them.
     manifest.skills = await exists(join(root, 'skills')) ? ['./skills'] : [];

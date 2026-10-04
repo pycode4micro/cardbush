@@ -39,6 +39,26 @@ export class PageHistory<Route> {
     this.publish();
     this.schedule();
   }
+  /** A named in-page return targets its parent view, never another app route.
+   * Reuse that visit when present so Forward still works; otherwise navigate
+   * within the current route (for example after old history was evicted). */
+  returnToView<T>(key: string, fallback: T, update: T | ((prior: T) => T), matches: (candidate: T, target: T) => boolean = equal) {
+    const prior = this.read(key, fallback);
+    const value = typeof update === 'function' ? (update as (prior: T) => T)(prior) : update;
+    if (equal(prior, value)) return;
+    this.flush();
+    for (let index = this.index - 1; index >= 0; index--) {
+      const entry = this.entries[index];
+      if (!equal(entry.route, this.route) || !this.available(entry.route)) continue;
+      const candidate = Object.hasOwn(entry.views, key) ? entry.views[key] as T : fallback;
+      if (!matches(candidate, value)) continue;
+      // Keep the parent's latest scroll position while retaining its own filters.
+      this.entries[index] = { ...entry, views: { ...entry.views, [key]: value } };
+      this.moveTo(index);
+      return;
+    }
+    this.update(key, fallback, value);
+  }
   private schedule() {
     if (this.queued) return;
     this.queued = true;
@@ -67,6 +87,9 @@ export class PageHistory<Route> {
     this.flush();
     const index = this.target(delta);
     if (index < 0) return;
+    this.moveTo(index);
+  }
+  private moveTo(index: number) {
     const next = this.entries[index];
     this.pendingRoute = equal(this.route, next.route) ? undefined : next.route;
     this.index = index; this.route = next.route; this.views = next.views;

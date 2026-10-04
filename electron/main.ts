@@ -1967,7 +1967,7 @@ registerVoiceIpc(() => mainWindow, {
   // Use the shared download route: native net.fetch rejects manual redirects,
   // but model archives must inspect every GitHub release redirect before following it.
   download: async (input, init) => (await pluginNetworking()).fetch(input, init),
-  speech: (input, init) => session.fromPartition('cardbush-model-network').fetch(input instanceof URL ? input.toString() : input, init),
+  speech: (input, init) => modelFetch(input, init),
 });
 
 ipcMain.handle('window:minimize', () => {
@@ -2352,7 +2352,7 @@ async function ensureRuntimeHostReady(): Promise<RuntimeHostController> {
 ipcMain.handle(
   'network:set-proxy',
   async (
-    _,
+    event,
     proxy: {
       mode: 'none' | 'system' | 'manual';
       httpProxy: string;
@@ -2360,9 +2360,8 @@ ipcMain.handle(
       noProxy: string;
     },
   ) => {
+    assertMainWindowSender(event.sender.id);
     await applyProxySettings(proxy);
-    // Async MCP scheduling replaces only connections whose effective route changed.
-    await productHostController?.refreshMcp();
   },
 );
 
@@ -2375,8 +2374,9 @@ ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string, options
   if (!token) {
     throw new Error('Missing API key');
   }
-  const response = await session.fromPartition('cardbush-model-network').fetch(endpoint, {
+  const response = await modelFetch(endpoint, {
     method: 'GET',
+    signal: AbortSignal.timeout(15_000),
     headers: {
       accept: 'application/json',
       ...(protocol === 'anthropic_messages' && modelApiGateway(root) !== 'openrouter' ? { 'x-api-key': token, 'anthropic-version': '2023-06-01' } : { authorization: `Bearer ${token}` }),
@@ -2722,6 +2722,7 @@ ipcMain.handle('plugins:prepare-ui-network', async event => {
   await refreshPluginUiNetwork();
 });
 const pluginFetch: typeof fetch = async (input, init) => (await pluginNetworking()).fetch(input, init);
+const modelFetch: typeof fetch = async (input, init) => (await pluginNetworking()).fetchModel(input, init);
 let mcpDesktopHost: McpDesktopHost | undefined;
 let openAiAccountPromise: Promise<import('./openAiAccount.mjs', { with: { 'resolution-mode': 'import' } }).OpenAiAccount> | undefined;
 function notifyAccountsChanged() {
@@ -2732,7 +2733,7 @@ function openAiDesktop() {
   return openAiAccountPromise ??= import('./openAiAccount.mjs').then(({ OpenAiAccount, OPENAI_ACCOUNT_CREDENTIAL_KEY }) => new OpenAiAccount({
     read: () => mcpDesktop().handle('credentials.read', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY }, new AbortController().signal),
     write: value => mcpDesktop().handle('credentials.write', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY, value }, new AbortController().signal),
-    fetch: pluginFetch,
+    fetch: modelFetch,
     openUrl: url => shell.openExternal(url),
     changed: notifyAccountsChanged,
   }));
@@ -2742,7 +2743,7 @@ function siwcDesktop() {
   return siwcAccountsPromise ??= import('./siwcAccounts.mjs').then(({ SiwcAccounts, SIWC_CREDENTIAL_KEY }) => new SiwcAccounts({
     read: () => mcpDesktop().handle('credentials.read', { key: SIWC_CREDENTIAL_KEY }, new AbortController().signal),
     write: value => mcpDesktop().handle('credentials.write', { key: SIWC_CREDENTIAL_KEY, value }, new AbortController().signal),
-    fetch: pluginFetch, openUrl: url => shell.openExternal(url), changed: notifyAccountsChanged,
+    fetch: modelFetch, openUrl: url => shell.openExternal(url), changed: notifyAccountsChanged,
     invalidated: accountId => { void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
       command: { kind: 'runtime.siwc_account_changed', payload: { accountId } } }).catch(() => {}); },
   }));
@@ -2893,10 +2894,11 @@ function pluginMarkets() {
     userPluginRoot: path.join(app.getPath('userData'), 'plugins'),
     bundledPluginRoot: path.join(app.getAppPath(), 'assets', 'plugins'),
     fetch: pluginFetch,
+    downloadRoute: async url => (await pluginNetworking()).downloadRoute(url),
     replacePlugin: replaceInstalledProductPlugin,
-    runAcquisition: async (command, args, cwd) => {
+    runAcquisition: async (command, args, cwd, signal) => {
       const env = await (await pluginNetworking()).environment();
-      return runAcquisitionCommand(command, command === 'git' ? ['-c', `http.proxy=${env.HTTPS_PROXY}`, ...args] : args, cwd, env);
+      return runAcquisitionCommand(command, command === 'git' ? ['-c', `http.proxy=${env.HTTPS_PROXY}`, ...args] : args, cwd, env, signal);
     },
   });
 }
@@ -2962,6 +2964,14 @@ ipcMain.handle('plugins:market-preview', async (event, sourceId: string, name: s
 ipcMain.handle('plugins:market-install', async (event, token: string) => {
   assertMainWindowSender(event.sender.id);
   return pluginMarkets().install(String(token));
+});
+ipcMain.handle('plugins:market-install-progress', (event, token: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().installProgress(String(token));
+});
+ipcMain.handle('plugins:market-install-cancel', (event, token: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().cancelInstall(String(token));
 });
 ipcMain.handle('plugins:market-presentation', async (event, sourceId: string, name: string) => {
   assertMainWindowSender(event.sender.id);
@@ -4126,7 +4136,10 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           if (input.action === 'execute') return manager.execute(input.uri, input.owner, input.name, input.input, signal);
           throw Error('Unknown SSH workspace operation.');
         }
-        if (operation === 'network.configuration') return (await pluginNetworking()).configuration();
+        if (operation === 'network.configuration') {
+          const network = await pluginNetworking();
+          return (payload as { model?: boolean })?.model === true ? network.modelConfiguration() : network.configuration();
+        }
         if (operation === 'network.route') return (await pluginNetworking()).endpoint(payload);
         if (operation === 'automation.changed') { for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'automation:changed'); return; }
         if (operation === 'automation.prepare-model') {
@@ -4970,41 +4983,32 @@ function isAllowedAppNavigation(targetUrl: string) {
 }
 
 let sharedModelProxy: { mode: 'none' | 'system' | 'manual'; httpProxy: string; httpsProxy: string; noProxy: string } = { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' };
-async function applyProxySettings(proxy: {
+let proxyUpdate: Promise<void> = Promise.resolve();
+function applyProxySettings(proxy: {
   mode: 'none' | 'system' | 'manual';
   httpProxy: string;
   httpsProxy: string;
   noProxy: string;
 }) {
-  sharedModelProxy = { ...proxy };
-  (await pluginNetworking()).setModel(proxy);
-  await refreshPluginUiNetwork();
-  const modelSession = session.fromPartition('cardbush-model-network');
-  if (proxy.mode === 'system') {
-    await modelSession.setProxy({ mode: 'system' });
-    return;
-  }
-  if (proxy.mode === 'none') {
-    await modelSession.setProxy({ mode: 'direct' });
-    return;
-  }
-  const rules = [
-    proxy.httpProxy.trim() ? `http=${normalizeProxyRule(proxy.httpProxy)}` : '',
-    proxy.httpsProxy.trim() ? `https=${normalizeProxyRule(proxy.httpsProxy)}` : '',
-  ].filter(Boolean);
-  await modelSession.setProxy({
-    mode: rules.length > 0 ? 'fixed_servers' : 'direct',
-    proxyRules: rules.join(';'),
-    proxyBypassRules: proxy.noProxy.trim(),
+  const next = { ...proxy };
+  const pending = proxyUpdate.then(async () => {
+    const network = await pluginNetworking(), previous = network.modelConfiguration();
+    network.setModel(next);
+    try {
+      await refreshPluginUiNetwork();
+      // Async MCP scheduling replaces only connections whose effective route changed.
+      await productHostController?.refreshMcp();
+    }
+    catch (error) {
+      network.setModel(previous);
+      await refreshPluginUiNetwork().catch(() => undefined);
+      await productHostController?.refreshMcp().catch(() => undefined);
+      throw error;
+    }
+    sharedModelProxy = network.modelConfiguration();
   });
-}
-
-function normalizeProxyRule(value: string) {
-  const trimmed = value.trim();
-  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-  return `http://${trimmed}`;
+  proxyUpdate = pending.catch(() => undefined);
+  return pending;
 }
 
 type WallpaperAccentResult = {

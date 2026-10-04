@@ -31,6 +31,7 @@ import {
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
+import { GuidanceActivity, guidanceActivityMessages } from '../chatMessages/GuidanceActivity';
 import { isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
 import {
   MessageListFooter,
@@ -398,6 +399,8 @@ export function ChatPanel({
       : normalized;
     return projectRenderableChatMessages(activeTranscript);
   }, [activeTurnId, visibleMessages, sending]);
+  const guidanceActivities = useMemo(() => guidanceActivityMessages(renderMessages, sending, activeTurnId),
+    [renderMessages, sending, activeTurnId]);
   const lastAssistantByTurn = useMemo(() => {
     const latest = new Map<string, string>();
     for (const message of renderMessages) if (message.role === 'assistant' && message.turnId) latest.set(message.turnId, message.id);
@@ -2795,6 +2798,10 @@ export function ChatPanel({
                       onOpenScene={openScene}
 
                     />
+                    {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
+                      conversationId={activeConversationId} turnId={activeTurnId} language={language}
+                      model={selectedModelConfig?.modelName ?? selectedModel} thinkingVisible={thinkingVisible}
+                      stopping={stopping} retryAvailable={guidanceAvailable} onRetry={onRetryGuidance} />}
                     {(activeAssistantForRender?.message.id === message.id || goalMessageId === message.id) && (
                       <TurnRuntimeDetails
                         key={`progress:${activeConversationId}:${message.turnId ?? message.id}`}

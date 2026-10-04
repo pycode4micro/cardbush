@@ -5,6 +5,20 @@ import { HostProcessResourceOwner } from '../dist-electron/hostProcesses.js';
 import { McpHostBridge, handleMcpHostRequest } from '../dist-electron/mcpHostBridge.js';
 import { getProcessResourceGovernor } from '../packages/bush-runtime/dist/processes.js';
 
+test('memory admission diagnostics survive the private host RPC', async () => {
+  const details = { limitingBudget: 'system_memory', availableMemoryBytes: 100, startupMemoryBytes: 200 };
+  const bridge = new McpHostBridge(message => {
+    if (message.type === 'request') void handleMcpHostRequest(message, new AbortController().signal, async () => {
+      throw Object.assign(new Error('Memory admission blocked'), { code: 'resource_memory_pressure', details });
+    }).then(response => bridge.receive(JSON.parse(JSON.stringify(response))));
+  });
+  await assert.rejects(bridge.request('resources.acquire', {}), error => {
+    assert.equal(error.code, 'resource_memory_pressure');
+    assert.deepEqual(error.details, details);
+    return true;
+  });
+});
+
 test('main and independent Runtime owners share admission through private RPC, preserving error codes', async t => {
   const governor = getProcessResourceGovernor();
   const previous = { ...governor.limits };

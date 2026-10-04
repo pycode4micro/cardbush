@@ -140,6 +140,9 @@ export const mcpSnapshotResultSchema = z.object({
     health: z.enum(["ready", "restarting", "unavailable", "auth_required", "configuration_required"]).default("ready"),
     restartAttempts: z.number().int().nonnegative().default(0),
     lastError: z.string().optional(),
+    // Keep the last exit attributable after the connection recovers.
+    lastFailure: z.object({ code: z.string(), message: z.string(), occurredAt: z.string().datetime(),
+      details: z.record(z.string(), z.unknown()).optional() }).optional(),
     // Background connection progress; tools still describe the currently published catalog.
     updateState: z.enum(['queued', 'connecting', 'waiting_for_resources', 'waiting_for_catalog', 'failed']).optional(),
     tools: z.array(z.object({

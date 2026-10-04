@@ -50,6 +50,7 @@ interface ConnectedServer {
   restartAttempts: number;
   readySince?: number;
   lastError?: string;
+  lastFailure?: { code: string; message: string; occurredAt: string; details?: Record<string, unknown> };
   waitingForResources?: boolean;
   restartPromise?: Promise<void>;
   authorization?: Promise<void>;
@@ -97,6 +98,7 @@ export interface McpClientManagerOptions {
     transportKind: McpServerSnapshot["transport"]["kind"];
     recoveryOwner: "cardbush_supervisor";
     error?: string;
+    failure?: ConnectedServer['lastFailure'];
   }) => void;
   onServerStderr?: (entry: { serverId: string; message: string }) => void;
 }
@@ -242,6 +244,7 @@ export class McpClientManager {
           ...(update ? { updateState: update.state } : current?.waitingForResources ? { updateState: 'waiting_for_resources' }
             : removed.some(c => c.config.id === id) ? { updateState: 'waiting_for_catalog' } : {}),
           ...(lastError ? { lastError } : {}),
+          ...(current?.lastFailure ? { lastFailure: current.lastFailure } : {}),
           // Only published tools belong to the active catalog, including while a replacement connects.
           tools: current?.tools.map(tool => ({ remoteName: tool.remote.name, runtimeName: tool.runtimeName })) ?? [],
         };
@@ -395,14 +398,19 @@ export class McpClientManager {
   #publishAvailable(): void {
     const desired = this.#pending;
     if (!desired || this.#applicationError) return;
-    if (!this.#canApply()) { this.#schedulePublication(); return; }
+    const idle = this.#canApply();
+    if (!idle && this.#atomicUpdate) { this.#schedulePublication(); return; }
     if (this.#atomicUpdate && [...this.#updates.values()].some(update => !update.connection && update.state !== 'failed')) return;
-    const next = desired.servers.flatMap(server => {
+    // Adding optional tools cannot invalidate an in-flight call. Replacements
+    // and removals still wait for idle and retain the existing connections.
+    const additions = [...this.#updates.values()].flatMap(update => update.connection &&
+      !this.#connections.some(connection => connection.config.id === update.config.id) ? [update.connection] : []);
+    const next = idle ? desired.servers.flatMap(server => {
       const update = this.#updates.get(server.id);
       if (update?.state === 'failed') return [];
       const connection = update?.connection ?? this.#connections.find(c => c.config.id === server.id);
       return connection ? [connection] : [];
-    });
+    }) : [...this.#connections, ...additions];
     try {
       if (next.length !== this.#connections.length || next.some((connection, index) => connection !== this.#connections[index])) {
         this.#registry.replaceOwned('runtime_mcp', next.flatMap(connection => connection.tools.map(tool => this.#registration(connection, tool))));
@@ -412,12 +420,15 @@ export class McpClientManager {
     this.#connections = next;
     for (const [id, update] of this.#updates) if (update.connection && next.includes(update.connection)) this.#updates.delete(id);
     this.#trackCleanup(this.#retireConnections(previous.filter(connection => !next.includes(connection))));
-    if ([...this.#updates.values()].every(update => update.state === 'failed')) {
+    const pendingRetirement = next.some(connection => this.#updates.has(connection.config.id) ||
+      !desired.servers.some(server => server.id === connection.config.id));
+    if (!pendingRetirement && [...this.#updates.values()].every(update => update.state === 'failed')) {
       this.#snapshot = desired;
       this.#pending = undefined;
       clearTimeout(this.#retryTimer);
       this.#retryTimer = undefined;
     }
+    if (!idle && this.#pending) this.#schedulePublication();
   }
 
   #failUpdate(error: unknown): void {
@@ -641,6 +652,7 @@ export class McpClientManager {
               health: connection.health,
               restartAttempts: connection.restartAttempts,
               retryable: true,
+              ...(connection.lastFailure ? { failure: connection.lastFailure } : {}),
             },
           );
         }
@@ -690,13 +702,15 @@ export class McpClientManager {
           this.#invalidateConnection(connection, activeClient, error);
           throw codedMcpError(
             "mcp_service_connection_lost",
-            `MCP service ${connection.config.id} lost its connection and is being restarted.`,
+            `MCP service ${connection.config.id} lost its connection; service recovery does not resume interrupted background jobs. ${connection.lastFailure?.message ?? errorMessage(error)}`,
             {
               serverId: connection.config.id,
-              health: "restarting",
+              health: connection.health,
               transportKind: connection.config.transport.kind,
               recoveryOwner: "cardbush_supervisor",
               retryable: true,
+              interruptedCallReplayed: false,
+              ...(connection.lastFailure ? { failure: connection.lastFailure } : {}),
             },
           );
         }
@@ -770,6 +784,14 @@ export class McpClientManager {
     failedClient: Client,
     error: unknown,
   ): void {
+    // EOF may race the native exit receipt. Keep the later, specific resource
+    // diagnosis without starting another recovery or overwriting a new client.
+    if (!connection.retired && connection.client === failedClient && connection.health === 'restarting' && error instanceof McpProcessError) {
+      connection.lastError = error.message;
+      connection.lastFailure = { code: error.code, message: error.message,
+        occurredAt: connection.lastFailure?.occurredAt ?? new Date().toISOString(), ...(error.details ? { details: error.details } : {}) };
+      this.#publishServiceState(connection, 'cardbush_supervisor');
+    }
     if (
       connection.retired ||
       connection.client !== failedClient ||
@@ -780,6 +802,8 @@ export class McpClientManager {
     if (connection.readySince && Date.now() - connection.readySince >= 60_000) connection.restartAttempts = 0;
     connection.health = "restarting";
     connection.lastError = errorMessage(error);
+    connection.lastFailure = { code: String(mcpErrorCode(error) ?? 'mcp_connection_closed'), message: connection.lastError, occurredAt: new Date().toISOString(),
+      ...(error instanceof McpProcessError && error.details ? { details: error.details } : {}) };
     this.#publishServiceState(connection, "cardbush_supervisor");
     connection.restartPromise = this.#restartConnection(connection, failedClient)
       .catch((restartError) => {
@@ -933,6 +957,7 @@ export class McpClientManager {
       transportKind: connection.config.transport.kind,
       recoveryOwner,
       ...(connection.lastError ? { error: connection.lastError } : {}),
+      ...(connection.lastFailure ? { failure: connection.lastFailure } : {}),
     });
   }
 }
@@ -1117,6 +1142,7 @@ function drainTransportStderr(
 }
 
 function isMcpConnectionFailure(error: unknown): boolean {
+  if (error instanceof McpProcessError) return true;
   const code = mcpErrorCode(error);
   return (
     code === SdkErrorCode.ConnectionClosed ||

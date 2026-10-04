@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
-import { usePageState, usePageBack } from '../navigation/PageNavigation';
+import { usePageState } from '../navigation/PageNavigation';
 
 export type ManageTab = 'plugins' | 'apps' | 'mcp';
 export type PluginPage =
@@ -21,7 +21,7 @@ export function usePluginNavigation() {
   const rootRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(0);
   const focusTargets = useRef(new Map<number, HTMLElement>());
-  const [entries, setEntries] = usePageState<Entry[]>('plugin-pages', [{ id: 0, page: { kind: 'catalog' }, scrollTop: 0 }]);
+  const [entries, setEntries, returnToEntries] = usePageState<Entry[]>('plugin-pages', [{ id: 0, page: { kind: 'catalog' }, scrollTop: 0 }]);
   nextId.current = Math.max(nextId.current, ...entries.map(entry => entry.id));
   const current = entries[entries.length - 1];
 
@@ -35,7 +35,8 @@ export function usePluginNavigation() {
       return [...items.slice(0, -1), { ...items[items.length - 1], scrollTop }, entry];
     });
   }, [setEntries]);
-  const back = usePageBack(() => setEntries(items => items.length > 1 ? items.slice(0, -1) : items));
+  const back = useCallback(() => returnToEntries(items => items.length > 1 ? items.slice(0, -1) : items,
+    (candidate, target) => candidate.length === target.length && candidate.every((entry, index) => entry.id === target[index].id)), [returnToEntries]);
   const reset = useCallback(() => {
     setEntries([{ id: ++nextId.current, page: { kind: 'catalog' }, scrollTop: 0 }]);
   }, [setEntries]);
