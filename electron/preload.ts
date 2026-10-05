@@ -97,6 +97,26 @@ type ShadowWindowPayload = {
 
 const desktopApi = {
   voice: {
+    setCallActive: (active: boolean) => ipcRenderer.invoke('voice:call-active', active),
+    realtime: {
+      settings: () => ipcRenderer.invoke('voice:realtime-settings'),
+      saveSettings: (input: import('./realtimeVoiceTypes').RealtimeVoiceSettingsInput) => ipcRenderer.invoke('voice:realtime-save', input),
+      start: (input: Parameters<import('./realtimeVoiceTypes').RealtimeVoiceApi['start']>[0]) => ipcRenderer.invoke('voice:realtime-start', input),
+      audio: (id: string, pcm: ArrayBuffer) => ipcRenderer.invoke('voice:realtime-audio', id, pcm),
+      control: (id: string, action: 'mute' | 'unmute' | 'interrupt' | 'commit') => ipcRenderer.invoke('voice:realtime-control', id, action),
+      results: (id: string, results: import('./realtimeVoiceTypes').RealtimeToolResult[]) => ipcRenderer.invoke('voice:realtime-results', id, results),
+      notify: (id: string, result: string) => ipcRenderer.invoke('voice:realtime-notify', id, result),
+      compacted: (id: string, jobId: string, result?: import('./realtimeVoiceTypes').RealtimeContextResult) => ipcRenderer.invoke('voice:realtime-compacted', id, jobId, result),
+      playback: (id: string, speaking: boolean) => ipcRenderer.invoke('voice:realtime-playback', id, speaking),
+      forgetHistory: (sessionId?: string) => ipcRenderer.invoke('voice:realtime-forget-history', sessionId),
+      setVoice: (id: string, voice: 'female' | 'male') => ipcRenderer.invoke('voice:realtime-voice', id, voice),
+      close: (id: string) => ipcRenderer.invoke('voice:realtime-close', id),
+      onEvent: (callback: (event: import('./realtimeVoiceTypes').RealtimeVoiceEvent) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, event: import('./realtimeVoiceTypes').RealtimeVoiceEvent) => callback(event);
+        ipcRenderer.on('voice:realtime-event', handler);
+        return () => ipcRenderer.removeListener('voice:realtime-event', handler);
+      },
+    },
     modelStatus: (kind?: import('./voiceTypes').VoiceModelKind) => ipcRenderer.invoke('voice:model-status', kind),
     installModel: (kind?: import('./voiceTypes').VoiceModelKind) => ipcRenderer.invoke('voice:model-install', kind),
     cancelModelInstall: (kind?: import('./voiceTypes').VoiceModelKind) => ipcRenderer.invoke('voice:model-cancel', kind),

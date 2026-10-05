@@ -6,6 +6,7 @@ import { kokoroPresets } from './kokoroPresets';
 import { VoiceModelPanel } from './VoiceModelPanel';
 import { SpeakerLockPanel } from './SpeakerLockPanel';
 import { CustomSpeechPanel } from './CustomSpeechPanel';
+import { RealtimeVoiceSettingsPanel } from './RealtimeVoiceSettingsPanel';
 import './voice.css';
 
 export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
@@ -61,6 +62,7 @@ export function VoiceSettingsPanel({ language }: { language: 'zh' | 'en' }) {
     finally { playback.close(); if (player.current === playback) { player.current = undefined; if (alive.current) setPreview(false); } }
   };
   return <div className="settings-stack voice-settings">
+    <RealtimeVoiceSettingsPanel language={language} />
     <SettingsCard title={zh ? '语音识别' : 'Speech recognition'} subtitle={zh ? '识别为文字后交给当前 Agent，独立选择识别和朗读方式。' : 'Send recognized text to your current Agent. Recognition and speech are configured independently.'}>
       <SettingsSelect name="voice-microphone" title={zh ? '麦克风' : 'Microphone'} value={settings.microphoneId} disabled={!loaded || busy || preview} onChange={value => update('microphoneId', value)}>
         <option value="">{zh ? '系统默认麦克风' : 'System default microphone'}</option>

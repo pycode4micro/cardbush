@@ -956,38 +956,6 @@ body.sidebar-resizing .right-inspector {
   color: inherit;
 }
 
-.app.has-custom-background .sidebar-menu,
-.app.has-custom-background .sidebar-context-menu {
-  --menu-secondary: #e0dedb;
-  --menu-hover: #333333;
-  --menu-separator: #585858;
-  color: #f8f5ee;
-  background: #202020;
-  border-color: #343434;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 18px 42px rgba(0, 0, 0, 0.42);
-}
-
-.app.has-custom-background .sidebar-menu-button {
-  color: #f8f5ee;
-}
-
-.app.has-custom-background .sidebar-menu-button:hover:not(:disabled),
-.app.has-custom-background .sidebar-menu-button:focus-visible {
-  color: #fffdf8;
-  background: var(--menu-hover);
-}
-
-.app.has-custom-background .sidebar-menu-button.danger {
-  color: #f8f5ee;
-}
-
-.app.has-custom-background .sidebar-menu-button.danger:hover {
-  color: #ff776f;
-  background: rgba(255, 98, 90, 0.12);
-}
-
 .settings-dock {
   flex: 0 0 38px;
   margin-top: 10px;

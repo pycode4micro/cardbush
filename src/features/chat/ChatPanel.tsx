@@ -1,4 +1,4 @@
-import { ArrowDown, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { QueueActionsMenu } from '../composer/QueueActionsMenu';
@@ -28,7 +28,8 @@ import {
   normalizeChatMessagesForDisplay,
   normalizeActiveTurnTranscriptForDisplay,
 } from '../chatMessages/transcript/messageProjection';
-import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
+import { useConversationWorkSummary } from './useConversationWorkSummary';
+import { ScrollBottomButton } from './ScrollBottomButton';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
 import { GuidanceActivity, guidanceActivityMessages } from '../chatMessages/GuidanceActivity';
@@ -234,6 +235,7 @@ export function ChatPanel({
   onRefreshActiveSession,
   onSend,
   onVoiceSend,
+  voiceAgent,
   onRetryMessage,
   onRegenerate,
   onEditUserMessage,
@@ -336,6 +338,7 @@ export function ChatPanel({
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: string) => Promise<void | boolean>;
   onVoiceSend?: (text: string) => Promise<boolean>;
+  voiceAgent?: import('../voice/realtimeAgentBridge').RealtimeAgentExecutor;
   onRetryMessage: (message: ChatMessage) => Promise<void>;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
@@ -2491,9 +2494,8 @@ export function ChatPanel({
     ],
   );
 
-  const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
-  const [workSummaryDocked, setWorkSummaryDocked] = useState(false);
-  const [workSummaryAnchorRight, setWorkSummaryAnchorRight] = useState(12);
+  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence, updateWorkSummaryLayout, setWorkSummaryVisible } =
+    useConversationWorkSummary(chatBodyRef, activeConversationId, inspectorOpen);
   const openChangeReview = useCallback((filePath?: string) => {
     onOpenChangeReview(filePath);
   }, [onOpenChangeReview]);
@@ -2503,69 +2505,6 @@ export function ChatPanel({
     '--stream-status-height': `${streamStatusHeight}px`,
     '--work-summary-anchor-right': `${workSummaryAnchorRight}px`,
   } as CSSProperties;
-  const showWorkSummary = workSummaryVisible;
-  const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
-  const updateWorkSummaryLayout = useCallback((anchor?: HTMLElement | null) => {
-    const chatBody = chatBodyRef.current;
-    const toggle = anchor ?? chatBody
-      ?.closest('.chat-panel')
-      ?.querySelector<HTMLElement>('[data-work-summary-toggle]');
-    if (!chatBody || !toggle) return;
-    const bodyBounds = chatBody.getBoundingClientRect();
-    const toggleBounds = toggle.getBoundingClientRect();
-    // Measure the whole chat pane, not the content frame that we shrink.
-    // 1100px leaves about 600px of readable text beside the 336px summary.
-    setWorkSummaryDocked(bodyBounds.width >= 1100);
-    const maximumRight = Math.max(12, bodyBounds.width - 24);
-    setWorkSummaryAnchorRight(Math.min(
-      maximumRight,
-      Math.max(12, Math.round(bodyBounds.right - toggleBounds.right)),
-    ));
-  }, []);
-  useLayoutEffect(() => {
-    const chatBody = chatBodyRef.current;
-    if (!workSummaryPresence.mounted || !chatBody) return undefined;
-    updateWorkSummaryLayout();
-    // Sidebars can resize the chat without a window resize. Also remeasure
-    // when the inspector toggle disappears, moving the summary button.
-    const observer = new ResizeObserver(() => updateWorkSummaryLayout());
-    observer.observe(chatBody);
-    return () => observer.disconnect();
-  }, [workSummaryPresence.mounted, inspectorOpen, updateWorkSummaryLayout]);
-  useEffect(() => {
-    if (!showWorkSummary || workSummaryDocked) {
-      return undefined;
-    }
-    const closeOverlaySummary = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) {
-        return;
-      }
-      if (
-        target.closest('.conversation-work-summary') ||
-        target.closest('[data-work-summary-toggle]') ||
-        target.closest('[data-inspector-toggle]') ||
-        target.closest('.right-inspector')
-      ) {
-        return;
-      }
-      setWorkSummaryVisible(false);
-    };
-    const closeOverlaySummaryWithKeyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setWorkSummaryVisible(false);
-      }
-    };
-    document.addEventListener('pointerdown', closeOverlaySummary);
-    document.addEventListener('keydown', closeOverlaySummaryWithKeyboard);
-    return () => {
-      document.removeEventListener('pointerdown', closeOverlaySummary);
-      document.removeEventListener('keydown', closeOverlaySummaryWithKeyboard);
-    };
-  }, [showWorkSummary, workSummaryDocked]);
-  useEffect(() => {
-    setWorkSummaryVisible(false);
-  }, [activeConversationId]);
   const scrollBottomVisible = useScrollBottomPresence({
     scrollerRef: listScrollerRef, requestedVisible: showScrollBottom, scope: scrollPositionKey,
     enabled: !loading && !showWelcome, revision: scrollMountRevision,
@@ -2596,7 +2535,7 @@ export function ChatPanel({
 
   return (
     <VoiceConversation language={language} disabled={readOnlyActions || inputReadOnly}
-      target={{ environment: host?.environmentId ?? 'local', sessionId: runtimeSessionId, messages,
+      target={{ agent: voiceAgent, environment: host?.environmentId ?? 'local', sessionId: runtimeSessionId, messages,
         sending, stopping, activeTurnId, language, waiting: hasInteraction,
         send: (text, options) => handleComposerSend(text, { ...options, acknowledge: true }) }}>
     <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
@@ -2968,20 +2907,7 @@ export function ChatPanel({
           </div>
         )}
         </div>
-        <button
-          ref={setScrollBottomRef}
-          className={`scroll-bottom ${
-            !scrollBottomVisible ? 'hidden' : ''
-          }`}
-          type="button"
-          aria-label={language === 'zh' ? '回到底部' : 'Back to bottom'}
-          title={language === 'zh' ? '回到底部' : 'Back to bottom'}
-          aria-hidden={!scrollBottomVisible}
-          tabIndex={scrollBottomVisible ? 0 : -1}
-          onClick={scrollToBottom}
-        >
-          <ArrowDown size={18} strokeWidth={2} aria-hidden="true" />
-        </button>
+        <ScrollBottomButton ref={setScrollBottomRef} language={language} visible={scrollBottomVisible} onClick={scrollToBottom}/>
       </div>
     </div>
     </ComposerReferenceContext.Provider>

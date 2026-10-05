@@ -1,3 +1,12 @@
+import { ASSISTANT_CONVERSATION_COMMAND } from '@cardbush/bush-protocol';
+import { AssistantConversation } from './assistantConversation.js';
+import { ConversationJournal } from './conversationJournal.js';
+import { REALTIME_AGENT_TOOL_COMMAND, realtimeAgentToolRequestSchema } from '@cardbush/bush-protocol';
+import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextRequestSchema } from '@cardbush/bush-protocol';
+import { compactRealtimeContext } from './realtimeContextCompaction.js';
+import { REALTIME_TASK_SUMMARY_COMMAND, realtimeTaskSummaryRequestSchema } from '@cardbush/bush-protocol';
+import { summarizeRealtimeTask } from './realtimeTaskSummary.js';
+import { RealtimeAgentDispatcher } from './realtimeAgent.js';
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
 import { registerSourceMemoTools, resolveSourceMemo, resolveSourceReferences } from "./sourceMemo.js";
 import { deliveredMemoryIds, deliveredMemoryVersions, hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
@@ -331,6 +340,10 @@ export class InMemoryRuntimeHost {
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
+  #realtimeAgents?: RealtimeAgentDispatcher;
+  readonly #assistant: AssistantConversation;
+  readonly #remoteAgents?: InMemoryRuntimeHostOptions['remoteAgents'];
+  #voiceMaintenance = new Map<string, AbortController>();
   readonly #subagentResume: SubagentResumeStore;
   readonly #backgroundTools: BackgroundToolCalls;
   readonly #terminalNotifications: TerminalCompletionNotifications;
@@ -368,6 +381,7 @@ export class InMemoryRuntimeHost {
 
   constructor(options: InMemoryRuntimeHostOptions) {
     this.#remoteWorkspace = options.remoteWorkspace;
+    this.#remoteAgents = options.remoteAgents;
     this.#workspaceRedo = new WorkspaceRedoStore(options.dataRoot ? join(options.dataRoot, 'workspace-redo') : undefined);
     this.#provider = options.provider;
     this.#requestBackgroundPermission = options.requestBackgroundPermission;
@@ -394,6 +408,11 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
+    this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
+      provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
+      exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
+      delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
+    });
     this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.#provider);
     registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
@@ -679,6 +698,10 @@ export class InMemoryRuntimeHost {
         REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
         RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
         GET_RUNTIME_SUBAGENT_TASK_COMMAND,
+        REALTIME_AGENT_TOOL_COMMAND,
+        ASSISTANT_CONVERSATION_COMMAND,
+        REALTIME_CONTEXT_COMPACTION_COMMAND,
+        REALTIME_TASK_SUMMARY_COMMAND,
         LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
         GET_RUNTIME_PLAN_COMMAND,
         SET_RUNTIME_PLAN_COMMAND,
@@ -1113,6 +1136,39 @@ export class InMemoryRuntimeHost {
         return { sessionId: result.sessionId, turnIds: result.turnIds, restoredFiles: result.revertedFiles,
           restoredChangeIds: result.revertedChangeIds, restoredAt: result.revertedAt };
       }
+      case ASSISTANT_CONVERSATION_COMMAND: return this.#assistant.command(command.payload);
+      case REALTIME_AGENT_TOOL_COMMAND: {
+        if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
+        const input = realtimeAgentToolRequestSchema.parse(command.payload);
+        this.#realtimeAgents ??= new RealtimeAgentDispatcher({ sessions: this.#sessions, tasks: this.#subagentTasks, registry: this.#toolRegistry, remote: this.#remoteAgents,
+          read: id => this.#childConversation(id), guide: payload => this.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload }) });
+        return this.#withTurnAdmission(input.sessionId, () => this.#realtimeAgents!.execute(input));
+      }
+      case REALTIME_TASK_SUMMARY_COMMAND: {
+        if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
+        const input = realtimeTaskSummaryRequestSchema.parse(command.payload);
+        const task = this.#subagentTasks.get(input.sessionId, input.taskId);
+        if (!task || task.origin !== 'subagent' || task.status === 'running') throw Error('No completed child result in this conversation.');
+        const result = await summarizeRealtimeTask(this.#provider, input, task, signal);
+        const current = this.#subagentTasks.get(input.sessionId, input.taskId);
+        if (!current || current.revision !== task.revision || current.finalResponse !== task.finalResponse) throw Error('Child result changed while summarizing.');
+        return result;
+      }
+      case REALTIME_CONTEXT_COMPACTION_COMMAND: {
+        if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
+        const input = realtimeContextRequestSchema.parse(command.payload);
+        const key = input.job.sessionId;
+        if (this.#voiceMaintenance.has(key)) throw new Error('Voice context maintenance is already running.');
+        const controller = new AbortController();
+        this.#voiceMaintenance.set(key, controller);
+        try {
+          return await compactRealtimeContext(this.#provider, input,
+            this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
+            AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]),
+            this.#subagentTasks.list(key).sort((a,b)=>Number(a.status==='running')-Number(b.status==='running')).slice(-16)
+              .map(task=>({taskId:task.taskId,status:task.status,childSessionId:task.childSessionId})));
+        } finally { this.#voiceMaintenance.delete(key); }
+      }
       case GET_RUNTIME_SUBAGENT_TASK_COMMAND: {
         const identity = subagentTaskIdentitySchema.parse(command.payload);
         return this.#subagentTasks.get(identity.parentSessionId, identity.taskId) ?? null;
@@ -1162,13 +1218,21 @@ export class InMemoryRuntimeHost {
             messageId: guidance.messageId, accepted: true, queueDepth: this.#guidanceQueues.get(key)?.length ?? 0 };
         }
         if (!this.#activeTurns.has(key)) {
-          throw new Error(`Turn ${guidance.turnId} is not accepting guidance.`);
+          // A background child may have acknowledged dispatch but still be preparing
+          // its workspace. Accept parent guidance into its normal queue immediately.
+          const parent = guidance.metadata?.realtimeParentSessionId;
+          const taskId = guidance.metadata?.realtimeTaskId;
+          const starting = typeof parent === 'string' && typeof taskId === 'string' ? this.#subagentTasks.get(parent, taskId) : undefined;
+          if (guidance.metadata?.realtimeParent !== true || starting?.status !== 'running' ||
+            starting.childSessionId !== guidance.sessionId || starting.childTurnId !== guidance.turnId) {
+            throw new Error(`Turn ${guidance.turnId} is not accepting guidance.`);
+          }
         }
         const queue = this.#guidanceQueues.get(key) ?? [];
         let modelRequestInterrupted = false;
         if (!queue.some((entry) => entry.messageId === guidance.messageId)) {
           const child = this.#recovery.cacheRoots().find(item => item.request.sessionId === guidance.sessionId && item.request.turnId === guidance.turnId)?.request;
-          if (child?.metadata.agentRole === 'child') guidance.metadata = { ...guidance.metadata, subagentAuthor: 'user' };
+          if (child?.metadata.agentRole === 'child' || guidance.metadata?.realtimeParent === true) guidance.metadata = { ...guidance.metadata, subagentAuthor: guidance.metadata?.realtimeParent === true ? 'parent' : 'user' };
           queue.push({
             messageId: guidance.messageId,
             content: guidance.content,
@@ -1195,6 +1259,8 @@ export class InMemoryRuntimeHost {
       }
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
+        this.#assistant.close();
+        for (const controller of this.#voiceMaintenance.values()) controller.abort();
         await this.#memory.close();
         this.#mcpApps.close();
         clearInterval(this.#cacheRetentionTimer);
@@ -1336,7 +1402,7 @@ export class InMemoryRuntimeHost {
       const inputs = commit.inputMessages;
       const generated = checkpoint.request.messages.slice(commit.initialMessageCount).map((message, index) => ({ messageId: `live:${checkpoint.request.turnId}:${index}`, message }));
       const pending = this.#guidanceQueues.get(JSON.stringify([sessionId, checkpoint.request.turnId])) ?? [];
-      for (const [index, entry] of [...inputs, ...generated, ...pending.map(item => ({ messageId: item.messageId, createdAt: item.createdAt, metadata: { ...item.metadata, delivery: 'queued', subagentAuthor: 'user' }, message: { role: 'user' as const, content: item.content, name: 'turn_guidance' } }))].entries()) {
+      for (const [index, entry] of [...inputs, ...generated, ...pending.map(item => ({ messageId: item.messageId, createdAt: item.createdAt, metadata: { ...item.metadata, delivery: 'queued', subagentAuthor: item.metadata?.subagentAuthor ?? 'user' }, message: { role: 'user' as const, content: item.content, name: 'turn_guidance' } }))].entries()) {
         messages.push({ ...entry, message: entry.message as typeof messages[number]['message'], turnId: checkpoint.request.turnId, turnSequence: session.turns.length + 1, messageIndex: index, createdAt: 'createdAt' in entry && entry.createdAt ? entry.createdAt : checkpoint.createdAt });
       }
     }
@@ -3607,6 +3673,7 @@ export class InMemoryRuntimeHost {
   }
 
   async #deleteSession(sessionId: string) {
+    this.#assistant.forget(sessionId);
     await this.#subagentResume.remove(sessionId);
     for (const task of this.#subagentTasks.list(sessionId)) await this.#subagentResume.remove(task.childSessionId);
     await this.#pluginHooks.closeSession(sessionId);

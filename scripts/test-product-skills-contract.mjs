@@ -17,11 +17,19 @@ try {
   assert.ok(management.description);
   assert.ok((await fs.readFile(path.join(management.packageDir, 'references/plugin-contract.md'), 'utf8')).length > 0);
   const bundledNames = (await listProductSkills([path.resolve('assets/skills')])).map(skill => skill.name);
-  assert.deepEqual(bundledNames.filter(name => name.startsWith('cardbush-')), ['cardbush-agent-deploy', 'cardbush-docs']);
-  const deployment = await readProductSkill([path.resolve('assets/skills')], 'cardbush-agent-deploy');
-  assert.equal(deployment.invocationMode, 'both');
-  for (const resource of ['references/deployment.md', 'references/network-security.md', 'agents/openai.yaml']) {
-    assert.ok((await fs.stat(path.join(deployment.packageDir, resource))).isFile());
+  assert.deepEqual(bundledNames.filter(name => name.startsWith('cardbush-')), ['cardbush-docs']);
+  assert.equal(management.invocationMode, 'both');
+  const cardbushDocuments = ['SKILL.md', ...(await fs.readdir(path.join(management.packageDir, 'references'))).filter(name=>name.endsWith('.md')).map(name=>'references/'+name)];
+  for (const file of cardbushDocuments) {
+    const content = await fs.readFile(path.join(management.packageDir, file), 'utf8');
+    for (const [,link] of content.matchAll(/\]\(([^)]+)\)/g)) {
+      if (/^(?:[a-z]+:|#)/i.test(link)) continue;
+      const target = path.resolve(management.packageDir, path.dirname(file), link.split('#')[0]);
+      assert.ok((await fs.stat(target)).isFile(), `${file}: broken local link ${link}`);
+    }
+  }
+  for (const resource of ['references/agent-deploy.md', 'references/agent-deployment.md', 'references/agent-network-security.md', 'references/realtime-provider.md', 'references/realtime-protocol.md', 'references/voice-assistant.md']) {
+    assert.ok((await fs.stat(path.join(management.packageDir, resource))).isFile());
   }
   for (const resource of ['references/mcp-management.md', 'references/plugin-management.md', 'references/style-management.md', 'references/theme-contract.md', 'references/calendar-protocol.md', 'references/automations.md', 'scripts/convert-date.mjs']) {
     assert.ok((await fs.stat(path.join(management.packageDir, resource))).isFile());
@@ -51,7 +59,7 @@ try {
   const spreadsheet = await readProductSkill([bundledRoot], 'xlsx');
   assert.ok(spreadsheet.conditionalReads.length > 0);
   assert.ok(spreadsheet.resourceQuickRefs.every(item => item.path && item.label && item.use_when && item.gives_you && item.not_for));
-  for (const name of ['cardbush-docs', 'cardbush-agent-deploy', 'pptx', 'xlsx']) {
+  for (const name of ['cardbush-docs', 'pptx', 'xlsx']) {
     const detail = await readProductSkill([bundledRoot], name);
     assert.match(detail.content, /^license: Apache-2\.0$/m);
     assert.equal(await fs.readFile(path.join(detail.packageDir, 'LICENSE.txt'), 'utf8'), await fs.readFile('LICENSE', 'utf8'));

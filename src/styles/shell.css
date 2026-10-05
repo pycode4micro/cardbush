@@ -60,13 +60,6 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   pointer-events: none !important;
 }
 
-.theme-dark.app {
-  --menu-surface: #202020;
-  --menu-border: #343434;
-  --scrollbar-thumb: #2b2b2b;
-  --scrollbar-thumb-hover: #353535;
-}
-
 .app * {
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }

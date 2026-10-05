@@ -1,5 +1,5 @@
 /** Recording chunks are transport units, not conversation turns. */
-export interface VoiceTurnDraft { text: string; review: boolean }
+export interface VoiceTurnDraft { text: string }
 export interface VoiceTurnClock {
   now(): number;
   later(callback: () => void, ms: number): unknown;
@@ -13,7 +13,7 @@ export function isImmediateVoiceCommand(text: string) {
   return /^(?:停|停止|停一下|先停一下|等一下|暂停|停止播报|先别说话|stop|stopspeaking|pause)$/i.test(text.replace(/[\s。，！？.!?,]/g, ''));
 }
 export class VoiceTurnBuffer {
-  private parts: VoiceTurnDraft[] = [];
+  private parts: { text: string; allowImmediate: boolean }[] = [];
   private pending = 0;
   private open = false;
   private paused = false;
@@ -30,7 +30,7 @@ export class VoiceTurnBuffer {
     this.open = false; this.pending++; this.lastSpeech = Math.max(this.lastSpeech, lastSpeechAt);
     this.clearTimer(); this.publish();
   }
-  append(text: string, review: boolean) { this.parts.push({ text: text.trim(), review }); this.publish(); }
+  append(text: string, allowImmediate: boolean) { this.parts.push({ text: text.trim(), allowImmediate }); this.publish(); }
   finishClip() { this.pending = Math.max(0, this.pending - 1); this.schedule(); this.publish(); }
   discardCapture() { this.open = false; this.schedule(); this.publish(); }
   force() { this.forced = true; this.schedule(); }
@@ -43,11 +43,11 @@ export class VoiceTurnBuffer {
   private schedule() {
     this.clearTimer();
     if (this.paused || this.open || this.pending || !this.parts.length) return;
-    const quick = this.parts.length === 1 && !this.parts[0].review && isImmediateVoiceCommand(this.parts[0].text);
+    const quick = this.parts.length === 1 && this.parts[0].allowImmediate && isImmediateVoiceCommand(this.parts[0].text);
     const delay = this.forced || quick ? 0 : Math.max(0, this.waitMs() - (this.clock.now() - this.lastSpeech));
     this.timer = this.clock.later(() => {
       this.timer = undefined;
-      const draft = { text: this.parts.map(part => part.text).join(' '), review: this.parts.some(part => part.review) };
+      const draft = { text: this.parts.map(part => part.text).join(' ') };
       this.parts = []; this.forced = false; this.publish(); this.ready(draft);
     }, delay);
   }

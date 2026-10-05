@@ -13,7 +13,8 @@ DevTools MCP bundle retains Google's Apache-2.0 license and dependency notices.
 See assets/plugins/chrome/THIRD_PARTY_NOTICES.md for exact source references,
 including the MPL-2.0-covered axe-core dependency.
 
-The CardBush-authored cardbush-docs and cardbush-agent-deploy skills and the
+The CardBush-authored cardbush-docs skill (including the former
+cardbush-agent-deploy documentation) and the
 replacement pptx and xlsx skills carry Apache-2.0 license texts in their folders.
 The replacement Office skills do not redistribute the previous proprietary
 skill implementation. External Office libraries and renderers retain their

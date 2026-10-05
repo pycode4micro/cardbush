@@ -1,8 +1,3 @@
----
-name: cardbush-agent-deploy
-description: 将 CardBush 独立 Agent 服务部署到指定 SSH 主机或本机服务器，完成构建、进程托管、HTTP 接入、验证、更新与回滚，并按部署方式配置 HTTPS、访问令牌和网络防护。用于部署或维护 CardBush Agent 服务，不用于普通 SSH 项目连接或其他应用部署。
-license: Apache-2.0
----
 
 # CardBush Agent 服务部署
 
@@ -28,8 +23,8 @@ license: Apache-2.0
 
 ## 执行与验证
 
-1. 阅读 [部署与更新](references/deployment.md)，按目标系统准备独立目录、服务账号和构建产物。Linux 后台服务优先使用已有的 systemd；其他系统沿用其服务管理方式，不强行安装 systemd。
-2. 阅读 [网络接入与安全](references/network-security.md)，选择隧道或 HTTPS。Fail2ban 是基于失败日志的可选补充，不是部署前置依赖。保留 HTTP 鉴权、事件流和断线续读能力。
+1. 阅读 [部署与更新](agent-deployment.md)，按目标系统准备独立目录、服务账号和构建产物。Linux 后台服务优先使用已有的 systemd；其他系统沿用其服务管理方式，不强行安装 systemd。
+2. 阅读 [网络接入与安全](agent-network-security.md)，选择隧道或 HTTPS。Fail2ban 是基于失败日志的可选补充，不是部署前置依赖。保留 HTTP 鉴权、事件流和断线续读能力。
 3. 配置服务后验证真实 HTTP 连接与 `/api/agent/v1/info`；不能只凭进程存在或端口打开就报告成功。未配置模型时如实说明只验证了服务接入，不宣称已完成模型对话测试。
 4. 若当前工具提供 Agent 连接管理入口，在授权范围内添加连接；否则交付「Agents → 添加 Agent」所需字段，不伪造已添加结果。访问令牌只通过受保护的凭据入口交付，不贴进聊天或普通日志。
 

@@ -20,7 +20,7 @@ node dist-electron/agentServiceCli.mjs --help
 
 代码目录由部署账号维护；服务账号只需读取代码，并写入自己的数据目录、项目目录和必要缓存。创建独立服务账号及其主目录，数据目录限制为所有者访问；不要对共享目录批量更改所有权。服务账号默认不加入 sudo 或 Docker 管理组。
 
-当前 CLI 的内置资源根目录是 `DATA_DIR/bundled`，不会自动加载源码中的 `assets/skills`。部署时将所需内置 skill 的**完整目录**从 `assets/skills` 安装到 `DATA_DIR/bundled/skills`，包括本部署 skill 的 `references` 和 `agents` 子目录。用户自定义 skill 保存在 `DATA_DIR/skills`；不要覆盖这一目录。更新内置资源时同步对应版本，并保留旧资源以便回滚。不要顺带复制 `assets/plugins` 或任何桌面用户配置。
+当前 CLI 的内置资源根目录是 `DATA_DIR/bundled`，不会自动加载源码中的 `assets/skills`。部署时将所需内置 skill 的**完整目录**从 `assets/skills` 安装到 `DATA_DIR/bundled/skills`，包括 `cardbush-docs` 的 `references` 和 `scripts` 子目录。用户自定义 skill 保存在 `DATA_DIR/skills`；不要覆盖这一目录。更新内置资源时同步对应版本，并保留旧资源以便回滚。不要顺带复制 `assets/plugins` 或任何桌面用户配置。
 
 ## HTTP 服务
 
@@ -76,7 +76,7 @@ systemctl is-active cardbush-agent-a.service
 journalctl -u cardbush-agent-a.service -n 50 --no-pager
 ```
 
-日志输出可能含模型或插件错误，转交前脱敏。只有变更本实例配置时才重启本实例；不要重启整台主机或所有服务。隧道与 HTTPS 配置见 [网络接入与安全](network-security.md)。
+日志输出可能含模型或插件错误，转交前脱敏。只有变更本实例配置时才重启本实例；不要重启整台主机或所有服务。隧道与 HTTPS 配置见 [网络接入与安全](agent-network-security.md)。
 
 ## 本机 HTTP
 

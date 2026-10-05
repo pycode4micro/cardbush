@@ -19,8 +19,8 @@ export class VoiceProgress {
     return { activity };
   }
 }
-// Ambiguous fragments are reviewable instead of spawning another Agent turn.
+// Ignore ambiguous whole utterances instead of spawning another Agent turn.
 // Short useful commands such as “好”“停”“否” still go through immediately.
-export function needsVoiceReview(text: string) {
+export function isAmbiguousVoiceFragment(text: string) {
   return /^(?:[嗯呃啊唔额]+|[a-z])$/i.test(text.replace(/[\s。，、！？.!?,]/g, ''));
 }

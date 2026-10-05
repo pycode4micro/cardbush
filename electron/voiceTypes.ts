@@ -73,6 +73,8 @@ export interface VoiceCapabilities {
   recognizers: { id: string; name: string; language: string }[];
 }
 export interface VoiceDesktopApi {
+  setCallActive?(active: boolean): Promise<void>;
+  realtime?: import('./realtimeVoiceTypes').RealtimeVoiceApi;
   chooseSpeechPath(kind: 'model' | 'python'): Promise<string | null>;
   inspectSpeechModel(directory: string): Promise<CustomSpeechModelInfo>;
   modelStatus(kind?: VoiceModelKind): Promise<VoiceModelStatus>;

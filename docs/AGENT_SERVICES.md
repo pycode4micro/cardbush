@@ -1,6 +1,6 @@
 # 独立 Agent 服务部署说明
 
-CardBush 内置 `cardbush-agent-deploy` skill，可直接要求 Agent 将服务部署到指定 SSH 主机。该 skill 包含构建、进程托管、更新恢复，以及 SSH 隧道、HTTPS 代理和可选 Fail2ban 防护建议。详见 [部署 skill](../assets/skills/cardbush-agent-deploy/SKILL.md)。
+CardBush 自身的使用、开发和部署技能统一收录在 `cardbush-docs`。可直接要求 Agent 将服务部署到指定 SSH 主机；它会按需读取构建、进程托管、更新恢复、SSH 隧道、HTTPS 和可选 Fail2ban 专题。详见 [部署指南](../assets/skills/cardbush-docs/references/agent-deploy.md)。
 
 CardBush 可以作为无图形界面的 Node.js 服务运行。桌面端通过侧栏的 **Agents** 接入多个实例。配置统一在桌面端管理，使用云端时同步应用；每个实例仍独立管理运行时、项目、会话、任务队列和历史记录。
 

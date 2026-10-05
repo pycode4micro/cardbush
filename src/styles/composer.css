@@ -174,15 +174,10 @@
   max-height: var(--composer-popover-max-height, 360px);
   overflow: hidden;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface) 98%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: var(--menu-surface);
+  border: 1px solid var(--menu-border);
   border-radius: 12px;
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--shadow) 160%, transparent);
-}
-
-.theme-dark .composer-command-palette {
-  background: rgba(36, 36, 36, 0.985);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--menu-shadow);
 }
 
 .composer-command-palette header {
@@ -362,8 +357,8 @@
 }
 
 .theme-dark .composer-surface {
-  background: #2b2b2b;
-  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--surface-strong);
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
   box-shadow: 0 6px 16px color-mix(in srgb, var(--shadow) 96%, transparent);
 }
 
@@ -1599,10 +1594,10 @@
   max-height: min(460px, var(--composer-popover-max-height, calc(100vh - 140px)));
   overflow: hidden;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface) 98%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: var(--menu-surface);
+  border: 1px solid var(--menu-border);
   border-radius: 18px;
-  box-shadow: 0 12px 26px color-mix(in srgb, var(--shadow) 150%, transparent);
+  box-shadow: var(--menu-shadow);
 }
 
 .composer-popover.anchored {
@@ -1810,22 +1805,6 @@
   }
 }
 
-.theme-dark .composer-popover:not(.more) {
-  background: rgba(36, 36, 36, 0.98);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.38);
-}
-
-.composer-popover.picker {
-  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--shadow) 160%, transparent);
-}
-
-.theme-dark .composer-popover.picker {
-  background: rgba(31, 31, 31, 0.98);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
-}
-
 .composer-popover header,
 .console-header {
   display: flex;
@@ -1916,11 +1895,6 @@
 .model-picker-row.active {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-.theme-dark .model-picker-row:hover,
-.theme-dark .model-picker-row.active {
-  background: rgba(255, 255, 255, 0.08);
 }
 
 .model-picker-row.primary {

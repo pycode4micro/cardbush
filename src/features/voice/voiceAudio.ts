@@ -3,13 +3,21 @@ import { VoiceActivity } from './voiceActivity';
 
 export class VoicePlayback {
   private context?: AudioContext;
+  private outputGain?: GainNode;
+  private outputMuted = false;
   private sources = new Set<AudioBufferSourceNode>();
   private current?: { id: string; cancel(): void };
   private cursor = 0;
   private tail: number | undefined;
   private epoch = 0;
   constructor(private api: VoiceDesktopApi) {}
-  async prepare() { this.context ??= new AudioContext({ sampleRate: 24_000 }); await this.context.resume(); }
+  async prepare() {
+    this.context ??= new AudioContext({ sampleRate: 24_000 });
+    if (!this.outputGain) { this.outputGain = this.context.createGain(); this.outputGain.connect(this.context.destination); }
+    this.outputGain.gain.value = this.outputMuted ? 0 : 1;
+    await this.context.resume();
+  }
+  setOutputMuted(value: boolean) { this.outputMuted = value; if (this.outputGain) this.outputGain.gain.value = value ? 0 : 1; }
   async speak(text: string, voice?: 'male' | 'female') {
     const epoch = this.epoch;
     await this.prepare();
@@ -29,7 +37,7 @@ export class VoicePlayback {
       if (!length) return;
       const buffer = context.createBuffer(1, length, chunk.sampleRate), samples = buffer.getChannelData(0), view = new DataView(bytes.buffer);
       for (let i = 0; i < length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
-      const source = context.createBufferSource(); source.buffer = buffer; source.connect(context.destination);
+      const source = context.createBufferSource(); source.buffer = buffer; source.connect(this.outputGain!);
       this.sources.add(source); source.onended = () => { this.sources.delete(source); source.disconnect(); };
       this.cursor = Math.max(this.cursor, context.currentTime + .025); source.start(this.cursor); this.cursor += buffer.duration; last = source;
     });
@@ -46,7 +54,7 @@ export class VoicePlayback {
     if (this.current) { void this.api.cancel(this.current.id).catch(() => {}); this.current.cancel(); this.current = undefined; }
     for (const source of this.sources) { try { source.stop(); } catch {} source.disconnect(); } this.sources.clear();
   }
-  close() { this.stop(); const context = this.context; this.context = undefined; void context?.close().catch(() => {}); }
+  close() { this.stop(); const context = this.context; this.context = undefined; this.outputGain = undefined; void context?.close().catch(() => {}); }
 }
 
 export interface VoiceClipTiming { lastSpeechAt: number; reason: 'silence' | 'limit' | 'manual' }

@@ -28,6 +28,7 @@ export interface RemoteSubagentBridge {
   list(signal?: AbortSignal): Promise<Array<{ id: string; name: string; agentId?: string }>>;
   run(input: RemoteSubagentRequest, signal?: AbortSignal): Promise<RemoteSubagentResult>;
   read?(input: { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string }, signal?: AbortSignal): Promise<SessionSnapshot | undefined>;
+  guide?(input: { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string; turnId: string; messageId: string; content: string }, signal?: AbortSignal): Promise<unknown>;
 }
 
 interface SubagentInput {
@@ -179,7 +180,7 @@ export function registerSubagentTool(
         properties: {
           prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Delegate to a saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only. It uses its own server workspace, model, tools and instructions; no parent history, credentials or local paths are copied. Results participate in await_subagents. Resume with resume_task_id.' } } : {}),
-          ...(options.loadChildRequest ? { resume_task_id: { type: 'string', minLength: 1, description: 'Continue a finished subagent task from this parent conversation in its original child session, with its own history and identity. Supply only this ID and a new prompt. A running child cannot be resumed concurrently.' } } : {}),
+          ...(options.loadChildRequest ? { resume_task_id: { type: 'string', minLength: 1, description: 'Continue a finished subagent task from this parent conversation in its original child session, with its own history and identity. Supply this ID and a new prompt; optional run_in_background runs the continuation independently. A running child cannot be resumed concurrently.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork inherits the complete pre-dispatch conversation and system/tool prefix. Use clean only when the user explicitly requests independent configuration, not merely for a self-contained task. For clean, inspect list_subagent_options and choose system_prompt, settings and tool/Skill scope; parent history and system prompt are not copied.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required in clean mode; unavailable in fork mode. Sets the actual system message for the child. Define its role, behavior, communication language and output requirements. Host permissions cannot be overridden.' },
           allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
@@ -478,8 +479,9 @@ function decodeInput(input: unknown): SubagentInput {
   }
   if (object.resume_task_id !== undefined) {
     if (typeof object.resume_task_id !== 'string' || !object.resume_task_id.trim()) throw new Error('resume_task_id must be non-empty.');
-    if (Object.keys(object).some(key => !['prompt', 'resume_task_id'].includes(key))) throw new Error('Resume accepts only prompt and resume_task_id; the original configuration is preserved.');
-    return { prompt, mode: 'fork', resumeTaskId: object.resume_task_id.trim() };
+    if (Object.keys(object).some(key => !['prompt', 'resume_task_id', 'run_in_background'].includes(key))) throw new Error('Resume accepts prompt, resume_task_id and optional run_in_background; the original configuration is preserved.');
+    if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
+    return { prompt, mode: 'fork', resumeTaskId: object.resume_task_id.trim(), runInBackground: object.run_in_background as boolean | undefined };
   }
   if (object.inherit_context !== undefined && typeof object.inherit_context !== "boolean") {
     throw new Error("inherit_context must be a boolean.");

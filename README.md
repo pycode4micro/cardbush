@@ -54,14 +54,15 @@ The settings environment selector chooses the local host or a connected Agent. M
 
 | Make it yours | What you can do |
 | --- | --- |
-| **Text and voice** | Stream replies, attach images, queue messages and guide a running task. Click the empty composer's microphone to dictate; hold it to enter a voice conversation with spoken Agent replies. |
+| **Text and voice** | Stream replies, attach images, queue messages and guide a running task. Click the empty composer's microphone to dictate; hold it to call. Calls continue across navigation and minimization, with transcripts saved to their original chat. |
+| **Personal assistant** | A persistent conversation with a customizable name and persona, an animated lightbulb, and local or SSH-connected Agent execution. Talk while tasks run; the assistant publishes useful Markdown with `page_write`. |
 | **Your start page** | Arrange clocks, a calendar, conversation starters and either composer style. Import custom HTML components, drag and resize with alignment guides, and use theme-aware events and permitted actions. |
 | **A browser workspace** | Save favorite pages, use multiple panes in Beta, and expand the right panel with a floating return/input capsule. |
 | **Tools that act** | Search and edit files, run commands, use subagents, add MCP plugins and skills, and schedule automations. Choose Ask for approval or Full access. |
 | **Local or remote** | Use the built-in Agent, an SSH project or an independent Agent service. Optionally give a personal Linux Agent its own graphical desktop, Computer Use and Browser Use. |
 | **Continuity** | Persistent conversations, context recovery, searchable archived tool results and usage records. Habit memory and next-step predictions are optional and off by default. |
 
-Voice uses speech recognition, the existing text Agent and speech synthesis. Only voice conversations read replies aloud automatically. **SenseVoice recognition and Qwen3-TTS CustomVoice speech are the recommended local options**, with separate female/male voices at a natural speaking rate. Models are optional, not preinstalled; Qwen uses your selected local model folder and Python environment. Windows speech and legacy Kokoro remain available. Windows x64 also offers an optional local voice lock: enroll your voice to reduce other speakers triggering messages or interrupting playback. See [voice setup, downloads and platform limits](docs/LOCAL_VOICE_MODELS.md).
+Voice calls default to a separate **Volcengine realtime voice provider**, which handles conversation and delegates tasks to independent background subagents using your configured local Agent. `await_subagent` returns status immediately; message and conversation-reading tools let the voice parent communicate with its children. Keep talking while tasks run concurrently. It requires a Doubao Voice API Key; audio is streamed to that service. See [realtime setup and current limits](docs/REALTIME_VOICE.md). The original recognition → Agent → speech mode remains selectable; both call modes send tasks without an extra voice confirmation. **SenseVoice recognition and Qwen3-TTS CustomVoice speech are the recommended local options**, with separate female/male voices at a natural speaking rate. Models are optional, not preinstalled; Qwen uses your selected local model folder and Python environment. Windows speech and legacy Kokoro remain available. Windows x64 offers an optional local voice lock for the original mode; it is not applied to realtime audio. See [local voice setup, downloads and platform limits](docs/LOCAL_VOICE_MODELS.md).
 
 Open **App Center → Components** to edit the new-conversation layout. Built-in component definitions stay available; custom HTML uses an isolated frame and explicitly granted actions. The calendar shows holidays and automation details on hover. See [components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md).
 
@@ -97,7 +98,7 @@ Sandbox settings detect the host environment; dependency installation requires a
 | Start here | Guide |
 | --- | --- |
 | Connect a model | [Providers, protocols and OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
-| Set up voice | [Local speech recognition and voices](docs/LOCAL_VOICE_MODELS.md) |
+| Set up voice | [Realtime calls](docs/REALTIME_VOICE.md) · [Local speech recognition and voices](docs/LOCAL_VOICE_MODELS.md) |
 | Customize your workspace | [HTML components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [App Center](assets/skills/cardbush-docs/references/app-center.md) |
 | Run an Agent remotely | [Service deployment](docs/AGENT_SERVICES.md) · [Docker and optional Linux desktop](deploy/agent/README.md) · [SSH projects](docs/SSH_WORKSPACES.md) |
 | Understand access | [Permissions](docs/PERMISSIONS.md) · [Command sandbox](docs/EXECUTION_SANDBOX.md) · [Computer Use / Browser Use](docs/CORE_BROWSER_COMPUTER_USE.md) |

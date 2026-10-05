@@ -82,9 +82,9 @@ const localPaths = {};
 new Function('exports', ts.transpileModule(readFileSync('src/shared/localPaths.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText)(localPaths);
-const hookSource = readFileSync('src/hooks/useCardbushChat.ts', 'utf8');
+const hookSource = readFileSync('src/shared/chatAttachments.ts', 'utf8');
 const hookAst = ts.createSourceFile('useCardbushChat.ts', hookSource, ts.ScriptTarget.Latest, true);
-const sendParserSource = hookAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'splitStreamAttachmentMentions').getText(hookAst);
+const sendParserSource = hookAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'splitStreamAttachmentMentions').getText(hookAst).replace(/^export /, '');
 const splitOutbound = new Function('splitExplicitAttachmentMentions', 'isImagePath',
   ts.transpileModule(sendParserSource + '\nreturn splitStreamAttachmentMentions;', {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },

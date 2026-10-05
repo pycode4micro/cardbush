@@ -1,4 +1,4 @@
-.composer-stack.simple .composer-surface { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 10px 14px; border-radius: 30px; }
+.composer-stack.simple .composer-surface:not(.voice-call-active) { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 10px 14px; border-radius: 30px; }
 .composer-stack.simple .composer-footer, .composer-stack.simple .composer-tools { display: contents; }
 .composer-stack.simple .composer-actions { grid-area: 1 / 3; display: flex; gap: 8px; }
 .composer-stack.simple .composer-tools > :not(:first-child) { display: none; }

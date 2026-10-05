@@ -30,4 +30,8 @@ export * from './search.js';
 export * from './solutionSelection.js';
 export * from './browser.js';
 export * from './extraction.js';
+export * from './realtimeAgent.js';
+export * from './realtimeContext.js';
+export * from './realtimeTaskSummary.js';
+export * from './assistantConversation.js';
 export { normalizeToolDisplay, normalizeToolDisplayTitle } from './toolDisplay.js';

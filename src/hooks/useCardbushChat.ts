@@ -1,3 +1,8 @@
+import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision, streamAttachmentsFromChatAttachments } from '../shared/chatAttachments';
+import { createRealtimeAgentExecutor } from '../backend/realtimeAgent';
+import { journalMessages } from '../backend/conversationJournal';
+import type { ConversationEntry } from '@cardbush/bush-protocol';
+import type { VoiceTarget } from '../features/voice/voiceSession';
 import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
 import { adoptDraftConversationStyle } from '../features/settings/conversationStyle';
 import { useConversationViewState } from '../shared/conversationViewState';
@@ -21,7 +26,6 @@ import type {
   AppLanguage,
   AssistantRevision,
   AssistantStreamChunk,
-  ChatAttachment,
   ChatMessage,
   ConversationSummary,
   ManagedModelConfig,
@@ -69,12 +73,7 @@ import {
 } from '../features/sessionAttention';
 import { notifyAttentionSound } from '../features/notificationSound';
 import {
-  basename,
-  isAudioPath,
-  isImagePath,
-  isVideoPath,
   samePath,
-  splitExplicitAttachmentMentions,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
 import { normalizePermissionMode } from '../shared/permissionModes';
@@ -2824,6 +2823,61 @@ export function useCardbushChat(
     ],
   );
 
+  const voiceGuidanceRef = useRef<(message: ChatMessage, text: string) => Promise<boolean>>(async () => false);
+  const prepareVoiceRequest = useCallback(async (fixedSessionId?: string) => {
+    if (backend.scope) throw new Error('Realtime delegation requires a local conversation.');
+    if (!selectedModel.trim()) throw Object.assign(new Error('请先配置 Agent 模型。'), { code: 'realtime_model_required' });
+    const conversation = fixedSessionId ? { id: fixedSessionId } as ConversationSummary
+      : await persistPreparedConversation(activeConversation ?? prepareConversation(undefined, '语音任务'));
+    return {
+      sessionId: conversation.id, userInput: '',
+      model: selectedModelName(managedModelConfigs, selectedModel), modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
+      projectDir: conversationProjectRequestDir(conversation), workspaceDir: conversationWorkspaceRoot(conversation),
+      teamInstructions: requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined, uiLanguage: languageRef.current,
+      disabledSkills: [...(requestContext.disabledSkillNames ?? [])], referencePlanMode, permissionMode,
+      subagentPermissionRouting, reasoningLevel, sourceEnabled: resolveConversationSource(conversation.id),
+      interactiveRequestsEnabled: requestContext.interactiveRequestsAvailable === true,
+      standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+      teamModeEnabled: requestContext.teamModeEnabled === true, teamId: requestContext.selectedTeamId,
+      disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
+    };
+  }, [backend.scope, selectedModel, activeConversation, prepareConversation, persistPreparedConversation,
+    managedModelConfigs, requestContext, referencePlanMode, permissionMode, subagentPermissionRouting, reasoningLevel]);
+  const voiceAgent = useMemo(() => {
+    const executor = createRealtimeAgentExecutor(prepareVoiceRequest, () => activeConversation?.id ?? '');
+    executor.pin = async target => {
+      const config = await prepareVoiceRequest();
+      const conversation = conversationsRef.current.find(item => item.id === config.sessionId) ?? preparedConversationsRef.current[config.sessionId]
+        ?? { id: config.sessionId, title: '语音对话', preview: '', updatedAt: new Date().toISOString(), projectDir: config.projectDir };
+      const pinned: VoiceTarget = { ...target, sessionId: config.sessionId,
+        agent: createRealtimeAgentExecutor(async () => config, () => config.sessionId),
+        send: (text, options) => {
+          const turnId = activeTurnIdsRef.current[config.sessionId];
+          if (options?.immediate && turnId && sendingSessionsRef.current.has(config.sessionId)) return voiceGuidanceRef.current({
+            id: `voice-anchor-${turnId}`, role: 'assistant', content: '', conversationId: config.sessionId, turnId,
+          }, text);
+          return submissionReceipt(accepted => sendMessage(text, conversation, undefined, undefined, undefined, undefined, accepted));
+        },
+      };
+      pinned.refresh = () => ({ ...pinned, messages: messagesByConversationRef.current[config.sessionId] ?? [],
+        sending: sendingSessionsRef.current.has(config.sessionId), activeTurnId: activeTurnIdsRef.current[config.sessionId],
+        stopping: stoppingRequestsRef.current.has(config.sessionId) });
+      return pinned.refresh();
+    };
+    return executor;
+  }, [prepareVoiceRequest, activeConversation?.id, sendMessage]);
+  useEffect(() => {
+    if (backend.scope) return;
+    const append = (event: Event) => {
+      const { sessionId, entry } = (event as CustomEvent<{sessionId: string; entry: ConversationEntry}>).detail;
+      const additions = journalMessages([entry], sessionId);
+      if (!additions.length) return;
+      setMessagesByConversation(current => ({ ...current, [sessionId]: [...(current[sessionId] ?? []).filter(item => item.id !== entry.id), ...additions] }));
+    };
+    window.addEventListener('cardbush:conversation-entry', append);
+    return () => window.removeEventListener('cardbush:conversation-entry', append);
+  }, [backend.scope]);
+
   const sendVoiceMessage = useCallback((text: string) => submissionReceipt(accepted =>
     sendMessage(text, undefined, undefined, undefined, undefined, undefined, accepted)), [sendMessage]);
 
@@ -3731,6 +3785,7 @@ export function useCardbushChat(
     ],
   );
 
+  voiceGuidanceRef.current = (message, text) => sendTurnGuidance(message, text, 'interrupt_and_continue');
   const sendQueuedMessageAsGuidance = useCallback(
     async (
       queuedId: string,
@@ -4270,6 +4325,8 @@ export function useCardbushChat(
     submitTeamFlowAction,
     sendMessage,
     sendVoiceMessage,
+    voiceAgent,
+    prepareAssistantRequest: () => prepareVoiceRequest('personal-assistant'),
     retryFailedUserMessage,
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,
@@ -4511,101 +4568,6 @@ function firstUserTitleSource(messages: ChatMessage[], fallback: string) {
   return (
     messages.find((message) => message.role === 'user')?.content.trim() ||
     fallback.trim()
-  );
-}
-
-function splitStreamAttachmentMentions(content: string) {
-  const images: Array<{ path: string }> = [];
-  const files: string[] = [];
-  const { text: userInput, paths } = splitExplicitAttachmentMentions(content);
-  for (const mention of paths) {
-    if (!mention.startsWith('ssh://') && isImagePath(mention)) {
-      images.push({ path: mention });
-    } else {
-      files.push(mention);
-    }
-  }
-  return {
-    displayInput: userInput,
-    userInput:
-      userInput ||
-      (images.length > 0 || files.length > 0
-        ? 'Please review the attached file(s).'
-        : content.trim()),
-    images,
-    files,
-  };
-}
-
-async function chatAttachmentsFromOutbound(
-  outbound: ReturnType<typeof splitStreamAttachmentMentions>,
-  inspectLocal = true,
-): Promise<ChatAttachment[]> {
-  const inspected = inspectLocal && outbound.files.length > 0 ? await window.cardbushDesktop
-    ?.inspectAttachments?.(outbound.files)
-    .catch(() => []) : [];
-  const kindByPath = new Map(
-    (inspected ?? []).map((item) => [
-      item.path.replace(/\\/g, '/').toLowerCase(),
-      item.kind,
-    ]),
-  );
-  return [
-    ...outbound.images.map((image) => ({
-      id: `attachment-${crypto.randomUUID()}`,
-      name: basename(image.path),
-      path: image.path,
-      type: 'image' as const,
-    })),
-    ...outbound.files.map((pathValue) => {
-      const kind = kindByPath.get(pathValue.replace(/\\/g, '/').toLowerCase());
-      return {
-        id: `attachment-${crypto.randomUUID()}`,
-        name: basename(pathValue),
-        path: pathValue,
-        type: kind === 'folder'
-          ? 'folder' as const
-          : isVideoPath(pathValue)
-            ? 'video' as const
-            : isAudioPath(pathValue)
-              ? 'audio' as const
-              : 'document' as const,
-      };
-    }),
-  ];
-}
-
-function streamAttachmentsForVision(
-  attachments: ReturnType<typeof splitStreamAttachmentMentions>,
-  standardImageInputEnabled: boolean,
-) {
-  if (standardImageInputEnabled) {
-    return attachments;
-  }
-  return {
-    ...attachments,
-    images: [],
-    files: [
-      ...attachments.files,
-      ...attachments.images.map((image) => image.path).filter(Boolean),
-    ],
-  };
-}
-
-function streamAttachmentsFromChatAttachments(
-  attachments: ChatAttachment[] | undefined,
-  standardImageInputEnabled: boolean,
-) {
-  const paths = (attachments ?? []).flatMap((attachment) =>
-    attachment.path?.trim() ? [attachment.path.trim()] : [],
-  );
-  const images = paths
-    .filter(path => !path.startsWith('ssh://') && isImagePath(path))
-    .map((path) => ({ path }));
-  const files = paths.filter((path) => path.startsWith('ssh://') || !isImagePath(path));
-  return streamAttachmentsForVision(
-    { displayInput: '', userInput: '', images, files },
-    standardImageInputEnabled,
   );
 }
 

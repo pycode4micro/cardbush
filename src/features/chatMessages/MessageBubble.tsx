@@ -2633,7 +2633,7 @@ function formatMessageFileSize(size?: number) {
   return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }
 
-function MessageFileAttachmentStrip({
+export function MessageFileAttachmentStrip({
   attachments,
   language,
 }: {
@@ -2718,7 +2718,7 @@ function MessageFileAttachmentStrip({
   );
 }
 
-function MessageImageStrip({
+export function MessageImageStrip({
   paths,
   language,
 }: {

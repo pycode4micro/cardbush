@@ -94,11 +94,15 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     if (dock.classList.contains('interaction-only')) return;
     const content = scroller.querySelector<HTMLElement>('.message-list-content');
     if (!content || !scroller.clientWidth || !scroller.clientHeight) return;
-    const summaryInset = Math.max(0, parseFloat(getComputedStyle(content).marginRight) || 0);
+    const contentStyle = getComputedStyle(content);
+    const summaryInset = Math.max(0, parseFloat(contentStyle.marginRight) || 0);
     const height = scroller.clientHeight;
     if (!embedded) {
+      // Without a custom width, use the same available track as the transcript,
+      // including its gutters and scrollbar when a summary column is docked.
+      const readingWidth = Math.max(0, content.clientWidth - (parseFloat(contentStyle.paddingLeft) || 0) - (parseFloat(contentStyle.paddingRight) || 0));
       const horizontal = composerHorizontalBounds(body.clientWidth, placement?.width,
-        parseFloat(getComputedStyle(body).getPropertyValue('--chat-track-width')) || 704, body.clientWidth - summaryInset);
+        Math.min(parseFloat(getComputedStyle(body).getPropertyValue('--chat-track-width')) || 704, readingWidth), body.clientWidth - summaryInset);
       body.style.setProperty('--flow-composer-left', `${horizontal.left}px`);
       body.style.setProperty('--flow-composer-width', `${horizontal.width}px`);
     }
@@ -158,7 +162,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
       const boundary = y - gap;
       const find = (node: HTMLElement): HTMLElement => {
         // Atomic content moves intact: no cutting lines, code or table rows.
-        if (topOf(node) >= boundary || node.matches('p, h1, h2, h3, h4, h5, h6, pre, table, figure, .markdown-table-scroll, .user-bubble')) return node;
+        if (topOf(node) >= boundary || node.matches('p, h1, h2, h3, h4, h5, h6, pre, table, figure, .markdown-table-scroll, .user-bubble, .assistant-message')) return node;
         for (const child of node.children) {
           if (!(child instanceof HTMLElement) || bottomOf(child) <= boundary) continue;
           const style = getComputedStyle(child);

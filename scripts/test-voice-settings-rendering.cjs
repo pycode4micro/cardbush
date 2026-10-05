@@ -26,8 +26,10 @@ app.whenReady().then(async () => {
       import { VoiceConversation, VoiceButton } from ${file('src/features/voice/VoiceConversation.tsx')};
       import { SettingsDropdown } from ${file('src/features/settings/SettingsDropdown.tsx')};
       import { defaultVoiceSettings } from ${file('electron/voiceTypes.ts')};
-      let settings={...defaultVoiceSettings};
+      import { defaultRealtimeVoiceSettings } from ${file('electron/realtimeVoiceTypes.ts')};
+      let settings={...defaultVoiceSettings},realtime={...defaultRealtimeVoiceSettings};
       window.cardbushDesktop={voice:{settings:async()=>settings,saveSettings:async value=>(settings=value),
+        realtime:{settings:async()=>realtime,saveSettings:async input=>{const {apiKey,...rest}=input;return realtime={...rest,hasApiKey:apiKey===undefined?realtime.hasApiKey:!!apiKey};}},
         chooseSpeechPath:async kind=>window.nextSpeechPath??null,
         inspectSpeechModel:async directory=>({kind:'qwen3-customvoice',name:'Qwen3-TTS CustomVoice (1.7B)',directory,
           voices:['serena','vivian','uncle_fu','ryan','aiden','ono_anna','sohee','eric','dylan'].map(id=>({id,name:id})),
@@ -54,7 +56,7 @@ app.whenReady().then(async () => {
   const errors=[];
   win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
   win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:/^https?:/.test(details.url)}));
-  const read = code => win.webContents.executeJavaScript(code);
+  const read = code => win.webContents.executeJavaScript(code).catch(error=>{throw Error(error.message+'\nScript: '+code+'\n'+errors.join('\n'));});
   const until = async code => {for(let i=0;i<100;i++){if(await read(code))return;await pause(25);}throw Error('Timed out: '+code+'\n'+await read('document.body.innerText'));};
   const click = label => read(`Array.from(document.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}||b.textContent===${JSON.stringify(label)}).click();void 0`);
   const key = async keyCode => { win.webContents.sendInputEvent({type:'keyDown',keyCode});win.webContents.sendInputEvent({type:'keyUp',keyCode});await pause(40); };
@@ -67,6 +69,25 @@ app.whenReady().then(async () => {
     assert.equal(await read('!!document.querySelector(".app .voice-mini")'),true,'floating control inherits application theme');
     await click('展开语音通话');await click('语音设置');await until('document.querySelector(".voice-settings-dialog")');
     assert.equal(await read('!!document.querySelector(".app .voice-settings-dialog")'),true,'dialog inherits application theme');
+    assert.equal(await read('document.querySelector("[role=combobox][aria-label=通话模式]").value'),'realtime');
+    assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').type`),'password');
+    await read(`(()=>{const el=document.querySelector('input[aria-label="API Key"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'fixture-credential');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await click('保存通话设置');await until('(async()=> (await cardbushDesktop.voice.realtime.settings()).hasApiKey)()');
+    assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').value`),'','saved credentials are not echoed');
+    await openChoice('语音服务');await key('END');await key('ENTER');
+    await until('document.querySelector("input[aria-label=服务地址]")');
+    assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').value`),'');
+    for(const [label,value] of [['服务地址','ws://127.0.0.1:8765/realtime'],['语音模型 ID','fixture-voice']]) {
+      await read(`(()=>{const el=document.querySelector('input[aria-label="${label}"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    }
+    await click('保存通话设置');await until('(async()=> (await cardbushDesktop.voice.realtime.settings()).provider==="cardbush")()');
+    assert.equal((await read('cardbushDesktop.voice.realtime.settings()')).model,'fixture-voice');
+    win.setSize(500,850);await pause(80);
+    assert.equal(await read('document.querySelector(".voice-settings-dialog").scrollWidth<=document.querySelector(".voice-settings-dialog").clientWidth'),true,'realtime provider settings fit a narrow window');
+    await snapshot('realtime-voice-settings');win.setSize(920,850);
+    await openChoice('通话模式');await key('END');await key('ENTER');await click('保存通话设置');
+    assert.equal((await read('cardbushDesktop.voice.realtime.settings()')).mode,'chained');
+    assert.equal(await read(`!!document.querySelector('input[aria-label="API Key"]')`),false,'local call mode hides cloud fields');
     for(const [theme,width,scale] of [['dark',920,1],['bright',500,1],['dark',500,1.5]]) {
       win.setSize(width,850);await read(`fixture.theme(${JSON.stringify(theme)});fixture.font(${scale});void 0`);await pause(100);
       await openChoice('音色');const g=await geometry();

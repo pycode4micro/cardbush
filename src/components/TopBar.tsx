@@ -12,6 +12,7 @@ export function TopBar({
   onToggleWorkSummary,
   onToggleInspector,
   workspaceControl,
+  titleIcon,
 }: {
   title: string;
   language: AppLanguage;
@@ -21,10 +22,12 @@ export function TopBar({
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
   onToggleInspector?: () => void;
   workspaceControl?: ReactNode;
+  titleIcon?: ReactNode;
 }) {
   const displayTitle = conversationDisplayTitle(title);
   return (
     <div className="topbar">
+      {titleIcon}
       <h1 title={displayTitle}>{displayTitle}</h1>
       {workspaceControl}
       {conversationContentAvailable && onToggleWorkSummary && (

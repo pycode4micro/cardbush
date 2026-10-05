@@ -1,5 +1,6 @@
 import { useConversationSource } from '../settings/conversationSource';
 import { VoiceButton } from '../voice/VoiceConversation';
+import { useVoiceComposer, VoiceComposerPanel } from '../voice/VoiceComposer';
 import { useIndividuation } from '../settings/useIndividuation';
 import { useConversationStyle } from '../settings/useConversationStyle';
 import { conversationStyleName, conversationStylePresets } from '../settings/conversationStyle';
@@ -379,6 +380,7 @@ export function Composer({
   submissionPending = false,
   inputReadOnly = false,
   portalCommands = false,
+  retainUntilAccepted = false,
 }: {
   compact?: boolean;
   fileDropTarget?: React.RefObject<HTMLElement | null>;
@@ -432,13 +434,14 @@ export function Composer({
   submissionPending?: boolean;
   inputReadOnly?: boolean;
   portalCommands?: boolean;
+  retainUntilAccepted?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const portalTarget = useContext(ComposerPortalContext);
   const presentation = useContext(ComposerPresentationContext);
   const components = useComponents();
   const simple = (presentation?.style ?? welcomeInputStyle(components)) === 'simple';
-  const initializePermissions = Boolean(presentation && !presentation.preview);
+  const initializePermissions = Boolean(presentation && !presentation.preview && !presentation.preservePermissions);
   const simplePermissionInitialized = useRef(false);
   useEffect(() => {
     // Continuing a conversation changes presentation only, preserving its permissions.
@@ -458,6 +461,8 @@ export function Composer({
   const runtimeReady = runtimeStartup.phase === 'ready';
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement>(null);
+  const voiceComposer = useVoiceComposer(!presentation?.preview, composerSurfaceRef);
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
   useEffect(() => {
     if (!portalTarget || presentation?.preview) return;
@@ -467,6 +472,7 @@ export function Composer({
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  useEffect(() => { if (voiceComposer.visible) { setActiveMenu(null); setCommandState(null); } }, [voiceComposer.visible]);
   const plugins = usePluginCatalog();
   const applications = useApplications(language);
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
@@ -648,7 +654,7 @@ export function Composer({
       } finally { setAttachmentUploads(current => current - 1); }
     }
     const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
-    if (host) {
+    if (host || retainUntilAccepted) {
       if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
       if (currentSubmittedDraft() === draft) onDraftChange('');
       setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
@@ -1370,9 +1376,11 @@ export function Composer({
         </div>
       )}
       <div
-        className={`composer-surface${fileDragActive ? ' is-file-dragging' : ''}`}
+        ref={composerSurfaceRef}
+        style={voiceComposer.style}
+        className={`composer-surface${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
         onPointerDown={(event) => {
-          if (event.button !== 0) return;
+          if (event.button !== 0 || voiceComposer.visible) return;
           const target = event.target;
           if (
             target instanceof Element &&
@@ -1388,6 +1396,8 @@ export function Composer({
         onPasteCapture={capturePastedText}
         onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(language === 'zh' ? '无法添加附件' : 'Unable to add attachments', String(error)))}
       >
+        {voiceComposer.visible && voiceComposer.session && <VoiceComposerPanel session={voiceComposer.session} language={language}
+          onReturnText={() => requestAnimationFrame(() => textareaRef.current?.focus())}/>}
         {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
             <Paperclip size={20} />

@@ -1,3 +1,5 @@
+import { ApplicationVoiceHost } from './features/voice/VoiceConversation';
+import { AssistantView } from './features/assistant/AssistantView';
 import {
   APPEARANCE_STORAGE_KEY,
   appearanceVariables,
@@ -2058,6 +2060,7 @@ function CardbushApp() {
         await chat.reloadConversations();
         handlePreviousConversation(fork.id);
       }}>
+    <ApplicationVoiceHost language={language}>
     <ImageGalleryProvider sessionId={chat.activeConversationId} messages={chat.activeMessages}
       workspaceRoot={activeProjectDir} pathAliases={activeProjectPathAliases} language={language}>
     <div
@@ -2177,7 +2180,7 @@ function CardbushApp() {
                   agentSessions={agents}
                   language={language}
                   section={section}
-                  activeConversationId={section === 'agents' ? '' : chat.activeConversationId}
+                  activeConversationId={section === 'chat' ? chat.activeConversationId : ''}
                   runningConversationIds={chat.processingConversationIds}
                   onConversationWorkspaceChange={(conversationId, project) => chat.setConversationProject(conversationId, project?.rootPath ?? null, project?.id ?? null)}
                   attentionByConversation={chat.attentionByConversation}
@@ -2208,6 +2211,18 @@ function CardbushApp() {
             </>
           )}
           <section ref={mainStageRef} className="main-stage" inert={inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
+            <AssistantView active={section === 'assistant'} language={language} connections={agents.connections} prepare={chat.prepareAssistantRequest}
+              inspectorOpen={inspectorOpen} onToggleInspector={toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
+              composerPortalTarget={section === 'assistant' && quickInputOpen ? quickInputTarget : null}
+              subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}
+              composerControls={{ selectedModel: chat.selectedModel, availableModels, onModelChange: chat.setSelectedModel,
+                onConfigureModels: () => openSettings('models'), referencePlanMode: chat.referencePlanMode, onReferencePlanModeChange: chat.setReferencePlanMode,
+                permissionMode: chat.permissionMode, onPermissionModeChange: chat.setPermissionMode,
+                subagentPermissionRouting: chat.subagentPermissionRouting, onSubagentPermissionRoutingChange: chat.setSubagentPermissionRouting,
+                reasoningLevelAvailable: backendCapabilities.reasoningLevelSelection, reasoningLevel: chat.reasoningLevel,
+                reasoningLevels: backendCapabilities.reasoningLevels, onReasoningLevelChange: chat.setReasoningLevel,
+                skills: chat.skills, disabledSkillNames, onToggleSkill: toggleSkillEnabled }}
+              onManageHosts={() => { agents.select('', undefined, 'settings'); setSection('agents'); }}/>
             {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView composerPortalTarget={section === 'agents' && quickInputOpen ? quickInputTarget : null} active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
                 draft: activeDraft, notice: chat.error || chat.notice || undefined,
@@ -2245,7 +2260,7 @@ function CardbushApp() {
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(language === 'zh' ? '组件消息发送失败' : 'Component message failed', error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
-            {section === 'agents' ? null : section === 'chat' ? (
+            {section === 'agents' || section === 'assistant' ? null : section === 'chat' ? (
               <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
               <ChatPanel
                 browserTabs={composerBrowserTabs}
@@ -2326,7 +2341,7 @@ function CardbushApp() {
                 onToggleSkill={toggleSkillEnabled}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
-                onVoiceSend={chat.sendVoiceMessage}
+                onVoiceSend={chat.sendVoiceMessage} voiceAgent={chat.voiceAgent}
                 onRetryMessage={chat.retryFailedUserMessage}
                 onRegenerate={chat.regenerateAssistantMessage}
                 onEditUserMessage={chat.editUserMessageAndRegenerate}
@@ -2830,7 +2845,7 @@ function CardbushApp() {
               aria-label={language === 'zh' ? '快速输入' : 'Quick input'} />}
             <div className="inspector-cover-capsule">
               <button type="button" onClick={leaveInspectorCover}><ArrowLeft size={15}/>{language === 'zh' ? '返回' : 'Back'}</button>
-              <button type="button" aria-expanded={quickInputOpen} onClick={() => { if (!quickInputOpen && section !== 'agents') setSection('chat'); setQuickInputOpen(open => !open); }}>
+              <button type="button" aria-expanded={quickInputOpen} onClick={() => { if (!quickInputOpen && section !== 'agents' && section !== 'assistant') setSection('chat'); setQuickInputOpen(open => !open); }}>
                 {language === 'zh' ? '输入' : 'Input'}
               </button>
             </div>
@@ -2855,6 +2870,7 @@ function CardbushApp() {
       </AppCenterProvider>
     </div>
     </ImageGalleryProvider>
+    </ApplicationVoiceHost>
     </ConversationExtractionProvider>
     </WorkspaceChangeStateContext.Provider>
     </PageNavigationContext.Provider>

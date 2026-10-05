@@ -9,7 +9,10 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 export function composerHorizontalBounds(viewportWidth: number, percent?: number, defaultWidth = 704, availableWidth = viewportWidth) {
   const available = Math.max(0, availableWidth - composerEdge * 2);
   const requested = percent === undefined ? defaultWidth : viewportWidth * percent / 100;
-  const width = clamp(requested, Math.min(280, available), available);
+  // A default reading track can be narrower than the editor's minimum in a
+  // split pane. Explicit/custom widths still retain the editor's 280px minimum.
+  const minimum = percent === undefined ? Math.min(280, Math.max(0, defaultWidth)) : 280;
+  const width = clamp(requested, Math.min(minimum, available), available);
   return { left: Math.max(0, (availableWidth - width) / 2), width };
 }
 

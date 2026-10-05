@@ -128,7 +128,7 @@ function sessionFixture(overrides = {}, playback = {}, clock, captureOverrides =
   return { session, target, sent, spoken, cancelled, mutes, get callbacks() { return callbacks; }, get stopped() { return stopped; }, get closed() { return closed; } };
 }
 
-test('unlocked calls merge pending clips for one review, pause capture and preserve playback', async () => {
+test('unlocked calls merge pending clips and send automatically without a confirmation', async () => {
   const response = deferred(), playing = deferred(); let calls = 0;
   const f = sessionFixture({ transcribe: async () => { calls++; return response.promise; } }, { speak: () => playing.promise });
   try {
@@ -136,26 +136,46 @@ test('unlocked calls merge pending clips for one review, pause capture and prese
     f.session.update({ ...f.target, sending: true, activeTurnId: 'turn', messages: [{ id: 'reply', role: 'assistant', turnId: 'turn', content: '继续处理。' }] });
     const before = f.stopped;
     for (let i = 0; i < 3; i++) f.callbacks.clip(new Blob(['external audio'], { type: 'audio/webm' }));
-    await pause(); response.resolve({ text: '背景视频里的声音' }); await pause(); await pause();
-    assert.equal(calls, 3); assert.equal(f.sent.length, 0); assert.equal(f.stopped, before);
-    assert.equal(f.session.snapshot().reviewText, '背景视频里的声音 背景视频里的声音 背景视频里的声音'); assert.equal(f.session.snapshot().queuedClips, 0);
-    assert.equal(f.mutes.at(-1), true); assert.equal(f.session.snapshot().speakerLocked, false);
-    f.callbacks.clip(new Blob(['more noise'])); f.session.finishUtterance(); await pause(); assert.equal(calls, 3);
-    f.session.review('我确认发送的内容'); f.session.review('重复点击'); await pause(); await pause();
-    assert.deepEqual(f.sent, [['我确认发送的内容', { immediate: true }]]); assert.equal(f.stopped, before + 1);
+    await pause(); assert.equal(f.sent.length,0); assert.equal(f.stopped,before);
+    response.resolve({ text: '继续补充的内容' }); await pause(); await pause();
+    assert.equal(calls, 3); assert.equal(f.session.snapshot().queuedClips, 0);
+    assert.equal(f.session.snapshot().speakerLocked, false);
+    assert.deepEqual(f.sent, [['继续补充的内容 继续补充的内容 继续补充的内容', { immediate: true }]]); assert.equal(f.stopped, before + 1);
     assert.equal(f.mutes.at(-1), false);
   } finally { playing.resolve(); f.session.end(); }
 });
 
-test('a previously verified caller requires review again when the host no longer verifies this clip', async () => {
+test('unlocked calls do not require proof or confirmation and keep explicit mute working', async () => {
   let verified = true;
   const f = sessionFixture({ transcribe: async () => ({ text: '完整的一句话', ...(verified ? { speakerVerified: true } : {}) }) });
   await f.session.start('call'); f.session.finishUtterance(); await pause(); await pause();
-  assert.equal(f.sent.length, 1); assert.equal(f.session.snapshot().speakerLocked, true);
-  verified = false; f.session.finishUtterance(); await pause(); await pause();
   assert.equal(f.sent.length, 1); assert.equal(f.session.snapshot().speakerLocked, false);
-  f.session.mute(); f.session.review(''); assert.equal(f.mutes.at(-1), true, 'dismiss respects explicit mute');
+  verified = false; f.session.finishUtterance(); await pause(); await pause();
+  assert.equal(f.sent.length, 2); assert.equal(f.session.snapshot().speakerLocked, false);
+  f.session.mute(); assert.equal(f.mutes.at(-1), true);
   f.session.end();
+});
+
+test('an enabled speaker lock drops missing proof without sending or asking for confirmation', async () => {
+  let verified = true;
+  const f = sessionFixture({
+    settings:async()=>({...defaultVoiceSettings,hasApiKey:true,speakerLockEnabled:true}),
+    modelStatus:async()=>({state:'installed'}),speakerStatus:async()=>({enabled:true,enrolled:true}),
+    transcribe:async()=>({text:'完整的一句话',...(verified?{speakerVerified:true}:{})}),
+  });
+  // The fixture skips actual WAV conversion; the production host verifies audio.
+  const previousAudioContext=globalThis.AudioContext;
+  const previousOfflineAudioContext=globalThis.OfflineAudioContext;
+  globalThis.AudioContext=class{decodeAudioData(){return Promise.resolve({length:16000,duration:1});}close(){return Promise.resolve();}};
+  globalThis.OfflineAudioContext=class{createBufferSource(){return {connect(){},start(){}};}startRendering(){return Promise.resolve({getChannelData:()=>new Float32Array(16000)});}};
+  try {
+    await f.session.start('call');f.session.finishUtterance();await pause();await pause();
+    assert.equal(f.sent.length,1);const before=f.stopped;
+    verified=false;f.session.finishUtterance();await pause();await pause();
+    assert.equal(f.sent.length,1);assert.equal(f.stopped,before);assert.equal(f.session.snapshot().speakerLocked,true);
+    assert.ok(f.session.snapshot().speakerNotice);assert.equal(f.session.snapshot().muted,false);
+    f.session.retry();await pause();assert.equal(f.sent.length,1);
+  } finally {f.session.end();globalThis.AudioContext=previousAudioContext;globalThis.OfflineAudioContext=previousOfflineAudioContext;}
 });
 
 test('Kokoro warm delivery joins available short sentences without delaying the first reply', async () => {
@@ -195,22 +215,22 @@ test('single recording sends ordinary text and never speaks the reply', async ()
   f.session.update({ ...f.target, messages: [{ id: 'reply', role: 'assistant', content: '好的。' }] });
   assert.equal(f.spoken.length, 0); assert.ok(f.closed); f.session.end();
 });
-test('recording Send dismisses immediately, releases capture and submits once after delayed transcription', async () => {
+test('recording Send retains its session, releases capture and submits once after delayed transcription', async () => {
   const response = deferred(); let transcriptions = 0;
   const f = sessionFixture({ transcribe: () => { transcriptions++; return response.promise; } });
   await f.session.start('recording'); f.session.finishRecording();
-  assert.equal(f.session.snapshot().background, true); assert.equal(f.session.snapshot().phase, 'transcribing');
+  assert.equal(f.session.snapshot().mode, 'recording'); assert.equal(f.session.snapshot().phase, 'transcribing');
   assert.ok(f.closed); assert.equal(f.sent.length, 0);
   f.session.finishRecording(); f.session.retry(); await pause();
   assert.equal(transcriptions, 1); assert.equal(f.cancelled.length, 0);
   response.resolve({ text: '后台发送' }); await pause(); await pause();
   assert.deepEqual(f.sent, [['后台发送', undefined]]); assert.equal(f.session.snapshot().mode, 'idle');
 });
-test('background recording failures preserve a retry without reopening the modal', async () => {
+test('recording failures retain the session and allow one retry', async () => {
   let attempts = 0;
   const f = sessionFixture({ transcribe: async () => { if (++attempts === 1) throw Error('暂时失败'); return { text: '录音已保留' }; } });
   await f.session.start('recording'); f.session.finishRecording(); await pause(); await pause();
-  assert.equal(f.session.snapshot().background, true); assert.equal(f.session.snapshot().retryAvailable, true);
+  assert.equal(f.session.snapshot().mode, 'recording'); assert.equal(f.session.snapshot().retryAvailable, true);
   assert.equal(f.sent.length, 0); f.session.retry(); f.session.retry(); await pause(); await pause();
   assert.equal(attempts, 2); assert.deepEqual(f.sent, [['录音已保留', undefined]]);
 });
@@ -223,7 +243,35 @@ test('cancel or conversation switch during background transcription cannot submi
     assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().mode, 'idle'); assert.ok(f.cancelled.length);
   }
 });
-test('call streams text, changes voice, interrupts audio independently, and ends on conversation switch', async () => {
+test('detaching a view only releases its own recording, not another session or host', async () => {
+  const f = sessionFixture(); await f.session.start('recording');
+  f.session.releaseRecording({ ...f.target, sessionId: 'hidden-assistant' });
+  f.session.releaseRecording({ ...f.target, environment: 'remote' });
+  assert.equal(f.session.snapshot().phase, 'recording'); assert.equal(f.closed, 0);
+  f.session.releaseRecording(f.target);
+  assert.equal(f.session.snapshot().mode, 'idle'); assert.ok(f.closed);
+});
+test('detaching the recording owner cancels pending startup and late transcription', async () => {
+  const settings = deferred(), starting = sessionFixture({ settings: () => settings.promise });
+  const startup = starting.session.start('recording');
+  starting.session.releaseRecording(starting.target);
+  settings.resolve({ ...defaultVoiceSettings, hasApiKey: true }); await startup;
+  assert.equal(starting.session.snapshot().mode, 'idle'); assert.equal(starting.callbacks, undefined);
+  const response = deferred(), f = sessionFixture({ transcribe: () => response.promise });
+  await f.session.start('recording'); f.session.finishRecording(); await pause();
+  f.session.releaseRecording(f.target); response.resolve({ text: '不能迟到发送' }); await pause(); await pause();
+  assert.equal(f.session.snapshot().mode, 'idle'); assert.equal(f.sent.length, 0); assert.ok(f.cancelled.length);
+});
+test('detaching the call owner preserves an application-level call', async () => {
+  const f = sessionFixture(); await f.session.start('call');
+  try {
+    f.session.releaseRecording(f.target);
+    assert.equal(f.session.snapshot().mode, 'call'); assert.equal(f.closed, 0);
+    f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause();
+    assert.equal(f.sent.length, 1);
+  } finally { f.session.end(); }
+});
+test('call streams text, changes voice, interrupts audio independently, and survives conversation switch', async () => {
   const f = sessionFixture(); await f.session.start('call'); await f.session.setVoice('male');
   f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause();
   assert.equal(f.sent[0][1].immediate, true);
@@ -232,7 +280,7 @@ test('call streams text, changes voice, interrupts audio independently, and ends
   const before = f.stopped; f.callbacks.speech(); assert.equal(f.stopped, before, 'activity without confirmed text cannot interrupt');
   f.session.update({ ...target, messages: [{ ...target.messages[0], content: '第一句。下一句。' }] }); await pause(); assert.equal(f.spoken.length, 2);
   f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause(); assert.ok(f.stopped > before, 'confirmed speech still interrupts');
-  f.session.update({ ...target, sessionId: 'other' }); assert.equal(f.session.snapshot().mode, 'idle');
+  f.session.update({ ...target, sessionId: 'other' }); assert.equal(f.session.snapshot().mode, 'call'); f.session.end();
 });
 test('noise, empty ASR, uncertain fragments, playback echo and ASR failure preserve active playback', async () => {
   for (const text of ['', 'I.', '嗯', '我会帮你检查最新的市场行情。', null]) {
@@ -246,11 +294,7 @@ test('noise, empty ASR, uncertain fragments, playback echo and ASR failure prese
       const before = stops;
       f.callbacks.speech(); f.callbacks.clip(new Blob(['noise'], { type: 'audio/webm' })); await pause(); await pause();
       assert.equal(stops, before, `ASR ${text} must not stop speech`); assert.equal(f.session.snapshot().speaking, true); assert.equal(f.sent.length, 0);
-      if (text) {
-        assert.equal(f.session.snapshot().reviewText, text);
-        f.session.review('请打开浏览器'); await pause(); await pause();
-        assert.equal(stops, before + 1); assert.equal(f.sent[0][0], '请打开浏览器');
-      }
+      if (text) { assert.ok(f.session.snapshot().speakerNotice); assert.equal(f.session.snapshot().muted,false); }
     } finally { playing.resolve(); f.session.end(); }
   }
 });
@@ -265,8 +309,8 @@ test('foreign and uncertain speakers never interrupt, enter review, retry text o
       await pause(); const before = stops;
       f.callbacks.clip(new Blob(['foreign voice'], { type: 'audio/webm' })); await pause(); await pause();
       assert.equal(stops, before); assert.equal(f.session.snapshot().speaking, true); assert.equal(f.session.snapshot().muted, false);
-      assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().reviewText, ''); assert.equal(f.session.snapshot().retryAvailable, false);
-      assert.ok(f.session.snapshot().speakerNotice); f.session.retry(); f.session.review('旁人的命令'); await pause(); assert.equal(f.sent.length, 0);
+      assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().retryAvailable, false);
+      assert.ok(f.session.snapshot().speakerNotice); f.session.retry(); await pause(); assert.equal(f.sent.length, 0);
       f.session.end(); await f.session.start('call'); assert.equal(f.session.snapshot().speakerNotice, undefined);
     } finally { playing.resolve(); f.session.end(); }
   }
@@ -343,7 +387,7 @@ test('failed transcription retains audio and exposes retry before any transcript
   assert.equal(f.session.snapshot().retryAvailable, false); assert.equal(f.sent.length, 1); assert.equal(f.sent[0][0], '重试成功'); f.session.end();
 });
 const { submissionReceipt } = compile('src/shared/submissionReceipt.ts');
-const { VoiceProgress, needsVoiceReview } = compile('src/features/voice/voiceProgress.ts');
+const { VoiceProgress, isAmbiguousVoiceFragment } = compile('src/features/voice/voiceProgress.ts');
 
 test('voice acceptance frees transcription before a long Agent turn completes; failures are not acknowledged', async () => {
   const completion = deferred(); let active = true;
@@ -359,14 +403,15 @@ test('voice acceptance frees transcription before a long Agent turn completes; f
   assert.equal(await submissionReceipt(async accepted => { accepted(); throw Error('later turn failed'); }), true);
 });
 
-test('ambiguous fragments require review; confirmation is sent once and useful short commands still work', async () => {
-  for (const text of ['嗯。', '呃', 'I.', '啊 嗯']) assert.equal(needsVoiceReview(text), true);
-  for (const text of ['好', '停', '不', 'OK', '打开 Chrome']) assert.equal(needsVoiceReview(text), false);
-  const f = sessionFixture({ transcribe: async () => ({ text: 'I.' }) }); await f.session.start('call');
+test('ambiguous utterances are ignored without interrupting the next useful command', async () => {
+  for (const text of ['嗯。', '呃', 'I.', '啊 嗯']) assert.equal(isAmbiguousVoiceFragment(text), true);
+  for (const text of ['好', '停', '不', 'OK', '打开 Chrome']) assert.equal(isAmbiguousVoiceFragment(text), false);
+  let text='I.';
+  const f = sessionFixture({ transcribe: async () => ({ text }) }); await f.session.start('call');
   f.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause();
-  assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().reviewText, 'I.');
-  f.session.review('打开 Chrome'); f.session.review('打开 Chrome'); await pause(); await pause();
-  assert.equal(f.sent.length, 1); assert.equal(f.sent[0][0], '打开 Chrome'); assert.equal(f.session.snapshot().reviewText, ''); f.session.end();
+  assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().muted,false); assert.ok(f.session.snapshot().speakerNotice);
+  text='打开 Chrome';f.callbacks.clip(new Blob(['audio'], {type:'audio/webm'}));await pause();await pause();
+  assert.equal(f.sent.length, 1); assert.equal(f.sent[0][0], '打开 Chrome'); f.session.end();
 });
 
 test('ASR backpressure resumes on drain and respects explicit microphone mute', async () => {
@@ -480,14 +525,13 @@ test('Finished speaking during ASR waits for the result then bypasses silence, w
   gate.resolve({ text: '完整的话', speakerVerified: true }); await settle(); clock.advance(0); await settle();
   assert.deepEqual(f.sent.map(v => v[0]), ['完整的话']); assert.equal(f.mutes.at(-1), false); f.session.end();
 });
-test('unverified fragments require one review of the complete turn even if another fragment is verified', async () => {
+test('unlocked mixed verification fragments merge and send one complete turn automatically', async () => {
   const clock = turnClock(); let i = 0;
   const f = sessionFixture({ transcribe: async () => ++i === 1 ? { text: '前半句' } : { text: '后半句', speakerVerified: true } }, {}, clock);
   await f.session.start('call'); clip(f, clock); await settle(); clock.advance(2000);
-  f.callbacks.speech(); clip(f, clock); await settle(); assert.equal(f.session.snapshot().reviewText, '');
-  clock.advance(3000); await settle(); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().reviewText, '前半句 后半句');
-  assert.equal(f.mutes.at(-1), true); f.session.review('前半句 后半句'); await settle();
-  assert.equal(f.sent.length, 1); f.session.end();
+  f.callbacks.speech(); clip(f, clock); await settle(); assert.equal(f.sent.length, 0);
+  clock.advance(3000); await settle();assert.deepEqual(f.sent.map(v=>v[0]),['前半句 后半句']);
+  assert.equal(f.mutes.at(-1), false); f.session.end();
 });
 test('drafts survive a failed continuation and retry without resending the first fragment separately', async () => {
   const clock = turnClock(); let i = 0;
@@ -497,7 +541,7 @@ test('drafts survive a failed continuation and retry without resending the first
   f.session.retry(); await settle(); clock.advance(0); await settle();
   assert.deepEqual(f.sent.map(v => v[0]), ['保留前半句 重试后半句']); f.session.end();
 });
-test('disconnect, settings, hangup and switching conversations prevent pending automatic submissions', async () => {
+test('disconnect, settings and hangup prevent pending submissions; navigation preserves the call', async () => {
   for (const action of ['disconnect', 'settings', 'end', 'switch']) {
     const clock = turnClock(), f = sessionFixture({}, {}, clock);
     await f.session.start('call'); clip(f, clock); await settle();
@@ -505,7 +549,7 @@ test('disconnect, settings, hangup and switching conversations prevent pending a
     if (action === 'settings') f.session.setSettingsOpen(true);
     if (action === 'end') f.session.end();
     if (action === 'switch') f.session.update({ ...f.target, sessionId: 'other' });
-    clock.advance(20000); await settle(); assert.equal(f.sent.length, 0, action); f.session.end(); assert.equal(clock.pending, 0);
+    clock.advance(20000); await settle(); assert.equal(f.sent.length, action === 'switch' ? 1 : 0, action); f.session.end(); assert.equal(clock.pending, 0);
   }
 });
 test('only verified standalone interruption commands bypass the normal pause', async () => {
@@ -520,4 +564,44 @@ test('voice pause preference persists and existing profiles migrate to normal', 
   assert.equal(validateVoiceSettings({ ...defaultVoiceSettings, turnEndPause: undefined }).turnEndPause, 'normal');
   instance.save({ ...defaultVoiceSettings, turnEndPause: 'patient' }); assert.equal(instance.settings().turnEndPause, 'patient');
   assert.throws(() => validateVoiceSettings({ ...defaultVoiceSettings, turnEndPause: 'instant' }));
+});
+
+
+test('assistant microphone and playback preferences are independent and survive a new call',async()=>{
+  const preferences={microphoneMuted:true,outputMuted:true},output=[];
+  const f=sessionFixture({}, {setOutputMuted:value=>output.push(value)});
+  const owner={...f.target,assistant:{name:'Lumi',persona:''},audioPreferences:()=>preferences,onMicrophoneMuteChange:value=>preferences.microphoneMuted=value};
+  f.session.update(owner);
+  try{
+    await f.session.start('call');assert.equal(f.session.snapshot().muted,true);assert.equal(f.mutes.at(-1),true);
+    assert.equal(f.session.snapshot().outputMuted,true);assert.equal(output.at(-1),true);
+    f.session.mute();assert.equal(preferences.microphoneMuted,false);assert.equal(f.session.snapshot().outputMuted,true);
+    preferences.outputMuted=false;f.session.update(owner);assert.equal(output.at(-1),false);assert.equal(f.session.snapshot().muted,false);
+    preferences.outputMuted=true;f.session.update(owner);f.session.end();
+    f.session.update(owner);await f.session.start('call');
+    assert.equal(f.session.snapshot().muted,false);assert.equal(f.session.snapshot().outputMuted,true);
+  }finally{f.session.end();}
+});
+
+
+test('assistant call ownership is available during connection so reset can cancel a pending start',async()=>{
+  const f=sessionFixture(),pin=deferred();
+  f.session.update({...f.target,sessionId:'personal-assistant',assistant:{name:'Lumi',persona:''},agent:{pin:()=>pin.promise}});
+  const connecting=f.session.start('call');
+  assert.equal(f.session.snapshot().assistant,true);assert.equal(f.session.snapshot().phase,'connecting');
+  f.session.end();pin.resolve(f.target);await connecting;
+  assert.equal(f.session.snapshot().mode,'idle');assert.equal(f.callbacks,undefined);
+});
+
+
+test('muted speech is not treated as an audible echo of the user',async()=>{
+  const text='我会帮你检查最新的市场行情。',playing=deferred();
+  const f=sessionFixture({transcribe:async()=>({text,speakerVerified:true})},{speak:()=>playing.promise});
+  try{
+    await f.session.start('call');f.session.setOutputMuted(true);
+    f.session.update({...f.target,sending:true,activeTurnId:'turn',messages:[{id:'reply',role:'assistant',turnId:'turn',content:text}]});
+    await pause();f.callbacks.clip(new Blob(['audio'],{type:'audio/webm'}));
+    for(let i=0;i<15&&!f.sent.length;i++)await pause();
+    assert.equal(f.sent[0]?.[0],text,'inaudible TTS must not discard a matching user utterance');
+  }finally{playing.resolve();f.session.end();}
 });

@@ -67,6 +67,7 @@ test('bottom placements snap or leave meaningful travel, including tall inputs a
   const pinned = composer.composerVerticalBounds(900, 52, 560, 'bottom', true);
   assert.equal(pinned.top, 828, 'saved bottom pin follows viewport height');
   assert.equal(composer.composerHorizontalBounds(1000, 60).left, 200);
+  assert.deepEqual(composer.composerHorizontalBounds(320, undefined, 218), { left: 51, width: 218 }, 'default composer fits the narrow transcript track');
   assert.deepEqual(composer.composerHorizontalBounds(1000, 90, 704, 700), { left: 12, width: 676 }, 'summary constrains width symmetrically');
 });
 

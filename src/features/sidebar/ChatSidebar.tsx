@@ -26,6 +26,8 @@ import {
   Mail,
   MailOpen,
   MessageSquare,
+  MicOff,
+  VolumeX,
   Pin,
   Plus,
   RefreshCw,
@@ -205,6 +207,9 @@ function sidebarContextMenuPosition(clientX: number, clientY: number, items: Sid
   };
 }
 
+import { AssistantBulb } from '../assistant/AssistantBulb';
+import { useAssistantActions } from '../assistant/useAssistantActions';
+
 export const ChatSidebar = memo(function ChatSidebar({
   language,
   section,
@@ -259,6 +264,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   softVisible?: boolean;
 }) {
   const sidebarRenderStartedAt = performance.now();
+  const assistantActions = useAssistantActions(language), assistantProfile = assistantActions.profile;
   useLayoutEffect(() => {
     recordUiPerformanceMetric('sidebar_commit_ms', {
       sessionId: activeConversationId,
@@ -833,6 +839,13 @@ export const ChatSidebar = memo(function ChatSidebar({
             ])
           }
         />
+        <NavRow icon={<AssistantBulb size={18}/>} label={assistantProfile.name} active={section === 'assistant'} onClick={() => onSectionChange('assistant')}
+          onContextMenu={event => openContextMenu(event, 'nav:assistant', assistantActions.items)}
+          trailing={<span className="assistant-muted-indicators">
+            {assistantActions.resetting && <LoaderCircle className="spin" size={12}/>}
+            {assistantProfile.microphoneMuted && <MicOff size={12} aria-label={language === 'zh' ? '麦克风已静音' : 'Microphone muted'}/>}
+            {assistantProfile.outputMuted && <VolumeX size={12} aria-label={language === 'zh' ? '播报已静音' : 'Speech muted'}/>}
+          </span>}/>
       </nav>
 
       <div className="sidebar-scroll">
@@ -1008,6 +1021,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           sidebarRef.current?.closest('.app') ?? document.body,
         )
       )}
+      {assistantActions.dialog}
     </aside>
   );
 });

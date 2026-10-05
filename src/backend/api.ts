@@ -70,6 +70,8 @@ import { standardImageInputToolDefaultName } from './toolVisibility';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { isVisibleConversationSession } from './runtimeSessionVisibility';
+import { ASSISTANT_CONVERSATION_COMMAND } from '@cardbush/bush-protocol';
+import { journalMessages, type ConversationJournalSnapshot } from './conversationJournal';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
@@ -1209,6 +1211,7 @@ export async function fetchConversations(
     const sessions = await runtime.client.listSessions();
     return sessions
       .filter(isVisibleConversationSession)
+      .filter(item => item.sessionId !== 'personal-assistant')
       .map(runtimeConversation)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   } finally {
@@ -1259,6 +1262,12 @@ export async function fetchSessionMessages(
       }, snapshot.sessionId);
       return markRuntimeSupersededMessages(projected, superseded);
     });
+    const capabilities = await runtime.client.getCapabilities();
+    if (capabilities.supportedCommands.includes(ASSISTANT_CONVERSATION_COMMAND)) {
+      const journal = await runtime.client.command({ kind: ASSISTANT_CONVERSATION_COMMAND, payload: { action: 'read', sessionId: snapshot.sessionId } }, value => value as ConversationJournalSnapshot);
+      messages.push(...journalMessages(journal.entries, snapshot.sessionId));
+      messages.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
+    }
     const [recordGroups, compactionEventGroups] = await Promise.all([
       Promise.all(
         snapshot.turns.map((turn) =>
@@ -1673,7 +1682,9 @@ export async function deleteConversationApi(sessionId: string) {
   }
   const runtime = createDesktopRuntimeSession();
   try {
-    return (await runtime.client.deleteSession(normalized)).deleted;
+    const deleted=(await runtime.client.deleteSession(normalized)).deleted;
+    if (deleted) await window.cardbushDesktop?.voice?.realtime?.forgetHistory(normalized);
+    return deleted;
   } finally {
     runtime.dispose();
   }
@@ -1800,7 +1811,9 @@ async function productHostValue(
 }
 
 export async function clearConversationHistory(): Promise<MaintenanceClearResult> {
-  return maintenanceClearResultFromPayload(await productHostValue({ kind: 'maintenance.clear_conversations' }));
+  const result=maintenanceClearResultFromPayload(await productHostValue({ kind: 'maintenance.clear_conversations' }));
+  if (result.cleared && !result.errors?.length) await window.cardbushDesktop?.voice?.realtime?.forgetHistory();
+  return result;
 }
 
 export async function clearApplicationCache(): Promise<MaintenanceClearResult> {

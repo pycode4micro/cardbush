@@ -10,7 +10,8 @@ const source = ts.createSourceFile('hook.ts', readFileSync('src/hooks/useCardbus
 const hook = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useCardbushChat');
 const send = hook.body.statements.flatMap(node => ts.isVariableStatement(node) ? [...node.declarationList.declarations] : [])
   .find(node => node.name.getText(source) === 'sendMessage').initializer.arguments[0].getText(source);
-const attachments = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'chatAttachmentsFromOutbound').getText(source);
+const attachmentSource = ts.createSourceFile('attachments.ts', readFileSync('src/shared/chatAttachments.ts', 'utf8'), ts.ScriptTarget.Latest, true);
+const attachments = attachmentSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'chatAttachmentsFromOutbound').getText(attachmentSource).replace(/^export /, '');
 const code = ts.transpileModule(`${attachments}\nexports.send = ${send};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));

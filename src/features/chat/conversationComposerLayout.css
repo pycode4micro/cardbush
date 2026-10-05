@@ -29,7 +29,7 @@
     var(--surface) 100%
   );
 }
-.chat-panel.composer-layout-managed .composer-dock .composer-stack { width: 100%; }
+.chat-panel.composer-layout-managed .composer-dock .composer-stack { width: 100%; max-width: none; }
 .chat-panel.composer-anchored .composer-dock:not(.interaction-only) {
   top: var(--flow-composer-top, 12px);
   left: var(--flow-composer-left, 12px);

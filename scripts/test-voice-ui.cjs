@@ -46,7 +46,7 @@ app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // A deterministic microphone: two phrases separated by a thinking pause, then silence.
 // A single pure tone is intentionally rejected by the activity gate.
-// Two seconds between phrases must not create two turns. The final gap permits one review.
+// Two seconds between phrases must not create two turns. The final gap permits one send.
 const rate = 48000, frames = rate * 12, wav = Buffer.alloc(44 + frames * 2);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
 wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(frames * 2, 40);
@@ -124,7 +124,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') assert.equal(app.isPackaged, true, 'branded development runtime exercises packaged-detection mismatch');
   const runtime = { packaged: app.isPackaged && process.env.CARDBUSH_DEVELOPMENT_RUNTIME?.trim() !== '1',
     appPath: path.resolve(__dirname, '..'), resourcesPath: process.resourcesPath };
-  registerVoiceIpc(()=>win, runtime, { download:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init), speech:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init) }); installVoiceMediaPermissions(win); win.webContents.setAudioMuted(true);
+  registerVoiceIpc(()=>win, runtime, { realtimeProxy:async()=>'', download:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init), speech:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init) }); installVoiceMediaPermissions(win); win.webContents.setAudioMuted(true);
   const errors=[]; win.webContents.on('console-message',event=>{ if(event.level==='error') errors.push(event.message); });
   const read = code => win.webContents.executeJavaScript(code);
   const until = async (code, timeout = 6500) => { const end=Date.now()+timeout; while(!await read(code)){if(Date.now()>end)throw Error('Timed out: '+code+'\n'+await read('document.body.innerText')+'\n'+errors.join('\n'));await pause(30);} };
@@ -133,6 +133,7 @@ app.whenReady().then(async () => {
   try {
     await win.loadFile(path.join(directory,'index.html'));
     await until('document.querySelector(".send-button")');
+    await read('(async()=>{const api=cardbushDesktop.voice.realtime;await api.saveSettings({...await api.settings(),mode:"chained"});})()');
     assert.equal(await read('(async()=> (await cardbushDesktop.voice.settings()).engine)()'), 'system');
     assert.equal((await read('cardbushDesktop.voice.modelStatus()')).state, 'not-installed');
     assert.equal(fs.existsSync(path.join(app.getPath('userData'), 'voice-models')), false);
@@ -154,7 +155,7 @@ app.whenReady().then(async () => {
       await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       fs.writeFileSync(path.resolve('tmp/voice-system-settings.png'), (await win.webContents.capturePage()).toPNG());
       await read('fixture.settings(false);window.nativeChunks=[];window.nativeUnsub=cardbushDesktop.voice.onAudio(chunk=>nativeChunks.push(chunk));void 0');
-      await read('document.querySelector(".send-button").click()'); await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在录音")');
+      await read('document.querySelector(".send-button").click()'); await until('document.querySelector(".voice-composer-label")?.textContent.includes("正在录音")');
       await click('取消录音'); assert.equal(requests.length,0);
       await read('document.querySelector("button[aria-label=语音通话]").click()'); await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在聆听")');
       await read('document.querySelector("button[aria-label=麦克风静音]").click();fixture.sending(true);fixture.messages([{id:"local-answer",role:"assistant",turnId:"turn",content:"今天天气很好。"}]);void 0');
@@ -185,20 +186,20 @@ app.whenReady().then(async () => {
     const config={engine:'cloud',language:'zh-CN',systemFemaleVoice:'',systemMaleVoice:'',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,transcriptionModel:'test-transcribe',speechModel:'test-speech',voice:'female',femaleVoice:'nova',maleVoice:'onyx',speed:1,apiKey:'fixture-key'};
     await read(`window.cardbushDesktop.voice.saveSettings(${JSON.stringify(config)})`);
     // Click records; cancel never uploads or submits.
-    await read('document.querySelector(".send-button").click()'); await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在录音")');
+    await read('document.querySelector(".send-button").click()'); await until('document.querySelector(".voice-composer-label")?.textContent.includes("正在录音")');
     assert.equal(await read('!!document.querySelector(".voice-dialog")'),false,'recording starts compact');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.resolve('tmp/voice-recording-mini.png'),(await win.webContents.capturePage()).toPNG());
-    await click('展开录音详情');await until('document.querySelector(".voice-dialog")');
-    assert.equal(await read('document.querySelector(".voice-dialog").getAttribute("aria-modal")'),'false');
-    await click('收起为悬浮按钮');await until('document.querySelector(".voice-mini") && !document.querySelector(".voice-dialog")');
-    const miniBefore=await read('document.querySelector(".voice-mini").getBoundingClientRect().x');
-    await read('document.querySelector(".voice-mini .voice-drag-handle").dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowLeft",bubbles:true}));void 0');
-    await pause(50);assert.equal(await read('document.querySelector(".voice-mini").getBoundingClientRect().x'),miniBefore-16);
+    await click('查看录音状态');await until('document.querySelector(".voice-composer-note")');
+    assert.equal(await read('!!document.querySelector(".voice-dialog,.voice-mini")'),false,'no legacy recording UI');
+    await click('查看录音状态');await until('!document.querySelector(".voice-composer-note")');
+    const miniBefore=await read('document.querySelector(".voice-floating-composer").getBoundingClientRect().x');
+    await read('document.querySelector(".voice-floating-composer .voice-drag-handle").dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowLeft",bubbles:true}));void 0');
+    await pause(50);assert.equal(await read('document.querySelector(".voice-floating-composer").getBoundingClientRect().x'),miniBefore-16);
     await click('取消录音'); assert.equal(requests.length,0);
-    await read('document.querySelector(".send-button").click()'); await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在录音")');
+    await read('document.querySelector(".send-button").click()'); await until('document.querySelector(".voice-composer-label")?.textContent.includes("正在录音")');
     holdTranscription = true;
-    await pause(500); await click('发送录音'); await until('!document.querySelector(".voice-overlay") && document.querySelector(".voice-mini")');
+    await pause(500); await click('发送录音'); await until('!document.querySelector(".voice-overlay") && document.querySelector(".voice-floating-composer")');
     assert.equal(await read('fixture.sent.length'), 0);
     await until('fixture.tracks.every(track=>track.readyState==="ended")');
     // Background transcription must leave typing/focus/Escape alone.
@@ -206,15 +207,15 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.activeElement.getAttribute("aria-label")'), '消息');
     for(let i=0;i<100&&!completeTranscription;i++)await pause(30); assert.ok(completeTranscription);
     completeTranscription(503); holdTranscription = false;
-    await until('document.querySelector(".voice-mini-status")?.textContent==="语音需要处理"');
-    assert.equal(await read('document.querySelector(".voice-mini-restore").title'), '语音服务请求失败（HTTP 503）。');
+    await until('document.querySelector(".voice-composer-label")?.textContent==="语音需要处理"');
+    assert.equal(await read('document.querySelector(".voice-composer-status").title'), '语音服务请求失败（HTTP 503）。');
     assert.equal(await read('!!document.querySelector(".voice-overlay")'), false);
     assert.equal(await read('fixture.sent.length'), 0);
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await pause(100);
     fs.writeFileSync(path.resolve('tmp/voice-background-retry.png'), (await win.webContents.capturePage()).toPNG());
     await click('重试发送'); await until('fixture.sent.length===1');
     assert.equal(await read('fixture.sent[0].options===undefined'),true); assert.ok(requests[0].body.length>500); assert.equal(requests[0].authorization,'Bearer fixture-key');
-    await until('!document.querySelector(".voice-overlay") && !document.querySelector(".voice-mini")');
+    await until('!document.querySelector(".voice-overlay,.voice-mini,.voice-floating-composer")');
     // Actual pointer hold and release: one call, never a second recording overlay.
     const transcriptionsBeforeCall=requests.filter(r=>r.url.endsWith('/transcriptions')).length;
     const position=await point('.send-button'); win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...position});
@@ -223,18 +224,16 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".voice-mini-status")?.textContent.includes("正在聆听")');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.resolve('tmp/voice-call.png'),(await win.webContents.capturePage()).toPNG());
-    // Real MediaRecorder + VAD + IPC, but an unlocked microphone needs review.
+    // Real MediaRecorder + VAD + IPC: merged speech sends without confirmation.
     await until('document.querySelector(".voice-mini-status")?.textContent.includes("还在听，可以继续")');
     assert.equal(await read('fixture.sent.length'),1,'a live utterance does not interrupt or submit');
-    await until('document.querySelector(".voice-mini-status")?.textContent.includes("识别待确认")',10000);
+    await until('fixture.sent.length===2',10000);
     assert.equal(requests.filter(r=>r.url.endsWith('/transcriptions')).length-transcriptionsBeforeCall,2,'both recording segments are transcribed');
-    assert.equal(await read('fixture.sent.length'),1,'external audio cannot auto-steer an unlocked call');
-    assert.equal(await read('fixture.tracks.filter(t=>t.readyState==="live").every(t=>!t.enabled)'),true);
-    await click('展开语音通话');await until('document.querySelector(".voice-review textarea")');
-    assert.equal(await read('document.querySelector(".voice-review textarea").value'),'这是麦克风转写测试 这是麦克风转写测试','thinking pause preserves one complete turn');
+    assert.equal(await read('fixture.tracks.filter(t=>t.readyState==="live").every(t=>t.enabled)'),true);
+    await click('展开语音通话');await until('document.querySelector(".voice-dialog")');
+    assert.equal(await read('!!document.querySelector(".voice-review")'),false);
+    assert.equal(await read('fixture.sent[1].text'),'这是麦克风转写测试 这是麦克风转写测试','thinking pause preserves one complete turn');
     assert.ok(await read('document.querySelector(".voice-lock-status").textContent.includes("未开启")'));
-    await read('document.querySelector(".voice-review button").click();void 0');
-    await until('fixture.sent.length>=2');
     await click('收起为悬浮按钮');
     assert.equal(await read('fixture.sent[1].options.immediate'),true);
     await read('document.querySelector("button[aria-label=麦克风静音]").click()');
@@ -263,7 +262,7 @@ app.whenReady().then(async () => {
     await read('document.querySelector("button[aria-label=收起为悬浮按钮]").click();void 0');await until('document.querySelector(".voice-mini") && !document.querySelector(".voice-dialog")');
     assert.equal(await read('fixture.tracks.some(track=>track.readyState==="live")'),true);
     await read('fixture.messages([{id:"progress",role:"assistant",turnId:"turn",content:"",toolExecutions:[{id:"browser-call",name:"browser",state:"running",metadata:{displayTitles:{zh:"核对最新行情",en:"Check the latest market"}}}]}]);void 0');
-    await until('document.querySelector(".voice-mini")?.textContent.includes("正在播报") || document.querySelector(".voice-mini")?.textContent.includes("Agent 正在执行")');
+    await until('document.querySelector(".voice-mini-status")?.textContent==="已静音"');
     await pause(250);assert.equal(speechCount(),2,'tool reasons must stay silent');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await pause(100);
     fs.writeFileSync(path.resolve('tmp/voice-mini.png'),(await win.webContents.capturePage()).toPNG());
@@ -275,7 +274,10 @@ app.whenReady().then(async () => {
     await read('document.querySelector("input[aria-label=消息]").focus();window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",cancelable:true}));void 0');
     assert.equal(await read('!!document.querySelector(".voice-dialog")'),true,'background Escape must not affect the call');
     win.setSize(850,950);
-    await read('fixture.session("different-conversation");void 0'); await until('!document.querySelector(".voice-overlay")');
+    await read('fixture.session("different-conversation");void 0');
+    assert.equal(await read('!!document.querySelector(".voice-dialog")'), true, 'navigation preserves the call');
+    assert.equal(await read('fixture.tracks.some(track=>track.readyState==="live")'), true);
+    await click('结束通话'); await until('!document.querySelector(".voice-overlay")');
     // Settings use real persistence and remain usable at narrow sizes.
     await read('fixture.settings(true);void 0'); await until('document.querySelector(".voice-settings")');
     await until('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="保存").disabled');

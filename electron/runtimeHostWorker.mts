@@ -861,6 +861,7 @@ host = new InMemoryRuntimeHost({
     list: signal => mcpHost.request('agents.list', {}, signal),
     run: (input, signal) => mcpHost.request('agents.delegate', input, signal, true),
     read: (input, signal) => mcpHost.request('agents.read-child', input, signal),
+    guide: (input, signal) => mcpHost.request('agents.guide-child', input, signal),
   },
   subagentModels: {
     list: signal => mcpHost.request<import('@cardbush/bush-runtime').SubagentModelOption[]>('subagent.models', {}, signal),

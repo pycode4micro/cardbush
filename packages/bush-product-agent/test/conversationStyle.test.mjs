@@ -40,7 +40,8 @@ test("inactive custom text stays out of model context, and custom text is quoted
   }
   const custom = context({ mode: "custom", customTone });
   assert.ok(custom.includes(JSON.stringify(customTone)));
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /only to user-facing wording, tone and conversational persona/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /only to user-facing wording and tone/);
+  assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /You are CardBush|conversational persona/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /user's explicit request takes precedence/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /does not change task scope, tool use, permissions/);
   assert.equal(context({ mode: "custom", customTone: "  " }).includes("Custom tone preference"), false);

@@ -1968,6 +1968,7 @@ registerVoiceIpc(() => mainWindow, {
   // but model archives must inspect every GitHub release redirect before following it.
   download: async (input, init) => (await pluginNetworking()).fetch(input, init),
   speech: (input, init) => modelFetch(input, init),
+  realtimeProxy: async () => { const network = await pluginNetworking(); return network.endpoint(network.modelConfiguration()); },
 });
 
 ipcMain.handle('window:minimize', () => {
@@ -4150,6 +4151,18 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         if (operation === 'agents.delegate') {
           const { runRemoteSubagent } = await import('./remoteSubagent.mjs');
           return runRemoteSubagent(await agentConnections(), payload as import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).RemoteSubagentRequest, signal);
+        }
+        if (operation === 'agents.guide-child') {
+          const input = payload as { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string; turnId: string; messageId: string; content: string };
+          const manager = await agentConnections(), info = await manager.connect(input.connectionId);
+          if (input.agentId && info.id !== input.agentId) throw new Error('Remote Agent identity changed.');
+          const session = await manager.call(input.connectionId, 'sessions.get', { sessionId: input.sessionId }) as { metadata?: Record<string, unknown> } | undefined;
+          if (!session || session.metadata?.delegationOwner !== input.parentSessionId) throw new Error('This child conversation belongs to another parent.');
+          return manager.call(input.connectionId, 'runtime.command', { kind: 'runtime.enqueue_guidance', payload: {
+            protocol: 'bush.runtime_guidance.v1', sessionId: input.sessionId, turnId: input.turnId,
+            messageId: input.messageId, content: input.content, createdAt: new Date().toISOString(),
+            mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent', realtimeParent: true },
+          } });
         }
         if (operation === 'agents.read-child') {
           const input = payload as { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string };
