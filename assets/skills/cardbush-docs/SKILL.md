@@ -1,6 +1,6 @@
 ---
 name: cardbush-docs
-description: CardBush 使用、配置、开发与部署文档。用于应用与插件、MCP、主题、定时日历、Agent 服务部署，以及 assistant 通话和新的实时语音模型接入。CardBush docs, agent deployment and realtime voice providers. 不用于其他宿主或无关应用的配置与部署。
+description: CardBush 使用、配置、开发与部署文档。用于应用与插件、MCP、主题、定时日历、导入万年历和中国农历转换、Agent 服务部署，以及 assistant 通话和新的实时语音模型接入。CardBush docs, agent deployment and realtime voice providers. 不用于其他宿主或无关应用的配置与部署。
 license: Apache-2.0
 ---
 
