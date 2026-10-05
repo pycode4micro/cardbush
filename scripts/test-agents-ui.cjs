@@ -135,6 +135,7 @@ app.whenReady().then(async () => {
         if(id==='c'&&operation==='chat.send'&&('visionEnabled' in input||'conversationStyle' in input))throw Error('Unrecognized key: visionEnabled');
         if(operation==='conversation.extracts'&&input.action==='list'){calls.push({id,operation,input});return {permanent:[],pending:[]}}
         if(operation==='runtime.command'){
+          if(input.kind==='runtime.get_capabilities'){calls.push({id,operation,input});return {protocol:'bush.runtime_capabilities.v1',hostId:'agent-'+id,runtimeVersion:'test',eventProtocol:'bush.runtime_event.v1',supportedEvents:[],supportedCommands:[],features:[]}}
           if(input.kind==='runtime.list_user_prompts'){calls.push({id,operation,input});return []}
           if(['runtime.get_goal','runtime.get_tool_execution'].includes(input.kind)){calls.push({id,operation,input});return null}
           if(input.kind==='runtime.list_turn_context_compactions'){calls.push({id,operation,input});return []}
@@ -432,7 +433,7 @@ app.whenReady().then(async () => {
     await setLimit('最大输出 tokens',16384);
     await run("document.querySelector('.settings-shell form').requestSubmit()");
     await until("document.querySelector('.settings-shell [role=status]')?.textContent.includes('已保存')",'output limit saved on the remote Agent');
-    assert.deepEqual(await run("calls.find(c=>c.operation==='product.command'&&c.input.kind==='models.update')"),{id:'shared',operation:'product.command',input:{kind:'models.update',config:{defaultModelId:'model',models:[{id:'model',provider:'openai',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true,maxContextTokens:64000,maxCompletionTokens:16384,apiProtocol:'openai_responses',defaultHeaders:{}}]}}});
+    assert.deepEqual(await run("calls.find(c=>c.operation==='product.command'&&c.input.kind==='models.update')"),{id:'shared',operation:'product.command',input:{kind:'models.update',config:{defaultModelId:'model',models:[{id:'model',provider:'openai',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true,maxContextTokens:64000,maxCompletionTokens:16384,apiProtocol:'openai_responses',defaultHeaders:{},authentication:{kind:'api_key'},reasoningEffort:null}]}}});
     await until("!document.querySelector('dialog.model-config-dialog')",'saved model details collapse');
     await run("document.querySelector('.model-row-edit').click()");
     await until("document.querySelector('dialog.model-config-dialog')?.open",'reopen output settings');
@@ -454,7 +455,7 @@ app.whenReady().then(async () => {
     await run("document.querySelector('.settings-shell .model-form').requestSubmit()");
     await until("!document.querySelector('dialog.model-config-dialog')&&models.models[0].provider==='deepseek'",'save provider selection');
     assert.equal(await run("document.querySelector('.model-provider-group > header strong').textContent"),'deepseek','model moves into the selected provider group');
-    assert.deepEqual(await run("models"),{defaultModelId:'model',models:[{id:'model',provider:'deepseek',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true,maxContextTokens:64000,maxCompletionTokens:12000,apiProtocol:'openai_responses',defaultHeaders:{}}]},'changing provider retains model identity, endpoint, credentials and limits');
+    assert.deepEqual(await run("models"),{defaultModelId:'model',models:[{id:'model',provider:'deepseek',modelName:'Fixture Model',apiKey:'',baseUrl:'https://api.deepseek.com/v1',hasApiKey:true,maxContextTokens:64000,maxCompletionTokens:12000,apiProtocol:'openai_responses',defaultHeaders:{},authentication:{kind:'api_key'},reasoningEffort:null}]},'changing provider retains model identity, endpoint, credentials and limits');
     await run("document.querySelector('.model-row-edit').click()");
     await until("document.querySelector('dialog.model-config-dialog [role=combobox]')?.value==='deepseek'",'saved provider is selected when reopened');
     await chooseProvider('anthropic');

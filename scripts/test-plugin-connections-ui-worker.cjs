@@ -709,6 +709,7 @@ app.whenReady().then(async()=>{
   await read('document.querySelector("textarea").focus();document.querySelector("textarea").dispatchEvent(new KeyboardEvent("keydown",{key:"Tab",bubbles:true,cancelable:true}))');
   await until('!!document.querySelector(".composer-plugin-token")');
   await until('document.activeElement===document.querySelector(".composer-prompt-editor")');
+  await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   await win.webContents.insertText('检查依赖');
   await until('fixtureDraft.endsWith("检查依赖")');
   assert.match(await read('fixtureDraft'),/^请用 \[\$personal\.tools\]\(<C:\/Fixture Plugins\/personal.tools\/\.codex-plugin\/plugin.json>\) 检查依赖$/);
@@ -716,6 +717,7 @@ app.whenReady().then(async()=>{
   await read('document.activeElement.dispatchEvent(new CompositionEvent("compositionstart",{bubbles:true}));document.activeElement.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",isComposing:true,bubbles:true,cancelable:true}));document.activeElement.dispatchEvent(new CompositionEvent("compositionend",{bubbles:true}))');
   assert.equal(await read('sentCommands.length'),sentBeforeIme,'IME confirmation must not submit the draft');
   await read('document.activeElement.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",shiftKey:true,bubbles:true,cancelable:true}))');
+  await until('fixtureDraft.endsWith("\\n")');
   await win.webContents.insertText('第二行');await until('fixtureDraft.includes("\\n第二行")');
   await read('(()=>{const range=document.createRange();range.selectNodeContents(document.querySelector(".composer-prompt-editor"));const selection=getSelection();selection.removeAllRanges();selection.addRange(range);const data=new DataTransfer();document.activeElement.dispatchEvent(new ClipboardEvent("copy",{bubbles:true,cancelable:true,clipboardData:data}));window.copiedPrompt=data.getData("text/plain")})()');
   assert.equal(await read('copiedPrompt'),await read('fixtureDraft'),'copy preserves exact plugin identity, path and line breaks');
@@ -726,6 +728,7 @@ app.whenReady().then(async()=>{
   await read('document.querySelector("textarea").focus();document.querySelector("textarea").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}))');
   await until('!!document.querySelector(".composer-plugin-token")');
   await until('document.activeElement===document.querySelector(".composer-prompt-editor")');
+  await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   await win.webContents.insertText('重新检查');
   await until('fixtureDraft.endsWith("重新检查")');
   await read('document.querySelector(".send-button").click()');await until(`sentCommands.length===${sentBeforeIme+1}`);
@@ -818,6 +821,7 @@ app.whenReady().then(async()=>{
   await until('document.activeElement===document.querySelector(".composer-prompt-editor")');
   assert.match(await read('fixtureDraft'),/cardbush-reference:\/\/user-turn\?sessionId=current&turnId=source-turn&messageId=source-user/);
   assert.doesNotMatch(await read('document.querySelector(".composer-prompt-editor").textContent'),/cardbush-reference|source-turn/);
+  await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   await win.webContents.insertText(' 继续分析');await until('fixtureDraft.endsWith("继续分析")');
   await read('window.savedTurnReference=fixtureDraft;document.querySelector(".composer-context-token button").click()');
   await until('!!document.querySelector("textarea")');

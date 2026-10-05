@@ -87,6 +87,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelector(".main-stage textarea[data-composer-input]").value'),'return draft');
   assert.ok(Math.abs(await run('document.querySelector(".right-inspector-content").getBoundingClientRect().width')-499)<2,'Back restores the original inspector width');
   assert.equal(await run('document.body.classList.contains("right-inspector-resizing")'),false);
+  await until('localStorage.getItem("cardbush.inspector_split_width")==="500"','restored usable split is observed before covering it again');
   await run('coverWorkspace.setSidebarCollapsed(false);coverWorkspace.setInspectorWidth(innerWidth)');
   await until('coverWorkspace.conversationCovered && !!document.querySelector("#cover-back")','oversized docked width exposes recovery capsule');
   assert.equal(await run('coverWorkspace.inspectorCover'),false,'recovery also works without explicit cover mode');

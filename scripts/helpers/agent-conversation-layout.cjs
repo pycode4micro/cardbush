@@ -26,7 +26,7 @@ module.exports = async function testAgentConversationLayout({ run, until, pause,
       return {top: scroller.scrollTop, bottom: scroller.scrollHeight - scroller.clientHeight,
         message: last.querySelector('.message-row').getBoundingClientRect().toJSON(), composer: surface.getBoundingClientRect().toJSON(),
         contentTop: dock.firstElementChild.getBoundingClientRect().top,
-        background: getComputedStyle(dock).backgroundImage};
+        background: getComputedStyle(dock, '::before').backgroundImage};
     }; undefined;`);
   await until("document.querySelectorAll('.agent-chat .quick-context-tick').length === 25", 'remote turn rail');
   assert.equal(await run("document.querySelector('.sidebar-scroll').textContent.indexOf('置顶') < document.querySelector('.sidebar-scroll').textContent.indexOf('Agents')"), true, 'Pinned precedes Agents');

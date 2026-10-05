@@ -183,7 +183,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /<\/div>\s*<button\s*ref=\{setScrollBottomRef\}/,
+  /<\/div>\s*<ScrollBottomButton\s*ref=\{setScrollBottomRef\}/,
   'The bottom control must live outside the transitioning chat-content-frame',
 );
 assert.match(

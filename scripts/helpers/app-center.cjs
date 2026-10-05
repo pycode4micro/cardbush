@@ -38,7 +38,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   `);
   await until("!!document.querySelector('.app-center-launcher')", 'new app dock mounted');
   await pause(150);
-  assert.equal(await run("document.querySelectorAll('.sidebar-nav .nav-row').length"), 1, await run("JSON.stringify({errors:failures,html:document.body.innerHTML.slice(0,2200)})"));
+  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), ['新会话', 'assistant'], 'primary navigation keeps both the normal chat and persistent assistant');
   assert.equal(await run("!!document.querySelector('.sidebar-footer .settings-dock,.sidebar-footer .sidebar-search-button')"), false);
   assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run("document.querySelector('[data-shortcut=searchConversations]').click()");

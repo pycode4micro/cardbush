@@ -64,12 +64,12 @@ module.exports = async ({ window, read, waitFor, activeReady, origin, webContent
   await read(`${button}.click(); void 0`);
   await waitFor(`${state}==="error"`);
   assert.equal(await long.executeJavaScript('document.querySelector("p").textContent'), 'Paragraph 0', 'later failure rolls back already translated batches');
-  assert.ok(await read('document.querySelector(".inspector-translation-notice").textContent.includes("翻译失败")'));
+  assert.ok(await read('document.querySelector(".right-inspector-tab-page.active .inspector-translation-notice").textContent.includes("翻译失败")'));
 
   setMode('normal');
   await read(`${button}.click(); void 0`);
   await waitFor(`${state}==="translated"`);
-  await waitFor('document.querySelector(".inspector-translation-notice")===null');
+  await waitFor('document.querySelector(".right-inspector-tab-page.active .inspector-translation-notice")===null');
   await read('browserFixture.setLayout(browserFixture.addPanel(null,browserFixture.activeId)); void 0');
   await waitFor('document.querySelector(".inspector-tile-frame .inspector-translate-button")?.getAttribute("aria-pressed")==="true"');
   await waitFor('document.querySelector(".deferred-resize-preview[data-resizing]")===null');

@@ -41,9 +41,9 @@ app.whenReady().then(async () => {
     await read(`document.querySelector('.composer-queue-button').click()`);
     await until(`!!document.querySelector('.runtime-queue-guide')`);
     assert.equal(await read(`window.calls.filter(item=>item.kind==='send').length`),0,'running input is queued, not a second turn');
-    const guide=await read(`Array.from(document.querySelectorAll('button')).find(button=>button.textContent.trim()==='引导')?.outerHTML`);
+    const guide=await read(`document.querySelector('button.runtime-queue-guide')?.outerHTML`);
     assert.ok(guide,'shared queue exposes guidance');
-    await read(`Array.from(document.querySelectorAll('button')).find(button=>button.textContent.trim()==='引导').click()`);
+    await read(`document.querySelector('button.runtime-queue-guide').click()`);
     await until(`window.calls.some(item=>item.kind==='guide'&&item.sessionId==='a'&&item.text==='请先检查宽度')`);
     assert.ok(await read(`document.querySelectorAll('.message-row.user').length >= 2`),'human guidance is another user-shaped message');
     await read(`window.setSource(false,'a')`);

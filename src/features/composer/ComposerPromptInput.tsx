@@ -105,6 +105,13 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     }
     // A text node after a terminal chip gives the caret a valid insertion position.
     fragment.append(document.createTextNode(''));
+    // Chromium needs a terminal line box to keep typing after an authored
+    // newline; without it native insertion can jump before that newline.
+    if (value.endsWith('\n')) {
+      const placeholder = document.createElement('br');
+      placeholder.dataset.composerPlaceholder = '';
+      fragment.append(placeholder);
+    }
     node.replaceChildren(fragment);
     if (focused) selectOffsets(node, caret, caret);
   });
@@ -213,6 +220,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
 function readPrompt(node: Node, nativeEditing = false): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
   if (node instanceof HTMLElement) {
+    if (node.hasAttribute('data-composer-placeholder')) return '';
     const token = tokenText(node);
     if (token) return token;
     if (node.tagName === 'BR') return '\n';
