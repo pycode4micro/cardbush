@@ -57,23 +57,20 @@ Browser Use 在 Windows 11 上统一控制 CardBush 内置浏览器和分别配�
 
 - 插件目录中 Browser Use 和 Computer Use 的卡片描述、详情及示例提示词跟随界面语言即时切换。清单默认文案为英文，`cardbush.localizations.zh` 提供中文；宿主解析后由显示层按语言取值，缺项回退默认文案，不改写插件配置。其他插件也可选填 `cardbush.localizations.zh/en` 的 `shortDescription`、`longDescription`、`defaultPrompt`。
 - 设置侧栏独立提供「浏览器」和「电脑操控」。Browser Use 连接、启停以及 Computer Use 原有配置可直接管理。
-- 初始主页默认 `https://www.google.com/`，在「浏览器 → 初始页面」修改。支持 HTTP(S)、省略协议的普通域名，以及显式 `about:blank`。
-- 主页存于宿主的 `product-host/config/browser.json`，跨会话、重启保留。新建内置标签页，以及 Connector 的 `new_page` 未提供 URL 时，每次读取最新配置。传入 URL 的工具调用保持原目标。
-- 同一主页可以新建多个独立标签页；标签身份不再写入网址查询参数。保存主页不会跳转已经打开的页面，也不会改写用户自己的 Chrome 启动设置。
+- 标签栏的「＋」紧跟标签，点击直接创建独立新标签页并聚焦地址栏。新标签页在本地展示工具入口和收藏网站；未收藏时提供 Google 入口。
+- 地址栏支持网址和搜索词：普通域名补全 HTTPS，localhost/本机回环地址使用 HTTP，其他文字交给 Google 搜索。空白输入不导航，本地路径与可执行协议不会发给搜索引擎。
+- 不再提供初始主页设置，也不读取旧主页配置。新标签以 `about:blank` 创建，Connector 的 `new_page` 未提供 URL 时也如此；显式 URL 保持原目标。在新标签中打开网址复用原 webview，保留每个标签的独立状态。
 - 内置网页以 100% 比例显示，取消按面板宽度自动缩小字体；较宽页面使用网页自身的横向滚动。拖动面板仍合并尺寸更新，避免每一帧触发文档重排。
 - 加载提示只跟随顶层文档导航。滚动触发的 iframe 延迟加载、页面内跳转不再遮住正文；已经显示的网页在后续导航等待期间保持可见。超时后收到成功的文档就绪事件会自行清除超时提示，无需再刷新一次。
 - 内置网页不能直接唤起系统应用：主页面、隐藏 iframe、重定向及弹窗中的 `bytedance:` 等应用协议均被拦截，会话权限同时拒绝 `openExternal`，避免反复弹出 Windows 应用选择或商店提示。普通网页导航、页面内资源和工具栏显式「在外部浏览器打开」继续可用；权限策略统一由 `electron/appSessionPermissions.ts` 管理，应用麦克风仍仅允许主应用页面使用。
-- 主页修改使用版本号和原子写入，旧窗口不能覆盖更新的配置。加载或保存出错有明确反馈，并可重新加载。
 - `chrome`、`computer-use` 及大小写、下划线别名保留给核心能力。安装器拒绝外部同名包；目录扫描忽略旧的同名用户包，保留随应用发布的实现。普通插件安装和管理不受影响。
 
 ## 代码职责
 
 | 层 | 位置 | 职责 |
 | --- | --- | --- |
-| 配置协议 | `packages/bush-protocol/src/browser.ts` | 默认主页、URL 验证、配置版本 |
-| 宿主存储 | `packages/cardbush-product-host/src/browserConfigStore.ts` | 持久化、串行写入、版本冲突检查 |
-| 桌面接入 | `electron/browserSettings.ts`、`main.ts`、`preload.ts` | 确定配置位置；仅主界面可读写主页；传递工具进程的配置路径 |
-| 浏览器设置与新标签 | `src/features/browser/` | 独立设置组件、连接状态、主页读取、浏览器自身样式 |
+| 旧主页配置 | `packages/bush-protocol/src/browser.ts`、`browserConfigStore.ts`、`electron/browserSettings.ts` | 保留旧配置的数据读写接口；新标签不再使用其主页值 |
+| 浏览器设置与新标签 | `src/features/browser/` | 连接设置、新标签创建、Google 搜索与本地起始页 |
 | 桌面操控设置 | `src/features/computerUse/` | 截图目录、让行、恢复指针、启动应用与关闭窗口开关 |
 | 旧配置适配 | `src/features/capabilities/CoreCapabilitySettings.tsx` | 复用现有配置版本与运行时同步机制，不依赖插件管理页面 |
 | Browser Use 执行 | `packages/cardbush-chrome-mcp/`、`electron/chromeConnector*`、随应用提供的 Browser Use 扩展 | 工具协议、本地桥、会话标签组、站点授权、截图及下载 |

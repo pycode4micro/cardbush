@@ -5,7 +5,7 @@ import { observeExplicitInteraction } from '../shared/explicitInteraction';
 import { observeNativeTooltipTitles } from '../shared/nativeTooltipTitles';
 import './global-tooltip.css';
 
-/** One delegated tooltip host also upgrades existing native title controls. */
+/** Show explicitly authored help; accessible names alone are not tooltips. */
 export function GlobalTooltip() {
   const shortcuts = useKeyboardShortcuts(), id = useId(), node = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<{ anchor: Element; text: string; shortcut: string } | null>(null);
@@ -46,7 +46,7 @@ export function GlobalTooltip() {
       if (isTextEditor(document.activeElement) && target.contains(document.activeElement)) return null;
       // The open interactive popup owns its trigger's explanation until it closes.
       if (target.closest('[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]')) return null;
-      const text = target.getAttribute('data-tooltip') || target.getAttribute('data-global-tooltip-title') || target.getAttribute('aria-label'); if (!text) return null;
+      const text = target.getAttribute('data-tooltip') || target.getAttribute('data-global-tooltip-title'); if (!text) return null;
       const shortcutId = target.getAttribute('data-shortcut') || (target.getAttribute('aria-keyshortcuts')
         ? shortcutDefinitions.find(item => shortcuts.aria(item.id) === target.getAttribute('aria-keyshortcuts'))?.id : undefined);
       const shortcut = shortcutDefinitions.some(item => item.id === shortcutId) ? shortcuts.label(shortcutId as ShortcutId) : '';

@@ -37,7 +37,6 @@ export function TopBar({
           data-work-summary-toggle
           aria-expanded={Boolean(workSummaryVisible)}
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
-          title={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
           aria-label={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
         >
           <Clipboard size={15} />
@@ -49,7 +48,6 @@ export function TopBar({
         data-inspector-toggle
         data-shortcut="toggleInspector"
         onClick={() => onToggleInspector()}
-        title={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}
         aria-label={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}
         aria-expanded={false}
         aria-controls="right-inspector"

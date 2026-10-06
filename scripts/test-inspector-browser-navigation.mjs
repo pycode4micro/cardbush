@@ -20,7 +20,10 @@ import { BrowserTranslateButton } from '${local('src/features/inspector/BrowserT
 import { BrowserBookmarkButton } from '${local('src/features/inspector/BrowserBookmarkButton.tsx')}';
 import { RightInspectorResizer } from '${local('src/components/RightInspectorResizer.tsx')}';
 import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
-import { BrowserStartPageSettings } from '${local('src/features/browser/BrowserSettingsPanel.tsx')}';
+import { useSoftPanelPresence } from '${local('src/hooks/useSoftPanelPresence.ts')}';
+import { InspectorActions } from '${local('src/features/inspector/InspectorActions.tsx')}';
+import { InspectorTabStrip } from '${local('src/features/inspector/InspectorTabStrip.tsx')}';
+import { toggleBrowserBookmark } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
 import { newBrowserTab } from '${local('src/features/browser/browserStartPage.ts')}';
 import { useInspectorBrowserActions } from '${local('src/features/inspector/useInspectorBrowserActions.ts')}';
 import { inspectorBrowserReferences } from '${local('src/features/composer/ComposerReferenceContext.ts')}';
@@ -29,48 +32,54 @@ import { bindLocalBrowserReferences, resolvePromptReferenceContext } from '${loc
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 window.openedLinks=[];
+window.toolClicks=[];
 function Harness() {
   const tabs=useInspectorTabs(), refs=React.useRef({});
   const [navigation,setNavigation]=React.useState({});
-  const [settings,setSettings]=React.useState(false);
+  const [address,setAddress]=React.useState('');
   const [layout,setLayout]=React.useState(null);
   const [covered,setCovered]=React.useState(false);
   const [width,setWidth]=React.useState(820);
   const [language,setLanguage]=React.useState('zh');
+  const [inspectorOpen,setInspectorOpen]=React.useState(false);
+  const presence=useSoftPanelPresence(inspectorOpen,240,{keepMounted:true});
   const open=React.useCallback(detail=>{
+    setInspectorOpen(true);
     window.openedLinks.push(detail.target);
     tabs.openTab({id:detail.newTab ? crypto.randomUUID() : detail.target,kind:'resource',detail});
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
-  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage};
-  useInspectorBrowserActions({open:tabs.openTab,activate:tabs.activateTab,close:id=>tabs.closeTabs(new Set([id])),show:()=>{}});
+  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark};
+  useInspectorBrowserActions({open:tabs.openTab,activate:tabs.activateTab,close:id=>tabs.closeTabs(new Set([id])),show:()=>setInspectorOpen(true)});
   window.browserFixture.reference = async (sessionId,tabId) => {
     const reference=inspectorBrowserReferences(tabs.tabs,navigation).find(tab=>tab.tabId===tabId);
     if(!reference)throw Error('Reference unavailable');
     return resolvePromptReferenceContext(promptReferenceMarkdown(reference)+' Click the first video.',sessionId,undefined,'en',undefined,undefined,undefined,bindLocalBrowserReferences);
   };
   const active=navigation[tabs.activeId];
+  React.useEffect(()=>setAddress(active?.url==='about:blank'?'':active?.url||''),[active?.url,tabs.activeId]);
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
     <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/></div></section>
-    <aside className="right-inspector" style={{'--right-inspector-width':width+'px'}}>
-    <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} label="Resize workspace"/>
+    {presence.mounted && <aside className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
+      inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
+    <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>
     <div className="right-inspector-viewport"><div className="right-inspector-content">
-      <header>{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} onClick={()=>tabs.activateTab(tab.id)}>{navigation[tab.id]?.title||tab.id}</button>)}</header>
-      <nav><button id="new-tab" onClick={async()=>{setSettings(false);open(await newBrowserTab());}}>新标签页</button>
-      <button id="browser-settings" onClick={()=>setSettings(value=>!value)}>浏览器设置</button>
+      <header className="right-inspector-toolbar with-tabs"><InspectorTabStrip language={language} onNewTab={()=>open(newBrowserTab(language))}>
+      {tabs.tabs.map(tab=><div className={'right-inspector-tab'+(tab.id===tabs.activeId?' active':'')} key={tab.id}><button role="tab" className="right-inspector-tab-select" data-tab={tab.id} onClick={()=>tabs.activateTab(tab.id)}><span>{navigation[tab.id]?.title||tab.detail.title||tab.id}</span></button></div>)}
+      </InspectorTabStrip></header>
+      <nav><button id="new-tab" onClick={()=>open(newBrowserTab(language))}>新标签页</button>
       <button id="back" disabled={!active?.canGoBack} onClick={()=>refs.current[tabs.activeId]?.goBack()}>后退</button>
       <button id="forward" disabled={!active?.canGoForward} onClick={()=>refs.current[tabs.activeId]?.goForward()}>前进</button>
       <button id="external" onClick={()=>window.cardbushDesktop.openExternal(active?.url||tabs.tabs.find(tab=>tab.id===tabs.activeId)?.detail.target)}>外部打开</button>
       <output id="address">{active?.url}</output></nav>
-      <div className="right-inspector-navigation"><div className="right-inspector-address editable">
-        <input aria-label="Address" value={active?.url||''} readOnly/>
+      <div className="right-inspector-navigation"><form className="right-inspector-address editable" onSubmit={event=>{event.preventDefault();refs.current[tabs.activeId]?.navigate(address);}}>
+        <input aria-label="Address" placeholder="搜索或输入网址" value={address} onChange={event=>setAddress(event.target.value)}/>
         <BrowserBookmarkButton address={active?.url||''} title={active?.title||''} language={language}/>
         <BrowserTranslateButton address={active?.url||''} language={language} state={active?.translation} loading={active?.loading}
           onClick={()=>refs.current[tabs.activeId]?.toggleTranslation()}/>
-      </div></div>
-      {settings && <div className="settings-stack" style={{padding:24}}><BrowserStartPageSettings language="zh"/></div>}
-      <div className="right-inspector-body" style={{display:settings?'none':undefined}}><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId} layout={layout} language="zh"
+      </form></div>
+      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId} layout={layout} language="zh"
         onActivate={tabs.activateTab}
         onResize={(path,ratio)=>setLayout(current=>resizePanelSplit(current,path,ratio))}
         renderFrame={tab=><InspectorTileFrame tab={tab} language={language} navigation={navigation[tab.id]} handle={refs.current[tab.id]} onSwap={(from,x,y)=>{
@@ -80,10 +89,13 @@ function Harness() {
           if(to)setLayout(current=>swapPanels(current,from,to));
         }}/>}>{tab=>
         <InspectorWebview ref={value=>{refs.current[tab.id]=value;}} identity={tab.id} target={tab.detail.target} source={tab.detail.target}
+          startPage={<InspectorActions language={language} filesAvailable shadowUnavailableReason=""
+            onOpenReview={()=>toolClicks.push('review')} onOpenFiles={()=>toolClicks.push('files')} onOpenShadow={()=>toolClicks.push('shadow')}
+            onAddPage={()=>toolClicks.push('add-page')} onOpenBookmark={url=>refs.current[tab.id]?.navigate(url)}/>}
           language={language} onOpenTarget={open} onNavigationStateChange={update} onActivate={id=>{if(layout)tabs.activateTab(id);}}/>
       }</InspectorTabPages></div>
     </div></div>
-    </aside>
+    </aside>}
     </main>
   </div>;
 }

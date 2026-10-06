@@ -21,7 +21,7 @@ export function InspectorTileFrame({ tab, language, navigation, handle, onSwap }
 
   return <div className="inspector-tile-frame" {...drag}>
     <div className="right-inspector-navigation">
-      <button type="button" className="inspector-tile-drag" aria-label={zh ? '拖动交换页面位置' : 'Drag to swap pages'} title={zh ? '拖动交换页面位置' : 'Drag to swap pages'}>
+      <button type="button" className="inspector-tile-drag" aria-label={zh ? '拖动交换页面位置' : 'Drag to swap pages'}>
         <GripHorizontal size={13}/>
       </button>
       {resource && <>
@@ -29,7 +29,7 @@ export function InspectorTileFrame({ tab, language, navigation, handle, onSwap }
       <button type="button" className="inspector-tile-history" disabled={!navigation?.canGoForward} aria-label={zh ? '前进' : 'Forward'} onClick={() => handle?.goForward()}><ArrowRight size={14}/></button>
       <button type="button" aria-label={zh ? '刷新' : 'Reload'} onClick={() => handle?.reload()}><RefreshCw size={14}/></button>
       {browser ? <form className="right-inspector-address editable" onSubmit={event => { event.preventDefault(); handle?.navigate(draft); }}>
-        <input aria-label={zh ? '网址' : 'Address'} value={draft} onChange={event => setDraft(event.target.value)} placeholder="https://"/>
+        <input aria-label={zh ? '网址' : 'Address'} value={draft} onChange={event => setDraft(event.target.value)} placeholder={zh ? '搜索或输入网址' : 'Search or enter address'}/>
         <BrowserBookmarkButton address={address} title={title} language={language}/>
         <BrowserTranslateButton address={address} language={language} state={navigation?.translation} loading={navigation?.loading} onClick={() => handle?.toggleTranslation()}/>
       </form> : <span className="inspector-tile-path" title={address}>{title}</span>}

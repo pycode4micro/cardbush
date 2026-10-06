@@ -3,7 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async ({ window, read, waitFor, activeReady, origin, webContents, translation, calls, setMode }) => {
-  const open = async path => { await read(`browserFixture.open({target:${JSON.stringify(origin)}+${JSON.stringify(path)}}); void 0`); await activeReady(); };
+  const open = async path => {
+    await read(`browserFixture.open({target:${JSON.stringify(origin + path)}}); void 0`);
+    await waitFor(`browserFixture.activeId===${JSON.stringify(origin + path)}`);
+    await activeReady();
+    // DOM-ready enables page interaction before the native load has finished;
+    // translation deliberately waits for the complete document.
+    await waitFor('document.querySelector(".right-inspector-tab-page.active webview")?.isLoading()===false');
+  };
   const button = 'document.querySelector(".right-inspector-navigation .inspector-translate-button")';
   const state = 'browserFixture.navigation[browserFixture.activeId]?.translation?.status';
   await open('/translation');
@@ -64,7 +71,8 @@ module.exports = async ({ window, read, waitFor, activeReady, origin, webContent
   await read(`${button}.click(); void 0`);
   await waitFor(`${state}==="error"`);
   assert.equal(await long.executeJavaScript('document.querySelector("p").textContent'), 'Paragraph 0', 'later failure rolls back already translated batches');
-  assert.ok(await read('document.querySelector(".right-inspector-tab-page.active .inspector-translation-notice").textContent.includes("翻译失败")'));
+  const errorNotice = await read('document.querySelector(".right-inspector-tab-page.active .inspector-translation-notice").textContent');
+  assert.ok(errorNotice.includes('翻译失败'), errorNotice + ' ' + JSON.stringify(await read('browserFixture.navigation[browserFixture.activeId]')));
 
   setMode('normal');
   await read(`${button}.click(); void 0`);

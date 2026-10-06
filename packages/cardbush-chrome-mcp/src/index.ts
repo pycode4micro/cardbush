@@ -4,7 +4,6 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { BrowserConfigStore } from '@cardbush/product-host';
 import { DEFAULT_BROWSER_START_PAGE } from '@cardbush/bush-protocol';
 import { BrowserArtifacts, digest, exportedImage, type BrowserArtifact } from './imageArtifacts.js';
 import { prepareCapture, captureClip, setViewport, evaluate, canvasExportExpression, type Viewport } from './pageCapture.js';
@@ -214,13 +213,12 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open a tab in the selected browser, scoped to this conversation. CardBush opens it in the visible integrated browser; Chrome/Edge opens it in the session group. Omit url to use the start page in CardBush browser settings (initially https://www.google.com/).',
+    'Open a tab in the selected browser, scoped to this conversation. CardBush opens it in the visible integrated browser; Chrome/Edge opens it in the session group. Omit url to open a blank new tab; pass an HTTP(S) URL to navigate directly.',
     z.object({ url: z.string().url().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
-    const settingsPath = options.browserConfigPath ?? process.env.CARDBUSH_BROWSER_CONFIG_PATH?.trim();
-    const url = input.url ?? (settingsPath ? (await new BrowserConfigStore(settingsPath).read()).startPage : DEFAULT_BROWSER_START_PAGE);
+    const url = input.url ?? DEFAULT_BROWSER_START_PAGE;
     const result = record(await request('tabs.create', { url }, context));
     const selectedPageId = integer(result.id);
     if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);

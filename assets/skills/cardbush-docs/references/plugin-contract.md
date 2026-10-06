@@ -60,7 +60,7 @@
 
 以下 Agents 和 Commands 保留为既有兼容能力；标准 Agent Plugins 包不会自动发现这两类目录。新包优先用 Skills 表达可复用流程，不以 Claude 专有能力的完整复刻为目标。安装预览展示实际组件和适配说明：
 
-- **Agents**：读取默认 `agents/` 或清单声明的 Markdown 文件，解析 YAML 中的 `name`、`description`、`tools`、`disallowedTools` 和 `maxTurns`。模型使用 `list_plugin_agents` 发现角色，再调用 `subagent` 的 `agent_type: "plugin:agent"` 应用。角色指令注入子任务，工具范围与父任务已有工具取交集，并应用禁用列表；Claude 的 Read、Write、Edit、Bash 等名称映射到 CardBush 工具。Claude 模型别名不自动切换模型，使用 CardBush 子 Agent 配置。带参数的工具规则、Agent 私有 MCP、隔离、记忆及权限覆盖等专有设置尚不支持。
+- **Agents**：读取默认 `agents/` 或清单声明的 Markdown 文件，解析 YAML 中的 `name`、`description`、`tools`、`disallowedTools` 和 `maxTurns`。模型使用 `list_subagent_options.agent_roles` 发现角色，再调用 `subagent` 的 `agent_type: "plugin:agent"` 应用。角色指令注入子任务，工具范围与父任务已有工具取交集，并应用禁用列表；Claude 的 Read、Write、Edit、Bash 等名称映射到 CardBush 工具。Claude 模型别名不自动切换模型，使用 CardBush 子 Agent 配置。带参数的工具规则、Agent 私有 MCP、隔离、记忆及权限覆盖等专有设置尚不支持。
 - **Hooks**：读取 `hooks/hooks.json` 或清单中的内联/文件声明。支持 OpenAI 的 SessionStart、SessionEnd、UserPromptSubmit、PreToolUse、PermissionRequest、PostToolUse、PreCompact、PostCompact、Stop、Interrupt、SubagentStart、SubagentStop，并保留既有 PostToolUseFailure。处理器支持 command 和 mcp_tool；prompt / agent 按 OpenAI 当前行为解析后跳过。同一事件的匹配处理器并发执行并合并决定。PreToolUse 错误报告后继续原调用，有效的替换参数仍经过工具校验和宿主准入；PermissionRequest 可以处理即将发起的权限询问，不能覆盖宿主硬拒绝。PostToolUse 的反馈只影响模型收到的结果，原始执行结果完整保留。
 - **Commands**：原生读取默认 `commands/` 或清单声明的 Markdown 文件，保留原始文档，不生成 Skill。组件类型为 `command`；输入框 `/插件名:命令名` 菜单显示说明与 `argument-hint`，提交后由宿主调用。模型可通过 `list_plugin_commands` 发现命令、`run_plugin_command` 调用允许自动调用的命令。支持 `$ARGUMENTS`、零起始的 `$ARGUMENTS[n]` / `$n` 和 `arguments` 声明的命名参数；引号内的参数视为一个值。`disable-model-invocation`、`user-invocable` 在宿主校验，停用插件后入口与调用同时失效。
 

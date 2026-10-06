@@ -1,6 +1,6 @@
 import type { VoiceTarget } from './voiceSession';
 import type { RealtimeToolCall } from '../../../electron/realtimeVoiceTypes';
-import type { SubagentTask } from '@cardbush/bush-protocol';
+import { conversationalSubagentInput, conversationalAwaitInput, conversationalReadInput, type SubagentTask } from '@cardbush/bush-protocol';
 import { realtimeAgentError } from './realtimeAgentError';
 
 export interface RealtimeAgentExecutor {
@@ -10,7 +10,7 @@ export interface RealtimeAgentExecutor {
   pageWrite?(id: string, content: string): Promise<void>;
   prepareConversation?(): Promise<string>;
   compact?(job: import('@cardbush/bush-protocol').RealtimeContextJob, signal?: AbortSignal): Promise<import('@cardbush/bush-protocol').RealtimeContextResult>;
-  execute(callId: string, action: 'subagent' | 'send_subagent_message' | 'read_subagent_conversation', args: Record<string, unknown>): Promise<Record<string, unknown>>;
+  execute(callId: string, action: 'subagent' | 'read_subagent_conversation', args: Record<string, unknown>): Promise<Record<string, unknown>>;
   list(): Promise<SubagentTask[]>;
 }
 
@@ -52,33 +52,30 @@ export class RealtimeAgentBridge {
     if (this.closed) return JSON.stringify({ status: 'detached' });
     const agent = this.target?.agent;
     if (!agent || this.target?.environment !== 'local') throw Object.assign(Error('This call requires a configured local Agent.'), { code: 'realtime_local_agent_required' });
-    const args = JSON.parse(call.arguments) as Record<string, unknown>;
+    let args = JSON.parse(call.arguments) as Record<string, unknown>;
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('Invalid arguments.');
-    const allowed: Record<string, string[]> = { subagent: ['prompt'], await_subagent: ['task_ids'], send_subagent_message: ['task_id','prompt'], read_subagent_conversation: ['task_id','cursor'], ...(this.target?.assistant ? { page_write: ['content'] } : {}) };
+    const allowed: Record<string, string[]> = { subagent: ['prompt', 'task_id'], await_subagents: ['task_ids'], read_subagent_conversation: ['task_id','cursor'], ...(this.target?.assistant ? { page_write: ['content'] } : {}) };
     if (!allowed[call.name] || Object.keys(args).some(key => !allowed[call.name].includes(key))) throw Error('Unknown voice tool or arguments.');
     if (call.name === 'page_write') {
       if (!agent.pageWrite || typeof args.content !== 'string' || !args.content.trim() || args.content.length > 64000) throw Error('Invalid page content.');
       await agent.pageWrite(call.id, args.content);
       return JSON.stringify({ status: 'written' });
     }
-    if (call.name === 'await_subagent') {
-      if (args.task_ids !== undefined && (!Array.isArray(args.task_ids) || args.task_ids.length > 8 || args.task_ids.some(id => typeof id !== 'string' || !id))) throw Error('Invalid task_ids.');
+    if (call.name === 'await_subagents') {
+      const { task_ids: ids } = conversationalAwaitInput.parse(args);
       this.submitting(true);
       let tasks: SubagentTask[];
       try { tasks = await agent.list(); } finally { this.submitting(this.preparing > 0); }
-      const ids = args.task_ids as string[] | undefined;
       if (ids?.some(id => !tasks.some(task => task.taskId === id))) throw Error('Task does not belong to this conversation.');
       const selected = (ids?.length ? tasks.filter(task => ids.includes(task.taskId)) : tasks.filter(task => this.watching.has(task.taskId) || task.parentTurnId.startsWith('voice_turn_'))).slice(-8);
       for (const task of selected) { this.watching.add(task.taskId); if (task.status !== 'running') this.delivered.add(task.taskId); }
       return JSON.stringify({ status: selected.some(task => task.status === 'running') ? 'watching' : 'settled',
         tasks: selected.slice(-8).map(task => this.summary(task, 600)), notification: 'Running tasks will report automatically. Continue talking; do not poll or wait silently.' });
     }
-    if (call.name !== 'read_subagent_conversation' && (typeof args.prompt !== 'string' || !args.prompt.trim() || args.prompt.length > 8000)) throw Error('Provide a prompt (1–8000 characters).');
-    if (call.name !== 'subagent' && (typeof args.task_id !== 'string' || !args.task_id)) throw Error('Provide task_id.');
-    if (args.cursor !== undefined && (typeof args.cursor !== 'string' || !/^\d+:\d+$/.test(args.cursor))) throw Error('Invalid cursor.');
+    args = call.name === 'subagent' ? conversationalSubagentInput.parse(args) : conversationalReadInput.parse(args);
     this.preparing++; this.submitting(true);
     try {
-      const result = await agent.execute(call.id, call.name as 'subagent' | 'send_subagent_message' | 'read_subagent_conversation', args);
+      const result = await agent.execute(call.id, call.name as 'subagent' | 'read_subagent_conversation', args);
       if (call.name !== 'read_subagent_conversation') this.reportError('');
       if (typeof result.taskId === 'string' && call.name !== 'read_subagent_conversation') { this.watching.add(result.taskId); this.callTasks.set(call.id, result.taskId); this.delivered.delete(result.taskId); }
       this.schedule(); return JSON.stringify(result);

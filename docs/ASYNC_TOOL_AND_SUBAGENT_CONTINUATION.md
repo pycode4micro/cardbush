@@ -29,14 +29,16 @@
 ## 子代理续接
 
 ```json
-{ "prompt": "继续处理后续问题", "resume_task_id": "先前返回的 taskId" }
+{ "prompt": "继续处理后续问题", "task_id": "先前返回的 taskId" }
 ```
 
-以上参数传给 `subagent`。每次续接生成新的任务与 Turn，保持原 child session；子代理自己的历史、原始前缀、模型和设置保留。工具与权限取原配置和当前宿主限制的交集，同一 child session 不允许并发续接。只允许原父会话续接自己拥有的普通子代理，Team 任务仍由 Team 管理。父会话工作区已经变化时拒绝隐式移动旧子代理。
+以上参数传给 `subagent`。任务仍在运行时立即追加指导，返回 `message_queued`，不重复派发；任务已结束时生成新的任务与 Turn，保持原 child session。子代理自己的历史、原始前缀、模型和执行主机保留。工具与权限取原配置和当前宿主限制的交集，同一 child session 不允许并发续接。只允许原父会话续接自己拥有的普通子代理，Team 任务仍由 Team 管理。父会话工作区已经变化时拒绝隐式移动旧子代理。
 
 原始执行配置写入运行数据目录 `subagent-context`，配合既有会话持久化可在重启后续接。只对保存了这份配置的任务生效；旧版本已结束且缺少配置的子代理会明确报错，不猜测其权限或原始上下文。新任务应保存返回的 taskId；聊天室等插件的成员凭证仍由各代理自己的上下文持有。
 
 `await_subagents` 新增 `mode=any|all`，默认 any，允许依赖单个先完成的结果继续工作；未完成的兄弟任务继续运行。显式选择已经完成的任务可再次获取结果。
+
+文字 assistant 与实时语音使用同名的 `await_subagents`，其会话接口只返回状态并登记异步通知，始终不等待执行结束。`read_subagent_conversation` 只读取交流记录。插件角色统一从 `list_subagent_options.agent_roles` 发现；跨 Turn 后台任务的列出、等待和停止由 `manage_plugin_agents` 管理。
 
 ## 验证
 

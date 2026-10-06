@@ -12,6 +12,7 @@ import { useAgentConnections } from './features/agents/useAgentConnections';
 import './features/agents/agents.css';
 import { withWorkspaceReference } from './shared/promptReferences';
 import { recentReviewTurns } from './features/sidebar/reviewModel';
+import { InspectorTabStrip } from './features/inspector/InspectorTabStrip';
 import { newBrowserTab } from './features/browser/browserStartPage';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
@@ -34,7 +35,6 @@ import {
   Globe2,
   Menu,
   PanelRightClose,
-  Plus,
   RefreshCw,
   X,
 } from 'lucide-react';
@@ -655,18 +655,16 @@ function CardbushApp() {
   const openConversationInspector = useCallback((id: string, title: string) => {
     openInspectorTab({ id, title, kind: 'conversation' });
     setInspectorOpen(true);
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [openInspectorTab]);
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [inspectorAddMenuOpen, setInspectorAddMenuOpen] = useState(false);
   const [inspectorTabsMenuOpen, setInspectorTabsMenuOpen] = useState(false);
   const [inspectorTabContextMenu, setInspectorTabContextMenu] =
     useState<InspectorTabContextMenuState | null>(null);
-  const inspectorAddMenuRef = useRef<HTMLDivElement | null>(null);
   const inspectorTabsMenuRef = useRef<HTMLDivElement | null>(null);
   const inspectorTabContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const focusNewBrowserTab = useRef(false);
   const inspectorWebviewRefs = useRef(new Map<string, InspectorWebviewHandle>());
   const [inspectorNavigationByTarget, setInspectorNavigationByTarget] = useState<
     Record<string, InspectorNavigationState>
@@ -684,14 +682,14 @@ function CardbushApp() {
   const [addPageOpen, setAddPageOpen] = useState(false);
   const {
     inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
-    inspectorCover, enterInspectorCover, leaveInspectorCover,
+    inspectorCover, enterInspectorCover, leaveInspectorCover, revealConversation,
     mainStageRef, conversationCovered, inspectorControlsVisible,
     quickInputOpen, setQuickInputOpen, toggleMultiPage,
   } = useInspectorWorkspace({
     language, windowMaximized, compactLayout,
     sidebarCollapsed, sidebarWidth, setSidebarCollapsed, section, setSection,
     inspectorOpen, setInspectorOpen, inspectorTabs, activeInspectorTab, openInspectorTab,
-    setInspectorAddMenuOpen, setInspectorTabsMenuOpen,
+    setInspectorTabsMenuOpen,
   });
   const openInspectorTarget = useCallback((detail: InspectorOpenDetail) => {
     const target = stripWrappingQuotes(detail.target.trim());
@@ -700,7 +698,6 @@ function CardbushApp() {
     if (sourceTab) {
       selectInspectorTab(sourceTab.tabId);
       setInspectorOpen(true);
-      setInspectorAddMenuOpen(false);
       setInspectorTabsMenuOpen(false);
       setInspectorTabContextMenu(null);
       return;
@@ -718,10 +715,13 @@ function CardbushApp() {
     };
     openInspectorTab(nextTab);
     setInspectorOpen(true);
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [openInspectorTab, selectInspectorTab]);
+  const openNewBrowserInspectorTab = useCallback(() => {
+    focusNewBrowserTab.current = true;
+    openInspectorTarget(newBrowserTab(language));
+  }, [language, openInspectorTarget]);
   const openChangeReviewInspector = useCallback((
     conversationId: string,
     initialFilePath = '',
@@ -740,7 +740,6 @@ function CardbushApp() {
     openInspectorTab(nextTab);
     setInspectorOpen(true);
     setChangeReviewNotice('');
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [language, openInspectorTab]);
@@ -748,7 +747,6 @@ function CardbushApp() {
     if (!detail.sessionId.trim()) return;
     openInspectorTab(workSummaryInspectorTab(detail, language));
     setInspectorOpen(true);
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [language, openInspectorTab]);
@@ -757,7 +755,7 @@ function CardbushApp() {
       const detail = (event as CustomEvent<AutomationRunOpenDetail>).detail;
       if (!detail?.jobId || !detail.runId) return;
       openInspectorTab({ id: `automation:${detail.runId}`, kind: 'automation', ...detail });
-      setInspectorOpen(true); setInspectorAddMenuOpen(false); setInspectorTabsMenuOpen(false); setInspectorTabContextMenu(null);
+      setInspectorOpen(true); setInspectorTabsMenuOpen(false); setInspectorTabContextMenu(null);
     };
     window.addEventListener(OPEN_AUTOMATION_RUN_EVENT, open);
     return () => window.removeEventListener(OPEN_AUTOMATION_RUN_EVENT, open);
@@ -851,7 +849,6 @@ function CardbushApp() {
   const closeInspector = useCallback(() => {
     setInspectorOpen(false);
     setChangeReviewNotice('');
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, []);
@@ -860,16 +857,10 @@ function CardbushApp() {
       closeInspector();
       return;
     }
-    // Reopen the selected tab; on first open, prefer the current review when available.
-    if (!activeInspectorTab && section === 'chat' &&
-      changeReportsByConversation[chat.activeConversationId]?.length) {
-      openChangeReviewInspector(chat.activeConversationId);
-    } else {
-      setInspectorOpen(true);
-    }
-  }, [activeInspectorTab, changeReportsByConversation, chat.activeConversationId,
-    closeInspector, inspectorOpen, openChangeReviewInspector, section]);
-  // Collapsing only changes visibility, so content stays intact throughout the exit animation.
+    if (!activeInspectorTab) openNewBrowserInspectorTab();
+    else setInspectorOpen(true);
+  }, [activeInspectorTab, closeInspector, inspectorOpen, openNewBrowserInspectorTab]);
+  // Collapsing retains the pages; only closing a tab should dispose its content.
   const displayedInspectorTab = activeInspectorTab;
   const displayedInspectorTarget = displayedInspectorTab?.kind === 'resource'
     ? displayedInspectorTab.detail
@@ -880,7 +871,6 @@ function CardbushApp() {
   const activateInspectorTab = (tab: InspectorTab) => {
     selectInspectorTab(tab.id);
     setInspectorOpen(true);
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   };
@@ -902,7 +892,6 @@ function CardbushApp() {
       return changed ? next : current;
     });
     if (closingTabs.some((tab) => tab.kind === 'review')) setChangeReviewNotice('');
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
     if (closingTabs.length === inspectorTabs.length) closeInspector();
@@ -936,7 +925,6 @@ function CardbushApp() {
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
     });
     setInspectorTabsMenuOpen(false);
-    setInspectorAddMenuOpen(false);
   };
   const updateInspectorNavigation = useCallback((
     identity: string,
@@ -976,6 +964,19 @@ function CardbushApp() {
         : activeInspectorAddress,
     );
   }, [activeInspectorAddress, activeInspectorTabIdentity]);
+  useEffect(() => {
+    if (!focusNewBrowserTab.current || !activeInspectorTabIdentity) return;
+    const frame = requestAnimationFrame(() => {
+      const input = inspectorLayout
+        ? document.querySelector<HTMLInputElement>(`[data-inspector-page-id="${CSS.escape(activeInspectorTabIdentity)}"] .right-inspector-address input`)
+        : inspectorAddressRef.current;
+      if (input) {
+        input.focus(); input.select();
+        focusNewBrowserTab.current = false;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeInspectorTabIdentity, inspectorLayout]);
   const selectedInspectorModelConfig = useMemo(
     () => appSettings.managedModelConfigs.find(
       (config) => config.id === chat.selectedModel,
@@ -997,12 +998,7 @@ function CardbushApp() {
         : !selectedInspectorModelConfig
           ? language === 'zh' ? '请先选择可用模型' : 'Select an available model first'
           : language === 'zh' ? '完成一轮会话后可创建 Shadow 对话' : 'Complete a conversation turn to create a Shadow chat';
-  const openNewBrowserInspectorTab = useCallback(async () => {
-    try { openInspectorTarget(await newBrowserTab()); }
-    catch (error) { window.alert(`${language === 'zh' ? '无法读取浏览器设置' : 'Unable to read browser settings'}: ${String(error)}`); }
-  }, [language, openInspectorTarget]);
   const openInspectorFiles = useCallback(async () => {
-    setInspectorAddMenuOpen(false);
     const paths = await window.cardbushDesktop?.pickAttachments?.().catch(() => []);
     if (!paths?.length) return;
     for (const path of paths) openInspectorTarget({ target: path });
@@ -1038,7 +1034,6 @@ function CardbushApp() {
         title: `Shadow · ${title}`,
     });
     setInspectorOpen(true);
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [
@@ -1070,26 +1065,24 @@ function CardbushApp() {
       : undefined,
     onOpenFiles: () => { void openInspectorFiles(); },
     onOpenShadow: openShadowInspectorTab,
-    onOpenBrowser: openNewBrowserInspectorTab,
-    onAddPage: () => { setInspectorAddMenuOpen(false); setAddPageOpen(true); },
+    onAddPage: () => { setAddPageOpen(true); },
     onOpenBookmark: (url: string) => openInspectorTarget({ target: url }),
     onMultiPage: toggleMultiPage,
     multiPage: Boolean(inspectorLayout),
   };
   const dismissInspectorMenus = useCallback(() => {
-    setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, []);
   const inspectorMenuContainers = useMemo(() => [
-    inspectorAddMenuRef, inspectorTabsMenuRef, inspectorTabContextMenuRef,
+    inspectorTabsMenuRef, inspectorTabContextMenuRef,
   ], []);
-  const inspectorMenuOpen = inspectorAddMenuOpen || inspectorTabsMenuOpen || !!inspectorTabContextMenu;
+  const inspectorMenuOpen = inspectorTabsMenuOpen || !!inspectorTabContextMenu;
   useOutsideDismiss(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus);
   const sidebarPresence = useSoftPanelPresence(
     !sidebarCollapsed,
   );
-  const inspectorPresence = useSoftPanelPresence(inspectorOpen);
+  const inspectorPresence = useSoftPanelPresence(inspectorOpen, 240, { keepMounted: true });
 
   useEffect(() => {
     const handleOpenInspector = (event: Event) => {
@@ -1911,12 +1904,14 @@ function CardbushApp() {
   // handlers used to be recreated by App on every message update, defeating
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
+    revealConversation();
     setSection(nextSection);
     if (nextSection === 'agents') closeInspector();
-  }, [closeInspector]);
+  }, [closeInspector, revealConversation]);
   const handleAgentSelect = useCallback((id: string, sessionId?: string, view?: 'chat' | 'settings') => {
+    if (inspectorControlsVisible) leaveInspectorCover();
     agents.select(id, sessionId, view); setSection('agents'); closeInspector(); if (compactLayout && (sessionId !== undefined || !id)) collapseSidebar();
-  }, [agents.select, compactLayout, collapseSidebar, closeInspector]);
+  }, [agents.select, compactLayout, collapseSidebar, closeInspector, inspectorControlsVisible, leaveInspectorCover]);
   useEffect(() => {
     const open = (event: Event) => {
       const target = (event as CustomEvent<AgentConversationTarget>).detail;
@@ -1926,12 +1921,14 @@ function CardbushApp() {
     return () => window.removeEventListener(OPEN_AGENT_CONVERSATION, open);
   }, [agents.connections, handleAgentSelect]);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
+    revealConversation();
     openConversation(conversationId);
     if (compactLayout) collapseSidebar();
-  }, [openConversation, compactLayout, collapseSidebar]);
+  }, [openConversation, compactLayout, collapseSidebar, revealConversation]);
   const handleSidebarCreateConversation = useCallback(() => {
+    revealConversation();
     createConversation();
-  }, [createConversation]);
+  }, [createConversation, revealConversation]);
   const handleSidebarAddProject = useCallback(() => {
     void addProject();
   }, [addProject]);
@@ -1950,14 +1947,16 @@ function CardbushApp() {
   }, [openSettings, section, agents.selectedId]);
   const handleSearchOpenConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
+    revealConversation();
     openConversation(conversationId);
-  }, [openConversation]);
+  }, [openConversation, revealConversation]);
   const handlePreviousConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
+    revealConversation();
     chat.openConversation(conversationId);
     setSection('chat');
     setConversationPromptFocus(value => value + 1);
-  }, [chat.openConversation]);
+  }, [chat.openConversation, revealConversation]);
   const conversationNavigation = usePreviousConversationShortcut({
     activeConversationId: chat.activeConversationId,
     conversations: chat.conversations,
@@ -1972,6 +1971,7 @@ function CardbushApp() {
     : { section };
   const pageNavigation = usePageNavigation(currentPage, page => {
     if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab); return; }
+    revealConversation();
     setSettingsOpen(false); setSection(page.section);
     if (page.section === 'chat') {
       if (page.conversationId) chat.openConversation(page.conversationId); else chat.clearConversationSelection();
@@ -1989,8 +1989,9 @@ function CardbushApp() {
   });
   const handleSearchCreateConversation = useCallback(() => {
     setSettingsOpen(false);
+    revealConversation();
     createConversation();
-  }, [createConversation]);
+  }, [createConversation, revealConversation]);
   const handleSearchOpenFiles = useCallback(() => {
     setSettingsOpen(false);
     void openInspectorFiles();
@@ -2153,7 +2154,7 @@ function CardbushApp() {
         aria-hidden={settingsVisible}
         inert={settingsVisible ? true : undefined}
       >
-          <CompactSidebarBackdrop visible={compactLayout && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
+          <CompactSidebarBackdrop visible={(compactLayout || inspectorCover) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
           {sidebarPresence.mounted && (
             <>
               {section === 'team' ? (
@@ -2380,7 +2381,7 @@ function CardbushApp() {
               className={`right-inspector soft-panel-motion ${inspectorPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
               aria-label={language === 'zh' ? '右侧检查器' : 'Inspector'}
               aria-hidden={!inspectorPresence.visible}
-              inert={!inspectorPresence.visible || (compactLayout && !sidebarCollapsed) ? true : undefined}
+              inert={!inspectorPresence.visible || ((compactLayout || inspectorCover) && !sidebarCollapsed) ? true : undefined}
               style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
             >
               <RightInspectorResizer
@@ -2399,13 +2400,7 @@ function CardbushApp() {
               }`}>
                 {displayedInspectorTab && displayedInspectorTabs.length > 0 ? (
                   <>
-                    <div className="right-inspector-tab-strip">
-                      <div
-                        className="right-inspector-tabs"
-                        ref={inspectorTabsRef}
-                        role="tablist"
-                        aria-label={language === 'zh' ? '已打开的标签页' : 'Open inspector tabs'}
-                      >
+                    <InspectorTabStrip language={language} stripRef={inspectorTabsRef} onNewTab={openNewBrowserInspectorTab}>
                         {displayedInspectorTabs.map((tab) => {
                           const active = tab.id === activeInspectorTabIdentity;
                           const navigation = tab.kind === 'resource'
@@ -2415,7 +2410,7 @@ function CardbushApp() {
                             ? navigation?.title || inspectorTabLabel(tab.detail)
                             : tab.title;
                           const targetTitle = tab.kind === 'resource'
-                            ? tab.detail.target
+                            ? (isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType) && navigation?.url) || tab.detail.target
                             : tab.kind === 'review'
                               ? `${label} · ${tab.conversationId}`
                               : tab.kind === 'conversation' ? label : tab.kind === 'automation' ? `${label} · ${tab.runId}` : tab.kind === 'shadow'
@@ -2464,8 +2459,7 @@ function CardbushApp() {
                             </div>
                           );
                         })}
-                      </div>
-                    </div>
+                    </InspectorTabStrip>
                     <div className="right-inspector-tab-manager" ref={inspectorTabsMenuRef}>
                       <button
                         type="button"
@@ -2478,7 +2472,6 @@ function CardbushApp() {
                           : `Manage all tabs (${displayedInspectorTabs.length})`}
                         onClick={() => {
                           setInspectorTabsMenuOpen((open) => !open);
-                          setInspectorAddMenuOpen(false);
                           setInspectorTabContextMenu(null);
                         }}
                       >
@@ -2550,31 +2543,11 @@ function CardbushApp() {
                         </div>
                       )}
                     </div>
-                    <div className="right-inspector-add-tab" ref={inspectorAddMenuRef}>
-                      <button
-                        type="button"
-                        className={inspectorAddMenuOpen ? 'active' : ''}
-                        aria-label={language === 'zh' ? '新建标签页' : 'New tab'}
-                        aria-haspopup="menu"
-                        aria-expanded={inspectorAddMenuOpen}
-                        title={language === 'zh' ? '新建标签页' : 'New tab'}
-                        onClick={() => {
-                          setInspectorAddMenuOpen((open) => !open);
-                          setInspectorTabsMenuOpen(false);
-                          setInspectorTabContextMenu(null);
-                        }}
-                      >
-                        <Plus size={17} aria-hidden="true" />
-                      </button>
-                      {inspectorAddMenuOpen && (
-                        <InspectorActions {...inspectorActionProps} menu />
-                      )}
-                    </div>
                   </>
                 ) : (
                   <strong />
                 )}
-                {displayedInspectorTarget && (
+                {displayedInspectorTarget && !/^about:blank(?:[?#]|$)/i.test(activeInspectorAddress) && (
                   <button
                     type="button"
                     onClick={() => void window.cardbushDesktop?.openExternal?.(
@@ -2588,7 +2561,6 @@ function CardbushApp() {
                 <button
                   type="button"
                   onClick={closeInspector}
-                  title={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
                   data-shortcut="toggleInspector"
                   aria-label={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
                 >
@@ -2688,7 +2660,7 @@ function CardbushApp() {
                         ref={inspectorAddressRef}
                         value={inspectorAddressDraft}
                         aria-label={language === 'zh' ? '网址' : 'Address'}
-                        placeholder={language === 'zh' ? '输入网址' : 'Enter address'}
+                        placeholder={language === 'zh' ? '搜索或输入网址' : 'Search or enter address'}
                         spellCheck={false}
                         onChange={(event) => setInspectorAddressDraft(event.target.value)}
                       />
@@ -2745,6 +2717,8 @@ function CardbushApp() {
                               mediaType={tab.detail.mediaType}
                               title={tab.detail.title}
                               language={language}
+                              startPage={<InspectorActions {...inspectorActionProps}
+                                onOpenBookmark={url => inspectorWebviewRefs.current.get(tab.id)?.navigate(url)}/>}
                               onNavigationStateChange={updateInspectorNavigation}
                               onActivate={id => { if (inspectorLayout) selectInspectorTab(id); }}
                               onOpenTarget={openInspectorTarget}
@@ -2831,7 +2805,7 @@ function CardbushApp() {
               </div>
             </aside>
           ) : null}
-          {inspectorControlsVisible && <div className="inspector-cover-controls">
+          {inspectorControlsVisible && <div className="inspector-cover-controls" inert={(compactLayout || inspectorCover) && !sidebarCollapsed ? true : undefined}>
             {quickInputOpen && <div className="inspector-quick-input" ref={setQuickInputTarget}
               aria-label={language === 'zh' ? '快速输入' : 'Quick input'} />}
             <div className="inspector-cover-capsule">

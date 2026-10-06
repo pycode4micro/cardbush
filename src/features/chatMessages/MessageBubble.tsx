@@ -2842,7 +2842,7 @@ function MessageImagePreviewButton({
     <button
       className={`message-image-preview${failed ? ' is-failed' : ''}`}
       type="button"
-      title={name}
+      aria-label={name}
       onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { image: true, language })}
       onClick={event => {
         const thumbnail = event.currentTarget.querySelector('img');

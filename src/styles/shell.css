@@ -524,7 +524,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 .desktop-shell,
 .settings-shell {
   --layout-sidebar-space: var(--sidebar-width);
-  --conversation-pane-min-width: 440px;
+  --conversation-pane-min-width: 340px;
   position: relative;
   height: calc(100vh - var(--window-frame-height));
   display: flex;
@@ -533,10 +533,6 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   border-top: 0;
   background: var(--bg);
   overflow: hidden;
-}
-
-.desktop-shell.window-maximized {
-  --conversation-pane-min-width: clamp(340px, 18vw, 440px);
 }
 
 .app > .settings-shell {

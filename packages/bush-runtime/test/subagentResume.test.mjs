@@ -5,6 +5,36 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryRuntimeHost, SessionStore, SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
 
+test('one subagent entry guides the current child and rejects stale names and foreign IDs', async () => {
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), guidance = [];
+  let dispatched = 0;
+  registerSubagentTool(registry, tasks, async () => { dispatched++; throw Error('must not dispatch'); }, {
+    guideChild: async input => { guidance.push(input); return { status: 'queued' }; },
+    loadPluginAgents: async () => [{ id: 'fixture:reviewer', description: 'Read only', mcpServers: ['docs'] }],
+  });
+  const request = { requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' };
+  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('unexpected permission'); } } });
+  const invoke = (name, args, sessionId = 'parent') => coordinator.execute(
+    { protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name, argumentsText: JSON.stringify(args) },
+    { requestId: 'r', sessionId, turnId: 't', round: 1, ordinal: 0 }, undefined, { request: { ...request, sessionId }, contextMessages: [] });
+  tasks.start({ taskId: 'old', parentSessionId: 'parent', parentTurnId: 'previous', childSessionId: 'child', childTurnId: 'first', prompt: 'first', inheritContext: true, inheritedMessageCount: 0 });
+  tasks.finish({ parentSessionId: 'parent', taskId: 'old', status: 'completed', finalResponse: 'done', errorMessage: '', usage: {} });
+  tasks.start({ taskId: 'current', parentSessionId: 'parent', parentTurnId: 'previous', childSessionId: 'child', childTurnId: 'second', prompt: 'next', inheritContext: true, inheritedMessageCount: 0 });
+  const receipt = await invoke('subagent', { task_id: 'old', prompt: 'Keep it read only' });
+  assert.equal(receipt.result.status, 'message_queued'); assert.equal(receipt.result.taskId, 'current');
+  assert.equal(guidance[0].turnId, 'second'); assert.equal(guidance[0].mode, 'interrupt_and_continue');
+  assert.equal((await invoke('subagent', { task_id: 'old', prompt: 'x' }, 'foreign')).kind, 'failed');
+  assert.equal((await invoke('subagent', { task_id: 'unknown', prompt: 'x' })).kind, 'failed');
+  assert.equal((await invoke('subagent', { resume_task_id: 'old', prompt: 'x' })).kind, 'failed');
+  assert.equal(guidance.length, 1); assert.equal(dispatched, 0); assert.equal(tasks.list('parent').length, 2);
+  assert.equal(registry.resolve('list_plugin_agents'), undefined);
+  const options = await invoke('list_subagent_options', {});
+  assert.equal(options.result.agent_roles[0].id, 'fixture:reviewer');
+  assert.deepEqual(options.result.agent_roles[0].mcpServers, ['docs']);
+  const properties = registry.resolve('subagent').definition.inputSchema.properties;
+  assert.ok(properties.task_id); assert.equal(properties.resume_task_id, undefined);
+});
+
 function* respond(request, name, args, text = 'parent done') {
   const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
   yield { ...base, sequence: 0, kind: 'response_started' };
@@ -23,7 +53,7 @@ test('resumes original child session after host recreation with its own history,
       yield* respond(request, undefined, undefined, requests.length === 1 ? 'private child identity alpha; read position 4' : 'continued alpha'); return;
     }
     const round = (parentRounds.get(request.turnId) ?? 0) + 1; parentRounds.set(request.turnId, round);
-    if (round === 1) yield* respond(request, 'subagent', resumeId ? { resume_task_id: resumeId, prompt: 'continue' } : { prompt: 'first task' });
+    if (round === 1) yield* respond(request, 'subagent', resumeId ? { task_id: resumeId, prompt: 'continue' } : { prompt: 'first task' });
     else yield* respond(request);
   } };
   const makeHost = () => new InMemoryRuntimeHost({ provider, sessionStore: sessions, subagentTaskStore: tasks, dataRoot });
@@ -55,10 +85,10 @@ test('resume refuses other owners and running children, and concurrent requests 
     { requestId: 'r', sessionId, turnId: 't', round: 1, ordinal: 0 }, undefined,
     { request: { requestId: 'r', sessionId, turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' }, contextMessages: [{ role: 'system', content: 'prefix' }] });
   assert.equal((await run({ prompt: 'one' })).kind, 'returned');
-  assert.equal((await run({ prompt: 'steal', resume_task_id: 'task1' }, 'other')).kind, 'failed');
-  const pair = await Promise.all([run({ prompt: 'continue', resume_task_id: 'task1' }), run({ prompt: 'duplicate', resume_task_id: 'task1' })]);
+  assert.equal((await run({ prompt: 'steal', task_id: 'task1' }, 'other')).kind, 'failed');
+  const pair = await Promise.all([run({ prompt: 'continue', task_id: 'task1' }), run({ prompt: 'duplicate', task_id: 'task1' })]);
   assert.equal(pair.filter(result => result.kind === 'returned').length, 1); assert.equal(started, 2);
-  assert.equal((await run({ prompt: 'override', resume_task_id: 'task1', mode: 'clean' })).kind, 'failed');
+  assert.equal((await run({ prompt: 'override', task_id: 'task1', mode: 'clean' })).kind, 'failed');
 });
 
 test('resume preserves clean configuration while intersecting current permissions, tools and skills', async () => {
@@ -83,7 +113,7 @@ test('resume preserves clean configuration while intersecting current permission
       permission_mode: 'user_free', allowed_skills: ['a', 'b'], disabled_skills: ['old-disabled'], disabled_tools: ['write_file'] } },
     { contextWindowTokens: 65536 });
   assert.equal(first.kind, 'returned', JSON.stringify(first));
-  const resumed = await run({ prompt: 'continue', resume_task_id: 'task1' },
+  const resumed = await run({ prompt: 'continue', task_id: 'task1' },
     { contextWindowTokens: 32768, pluginAgentMaxTurns: 2, allowedSkills: ['b', 'c'], disabledSkills: ['new-disabled'],
       childAgentPolicy: { disabledTools: ['delete_file'] } }, registry.definitions().filter(tool => tool.name !== 'write_file'), 'task_free');
   assert.equal(resumed.kind, 'returned', JSON.stringify(resumed));

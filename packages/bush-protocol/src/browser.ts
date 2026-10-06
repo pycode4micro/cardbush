@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const DEFAULT_BROWSER_START_PAGE = 'https://www.google.com/';
+export const DEFAULT_BROWSER_START_PAGE = 'about:blank';
 export const BROWSER_CONFIGURATION_PROTOCOL = 'cardbush.browser_config.v1' as const;
 
 export const browserStartPageSchema = z.string().trim().max(4096).transform(value => {

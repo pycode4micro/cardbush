@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import { basename, resourceBasename, resourceTargetKind } from '../../shared/localPaths';
 import type { InspectorOpenDetail } from './inspectorEvents';
@@ -70,6 +71,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   ) => void;
   onOpenTarget: (detail: InspectorOpenDetail) => void;
   onActivate?: (identity: string) => void;
+  startPage?: ReactNode;
 }>(function InspectorWebview({
   identity,
   target,
@@ -80,11 +82,14 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onNavigationStateChange,
   onOpenTarget,
   onActivate,
+  startPage,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
   const activateRef = useRef(onActivate); activateRef.current = onActivate;
+  const languageRef = useRef(language); languageRef.current = language;
   const webviewDomReadyRef = useRef(false);
   const requestedUrlRef = useRef(source);
+  const [currentUrl, setCurrentUrl] = useState(source);
   const filePath = inspectorFilePath(target);
   const media = mediaType ? inspectorMediaTarget(target, mediaType) : null;
   const fileTitle = title?.trim() || resourceBasename(filePath) || media?.kind || basename(filePath);
@@ -122,16 +127,18 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       translation: translation.stateRef.current,
     };
     if (!webview?.isConnected || !webviewDomReadyRef.current) {
+      setCurrentUrl(fallbackNavigation.url);
       onNavigationStateChange(identity, fallbackNavigation);
       return;
     }
     try {
       const url = webview.getURL?.() || fallbackNavigation.url;
       requestedUrlRef.current = url;
+      setCurrentUrl(url);
       onNavigationStateChange(identity, {
         guestWebContentsId: webview.getWebContentsId?.(),
         url,
-        title: webview.getTitle?.().trim() || '',
+        title: /^about:blank(?:[?#]|$)/i.test(url) ? (languageRef.current === 'zh' ? '新标签页' : 'New tab') : webview.getTitle?.().trim() || '',
         canGoBack: webview.canGoBack?.() ?? false,
         canGoForward: webview.canGoForward?.() ?? false,
         loading: loadingRef.current,
@@ -145,7 +152,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       onNavigationStateChange(identity, fallbackNavigation);
     }
   }, [identity, onNavigationStateChange, source, translation.stateRef]);
-  useEffect(() => { if (!rendererPreview) publishNavigation(); }, [translation.state, publishNavigation, rendererPreview]);
+  useEffect(() => { if (!rendererPreview) publishNavigation(); }, [translation.state, publishNavigation, rendererPreview, language]);
 
   useImperativeHandle(forwardedRef, () => ({
     toggleTranslation: translation.toggle,
@@ -399,8 +406,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     translation.reset,
   ]);
 
+  const showStartPage = Boolean(startPage) && isInspectorBrowserTarget(target, mediaType)
+    && /^about:blank(?:[?#]|$)/i.test(currentUrl) && !previewError && (!loading || !hasDocument);
   return (
-    <DeferredResizePreview className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
+    <DeferredResizePreview className={`right-inspector-preview ${loading ? 'loading' : 'ready'}${showStartPage ? ' showing-start-page' : ''}`}>
       <InspectorErrorBoundary
         key={`${target}:${filePreviewRevision}:${webviewRevision}`}
         target={target}
@@ -438,6 +447,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
         })}
       </InspectorErrorBoundary>
+      {showStartPage && <div className="inspector-new-tab-page">{startPage}</div>}
       {translation.state.status === 'error' && !previewError && (
         <div className="inspector-translation-notice" role="status">
           <span>{browserTranslationError(translation.state.error, language)}</span>
@@ -452,7 +462,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           </button>
         </div>
       )}
-      {loading && (rendererPreview || !hasDocument) && (
+      {!showStartPage && loading && (rendererPreview || !hasDocument) && (
         <div className="right-inspector-preview-loading" role="status">
           <span />
           <span />

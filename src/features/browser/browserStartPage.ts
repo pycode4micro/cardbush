@@ -1,7 +1,6 @@
-import { defaultBrowserConfiguration } from '@cardbush/bush-protocol';
 import type { InspectorOpenDetail } from '../inspector/inspectorEvents';
+import type { AppLanguage } from '../../types';
 
-export async function newBrowserTab(): Promise<InspectorOpenDetail> {
-  const configuration = await window.cardbushDesktop?.readBrowserConfiguration?.() ?? defaultBrowserConfiguration();
-  return { target: configuration.startPage, newTab: true };
+export function newBrowserTab(language: AppLanguage = 'zh'): InspectorOpenDetail {
+  return { target: 'about:blank', title: language === 'zh' ? '新标签页' : 'New tab', newTab: true };
 }

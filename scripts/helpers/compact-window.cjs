@@ -107,6 +107,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('compactState.setSidebarCollapsed(true)'); await pause(260);
   await resize(480,480);
   await run("document.querySelector('.window-sidebar-toggle').click()"); await pause(260);
+  await run(`window.drawerEscapeBubbled=false;
+    window.drawerEscapeObserver=event=>{if(event.key==='Escape'&&!event.defaultPrevented)window.drawerEscapeBubbled=true;};
+    window.addEventListener('keydown',drawerEscapeObserver);
+    window.drawerTestDialog=document.createElement('dialog');document.body.append(drawerTestDialog);drawerTestDialog.showModal();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
+  assert.equal(await run('compactState.sidebarCollapsed'),false,'Escape in a modal does not dismiss the drawer behind it');
+  await run('drawerTestDialog.close();drawerTestDialog.remove();drawerEscapeBubbled=false;void 0');
+  await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+  await until('compactState.sidebarCollapsed','Escape closes only the drawer');
+  assert.equal(await run('drawerEscapeBubbled'),false,'handled Escape cannot also close the inspector or quick input');
+  await run('window.removeEventListener("keydown",drawerEscapeObserver);compactState.setSidebarCollapsed(false);void 0');await pause(260);
   await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await until('compactState.sidebarCollapsed', 'Escape closes drawer');
   await resize(1180,760);

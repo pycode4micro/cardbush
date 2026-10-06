@@ -70,8 +70,6 @@ test('recorded Ark error and arbitrary provider errors fall back collectively wi
     [422, 'UnrecognizedVendorCode', 'bad shape'],
     [401, 'custom_auth_code', 'invalid fixture-secret'],
     [403, 'custom_denial', 'request denied'],
-    [429, 'custom_rate_limit', 'too many requests'],
-    [500, 'custom_server_code', 'upstream failed'],
   ]) await t.test(String(status), async t => {
     const f = await fixture(t, (_body, _path, count) => count === 1 ? { status, error: { code, param: 'tool.type', message } } : {});
     f.store.observe({ scope, model, capability: 'response_continuation' }, { status: 'supported' });
@@ -126,7 +124,7 @@ test('compatibility binds to provider configuration and model for seven days acr
   const options = { now: () => now };
   const store = new FileProviderCapabilityStore(path, options);
   const f = await fixture(t, (_body, _route, count) => count === 1 || count === 4
-    ? { status: 500, error: { code: 'GatewayFailure', message: 'request failed' } } : {}, store);
+    ? { status: count === 1 ? 400 : 500, error: { code: 'GatewayFailure', message: 'request failed' } } : {}, store);
   const config = { protocol: 'bush.provider_binding_config.v1', adapter: 'openai_responses',
     bindingId: 'first-binding', apiKey: f.config.apiKey, baseURL: f.config.baseURL, timeoutMs: 2000 };
   const firstRegistry = new ModelProviderRegistry({ capabilityStore: store });
@@ -201,8 +199,8 @@ test('token count errors of any shape use local estimates and persist one shared
   assert.equal(f.calls.length, 3); assert.equal(native(f.calls[2].body), false);
 });
 
-test('early stream errors and connection failures retry once, exposed text and tools are never replayed', async t => {
-  for (const first of [{ sseError: 'early failure' }, { emptyStream: true }, { disconnect: true }]) await t.test(JSON.stringify(first), async t => {
+test('early protocol errors retry once, exposed text and tools are never replayed', async t => {
+  for (const first of [{ sseError: 'early failure' }]) await t.test(JSON.stringify(first), async t => {
     const f = await fixture(t, (_body, _path, count) => count === 1 ? first : {});
     const events = [];
     const round = await executeModelRound(f.provider, request(), { onEvent: event => events.push(event) });
@@ -219,6 +217,32 @@ test('early stream errors and connection failures retry once, exposed text and t
   const g = await fixture(t, () => ({ toolPartial: true, sseError: 'tool stream failed' }));
   assert.equal((await executeModelRound(g.provider, request())).status, 'failed');
   assert.equal(g.calls.length, 1, 'an exposed tool call must not be replayed by compatibility retry');
+});
+
+test('temporary HTTP, socket and incomplete-stream failures retain the protocol for runtime retries', async t => {
+  for (const first of [{ status: 429, error: { code: 'rate_limit', message: 'busy' } },
+    { status: 503, error: { code: 'unavailable', message: 'busy' } }, { disconnect: true }, { emptyStream: true }]) {
+    await t.test(JSON.stringify(first), async t => {
+      const f = await fixture(t, (_body, _path, count) => count === 1 ? first : {});
+      const diagnostics = [];
+      const initial = request();
+      const failed = await executeModelRound(f.provider, initial, { onCompatibilityDiagnostic: event => diagnostics.push(event) });
+      assert.equal(failed.status, 'failed'); assert.equal(failed.error.retryable, true);
+      assert.equal(f.calls.length, 1); assert.deepEqual(diagnostics, []);
+      assert.equal(f.store.read(profile).status, 'unknown');
+      assert.equal((await executeModelRound(f.provider, initial)).status, 'completed');
+      assert.deepEqual(f.calls[1].body, f.calls[0].body, 'recovery must not change the tool schema or request prefix');
+    });
+  }
+});
+
+test('a temporary token-count outage does not downgrade generation', async t => {
+  const f = await fixture(t, (_body, route) => route.endsWith('/input_tokens')
+    ? { status: 503, error: { code: 'upstream_down', message: 'try later' } } : {});
+  assert.equal(await f.provider.countInputTokens(request()), undefined);
+  assert.equal(f.store.read(profile).status, 'unknown');
+  assert.equal((await executeModelRound(f.provider, request())).status, 'completed');
+  assert.ok(native(f.calls.at(-1).body));
 });
 
 test('native history converts losslessly, tool images follow complete batches, and compatibility pins across TTL', async t => {

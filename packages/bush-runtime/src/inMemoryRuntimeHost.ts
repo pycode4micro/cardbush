@@ -220,12 +220,8 @@ import {
   type TurnTerminalPayload,
 } from "./runtimeSessionCoordinator.js";
 
-export interface RuntimeRetryContext {
-  nextAttempt: number;
-  maxAttempts: number | null;
-  code: string;
-  retryAfterMs?: number;
-}
+import { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
+export { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
 
 export interface InMemoryRuntimeHostOptions {
   commandSandbox?: import('./commandSandboxPolicy.js').CommandSandboxConfiguration;
@@ -410,6 +406,7 @@ export class InMemoryRuntimeHost {
     );
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
+      wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
     });
@@ -577,6 +574,7 @@ export class InMemoryRuntimeHost {
       {
         asyncDispatch: true,
         remoteAgents: options.remoteAgents,
+        guideChild: payload => this.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload }),
         readChildConversation: sessionId => this.#childConversation(sessionId),
         saveChildRequest: request => this.#subagentResume.save(request),
         loadChildRequest: session => this.#sessions.hasSession(session) ? this.#subagentResume.load(session) : Promise.resolve(undefined),
@@ -1141,7 +1139,7 @@ export class InMemoryRuntimeHost {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
         this.#realtimeAgents ??= new RealtimeAgentDispatcher({ sessions: this.#sessions, tasks: this.#subagentTasks, registry: this.#toolRegistry, remote: this.#remoteAgents,
-          read: id => this.#childConversation(id), guide: payload => this.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload }) });
+          read: id => this.#childConversation(id) });
         return this.#withTurnAdmission(input.sessionId, () => this.#realtimeAgents!.execute(input));
       }
       case REALTIME_TASK_SUMMARY_COMMAND: {
@@ -2018,7 +2016,7 @@ export class InMemoryRuntimeHost {
             if (result.blocked) return await finalize({ status: 'failed', reason: 'plugin_hook_blocked', details: { message: result.blocked } });
             if (result.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: result.stopTurn } });
             initialHookMessages.push(...result.messages);
-            if (pluginExtensions.agents.length && request.tools.some(tool => tool.name === 'subagent')) initialHookMessages.push("Installed plugin Agents are available via list_plugin_agents. Apply a role using subagent.agent_type with its exact plugin:agent id. Their instructions and allowed tools apply; CardBush's configured child model and permission policies apply.");
+            if (pluginExtensions.agents.length && request.tools.some(tool => tool.name === 'subagent')) initialHookMessages.push("Installed plugin Agents are available via list_subagent_options.agent_roles. Apply a role using subagent.agent_type with its exact plugin:agent id. Their instructions and allowed tools apply; CardBush's configured child model and permission policies apply.");
             if (pluginExtensions.commands?.length && request.tools.some(tool => tool.name === 'list_plugin_commands')) initialHookMessages.push('Installed plugin Commands are available via list_plugin_commands and run_plugin_command. They retain their own command identity and argument handling. User-only commands require an explicit slash invocation.');
           }
           for (const [index, content] of initialHookMessages.entries()) {
@@ -4336,13 +4334,6 @@ function conversationSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot
       }),
     })),
   };
-}
-
-export function defaultRuntimeRetryDelayMs(context: RuntimeRetryContext): number {
-  // 1, 2, 4, 8, 16, then 30 seconds. Retry the same request; never replay tools.
-  const backoff = Math.min(30_000, 1000 * 2 ** Math.min(5, Math.max(0, context.nextAttempt - 2)));
-  const retryAfter = Number.isFinite(context.retryAfterMs) ? Math.max(0, context.retryAfterMs!) : 0;
-  return Math.round(Math.max(backoff, Math.min(retryAfter, 300_000)));
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

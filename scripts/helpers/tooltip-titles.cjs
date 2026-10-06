@@ -16,7 +16,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         const [disabled,setDisabled]=React.useState(false);
         window.setFixtureTitle=setTitle;window.setFixtureDisabled=setDisabled;
         return h('div',{title:'Parent help',style:{padding:'12px'}},
-          h('button',{id:'title-control',title,disabled},h('span',null,'Action')),
+          h('button',{id:'title-control',title,disabled,'aria-label':'Action'},h('span',null,'Action')),
           h('button',{id:'title-icon',title:'Icon action'},h('svg',{'aria-hidden':true})),
           h('form',{id:'title-address',title:'编辑网址','data-shortcut':'focusBrowserAddress'},
             h('input',{type:'url','aria-label':'网址',defaultValue:'https://example.test/search?q=hello'})),
@@ -45,6 +45,16 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run('setFixtureTitle(undefined)');
     await until("!document.querySelector('.global-tooltip') && !document.querySelector('#title-control').hasAttribute('data-global-tooltip-title')", 'removing a React title removes stale help');
     assert.equal(await run("document.querySelector('#title-control').hasAttribute('aria-description')"), false, 'generated accessible help is also removed');
+    await away(); move(); await pause(430);
+    assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'accessible names do not recreate removed hover help or inherit parent help');
+    assert.equal(await run("document.querySelector('#title-control').getAttribute('aria-label')"), 'Action', 'cleaning up hover help preserves the accessible name');
+    await run("document.querySelector('#title-icon').focus()");
+    window.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab',modifiers:['shift']});
+    window.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab',modifiers:['shift']});
+    await pause(150);
+    assert.equal(await run("document.activeElement.id"), 'title-control');
+    assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'keyboard focus on a named control does not invent a tooltip');
+    await run("document.querySelector('#title-control').blur()");
     await run("setFixtureTitle('Restored help')"); await pause(40); move(1);
     await until(help('Restored help'), 'title can be added again');
     for (const event of ['scroll','resize','blur']) {

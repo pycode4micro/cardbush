@@ -12,5 +12,5 @@ export function realtimeAgentError(error: unknown) {
     .replace(/https?:\/\/[^\s"']+/g, '[service URL]')
     .slice(0, 500);
   return { status: 'error' as const, code, message,
-    instruction: 'Report this specific error, not an inferred need for permission. A spoken confirmation does not fix configuration or connection errors. Do not claim acceptance or success. Check await_subagent before retrying a dispatch with an unknown outcome.' };
+    instruction: 'Report this specific error, not an inferred need for permission. A spoken confirmation does not fix configuration or connection errors. Do not claim acceptance or success. Check await_subagents before retrying a dispatch with an unknown outcome.' };
 }

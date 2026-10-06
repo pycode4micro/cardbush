@@ -10,7 +10,7 @@ assistant 是固定身份的持续会话。普通会话没有助手角色扮演�
 
 默认在本机执行，也可选择已接入的独立 Agent 服务，包括 SSH 直连接入的服务；只有 SSH 项目不足以代替服务。交流记录仍保存在桌面，切换只影响后续派发；远端执行依赖目标主机的配置与工具。文件、拖放和图片粘贴复用普通输入框；远端附件上传到所选 Agent，每个文件最多 64 MiB，文件夹先打包。挂断不会取消已受理任务；应用真正退出时本地执行遵循 Runtime 停止与恢复，远端服务拥有自己的队列。
 
-语音模型仅使用 subagent、await_subagent、send_subagent_message、read_subagent_conversation；assistant 额外有 page_write。派发立即返回，await_subagent 只登记观察，均不阻塞通话。执行权限沿用当前 Agent；不可因语音层口头声明改变工具禁用状态。
+语音模型仅使用 subagent、await_subagents、read_subagent_conversation；assistant 额外有 page_write。subagent 不带 task_id 创建任务，带 task_id 则给运行中的任务追加指导或在原主机继续已完成任务。派发立即返回，await_subagents 只登记观察，均不阻塞通话。语音 Provider 与文字 assistant 共用 bush-protocol 的 conversationalSubagentTools，接入新 Provider 时不要另写一套工具定义。执行权限沿用当前 Agent；不可因语音层口头声明改变工具禁用状态。
 
 完成结果先由当前配置的执行模型生成独立的口述摘要，再在对话空隙播报。摘要不是新的执行轮，不带执行工具。长路径、表格与完整列表留在任务详情。摘要失败时仅提示有结果可查看，不朗读原文截断片段；因此一次完成通知可能额外消耗文字模型用量。正在讲话和播放时延后通知，挂断取消摘要等待但不取消后台任务。
 

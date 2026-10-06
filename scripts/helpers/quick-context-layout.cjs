@@ -158,10 +158,9 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   for (const edge of ['first', 'last']) {
     const tickPoint = await run("(() => { const ticks = [...document.querySelectorAll('.quick-context-tick')]; const r = ticks[" + (edge === 'first' ? '0' : 'ticks.length - 1') + "].getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()");
     window.webContents.sendInputEvent({ type: 'mouseMove', ...tickPoint });
-    await until("!!document.querySelector('.global-tooltip:popover-open')", 'edge capsule tooltip');
-    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 1, 'read-only hover has one tooltip');
+    await pause(450);
+    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 0, 'accessible turn labels do not create redundant hover help');
     assert.equal(await run("!!document.querySelector('.quick-context-turn-preview')"), false, 'no duplicate request preview');
-    assert.ok(await run("(() => { const r=document.querySelector('.global-tooltip').getBoundingClientRect(); return r.left>=8 && r.right<=innerWidth-8 && r.top>=8 && r.bottom<=innerHeight-8; })()"), 'edge capsule stays inside viewport');
     window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
     await until("!document.querySelector('.global-tooltip')", 'leave tooltip');
   }
@@ -193,5 +192,5 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
     document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest;
     if (contextClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', contextClipboardDescriptor);
     else delete navigator.clipboard;`);
-  console.log('Quick context layout passed: retained turn previews, copy, jump, session isolation, split-pane widths, live resize, short window, expanded composer, themes, scroll isolation and edge tooltips.');
+  console.log('Quick context layout passed: retained turn previews, copy, jump, session isolation, split-pane widths, live resize, short window, expanded composer, themes, scroll isolation and quiet hover.');
 };

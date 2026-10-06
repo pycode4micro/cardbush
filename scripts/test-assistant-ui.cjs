@@ -29,7 +29,7 @@ async function buildFixture(directory) {
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>({entries:fixture.entries.slice(after),cursor:fixture.entries.length,busy:fixture.busy,error:'',workingTasks:0,generation:fixture.generation??0}),
+          read:async(after=0)=>({entries:fixture.entries.slice(after),cursor:fixture.entries.length,busy:fixture.busy,error:fixture.runtimeError??'',retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0}),
           reset:async()=>{fixture.resetCount=(fixture.resetCount??0)+1;fixture.generation=(fixture.generation??0)+1;fixture.entries=[];window.dispatchEvent(new Event('cardbush:assistant-reset'));},
           send:async(text,config,spoken)=>{if(fixture.failSend)throw Error('fixture send failed');fixture.sent.push({text,spoken});const input=splitStreamAttachmentMentions(text);fixture.entries.push({id:'user-'+fixture.sent.length,role:'user',content:input.userInput,attachments:await chatAttachmentsFromOutbound(input),createdAt:new Date().toISOString(),source:'text',visibility:'conversation'});}};`;
       if (id === '\0assistant-fixture.tsx') return `
@@ -100,6 +100,16 @@ app.whenReady().then(async () => {
     await win.loadFile(path.join(directory, 'index.html')); await until('document.querySelectorAll(".assistant-message").length===2');
     assert.equal(await read('document.body.innerText.includes("口头回复")||document.body.innerText.includes("工具日志")||document.body.innerText.includes("用户转写")'), false);
     await until('document.querySelector(".assistant-message-assistant h2")');
+    await read('fixture.busy=true;fixture.retry={attempt:2,maxAttempts:3,nextRetryMs:1000,code:"ECONNRESET",createdAt:new Date().toISOString()};void 0');
+    await until('document.querySelector(".assistant-view .conversation-connection-notice")?.textContent.includes("ECONNRESET")');
+    assert.ok(await read('document.querySelector(".assistant-view .conversation-connection-notice").textContent.includes("第 2 次")'));
+    assert.equal(await read('document.querySelectorAll(".assistant-message").length'),2,'retry keeps the conversation visible');
+    await until('Number(getComputedStyle(document.querySelector(".assistant-view .conversation-connection-notice")).opacity)>.99');
+    assert.ok(await read('(()=>{const n=document.querySelector(".assistant-view .conversation-connection-notice"),r=n.getBoundingClientRect();return r.height>30&&r.top>=48&&r.bottom<innerHeight&&document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.closest(".conversation-connection-notice")===n;})()'),'retry notice is visible below the header');
+    await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    fs.writeFileSync(path.join(directory,'assistant-retry.png'),(await win.webContents.capturePage()).toPNG());
+    await read('fixture.busy=false;fixture.retry=null;void 0');
+    await until('!document.querySelector(".assistant-view .conversation-connection-notice")');
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .composer-stack.simple")'), true);
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .assistant-actions")'), false);
     assert.equal(await read('fixture.permissionChanged'), undefined);
@@ -116,7 +126,13 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".inspector-quick-input textarea")');
     assert.equal(await read('document.querySelectorAll(".composer-stack").length'),1,'quick input moves the same composer');
     assert.equal(await read('document.querySelector(".inspector-quick-input textarea").value'),'快速输入仍属于助手');
-    await read('fixture.portal(false);void 0');await until('document.querySelector(".assistant-composer-dock textarea")');
+    await until('document.querySelector(".quick-input-status")?.textContent.includes("已回复")');
+    await read('fixture.busy=true;void 0');await until('document.querySelector(".quick-input-status")?.textContent.includes("正在处理")');
+    await click('.quick-input-status');await until('document.querySelector(".quick-input-transcript .assistant-message")');
+    assert.equal(await read('!!document.querySelector(".inspector-quick-input textarea")'),true,'Assistant preview opens above its quick composer');
+    assert.equal(await read('fixture.busy'),true,'expanding leaves Assistant running');
+    await read('fixture.busy=false;fixture.portal(false);void 0');
+    await until('document.querySelector(".assistant-composer-dock textarea")');
     assert.equal(await read('document.querySelector(".assistant-composer-dock textarea").value'),'快速输入仍属于助手');
     await fill('.assistant-composer-dock textarea','');
 

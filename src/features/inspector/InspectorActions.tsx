@@ -1,34 +1,30 @@
-import { Clipboard, Clock3, FolderOpen, Globe2, PanelsTopLeft, Plus, Star } from 'lucide-react';
+import { Clipboard, Clock3, FolderOpen, Globe2, PanelsTopLeft, Plus } from 'lucide-react';
 import { useBrowserBookmarks } from './useBrowserBookmarks';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage } from '../../types';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 
-/** Shared entry points for the empty sidebar and the tab bar's add menu. */
+/** Local new-tab content; navigation continues in the same browser tab. */
 export function InspectorActions({
   language,
-  menu = false,
   filesAvailable,
   shadowUnavailableReason,
   onOpenReview,
   onOpenHistory,
   onOpenFiles,
   onOpenShadow,
-  onOpenBrowser,
   onAddPage,
   onOpenBookmark,
   onMultiPage,
   multiPage = false,
 }: {
   language: AppLanguage;
-  menu?: boolean;
   filesAvailable: boolean;
   shadowUnavailableReason: string;
   onOpenReview?: () => void;
   onOpenHistory?: () => void;
   onOpenFiles: () => void;
   onOpenShadow: () => void;
-  onOpenBrowser: () => void;
   onAddPage?: () => void;
   onOpenBookmark?: (url: string) => void;
   onMultiPage?: () => void;
@@ -63,41 +59,42 @@ export function InspectorActions({
       description: zh ? '基于当前会话冻结历史' : 'Freeze the current conversation history',
       unavailable: shadowUnavailableReason, onClick: onOpenShadow,
     },
-    {
-      id: 'browser', icon: <Globe2 size={16} aria-hidden="true" />,
-      label: zh ? '浏览器' : 'Browser', shortcut: shortcuts.label('openBrowser'), keyShortcut: shortcuts.aria('openBrowser'),
-      description: zh ? '打开可导航的空白页' : 'Open a navigable blank page',
-      unavailable: '', onClick: onOpenBrowser,
-    },
     ...(onMultiPage ? [{ id: 'multi-page', icon: <PanelsTopLeft size={16} aria-hidden="true" />,
       label: zh ? `${multiPage ? '退出' : ''}多页面 (Beta)` : `${multiPage ? 'Exit ' : ''}Multiple pages (Beta)`, shortcut: '', keyShortcut: undefined,
       description: zh ? '适用于大屏，同时排列多个侧栏页面' : 'Arrange multiple inspector pages on a large display', unavailable: '', onClick: onMultiPage }] : []),
   ];
   return (
-    <div className={menu ? 'right-inspector-add-menu' : 'right-inspector-start-actions'}
-      role={menu ? 'menu' : 'group'} aria-label={zh ? '打开侧栏内容' : 'Open sidebar content'}>
+    <div className="right-inspector-start-actions" aria-label={zh ? '新标签页' : 'New tab'}>
+      <section className="inspector-start-tools" aria-label={zh ? '工具' : 'Tools'}>
+      <h2>{zh ? '工具' : 'Tools'}</h2>
       {actions.map((action) => (
-        <button key={action.id} type="button" role={menu ? 'menuitem' : undefined}
+        <button key={action.id} type="button"
           data-inspector-action={action.id}
           disabled={Boolean(action.unavailable)}
-          title={action.unavailable || [action.description, action.shortcut].filter(Boolean).join(' · ')}
+          title={action.unavailable || undefined}
+          aria-description={action.description}
           aria-keyshortcuts={action.unavailable ? undefined : action.keyShortcut}
           onClick={action.onClick}>
           {action.icon}
           <span>
             <strong>{action.label}</strong>
-            {menu && <small>{action.description}</small>}
           </span>
-          {action.shortcut && <kbd title={action.shortcut}>{action.shortcut.replaceAll(' + ', '+')}</kbd>}
+          {action.shortcut && <kbd>{action.shortcut.replaceAll(' + ', '+')}</kbd>}
         </button>
       ))}
-      {onOpenBookmark && bookmarks.map(bookmark => <button key={bookmark.id} type="button" role={menu ? 'menuitem' : undefined}
-        className="inspector-bookmark-entry" title={bookmark.url} onClick={() => onOpenBookmark(bookmark.url)}>
-        <Star size={16} aria-hidden="true"/><span><strong>{bookmark.title}</strong>{menu && <small>{new URL(bookmark.url).host}</small>}</span>
-      </button>)}
-      {onAddPage && <button type="button" role={menu ? 'menuitem' : undefined} className="inspector-add-page" onClick={onAddPage}>
+      {onAddPage && <button type="button" className="inspector-add-page" onClick={onAddPage}>
         <Plus size={16} aria-hidden="true"/><span><strong>{zh ? '添加页面' : 'Add page'}</strong></span>
       </button>}
+      </section>
+      {onOpenBookmark && <section className="inspector-start-bookmarks" aria-label={zh ? '常用网站' : 'Shortcuts'}>
+        <h2>{zh ? '常用网站' : 'Shortcuts'}</h2>
+        <div className="inspector-start-sites">
+          {(bookmarks.length ? bookmarks : [{id:'google',title:'Google',url:'https://www.google.com/'}]).map(bookmark =>
+            <button key={bookmark.id} type="button" className="inspector-bookmark-entry" title={bookmark.url} onClick={() => onOpenBookmark(bookmark.url)}>
+              <Globe2 size={27} aria-hidden="true"/><strong>{bookmark.title}</strong>
+            </button>)}
+        </div>
+      </section>}
     </div>
   );
 }

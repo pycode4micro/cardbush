@@ -207,7 +207,7 @@
     "test:windows-release-signatures": "node --test scripts/test-windows-release-signatures.mjs",
     "test:ssh": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && tsc -p tsconfig.node.json && node --test --test-timeout=30000 scripts/test-ssh-connections.mjs packages/bush-runtime/test/sshWorkspace.test.mjs",
     "test:ssh-ui": "node scripts/run-app-views-test.mjs ssh",
-    "test:assistant": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && tsc -p tsconfig.node.json && node --test packages/bush-runtime/test/assistantConversation.test.mjs scripts/test-assistant-attachments.mjs scripts/test-realtime-voice.mjs && node scripts/test-assistant-ui.cjs && node scripts/test-realtime-voice-ui.cjs"
+    "test:assistant": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && tsc -p tsconfig.node.json && node --test packages/bush-runtime/test/assistantConversation.test.mjs packages/bush-runtime/test/assistantRetry.test.mjs scripts/test-assistant-attachments.mjs scripts/test-realtime-voice.mjs && node scripts/test-assistant-ui.cjs && node scripts/test-realtime-voice-ui.cjs"
   },
   "dependencies": {
     "@cardbush/apps-mcp": "0.1.0",

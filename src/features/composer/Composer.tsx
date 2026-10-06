@@ -1412,7 +1412,7 @@ export function Composer({
                 <button
                   className="composer-image-preview"
                   type="button"
-                  title={language === 'zh' ? '放大查看图片' : 'Preview image'}
+                  aria-label={language === 'zh' ? `查看图片：${image.name}` : `Preview image: ${image.name}`}
                   onClick={event => {
                     const thumbnail = event.currentTarget.querySelector('img');
                     setPreviewImage({
@@ -1429,7 +1429,7 @@ export function Composer({
                 <button
                   className="composer-image-remove"
                   type="button"
-                  title={language === 'zh' ? '移除图片' : 'Remove image'}
+                  aria-label={language === 'zh' ? '移除图片' : 'Remove image'}
                   onClick={() =>
                     setImageAttachments((current) =>
                       current.filter((item) => item.id !== image.id),

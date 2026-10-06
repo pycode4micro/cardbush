@@ -9,6 +9,7 @@ export type SoftPanelPresence = {
 export function useSoftPanelPresence(
   open: boolean,
   exitDurationMs = 240,
+  { keepMounted = false }: { keepMounted?: boolean } = {},
 ): SoftPanelPresence {
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(open);
@@ -34,17 +35,21 @@ export function useSoftPanelPresence(
       });
     } else {
       setVisible(false);
-      timer = window.setTimeout(
-        () => setMounted(false),
-        reduceMotion ? 0 : exitDurationMs,
-      );
+      // Stateful pages (especially native webviews) must survive a collapse.
+      // Still mount lazily on first open, and let actual tab removal dispose them.
+      if (!keepMounted) {
+        timer = window.setTimeout(
+          () => setMounted(false),
+          reduceMotion ? 0 : exitDurationMs,
+        );
+      }
     }
     return () => {
       window.cancelAnimationFrame(mountFrame);
       window.cancelAnimationFrame(revealFrame);
       window.clearTimeout(timer);
     };
-  }, [exitDurationMs, open]);
+  }, [exitDurationMs, open, keepMounted]);
 
   return { mounted, visible };
 }

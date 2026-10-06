@@ -29,6 +29,7 @@ export const appViewFiles = [
   'src/features/inspector/inspectorTargets.ts',
   'src/features/inspector/InspectorWebview.tsx',
   'src/features/inspector/InspectorActions.tsx',
+  'src/features/inspector/InspectorTabStrip.tsx',
   'src/features/inspector/InspectorTabPages.tsx',
   'src/features/inspector/TextInspectorPreview.tsx',
   'src/features/inspector/FilePreviewFallback.tsx',

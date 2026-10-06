@@ -6,7 +6,7 @@ import test from 'node:test';
 import { BrowserConfigStore } from '@cardbush/product-host';
 import { createCardbushChromeServer } from '../dist/index.js';
 
-test('new_page reads live host preferences and preserves explicit targets', async t => {
+test('new_page opens a blank tab independently of legacy home preferences and preserves explicit targets', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-chrome-start-page-'));
   t.after(async () => {
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-chrome-start-page-'));
@@ -28,6 +28,6 @@ test('new_page reads live host preferences and preserves explicit targets', asyn
   assert.notEqual((await open({})).isError, true);
   await writeFile(browserConfigPath, '{broken');
   assert.notEqual((await open({ url: 'https://explicit.test/path?query=1' })).isError, true);
-  assert.equal((await open({})).isError, true, 'failed config reads are reported, not silently replaced');
-  assert.deepEqual(requests, ['https://www.google.com/', 'https://example.com/start', 'about:blank', 'https://explicit.test/path?query=1']);
+  assert.notEqual((await open({})).isError, true, 'new tabs do not depend on legacy configuration');
+  assert.deepEqual(requests, ['about:blank', 'about:blank', 'about:blank', 'https://explicit.test/path?query=1', 'about:blank']);
 });

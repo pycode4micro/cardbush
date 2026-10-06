@@ -72,6 +72,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-cover' ? [
       'src/features/composer/ComposerPortalContext.ts', 'src/features/inspector/InspectorTabPages.tsx',
       'src/features/inspector/InspectorTileFrame.tsx', 'src/features/inspector/panelLayout.ts',
+      'src/components/CompactSidebarBackdrop.tsx',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components' ? [
       'src/features/components/ComponentsApp.tsx', 'src/features/components/HtmlComponentSurface.tsx',
@@ -402,6 +403,15 @@ app.whenReady().then(async () => {
     if (!['inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
+    for (const [input, expected] of [
+      ['openai', 'https://www.google.com/search?q=openai'],
+      ['今天的天气', 'https://www.google.com/search?q=%E4%BB%8A%E5%A4%A9%E7%9A%84%E5%A4%A9%E6%B0%94'],
+      ['what is node.js', 'https://www.google.com/search?q=what%20is%20node.js'],
+      ['example.com/docs?q=test', 'https://example.com/docs?q=test'],
+      ['https://example.com/?q=1#test', 'https://example.com/?q=1#test'],
+      ['[::1]:3000', 'http://[::1]:3000'], ['about:blank', 'about:blank'],
+      ['javascript:alert(1)', ''], ['C:\\private\\notes.txt', ''], ['/tmp/private.txt', ''], ['file:///tmp/private.txt', ''], ['  ', ''],
+    ]) assert.equal(await run(`views.normalizeInspectorBrowserAddress(${JSON.stringify(input)})`), expected, input);
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
     assert.equal(await run("views.inspectorTargetIdentity('D:/Fixture/Code.ts')"), 'd:\\fixture\\code.ts');
     await run("preview('D:/fixture/second.md')");
@@ -552,6 +562,11 @@ app.whenReady().then(async () => {
       return;
     }
     await require('./helpers/inspector-start-layout.cjs')({ run, until, pause, window, root });
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector') {
+      assert.deepEqual(await run('failures'), [], 'no inspector renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     }
 
     await run(`
@@ -892,7 +907,8 @@ app.whenReady().then(async () => {
     assert.deepEqual(errors, []);
     console.log('App views passed: module ownership, StrictMode, preview races/reload/error/unmount, lazy syntax, toolbar, welcome, session switch and stop.');
   } finally { window.destroy(); }
-}).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });
+// Let Chromium and native worker queues finish disposing before process exit.
+}).then(() => app.quit()).catch(error => { console.error(error); app.exit(1); });
 
 function loadChatCallbackNames() {
   const file = path.join(root, 'src/features/chat/ChatPanel.tsx');

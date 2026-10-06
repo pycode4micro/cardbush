@@ -2025,7 +2025,7 @@ export function ConversationChangeDialog({
               : (language === 'zh' ? '撤回' : 'Revert')}</span>
           </button>
           <button className="change-review-nav-toggle" ref={fileNavToggleRef} type="button"
-            title={fileNavToggleLabel} aria-label={fileNavToggleLabel} aria-expanded={!fileNav.collapsed}
+            aria-label={fileNavToggleLabel} aria-expanded={!fileNav.collapsed}
             aria-controls={fileNavId} onClick={() => fileNav.changeCollapsed(!fileNav.collapsed)}>
             <FolderTree size={16} />
           </button>
@@ -2085,7 +2085,6 @@ export function ConversationChangeDialog({
               aria-label={language === 'zh' ? '调整文件列表宽度' : 'Resize file list'}
               aria-controls={fileNavId}
               aria-valuemin={0} aria-valuemax={420} aria-valuenow={fileNav.collapsed ? 0 : fileNav.width}
-              title={language === 'zh' ? '拖动调整宽度，拖向右侧边缘收起文件列表' : 'Drag to resize; drag toward the right edge to hide files'}
               onPointerDown={fileNav.beginResize}
               onKeyDown={event => {
                 if (fileNav.resizeWithKeyboard(event)) fileNavToggleRef.current?.focus({ preventScroll: true });

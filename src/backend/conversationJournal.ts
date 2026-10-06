@@ -2,7 +2,8 @@ import { ASSISTANT_CONVERSATION_COMMAND, type ConversationEntry } from '@cardbus
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import type { ChatMessage } from '../types';
 
-export interface ConversationJournalSnapshot { entries: ConversationEntry[]; cursor: number; busy: boolean; error: string; workingTasks?: number; generation?: number }
+export interface ConversationJournalSnapshot { entries: ConversationEntry[]; cursor: number; busy: boolean; error: string; workingTasks?: number; generation?: number;
+  retry?: { attempt: number; maxAttempts: number; nextRetryMs: number; code: string; createdAt: string } | null }
 export async function conversationJournalCommand<T = unknown>(payload: unknown): Promise<T> {
   const runtime = createDesktopRuntimeSession();
   try { return await runtime.client.command({ kind: ASSISTANT_CONVERSATION_COMMAND, payload }, value => value as T); }

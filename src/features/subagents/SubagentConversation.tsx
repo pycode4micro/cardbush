@@ -99,8 +99,9 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   const accepted = useRef<(() => void) | undefined>(undefined);
   const knownTask = useRef(task);
   knownTask.current = task;
+  const [observedTasks, setObservedTasks] = useState<SubagentTaskSnapshot[]>([]);
   const backend = useMemo(() => subagentConversationBackend({ base, runtime, sessionId, readTasks, knownTask: () => knownTask.current,
-    onSubmitted: () => accepted.current?.() }), [base, runtime, sessionId, readTasks]);
+    onSubmitted: () => accepted.current?.(), onTasksChanged: setObservedTasks }), [base, runtime, sessionId, readTasks]);
   const chat = useCardbushChat(models, models, { runtimeReady: true, activeConversationId: sessionId, viewActive: active,
     onModelReasoningChange: (id, effort) => api.saveModelReasoning(id, effort, host?.environmentId),
     language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputEnabled, disabledSkillNames,
@@ -118,7 +119,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
       void chat.sendMessage(text).then(() => finish(false), () => finish(false));
     });
   };
-  const messages = useMemo(() => childConversationMessages(chat.activeMessages, task), [chat.activeMessages, task]);
+  const messages = useMemo(() => childConversationMessages(chat.activeMessages, task, observedTasks), [chat.activeMessages, task, observedTasks]);
   const reports = useMemo(() => changeReportsFromMessages(messages), [messages]);
   const [error, setError] = useState('');
   const [reverting, setReverting] = useState('');
@@ -194,20 +195,33 @@ export function SubagentConversationView({ task, language, active, refresh, refr
 }
 
 /** Keep parent assignments distinguishable from direct human interventions. */
-export function childConversationMessages(messages: ChatMessage[], task: SubagentTaskSnapshot): ChatMessage[] {
+export function childConversationMessages(messages: ChatMessage[], task: SubagentTaskSnapshot, observedTasks: SubagentTaskSnapshot[] = []): ChatMessage[] {
+  // An inspector can stay on the original task while the parent starts later
+  // turns in the same child. Use the session watcher, not just the selected card.
+  const assignments = [...new Map([task, ...observedTasks.filter(candidate =>
+    candidate.childSessionId === task.childSessionId && candidate.parentSessionId === task.parentSessionId &&
+    candidate.remote?.connectionId === task.remote?.connectionId,
+  )].map(candidate => [candidate.childTurnId, candidate])).values()]
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
   const result = messages.map(message => {
     if (message.role !== 'user') return message;
     const legacy = message.content.startsWith('你当前处于子agent状态\n');
-    const parent = legacy || message.metadata?.subagent_author === 'parent' ||
-      (!message.metadata?.subagent_author && message.turnId === task.childTurnId && message.content === task.requestPrompt);
+    const author = message.metadata?.subagent_author ?? message.metadata?.subagentAuthor;
+    const parent = legacy || author === 'parent' ||
+      (!author && assignments.some(assignment => message.turnId === assignment.childTurnId && message.content === assignment.requestPrompt));
     return { ...message, content: legacy ? message.content.replace(/^你当前处于子agent状态\s*\n+/, '') : message.content,
       metadata: { ...message.metadata, subagent_author: parent ? 'parent' : 'user' } };
   });
-  // Active turns are not committed yet. Show the known assignment immediately;
-  // replace it with the durable user message as soon as the transcript arrives.
-  if (!task.terminal && task.requestPrompt && !task.raw.resumedFromTaskId && !result.some(message => message.role === 'user' && message.turnId === task.childTurnId && message.metadata?.subagent_author === 'parent')) {
-    result.unshift({ id: `subagent-assignment:${task.taskId}`, role: 'user', content: task.requestPrompt,
-      conversationId: task.childSessionId, turnId: task.childTurnId, createdAt: task.createdAt,
+  // Active turns are not committed yet. Show both initial and resumed assignments
+  // before that turn's live output, then replace them with the durable input.
+  for (const assignment of assignments) {
+    if (assignment.terminal || !assignment.childTurnId || !assignment.requestPrompt || result.some(message =>
+      message.role === 'user' && message.turnId === assignment.childTurnId && !message.metadata?.turn_guidance)) continue;
+    const sameTurn = result.findIndex(message => message.turnId === assignment.childTurnId);
+    const later = assignment.createdAt ? result.findIndex(message => (message.createdAt ?? '') > assignment.createdAt!) : -1;
+    const index = sameTurn >= 0 ? sameTurn : later >= 0 ? later : result.length;
+    result.splice(index, 0, { id: `subagent-assignment:${assignment.taskId}`, role: 'user', content: assignment.requestPrompt,
+      conversationId: assignment.childSessionId, turnId: assignment.childTurnId, createdAt: assignment.createdAt,
       metadata: { subagent_author: 'parent' } });
   }
   return result;

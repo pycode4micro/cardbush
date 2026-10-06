@@ -70,6 +70,7 @@ export function AppCenterDock({ language, unread = 0 }: { language: AppLanguage;
     }}
     onDragOver={allowDrop} onDrop={event => center.drop(event)}>
     <button type="button" className="app-center-launcher" onClick={center.open} aria-haspopup="dialog" data-shortcut="openAppCenter"
+      title={language === 'zh' ? '应用中心' : 'App center'}
       aria-label={language === 'zh' ? '应用中心' : 'App center'} aria-keyshortcuts={shortcuts.aria('openAppCenter')}>
       <LayoutGrid size={18} aria-hidden="true"/>
     </button>

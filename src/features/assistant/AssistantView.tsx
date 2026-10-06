@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Monitor, Server, Settings2, X, PhoneOff, Link } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
-import { journalMessages } from '../../backend/conversationJournal';
+import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
 import { assistantBackend } from './assistantBackend';
 import { VoiceConversation, applicationVoiceSession } from '../voice/VoiceConversation';
 import type { VoiceTarget } from '../voice/voiceSession';
@@ -16,11 +16,12 @@ import { AssistantSettingsDialog } from './AssistantSettingsDialog';
 import { readAssistantProfile, saveAssistantProfile, useAssistantProfile, setAssistantWorking } from './assistantProfile';
 import { TopBar } from '../../components/TopBar';
 import { ScrollBottomButton } from '../chat/ScrollBottomButton';
-import { RuntimeStatusBanner } from '../chat/ChatStatusViews';
+import { ConversationConnectionNotice, RuntimeStatusBanner } from '../chat/ChatStatusViews';
 import { ConversationWorkSummary } from '../chat/ConversationWorkSummary';
 import { useConversationWorkSummary } from '../chat/useConversationWorkSummary';
 import { useAssistantViewport } from './useAssistantViewport';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
+import { QuickInputStatus } from '../composer/QuickInputStatus';
 import type { BrowserPromptReference } from '../../shared/promptReferences';
 import '../chat/conversationComposerLayout.css';
 import './assistant.css';
@@ -52,6 +53,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
   const pageMessages = useMemo(() => journalMessages(pageEntries, sessionId), [pageEntries]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [draft, setDraft] = useState('');
   const [runtimeError, setRuntimeError] = useState('');
+  const [retry, setRetry] = useState<ConversationJournalSnapshot['retry']>(null);
   const [settings, setSettings] = useState(false), [desktop, setDesktop] = useState(false);
   useEffect(() => { if (!active) setSettings(false); }, [active]);
   const prepareRef = useRef(prepare); prepareRef.current = prepare;
@@ -91,12 +93,12 @@ export function AssistantView({ active, language, connections, prepare, onManage
       cursor.current = result.cursor;
       if (reset) setEntries(result.entries);
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
-      setBusy(result.busy); setAssistantWorking(result.busy || Boolean(result.workingTasks)); setRuntimeError(result.error);
+      setBusy(result.busy); setAssistantWorking(result.busy || Boolean(result.workingTasks)); setRuntimeError(result.error); setRetry(result.retry);
     })().finally(() => { refreshing.current = undefined; });
     return refreshing.current;
   }, []);
   useEffect(() => {
-    const reset = () => { setDraft(''); setError(''); setRuntimeError(''); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
+    const reset = () => { setDraft(''); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
     window.addEventListener('cardbush:assistant-reset', reset);
     return () => window.removeEventListener('cardbush:assistant-reset', reset);
   }, [refresh]);
@@ -156,6 +158,17 @@ export function AssistantView({ active, language, connections, prepare, onManage
       <button type="button" title={zh ? '助手设置' : 'Assistant settings'} onClick={() => setSettings(true)}><Settings2 size={18}/></button>
     </div>
   </div>;
+  const renderTimelineItem = (item: typeof timeline[number]) => {
+    if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
+    const { entry } = item;
+    return <div className="message-list-item assistant-message-row" data-message-role={entry.role} data-message-id={entry.id} key={entry.id}><article className={`assistant-message assistant-message-${entry.role}${arriving.has(entry.id) ? ' assistant-message-arriving' : ''}`}>
+    <div>{entry.role === 'assistant' ? <MarkdownContent content={entry.content} language={language}/> : <>
+      <MessageImageStrip paths={(entry.attachments ?? []).filter(file => file.type === 'image').flatMap(file => file.path ? [file.path] : [])} language={language}/>
+      <MessageFileAttachmentStrip attachments={(entry.attachments ?? []).filter(file => file.type !== 'image')} language={language}/><p>{entry.content}</p>
+    </>}</div>
+    <time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</time>
+  </article></div>;
+  };
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
@@ -165,6 +178,8 @@ export function AssistantView({ active, language, connections, prepare, onManage
     {settings && active && <AssistantSettingsDialog language={language} onClose={() => setSettings(false)}/>}
     {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={error || runtimeError}
       onDismiss={() => { setError(''); setRuntimeError(''); }}/>}
+    {retry && !error && !runtimeError && <ConversationConnectionNotice language={language}
+      update={{ ...retry, sessionId, state: 'retrying', source: 'provider', reason: retry.code }}/>}
     <div className="assistant-body"><div className="assistant-chat chat-body" ref={chatBody} style={{ '--work-summary-anchor-right': `${summary.workSummaryAnchorRight}px` } as CSSProperties}>
       {summary.workSummaryPresence.mounted && <ConversationWorkSummary language={language} sessionId={sessionId} messages={pageMessages} changeReports={[]}
         onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable} softVisible={summary.workSummaryPresence.visible}/>}
@@ -172,20 +187,16 @@ export function AssistantView({ active, language, connections, prepare, onManage
       <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={zh ? '助手对话' : 'Assistant conversation'}>
       <div className="message-list-content">
         {!timeline.length && <div className="assistant-welcome"><AssistantBulb size={68}/><h2>{zh ? '随时聊聊' : 'Let’s talk'}</h2><p>{zh ? '说说想法，或把事情交给我。任务在后台进行，我们可以继续聊。' : 'Share a thought or hand over a task. We can keep talking while work continues.'}</p></div>}
-        {timeline.map(item => {
-          if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
-          const { entry } = item;
-          return <div className="message-list-item assistant-message-row" data-message-role={entry.role} data-message-id={entry.id} key={entry.id}><article className={`assistant-message assistant-message-${entry.role}${arriving.has(entry.id) ? ' assistant-message-arriving' : ''}`}>
-          <div>{entry.role === 'assistant' ? <MarkdownContent content={entry.content} language={language}/> : <>
-            <MessageImageStrip paths={(entry.attachments ?? []).filter(file => file.type === 'image').flatMap(file => file.path ? [file.path] : [])} language={language}/>
-            <MessageFileAttachmentStrip attachments={(entry.attachments ?? []).filter(file => file.type !== 'image')} language={language}/><p>{entry.content}</p>
-          </>}</div>
-          <time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</time>
-        </article></div>; })}
+        {timeline.map(renderTimelineItem)}
       </div></div>
       <VoiceConversation target={target} language={language} disabled={!ready} active={active}>
         <div className="assistant-composer-dock composer-dock" ref={composerDock}>
           <ComposerPortalContext.Provider value={composerPortalTarget}>
+          <QuickInputStatus language={language} messages={pageMessages} sending={busy || tasks.some(task => !task.terminal)}
+            submitting={submitting} error={error || runtimeError}
+            recovery={retry ? { ...retry, sessionId, state: 'retrying', source: 'provider' } : null} sessionId={sessionId}>
+            {timeline.slice(-12).map(renderTimelineItem)}
+          </QuickInputStatus>
           <AssistantComposer controls={composerControls} language={language} draft={draft} onDraftChange={setDraft}
             ready={ready} submitting={submitting} onSend={send} fileDropTarget={chatBody} messages={pageMessages} browserTabs={browserTabs}/>
           </ComposerPortalContext.Provider>

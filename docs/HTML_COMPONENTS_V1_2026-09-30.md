@@ -137,7 +137,7 @@ HTML 包含内联 CSS/JavaScript，可使用 data 图片；单个 HTML 上限 25
 - `node scripts/run-app-views-test.mjs html-components`：真实 iframe SDK、主题更新、授权拒绝、陈旧上下文、重复动作去重、编辑禁用动作、导航拦截、收藏与菜单；内置视图、时钟更新、闰日月历、唯一自定义入口、两种输入样式与模型菜单、权限默认值、命令浮层、IME/发送/停止；真实首页编辑、胶囊菜单、组件增减、撤回/重置/清空/取消/保存、真实指针缩放、保存后首页渲染、空布局持久化和版本冲突。
 - `node scripts/run-app-views-test.mjs inspector-cover`：真实指针将边界拖到最左，使用完整 viewport/content 容器验证单页与多页铺满、窗口变宽/变窄与 125% 渲染缩放、窄窗口拖拽柄可用；动作栏保留、原 Composer 单实例、焦点/草稿/IME/命令/发送/停止，以及返回恢复原宽度。
 - `node scripts/run-agents-ui-test.mjs --quick-input`：真实云端界面与隔离服务替身，验证胶囊发送仍路由至原 Agent/会话，远程接收后清理草稿，返回恢复同一输入框。
-- `node scripts/test-inspector-browser-navigation.mjs`：真实 Electron webview 的单行拖拽柄/网址栏、两页半宽、覆盖/返回时实际视口适配、真实鼠标换位与失焦取消；外侧边框拖动全程保持左右区域相邻，验证松手最终坐标、靠左停留及覆盖返回、125% CSS/渲染缩放、内部行列分隔线抓取偏移与失焦恢复；全局外部打开跟随点击页及其重定向后网址（记录 IPC，不启动外部浏览器）；webContents ID/页面状态保持；既有导航、主页、延迟页面回归。
+- `node scripts/test-inspector-browser-navigation.mjs`：真实 Electron webview 的单行拖拽柄/网址栏、两页半宽、覆盖/返回时实际视口适配、真实鼠标换位与失焦取消；外侧边框拖动全程保持左右区域相邻，验证松手最终坐标、靠左停留及覆盖返回、125% CSS/渲染缩放、内部行列分隔线抓取偏移与失焦恢复；全局外部打开跟随点击页及其重定向后网址（记录 IPC，不启动外部浏览器）；webContents ID/页面状态保持；既有导航、本地新标签页、Google 搜索、延迟页面回归。
 - `node scripts/test-inspector-navigation-ui.mjs`：既有文件、浏览器、Shadow、审查、历史和子代理页面回归。
 - `node scripts/run-app-views-test.mjs app-center` 与 `composer-input`：既有应用中心操作、真实中文输入法、引用 token、发送和窄窗口输入回归。
 

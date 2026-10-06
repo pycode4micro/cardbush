@@ -169,7 +169,6 @@ export function RightInspectorResizer({
       tabIndex={0}
       aria-orientation="vertical"
       aria-label={label}
-      title={label}
       onPointerDown={beginResize}
       onDoubleClick={onExpand}
       onKeyDown={event => {

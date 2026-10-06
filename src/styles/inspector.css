@@ -22,10 +22,12 @@
   transform-origin: right center;
   opacity: 1;
   transform: translateX(0);
+  visibility: visible;
   transition:
     flex-basis var(--panel-motion-duration) var(--panel-motion-ease),
     opacity 180ms ease,
-    transform var(--panel-motion-duration) var(--panel-motion-ease);
+    transform var(--panel-motion-duration) var(--panel-motion-ease),
+    visibility 0s;
 }
 
 .right-inspector-viewport {
@@ -49,8 +51,11 @@
 .right-inspector.soft-panel-hidden {
   width: 0;
   flex-basis: 0;
+  border-left-width: 0;
   opacity: 0;
   transform: translateX(14px);
+  visibility: hidden;
+  transition-delay: 0s, 0s, 0s, var(--panel-motion-duration);
 }
 
 .right-inspector-resizer {
@@ -94,7 +99,6 @@ body.right-inspector-resizing .right-inspector-body {
 }
 
 body.right-inspector-resizing .right-inspector,
-body.window-right-edge-resizing .right-inspector,
 body.right-inspector-resizing .right-inspector-resizer {
   transition: none;
 }
@@ -146,6 +150,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .right-inspector-tab-strip {
+  gap: 6px;
   min-width: 0;
   min-height: 32px;
   display: flex;
@@ -157,7 +162,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   min-width: 0;
   min-height: 32px;
   display: flex;
-  flex: 1;
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
   padding: 0;
@@ -171,17 +176,13 @@ body.right-inspector-resizing .right-inspector-resizer {
   display: none;
 }
 
-.right-inspector-add-tab,
+.right-inspector-new-tab,
 .right-inspector-tab-manager {
   flex: 0 0 auto;
   align-self: center;
 }
 
-.right-inspector-add-tab {
-  position: relative;
-}
-
-.right-inspector-add-tab > button,
+.right-inspector-new-tab,
 .right-inspector-tab-manager > button {
   width: 30px;
   height: 30px;
@@ -208,93 +209,12 @@ body.right-inspector-resizing .right-inspector-resizer {
   line-height: 1;
 }
 
-.right-inspector-add-tab > button:hover,
-.right-inspector-add-tab > button.active,
+.right-inspector-new-tab:hover,
+.right-inspector-new-tab.active,
 .right-inspector-tab-manager > button:hover,
 .right-inspector-tab-manager > button.active {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 9%, transparent);
-}
-
-.right-inspector-add-menu {
-  position: absolute;
-  z-index: 50;
-  top: calc(100% + 5px);
-  right: 0;
-  width: 224px;
-  display: grid;
-  gap: 3px;
-  padding: 7px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface-strong) 96%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
-  border-radius: 12px;
-  box-shadow: 0 16px 38px color-mix(in srgb, var(--shadow) 82%, transparent);
-}
-
-.right-inspector-add-menu > button,
-.right-inspector-start-actions > button {
-  min-width: 0;
-  min-height: 46px;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 9px;
-  color: var(--text-mid);
-  background: transparent;
-  border-radius: 8px;
-  text-align: left;
-}
-
-.right-inspector-add-menu > button:hover:not(:disabled),
-.right-inspector-add-menu > button:focus-visible:not(:disabled),
-.right-inspector-start-actions > button:hover:not(:disabled),
-.right-inspector-start-actions > button:focus-visible:not(:disabled) {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-.right-inspector-add-menu > button:disabled,
-.right-inspector-start-actions > button:disabled {
-  opacity: 0.42;
-}
-
-.right-inspector-add-menu > button > svg,
-.right-inspector-start-actions > button > svg {
-  justify-self: center;
-}
-
-.right-inspector-add-menu > button > span,
-.right-inspector-start-actions > button > span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.right-inspector-add-menu strong,
-.right-inspector-add-menu small,
-.right-inspector-start-actions strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.right-inspector-add-menu kbd {
-  color: var(--text-soft);
-  font-family: inherit;
-  font-size: calc(9px * var(--ui-font-scale, 1));
-  white-space: nowrap;
-}
-
-.right-inspector-add-menu strong {
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  font-weight: 680;
-}
-
-.right-inspector-add-menu small {
-  color: var(--text-soft);
-  font-size: calc(9.5px * var(--ui-font-scale, 1));
 }
 
 .right-inspector-tab-menu {
@@ -1270,6 +1190,7 @@ body.right-inspector-resizing .right-inspector-resizer {
     transition:
       width var(--panel-motion-duration) var(--panel-motion-ease),
       opacity 180ms ease,
-      transform var(--panel-motion-duration) var(--panel-motion-ease);
+      transform var(--panel-motion-duration) var(--panel-motion-ease),
+      visibility 0s;
   }
 }

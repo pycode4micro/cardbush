@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AppLanguage, AppSection } from '../../types';
-import { inspectorMaximum, minimumInspectorWidth } from '../../components/rightInspectorSizing';
+import { inspectorMaximum, minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
 import { useInspectorRecovery } from './useInspectorRecovery';
 import type { InspectorTab, InspectorResourceTab } from './inspectorTabs';
 import { addPanel, panelIds, retainPanels, type PanelLayout } from './panelLayout';
@@ -19,7 +19,6 @@ type InspectorWorkspaceOptions = {
   inspectorTabs: InspectorTab[];
   activeInspectorTab: InspectorTab | null;
   openInspectorTab: (tab: InspectorTab) => void;
-  setInspectorAddMenuOpen: (open: boolean) => void;
   setInspectorTabsMenuOpen: (open: boolean) => void;
 };
 
@@ -28,13 +27,15 @@ export function useInspectorWorkspace({
   language, windowMaximized, compactLayout,
   sidebarCollapsed, sidebarWidth, setSidebarCollapsed, section, setSection,
   inspectorOpen, setInspectorOpen, inspectorTabs, activeInspectorTab, openInspectorTab,
-  setInspectorAddMenuOpen, setInspectorTabsMenuOpen,
+  setInspectorTabsMenuOpen,
 }: InspectorWorkspaceOptions) {
   const [inspectorWidth, setInspectorWidthState] = useState(() => {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
-    return Number.isFinite(stored) ? Math.min(window.innerWidth, Math.max(380, stored)) : 620;
+    return Number.isFinite(stored) ? Math.max(minimumInspectorWidth, stored) : 620;
   });
   const inspectorWidthRef = useRef(inspectorWidth);
+  const preferredWidthRef = useRef(inspectorWidth);
+  const conversationCoverRequested = useRef(false);
   const [inspectorLayout, setInspectorLayout] = useState<PanelLayout | null>(null);
   const [inspectorCover, setInspectorCover] = useState(false);
   const [quickInputOpen, setQuickInputOpen] = useState(false);
@@ -42,28 +43,51 @@ export function useInspectorWorkspace({
   const inspectorControlsVisible = inspectorOpen && (inspectorCover || conversationCovered);
   const multiPageRestore = useRef<{ width: number; sidebar: boolean } | null>(null);
   const coverRestore = useRef<{ section: AppSection; sidebar: boolean; width: number } | null>(null);
-  const setInspectorWidth = useCallback((width: number) => {
+  const setInspectorWidth = useCallback((width: number, keepConversationVisible = false) => {
     const next = Math.min(
       inspectorMaximum(windowMaximized, window.innerWidth),
-      Math.max(380, Math.round(width)),
+      Math.max(minimumInspectorWidth, Math.round(width)),
     );
+    const shell = mainStageRef.current?.parentElement;
+    const available = (shell?.clientWidth ?? window.innerWidth) - (sidebarCollapsed ? 0 : sidebarWidth);
+    // Only an explicit oversized pane choice may hide the conversation. A
+    // viewport change must never turn an ordinary split into a cover by itself.
+    conversationCoverRequested.current = !keepConversationVisible && !compactLayout && next > available - minimumConversationWidth;
+    preferredWidthRef.current = next;
     inspectorWidthRef.current = next;
     setInspectorWidthState(next);
     window.localStorage.setItem('cardbush.inspector_width', String(next));
-  }, [windowMaximized]);
+  }, [windowMaximized, mainStageRef, sidebarCollapsed, sidebarWidth, compactLayout]);
   const leaveInspectorCover = useCallback(() => {
     setInspectorCover(false); setQuickInputOpen(false);
     const previous = coverRestore.current; coverRestore.current = null;
     if (previous) { setSidebarCollapsed(previous.sidebar); setSection(previous.section); }
     const collapsed = previous?.sidebar ?? sidebarCollapsed;
     const available = (mainStageRef.current?.parentElement?.clientWidth ?? window.innerWidth) - (collapsed ? 0 : sidebarWidth);
-    const maximum = available - 340;
+    const maximum = available - minimumConversationWidth;
     if (compactLayout || maximum < minimumInspectorWidth) {
       setInspectorOpen(false);
     } else {
-      setInspectorWidth(Math.min(previous?.width ?? splitWidthRef.current ?? 620, maximum));
+      setInspectorWidth(Math.min(previous?.width ?? splitWidthRef.current ?? 620, maximum), true);
     }
   }, [setSidebarCollapsed, setSection, sidebarCollapsed, sidebarWidth, compactLayout, setInspectorOpen, setInspectorWidth, mainStageRef, splitWidthRef]);
+  const revealConversation = useCallback(() => {
+    if (inspectorControlsVisible) {
+      leaveInspectorCover();
+    } else if (inspectorOpen) {
+      const panel = mainStageRef.current?.parentElement?.querySelector(':scope > .right-inspector');
+      // In a narrow window the inspector overlays the conversation. Navigation
+      // must reveal the destination, while a usable docked split can stay open.
+      if (compactLayout || panel && getComputedStyle(panel).position === 'absolute') {
+        setInspectorOpen(false);
+      }
+    }
+    if (compactLayout) setSidebarCollapsed(true);
+    // Quick input may have selected a conversation since cover mode opened.
+    // Its status opens that current conversation, not the previous app section.
+    setSection(section);
+  }, [inspectorControlsVisible, leaveInspectorCover, inspectorOpen, mainStageRef,
+    compactLayout, setInspectorOpen, setSidebarCollapsed, section, setSection]);
   const enterInspectorCover = useCallback(() => {
     coverRestore.current ??= { section, sidebar: sidebarCollapsed, width: conversationCovered ? splitWidthRef.current ?? 620 : inspectorWidthRef.current };
     setInspectorCover(true); setSidebarCollapsed(true); setInspectorOpen(true);
@@ -71,7 +95,7 @@ export function useInspectorWorkspace({
   const leaveMultiPage = useCallback(() => {
     setInspectorLayout(null);
     const previous = multiPageRestore.current; multiPageRestore.current = null;
-    if (previous) { setInspectorWidth(previous.width); if (!coverRestore.current) setSidebarCollapsed(previous.sidebar); }
+    if (previous) { setInspectorWidth(previous.width, true); if (!coverRestore.current) setSidebarCollapsed(previous.sidebar); }
   }, [setInspectorWidth, setSidebarCollapsed]);
   const toggleMultiPage = () => {
     if (inspectorLayout) { leaveMultiPage(); return; }
@@ -86,8 +110,8 @@ export function useInspectorWorkspace({
     }
     setInspectorLayout(initial.reduce<PanelLayout | null>((tree, tab) => addPanel(tree, tab.id), null));
     setSidebarCollapsed(true); setInspectorOpen(true);
-    setInspectorWidth(window.innerWidth - 340);
-    setInspectorAddMenuOpen(false); setInspectorTabsMenuOpen(false);
+    setInspectorWidth(window.innerWidth - minimumConversationWidth, true);
+    setInspectorTabsMenuOpen(false);
   };
   useEffect(() => {
     if (!inspectorLayout) return;
@@ -103,72 +127,39 @@ export function useInspectorWorkspace({
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open]')) return;
       event.preventDefault();
+      if (inspectorCover && !sidebarCollapsed) { setSidebarCollapsed(true); return; }
       if (quickInputOpen) setQuickInputOpen(false); else leaveInspectorCover();
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
-  }, [inspectorControlsVisible, quickInputOpen, leaveInspectorCover]);
+  }, [inspectorControlsVisible, quickInputOpen, leaveInspectorCover, inspectorCover, sidebarCollapsed, setSidebarCollapsed]);
 
-  useEffect(() => {
-    let previousLeft = window.screenX;
-    let previousOuterWidth = window.outerWidth;
-    let previousInnerWidth = window.innerWidth;
-    let pendingWidthDelta = 0;
-    let animationFrame = 0;
-    let resizeSettleTimer = 0;
-
-    const resizeInspectorFromWindowRightEdge = () => {
-      const nextLeft = window.screenX;
-      const nextOuterWidth = window.outerWidth;
-      const nextInnerWidth = window.innerWidth;
-      const innerWidthDelta = nextInnerWidth - previousInnerWidth;
-      const rightEdgeDelta = nextLeft + nextOuterWidth - (
-        previousLeft + previousOuterWidth
-      );
-      const leftEdgeStayedPut = Math.abs(nextLeft - previousLeft) <= 2;
-
-      previousLeft = nextLeft;
-      previousOuterWidth = nextOuterWidth;
-      previousInnerWidth = nextInnerWidth;
-
-      if (
-        !inspectorOpen || compactLayout ||
-        innerWidthDelta === 0 ||
-        !leftEdgeStayedPut ||
-        Math.sign(innerWidthDelta) !== Math.sign(rightEdgeDelta)
-      ) {
-        return;
-      }
-
-      document.body.classList.add('window-right-edge-resizing');
-      if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
-      resizeSettleTimer = window.setTimeout(() => {
-        resizeSettleTimer = 0;
-        document.body.classList.remove('window-right-edge-resizing');
-      }, 140);
-      pendingWidthDelta += innerWidthDelta;
-      if (animationFrame) return;
-      animationFrame = window.requestAnimationFrame(() => {
-        animationFrame = 0;
-        const widthDelta = pendingWidthDelta;
-        pendingWidthDelta = 0;
-        if (widthDelta !== 0) {
-          setInspectorWidth(inspectorWidthRef.current + widthDelta);
-        }
-      });
+  useLayoutEffect(() => {
+    const shell = mainStageRef.current?.parentElement;
+    if (!shell || !inspectorOpen || inspectorCover) return;
+    const fit = () => {
+      if (document.body.classList.contains('right-inspector-resizing') ||
+        document.body.classList.contains('sidebar-resizing')) return;
+      const panel = shell.querySelector(':scope > .right-inspector');
+      const overlay = compactLayout || panel && getComputedStyle(panel).position === 'absolute';
+      const available = shell.clientWidth - (sidebarCollapsed ? 0 : sidebarWidth);
+      const next = overlay ? preferredWidthRef.current
+        : conversationCoverRequested.current ? available
+        : Math.min(preferredWidthRef.current, Math.max(minimumInspectorWidth, available - minimumConversationWidth));
+      // Fit the current viewport without overwriting the user's preferred width.
+      // Maximizing/restoring and resizing either window edge share this rule.
+      inspectorWidthRef.current = next;
+      setInspectorWidthState(current => current === next ? current : next);
     };
-
-    window.addEventListener('resize', resizeInspectorFromWindowRightEdge);
-    return () => {
-      window.removeEventListener('resize', resizeInspectorFromWindowRightEdge);
-      if (animationFrame) window.cancelAnimationFrame(animationFrame);
-      if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
-      document.body.classList.remove('window-right-edge-resizing');
-    };
-  }, [inspectorOpen, setInspectorWidth, compactLayout]);
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(shell);
+    window.addEventListener('resize', fit);
+    return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
+  }, [inspectorOpen, inspectorCover, inspectorWidth, sidebarCollapsed, sidebarWidth, compactLayout, mainStageRef]);
   return {
     inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
-    inspectorCover, enterInspectorCover, leaveInspectorCover,
+    inspectorCover, enterInspectorCover, leaveInspectorCover, revealConversation,
     mainStageRef, conversationCovered, inspectorControlsVisible,
     quickInputOpen, setQuickInputOpen, toggleMultiPage,
   };

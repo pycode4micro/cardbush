@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./conversational-subagent-tools": {
+      "types": "./dist/conversationalSubagentTools.d.cts",
+      "default": "./dist/conversationalSubagentTools.cjs"
+    },
     "./runtime-fixture": {
       "types": "./dist/runtimeFixture.d.ts",
       "import": "./dist/runtimeFixture.js"

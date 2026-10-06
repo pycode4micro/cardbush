@@ -97,6 +97,7 @@ app.whenReady().then(async () => {
   window.webContents.on('preload-error', (_event, _file, error) => errors.push(error.message));
   window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
   window.webContents.session.webRequest.onBeforeRequest((details, done) => {
+    if (details.url.startsWith('https://www.google.com/search?')) { done({redirectURL:origin+'/google-search?'+new URL(details.url).searchParams.toString()}); return; }
     done({ cancel: /^https?:/.test(details.url) && !details.url.startsWith(origin + '/') });
   });
   const read = expression => window.webContents.executeJavaScript(expression);
@@ -121,6 +122,7 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(path.join(directory, 'index.html'));
     await waitFor('Boolean(window.browserFixture)');
+    assert.equal(await read('document.querySelector(".right-inspector")'), null, 'retained pane still mounts lazily');
     await read(`browserFixture.open({target:${JSON.stringify(searchUrl)}}); void 0`);
     await activeReady();
     const originalId = await read('document.querySelector("webview").getWebContentsId()');
@@ -265,41 +267,11 @@ app.whenReady().then(async () => {
     assert.equal(await original.executeJavaScript('typeof require'), 'undefined');
     assert.equal(await original.executeJavaScript('typeof window.cardbushDesktop'), 'undefined', 'guest receives no desktop bridge');
 
-    await read('document.querySelector("#browser-settings").click(); void 0');
-    await waitFor('document.querySelector(".settings-field input")?.disabled===false');
-    assert.equal(await read('document.querySelector(".settings-field input").value'), 'https://www.google.com/');
-    const enterHome = value => read(`(()=>{const input=document.querySelector('.settings-field input');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});
-      input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-    const saveHome = () => read('document.querySelector(".settings-card button[type=submit]").click(); void 0');
-    await enterHome('javascript:alert(1)'); await saveHome();
-    await waitFor('document.querySelector("[role=alert]")!==null');
-    assert.equal((await store.read()).revision, 1, 'invalid homepage does not reach storage');
-    const newHome = origin + '/configured-home?keep=1';
-    await enterHome(newHome); await saveHome();
-    await waitFor('document.querySelector("[role=status]")!==null');
-    assert.equal((await new BrowserConfigStore(store.path).read()).startPage, newHome);
-    await read('document.querySelector("#new-tab").click(); void 0');
-    await waitFor('browserFixture.tabs.length===7'); await activeReady();
-    assert.equal(await read('document.querySelector("#address").textContent'), newHome);
-    const firstHomeId = await read('browserFixture.activeId');
-    await read('document.querySelector("#new-tab").click(); void 0');
-    await waitFor('browserFixture.tabs.length===8'); await activeReady();
-    assert.notEqual(await read('browserFixture.activeId'), firstHomeId, 'new tabs at the same home page have separate state');
-    assert.equal(await read('document.querySelector("#address").textContent'), newHome, 'tab identity does not add query parameters');
-    assert.equal(original.getURL(), searchUrl, 'home page changes preserve existing tabs');
-    await read('document.querySelector("#browser-settings").click(); void 0');
-    await waitFor('document.querySelector(".settings-field input")?.disabled===false');
-    assert.equal(await read('document.querySelector(".settings-field input").value'), newHome, 'remount reads persisted home page');
-    // A second settings surface cannot silently overwrite a newer preference.
-    await store.update({ startPage: origin + '/another-window', expectedRevision: 2 });
-    await enterHome(origin + '/stale'); await saveHome();
-    await waitFor('document.querySelector("[role=alert]")?.textContent.includes("changed")');
-    assert.equal((await store.read()).startPage, origin + '/another-window');
-    await read('document.querySelector("[role=alert] button").click(); void 0');
-    await waitFor(`document.querySelector('.settings-field input')?.value===${JSON.stringify(origin + '/another-window')}`);
+    await store.update({ startPage: origin + '/legacy-home', expectedRevision: 1 });
+    await require('./helpers/browser-new-tab.cjs')({ window, read, waitFor, activeReady, origin, webContents, click });
+    assert.equal(original.getURL(), searchUrl, 'new tabs preserve existing tabs');
 
-    await read(`document.querySelector('#browser-settings').click(); browserFixture.open({target:${JSON.stringify(origin + '/wide')}}); void 0`);
+    await read(`browserFixture.open({target:${JSON.stringify(origin + '/wide')}}); void 0`);
     await activeReady();
     const wideId = await read('document.querySelector(".right-inspector-tab-page.active webview").getWebContentsId()');
     const wide = webContents.fromId(wideId);
@@ -346,8 +318,9 @@ app.whenReady().then(async () => {
     await read('window.setTimeout=normalTimeout; void 0');
     await require('./helpers/browser-translation-ui.cjs')({ window, read, waitFor, activeReady, origin, webContents,
       translation, calls: translationCalls, setMode: value => { translationMode = value; modeCalls = 0; } });
+    await require('./helpers/inspector-retention.cjs')({ window, read, waitFor, activeReady, origin, webContents, pause, click });
     assert.deepEqual(errors, []);
-    console.log('Inspector browser: single-row chrome, real drag/cancel, full-cover guest sizing/restore, selected-page external action, preserved guests, navigation, home pages and loading recovery passed.');
+    console.log('Inspector browser: single-row chrome, real drag/cancel, full-cover guest sizing/restore, selected-page external action, preserved guests, navigation, local new tabs, Google search and loading recovery passed.');
   } catch(error) {
     require('node:fs').writeFileSync(path.resolve('tmp/inspector-browser-failure.png'),(await window.webContents.capturePage()).toPNG());
     throw error;

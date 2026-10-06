@@ -434,9 +434,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
       };
     } catch (error) {
       if (options.signal?.aborted || error instanceof OpenAI.APIUserAbortError) throw error;
-      this.#enableCompatibility(request, "input_token_count");
-      this.#compatibilityDiagnostic(request, options, "input_token_count", "local_estimate",
-        providerFailureEvent(request.requestId, 0, error, false));
+      const failure = providerFailureEvent(request.requestId, 0, error, false);
+      if (!failure.retryable) this.#enableCompatibility(request, "input_token_count");
+      this.#compatibilityDiagnostic(request, options, "input_token_count", "local_estimate", failure);
       return undefined;
     }
   }
@@ -519,6 +519,10 @@ export class OpenAIResponsesProvider implements ModelProvider {
           // SIWC has a known protocol: entitlement/auth/transport errors must not
           // rewrite the cache prefix or retry as a different API protocol.
           if (this.#config.chatGpt) { yield siwcFailure(failure); return; }
+          // A transient outage is not evidence that this endpoint rejects the
+          // protocol. Let Runtime retry the frozen request without persisting
+          // a compatibility downgrade for this model and other conversations.
+          if (failure.retryable) { yield failure; return; }
           if (isToolCallValidationFailure(failure)) {
             // Runtime repairs the call by appending guidance. An invalid call
             // is not evidence to switch schemas and invalidate the cache prefix.

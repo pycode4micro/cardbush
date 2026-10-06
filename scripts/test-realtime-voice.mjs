@@ -9,10 +9,11 @@ import { defaultRealtimeVoiceSettings as defaults } from '../dist-electron/realt
 import { volcengineRealtimeVoice as provider } from '../dist-electron/volcengineRealtimeVoice.js';
 import { realtimeVoiceNotification } from '../dist-electron/realtimeVoiceNotification.js';
 import { CARDBUSH_REALTIME_PROTOCOL } from '../dist-electron/cardbushRealtimeVoice.js';
+import * as protocol from '@cardbush/bush-protocol';
 
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 const compile=file=>{const exports={};const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  new Function('exports','require',source)(exports,spec=>compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
+  new Function('exports','require',source)(exports,spec=>spec==='@cardbush/bush-protocol'?protocol:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
 const { RealtimeAgentBridge, realtimeConversationContext }=compile('src/features/voice/realtimeAgentBridge.ts');
 const { RealtimeVoiceCall }=compile('src/features/voice/realtimeVoiceCall.ts');
 const { RealtimeVoiceAudio }=compile('src/features/voice/realtimeVoiceAudio.ts');
@@ -48,7 +49,7 @@ test('Seeduplex handshake, PCM formats, delegation tools, mute controls and grac
   const f=fixture();await f.start();
   assert.equal(f.headers['X-Api-Key'],'fixture-not-a-real-credential');
   const event=f.socket.sent[0];assert.equal(event.type,'session.create');assert.equal(event.session.model,'1.2.6.1');
-  assert.deepEqual(event.session.tools.map(t=>t.name),['subagent','await_subagent','send_subagent_message','read_subagent_conversation']);assert.equal(event.session.audio.input.format.rate,16000);
+  assert.deepEqual(event.session.tools.map(t=>t.name),['subagent','await_subagents','read_subagent_conversation']);assert.equal(event.session.audio.input.format.rate,16000);
   assert.equal(event.session.audio.output.format.type,'pcm_s16le');assert.equal(event.session.audio.output.speed,0);
   const pcm=new Uint8Array(640).fill(37);
   f.service.audio(1,'call-1',pcm.buffer);assert.equal(f.socket.sent.at(-1).type,'input_audio_buffer.append');
@@ -185,7 +186,7 @@ function agentFixture() {
   const tasks=[],calls=[];
   const agent={list:async()=>tasks,execute:async(id,name,args)=>{calls.push({id,name,args});
     if(name==='read_subagent_conversation')return {taskId:args.task_id,messages:[{author:'child_agent',content:'child answer'}],nextCursor:null};
-    if(name==='send_subagent_message')return {status:'message_queued',taskId:args.task_id};
+    if(name==='subagent' && args.task_id)return {status:'message_queued',taskId:args.task_id};
     const task={taskId:id,status:'running',childSessionId:'child-'+id,parentTurnId:'voice_turn_'+id,finalResponse:'',errorMessage:''};tasks.push(task);return task;
   }};
   return{agent,tasks,calls};
@@ -215,7 +216,7 @@ test('dispatch and await return immediately while multiple children run; termina
     const results=await Promise.all(calls.map(c=>bridge.run(c)));assert.deepEqual(results.map(r=>JSON.parse(r).status),['running','running']);
     assert.equal(f.tasks.length,2);assert.equal(f.calls.length,2);
     assert.deepEqual(await bridge.run(calls[0]),results[0]);assert.equal(f.tasks.length,2);
-    const watching=JSON.parse(await bridge.run(tool('wait','await_subagent',{task_ids:['a','b']})));assert.equal(watching.status,'watching');
+    const watching=JSON.parse(await bridge.run(tool('wait','await_subagents',{task_ids:['a','b']})));assert.equal(watching.status,'watching');
     f.tasks[0].status='completed';f.tasks[0].finalResponse='real first result';
     await bridge.poll();assert.equal(notifications.length,0,'never notify before dispatch receipt is delivered');
     bridge.acknowledge(calls);await bridge.poll();await bridge.poll();assert.equal(notifications.length,1);assert.equal(notifications[0].result,'real first result');
@@ -226,9 +227,13 @@ test('follow-ups and ordered conversation reads use the owned child and invalid 
   const f=agentFixture(),bridge=new RealtimeAgentBridge(()=>{});bridge.update({...target(),agent:f.agent});
   try{
     await bridge.run(tool('a','subagent',{prompt:'one'}));
-    assert.equal(JSON.parse(await bridge.run(tool('m','send_subagent_message',{task_id:'a',prompt:'correction'}))).status,'message_queued');
+    assert.equal(JSON.parse(await bridge.run(tool('m','subagent',{task_id:'a',prompt:'correction'}))).status,'message_queued');
+    assert.equal(f.tasks.length,1,'follow-up reuses the existing task');
+    assert.equal(f.calls.at(-1).name,'subagent');
     assert.equal(JSON.parse(await bridge.run(tool('r','read_subagent_conversation',{task_id:'a'}))).messages[0].content,'child answer');
-    for(const call of [tool('bad1','shell',{prompt:'no'}),tool('bad2','subagent',{prompt:'no',approved:true}),tool('bad3','await_subagent',{task_ids:['unrelated']}),{id:'bad4',name:'subagent',arguments:'invalid'}])
+    for(const call of [tool('bad1','shell',{prompt:'no'}),tool('bad2','subagent',{prompt:'no',approved:true}),tool('bad3','await_subagents',{task_ids:['unrelated']}),{id:'bad4',name:'subagent',arguments:'invalid'},
+      tool('bad5','subagent',{task_id:'',prompt:'no'}),tool('removed-message','send_subagent_message',{task_id:'a',prompt:'no'}),
+      tool('removed-wait','await_subagent',{}),tool('removed-arg','subagent',{resume_task_id:'a',prompt:'no'})])
       assert.equal(JSON.parse(await bridge.run(call)).status,'error');
     assert.equal(f.calls.length,3);
   }finally{bridge.close();}
@@ -286,7 +291,7 @@ test('audio and dialogue continue during concurrent dispatch and await batches',
   const call=new RealtimeVoiceCall(api,p=>patches.push(p),()=>{},frame=>(frames=frame,audio));call.update({...target(),agent:f.agent,sending:true});await call.start('','female');
   callback({id:call.id,type:'tools',calls:[tool('1','subagent',{prompt:'one'}),tool('2','subagent',{prompt:'two'})]});await pause();
   assert.deepEqual(results[0].map(r=>JSON.parse(r.output).status),['running','running']);
-  callback({id:call.id,type:'tools',calls:[tool('wait','await_subagent',{task_ids:['1','2']})]});await pause();
+  callback({id:call.id,type:'tools',calls:[tool('wait','await_subagents',{task_ids:['1','2']})]});await pause();
   assert.equal(JSON.parse(results[1][0].output).status,'watching');
   frames(new ArrayBuffer(640));callback({id:call.id,type:'audio',pcm:'AAA=',sampleRate:24000});
   callback({id:call.id,type:'transcript',role:'assistant',text:'我们继续聊',itemId:'a1',final:true});
@@ -365,7 +370,7 @@ test('final voice transcripts remain in the owning chat; both sides of assistant
 test('personal voice session advertises page_write and custom persona without changing ordinary call tools',()=>{
   const ordinary=provider.start(defaults,'female').session;
   const personal=provider.start(defaults,'female',{name:'Lumi',persona:'安静、可靠'}).session;
-  assert.equal(ordinary.tools.length,4);assert.equal(personal.tools.length,5);
+  assert.equal(ordinary.tools.length,3);assert.equal(personal.tools.length,4);
   assert.ok(!ordinary.instructions.includes('你是 CardBush'));
   assert.match(personal.instructions,/Lumi/);assert.match(personal.instructions,/page_write/);
 });

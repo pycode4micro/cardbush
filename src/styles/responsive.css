@@ -20,6 +20,24 @@
   cursor: pointer;
 }
 
+/* Shared by compact-window drawers and the sidebar over a covering inspector. */
+.compact-sidebar-backdrop {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  border: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg) 28%, transparent);
+  backdrop-filter: blur(6px) saturate(0.9);
+  -webkit-backdrop-filter: blur(6px) saturate(0.9);
+  opacity: 0;
+  transition: opacity 180ms var(--ease-standard);
+  cursor: default;
+}
+.compact-sidebar-backdrop[data-visible="true"] { opacity: 1; }
+.compact-sidebar-backdrop[aria-hidden="true"] { pointer-events: none; }
+
 /* Small desktop windows keep one usable content pane; sidebars become drawers. */
 @media (max-width: 760px) {
   .desktop-shell, .settings-shell {
@@ -35,24 +53,6 @@
     height: 100%;
     box-shadow: 10px 0 28px var(--shadow);
   }
-
-  .compact-sidebar-backdrop {
-    display: block;
-    position: absolute;
-    inset: 0;
-    z-index: 40;
-    border: 0;
-    border-radius: 0;
-    background: color-mix(in srgb, var(--bg) 28%, transparent);
-    backdrop-filter: blur(6px) saturate(0.9);
-    -webkit-backdrop-filter: blur(6px) saturate(0.9);
-    opacity: 0;
-    transition: opacity 180ms var(--ease-standard);
-    cursor: default;
-  }
-
-  .compact-sidebar-backdrop[data-visible="true"] { opacity: 1; }
-  .compact-sidebar-backdrop[aria-hidden="true"] { pointer-events: none; }
 
   .desktop-shell > .sidebar-resizer, .settings-shell > .sidebar-resizer,
   .right-inspector-resizer { display: none; }

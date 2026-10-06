@@ -5,7 +5,7 @@ const { writeFileSync } = require('node:fs');
 app.disableHardwareAcceleration();
 app.setPath('userData', join(resolve(process.argv[2]), 'profile'));
 app.whenReady().then(async () => {
-  const window = new BrowserWindow({ show: false, width: 1160, height: 840, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  const window = new BrowserWindow({ show: false, width: 1160, height: 840, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, offscreen: true } });
   const errors=[]; window.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
   const read=script=>window.webContents.executeJavaScript(script);
   const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -60,6 +60,22 @@ app.whenReady().then(async () => {
     await read(`window.finish('a'); window.show('a')`);
     await until(`document.body.innerText.includes('完成后检查字体')`);
     await until(`!document.querySelector('.subagent-conversation-heading .spin')`);
+    // Keep the inspector on the original card. The parent resumes that child;
+    // the accepted assignment must appear before the model produces anything.
+    for(let count=1;count<=2;count++) {
+      await read(`window.parentFollowup('a',${count===1})`);
+      await until(`window.streams.get('a')?.request.turnId.startsWith('parent-followup-')`);
+      await until(`Array.from(document.querySelectorAll('.message-row.user')).filter(n=>n.textContent.includes('父代理追加：请在报告后补充操作建议。')).length===${count}`);
+      assert.ok(await read(`Array.from(document.querySelectorAll('.message-row.user')).filter(n=>n.textContent.includes('父代理追加：')).every(n=>n.querySelector('.subagent-message-author')?.textContent==='主 Agent')`),'parent identity is visible before completion');
+      await read('window.releaseParentOutput()');
+      await until(`document.querySelectorAll('.tool-execution-block').length>=1`);
+      assert.ok(await read(`(()=>{const rows=Array.from(document.querySelectorAll('.message-row'));const user=rows.findLastIndex(n=>n.textContent.includes('父代理追加：'));return user>=0&&rows.slice(user+1).some(n=>n.classList.contains('assistant'));})()`),'resumed assignment precedes its live reply instead of preceding all history');
+      if(count===1){await read(`Array.from(document.querySelectorAll('.message-row.user')).findLast(n=>n.textContent.includes('父代理追加：')).scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);await wait(250);writeFileSync(resolve('tmp/subagent-parent-followup.png'),(await window.webContents.capturePage()).toPNG());}
+      await read(`window.finish('a')`);
+      await until(`!document.querySelector('.subagent-conversation-heading .spin')`);
+      await wait(1700);
+      assert.equal(await read(`Array.from(document.querySelectorAll('.message-row.user')).filter(n=>n.textContent.includes('父代理追加：请在报告后补充操作建议。')).length`),count,'history replaces the live assignment once; repeated text in another turn is preserved');
+    }
     await type('继续检查边距');await send();
     await until(`window.calls.some(item=>item.kind==='send'&&item.sessionId==='a'&&item.text==='继续检查边距')`);
     await until(`window.streams.has('a')`);
@@ -80,7 +96,7 @@ app.whenReady().then(async () => {
     assert.ok(await read(`(()=>{const input=document.querySelector('[data-composer-input]').getBoundingClientRect(), panel=document.querySelector('aside').getBoundingClientRect();return input.width>0&&input.left>=panel.left&&input.right<=panel.right&&input.bottom<=innerHeight})()`),'composer stays inside narrow inspector');
     writeFileSync(resolve('tmp/subagent-conversation-bright.png'),(await window.webContents.capturePage()).toPNG());
     assert.deepEqual(errors,[]);
-    console.log('Subagent conversation UI passed: shared transcript/composer, running queue → guidance, follow-up, session isolation, retained draft, both languages and themes.');
+    console.log('Subagent conversation UI passed: shared transcript/composer, running queue → guidance, live parent follow-ups through old task cards, dispatch notifications/polling, ordered history deduplication, session isolation, retained draft, both languages and themes.');
     window.destroy();app.exit(0);
   } catch(error) {console.error(error);console.error(errors);console.error(await read('JSON.stringify(window.calls)'));writeFileSync(resolve('tmp/subagent-conversation-failed.png'),(await window.webContents.capturePage()).toPNG());window.destroy();app.exit(1);}
 });

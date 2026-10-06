@@ -5,6 +5,7 @@ import {
   type SessionSnapshot,
   type RemoteSubagentRequest,
   type RemoteSubagentResult,
+  type RuntimeGuidanceRequest,
 } from "@cardbush/bush-protocol";
 
 import {
@@ -39,7 +40,7 @@ interface SubagentInput {
   settings?: CleanAgentSettings;
   agentType?: string;
   runInBackground?: boolean;
-  resumeTaskId?: string;
+  taskId?: string;
   targetAgent?: string;
 }
 
@@ -83,6 +84,7 @@ export function registerSubagentTool(
     permissionPolicy?: SubagentPermissionPolicy;
     models?: SubagentModelCatalog;
     remoteAgents?: RemoteSubagentBridge;
+    guideChild?: (input: RuntimeGuidanceRequest) => Promise<unknown>;
     loadPluginAgents?: () => Promise<PluginAgent[]>;
     runBackground?: <T>(session: string, turn: string, taskId: string, run: (signal: AbortSignal) => Promise<T>) => Promise<T>;
     saveChildRequest?: (request: Parameters<SubagentChildRunner>[0]) => Promise<void>;
@@ -116,15 +118,9 @@ export function registerSubagentTool(
       return { taskId: task.taskId, status: task.status, ...childConversationPage(session, context.input.cursor) };
     },
   });
-  if (options.loadPluginAgents && !registry.resolve('list_plugin_agents')) registry.register({
-    definition: { name: 'list_plugin_agents', description: 'List enabled plugin Agent roles. Use the exact id as subagent.agent_type to apply its instructions and tool restrictions.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-    manifest: { effect_kind: 'observation', operation: 'agent.list_profiles', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
-    decodeInput: () => ({}), parallelSafe: true,
-    execute: async () => (await options.loadPluginAgents!()).map(({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode, mcpServers }) => ({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode, mcpServers: mcpServers?.flatMap(server => typeof server === 'string' ? [server] : Object.keys(server)), model: 'inherit' })),
-  });
   if (registry.resolve(SUBAGENT_TOOL)) return;
   if (!registry.resolve('list_subagent_options')) registry.register({
-    definition: { name: 'list_subagent_options', description: 'Inspect available settings before a user-requested clean subagent: configured models, generation settings, permission ceiling, tool/Skill scope and plugin Agent roles. Normal delegation uses fork and does not need this setup step.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    definition: { name: 'list_subagent_options', description: 'Discover plugin Agent roles in agent_roles and remote execution hosts in remote_agents; also inspect models, generation settings, permission ceiling and tool/Skill scope before a user-requested clean subagent. Normal delegation uses fork and does not need this setup step.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     manifest: { effect_kind: 'observation', operation: 'agent.options', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
     parallelSafe: true, decodeInput: () => ({}),
     execute: async context => {
@@ -156,7 +152,7 @@ export function registerSubagentTool(
         skill_discovery: 'Use search_skills to find installed Skills; select exact values from defaults.allowed_skills when that scope is present.',
         settings: CLEAN_AGENT_SETTINGS_SCHEMA,
         remote_agents: await options.remoteAgents?.list(context.signal) ?? [],
-        agent_roles: (await options.loadPluginAgents?.() ?? []).map(({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode }) => ({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode })),
+        agent_roles: (await options.loadPluginAgents?.() ?? []).map(({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode, mcpServers }) => ({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode, mcpServers: mcpServers?.flatMap(server => typeof server === 'string' ? [server] : Object.keys(server)), model: 'inherit' })),
       };
       // Omit unavailable optional defaults; native tool results must be JSON values.
       return JSON.parse(JSON.stringify(result));
@@ -172,21 +168,21 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Dispatch useful parallel work asynchronously and return a task ID. Continue independent parent work, then reconcile the delivered subagent_result; use await_subagents when only child results remain instead of polling. Background tasks may outlive this Turn and are managed by manage_plugin_agents. Host permissions and child-state restrictions remain enforced.",
+        "Dispatch useful parallel work, or follow up on an existing child with task_id. Omit task_id only for new work; an existing running child receives guidance immediately, while a finished child resumes its original session and configuration. Continue independent parent work, then reconcile subagent_result; use await_subagents when only child results remain instead of polling. Background tasks may outlive this Turn and are managed by manage_plugin_agents. Host permissions and child-state restrictions remain enforced.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["prompt"],
         properties: {
           prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
-          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Delegate to a saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only. It uses its own server workspace, model, tools and instructions; no parent history, credentials or local paths are copied. Results participate in await_subagents. Resume with resume_task_id.' } } : {}),
-          ...(options.loadChildRequest ? { resume_task_id: { type: 'string', minLength: 1, description: 'Continue a finished subagent task from this parent conversation in its original child session, with its own history and identity. Supply this ID and a new prompt; optional run_in_background runs the continuation independently. A running child cannot be resumed concurrently.' } } : {}),
+          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Delegate new work to a saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only. It uses its own server workspace, model, tools and instructions; no parent history, credentials or local paths are copied. Results participate in await_subagents. Follow up with task_id.' } } : {}),
+          ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Follow up on a subagent owned by this parent. Running children receive guidance without a new task; finished children resume with their original history, model and execution host. Supply task_id and prompt only, with optional run_in_background for continuations; do not override configuration or create a duplicate task.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork inherits the complete pre-dispatch conversation and system/tool prefix. Use clean only when the user explicitly requests independent configuration, not merely for a self-contained task. For clean, inspect list_subagent_options and choose system_prompt, settings and tool/Skill scope; parent history and system prompt are not copied.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required in clean mode; unavailable in fork mode. Sets the actual system message for the child. Define its role, behavior, communication language and output requirements. Host permissions cannot be overridden.' },
           allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
           settings: CLEAN_AGENT_SETTINGS_SCHEMA,
           ...(options.runBackground ? { run_in_background: { type: 'boolean', default: false } } : {}),
-          ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_plugin_agents. Its role and tool restrictions apply to the child.' } } : {}),
+          ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_subagent_options.agent_roles. Its role and tool restrictions apply to the child.' } } : {}),
         },
       },
     },
@@ -204,10 +200,32 @@ export function registerSubagentTool(
     execute: async (context) => {
       if (!context.turn) throw new Error("Subagent dispatch requires the parent Turn context.");
       assertParentAgent(context.turn.request);
+      const previous = context.input.taskId ? tasks.get(context.sessionId, context.input.taskId) : undefined;
+      if (context.input.taskId && (!previous || previous.origin !== 'subagent')) throw new Error('Only a subagent task owned by this parent conversation can receive a follow-up.');
+      // An older task ID addresses the same child even after a later continuation.
+      const running = previous && tasks.list(context.sessionId).find(task => task.childSessionId === previous.childSessionId && task.status === 'running');
+      if (running) {
+        try {
+          const messageId = `subagent_guidance_${context.toolCall.id}`;
+          let receipt: unknown;
+          if (running.remote) {
+            if (!options.remoteAgents?.guide) throw new Error('Remote child guidance is unavailable.');
+            receipt = await options.remoteAgents.guide({ ...running.remote, parentSessionId: context.sessionId,
+              sessionId: running.childSessionId, turnId: running.childTurnId, messageId, content: context.input.prompt }, context.signal);
+          } else {
+            if (!options.guideChild) throw new Error('Running child guidance is unavailable.');
+            receipt = await options.guideChild({ protocol: 'bush.runtime_guidance.v1', sessionId: running.childSessionId,
+              turnId: running.childTurnId, messageId, content: context.input.prompt,
+              createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent',
+                realtimeParent: true, realtimeParentSessionId: context.sessionId, realtimeTaskId: running.taskId } });
+          }
+          return { status: 'message_queued', taskId: running.taskId, childSessionId: running.childSessionId, receipt };
+        } catch (error) {
+          if (tasks.get(context.sessionId, running.taskId)?.status === 'running') throw error;
+          // If completion raced guidance, continue in the original session below.
+        }
+      }
       const taskId = createTaskId();
-      const previous = context.input.resumeTaskId ? tasks.get(context.sessionId, context.input.resumeTaskId) : undefined;
-      if (context.input.resumeTaskId && (!previous || previous.origin !== 'subagent')) throw new Error('Only a subagent task owned by this parent conversation can be resumed.');
-      if (previous && tasks.list(context.sessionId).some(task => task.childSessionId === previous.childSessionId && task.status === 'running')) throw new Error('This child session is still running. Await its result before resuming.');
       if (context.input.targetAgent || previous?.remote) {
         if (!options.remoteAgents) throw new Error('Remote Agent delegation is unavailable in this host.');
         const targetId = previous?.remote?.connectionId ?? context.input.targetAgent!;
@@ -467,7 +485,7 @@ function decodeInput(input: unknown): SubagentInput {
   }
   const object = input as Record<string, unknown>;
   const unexpected = Object.keys(object).filter(
-    (key) => !['prompt', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'inherit_context', 'agent_type', 'run_in_background', 'resume_task_id', 'target_agent'].includes(key),
+    (key) => !['prompt', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'inherit_context', 'agent_type', 'run_in_background', 'task_id', 'target_agent'].includes(key),
   );
   if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
   const prompt = typeof object.prompt === "string" ? object.prompt.trim() : "";
@@ -477,11 +495,11 @@ function decodeInput(input: unknown): SubagentInput {
     if (Object.keys(object).some(key => !['prompt', 'target_agent'].includes(key))) throw new Error('Remote delegation accepts prompt and target_agent only; the server owns its configuration.');
     return { prompt, mode: 'clean', targetAgent: object.target_agent.trim() };
   }
-  if (object.resume_task_id !== undefined) {
-    if (typeof object.resume_task_id !== 'string' || !object.resume_task_id.trim()) throw new Error('resume_task_id must be non-empty.');
-    if (Object.keys(object).some(key => !['prompt', 'resume_task_id', 'run_in_background'].includes(key))) throw new Error('Resume accepts prompt, resume_task_id and optional run_in_background; the original configuration is preserved.');
+  if (object.task_id !== undefined) {
+    if (typeof object.task_id !== 'string' || !object.task_id.trim()) throw new Error('task_id must be non-empty.');
+    if (Object.keys(object).some(key => !['prompt', 'task_id', 'run_in_background'].includes(key))) throw new Error('Follow-up accepts prompt, task_id and optional run_in_background; the original configuration is preserved.');
     if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
-    return { prompt, mode: 'fork', resumeTaskId: object.resume_task_id.trim(), runInBackground: object.run_in_background as boolean | undefined };
+    return { prompt, mode: 'fork', taskId: object.task_id.trim(), runInBackground: object.run_in_background as boolean | undefined };
   }
   if (object.inherit_context !== undefined && typeof object.inherit_context !== "boolean") {
     throw new Error("inherit_context must be a boolean.");

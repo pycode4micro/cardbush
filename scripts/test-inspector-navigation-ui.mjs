@@ -91,7 +91,6 @@ function Harness() {
   const [language,setLanguage]=React.useState('zh');
   const [currentSession,setSession]=React.useState('a');
   const [liveReports,setReports]=React.useState(reports);
-  const [menu,setMenu]=React.useState(false);
   const openHistory=(turnId,sessionId=currentSession)=>tabs.openTab(workSummaryInspectorTab({kind:'turn-history',sessionId,turnId},language));
   const openReview=(initialFilePath='')=>tabs.openTab({id:'review:a',kind:'review',conversationId:'a',title:'审查',initialFilePath,selectionRequestId:crypto.randomUUID()});
   const openShadow=()=>tabs.openTab({id:'shadow:a',kind:'shadow',title:'Shadow',context:{windowId:'shadow:a',sessionId:'a',sourceTurnId:'',title:'源会话',language:'zh',theme:'dark',accentColor:'#6699ff',themeVariables:{},modelConfig:{id:'fixture'},reasoningLevel:'medium',projectDir:'',initialMode:'readonly'}});
@@ -102,15 +101,15 @@ function Harness() {
     <aside className="right-inspector" style={{width:520,flex:'0 0 520px','--side-panel-width':'520px'}}>
       <div className="right-inspector-viewport"><div className="right-inspector-content">
       <header className="right-inspector-toolbar with-tabs">
-        <div className="right-inspector-tabs" role="tablist">{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} role="tab" aria-selected={tab.id===tabs.activeId} onClick={()=>{tabs.activateTab(tab.id);setMenu(false);}}>{tab.kind}</button>)}</div>
-        <div className="right-inspector-add-tab"><button id="add" onClick={()=>setMenu(!menu)}>+</button>{menu&&<InspectorActions menu language={language} filesAvailable shadowUnavailableReason=""
-          onOpenHistory={()=>{openHistory();setMenu(false);}} onOpenReview={()=>{openReview();setMenu(false);}}
-          onOpenFiles={()=>{openResource('file','C:/fixture.md');setMenu(false);}} onOpenBrowser={()=>{openResource('browser','about:blank');setMenu(false);}}
-          onOpenShadow={()=>{openShadow();setMenu(false);}}/>}</div>
+        <div className="right-inspector-tabs" role="tablist">{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} role="tab" aria-selected={tab.id===tabs.activeId} onClick={()=>{tabs.activateTab(tab.id);}}>{tab.kind}</button>)}</div>
+        <button id="add" className="right-inspector-new-tab" onClick={()=>openResource('browser','about:blank')}>+</button>
       </header>
       <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId}>{(tab,active)=>
         tab.kind==='history'||tab.kind==='subagent'?<WorkSummaryInspector active={active} language={language} detail={tab.detail} messages={messages}/>
-        :tab.kind==='resource'?<InspectorWebview identity={tab.id} target={tab.detail.target} source={tab.detail.target} language={language} onOpenTarget={noop} onNavigationStateChange={noop}/>
+        :tab.kind==='resource'?<InspectorWebview identity={tab.id} target={tab.detail.target} source={tab.detail.target} language={language} onOpenTarget={noop} onNavigationStateChange={noop}
+          startPage={<InspectorActions language={language} filesAvailable shadowUnavailableReason=""
+            onOpenHistory={()=>openHistory()} onOpenReview={()=>openReview()}
+            onOpenFiles={()=>openResource('file','C:/fixture.md')} onOpenShadow={openShadow}/>}/>
         :tab.kind==='shadow'?<ShadowWindow embedded context={tab.context}/>
         :<ConversationChangeDialog embedded language={language} conversation={{id:tab.conversationId,title:'审查源会话',preview:'',updatedAt:'',projectDir:'C:/fixture'}} reports={liveReports}
            initialFilePath={tab.initialFilePath} selectionRequestId={tab.selectionRequestId}

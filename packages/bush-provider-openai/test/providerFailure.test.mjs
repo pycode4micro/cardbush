@@ -81,7 +81,7 @@ test("does not reinterpret an explicit provider terminal failure as a transport 
   }
 });
 
-test("real SDK fetch wrapper keeps the cause and records its single compatibility retry", async (context) => {
+test("real SDK fetch wrapper keeps the cause and leaves transport retries to Runtime", async (context) => {
   let requests = 0;
   context.mock.method(globalThis, "fetch", async () => {
     requests += 1;
@@ -91,8 +91,8 @@ test("real SDK fetch wrapper keeps the cause and records its single compatibilit
   const events = [];
   const diagnostics = [];
   for await (const event of provider.stream(request, { onCompatibilityDiagnostic: event => diagnostics.push(event) })) events.push(event);
-  assert.equal(requests, 2);
-  assert.deepEqual(diagnostics.map(event => event.action), ['retry', 'failed']);
+  assert.equal(requests, 1);
+  assert.deepEqual(diagnostics, []);
   assert.equal(events.at(-1).code, "ECONNRESET");
   assert.equal(events.at(-1).retryable, true);
   assert.doesNotMatch(JSON.stringify(events), /SENSITIVE/);

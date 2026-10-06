@@ -151,7 +151,6 @@ export function SidebarResizer({
       role="separator"
       aria-orientation="vertical"
       aria-label={language === 'zh' ? '调整侧边栏宽度' : 'Resize sidebar'}
-      title={language === 'zh' ? '拖动调整侧边栏宽度' : 'Drag to resize sidebar'}
       onPointerDown={beginResize}
       onLostPointerCapture={() => cancelRef.current?.()}
     />

@@ -34,7 +34,7 @@ test('remote subagents dispatch asynchronously, join any/all, and resume the sam
   assert.equal(first.kind, 'returned'); assert.equal(first.result.status, 'running');
   assert.equal(f.requests[0].language, 'en');
   assert.doesNotMatch(JSON.stringify(f.requests), /private parent history|never-forward|local-model/);
-  const invalidResume = await f.invoke('subagent', { prompt: 'Continue', resume_task_id: first.result.taskId });
+  const invalidResume = await f.invoke('subagent', { prompt: 'Continue', task_id: first.result.taskId });
   assert.equal(invalidResume.kind, 'failed');
   const second = await f.invoke('subagent', { prompt: 'Check docs', target_agent: f.target.id });
   pending[1].resolve(completed('Docs checked'));
@@ -44,7 +44,7 @@ test('remote subagents dispatch asynchronously, join any/all, and resume the sam
   pending[0].resolve(completed('Build checked'));
   const all = await f.invoke('await_subagents', { task_ids: [first.result.taskId, second.result.taskId], mode: 'all' });
   assert.equal(all.result.count, 2);
-  const resumed = await f.invoke('subagent', { prompt: 'Inspect follow-up', resume_task_id: first.result.taskId });
+  const resumed = await f.invoke('subagent', { prompt: 'Inspect follow-up', task_id: first.result.taskId });
   assert.equal(resumed.result.childSessionId, first.result.childSessionId);
   assert.notEqual(resumed.result.childTurnId, first.result.childTurnId);
   pending[2].resolve(completed('Follow-up checked')); await f.results.get(resumed.result.taskId);
@@ -55,9 +55,9 @@ test('remote delegation rejects mixed configuration, cross-parent resume and cha
   const f = fixture(async () => completed('done'));
   assert.equal((await f.invoke('subagent', { prompt: 'x', target_agent: f.target.id, mode: 'fork' })).kind, 'failed');
   const result = await f.invoke('subagent', { prompt: 'x', target_agent: f.target.id }); await f.results.get(result.result.taskId);
-  assert.equal((await f.invoke('subagent', { prompt: 'x', resume_task_id: result.result.taskId }, { ...f.request, sessionId: 'other-parent' })).kind, 'failed');
+  assert.equal((await f.invoke('subagent', { prompt: 'x', task_id: result.result.taskId }, { ...f.request, sessionId: 'other-parent' })).kind, 'failed');
   f.target.agentId = 'changed-agent';
-  assert.equal((await f.invoke('subagent', { prompt: 'x', resume_task_id: result.result.taskId })).kind, 'failed');
+  assert.equal((await f.invoke('subagent', { prompt: 'x', task_id: result.result.taskId })).kind, 'failed');
   assert.equal(f.requests.length, 1);
 });
 

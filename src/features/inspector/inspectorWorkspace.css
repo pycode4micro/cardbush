@@ -30,13 +30,15 @@ body.inspector-layout-resizing webview, body.inspector-layout-resizing iframe { 
 body.inspector-layout-resizing { user-select: none; }
 .desktop-shell.inspector-multi-page.window-maximized, .desktop-shell.inspector-multi-page { --conversation-pane-min-width: 340px; }
 .desktop-shell.inspector-covered { position: relative; }
-.desktop-shell.inspector-covered > .main-stage, .desktop-shell.inspector-covered > .sidebar, .desktop-shell.inspector-covered > .sidebar-resizer { visibility: hidden; pointer-events: none; }
+.desktop-shell.inspector-covered > .main-stage, .desktop-shell.inspector-covered > .sidebar-resizer { visibility: hidden; pointer-events: none; }
+.desktop-shell.inspector-covered > .sidebar { --side-panel-width: min(var(--sidebar-width, 272px), calc(100cqw - 48px)); position: absolute; inset: 0 auto 0 0; z-index: 46; height: 100%; box-shadow: 10px 0 28px var(--shadow); }
+.desktop-shell.inspector-covered > .compact-sidebar-backdrop { z-index: 45; }
 .desktop-shell.inspector-covered > .right-inspector { --side-panel-width: calc(100cqw - 2px); position: absolute; inset: 0; width: 100%; max-width: 100%; height: 100%; border-left: 0; border-radius: 0; z-index: 20; }
 /* Cover follows the actual viewport, while normal reveal/hide keeps its fixed inner width. */
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-resizer { display: none; }
 .desktop-shell.inspector-conversation-covered > .main-stage { flex: 0 0 0; width: 0; visibility: hidden; pointer-events: none; }
-.desktop-shell.inspector-conversation-covered > .right-inspector { flex: 1 0 0; width: 0; transition: none; }
+.desktop-shell.inspector-conversation-covered > .right-inspector { flex: 1 0 0; width: 0; border-left: 0; transition: none; }
 .desktop-shell.inspector-conversation-covered > .right-inspector .right-inspector-content { width: 100%; }
 /* Keep the inspector in the same layout while dragging. Taking it out of flex
    expands the conversation underneath it and changes the pointer's origin. */
@@ -44,7 +46,10 @@ body.right-inspector-resizing .desktop-shell > .right-inspector { transition: no
 .desktop-shell { position: relative; }
 .inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
 .inspector-conversation-covered .inspector-cover-controls { left: calc(var(--layout-sidebar-space) + (100% - var(--layout-sidebar-space)) / 2); width: min(680px, calc(100% - var(--layout-sidebar-space) - 32px)); }
-.inspector-conversation-covered > .right-inspector .right-inspector-resizer { left: calc(var(--panel-resize-hit-width) / 2); }
+/* With no conversation pane there is no second divider to resize. The sidebar
+   keeps its own boundary; Back restores the conversation and its divider. */
+.inspector-conversation-covered > .right-inspector .right-inspector-resizer { display: none; }
+body.right-inspector-resizing .inspector-conversation-covered > .right-inspector .right-inspector-resizer { display: block; }
 .inspector-cover-capsule {
   display: inline-flex; width: max-content; max-width: 100%; gap: 2px; padding: 4px;
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 999px;
@@ -57,11 +62,38 @@ body.right-inspector-resizing .desktop-shell > .right-inspector { transition: no
 .inspector-cover-capsule button + button::before { content: ''; position: absolute; left: -2px; top: 25%; height: 50%; width: 1px; background: color-mix(in srgb, var(--text) 14%, transparent); }
 .inspector-cover-capsule button:hover, .inspector-cover-capsule button[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .inspector-cover-capsule button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.inspector-quick-input { width: 100%; pointer-events: auto; }
+.inspector-quick-input { width: 100%; display: flex; flex-direction: column; gap: 0; pointer-events: auto; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-strong); box-shadow: 0 8px 28px var(--shadow); }
 .inspector-quick-input .composer-stack { margin: 0; max-width: none; width: 100%; }
+.quick-input-conversation { order: -1; min-width: 0; border-bottom: 1px solid var(--border); }
+.quick-input-status { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 7px 12px; border: 0; border-radius: 17px 17px 0 0; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; line-height: 16px; text-align: left; cursor: pointer; }
+.quick-input-status:hover { color: var(--text); background: var(--surface-raised); }
+.quick-input-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.quick-input-status > svg { flex-shrink: 0; }
+.quick-input-status[data-state="working"] > svg { animation: cardbush-spin 900ms linear infinite; }
+.quick-input-status[data-state="error"] > svg { color: var(--danger); }
+.quick-input-status[data-state="waiting"] > svg { color: var(--accent); }
+.quick-input-status-action { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-soft); }
+.quick-input-status-action svg { transition: transform 180ms ease; }
+.quick-input-status[aria-expanded="true"] .quick-input-status-action svg { transform: rotate(180deg); }
+.quick-input-transcript { max-height: min(340px, 42dvh, calc(100dvh - 230px)); min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; outline-offset: -2px; }
+.quick-input-transcript-content { padding: 10px 14px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+.quick-input-transcript .message-list-item { width: 100%; margin: 0; padding: 0; content-visibility: visible; }
+.quick-input-transcript .assistant-message { margin-bottom: 12px; }
+.quick-input-transcript .assistant-message > div { padding: 9px 12px; border-radius: 15px; }
+.quick-input-transcript .assistant-task-bubble { margin-bottom: 12px; padding: 9px 12px; }
+.quick-input-transcript .markdown-content { font-size: 13px; }
+.quick-input-transcript :is(pre, table) { max-width: 100%; overflow-x: auto; }
+.quick-input-transcript .interaction-card { margin: 8px 0 0; }
+.quick-input-empty, .quick-input-error { margin: 4px 0; color: var(--text-soft); font-size: 12px; }
+.quick-input-error { color: var(--danger); white-space: pre-wrap; }
+@media (prefers-reduced-motion: reduce) { .quick-input-status[data-state="working"] > svg { animation: none; } }
 .composer-stack.input-only .composer-tools, .composer-stack.input-only .model-select, .composer-stack.input-only .composer-note { display: none; }
 .composer-stack.input-only .composer-footer { justify-content: flex-end; margin-top: 0; }
-.composer-stack.input-only .composer { box-shadow: 0 6px 25px var(--shadow); }
+.inspector-quick-input .composer-stack.input-only .composer-surface { border: 0; border-radius: 0 0 17px 17px; background: transparent; box-shadow: none; }
+.composer-stack.input-only .composer-surface:not(.voice-call-active) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 10px; padding: 9px 10px 9px 13px; }
+.composer-stack.input-only .composer-surface:not(.voice-call-active) > :is(textarea, .composer-prompt-editor) { grid-area: 1 / 1; min-height: 1.5em; max-height: min(160px, 20dvh); margin: 3px 0; padding: 0; }
+.composer-stack.input-only .composer-surface:not(.voice-call-active) > .composer-footer { grid-area: 1 / 2; padding: 0; }
+.composer-stack.input-only .composer-surface > :is(.composer-image-strip, .composer-file-strip, .composer-command-mode, .composer-attachment-progress) { grid-column: 1 / -1; }
 .inspector-page-dialog { width: min(460px, calc(100% - 32px)); padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
 .inspector-page-dialog::backdrop { background: #0008; }
 .inspector-page-dialog form, .inspector-page-dialog label { display: flex; flex-direction: column; gap: 12px; }
@@ -69,8 +101,22 @@ body.right-inspector-resizing .desktop-shell > .right-inspector { transition: no
 .inspector-page-dialog input, .inspector-page-dialog textarea, .inspector-page-dialog select { font: inherit; color: var(--text); background: var(--surface); padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; min-width: 0; }
 .inspector-page-dialog footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
 .inspector-page-dialog button { font: inherit; color: var(--text); background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); padding: 7px 16px; border-radius: 8px; }
-.right-inspector-start-actions { max-height: calc(100% - 48px); overflow-y: auto; scrollbar-width: thin; }
-.right-inspector-add-menu { max-height: min(600px, calc(100vh - 120px)); overflow-y: auto; scrollbar-width: thin; }
-.right-inspector-start-actions .inspector-add-page { border: 1px dashed var(--border); }
-.right-inspector-start-actions .inspector-bookmark-entry { min-height: 42px; }
+.showing-start-page .right-inspector-webview { visibility: hidden; pointer-events: none; }
+.inspector-new-tab-page { position: absolute; inset: 0; z-index: 2; overflow: auto; background: var(--surface); color: var(--text); scrollbar-width: thin; }
+.right-inspector-start-actions { width: 100%; max-width: 760px; margin: 0 auto; padding: 28px 18px; }
+.right-inspector-start-actions h2 { margin: 0 0 16px; font-size: 14px; font-weight: 600; }
+.inspector-start-tools { display: grid; gap: 6px; }
+.inspector-start-tools h2 { margin-bottom: 8px; }
+.inspector-start-tools > button { min-width: 0; min-height: 46px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 13px; border: 0; border-radius: 11px; background: var(--surface-strong); color: var(--text-mid); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.inspector-start-tools > button strong { font-weight: 500; }
+.inspector-start-tools > button { background: color-mix(in srgb, var(--text) 5%, var(--surface)); color: var(--text); }
+.inspector-start-tools > button:hover:not(:disabled), .inspector-start-sites .inspector-bookmark-entry:hover { background: color-mix(in srgb, var(--text) 9%, var(--surface)); color: var(--text); }
+.inspector-start-tools > button:disabled { opacity: .42; cursor: default; }
+.inspector-start-tools > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-start-tools kbd { border-radius: 6px; padding: 2px 6px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text-soft); font: inherit; font-size: 11px; white-space: nowrap; }
+.inspector-start-tools > button:focus-visible, .inspector-bookmark-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.inspector-start-bookmarks { margin-top: 36px; }
+.inspector-start-sites { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 10px; }
+.inspector-start-sites .inspector-bookmark-entry { flex: 0 0 112px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 17px; padding: 18px 10px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--text-mid); font: inherit; cursor: pointer; }
+.inspector-start-sites .inspector-bookmark-entry strong { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
 @media(max-width:720px) { .desktop-shell.inspector-multi-page { --conversation-pane-min-width: 0px; } .inspector-tile-frame .right-inspector-navigation > .inspector-tile-history { display: none; } }

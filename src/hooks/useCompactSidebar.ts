@@ -21,7 +21,9 @@ export function useCompactSidebar() {
   useEffect(() => {
     if (!compactLayout || sidebarCollapsed) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) setDrawerCollapsed(true);
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open]')) return;
+      event.preventDefault();
+      setDrawerCollapsed(true);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);

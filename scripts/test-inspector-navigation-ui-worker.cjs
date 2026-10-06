@@ -43,7 +43,7 @@ app.whenReady().then(async () => {
     await click('#add');
     await click('[data-inspector-action="history"]');
     await until('document.querySelectorAll(".work-summary-inspector-turn").length===9');
-    assert.equal(await read('document.querySelectorAll("[role=tab]").length'),1,'history participates in the tab strip');
+    assert.equal(await read('document.querySelectorAll("[role=tab]").length'),2,'new tab and history participate in the tab strip');
     await read('document.getElementById("conversation-scroll").scrollTop=300; void 0');
     for (const theme of ['dark','bright']) {
       await read('document.querySelector(".app").className='+JSON.stringify('app theme-'+theme)+'; void 0');
@@ -81,7 +81,7 @@ app.whenReady().then(async () => {
     await click('#add'); await click('[data-inspector-action="files"]');
     await until('document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
     await read('window.fileNode=document.querySelector(".markdown-inspector-preview"); window.initialFileReads=fileReads; void 0');
-    await click('#add'); await click('[data-inspector-action="browser"]');
+    await click('#add');
     await until('document.querySelector("webview")?.getWebContentsId?.()>0 && document.querySelector(".right-inspector-tab-page.active .right-inspector-preview.ready")');
     await read('window.browserId=document.querySelector("webview").getWebContentsId(); void 0');
     await click('#add'); await click('[data-inspector-action="review"]');

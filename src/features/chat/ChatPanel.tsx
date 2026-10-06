@@ -1,6 +1,8 @@
 import { Sparkles } from 'lucide-react';
 import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
+import { QuickInputStatus } from '../composer/QuickInputStatus';
+import { ComposerPortalContext } from '../composer/ComposerPortalContext';
 import { QueueActionsMenu } from '../composer/QueueActionsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ExtractionSelector } from './ConversationExtraction';
@@ -381,6 +383,7 @@ export function ChatPanel({
   embedded?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
+  const quickInputTarget = useContext(ComposerPortalContext);
   const runtimeSessionId = host?.sessionId ?? activeConversationId;
   const pendingInteraction = suppliedPendingInteraction?.sessionId === activeConversationId
     ? suppliedPendingInteraction : null;
@@ -2509,6 +2512,79 @@ export function ChatPanel({
     scrollerRef: listScrollerRef, requestedVisible: showScrollBottom, scope: scrollPositionKey,
     enabled: !loading && !showWelcome, revision: scrollMountRevision,
   });
+  const renderMessage = (message: ChatMessage, index: number, preview = false) => (
+    <div
+      key={message.renderKey ?? message.id}
+      className={`message-list-item${index === 0 ? ' first' : ''}${
+        sending && activeTurnId && message.turnId === activeTurnId ? ' live-turn' : ''
+      }${
+        message.role === 'user' && (
+          enteringUserMessageIds.has(message.id) ||
+          pendingSubmittedUserEntryMessageId === message.id
+        )
+          ? ' user-message-entering'
+          : ''
+      }${
+        sending && message.role === 'assistant' &&
+        activeAssistantForRender?.message.id === message.id
+          ? ' streaming'
+          : ''
+      }`}
+      data-message-id={message.id}
+      data-message-render-key={message.renderKey ?? message.id}
+      data-message-role={message.role}
+    >
+      {!preview && (message.role === 'user' || (message.role === 'assistant' && lastAssistantByTurn.get(message.turnId ?? '') === message.id)) &&
+        <ExtractionSelector message={message} sessionId={runtimeSessionId} />}
+      <MessageBubble
+        message={message}
+        keepActionsVisible={message.id === latestCompletedMessageId}
+        activeConversationId={activeConversationId}
+        thinkingVisible={thinkingVisible}
+        readOnlyActions={readOnlyActions}
+        guidanceAvailable={guidanceAvailable}
+        changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
+        language={language}
+        sending={sending}
+        activeTurnId={activeTurnId}
+        canRevertWorkspace={reversibleTurnIds.has(message.turnId ?? '')}
+        activeAssistantMessageId={
+          activeAssistantForRender?.message.id ?? ''
+        }
+        selectedModel={selectedModelConfig?.modelName ?? selectedModel}
+        goalObjective={activeGoal?.objective ?? ''}
+        onRegenerate={onRegenerate}
+        onEditUserMessage={onEditUserMessage}
+        onRetryMessage={onRetryMessage}
+        onRetryGuidance={onRetryGuidance}
+        onRevertChangeReport={onRevertChangeReport}
+        onOpenChangeReview={filePath => onOpenChangeReview(filePath, message.turnId)}
+        onOpenScene={openScene}
+      />
+      {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
+        conversationId={activeConversationId} turnId={activeTurnId} language={language}
+        model={selectedModelConfig?.modelName ?? selectedModel} thinkingVisible={thinkingVisible}
+        reasoningActive={!activeAssistantForRender}
+        stopping={stopping} retryAvailable={guidanceAvailable} onRetry={onRetryGuidance} />}
+      {(activeAssistantForRender?.message.id === message.id || goalMessageId === message.id) && (
+        <TurnRuntimeDetails
+          key={`progress:${activeConversationId}:${message.turnId ?? message.id}`}
+          language={language}
+          running={sending && activeAssistantForRender?.message.id === message.id}
+          stopping={stopping && activeAssistantForRender?.message.id === message.id}
+          taskPlan={activeAssistantForRender?.message.id === message.id ? activeTaskPlan : undefined}
+          goal={goalMessageId === message.id ? activeGoal : undefined}
+          goalRounds={activeGoalRounds}
+          goalCancelling={goalCancelling}
+          goalWaiting={goalWaiting}
+          onCancelGoal={onCancelGoal}
+          changeSummary={activeAssistantForRender?.message.id === message.id ? currentTurnChangeSummary : undefined}
+          onOpenChangeReview={() => onOpenChangeReview(undefined, message.turnId)}
+        />
+      )}
+    </div>
+  );
+
   if (import.meta.env.DEV && isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
   }
@@ -2539,6 +2615,16 @@ export function ChatPanel({
         sending, stopping, activeTurnId, language, waiting: hasInteraction,
         send: (text, options) => handleComposerSend(text, { ...options, acknowledge: true }) }}>
     <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
+    {!embedded && <QuickInputStatus language={language} messages={renderMessages} sending={sending} stopping={stopping}
+      submitting={submissionPending} waiting={hasInteraction} error={error || refreshError} recovery={connectionRecovery} queued={queuedMessageCount}
+      sessionId={activeConversationId} interaction={interactionContent ?? (pendingInteraction && <InteractionCard
+        key={pendingInteraction.id} language={language} interaction={pendingInteraction} onReply={onReplyInteraction} onCancel={onCancelInteraction}/>)}>
+      <MessageFileReferenceScope workspaceRoot={activeProjectDir} pathAliases={projectPathAliases}>
+        {renderMessages.slice(-12).map((message, index) => renderMessage(message, index, true))}
+        {connectionRecovery && connectionRecovery.state !== 'recovered' && <ConversationConnectionNotice language={language} update={connectionRecovery}/>}
+        {transcriptFooter}
+      </MessageFileReferenceScope>
+    </QuickInputStatus>}
     <div
       className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${composerAnchored ? ' composer-anchored' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
       data-composer-after-send={composerFlow.afterSend}
@@ -2687,79 +2773,7 @@ export function ChatPanel({
               pathAliases={projectPathAliases}
             >
               <div className="message-list-content">
-                {renderMessages.map((message, index) => (
-                  <div
-                    key={message.renderKey ?? message.id}
-                    className={`message-list-item${index === 0 ? ' first' : ''}${
-                      sending && activeTurnId && message.turnId === activeTurnId ? ' live-turn' : ''
-                    }${
-                      message.role === 'user' && (
-                        enteringUserMessageIds.has(message.id) ||
-                        pendingSubmittedUserEntryMessageId === message.id
-                      )
-                        ? ' user-message-entering'
-                        : ''
-                    }${
-                      sending && message.role === 'assistant' &&
-                      activeAssistantForRender?.message.id === message.id
-                        ? ' streaming'
-                        : ''
-                    }`}
-                    data-message-id={message.id}
-                    data-message-render-key={message.renderKey ?? message.id}
-                    data-message-role={message.role}
-                  >
-                    {(message.role === 'user' || (message.role === 'assistant' && lastAssistantByTurn.get(message.turnId ?? '') === message.id)) &&
-                      <ExtractionSelector message={message} sessionId={runtimeSessionId} />}
-                    <MessageBubble
-                      message={message}
-                      keepActionsVisible={message.id === latestCompletedMessageId}
-                      activeConversationId={activeConversationId}
-                      thinkingVisible={thinkingVisible}
-                      readOnlyActions={readOnlyActions}
-                      guidanceAvailable={guidanceAvailable}
-                      changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
-                      language={language}
-                      sending={sending}
-                      activeTurnId={activeTurnId}
-                      canRevertWorkspace={reversibleTurnIds.has(message.turnId ?? '')}
-                      activeAssistantMessageId={
-                        activeAssistantForRender?.message.id ?? ''
-                      }
-                      selectedModel={selectedModelConfig?.modelName ?? selectedModel}
-                      goalObjective={activeGoal?.objective ?? ''}
-                      onRegenerate={onRegenerate}
-                      onEditUserMessage={onEditUserMessage}
-                      onRetryMessage={onRetryMessage}
-                      onRetryGuidance={onRetryGuidance}
-                      onRevertChangeReport={onRevertChangeReport}
-                      onOpenChangeReview={filePath => onOpenChangeReview(filePath, message.turnId)}
-                      onOpenScene={openScene}
-
-                    />
-                    {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
-                      conversationId={activeConversationId} turnId={activeTurnId} language={language}
-                      model={selectedModelConfig?.modelName ?? selectedModel} thinkingVisible={thinkingVisible}
-                      reasoningActive={!activeAssistantForRender}
-                      stopping={stopping} retryAvailable={guidanceAvailable} onRetry={onRetryGuidance} />}
-                    {(activeAssistantForRender?.message.id === message.id || goalMessageId === message.id) && (
-                      <TurnRuntimeDetails
-                        key={`progress:${activeConversationId}:${message.turnId ?? message.id}`}
-                        language={language}
-                        running={sending && activeAssistantForRender?.message.id === message.id}
-                        stopping={stopping && activeAssistantForRender?.message.id === message.id}
-                        taskPlan={activeAssistantForRender?.message.id === message.id ? activeTaskPlan : undefined}
-                        goal={goalMessageId === message.id ? activeGoal : undefined}
-                        goalRounds={activeGoalRounds}
-                        goalCancelling={goalCancelling}
-                        goalWaiting={goalWaiting}
-                        onCancelGoal={onCancelGoal}
-                        changeSummary={activeAssistantForRender?.message.id === message.id ? currentTurnChangeSummary : undefined}
-                        onOpenChangeReview={() => onOpenChangeReview(undefined, message.turnId)}
-                      />
-                    )}
-                  </div>
-                ))}
+                {renderMessages.map((message, index) => renderMessage(message, index))}
                 {connectionRecovery && connectionRecovery.state !== 'recovered' && (
                   <ConversationConnectionNotice
                     language={language}
@@ -2795,7 +2809,7 @@ export function ChatPanel({
             <span>{language === 'zh' ? '继续场景' : 'Scene'}</span>
           </button>
         )}
-        {!showWelcome && (pendingInteraction || interactionContent) && (
+        {!showWelcome && !quickInputTarget && (pendingInteraction || interactionContent) && (
           <div
             className={`composer-dock interaction-only ${pendingInteraction?.type === 'solution_selection' ? 'solution-only' : 'permission-only'}`}
             ref={composerDockRef}

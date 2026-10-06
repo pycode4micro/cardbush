@@ -50,11 +50,11 @@ assert.match(css, /\.right-inspector\.soft-panel-hidden/);
 assert.match(css, /\.conversation-work-summary\.soft-panel-hidden/);
 assert.match(css, /body\.sidebar-resizing \.sidebar[\s\S]*transition:\s*none/);
 assert.match(css, /body\.right-inspector-resizing \.right-inspector[\s\S]*transition:\s*none/);
-assert.match(css, /--conversation-pane-min-width:\s*440px/);
-assert.match(
+assert.match(css, /--conversation-pane-min-width:\s*340px/);
+assert.doesNotMatch(
   css,
-  /\.desktop-shell\.window-maximized\s*\{[\s\S]*?--conversation-pane-min-width:\s*clamp\(340px,\s*18vw,\s*440px\)/,
-  'Only an actually maximized window may yield more horizontal space to the inspector',
+  /\.desktop-shell\.window-maximized\s*\{[\s\S]*?--conversation-pane-min-width:/,
+  'Window mode must not change the conversation minimum',
 );
 assert.match(
   css,
@@ -70,9 +70,7 @@ assert.match(
   /mainWidth \/ scaleX \+ currentWidth - minimumConversationPaneWidth/,
   'Pointer resizing must use the same narrower conversation-pane limit as the flex layout',
 );
-assert.match(rightInspectorSizing, /maximizedConversationPaneMinimum = 340/);
-assert.match(rightInspectorSizing, /maximizedConversationPanePreferredRatio = 0\.18/);
-assert.match(rightInspectorSizing, /maximizedConversationPaneMaximum = 440/);
+assert.match(rightInspectorSizing, /minimumConversationWidth = 340/);
 assert.doesNotMatch(rightInspectorSizing, /maximizedInspectorMaximum/);
 assert.match(
   rightInspectorSizing,
@@ -82,14 +80,9 @@ assert.match(
 assert.match(app, /<RightInspectorResizer[\s\S]*?windowMaximized=\{windowMaximized\}/);
 assert.doesNotMatch(rightInspectorResizer, /minimumMainStageWidth\s*=\s*560/);
 assert.match(app, /const inspectorWidthRef = useRef\(inspectorWidth\)/);
-assert.match(app, /const rightEdgeDelta = nextLeft \+ nextOuterWidth/);
-assert.match(app, /const leftEdgeStayedPut = Math\.abs\(nextLeft - previousLeft\) <= 2/);
-assert.match(app, /Math\.sign\(innerWidthDelta\) !== Math\.sign\(rightEdgeDelta\)/);
-assert.match(app, /pendingWidthDelta \+= innerWidthDelta/);
-assert.match(app, /setInspectorWidth\(inspectorWidthRef\.current \+ widthDelta\)/);
-assert.match(app, /window\.addEventListener\('resize', resizeInspectorFromWindowRightEdge\)/);
-assert.match(app, /document\.body\.classList\.add\('window-right-edge-resizing'\)/);
-assert.match(css, /body\.window-right-edge-resizing \.right-inspector,[\s\S]*?transition:\s*none/);
+// Actual viewport fitting and preferred-width restoration are covered by the
+// native inspector-window-layout fixture, including both window edges.
+assert.doesNotMatch(app, /resizeInspectorFromWindowRightEdge/);
 assert.match(css, /--chat-inline-gutter:\s*clamp\(18px,\s*calc\(3vw \+ 10px\),\s*46px\)/);
 assert.match(
   css,
@@ -124,12 +117,12 @@ assert.equal(
 );
 assert.match(
   app,
-  /<header className=\{`right-inspector-toolbar[\s\S]*?className="right-inspector-tabs"[\s\S]*?<\/header>/,
+  /<header className=\{`right-inspector-toolbar[\s\S]*?<InspectorTabStrip[\s\S]*?<\/header>/,
   'Browser and file tabs must live in the inspector title bar',
 );
 assert.match(read('src', 'features', 'inspector', 'inspectorTabs.ts'), /type InspectorTab = InspectorResourceTab \| InspectorReviewTab \| InspectorShadowTab/);
-assert.match(app, /className="right-inspector-add-tab"/);
-assert.match(app, /<InspectorActions \{\.\.\.inspectorActionProps\} menu/);
+assert.match(app, /className="right-inspector-new-tab"/);
+assert.match(app, /startPage=\{<InspectorActions \{\.\.\.inspectorActionProps\}/);
 assert.match(app, /className="right-inspector-tab-strip"/);
 assert.match(app, /useInspectorTabStrip\(activeInspectorTabIdentity, displayedInspectorTabs\.length\)/);
 // Mount, wheel cancellation and ancestor-scroll behavior are exercised in Electron
@@ -142,12 +135,12 @@ assert.match(app, /关闭右侧标签页/);
 assert.match(app, /关闭全部标签页/);
 assert.match(
   app,
-  /const inspectorActionProps = \{[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab[\s\S]*?openNewBrowserInspectorTab/,
-  'The inspector new-tab menu must offer file, Shadow, and browser tabs in one place',
+  /const inspectorActionProps = \{[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab/,
+  'The inspector start page must offer file and Shadow actions',
 );
 assert.match(app, /tab\.kind === 'review'[\s\S]*?<Clipboard/);
 assert.match(app, /tab\.kind === 'shadow'[\s\S]*?<ShadowWindow embedded context=\{tab\.context\}/);
-assert.match(app, /openInspectorTarget\(await newBrowserTab\(\)\)/);
+assert.match(app, /openInspectorTarget\(newBrowserTab\(language\)\)/);
 assert.match(app, /className="right-inspector-address editable"[\s\S]*?\.navigate\(inspectorAddressDraft\)/);
 assert.match(app, /const webviewDomReadyRef = useRef\(false\)/);
 assert.match(app, /webview\.addEventListener\('dom-ready', ready\)/);
@@ -169,7 +162,7 @@ for (const shortcut of ['openBrowser', 'openFiles', 'openShadow']) {
 }
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
-assert.match(css, /\.right-inspector-add-menu\s*\{/);
+assert.doesNotMatch(css, /\.right-inspector-add-menu\s*\{/);
 assert.match(css, /\.right-inspector-tab-menu\s*\{/);
 assert.match(css, /\.right-inspector-tab-context-menu\s*\{/);
 assert.match(css, /\.shadow-window-shell\.shadow-inspector-shell\s*\{/);

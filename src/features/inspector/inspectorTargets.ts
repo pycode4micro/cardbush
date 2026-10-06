@@ -30,7 +30,18 @@ export function normalizeInspectorBrowserAddress(address: string) {
   if (/^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(value)) {
     return `http://${value}`;
   }
-  return `https://${value}`;
+  // An address bar also accepts search terms. Keep local/application schemes
+  // out of search so a pasted file path is not sent to a search engine.
+  if (/^(?:javascript|data|file|vbscript|blob):/i.test(value) || isAbsoluteLocalPath(value)) return '';
+  if (!/\s/.test(value)) {
+    try {
+      const url = new URL(`https://${value}`);
+      if (!url.username && !url.password && (url.hostname.includes('.') || url.hostname.startsWith('['))) {
+        return `https://${value}`;
+      }
+    } catch { /* Non-address input is a search query. */ }
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }
 
 export function inspectorTabLabel(detail: InspectorOpenDetail) {

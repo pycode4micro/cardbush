@@ -15,7 +15,7 @@ import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')
 window.addEventListener('error',event=>console.error(event.error?.stack)); window.calls=[]; window.reads=[]; window.streams=new Map();
 window.projectChild=childConversationMessages;
 const now=()=>new Date().toISOString(), root=createRoot(document.getElementById('root'));
-const tasks={}, histories={}; let render;
+const tasks={}, histories={}, selectedTasks={}; let render;
 const taskFor=id=>tasks[id]??(tasks[id]={protocol:'bush.subagent_task.v1',taskId:'task-'+id,parentSessionId:'parent',parentTurnId:'parent-turn',childSessionId:id,childTurnId:'initial-'+id,requestPrompt:'主 Agent 派发：检查布局 '+id,status:'running',terminal:false,createdAt:now(),updatedAt:now(),usage:{},raw:{}});
 const history=id=>histories[id]??=[{id:'previous-'+id,role:'assistant',conversationId:id,turnId:'previous-turn-'+id,content:'上一轮已核对文件范围。',status:'completed',createdAt:now()}];
 const conversation=id=>({id,title:'Child '+id,preview:'',updatedAt:now(),projectDir:'C:/fixture'});
@@ -23,9 +23,10 @@ const runtime={client:{getSession:async id=>({sessionId:id,turns:[],supersededMe
   stopTurn:async input=>{window.calls.push({kind:'stop',...input});window.finish(input.sessionId,'stopped');return {accepted:true,terminal:false,reason:'stop_accepted'};},revertWorkspaceChanges:async()=>{},restoreWorkspaceChanges:async()=>{}},answerPermission:async()=>{},dispose(){}};
 const load=async id=>{window.reads.push(id);return {conversation:conversation(id),messages:structuredClone(history(id)),toolExecutions:[]};};
 const stream=async request=>{const {sessionId,turnId}=request; window.calls.push({kind:'watch',sessionId,turnId});
-  request.onStart?.({sessionId,turnId,createdAt:now()}); request.onDelta?.('正在检查布局。',{turnId,messageId:'live-'+turnId,channel:'assistant',assistantSegmentIndex:1,createdAt:now(),sequence:2});
+  request.onStart?.({sessionId,turnId,createdAt:now()}); const emit=()=>{request.onDelta?.('正在检查布局。',{turnId,messageId:'live-'+turnId,channel:'assistant',assistantSegmentIndex:1,createdAt:now(),sequence:2});
   request.onToolExecution?.({id:'tool-'+turnId,name:'read_file',state:'completed',success:true,summary:'读取布局文件',output:'width: 100%',durationMs:12,createdAt:now(),turnId,
-    metadata:{displayTitles:{zh:'读取布局文件',en:'Read layout file'},turnId}});
+    metadata:{displayTitles:{zh:'读取布局文件',en:'Read layout file'},turnId}});};
+  if(turnId.startsWith('parent-followup-'))window.releaseParentOutput=emit;else emit();
   await new Promise(resolve=>{const entry={request,resolve};window.streams.set(sessionId,entry);request.signal?.addEventListener('abort',()=>{if(window.streams.get(sessionId)===entry)window.streams.delete(sessionId);resolve();},{once:true});});};
 const base={
   fetchConversations:async()=>[],fetchSessionMessages:load,fetchMessages:async id=>(await load(id)).messages,
@@ -47,14 +48,15 @@ const base={
 };
 window.finish=(id,status='completed')=>{
   const task=taskFor(id);tasks[id]={...task,status,terminal:true,updatedAt:now()};
-  if(!history(id).some(message=>message.metadata?.subagent_author==='parent'))history(id).unshift({id:'assignment-'+id,role:'user',conversationId:id,turnId:task.childTurnId,content:task.requestPrompt,createdAt:task.createdAt,metadata:{subagent_author:'parent'}});
+  if(!history(id).some(message=>message.turnId===task.childTurnId && message.metadata?.subagent_author==='parent'))history(id).push({id:'assignment-'+task.childTurnId,role:'user',conversationId:id,turnId:task.childTurnId,content:task.requestPrompt,createdAt:task.createdAt,metadata:{subagent_author:'parent'}});
   const entry=window.streams.get(id); if(entry){const turnId=entry.request.turnId;history(id).push({id:'answer-'+turnId,role:'assistant',content:status==='stopped'?'已停止':'检查完成，布局正常。',status,conversationId:id,turnId,createdAt:now()});entry.request.onFinalAssistantText?.(status==='stopped'?'已停止':'检查完成，布局正常。',{turnId,messageId:'answer-'+turnId,createdAt:now(),channel:'assistant',assistantSegmentIndex:1,sequence:3});entry.request.onDone?.({turnId,status,stopped:status==='stopped',completedAt:now(),raw:{}});entry.request.onMessages?.(structuredClone(history(id)),true);window.streams.delete(id);entry.resolve();}render();};
 const models={defaultModelId:'fixture',models:[{id:'fixture',modelName:'fixture',provider:'openai',apiKey:'',baseUrl:'https://api.example.invalid/v1',hasApiKey:true,maxContextTokens:400000,maxCompletionTokens:8000}]};
 const call=async()=>models;
 let current='a',language='zh',theme='dark';
 const readTasks=async()=>Object.values(tasks);
+window.parentFollowup=(id,notify)=>{const previous=taskFor(id);selectedTasks[id]??=previous;tasks[id]={...previous,taskId:'resumed-'+crypto.randomUUID(),childTurnId:'parent-followup-'+crypto.randomUUID(),requestPrompt:'父代理追加：请在报告后补充操作建议。',status:'running',terminal:false,createdAt:now(),updatedAt:now(),raw:{resumedFromTaskId:previous.taskId}};render();if(notify)window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:id,taskId:tasks[id].taskId}}));};
 window.show=(id,lang='zh',mode='dark')=>{current=id;language=lang;theme=mode;taskFor(id);render();};
-render=()=>root.render(<div className={'app theme-'+theme} style={{height:'100vh',width:'100%',display:'flex'}}><main style={{flex:1,padding:32}}>主会话保持在这里</main><aside style={{width:620,height:'100%',borderLeft:'1px solid var(--border)'}}><SubagentConversationView key={current} task={taskFor(current)} parentSessionId="parent" language={language} active theme={theme} refresh={async()=>render()} refreshing={false} error="" runtime={runtime} base={base} call={call} readTasks={readTasks}/></aside></div>);
+render=()=>root.render(<div className={'app theme-'+theme} style={{height:'100vh',width:'100%',display:'flex'}}><main style={{flex:1,padding:32}}>主会话保持在这里</main><aside style={{width:620,height:'100%',borderLeft:'1px solid var(--border)'}}><SubagentConversationView key={current} task={selectedTasks[current]??taskFor(current)} parentSessionId="parent" language={language} active theme={theme} refresh={async()=>render()} refreshing={false} error="" runtime={runtime} base={base} call={call} readTasks={readTasks}/></aside></div>);
 window.show('a');
 `;
 const result = await build({ configFile:false,logLevel:'warn',esbuild:{jsx:'automatic'},define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'subagent-conversation-fixture',resolveId(id){if(id.endsWith('__child_fixture__.tsx'))return '\0child-fixture.tsx';},load(id){if(id==='\0child-fixture.tsx')return source;}}],build:{outDir:directory,emptyOutDir:false,minify:false,lib:{entry:resolve('__child_fixture__.tsx'),formats:['es'],fileName:()=> 'fixture.js'}}});

@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { minimumInspectorWidth } from '../../components/rightInspectorSizing';
+import { minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
 
 const splitWidthKey = 'cardbush.inspector_split_width';
 const coveredConversationWidth = 320;
-const usableConversationWidth = 340;
+const usableConversationWidth = minimumConversationWidth;
 
 /** Keep a readable split, including restored widths and live resize previews. */
 export function useInspectorRecovery({ open, covered, width }: { open: boolean; covered: boolean; width: number }) {

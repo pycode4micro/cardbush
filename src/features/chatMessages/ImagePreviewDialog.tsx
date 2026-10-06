@@ -293,7 +293,6 @@ export function ImagePreviewDialog({
               onClick={() => applyZoom(1)}
               disabled={!ready}
               aria-label={language === 'zh' ? '原始尺寸（100%）' : 'Actual size (100%)'}
-              title={language === 'zh' ? '按原始尺寸查看（100%）' : 'View at actual size (100%)'}
             >
               {percentage}%
             </button>
@@ -324,7 +323,7 @@ export function ImagePreviewDialog({
             type="button"
             onClick={onClose}
             aria-label={language === 'zh' ? '关闭预览' : 'Close preview'}
-            title={language === 'zh' ? '关闭预览（Esc）' : 'Close preview (Esc)'}
+            aria-keyshortcuts="Escape"
           >
             <X size={16} />
           </button>
@@ -339,7 +338,7 @@ export function ImagePreviewDialog({
         <div
           ref={stageRef}
           className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
-          title={language === 'zh' ? '滚轮缩放 · 拖动查看' : 'Scroll to zoom · Drag to pan'}
+          aria-description={language === 'zh' ? '滚轮缩放 · 拖动查看' : 'Scroll to zoom · Drag to pan'}
           aria-busy={!ready && !unavailable}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -361,9 +360,9 @@ export function ImagePreviewDialog({
           {gallery.images.length > 1 && <div className="image-preview-navigation"
             onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
             <button type="button" disabled={gallery.index === 0} onClick={() => gallery.move(-1)}
-              aria-label={language === 'zh' ? '上一张图片' : 'Previous image'} title="←"><ChevronLeft size={22} /></button>
+              aria-label={language === 'zh' ? '上一张图片' : 'Previous image'} aria-keyshortcuts="ArrowLeft"><ChevronLeft size={22} /></button>
             <button type="button" disabled={gallery.index === gallery.images.length - 1} onClick={() => gallery.move(1)}
-              aria-label={language === 'zh' ? '下一张图片' : 'Next image'} title="→"><ChevronRight size={22} /></button>
+              aria-label={language === 'zh' ? '下一张图片' : 'Next image'} aria-keyshortcuts="ArrowRight"><ChevronRight size={22} /></button>
           </div>}
           {!ready && <p className="image-preview-status" role="status">{unavailable
             ? language === 'zh' ? '图片无法预览' : 'Image preview unavailable'

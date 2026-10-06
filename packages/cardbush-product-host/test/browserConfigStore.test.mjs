@@ -14,10 +14,10 @@ async function fixture(t) {
   return { root, store: new BrowserConfigStore(join(root, 'config', 'browser.json')) };
 }
 
-test('defaults to Google and persists normalized home page across host instances', async t => {
+test('defaults to blank and preserves legacy normalized home data across host instances', async t => {
   const { store } = await fixture(t);
   const initial = await store.read();
-  assert.equal(initial.startPage, 'https://www.google.com/');
+  assert.equal(initial.startPage, 'about:blank');
   const saved = await store.update({ startPage: ' www.example.com/start?q=中文 ', expectedRevision: initial.revision });
   assert.equal(saved.startPage, 'https://www.example.com/start?q=%E4%B8%AD%E6%96%87');
   assert.equal(saved.revision, initial.revision + 1);

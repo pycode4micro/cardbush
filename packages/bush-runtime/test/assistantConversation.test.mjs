@@ -27,20 +27,20 @@ const parent = (registry, voice = false) => ({ protocol: 'bush.session_turn_requ
   inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Check the files' } }], tools: registry?.definitions() ?? [],
   metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'task_free' });
 
-test('assistant accepts provider display metadata on all five tools, including await without task_ids', async () => {
+test('assistant accepts provider display metadata on all four tools, including await without task_ids', async () => {
   const journal = new ConversationJournal(temporary()), tasks = [], delegated = [], receipts = [];
   const title = { zh: '核对后台任务', en: 'Check background tasks' };
   const batches = [
     [{ name: 'subagent', args: { prompt: 'Read only: inspect the plugin' } }],
-    [{ name: 'await_subagent', args: {} }, { name: 'page_write', args: { content: '已派出任务。' } }],
-    [{ name: 'send_subagent_message', args: { task_id: 'child', prompt: 'Include the supported parameters' } },
+    [{ name: 'await_subagents', args: {} }, { name: 'page_write', args: { content: '已派出任务。' } }],
+    [{ name: 'subagent', args: { task_id: 'child', prompt: 'Include the supported parameters' } },
       { name: 'read_subagent_conversation', args: { task_id: 'child' } }],
   ];
   let round = 0;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks, checkpoint: () => ({}),
     delegate: async input => {
       delegated.push(input);
-      if (input.action === 'subagent') tasks.push({ taskId: 'child', status: 'running', finalResponse: '' });
+      if (input.action === 'subagent' && !input.taskId) tasks.push({ taskId: 'child', status: 'running', finalResponse: '' });
       return { taskId: 'child', status: 'running' };
     }, provider: { async *stream(request) {
       const index = round++;
@@ -53,7 +53,7 @@ test('assistant accepts provider display metadata on all five tools, including a
     await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
     assert.deepEqual(receipts.filter(receipt => receipt.status === 'failed'), []);
-    assert.deepEqual(delegated.map(input => input.action), ['subagent', 'send_subagent_message', 'read_subagent_conversation']);
+    assert.deepEqual(delegated.map(input => input.action), ['subagent', 'subagent', 'read_subagent_conversation']);
     assert.ok(delegated.every(input => !('_display_title' in input)));
     assert.ok(receipts.some(receipt => receipt.status === 'watching' && receipt.tasks[0].taskId === 'child'));
     assert.equal(journal.read(id).filter(item => item.source === 'page').length, 1);
@@ -63,13 +63,13 @@ test('assistant accepts provider display metadata on all five tools, including a
 test('assistant distinguishes malformed arguments, foreign tasks and disabled delegation', async () => {
   const journal = new ConversationJournal(temporary()), results = new Map(), delegated = [];
   const calls = [
-    { id: 'all', name: 'await_subagent', args: {} },
-    { id: 'wrong-type', name: 'await_subagent', args: { task_ids: 'child' } },
-    { id: 'bad-id', name: 'await_subagent', args: { task_ids: [123] } },
-    { id: 'foreign', name: 'await_subagent', args: { task_ids: ['foreign'] } },
+    { id: 'all', name: 'await_subagents', args: {} },
+    { id: 'wrong-type', name: 'await_subagents', args: { task_ids: 'child' } },
+    { id: 'bad-id', name: 'await_subagents', args: { task_ids: [123] } },
+    { id: 'foreign', name: 'await_subagents', args: { task_ids: ['foreign'] } },
     { id: 'unknown-field', name: 'subagent', args: { prompt: 'Inspect', approved: true } },
     { id: 'missing-prompt', name: 'subagent', args: {} },
-    { id: 'missing-task', name: 'send_subagent_message', args: { prompt: 'Continue' } },
+    { id: 'missing-task', name: 'subagent', args: { prompt: 'Continue', task_id: '' } },
     { id: 'invalid-cursor', name: 'read_subagent_conversation', args: { task_id: 'child', cursor: 'broken' } },
     { id: 'disabled', name: 'subagent', args: { prompt: 'Inspect' } },
   ];
@@ -152,7 +152,7 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
     }, provider: { async *stream(request) {
       seen.push(request); const index = round++;
       if (index === 0) { await modelGate.promise; yield* response(request, { text: '我会检查文件。', calls: [{ id: 'dispatch', name: 'subagent', args: { prompt: 'Read only: inspect files' } }] }); }
-      else if (index === 1) yield* response(request, { calls: [{ id: 'watch', name: 'await_subagent', args: { task_ids: ['child-task'] } }] });
+      else if (index === 1) yield* response(request, { calls: [{ id: 'watch', name: 'await_subagents', args: { task_ids: ['child-task'] } }] });
       else if (index === 2) yield* response(request, { text: '已经交给后台处理，我们可以继续聊。' });
       else if (index === 3) yield* response(request, { calls: [{ id: 'page', name: 'page_write', args: { content: '**已核对**：文件正常。' } }] });
       else yield* response(request);
@@ -164,7 +164,7 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
     modelGate.resolve(); await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(tasks[0].status, 'running', 'main response finishes while child still executes');
     assert.equal(round, 3); assistant.command(command); await new Promise(r => setTimeout(r, 20)); assert.equal(round, 3, 'retry does not re-execute');
-    assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['await_subagent', 'page_write', 'read_subagent_conversation', 'send_subagent_message', 'subagent']);
+    assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['await_subagents', 'page_write', 'read_subagent_conversation', 'subagent']);
     assert.ok(!journal.read(id).some(item => item.content === '我会检查文件。'), 'loop commentary is not a page message');
     tasks[0].status = 'completed'; tasks[0].finalResponse = '文件正常';
     await until(() => journal.read(id).some(item => item.source === 'page'));
@@ -241,11 +241,11 @@ test('remote voice children retain host identity for guidance, reads and resumpt
   try {
     const first = await invoke({ callId: 'dispatch-remote', action: 'subagent', prompt: 'Inspect remote files', targetAgent: 'remote-1', parent: parent(registry) });
     assert.equal(first.status, 'running');
-    await invoke({ callId: 'guide-remote', action: 'send_subagent_message', taskId: first.taskId, prompt: 'Read only', targetAgent: 'another-host', parent: parent(registry) });
+    await invoke({ callId: 'guide-remote', action: 'subagent', taskId: first.taskId, prompt: 'Read only', targetAgent: 'another-host', parent: parent(registry) });
     assert.equal(guided[0].connectionId, 'remote-1'); assert.equal(guided[0].parentSessionId, id);
     assert.equal((await invoke({ callId: 'read-remote', action: 'read_subagent_conversation', taskId: first.taskId })).status, 'starting');
     finish.resolve(); await until(() => tasks.get(id, first.taskId).status === 'completed');
-    const resumed = await invoke({ callId: 'resume-remote', action: 'send_subagent_message', taskId: first.taskId, prompt: 'Explain', targetAgent: 'another-host', parent: parent(registry) });
+    const resumed = await invoke({ callId: 'resume-remote', action: 'subagent', taskId: first.taskId, prompt: 'Explain', targetAgent: 'another-host', parent: parent(registry) });
     assert.equal(resumed.childSessionId, first.childSessionId);
   } finally { finish.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
 });
