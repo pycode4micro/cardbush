@@ -96,7 +96,7 @@ async function buildViews() {
       'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning' ? [
-      'src/hooks/useCardbushChat.ts',
+      'src/hooks/useCardbushChat.ts', 'src/features/settings/conversationModel.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -189,7 +189,7 @@ app.whenReady().then(async () => {
     } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'media-reveal', 'review-preview'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'media-reveal', 'review-preview', 'inspector-cover'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -601,6 +601,7 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning') {
       await require('./helpers/model-reasoning.cjs')({ run, until, pause });
+      await require('./helpers/conversation-models.cjs')({ run, until, pause });
       assert.deepEqual(await run('failures'), [], 'no model reasoning renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'model-protocols') {

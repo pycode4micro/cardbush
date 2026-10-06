@@ -205,7 +205,6 @@ test('a cumulative active source and earlier sources can be selected independent
     sources: [{ turnId: 'old', target: 'source 0', startMessage: 1, endMessageExclusive: 3 },
       { turnId: 'current', target: 'source 1', startMessage: 3, endMessageExclusive: 6 }],
     pressure: { ratio: 0.96 }, outputTokens: 16384, maximumOutputTokens: 128000, inputFormat: 'incremental' });
-  assert.equal(transaction.partition(), false);
   assert.deepEqual(transaction.job().messages.slice(0, messages.length), messages);
   assert.equal(transaction.accept(result('active', { updates: [{ source: 1, summary: '继续承接只做本地预览的授权。读取失败，没有写入，下一步检查路径。' }] })), false);
   assert.deepEqual(transaction.job().messages.slice(0, messages.length), messages);

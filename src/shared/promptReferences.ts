@@ -1,7 +1,7 @@
 import { localApplicationPath } from './localApplications';
 
 /** Explicit, portable Markdown references created by the composer. No ambient context. */
-export type BrowserPromptReference = { kind: 'browser'; tabId: string; url: string; title: string };
+export type BrowserPromptReference = { kind: 'browser'; tabId: string; pageId?: string; url: string; title: string };
 export type TurnPromptReference = { kind: 'user-turn'; sessionId: string; turnId: string; messageId: string; title: string };
 export type ConversationExtractReference = { kind: 'conversation-extract'; id: string; title: string };
 export type SshPromptReference = { kind: 'ssh'; connectionId: string; path: string; title: string };
@@ -47,7 +47,8 @@ export function parsePromptReference(href: string): PromptReference | null {
       return { kind: 'conversation-extract', id: value('id'), title };
     }
     if (url.hostname === 'browser' && valid(value('tabId')) && isBrowserReferenceUrl(value('url'))) {
-      return { kind: 'browser', tabId: value('tabId'), url: value('url'), title };
+      if (value('pageId') && !/^[1-9]\d{0,9}$/.test(value('pageId'))) return null;
+      return { kind: 'browser', tabId: value('tabId'), ...(value('pageId') ? { pageId: value('pageId') } : {}), url: value('url'), title };
     }
     if (url.hostname === 'user-turn' && ['sessionId', 'turnId', 'messageId'].every(name => valid(value(name)))) {
       return { kind: 'user-turn', sessionId: value('sessionId'), turnId: value('turnId'), messageId: value('messageId'), title };

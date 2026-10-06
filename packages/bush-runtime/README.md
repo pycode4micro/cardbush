@@ -6,6 +6,21 @@ languages, frameworks, or combinations of lifecycle states.
 
 ## Session and context boundary
 
+Product conversational features also use `ConversationJournal` for entries with
+explicit source and visibility. Final voice transcripts, page publications and
+task feedback are appended independently of execution Turns; reading them does
+not take the active Turn lock. Entry IDs deduplicate retries, and the personal
+assistant's context generation rejects late writes after a reset.
+
+`AssistantConversation` uses the shared model-round adapter with five restricted
+conversation tools. `RealtimeAgentDispatcher` sends execution to the existing
+subagent tool and durable Session loop, using the configured workspace and
+permission policy. Task reads and follow-ups keep the child's original host;
+resetting the conversational parent does not cancel already dispatched children.
+Conversation summaries retain original journal entries and are separate from
+cross-session habit memory. See the [assistant guide](../../docs/PERSONAL_ASSISTANT.md)
+and [realtime voice boundary](../../docs/REALTIME_VOICE.md).
+
 `SessionStore` is an append-only fact journal. A Turn is committed atomically
 with stable Turn/message identity, ordered indexes, terminal status, reason and
 provider usage. Reusing the same Turn ID is accepted only when every committed
@@ -30,23 +45,33 @@ Tool facts. Tool call/result adjacency is validated mechanically.
 
 `checkpoint_context` is always present in the stable Tool schema and Runtime
 never narrows the Tool list for a compaction round. The model must not invoke it
-proactively. At 95% of the usable input budget Runtime appends one explicit
-internal user-role instruction requiring it before normal work can continue. Runtime
-may issue it slightly earlier when the configured maximum response would otherwise
-consume the space required by the next checkpoint request. The same output reserve is
-enforced on the Provider request; when a caller omits a limit, Runtime derives the same
-bounded default (at most 8,192 tokens) instead of assuming an unenforced reserve.
-One atomic checkpoint must summarize every still-unsummarized preceding Turn in order and
-may also replace the completed prefix of the active Turn with one cumulative
-assistant checkpoint through an exact message boundary. Runtime then adds one
-fixed developer continuation instruction, keeps the original user input, and
-continues the same Tool loop without replaying completed side effects. Repeated
-active checkpoints overwrite the prior checkpoint projection rather than stacking.
-The latest checkpoint boundary and summary are persisted with the Turn, while all
-original assistant and Tool messages remain in the append-only journal for replay
-and audit. If compacted context later still reaches 95%, projection keeps the newest
-20 summaries and drops older summaries from active model context only. Durable
-history is never deleted.
+proactively. Runtime issues an explicit developer-role maintenance notice at the
+input-pressure threshold calculated by `resolveContextBudget`, reserving room
+for a separate checkpoint response and safety margin before the normal input cap.
+The normal output reserve is also enforced on Provider dispatch; an omitted limit
+uses the same bounded default (at most 8,192 tokens).
+
+The default incremental schema accepts `updates` for any pending source numbers
+the model chooses. Valid entries survive mixed invalid entries, while accepted
+text cannot be overwritten. A checkpoint is applied only after every authorized
+source is complete, including any cumulative active-Turn source through its exact
+boundary. Requests that exceed the input budget, or an explicitly configured
+transport budget, partition at complete message/Tool-exchange boundaries. Staged
+fragments retain global source numbers; the model consolidates them before a whole
+source is accepted. Earlier completed fragments provide background for references
+and authorization without reattaching their raw images. Real model calls, receipts
+and partition boundaries survive restart; a smaller dispatch projection never
+replaces the canonical history. Fitting requests retain the original source prefix
+while collecting incremental summaries.
+
+The committed checkpoint references a real model call and Tool receipt carrying
+the accepted texts. Runtime keeps the original user input and continues the same
+Tool loop without replaying completed side effects. Original assistant and Tool
+messages remain in the append-only journal; there is no unrecorded fallback that
+silently drops older summaries. All three API adapters use a default JSON-body
+budget of 40,000,000 bytes, with maintenance starting at 35,000,000 bytes.
+`maxRequestBodyBytes` can override the default for a known transport limit.
+See [image and request budgets](../../docs/MODEL_IMAGE_BUDGET.md).
 
 Every completed Tool round receives one aggregate context-ingress budget derived from
 the latest measured input, actual model output and checkpoint reserve. Parallel Tool
@@ -55,9 +80,10 @@ allowance. Exact native results remain in `ToolExecutionStore`; only their model
 projection is shortened, with a durable `tool-result://` locator. Image follow-ups
 consume the same budget. This keeps the following checkpoint request inside the
 configured context window even when one parallel batch returns many large results.
-An already-oversized legacy Session has a request-only recovery projection which first
-omits hidden reasoning and then shortens large archived results; it never rewrites the
-append-only Session or Tool journals.
+An already-oversized legacy Session has a request-only recovery projection which
+shortens large archived results before staging complete source fragments. Assistant
+reasoning, provider-owned replay and all parallel receipts remain intact; the
+append-only Session and Tool journals are never rewritten.
 
 Runtime emits a durable context-compaction lifecycle (started, retrying,
 completed, failed or cancelled) with one stable compaction identity. These are

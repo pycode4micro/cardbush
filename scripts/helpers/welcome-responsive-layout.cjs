@@ -35,6 +35,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
         close(current.items[index][key], expected.items[index][key], `${label} ${expected.items[index].id} ${key}`, .003);
       }
     }
+    const input = await run(`(()=>{const r=document.querySelector('.welcome-slot-input .composer-stack').getBoundingClientRect(),
+      slot=document.querySelector('.welcome-slot-input').getBoundingClientRect();return {left:r.left,width:r.width,slotLeft:slot.left,slotWidth:slot.width};})()`);
+    close(input.left,input.slotLeft,`${label} actual input left`);
+    close(input.width,input.slotWidth,`${label} actual input width`);
     return current;
   };
   window.setContentSize(1540, 1020); await pause();

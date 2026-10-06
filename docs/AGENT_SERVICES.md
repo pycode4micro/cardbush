@@ -22,6 +22,8 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 
 接入前按 [Docker 指南](../deploy/agent/README.md)获取该实例的私有令牌，通过 SSH 或 HTTPS 连接，并保留数据卷以延续身份和浏览器配置。桌面由同一 Agent 的会话共享；不同用户需要独立容器和数据卷。服务不会因此获得本机电脑的桌面控制权。
 
+接入后也可在[个人助手](PERSONAL_ASSISTANT.md)标题栏选择该 Agent 为执行主机。助手交流和通话留在桌面，后台任务进入目标服务的子会话，按该服务的模型、工作区和权限执行；切换主机不迁移已派发任务。仅 SSH 项目不提供这种独立执行服务。图形桌面是可选能力，普通文件、命令任务无需启用。
+
 ## 构建与启动
 
 需要 Node.js 22.12 及以上版本、npm 10 及以上版本。在仓库根目录安装依赖、构建并启动：

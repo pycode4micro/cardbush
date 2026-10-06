@@ -140,6 +140,7 @@ export function SettingsView({
   systemLanguage,
   settings,
   selectedModel,
+  defaultModelId = selectedModel,
   backendCapabilities,
   runtimeBusy,
   conversations,
@@ -182,6 +183,7 @@ export function SettingsView({
   systemLanguage: AppLanguage;
   settings: AppSettingsState;
   selectedModel: string;
+  defaultModelId?: string;
   availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
   runtimeBusy: boolean;
@@ -493,13 +495,13 @@ export function SettingsView({
       );
     }
     if (effectiveSection === 'models') return <ModelsSettingsPanel language={language}
-      models={{ defaultModelId: selectedModel, models: settings.managedModelConfigs }}
+      models={{ defaultModelId, models: settings.managedModelConfigs }} defaultSelection
       onSave={async config => {
         const merged = config.models.map(model => ({ ...model,
           apiKey: model.authentication?.kind === 'chatgpt' ? '' : model.apiKey || settings.managedModelConfigs.find(item => item.id === model.id)?.apiKey || '',
         }));
         onSettingsChange(current => ({ ...current, managedModelConfigs: merged }));
-        if (selectedModel !== config.defaultModelId) onUseModel(config.defaultModelId);
+        if (defaultModelId !== config.defaultModelId) onUseModel(config.defaultModelId);
         return { ...config, models: merged };
       }} onRefresh={async () => {}} onSelect={onUseModel} discoverModels={requestProviderModels}
       visualInputAvailable={visualInputAvailable} visualInputEnabled={visualInputEnabled} onVisualInputEnabledChange={onVisualInputEnabledChange}/>;

@@ -50,19 +50,28 @@ On first launch, open **App Center → Settings → Models → Add model**:
 
 The settings environment selector chooses the local host or a connected Agent. Model usage follows your provider or authorized plan. Plugins may require separate dependencies or credentials.
 
+Each conversation remembers its own model selection within its environment. The model catalog is shared; the default in Models applies to new conversations. Switching a conversation's model takes effect on its next request.
+
 ## What is included?
 
 | Make it yours | What you can do |
 | --- | --- |
-| **Text and voice** | Stream replies, attach images, queue messages and guide a running task. Click the empty composer's microphone to dictate; hold it to call. Calls continue across navigation and minimization, with transcripts saved to their original chat. |
-| **Personal assistant** | A persistent conversation with a customizable name and persona, an animated lightbulb, and local or SSH-connected Agent execution. Talk while tasks run; the assistant publishes useful Markdown with `page_write`. |
+| **Text and voice** | Stream replies, attach files and images, queue messages and guide a running task. Click the empty composer's microphone to dictate; hold it to call. Calls continue across navigation and minimization, and keep their original conversation. |
+| **Personal assistant** | Open the lightbulb below New chat for one persistent conversation. Customize its name, avatar and persona; delegate tasks locally or to a connected Agent, including over SSH. Keep talking while tasks run and open task bubbles for execution details. |
 | **Your start page** | Arrange clocks, a calendar, conversation starters and either composer style. Import custom HTML components, drag and resize with alignment guides, and use theme-aware events and permitted actions. |
 | **A browser workspace** | Save favorite pages, use multiple panes in Beta, and expand the right panel with a floating return/input capsule. |
 | **Tools that act** | Search and edit files, run commands, use subagents, add MCP plugins and skills, and schedule automations. Choose Ask for approval or Full access. |
 | **Local or remote** | Use the built-in Agent, an SSH project or an independent Agent service. Optionally give a personal Linux Agent its own graphical desktop, Computer Use and Browser Use. |
 | **Continuity** | Persistent conversations, context recovery, searchable archived tool results and usage records. Habit memory and next-step predictions are optional and off by default. |
 
-Voice calls default to a separate **Volcengine realtime voice provider**, which handles conversation and delegates tasks to independent background subagents using your configured local Agent. `await_subagent` returns status immediately; message and conversation-reading tools let the voice parent communicate with its children. Keep talking while tasks run concurrently. It requires a Doubao Voice API Key; audio is streamed to that service. See [realtime setup and current limits](docs/REALTIME_VOICE.md). The original recognition → Agent → speech mode remains selectable; both call modes send tasks without an extra voice confirmation. **SenseVoice recognition and Qwen3-TTS CustomVoice speech are the recommended local options**, with separate female/male voices at a natural speaking rate. Models are optional, not preinstalled; Qwen uses your selected local model folder and Python environment. Windows speech and legacy Kokoro remain available. Windows x64 offers an optional local voice lock for the original mode; it is not applied to realtime audio. See [local voice setup, downloads and platform limits](docs/LOCAL_VOICE_MODELS.md).
+Open the **lightbulb below New chat** to use the personal assistant. Its header contains the execution host selector, connection management and assistant settings. Text messages, published Markdown and task bubbles appear on the page; call transcripts stay in its internal conversation context. Right-click the sidebar entry to rename it, reset context, or mute the microphone and speech independently. See the [personal assistant guide](docs/PERSONAL_ASSISTANT.md) for attachments, remote execution and reset behavior.
+
+Voice has three entry paths. **Click the empty composer's microphone** to record and send transcribed text. **Hold it to call** using the mode saved in **Settings → Voice → Voice calls**:
+
+- **Realtime voice (default):** a separate provider handles listening and speaking while background subagents execute tasks. The default Volcengine adapter requires a Doubao Voice API Key with full-duplex service access; audio, recent context and task results are sent to that service. CardBush Realtime compatible services can also be configured. Ordinary calls delegate locally; the personal assistant can select a connected Agent. See [realtime setup, reconnect behavior and current limits](docs/REALTIME_VOICE.md).
+- **Transcription + Agent + speech:** recognition, the configured text Agent and speech synthesis run in sequence. **SenseVoice and Qwen3-TTS CustomVoice** are the recommended local options; models are optional and not preinstalled. Qwen uses your selected local model folder and Python environment. Windows speech and legacy Kokoro remain available. Optional Windows x64 voice lock applies to recording and this mode; disable it before starting a realtime call. See [local voice setup and platform limits](docs/LOCAL_VOICE_MODELS.md).
+
+Returning to text input, opening settings or minimizing keeps a call connected. Ordinary chats show saved call transcripts; the assistant shows only published content and task bubbles. Hanging up releases audio without cancelling accepted tasks. Local execution still depends on the desktop running; an independent Agent service owns its accepted remote tasks.
 
 Open **App Center → Components** to edit the new-conversation layout. Built-in component definitions stay available; custom HTML uses an isolated frame and explicitly granted actions. The calendar shows holidays and automation details on hover. See [components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md).
 
@@ -87,7 +96,7 @@ Team workflows are a separate installable plugin, not part of the desktop bundle
 | Native process CPU / memory enforcement | Windows Job Objects | Not yet implemented |
 | Managed process admission and owned-process cleanup | Yes | Yes |
 
-The Windows Browser Use connector and the optional remote Linux desktop use different integrations. The Docker desktop profile supplies Linux Computer Use / Browser Use on the server; it does not make Windows-only plugins portable. Local voice platform limits are listed in the [voice guide](docs/LOCAL_VOICE_MODELS.md).
+On Windows 11, Browser Use also controls CardBush's integrated tabs: select a tab with **@ → CardBush browser** to bind its exact page, without extension pairing. Closing that tab never redirects control to Chrome/Edge with the same URL. The Windows Browser Use connector and the optional remote Linux desktop use different integrations. The Docker desktop profile supplies Linux Computer Use / Browser Use on the server; it does not make Windows-only plugins portable. Local voice platform limits are listed in the [voice guide](docs/LOCAL_VOICE_MODELS.md).
 
 Linux does not claim the same CPU/memory enforcement as Windows. External plugins remain separate programs with their own platform requirements. A remote service exposes its own capabilities, not those of the desktop connecting to it.
 
@@ -98,6 +107,7 @@ Sandbox settings detect the host environment; dependency installation requires a
 | Start here | Guide |
 | --- | --- |
 | Connect a model | [Providers, protocols and OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
+| Use the personal assistant | [Conversation, tasks, attachments and reset](docs/PERSONAL_ASSISTANT.md) |
 | Set up voice | [Realtime calls](docs/REALTIME_VOICE.md) · [Local speech recognition and voices](docs/LOCAL_VOICE_MODELS.md) |
 | Customize your workspace | [HTML components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [App Center](assets/skills/cardbush-docs/references/app-center.md) |
 | Run an Agent remotely | [Service deployment](docs/AGENT_SERVICES.md) · [Docker and optional Linux desktop](deploy/agent/README.md) · [SSH projects](docs/SSH_WORKSPACES.md) |
@@ -128,6 +138,8 @@ npm run smoke:packaged
 
 On headless Linux, run desktop tests with `xvfb-run -a npm run test:release`. Outputs are in `release/`. `npm run test:release` requires a preceding build; it runs package tests, adversarial cases, platform contracts and Electron UI checks without repeatedly rebuilding each package. `npm run test:all` also runs the wider feature-specific checks. Provider tests use local mock HTTP servers; no live API key is needed.
 
+For assistant or voice changes, use `npm run test:assistant`, `npm run test:voice-realtime` and `npm run test:voice` as appropriate. These cover Runtime and isolated desktop fixtures; live provider audio quality and a real remote deployment need separate validation.
+
 For a headless Agent service, use `npm ci --ignore-scripts`, `npm run build:agent`, then `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`. It runs under Node.js without launching Electron. Use a dedicated data directory and configure authentication and SSH/HTTPS access as described in the [deployment guide](docs/AGENT_SERVICES.md). For containers and the optional graphical desktop, follow the [Docker guide](deploy/agent/README.md). Desktop installers do not deploy or update this service.
 
 Electron downloads use the official source by default. An optional `ELECTRON_MIRROR` can be configured for your network. Repair an incomplete download with `npm run fix:electron`.
@@ -155,6 +167,8 @@ See the [architecture overview](docs/ARCHITECTURE.md), [cross-platform maintenan
 ## Data and security
 
 Local conversations, usage records and settings live under Electron's user-data directory. Each independent Agent stores its own data and credentials in its server data directory; switching environments does not copy them to another host. Local automation requires the desktop to be running; independent Agent queues and supported automation run while that service is running. Clearing transient caches does not reset recorded usage.
+
+The assistant conversation remains on the desktop when its execution host changes. Remote attachments are uploaded to that host, and each child task retains its original host. Agent connections can explicitly synchronize supported model configuration and credentials, with plugin synchronization controlled per connection; ChatGPT / SIWC OAuth credentials remain local. Completed realtime transcripts and summaries are kept in encrypted voice history; raw call audio is not archived. See [Agent configuration sync](docs/AGENT_SERVICES.md) and [assistant data and reset](docs/PERSONAL_ASSISTANT.md#上下文与重置).
 
 The renderer uses context isolation and no Node.js integration. Remote Agent access is authenticated and represents access to that instance, not a multi-tenant account system. Model providers and external plugins receive the data needed for their requested operations. File/tool permissions and OS command isolation are separate controls.
 

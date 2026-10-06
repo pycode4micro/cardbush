@@ -50,18 +50,28 @@ AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）�
 
 设置页顶部可选择本机或已连接的 Agent。模型用量按所选服务商或已授权套餐计算，插件可能需要单独的依赖或凭证。
 
+每个会话在所属环境中独立记住模型选择。模型列表共用，模型管理中的默认值用于新会话；会话内切换模型从下一次请求生效。
+
 ## 主要功能
 
 | 方向 | 可以做什么 |
 | --- | --- |
-| **文字与语音** | 流式回复、图片附件、消息排队与运行中引导。输入框为空时，单击麦克风录音转文字，长按进入会朗读 Agent 回复的语音通话。 |
+| **文字与语音** | 流式回复、文件与图片附件、消息排队与运行中引导。输入框为空时，单击麦克风录音转文字，长按进入通话；切换页面或最小化后，通话仍归属原会话。 |
+| **个人助手** | 「新会话」下方的灯泡打开一个持续会话，可修改名称、头像和角色。任务交给本机或已连接的 Agent（包括 SSH 接入），执行期间继续交流，点击任务气泡查看详情。 |
 | **自己的初始桌面** | 编排时钟、日历、对话引导及两种输入框；导入自定义 HTML 组件，拖拽、缩放、辅助线吸附，通过事件和已授权动作交互，并自动跟随主题。 |
 | **浏览器工作区** | 收藏常用页面，使用多页面 Beta，展开右侧内容区并通过浮动的返回／输入胶囊继续交流。 |
 | **执行任务的工具** | 搜索和编辑文件、执行命令、调度子 Agent、安装 MCP 插件与技能、安排自动化；支持申请批准与完全访问。 |
 | **本地与远端** | 内置 Agent、SSH 项目、独立 Agent 服务；个人 Linux Agent 可选独立图形桌面、Computer Use 和 Browser Use。 |
 | **连续的工作上下文** | 会话持久化、上下文恢复、归档工具结果检索和使用记录；习惯记忆与下一步预测可选，默认关闭。 |
 
-语音采用语音识别、现有文字 Agent 和语音合成串联，只有语音通话自动朗读回复。**本地识别推荐 SenseVoice，主要播报模型为 Qwen3-TTS CustomVoice**，男女声音色可独立设置，使用正常语速。模型可选安装、不会预装；Qwen 通过选择本地模型目录和 Python 环境接入，Windows 语音及旧版 Kokoro 仍可选用。Windows x64 还提供可选本地声纹锁定，录入后验证说话人，减少旁人讲话触发发送或打断播报。详见[本地语音安装、下载与平台限制](docs/LOCAL_VOICE_MODELS.md)。
+点击 **「新会话」下方的灯泡** 打开个人助手。标题栏提供执行主机选择、连接管理和助手设置；页面显示文字消息、发布的 Markdown 和任务气泡，通话转写保留在内部上下文。右键侧栏入口可重命名、重置上下文，以及分别控制麦克风静音和播报静音。附件、远程执行和重置行为见[个人助手指南](docs/PERSONAL_ASSISTANT.md)。
+
+语音分为三种入口：**单击空输入框的麦克风**录音并发送转写文字；**长按麦克风**进入通话，通话方式在 **设置 → 语音 → 语音通话** 中选择：
+
+- **实时语音（默认）：** 独立语音服务负责听说，后台子 Agent 执行任务。默认火山适配器需要已开通全双工服务的豆包语音 API Key，音频、近期上下文和任务结果会发送给该服务；也可配置 CardBush Realtime 兼容服务。普通通话在本机派发，个人助手可选择已连接的 Agent。详见[实时通话配置、断线恢复与当前限制](docs/REALTIME_VOICE.md)。
+- **转写 + Agent + 朗读：** 语音识别、所选文字 Agent 与语音合成串联。**SenseVoice 和 Qwen3-TTS CustomVoice** 是推荐的本地选项，模型可选安装、不会预装；Qwen 通过所选模型目录和 Python 环境接入，Windows 语音及旧版 Kokoro 仍可使用。可选的 Windows x64 声纹锁定用于录音与此通话模式；进入实时通话前须关闭。详见[本地语音安装与平台限制](docs/LOCAL_VOICE_MODELS.md)。
+
+返回文字输入、打开设置或最小化都保留通话。普通会话显示已保存的通话转写，个人助手仅展示发布内容和任务气泡。挂断释放音频资源，不取消已接收任务；本地执行仍依赖桌面运行，独立 Agent 服务则拥有已接收的远程任务。
 
 通过 **应用中心 → 组件** 编辑新会话页面。系统内置组件定义始终保留；自定义 HTML 在隔离框架中运行，动作需明确授权。日历通过悬浮展示节日和自动化详情。详见[组件、布局与多页面说明](docs/HTML_COMPONENTS_V1_2026-09-30.md)。
 
@@ -86,7 +96,7 @@ Team 工作流作为独立插件安装，不包含在桌面安装包中，详见
 | 进程 CPU / 内存原生限制 | Windows Job Objects | 尚未实现 |
 | 托管进程准入与所属进程清理 | 支持 | 支持 |
 
-Windows Browser Use 连接器与远端 Linux 桌面使用不同实现。Docker 桌面配置提供的是服务器上的 Linux Computer Use / Browser Use，不会使 Windows 专属插件变成跨平台插件。本地语音的平台范围见[语音指南](docs/LOCAL_VOICE_MODELS.md)。
+Windows 11 上的 Browser Use 也支持内置标签：通过 **@ → CardBush 浏览器** 绑定真实页面，无需扩展配对。标签关闭后不会转去控制 Chrome / Edge 的同网址页面。Windows Browser Use 连接器与远端 Linux 桌面使用不同实现。Docker 桌面配置提供的是服务器上的 Linux Computer Use / Browser Use，不会使 Windows 专属插件变成跨平台插件。本地语音的平台范围见[语音指南](docs/LOCAL_VOICE_MODELS.md)。
 
 Linux 的 CPU／内存限制尚未与 Windows 完全一致。外部插件是独立程序，各自的平台要求仍需满足。远端服务提供自身主机的能力，不继承连接它的桌面能力。
 
@@ -97,7 +107,8 @@ Linux 的 CPU／内存限制尚未与 Windows 完全一致。外部插件是独�
 | 想了解什么 | 文档 |
 | --- | --- |
 | 接入模型 | [服务商、协议与 OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
-| 配置语音 | [本地识别与朗读模型](docs/LOCAL_VOICE_MODELS.md) |
+| 使用个人助手 | [持续对话、任务、附件与重置](docs/PERSONAL_ASSISTANT.md) |
+| 配置语音 | [实时通话](docs/REALTIME_VOICE.md) · [本地识别与朗读模型](docs/LOCAL_VOICE_MODELS.md) |
 | 自定义工作区 | [HTML 组件、布局与多页面](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [应用中心](assets/skills/cardbush-docs/references/app-center.md) |
 | 部署远端 Agent | [服务部署](docs/AGENT_SERVICES.md) · [Docker 与可选 Linux 桌面](deploy/agent/README.md) · [SSH 项目](docs/SSH_WORKSPACES.md) |
 | 了解权限 | [权限说明](docs/PERMISSIONS.md) · [命令沙盒](docs/EXECUTION_SANDBOX.md) · [Computer Use / Browser Use](docs/CORE_BROWSER_COMPUTER_USE.md) |
@@ -124,6 +135,8 @@ npm run smoke:packaged
 ```
 
 无桌面的 Linux 可使用 `xvfb-run -a npm run test:release`。产物位于 `release/`。运行 `test:release` 前先构建；它覆盖包测试、对抗场景、平台约束和 Electron 界面测试，避免为每个测试重复构建。更广的功能专项检查可运行 `npm run test:all`。模型协议测试使用本地模拟 HTTP 服务，不需要真实 API 密钥。
+
+修改助手或语音时，按范围运行 `npm run test:assistant`、`npm run test:voice-realtime` 和 `npm run test:voice`。这些检查覆盖 Runtime 与隔离的桌面测试环境；真实服务的听感和远程部署仍需单独验证。
 
 无图形界面的 Agent 服务使用 `npm ci --ignore-scripts`、`npm run build:agent` 构建，然后运行 `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`。服务由 Node.js 运行，不启动 Electron。使用独立数据目录，并按[部署指南](docs/AGENT_SERVICES.md)配置鉴权及 SSH / HTTPS 接入；容器和可选图形桌面见 [Docker 指南](deploy/agent/README.md)。更新桌面安装包不会部署或更新这个服务。
 
@@ -152,6 +165,8 @@ Electron 默认从官方源下载，网络需要时可设置 `ELECTRON_MIRROR`�
 ## 数据与安全
 
 本地对话、使用记录和设置保存在 Electron 用户数据目录。每个独立 Agent 将自身数据和凭据保存在服务器的数据目录，切换环境不会自动复制到另一台主机。本地自动化依赖桌面应用运行；独立 Agent 的队列及其支持的自动化在服务运行期间执行。清理临时缓存不会重置已经记录的使用量。
+
+个人助手切换执行主机时，对话仍保存在桌面；远程附件会上传至目标主机，子任务保留其原执行主机。Agent 连接可显式同步受支持的模型配置和凭据，插件同步由各连接单独选择；ChatGPT / SIWC 的 OAuth 凭据保留在本机。实时通话的已完成转写和摘要保存在加密语音历史中，不归档原始通话音频。详见 [Agent 配置同步](docs/AGENT_SERVICES.md)和[助手上下文与重置](docs/PERSONAL_ASSISTANT.md#上下文与重置)。
 
 界面启用上下文隔离，不直接访问 Node.js。远端接入需鉴权，访问令牌代表整个实例的访问权限，当前不是多租户账号系统。模型服务和外部插件会接收完成所请求操作需要的数据。文件／工具权限与操作系统命令隔离属于不同控制层。
 

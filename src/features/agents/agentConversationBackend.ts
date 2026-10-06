@@ -3,7 +3,7 @@ import { readIndividuation } from '../settings/individuation';
 import type { RuntimeEvent, SessionSnapshot, ConversationExtractDesktopApi } from '@cardbush/bush-protocol';
 import type { AgentDesktopApi, AgentJob, AgentSendInput, AgentOperation } from '../../../electron/agentTypes';
 import * as shared from '../../backend/api';
-import { resolvePromptReferenceContext } from '../../backend/promptReferenceContext';
+import { resolvePromptReferenceContext, rejectRemoteBrowserReferences } from '../../backend/promptReferenceContext';
 import type { ConversationBackend } from '../../backend/conversationBackend';
 import type { ConversationRuntime } from '../../backend/conversationRuntime';
 import { streamRuntimeTurnEvents } from '../../backend/runtimeChat';
@@ -110,6 +110,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   }, watch);
   const interactions = createRuntimeInteractions();
   const runtime: ConversationRuntime = { client, interactions, dispose() {},
+    resolveBrowserReferences: rejectRemoteBrowserReferences,
     answerPermission: answer => client.command({ kind: 'runtime.answer_permission', payload: answer }, value => value) };
   const extractListeners = new Set<() => void>();
   const extractCall = async <T,>(action: string, input: Record<string, unknown> = {}): Promise<T> => {
@@ -149,7 +150,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     if (!prior && options?.queueOnly) input.queueOnly = true;
     if (!prior) {
       const referenced = await resolvePromptReferenceContext(input.text, request.sessionId, await client.getSession(request.sessionId), request.uiLanguage,
-        (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve);
+        (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve, runtime.resolveBrowserReferences);
       input.text = referenced.content; input.userMessageMetadata = { ...referenced.metadata, sourceEnabled: request.sourceEnabled !== false,
         userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(request.attachments?.length ? { attachments: request.attachments } : {}) };

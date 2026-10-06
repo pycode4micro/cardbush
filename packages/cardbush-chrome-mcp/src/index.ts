@@ -22,6 +22,9 @@ type BrowserPage = {
   title: string;
   url: string;
   active: boolean;
+  selected?: boolean;
+  browser?: string;
+  targetKey?: string;
 };
 
 type ToolContext = {
@@ -39,28 +42,34 @@ type BrowserScope = {
 const viewportSchema = z.object({ width: z.number().int().min(64).max(4096), height: z.number().int().min(64).max(4096),
   deviceScaleFactor: z.number().min(0.5).max(3).optional() });
 
-export function createCardbushChromeServer(options: { connector?: typeof requestChromeConnector; artifactsDirectory?: string; browserConfigPath?: string } = {}): McpServer {
+/** HTTP MCP uses per-request server instances; browser selections and snapshot cursors belong to the host. */
+export function createBrowserUseState(artifactsDirectory?: string) {
+  return {
+    selectedPageIds: new Map<string, number>(), targetKeys: new Map<string, string>(), snapshots: new PageSnapshots(),
+    requestedViewports: new Map<string, Viewport>(), artifacts: new BrowserArtifacts(artifactsDirectory),
+    screenshotFailures: new Map<string, { attempts: number; elapsedMs: number; firstFailureAt: number }>(),
+  };
+}
+
+export function createCardbushChromeServer(options: { connector?: typeof requestChromeConnector; artifactsDirectory?: string; browserConfigPath?: string; state?: ReturnType<typeof createBrowserUseState> } = {}): McpServer {
   const server = new McpServer({
     name: 'browser_use',
     version: '0.1.0',
   }, {
     instructions: [
-      "Browser Use controls the user's Chrome or Edge on Windows 11 through a paired connector.",
+      "Browser Use controls CardBush's integrated browser and the user's paired Chrome or Edge on Windows 11. CardBush tabs do not need an extension or pairing.",
+      'An @ CardBush browser reference identifies an exact integrated tab, not an interchangeable URL. The desktop binds that conversation to CardBush. Use list_pages, then a fresh snapshot; never substitute a Chrome/Edge page with the same URL. If the referenced tab is unavailable, report it and ask the user to select it again.',
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
-      'Each CardBush session is isolated in its own visibly named browser tab group. Only tabs in the current session group are visible or controllable.',
-      'Use new_page to create an isolated tab. To use an existing personal tab, ask the user to copy it into the current CardBush group from the extension popup.',
-      'Call release_browser when browser work is complete; it detaches and collapses only the current session groups.',
+      'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, only tabs explicitly referenced by the user or created in this conversation are controllable. Use select_browser with connectionId cardbush to create integrated tabs.',
+      'Use new_page to create a tab in the selected browser. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
+      'Call release_browser when browser work is complete; it detaches control and collapses external session groups without closing tabs.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
-      'For actual file downloads use download_file and then download_status with its taskId. A pending task is not a failed download; reuse it instead of clicking or starting another download.',
+      'Tracked file downloads (download_file/download_status) are currently supported only in Chrome/Edge. Integrated tabs return an explicit unsupported error, never redirect to another browser. Reuse pending download taskIds instead of starting repeated downloads.',
       'take_snapshot returns a bounded page of accessibility text only once, with a nextCursor when more is available. Prefer rootUid/query/roles to narrow the page; continue only as needed. Click receipts confirm checked targeting and dispatched input, not that the page completed the requested operation; observe the relevant state afterwards.',
     ].join(' '),
   });
-  const selectedPageIds = new Map<string, number>();
-  const snapshots = new PageSnapshots();
-  const requestedViewports = new Map<string, Viewport>();
-  const artifacts = new BrowserArtifacts(options.artifactsDirectory);
+  const { selectedPageIds, targetKeys, snapshots, requestedViewports, artifacts, screenshotFailures } = options.state ?? createBrowserUseState(options.artifactsDirectory);
   const viewportKey = (context: ToolContext, tabId: number) => JSON.stringify([scopeFromContext(context).id, tabId]);
-  const screenshotFailures = new Map<string, { attempts: number; elapsedMs: number; firstFailureAt: number }>();
   const clearScreenshotFailures = (scopeId: string, tabId?: unknown) => {
     for (const key of screenshotFailures.keys()) {
       if (tabId !== undefined ? key === JSON.stringify([scopeId, tabId]) : key.startsWith(`[${JSON.stringify(scopeId)},`)) screenshotFailures.delete(key);
@@ -77,6 +86,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const scope = scopeFromContext(context);
     const result = await (options.connector ?? requestChromeConnector)(method, {
       ...params,
+      ...(typeof params.tabId === 'number' && targetKeys.has(JSON.stringify([scope.id, params.tabId]))
+        ? { expectedTargetKey: targetKeys.get(JSON.stringify([scope.id, params.tabId])) } : {}),
       scopeId: scope.id,
       scopeTitle: scope.title,
     }, {
@@ -112,11 +123,15 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     return Array.isArray(result) ? result.flatMap((item) => {
       const value = record(item);
       const id = integer(value.id);
+      if (id != null && typeof value.targetKey === 'string') targetKeys.set(JSON.stringify([scopeFromContext(context).id, id]), value.targetKey);
       return id == null ? [] : [{
         id,
         title: string(value.title),
         url: string(value.url),
         active: value.active === true,
+        ...(value.selected === true ? { selected: true } : {}),
+        ...(typeof value.browser === 'string' ? { browser: value.browser } : {}),
+        ...(typeof value.targetKey === 'string' ? { targetKey: value.targetKey } : {}),
       }];
     }) : [];
   };
@@ -125,6 +140,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const scope = scopeFromContext(context);
     const listed = await pages(context);
     const selectedPageId = selectedPageIds.get(scope.id);
+    const explicit = listed.find(page => page.selected);
+    if (explicit) { selectedPageIds.set(scope.id, explicit.id); return explicit.id; }
     if (selectedPageId != null && listed.some((page) => page.id === selectedPageId)) {
       return selectedPageId;
     }
@@ -141,7 +158,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('list_browsers', toolDefinition(
     'List Browser Use connections',
-    'List paired Chrome/Edge connections, their online state, the default, and this session’s selection. No personal tabs or credentials are returned.',
+    'List the CardBush integrated browser and paired Chrome/Edge connections, online state, default and this conversation’s selection. No personal tabs or credentials are returned. CardBush needs no pairing.',
     z.object({}), true,
   ), async (_input, context) => withToolResult(async () => {
     const result = record(await request('browser.list', {}, context));
@@ -150,25 +167,26 @@ export function createCardbushChromeServer(options: { connector?: typeof request
   server.registerTool('select_browser', toolDefinition(
     'Select Browser Use connection',
     'Explicitly bind this session to a connected browser/profile id from list_browsers. Switching releases the old session group first; a failed release leaves the binding unchanged. Take a fresh snapshot after switching; old tab and element ids must not be reused.',
-    z.object({ connectionId: z.string().regex(/^[a-f0-9]{32}$/) }), false,
+    z.object({ connectionId: z.union([z.literal('cardbush'), z.string().regex(/^[a-f0-9]{32}$/)]) }), false,
   ), async (input, context) => withToolResult(async () => {
     const result = record(await request('browser.select', input, context));
     const scopeId = scopeFromContext(context).id;
     selectedPageIds.delete(scopeId); clearScreenshotFailures(scopeId);
     snapshots.clear(scopeId);
+    for (const key of targetKeys.keys()) if (key.startsWith(`[${JSON.stringify(scopeId)},`)) targetKeys.delete(key);
     for (const key of requestedViewports.keys()) if (key.startsWith(`[${JSON.stringify(scopeId)},`)) requestedViewports.delete(key);
     return { text: 'Browser selected. Use list_pages or new_page, then take a fresh snapshot.', structured: result };
   }));
 
   server.registerTool('list_pages', toolDefinition(
     'List browser pages',
-    'List tabs in the current CardBush session group; use only returned pages or new_page. Personal tabs and other sessions are hidden. To use a personal tab, the user must copy it into this group from the extension popup. If the connector is unavailable, use the integrated browser where practical or explain the required setup/grant. Remote debugging is an explicitly selected compatibility mode, not an automatic fallback.',
+    'List controllable tabs in the selected browser. An @ CardBush reference binds the exact integrated tab; its numeric page id and browser identity are returned here. Do not substitute another browser with the same URL. Chrome/Edge shows only the current session group; personal tabs require extension consent. Closed or unavailable targets require explicit re-selection, never an automatic fallback.',
     z.object({}),
     true,
   ), async (_input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const listed = await pages(context);
-    let selectedPageId = selectedPageIds.get(scope.id);
+    let selectedPageId = listed.find(page => page.selected)?.id ?? selectedPageIds.get(scope.id);
     if (selectedPageId == null || !listed.some((page) => page.id === selectedPageId)) {
       selectedPageId = listed.find((page) => page.active)?.id ?? listed[0]?.id;
       if (selectedPageId == null) selectedPageIds.delete(scope.id);
@@ -176,7 +194,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     }
     return {
       text: listed.length > 0
-        ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.title || '(untitled)'} — ${page.url}`).join('\n')
+        ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.browser === 'cardbush' ? '[CardBush] ' : ''}${page.title || '(untitled)'} — ${page.url}`).join('\n')
         : 'This CardBush session has no isolated browser tabs. Use new_page, or copy an existing tab into the session group from the extension popup.',
       structured: { pages: listed, selectedPageId },
     };
@@ -196,7 +214,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open a new tab in a visibly named group isolated to the current CardBush session. Omit url to use the start page in CardBush browser settings (initially https://www.google.com/).',
+    'Open a tab in the selected browser, scoped to this conversation. CardBush opens it in the visible integrated browser; Chrome/Edge opens it in the session group. Omit url to use the start page in CardBush browser settings (initially https://www.google.com/).',
     z.object({ url: z.string().url().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {

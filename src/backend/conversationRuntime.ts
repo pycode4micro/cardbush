@@ -5,6 +5,7 @@ import { defaultRuntimeInteractions, type RuntimeInteractions } from '../runtime
 
 /** Host-owned I/O injected into the same conversation readers and event consumer. */
 export interface ConversationRuntime {
+  resolveBrowserReferences?: import('./promptReferenceContext').BrowserReferenceResolver;
   client: ProtocolRuntimeClient;
   resolveExtract?: (id: string, contextWindowTokens?: number) => Promise<{ path: string; tokens: number }>;
   interactions?: RuntimeInteractions;

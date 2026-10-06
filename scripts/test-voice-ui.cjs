@@ -119,12 +119,13 @@ app.whenReady().then(async () => {
     }
     else { res.setHeader('Content-Type','audio/pcm'); res.write(Buffer.alloc(2400)); setTimeout(()=>res.end(Buffer.alloc(2400)),30); }
   }); server.listen(0,'127.0.0.1'); await once(server,'listening');
-  const { registerVoiceIpc, installVoiceMediaPermissions } = require('../dist-electron/voiceIpc.js');
+  const { registerVoiceIpc } = require('../dist-electron/voiceIpc.js');
+  const { installAppSessionPermissions } = require('../dist-electron/appSessionPermissions.js');
   const win = new BrowserWindow({ show:false, width:850, height:950, webPreferences:{ preload:path.resolve('dist-electron/preload.js'), sandbox:true, contextIsolation:true, nodeIntegration:false, backgroundThrottling:false } });
   if (process.platform === 'win32') assert.equal(app.isPackaged, true, 'branded development runtime exercises packaged-detection mismatch');
   const runtime = { packaged: app.isPackaged && process.env.CARDBUSH_DEVELOPMENT_RUNTIME?.trim() !== '1',
     appPath: path.resolve(__dirname, '..'), resourcesPath: process.resourcesPath };
-  registerVoiceIpc(()=>win, runtime, { realtimeProxy:async()=>'', download:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init), speech:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init) }); installVoiceMediaPermissions(win); win.webContents.setAudioMuted(true);
+  registerVoiceIpc(()=>win, runtime, { realtimeProxy:async()=>'', download:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init), speech:(input,init)=>net.fetch(input instanceof URL ? input.toString() : input,init) }); installAppSessionPermissions(win); win.webContents.setAudioMuted(true);
   const errors=[]; win.webContents.on('console-message',event=>{ if(event.level==='error') errors.push(event.message); });
   const read = code => win.webContents.executeJavaScript(code);
   const until = async (code, timeout = 6500) => { const end=Date.now()+timeout; while(!await read(code)){if(Date.now()>end)throw Error('Timed out: '+code+'\n'+await read('document.body.innerText')+'\n'+errors.join('\n'));await pause(30);} };

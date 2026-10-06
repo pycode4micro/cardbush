@@ -165,7 +165,7 @@ app.whenReady().then(async () => {
     await fill(dialog+' input[name="assistant-name"]', 'Lumi'); await fill(dialog+' textarea', '温和、可靠');
     win.webContents.invalidate(); await pause(250);
     fs.writeFileSync(path.join(directory, 'assistant-settings-dark.png'), (await win.webContents.capturePage()).toPNG());
-    await read('fixture.theme("light");void 0'); win.webContents.invalidate(); await pause(250);
+    await read('fixture.theme("bright");void 0'); win.webContents.invalidate(); await pause(250);
     fs.writeFileSync(path.join(directory, 'assistant-settings-light.png'), (await win.webContents.capturePage()).toPNG());
     await read('fixture.theme("dark");void 0'); await click(dialog+' button[type=submit]');
     await until('document.querySelector(".assistant-view .topbar h1").textContent==="Lumi"');
@@ -186,7 +186,7 @@ app.whenReady().then(async () => {
     await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-bulb[data-state=working]")');
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 3);
     const dark = await read('getComputedStyle(document.querySelector(".assistant-view")).color');
-    await read('fixture.theme("light");void 0'); await until(`getComputedStyle(document.querySelector('.assistant-view')).color!==${JSON.stringify(dark)}`);
+    await read('fixture.theme("bright");void 0'); await until(`getComputedStyle(document.querySelector('.assistant-view')).color!==${JSON.stringify(dark)}`);
     assert.ok(await read('document.querySelector(".assistant-composer-dock").getBoundingClientRect().bottom<=innerHeight'));
     win.webContents.invalidate(); await pause(500);
     fs.writeFileSync(path.join(directory, 'assistant-light.png'), (await win.webContents.capturePage()).toPNG());
@@ -271,6 +271,7 @@ app.whenReady().then(async () => {
     assert.ok(await read('document.querySelector(".assistant-message-row:last-child").getBoundingClientRect().bottom<document.querySelector(".composer-surface").getBoundingClientRect().top'),'recorded message clears the input after layout settles');
     await click('.scroll-bottom');await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
     assert.ok(await read('document.querySelector(".assistant-message-row:last-child").getBoundingClientRect().bottom<document.querySelector(".composer-surface").getBoundingClientRect().top'),'last bubble clears the input');
+    await require('./helpers/assistant-scroll.cjs')({ read, until, fill, click, pause, win, directory });
     await read('fixture.setLayout(65);void 0');await pause(150);
     for(const width of [1440,800,1120]){
       win.setSize(width,800);await until('innerWidth==='+width);await pause(200);

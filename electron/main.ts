@@ -11,7 +11,9 @@ import { GlobalInstructionsStore, readAgentInstructionDocuments } from './global
 import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
 import { BrowserTranslationService } from './browserTranslation';
-import { registerVoiceIpc, installVoiceMediaPermissions } from './voiceIpc';
+import { IntegratedBrowser } from './integratedBrowser';
+import { registerVoiceIpc } from './voiceIpc';
+import { installAppSessionPermissions } from './appSessionPermissions';
 import { createBrowserTranslator } from './browserTranslationBridge';
 import type { BrowserTranslationRequest } from './browserTranslationTypes';
 import { McpDesktopHost } from './mcpDesktopHost';
@@ -224,6 +226,28 @@ let productHostController: {
   resolveSubagentModel: (modelId: string) => Promise<Record<string, unknown>>;
 } | null = null;
 let productMcpManagement: { url: string; token: string; close: () => Promise<void> } | null = null;
+let browserUseEndpoint: { url: string; token: string; close: () => Promise<void> } | null = null;
+let browserUseRouterPromise: Promise<import('./browserUseHost.mjs', { with: { 'resolution-mode': 'import' } }).BrowserUseRouter> | undefined;
+const integratedBrowser = new IntegratedBrowser({
+  getContents: id => electronWebContents.fromId(id),
+  defaultOwner: () => mainWindow?.webContents ?? null,
+  action: (ownerId, action) => {
+    const owner = electronWebContents.fromId(ownerId);
+    if (!owner || owner.isDestroyed()) throw new Error('CardBush browser window is unavailable.');
+    owner.send('inspector:browser-action', action);
+  },
+});
+function browserUseRouter() {
+  return browserUseRouterPromise ??= (async () => {
+    const { BrowserUseRouter, requestChromeConnector } = await import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href);
+    return new BrowserUseRouter(integratedBrowser, {
+      routesPath: path.join(app.getPath('userData'), 'product-host', 'browser-use-routes.json'),
+      external: (method: string, params: Record<string, unknown>, options: Record<string, unknown>) => requestChromeConnector(method, params, {
+        ...options, configPath: chromeConnectorBroker?.configPath ?? path.join(chromeConnectorDataRoot(), 'browser-connector', 'bridge.json'),
+      }),
+    });
+  })();
+}
 let disposeCapabilityCatalogWatcher: (() => void) | undefined;
 let cardlingWindow: BrowserWindow | null = null;
 type ShadowWindowMode = 'readonly' | 'fork';
@@ -605,7 +629,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
-  installVoiceMediaPermissions(window);
+  installAppSessionPermissions(window);
   windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
   window.setMenu(null);
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
@@ -3233,6 +3257,24 @@ ipcMain.handle('inspector:translate', (event, input: BrowserTranslationRequest) 
   assertMainWindowSender(event.sender.id);
   return browserTranslation.run(event.sender.id, input);
 });
+ipcMain.handle('inspector:browser-register', (event, input: { tabId: string; guestWebContentsId: number }) => {
+  assertMainWindowSender(event.sender.id);
+  integratedBrowser.register(event.sender, input);
+});
+ipcMain.handle('inspector:browser-unregister', (event, input: { tabId: string; guestWebContentsId: number }) => {
+  assertMainWindowSender(event.sender.id);
+  integratedBrowser.unregister(event.sender.id, input);
+});
+ipcMain.handle('inspector:browser-bind', async (event, input: { sessionId: string; references: Array<{ tabId: string; pageId?: string; url?: string }> }) => {
+  assertMainWindowSender(event.sender.id);
+  let configuration: { serviceEnabled?: boolean; plugins?: Array<{ id?: string; enabled?: boolean; config?: { connectionMode?: string } }> } = {};
+  try { configuration = JSON.parse(await fs.promises.readFile(productAppsConfigPath(), 'utf8')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const plugin = configuration.plugins?.find(plugin => plugin.id === 'chrome');
+  if (configuration.serviceEnabled === false || plugin?.enabled === false) throw new Error('请先在设置中启用 Browser Use，再引用内置浏览器标签页。Enable Browser Use before referencing an integrated tab.');
+  if (plugin?.config?.connectionMode === 'remote_debugging') throw new Error('当前为 Chrome 远程调试模式。请在浏览器设置中选择普通 Browser Use，再操作 CardBush 内置标签页；不会转去控制 Chrome。');
+  return (await browserUseRouter()).bindReferences(event.sender, input.sessionId, input.references);
+});
 ipcMain.handle('browser:settings-update', async (event, input: { startPage: string; expectedRevision: number }) => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).update(input);
@@ -4008,6 +4050,9 @@ async function disposeRuntimeServices(error?: Error) {
   const management = productMcpManagement;
   productMcpManagement = null;
   await management?.close();
+  const browserEndpoint = browserUseEndpoint;
+  browserUseEndpoint = null;
+  await browserEndpoint?.close();
 }
 
 async function initializeRuntimeHost() {
@@ -4048,6 +4093,13 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
   });
   if (signal.aborted) { await management.close(); signal.throwIfAborted(); }
   productMcpManagement = management;
+  const browserModule = await import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href);
+  const browserEndpoint = await browserModule.startBrowserUseHost(await browserUseRouter(), {
+    browserConfigPath: browserConfigurationPath(),
+    artifactsDirectory: path.join(app.getPath('userData'), 'browser-connector', 'artifacts'),
+  });
+  if (signal.aborted) { await browserEndpoint.close(); signal.throwIfAborted(); }
+  browserUseEndpoint = browserEndpoint;
   const controllerModuleUrl = pathToFileURL(
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
@@ -4069,6 +4121,8 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           ? path.join(process.resourcesPath, 'process-guard')
           : path.join(app.getAppPath(), 'dist-native', 'process-guard'),
         CARDBUSH_MCP_MANAGEMENT_TOKEN: productMcpManagement!.token,
+        CARDBUSH_BROWSER_USE_URL: browserUseEndpoint!.url,
+        CARDBUSH_BROWSER_USE_TOKEN: browserUseEndpoint!.token,
         CARDBUSH_RUNTIME_STATE_ROOT: path.join(
           app.getPath('userData'),
           'runtime-state',
@@ -4696,6 +4750,8 @@ app.on('before-quit', (event) => {
       await (await pluginNetworkPromise)?.close();
       await productMcpManagement?.close();
       productMcpManagement = null;
+      await browserUseEndpoint?.close();
+      browserUseEndpoint = null;
       await modelPreviewService?.dispose();
       await processesClosed;
       await (await agentConnectionsPromise)?.close();

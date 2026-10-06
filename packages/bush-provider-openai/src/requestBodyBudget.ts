@@ -1,9 +1,12 @@
 import type { ModelRequestBodyBudget } from "@cardbush/bush-runtime";
 
-// A conservative local dispatch budget, not a claim about any provider's limit.
-export const DEFAULT_REQUEST_BODY_MAX_BYTES = 32_000_000;
+// Local dispatch budget, independent of token usage and upstream limits.
+export const DEFAULT_REQUEST_BODY_MAX_BYTES = 40_000_000;
 
-export function requestBodyBudget(params: unknown, maxBytes: number): ModelRequestBodyBudget {
+export function requestBodyBudget(params: unknown, maxBytes = DEFAULT_REQUEST_BODY_MAX_BYTES): ModelRequestBodyBudget {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("maxRequestBodyBytes must be a positive safe integer when provided.");
+  }
   return { bytes: Buffer.byteLength(JSON.stringify(params), "utf8"), maxBytes };
 }
 

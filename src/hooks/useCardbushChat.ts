@@ -79,6 +79,7 @@ import { truncateText } from '../shared/text';
 import { normalizePermissionMode } from '../shared/permissionModes';
 import { conversationTitleFromUserText } from '../shared/conversationTitle';
 import { SessionReadFence, canApplySessionSnapshot } from '../shared/sessionReadFence';
+import { adoptDraftConversationModel, readConversationModel, resolveConversationModelId, selectConversationModel, useConversationModel } from '../features/settings/conversationModel';
 import {
   applyGoalToolUpdate,
   goalToolUpdateFromExecution,
@@ -178,6 +179,8 @@ export function useCardbushChat(
   managedModelConfigs: ManagedModelConfig[] = [],
   availableModels: ManagedModelConfig[] = [],
   requestContext: {
+    defaultModelId?: string;
+    modelsReady?: boolean;
     runtimeReady?: boolean;
     // A remote host owns its selected session; selection is immediate and does
     // not wait for a metadata mutation or restart this controller.
@@ -266,9 +269,14 @@ export function useCardbushChat(
     useState<Record<string, RuntimeConnectionUpdate | undefined>>({});
   const [pendingInteraction, setPendingInteraction] =
     useState<PendingInteraction | null>(null);
-  const [selectedModel, setSelectedModelState] = useState(() =>
-    readInitialSelectedModel(availableModels, preferenceStorage),
-  );
+  const storedConversationModel = useConversationModel(activeConversationId, backend.scope);
+  const defaultModelId = requestContext.defaultModelId ?? readInitialSelectedModel(availableModels, preferenceStorage);
+  const selectedModel = resolveConversationModelId(availableModels, activeConversationId, backend.scope, defaultModelId);
+  useEffect(() => {
+    if (requestContext.modelsReady !== false && activeConversationId && selectedModel && !storedConversationModel && !readConversationModel(activeConversationId, backend.scope)) {
+      selectConversationModel(selectedModel, activeConversationId, backend.scope);
+    }
+  }, [activeConversationId, backend.scope, selectedModel, storedConversationModel, requestContext.modelsReady]);
   const [referencePlanMode, setReferencePlanModeState] = useState<ReferencePlanMode>(
     () => readInitialReferencePlanMode(preferenceStorage),
   );
@@ -746,29 +754,10 @@ export function useCardbushChat(
     };
   }, [requestContext.runtimeReady]);
 
-  useEffect(() => {
-    setSelectedModelState((current) => {
-      const selected = modelConfigFor(availableModels, current);
-      if (selected) {
-        if (selected.id !== current) {
-          preferenceStorage.setItem('cardbush.selected_model', selected.id);
-        }
-        return selected.id;
-      }
-      const next = availableModels[0]?.id ?? '';
-      if (next) {
-        preferenceStorage.setItem('cardbush.selected_model', next);
-      } else {
-        preferenceStorage.removeItem('cardbush.selected_model');
-      }
-      return next;
-    });
-  }, [availableModels]);
-
   const setSelectedModel = useCallback((model: string) => {
-    setSelectedModelState(model);
-    preferenceStorage.setItem('cardbush.selected_model', model);
-  }, []);
+    const config = modelConfigFor(availableModels, model);
+    if (config) selectConversationModel(config.id, activeConversationId, backend.scope);
+  }, [availableModels, activeConversationId, backend.scope]);
 
 
   const setReferencePlanMode = useCallback((mode: ReferencePlanMode) => {
@@ -1814,9 +1803,10 @@ export function useCardbushChat(
     const current = activeConversationIdRef.current.trim();
     if (current) setMessageHistoryLoading(current, false);
     setActiveConversationId('');
+    selectConversationModel('', '', backend.scope);
     setPendingInteraction(null);
     setError(null);
-  }, [setMessageHistoryLoading]);
+  }, [setMessageHistoryLoading, backend.scope]);
 
   const prepareConversation = useCallback((
     projectDir?: string,
@@ -1856,10 +1846,11 @@ export function useCardbushChat(
     navigationRevisionRef.current++;
     if (!backend.scope && !activeConversationIdRef.current) adoptDraftConversationStyle(draft.id);
     if (!activeConversationIdRef.current) adoptDraftConversationSource(draft.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
+    if (!activeConversationIdRef.current) adoptDraftConversationModel(draft.id, selectedModel, backend.scope);
     setActiveConversationId(draft.id);
     setError(null);
     return draft;
-  }, [backend.scope, setMessageHistoryLoading]);
+  }, [backend.scope, setMessageHistoryLoading, selectedModel]);
 
   const persistPreparedConversation = useCallback(async (
     conversation: ConversationSummary,
@@ -1931,6 +1922,7 @@ export function useCardbushChat(
     projectId?: string,
   ) => {
     const optimistic = localConversation(projectDir, initialTitle, projectId);
+    if (!activeConversationIdRef.current) adoptDraftConversationModel(optimistic.id, selectedModel, backend.scope);
     setConversations((current) => [
       optimistic,
       ...current.filter((item) => item.id !== optimistic.id),
@@ -1973,7 +1965,7 @@ export function useCardbushChat(
       .catch(() => undefined);
 
     return optimistic;
-  }, [setMessageHistoryLoading]);
+  }, [setMessageHistoryLoading, selectedModel, backend.scope]);
 
   const openStoredConversation = useCallback(async (conversationId: string) => {
     const normalized = conversationId.trim();
@@ -2014,6 +2006,7 @@ export function useCardbushChat(
       setError(errorMessage(caught));
       return;
     }
+    selectConversationModel('', conversationId, backend.scope);
     historyReadsRef.current.invalidate(conversationId.trim());
     contextUsageReadsRef.current.invalidate(conversationId.trim());
     clearSessionAttention(conversationId);
@@ -2025,7 +2018,7 @@ export function useCardbushChat(
       delete next[conversationId];
       return next;
     });
-  }, [clearSessionAttention, localize, setMessageHistoryLoading]);
+  }, [clearSessionAttention, localize, setMessageHistoryLoading, backend.scope]);
 
   const renameConversation = useCallback(async (conversationId: string, title: string) => {
     const normalizedId = conversationId.trim();
@@ -2298,11 +2291,16 @@ export function useCardbushChat(
 
   const sendMessage = useCallback(
     async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => {
+      // Capture the target conversation before attachment preparation can yield.
+      const turnModel = resolveConversationModelId(availableModels, queuedConversation?.id ?? activeConversationId, backend.scope, defaultModelId);
+      const turnReasoningLevel = resolveModelReasoningEffort(modelConfigFor(managedModelConfigs, turnModel) ?? {}) ?? 'default';
       const sourceEnabled = sourceSnapshot ?? resolveConversationSource(queuedConversation?.id ?? activeConversation?.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const trimmed = text.trim();
       if (!trimmed) {
         return;
       }
+      const targetSessionId = queuedConversation?.id ?? activeConversationId;
+      if (targetSessionId && turnModel) selectConversationModel(turnModel, targetSessionId, backend.scope);
       const outbound = splitStreamAttachmentMentions(trimmed);
       const optimisticAttachments = await chatAttachmentsFromOutbound(outbound, !backend.scope);
       const attachments = streamAttachmentsForVision(
@@ -2313,7 +2311,7 @@ export function useCardbushChat(
         outbound.displayInput ||
         optimisticAttachments.map((attachment) => attachment.name).join(', ') ||
         outbound.userInput;
-      if (!selectedModel.trim()) {
+      if (!turnModel.trim()) {
         setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
         return;
       }
@@ -2325,6 +2323,7 @@ export function useCardbushChat(
           conversationTitleFromUserText(visibleUserInput),
         );
       const sessionId = candidate.id;
+      if (!readConversationModel(sessionId, backend.scope)) selectConversationModel(turnModel, sessionId, backend.scope);
       const switching = workspaceSwitchesRef.current.get(sessionId);
       if (switching) {
         try { await switching; } catch { return; }
@@ -2345,9 +2344,9 @@ export function useCardbushChat(
       if (isSessionSending(sessionId)) {
         if (backend.queue) {
           try {
-            await backend.queue.enqueue({ sessionId, userInput: outbound.userInput, model: selectedModel,
-              modelConfig: modelConfigFor(managedModelConfigs, selectedModel), uiLanguage: languageRef.current,
-              permissionMode, subagentPermissionRouting, reasoningLevel, referencePlanMode, sourceEnabled,
+            await backend.queue.enqueue({ sessionId, userInput: outbound.userInput, model: selectedModelName(managedModelConfigs, turnModel),
+              modelConfig: modelConfigFor(managedModelConfigs, turnModel), uiLanguage: languageRef.current,
+              permissionMode, subagentPermissionRouting, reasoningLevel: turnReasoningLevel, referencePlanMode, sourceEnabled,
               files: attachments.files, images: attachments.images, attachments: optimisticAttachments,
               standardImageInputEnabled: requestContext.standardImageInputEnabled,
               disabledSkills: [...(requestContext.disabledSkillNames ?? [])] });
@@ -2448,8 +2447,8 @@ export function useCardbushChat(
           userInput: outbound.userInput,
           sourceEnabled,
           submittedAt,
-          model: selectedModelName(managedModelConfigs, selectedModel),
-          modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
+          model: selectedModelName(managedModelConfigs, turnModel),
+          modelConfig: modelConfigFor(managedModelConfigs, turnModel),
           projectDir,
           workspaceDir,
           teamInstructions,
@@ -2458,7 +2457,7 @@ export function useCardbushChat(
           referencePlanMode,
           permissionMode,
           subagentPermissionRouting,
-          reasoningLevel,
+          reasoningLevel: turnReasoningLevel,
           reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
           interactiveRequestsEnabled:
             requestContext.interactiveRequestsAvailable === true,
@@ -2780,6 +2779,10 @@ export function useCardbushChat(
     },
     [
       activeConversation,
+      activeConversationId,
+      availableModels,
+      backend.scope,
+      defaultModelId,
       applyGoalExecution,
       beginHistoryRead,
       applyHistoryRead,
@@ -2826,22 +2829,26 @@ export function useCardbushChat(
   const voiceGuidanceRef = useRef<(message: ChatMessage, text: string) => Promise<boolean>>(async () => false);
   const prepareVoiceRequest = useCallback(async (fixedSessionId?: string) => {
     if (backend.scope) throw new Error('Realtime delegation requires a local conversation.');
-    if (!selectedModel.trim()) throw Object.assign(new Error('请先配置 Agent 模型。'), { code: 'realtime_model_required' });
+    const voiceModel = resolveConversationModelId(availableModels, fixedSessionId ?? activeConversationId, backend.scope, defaultModelId);
+    if (!voiceModel.trim()) throw Object.assign(new Error('请先配置 Agent 模型。'), { code: 'realtime_model_required' });
+    const voiceModelConfig = modelConfigFor(managedModelConfigs, voiceModel);
+    const voiceReasoningLevel: ReasoningLevel = resolveModelReasoningEffort(voiceModelConfig ?? {}) ?? 'default';
     const conversation = fixedSessionId ? { id: fixedSessionId } as ConversationSummary
       : await persistPreparedConversation(activeConversation ?? prepareConversation(undefined, '语音任务'));
+    if (!readConversationModel(conversation.id)) selectConversationModel(voiceModel, conversation.id);
     return {
       sessionId: conversation.id, userInput: '',
-      model: selectedModelName(managedModelConfigs, selectedModel), modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
+      model: selectedModelName(managedModelConfigs, voiceModel), modelConfig: voiceModelConfig,
       projectDir: conversationProjectRequestDir(conversation), workspaceDir: conversationWorkspaceRoot(conversation),
       teamInstructions: requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined, uiLanguage: languageRef.current,
       disabledSkills: [...(requestContext.disabledSkillNames ?? [])], referencePlanMode, permissionMode,
-      subagentPermissionRouting, reasoningLevel, sourceEnabled: resolveConversationSource(conversation.id),
+      subagentPermissionRouting, reasoningLevel: voiceReasoningLevel, sourceEnabled: resolveConversationSource(conversation.id),
       interactiveRequestsEnabled: requestContext.interactiveRequestsAvailable === true,
       standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
       teamModeEnabled: requestContext.teamModeEnabled === true, teamId: requestContext.selectedTeamId,
       disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
     };
-  }, [backend.scope, selectedModel, activeConversation, prepareConversation, persistPreparedConversation,
+  }, [backend.scope, activeConversationId, availableModels, defaultModelId, activeConversation, prepareConversation, persistPreparedConversation,
     managedModelConfigs, requestContext, referencePlanMode, permissionMode, subagentPermissionRouting, reasoningLevel]);
   const voiceAgent = useMemo(() => {
     const executor = createRealtimeAgentExecutor(prepareVoiceRequest, () => activeConversation?.id ?? '');

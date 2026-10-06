@@ -14,10 +14,11 @@ import { confirmAction } from '../../components/confirmAction';
 export type ModelSettingsConfig = { defaultModelId: string; models: ManagedModelConfig[] };
 type Models = ModelSettingsConfig;
 
-export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visualInputAvailable, visualInputEnabled, onVisualInputEnabledChange, scopeName, visionControl, discoverModels, onSelect }: {
+export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visualInputAvailable, visualInputEnabled, onVisualInputEnabledChange, scopeName, visionControl, discoverModels, onSelect, defaultSelection = false }: {
   language: AppLanguage; models: Models; onSave: (config: Models) => Promise<Models>; onRefresh: () => Promise<void>;
   visualInputAvailable: boolean; visualInputEnabled: boolean; onVisualInputEnabledChange: (enabled: boolean) => void;
   scopeName?: string; visionControl?: ReactNode; discoverModels?: DiscoverModels; onSelect?: (id: string) => void;
+  defaultSelection?: boolean;
 }) {
   const zh = language === 'zh';
   const [config, setConfig] = useState(models);
@@ -70,7 +71,7 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
         <div className="model-provider-list">{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([provider, entries]) => <section className="model-provider-group" key={provider}>
           <header><strong>{provider}</strong><span>{entries.length}</span></header>
           {entries.map(model => <div className="agent-model-entry" key={model.id}>
-            <ModelConfigRow config={model} language={language} disabled={busy} selected={config.defaultModelId === model.id} defaultSelection={Boolean(scopeName)}
+            <ModelConfigRow config={model} language={language} disabled={busy} selected={config.defaultModelId === model.id} defaultSelection={defaultSelection || Boolean(scopeName)}
               onEdit={() => { setEditing(model.id); setAdding(false); setError(''); setNotice(''); }}
               onUse={() => onSelect ? onSelect(model.id) : void save({ ...config, defaultModelId: model.id })}
               onDelete={() => {

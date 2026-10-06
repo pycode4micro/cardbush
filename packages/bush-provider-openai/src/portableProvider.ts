@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BUSH_MODEL_EVENT_PROTOCOL, type ModelEvent, type ModelRequest } from '@cardbush/bush-protocol';
 import type { ModelStreamOptions } from '@cardbush/bush-runtime';
-import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from './requestBodyBudget.js';
+import { assertRequestBodyBudget, requestBodyBudget } from './requestBodyBudget.js';
 import { providerToolAliases } from './toolNames.js';
 import { ProviderToolCallError } from './providerFailure.js';
 import { cacheRoutingFingerprint } from './promptCache.js';
@@ -16,7 +16,7 @@ export function eventWriter(requestId: string) {
 
 /** Fingerprint the wire projection once, excluding replay sidecars and image bytes. */
 export function recordProjection(format: string, request: ModelRequest, params: Record<string, unknown>, options: ModelStreamOptions,
-  maxBytes = DEFAULT_REQUEST_BODY_MAX_BYTES, dispatch = false): number {
+  maxBytes?: number, dispatch = false): number {
   let images = 0;
   const input = { system: params.system, messages: params.messages, tools: params.tools, thinking: params.thinking,
     output_config: params.output_config, reasoning_effort: params.reasoning_effort,

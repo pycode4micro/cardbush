@@ -2614,7 +2614,7 @@ export async function sendGuidance(request: SendGuidanceRequest,
     const snapshot = promptReferenceParts(guidance).some(part => part.reference?.kind === 'user-turn')
       ? await runtime.client.getSession(sessionId, request.signal) : undefined;
     const referencedInput = await resolvePromptReferenceContext(guidance, sessionId, snapshot, undefined,
-      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract);
+      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract, runtime.resolveBrowserReferences);
     const createdAt = request.createdAt ?? new Date().toISOString();
     const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const receipt = await runtime.client.enqueueGuidance({

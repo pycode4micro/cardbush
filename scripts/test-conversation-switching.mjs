@@ -36,6 +36,7 @@ const snapshots = [], supplements = [], promotions = [], messageQueue = [];
 let messages = {}, conversations = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }], active = '', error;
 const context = {
   exports: {}, useCallback: fn => fn, SessionReadFence, canApplySessionSnapshot,
+  backend: {}, selectConversationModel() {},
   requestContext: { workspaceChangesAvailable: true },
   historyRequestsRef: ref(new Map()), historyReadsRef: ref(new SessionReadFence()), liveTranscriptSessionsRef: ref(new Set()),
   navigationRevisionRef: ref(0), activeConversationIdRef: ref(''), conversationsRef: ref(conversations), preparedConversationsRef: ref({}),

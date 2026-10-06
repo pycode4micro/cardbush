@@ -10,6 +10,7 @@ module.exports = async ({ run, until, pause }) => {
     localStorage.setItem('cardbush.reasoning_level','max');
     localStorage.setItem('reasoning-fixture:cardbush.reasoning_level','max');
     localStorage.removeItem('reasoning-fixture:cardbush.selected_model');
+    views.selectConversationModel('', '', 'reasoning-fixture');
     window.reasoningModels=views.normalizeManagedModelConfigs([
       {id:'a',modelName:'same-name',provider:'custom',baseUrl:'https://a.test/v1',apiKey:'',reasoningEffort:'low'},
       {id:'b',modelName:'same-name',provider:'custom',baseUrl:'https://b.test/v1',apiKey:'',reasoningEffort:'high'},
@@ -64,6 +65,6 @@ module.exports = async ({ run, until, pause }) => {
   await run('renderView(null)'); await pause();
   await run('renderView(h(ReasoningFixture))');
   await until('reasoningChat.selectedModel==="b" && reasoningChat.reasoningLevel==="high"', 'remount restores selected model and its effort');
-  await run('renderView(null);localStorage.removeItem("cardbush.reasoning_level");localStorage.removeItem("reasoning-fixture:cardbush.reasoning_level");localStorage.removeItem("reasoning-fixture:cardbush.selected_model")');
+  await run('renderView(null);views.selectConversationModel("", "", "reasoning-fixture");localStorage.removeItem("cardbush.reasoning_level");localStorage.removeItem("reasoning-fixture:cardbush.reasoning_level");localStorage.removeItem("reasoning-fixture:cardbush.selected_model")');
   console.log('Model reasoning passed: same-name isolation, switching, pending saves, failed saves, provider default and remount.');
 };

@@ -22,6 +22,10 @@ import { RightInspectorResizer } from '${local('src/components/RightInspectorRes
 import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
 import { BrowserStartPageSettings } from '${local('src/features/browser/BrowserSettingsPanel.tsx')}';
 import { newBrowserTab } from '${local('src/features/browser/browserStartPage.ts')}';
+import { useInspectorBrowserActions } from '${local('src/features/inspector/useInspectorBrowserActions.ts')}';
+import { inspectorBrowserReferences } from '${local('src/features/composer/ComposerReferenceContext.ts')}';
+import { promptReferenceMarkdown } from '${local('src/shared/promptReferences.ts')}';
+import { bindLocalBrowserReferences, resolvePromptReferenceContext } from '${local('src/backend/promptReferenceContext.ts')}';
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 window.openedLinks=[];
@@ -39,6 +43,12 @@ function Harness() {
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
   window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage};
+  useInspectorBrowserActions({open:tabs.openTab,activate:tabs.activateTab,close:id=>tabs.closeTabs(new Set([id])),show:()=>{}});
+  window.browserFixture.reference = async (sessionId,tabId) => {
+    const reference=inspectorBrowserReferences(tabs.tabs,navigation).find(tab=>tab.tabId===tabId);
+    if(!reference)throw Error('Reference unavailable');
+    return resolvePromptReferenceContext(promptReferenceMarkdown(reference)+' Click the first video.',sessionId,undefined,'en',undefined,undefined,undefined,bindLocalBrowserReferences);
+  };
   const active=navigation[tabs.activeId];
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
@@ -92,7 +102,8 @@ try {
   await writeFile(join(directory, 'index.html'), `<!doctype html><html><head><meta charset="utf-8">${css.map(item => `<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="${entry.fileName}"></script></body></html>`);
   const require = createRequire(import.meta.url), env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
-  const run = spawnSync(require('electron'), ['scripts/test-inspector-browser-navigation.cjs', directory], { env, windowsHide: true, stdio: 'inherit', timeout: 45_000 });
+  const worker = process.argv.includes('--browser-use') ? 'scripts/test-integrated-browser-use.cjs' : 'scripts/test-inspector-browser-navigation.cjs';
+  const run = spawnSync(require('electron'), [worker, directory], { env, windowsHide: true, stdio: 'inherit', timeout: 60_000 });
   assert.equal(run.status, 0, String(run.error ?? 'Browser navigation regression failed'));
 } finally {
   assert.ok(directory.startsWith(parent + sep + 'inspector-browser-'));

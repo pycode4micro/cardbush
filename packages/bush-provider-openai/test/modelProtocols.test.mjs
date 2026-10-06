@@ -40,6 +40,60 @@ const anthropicEvents = (stop = 'tool_use', args = '{"path":"file.txt"}') => [
   { type: 'message_stop' },
 ];
 
+test('all three adapters use a 40 MB default and dispatch bodies above the former 32 MB cap', async t => {
+  const input = req({ messages: [{ role: 'user', content: 'Inspect the image.',
+    images: [{ url: 'data:image/png;base64,' + 'A'.repeat(32_000_001) }] }], tools: [] });
+  for (const Provider of [OpenAIResponsesProvider, OpenAIChatCompletionsProvider, AnthropicMessagesProvider]) {
+    await t.test(Provider.name, async () => {
+      let calls = 0, dispatchedBytes;
+      const provider = new Provider({ apiKey: 'fixture', fetch: async (_url, init) => {
+        calls++;
+        dispatchedBytes = Buffer.byteLength(init.body);
+        assert.ok(dispatchedBytes > 32_000_000 && dispatchedBytes < 40_000_000);
+        if (Provider === OpenAIResponsesProvider) return sse([{ type: 'response.completed', response: {
+          id: 'response-large', status: 'completed', output: [], store: false,
+        } }]);
+        if (Provider === OpenAIChatCompletionsProvider) return sse([chunk({ content: 'Checked.' }), chunk({}, 'stop')], true);
+        return sse(anthropicEvents('end_turn').filter(e => !(e.type.startsWith('content_block') && e.index === 2)));
+      } });
+      const budgets = [];
+      const tokens = await provider.estimateInputTokens(input, { onRequestBodyBudget: value => budgets.push(value) });
+      assert.ok(tokens < 5000, 'base64 byte length is independent of visual token estimates');
+      assert.equal(budgets.length, 1);
+      assert.equal(budgets[0].maxBytes, 40_000_000);
+      assert.ok(budgets[0].bytes > 32_000_000 && budgets[0].bytes < budgets[0].maxBytes);
+      const events = await collect(provider.stream(input, { onRequestBodyBudget: value => budgets.push(value) }));
+      assert.equal(events.at(-1).kind, 'response_completed');
+      assert.equal(calls, 1);
+      assert.equal(budgets.length, 2);
+      assert.deepEqual(budgets[1], budgets[0]);
+      assert.equal(budgets[1].bytes, dispatchedBytes);
+    });
+  }
+});
+
+test('all three adapters reject bodies above the default 40 MB budget before any network dispatch', async t => {
+  const input = req({ messages: [{ role: 'user', content: 'Inspect the image.',
+    images: [{ url: 'data:image/png;base64,' + 'A'.repeat(40_000_001) }] }], tools: [] });
+  for (const Provider of [OpenAIResponsesProvider, OpenAIChatCompletionsProvider, AnthropicMessagesProvider]) {
+    await t.test(Provider.name, async () => {
+      let calls = 0, budget;
+      const provider = new Provider({ apiKey: 'fixture', fetch: async () => { calls++; throw new Error('Oversized dispatch is forbidden.'); } });
+      const options = { onRequestBodyBudget: value => { budget = value; } };
+      const tokens = await provider.estimateInputTokens(input, options);
+      assert.ok(tokens < 5000, 'base64 byte length must not inflate token usage');
+      assert.equal(budget.maxBytes, 40_000_000);
+      assert.ok(budget.bytes > budget.maxBytes);
+      if (Provider === OpenAIResponsesProvider) assert.equal(await provider.countInputTokens(input, options), undefined);
+      const events = await collect(provider.stream(input, options));
+      assert.equal(events.at(-1).kind, 'response_failed');
+      assert.equal(events.at(-1).code, 'provider_request_body_too_large');
+      assert.equal(events.at(-1).retryable, false);
+      assert.equal(calls, 0);
+    });
+  }
+});
+
 test('session headers are per request, case-insensitive and confined to the OpenCode host', () => {
   const defaults = { 'User-Agent': 'CardBush-Test/1.0', 'x-session-id': '{{sessionId}}', 'X-OpenCode-Session': 'old-fixed-id' };
   assert.equal(modelRequestHeaders('https://opencode.ai/zen/go/v1', defaults, 'A')['x-opencode-session'], 'A');
@@ -105,7 +159,8 @@ for (const [adapter, Provider, events, path] of [
   });
   test(`${adapter}: real SDK request, fragmented SSE, tools, usage and opaque replay`, async () => {
     const requests = [], projections = [], budgets = [];
-    const provider = new Provider({ apiKey: 'fixture-key', baseURL: 'https://opencode.ai/zen/go/v1', defaultHeaders: { 'x-custom-session': '{{sessionId}}' },
+    const provider = new Provider({ apiKey: 'fixture-key', baseURL: 'https://opencode.ai/zen/go/v1', maxRequestBodyBytes: 100_000,
+      defaultHeaders: { 'x-custom-session': '{{sessionId}}' },
       fetch: async (url, init) => { requests.push({ url: String(url), headers: new Headers(init.headers), body: JSON.parse(init.body) }); return sse(events(), adapter === 'openai_chat_completions'); } });
     const input = req(), opts = { onInputProjection: p => projections.push(p), onRequestBodyBudget: b => budgets.push(b) };
     assert.ok(await provider.estimateInputTokens(input, opts) > 0);
@@ -125,6 +180,7 @@ for (const [adapter, Provider, events, path] of [
     assert.equal(usage.inputTokens, 100); assert.equal(usage.outputTokens, 10);
     assert.deepEqual(projections[0], projections[1], 'estimate and actual dispatch must have the same input');
     assert.equal(budgets[1].bytes, Buffer.byteLength(JSON.stringify(requests[0].body)));
+    assert.equal(budgets[1].maxBytes, 100_000);
     const assistant = { role: 'assistant', content: '检查', reasoningContent: '分析', toolCalls: [{ id: 'call-1', name: 'read_file', argumentsText: call.argumentsDelta }] };
     assistant.providerReplay = { ...result.at(-1).providerReplay, model: input.model, messageHash: modelReplayMessageHash(assistant) };
     const follow = req({ messages: [...input.messages, assistant, { role: 'tool', toolCallId: 'call-1', content: 'file content' }] });

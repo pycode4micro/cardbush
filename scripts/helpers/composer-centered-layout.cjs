@@ -12,19 +12,23 @@ module.exports = async ({ run, until, pause, window, root }) => {
     };
     void 0;
   `);
-  for (const style of ['simple','standard']) for (const mode of ['keep','bottom']) {
-    await run(`startFlow(${JSON.stringify(mode)},'above',${JSON.stringify('center-'+mode+style)});updateChat({language:'zh'});`);
+  for (const viewportWidth of [1080,1920,1080]) for (const style of ['simple','standard']) for (const mode of ['keep','bottom']) {
+    window.setContentSize(viewportWidth,820);
+    await run(`startFlow(${JSON.stringify(mode)},'above',${JSON.stringify('center-'+viewportWidth+mode+style)});updateChat({language:'zh',windowMaximized:${viewportWidth === 1920}});`);
     await pause();
     await run(`placeInput({x:1,y:180,width:62,height:700,inputStyle:${JSON.stringify(style)}})`);
     await until(`!!document.querySelector('.welcome-composer .composer-stack${style === 'simple' ? '.simple' : ':not(.simple)'}')`, 'input presentation'); await pause();
     const before = await run('layoutRect(".welcome-composer .composer-stack")');
     close(before.left+before.width/2, (await run('document.querySelector(".chat-body").clientWidth'))/2, 'welcome center');
+    close(before.width, (await run('layoutRect(".welcome-slot-input")')).width, 'visible input fills the centered placement');
     assert.ok(await run('document.querySelector(".welcome-slot-input").offsetHeight<300'), 'stored height creates no empty padding');
+    if (viewportWidth===1920 && style==='simple' && mode==='bottom') fs.writeFileSync(path.join(root,'tmp','composer-maximized-welcome.png'),(await window.webContents.capturePage()).toPNG());
     await run('document.querySelector(".send-button").click()');
     await until('!!document.querySelector(".composer-dock .composer-stack")', 'centered send');
     await until('document.querySelector(".composer-dock").getAnimations().every(a=>a.playState!=="running")', 'vertical arrival'); await pause();
     const after = await run('layoutRect(".composer-dock .composer-stack")');
     close(after.left,before.left,'same horizontal origin'); close(after.width,before.width,'same width');
+    if (viewportWidth===1920 && style==='simple' && mode==='bottom') fs.writeFileSync(path.join(root,'tmp','composer-maximized-conversation.png'),(await window.webContents.capturePage()).toPNG());
     if (mode==='keep') close(after.top,before.top,'keep actual input top');
     else {
       close(after.bottom, (await run('document.querySelector(".chat-body").clientHeight'))-20, 'shared bottom landing');
@@ -105,5 +109,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const smallSent = await run('layoutRect(".composer-dock .composer-stack")');
   close(smallSent.top,small.top,'small window stays put'); close(smallSent.width,small.width,'small window same width');
   await run('renderView(null);localStorage.removeItem(views.componentStorageKey)');
-  console.log('Centered composer passed: both styles and send modes, same width/axis, actual bounds, snapping, 125% drag/resize, keyboard lock, save/reopen, bottom pin and small windows.');
+  console.log('Centered composer passed: restored/1920px/restored, both styles and send modes, same width/axis, actual bounds, snapping, 125% drag/resize, keyboard lock, save/reopen, bottom pin and small windows.');
 };

@@ -359,7 +359,10 @@ async function executeRuntimeCommand(
       if (hostNetworkAvailable) {
         const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
         combined.servers = combined.servers.map(server => ({
-          ...server, networkProxy: server.id === 'cardbush_management' ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' } : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default,
+          // Desktop-owned loopback MCP must not leave the host through a plugin proxy.
+          ...server, networkProxy: server.id === 'cardbush_management' || server.id === 'browser_use' && server.transport.kind === 'streamable_http' && server.transport.url === process.env.CARDBUSH_BROWSER_USE_URL?.trim()
+            ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' }
+            : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default,
         }));
       }
       const content = JSON.stringify({ snapshotId: combined.snapshotId, servers: combined.servers });
@@ -419,8 +422,10 @@ function withBundledAppsServer(input: unknown): unknown {
   const managementToken = process.env.CARDBUSH_MCP_MANAGEMENT_TOKEN?.trim();
   const appsEntry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
   const chromeConnectorEntry = process.env.CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY?.trim();
+  const browserUseUrl = !process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1'
+    ? process.env.CARDBUSH_BROWSER_USE_URL?.trim() : undefined;
   const chromeRemoteDebuggingEntry = process.env.CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY?.trim();
-  if (!managementUrl && !appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry) return input;
+  if (!managementUrl && !appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry && !browserUseUrl) return input;
   const snapshot = object(input, 'MCP snapshot must be an object.');
   const configured = Array.isArray(snapshot.servers) ? snapshot.servers : [];
   const reservedIds = new Set(['cardbush_apps', 'browser_use', 'chrome_devtools', 'cardbush_management']);
@@ -482,12 +487,15 @@ function withBundledAppsServer(input: unknown): unknown {
   const chromeEntry = appsConfig.chromeConnectionMode === 'remote_debugging'
     ? chromeRemoteDebuggingEntry
     : chromeConnectorEntry;
-  if (chromeEntry && appsConfig.enabledPluginIds.has('chrome')) {
+  if ((chromeEntry || browserUseUrl && appsConfig.chromeConnectionMode !== 'remote_debugging') && appsConfig.enabledPluginIds.has('chrome')) {
     const remoteDebugging = appsConfig.chromeConnectionMode === 'remote_debugging';
+    const integrated = Boolean(browserUseUrl && !remoteDebugging);
+    if (integrated && !process.env.CARDBUSH_BROWSER_USE_TOKEN) throw new Error('CardBush Browser Use authentication is missing.');
     bundled.push({
       id: 'browser_use',
       pluginId: 'chrome',
-      transport: {
+      transport: integrated ? { kind: 'streamable_http', url: browserUseUrl!,
+        headers: { Authorization: `Bearer ${process.env.CARDBUSH_BROWSER_USE_TOKEN}` } } : {
         kind: 'stdio',
         command: process.execPath,
         args: remoteDebugging
@@ -515,8 +523,8 @@ function withBundledAppsServer(input: unknown): unknown {
       versionMode: 'auto',
       restartBackoffMs: 500,
       defaultToolPolicy: {
-        // The connector extension enforces per-tab/per-site consent. Avoid a
-        // duplicate CardBush permission prompt for every browser command.
+        // Extension consent or an explicit integrated-tab selection scopes access.
+        // Avoid a duplicate CardBush permission prompt for every browser command.
         permission: remoteDebugging ? 'ask' : 'allow',
         parallelSafe: false,
         visibleToChild: true,
@@ -527,7 +535,7 @@ function withBundledAppsServer(input: unknown): unknown {
       type: 'runtime_browser_connection',
       requestedMode: appsConfig.chromeConnectionMode,
       effectiveMode: appsConfig.chromeConnectionMode,
-      reason: remoteDebugging ? 'advanced_remote_debugging' : 'paired_loopback_websocket',
+      reason: remoteDebugging ? 'advanced_remote_debugging' : integrated ? 'desktop_browser_router' : 'paired_loopback_websocket',
     }));
   }
   return {

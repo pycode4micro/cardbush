@@ -1,6 +1,6 @@
 # 当前架构
 
-本页描述 Beta 5 的当前实现。历史迁移记录和分析报告不代替这里的运行边界；部署步骤见 [Agent 服务](AGENT_SERVICES.md)，发布步骤见[跨平台发布](CROSS_PLATFORM_RELEASE.md)。
+本页描述主分支的当前实现，源码包版本为 `1.0.0-beta.5`，安装包可能尚未包含全部更新。历史迁移记录和分析报告不代替这里的运行边界；部署步骤见 [Agent 服务](AGENT_SERVICES.md)，发布步骤见[跨平台发布](CROSS_PLATFORM_RELEASE.md)。
 
 ## 三种执行方式
 
@@ -42,6 +42,8 @@ flowchart TD
 | `electron/runtimeHostController.mts`、`electron/runtimeHostWorker.mts` | 桌面 Runtime 生命周期与共享 worker 入口 |
 | `electron/agentServiceCli.mts`、`electron/agentService.mts`、`electron/agentRuntimeHost.mts` | 独立服务入口、HTTP/队列管理和 Node Worker 宿主；运行时不启动 Electron |
 | `electron/productHostController.mts` | 将共享产品命令接到当前宿主的设置、插件与维护实现 |
+| `packages/bush-runtime/src/assistantConversation.ts`、`conversationJournal.ts` | 个人助手的持续交流、独立日志、受限工具及后台完成反馈 |
+| `electron/realtimeVoiceService.ts`、`src/features/voice` | 实时 Provider 接入、应用级通话归属、音频和上下文衔接 |
 | `src` | React 界面、会话状态消费、页面历史及本地／远端后端适配 |
 
 不要因服务文件位于 `electron/` 就推断服务依赖桌面进程；以入口的实际依赖和宿主实现为准。反过来，也不能将完整桌面安装包当作 Agent 服务器发行物。
@@ -63,9 +65,23 @@ flowchart TD
 
 `ModelProviderRegistry` 只选择请求适配器。Responses、Chat Completions、Messages 分别投影消息与解析流，公共输入处理和工具身份映射不依赖任何具体协议。适配器不能执行工具、修改权威历史或决定下一轮；`executeModelRound` 汇总统一事件，`InMemoryRuntimeHost` 处理执行、权限、重试、停止、压缩和恢复。供应商签名思考等数据以不透明 replay 携带，不能成为另一套 loop 状态。
 
+## 个人助手与应用级语音
+
+个人助手采用固定的 `personal-assistant` 会话身份。`ConversationJournal` 追加页面内容、内部转写、任务回执和摘要，与普通执行会话的 `SessionStore` / Turn 日志分开；语音追加不占用正在执行的文字 Turn 序号。条目以消息 ID 幂等追加，重置增加上下文代次，旧通话与旧请求不能迟到写入新上下文。界面按显式的 `source` 和 `visibility` 显示记录，不解析正文推断是否该展示。
+
+助手文字交流通过 `AssistantConversation` 与公共 `executeModelRound` 接入所选模型，只提供派发、即时状态、主子消息、分页读取和 `page_write`。普通实时语音提供前四类入口，assistant 通话另提供 `page_write`。真正的执行由 `RealtimeAgentDispatcher` 接到既有子 Agent 调度、工具注册表、权限和持久化执行循环；交流父会话不会直接运行文件或终端工具。任务完成通过真实状态异步反馈，页面以任务气泡打开共用执行详情。
+
+交流和语音采集属于桌面；assistant 的执行主机选择只作用于后续派发。远端子任务使用目标 Agent 服务自己的配置和工作区，追加、读取与恢复按任务保存的原主机路由。附件保留本机预览引用，远程执行另走分块上传并记录目标路径。配置同步和任务提交是不同动作；任务派发本身不复制桌面 OAuth 凭据或整个父会话。
+
+`applicationVoiceSession` 持有通话的麦克风、播放、归属和执行桥。导航、设置页和最小化不重定向通话；控件在所属输入框与浮动胶囊间切换。录音则绑定可见页面，离开后释放采集并取消未提交转写。挂断与取消任务分开，本地执行依赖桌面生命周期，独立服务继续拥有已接收的任务。
+
+语音 Provider 与文字 Provider 使用不同连接配置。`realtimeVoiceProvider.ts` 归一化音频、上下文、工具回执和控制事件；服务层负责调用去重、背压、恢复与空隙通知。实时通话维护使用所选文字模型的独立压缩请求，冻结范围后保存摘要，确认远端新历史后再替换旧上下文；无法确认时重建连接，不重放执行工具。用于语音恢复的 `voice-history` 转写和摘要由系统安全存储加密，会话日志另按 JSONL 保存；原始通话音频不归档。这些会话摘要与跨会话习惯记忆分开。
+
+用户操作、主机边界与重置范围见[个人助手](PERSONAL_ASSISTANT.md)，协议和上下文维护见[实时通话](REALTIME_VOICE.md)，原有识别／Agent／朗读模式见[本地语音](LOCAL_VOICE_MODELS.md)。
+
 ## 插件、应用中心与引用
 
-插件提供技能、MCP 工具或运行时扩展。安装、配置、启用和更新都在选定环境执行。云 Agent 可使用自己的插件市场，但不会复制桌面凭据，也不能提供本机浏览器登录弹窗或直接加载远端原生 renderer。
+插件提供技能、MCP 工具或运行时扩展。安装、配置、启用和更新都在选定环境执行。独立 Agent 可使用自己的插件市场，也可按连接设置同步选定插件、配置及已保存的模型／MCP 凭据；同步规则见 [Agent 服务](AGENT_SERVICES.md)。浏览器登录状态、ChatGPT / SIWC OAuth 凭据、插件目录外数据和桌面原生组件不迁移；远端不能提供本机浏览器登录弹窗或直接加载原生 renderer。
 
 应用中心是可操作页面和快捷入口目录：内置页面、用户添加的应用／网址，以及插件明确声明的 `cardbush.applications`。普通 `.app.json` MCP 连接不是应用页面，仍由插件设置管理。
 
