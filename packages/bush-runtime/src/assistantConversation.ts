@@ -1,23 +1,31 @@
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { assistantConversationRequestSchema, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   type AssistantProfile, type ModelMessage, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition } from '@cardbush/bush-protocol';
 import { executeModelRound } from './modelRound.js';
 import type { ModelProvider } from './modelProvider.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
+import { stripToolDisplayTitle } from './toolDisplay.js';
+
+const promptSchema = z.string().trim().min(1).max(8000);
+const subagentInput = z.object({ prompt: promptSchema }).strict();
+const awaitInput = z.object({ task_ids: z.array(z.string().min(1)).max(8).optional() }).strict();
+const messageInput = z.object({ task_id: z.string().min(1), prompt: promptSchema }).strict();
+const readInput = z.object({ task_id: z.string().min(1), cursor: z.string().regex(/^\d+:\d+$/).optional() }).strict();
 
 const tools: ToolDefinition[] = [assistantPageTool, {
   name: 'subagent', description: 'Dispatch a user-requested task to the selected execution host. Returns immediately with taskId. Execution is independent of this conversation; continue talking. Include context and constraints in prompt.',
-  inputSchema: { type: 'object', additionalProperties: false, required: ['prompt'], properties: { prompt: { type: 'string', minLength: 1, maxLength: 8000 } } },
+  inputSchema: z.toJSONSchema(subagentInput),
 }, {
   name: 'await_subagent', description: 'Return task states immediately and register automatic completion feedback. Never blocks; do not poll. Omit task_ids for all owned tasks.',
-  inputSchema: { type: 'object', additionalProperties: false, properties: { task_ids: { type: 'array', maxItems: 8, items: { type: 'string' } } } },
+  inputSchema: z.toJSONSchema(awaitInput),
 }, {
   name: 'send_subagent_message', description: 'Send a follow-up to an owned child. Running tasks receive guidance; completed tasks resume on their original host. Returns immediately.',
-  inputSchema: { type: 'object', additionalProperties: false, required: ['task_id', 'prompt'], properties: { task_id: { type: 'string' }, prompt: { type: 'string', minLength: 1, maxLength: 8000 } } },
+  inputSchema: z.toJSONSchema(messageInput),
 }, {
   name: 'read_subagent_conversation', description: 'Read an owned child conversation and verified results. Never blocks waiting for completion.',
-  inputSchema: { type: 'object', additionalProperties: false, required: ['task_id'], properties: { task_id: { type: 'string' }, cursor: { type: 'string' } } },
+  inputSchema: z.toJSONSchema(readInput),
 }];
 
 /** A small conversational parent. Execution still uses the existing Runtime child dispatcher. */
@@ -132,31 +140,39 @@ export class AssistantConversation {
       const results = await Promise.all(result.toolCalls.map(async call => {
         try {
           signal.throwIfAborted();
-          const args = JSON.parse(call.argumentsText);
+          const definition = tools.find(tool => tool.name === call.name);
+          if (!definition) throw Object.assign(Error('Tool is not available.'), { code: 'tool_unavailable' });
+          // Providers add presentation metadata to every function schema. Use the
+          // same boundary as the normal tool coordinator before business validation.
+          const args = stripToolDisplayTitle(JSON.parse(call.argumentsText), definition);
           let output: unknown;
           if (call.name === 'page_write') {
             const { content } = assistantPageInputSchema.parse(args);
             this.journal.append(id, { id: `page-${randomUUID()}`, role: 'assistant', content, createdAt: new Date().toISOString(), source: 'page', visibility: 'conversation' });
             published = true; output = { status: 'written' };
           } else if (call.name === 'await_subagent') {
-            if (!args || Object.keys(args).some(key => key !== 'task_ids') || args.task_ids !== undefined && (!Array.isArray(args.task_ids) || args.task_ids.length > 8)) throw Error('Invalid task_ids.');
+            const { task_ids } = awaitInput.parse(args);
             const tasks = this.deps.tasks(id);
-            if (args.task_ids?.some((taskId: string) => !tasks.some(task => task.taskId === taskId))) throw Error('Task is not owned by this assistant.');
-            const selected = tasks.filter(task => !args.task_ids || args.task_ids.includes(task.taskId));
+            if (task_ids?.some(taskId => !tasks.some(task => task.taskId === taskId))) throw Object.assign(Error('Task is not owned by this assistant.'), { code: 'subagent_not_owned' });
+            const selected = tasks.filter(task => !task_ids || task_ids.includes(task.taskId));
             selected.forEach(task => this.watched.add(task.taskId)); this.schedule();
             output = { status: selected.some(task => task.status === 'running') ? 'watching' : 'settled', tasks: selected.map(task => ({ taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 8000) })) };
           } else {
-            if (!['subagent', 'send_subagent_message', 'read_subagent_conversation'].includes(call.name)) throw Error('Tool is not available.');
-            const allowed = call.name === 'subagent' ? ['prompt'] : call.name === 'send_subagent_message' ? ['task_id', 'prompt'] : ['task_id', 'cursor'];
-            if (!args || Object.keys(args).some(key => !allowed.includes(key))) throw Error('Invalid tool arguments.');
+            const input = call.name === 'subagent' ? subagentInput.parse(args)
+              : call.name === 'send_subagent_message' ? messageInput.parse(args) : readInput.parse(args);
             output = await this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
-              parent, prompt: args.prompt, taskId: args.task_id, cursor: args.cursor, targetAgent: profile.targetAgent || undefined });
+              parent, prompt: 'prompt' in input ? input.prompt : undefined, taskId: 'task_id' in input ? input.task_id : undefined,
+              cursor: 'cursor' in input ? input.cursor : undefined, targetAgent: profile.targetAgent || undefined });
             signal.throwIfAborted();
             const taskId = (output as { taskId?: string })?.taskId;
             if (taskId && call.name !== 'read_subagent_conversation') { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }
           }
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify(output) };
-        } catch (error) { return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify({ status: 'failed', error: error instanceof Error ? error.message : String(error) }) }; }
+        } catch (error) {
+          const code = error instanceof z.ZodError || error instanceof SyntaxError ? 'invalid_tool_arguments'
+            : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'assistant_tool_failed';
+          return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify({ status: 'failed', code, error: error instanceof Error ? error.message : String(error) }) };
+        }
       }));
       messages.push(...results);
     }

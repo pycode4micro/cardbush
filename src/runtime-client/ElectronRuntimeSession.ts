@@ -31,6 +31,7 @@ import {
 import type { RuntimeTerminalView } from './RuntimeTurnProjection';
 import { RuntimeTurnStore } from './RuntimeTurnStore';
 import { settleRuntimeTurn } from './settleRuntimeTurn';
+import { bindLocalBrowserReferences } from '../backend/promptReferenceContext';
 
 type RuntimeTerminalEvent = Extract<RuntimeEvent, { kind: 'turn_terminal' }>;
 
@@ -54,6 +55,7 @@ export interface ElectronRuntimeSessionOptions {
  * facts.
  */
 export class ElectronRuntimeSession {
+  readonly resolveBrowserReferences = bindLocalBrowserReferences;
   readonly client: ElectronProtocolRuntimeClient;
   readonly store: RuntimeTurnStore;
   #operationController?: AbortController;

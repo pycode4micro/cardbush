@@ -395,7 +395,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
       toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
     const fingerprint = responsesInputFingerprint(full, full, request.providerBinding);
     options.onInputProjection?.(fingerprint);
-    options.onRequestBodyBudget?.(requestBodyBudget(projection.params, this.#maxRequestBodyBytes));
+    const budget = requestBodyBudget(projection.params, this.#maxRequestBodyBytes);
+    options.onRequestBodyBudget?.(budget);
     return fingerprint.tokenEstimate!.tokens;
   }
 

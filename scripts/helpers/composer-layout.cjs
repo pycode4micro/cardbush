@@ -4,7 +4,12 @@ const path = require('node:path');
 
 module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.insertCSS('.app { width:100%!important; }');
+  // main.tsx loads shared composer styles after the component modules. Keep that
+  // production cascade here so compact defaults cannot silently override layout.
+  await window.webContents.insertCSS(fs.readFileSync(path.join(root,'src/styles/composer.css'),'utf8'));
   await run(`
+    // The production parent supplies --chat-track-width and the reading gutters.
+    window.updateChat=patch=>{Object.assign(chatProps,patch);renderView(h('section',{className:'main-stage',style:{height:'100%'}},h(views.ChatPanel,chatProps)));};
     window.saveFlow=(afterSend,output)=>{
       const saved=JSON.parse(localStorage.getItem(views.componentStorageKey))||views.defaultComponents;
       views.saveComponents({...saved,items:saved.items.map(item=>item.id==='system-input'?{...item,inputStyle:'simple'}:item),

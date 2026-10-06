@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { installInspectorWindowOpen } = require('../dist-electron/inspectorWindowOpen.js');
+const { installAppSessionPermissions } = require('../dist-electron/appSessionPermissions.js');
 const { BrowserTranslationService } = require('../dist-electron/browserTranslation.js');
+const { IntegratedBrowser } = require('../dist-electron/integratedBrowser.js');
 const directory = path.resolve(process.argv[2]);
 app.setPath('userData', path.join(directory, 'profile'));
 app.on('window-all-closed', () => {});
@@ -15,6 +17,7 @@ app.whenReady().then(async () => {
   const delayedDocuments = [];
   let backgroundPageRequests = 0;
   const server = http.createServer((req, res) => {
+    if (req.url === '/external-redirect') { res.writeHead(302, { Location: 'bytedance://probe/redirect' }); res.end(); return; }
     if (req.url === '/redirect') { res.writeHead(302, { Location: '/landing?query=%E6%A8%A1%E5%9E%8B' }); res.end(); return; }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (req.url === '/translation') {
@@ -47,7 +50,31 @@ app.whenReady().then(async () => {
     preload: path.resolve('dist-electron/preload.js'), sandbox: true, contextIsolation: true,
     nodeIntegration: false, webviewTag: true, backgroundThrottling: false, offscreen: true,
   } });
+  // Never launch a real OS app, even if the production permission policy regresses.
+  // Record its decision while denying the external dispatch in this isolated fixture.
+  const externalPermissions = [];
+  const browserSession = window.webContents.session;
+  const setCheck = browserSession.setPermissionCheckHandler.bind(browserSession);
+  const setRequest = browserSession.setPermissionRequestHandler.bind(browserSession);
+  browserSession.setPermissionCheckHandler = handler => setCheck((contents, permission, requestingOrigin, details) => {
+    const allowed = handler(contents, permission, requestingOrigin, details);
+    if (permission !== 'openExternal') return allowed;
+    externalPermissions.push({ stage: 'check', allowed }); return false;
+  });
+  browserSession.setPermissionRequestHandler = handler => setRequest((contents, permission, callback, details) => {
+    handler(contents, permission, allowed => {
+      if (permission !== 'openExternal') { callback(allowed); return; }
+      externalPermissions.push({ stage: 'request', allowed }); callback(false);
+    }, details);
+  });
+  installAppSessionPermissions(window);
+  browserSession.setPermissionCheckHandler = setCheck;
+  browserSession.setPermissionRequestHandler = setRequest;
   installInspectorWindowOpen(window.webContents);
+  const integrated = new IntegratedBrowser({ getContents: id => webContents.fromId(id), defaultOwner: () => window.webContents,
+    action: (ownerId, action) => webContents.fromId(ownerId)?.send('inspector:browser-action', action) });
+  ipcMain.handle('inspector:browser-register', (event, input) => integrated.register(event.sender, input));
+  ipcMain.handle('inspector:browser-unregister', (event, input) => integrated.unregister(event.sender.id, input));
   const { BrowserConfigStore } = await import('@cardbush/product-host');
   const store = new BrowserConfigStore(path.join(directory, 'browser.json'));
   ipcMain.handle('browser:settings-read', () => store.read());
@@ -100,6 +127,7 @@ app.whenReady().then(async () => {
     const original = webContents.fromId(originalId);
     await until(() => original.executeJavaScript('!!document.querySelector("#blank")'), 'source page');
     await original.executeJavaScript('window.retainedState="search-state"');
+    await require('./helpers/browser-external-protocols.cjs')({ window, original, origin, read, until, pause, externalPermissions });
     await waitFor('!document.querySelector(".deferred-resize-preview[data-resizing]")');
     await pause(200);
 

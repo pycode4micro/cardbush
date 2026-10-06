@@ -589,6 +589,15 @@ const desktopApi = {
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
   readBrowserConfiguration: () => ipcRenderer.invoke('browser:settings-read') as Promise<BrowserConfiguration>,
+  registerInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => ipcRenderer.invoke('inspector:browser-register', input) as Promise<void>,
+  unregisterInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => ipcRenderer.invoke('inspector:browser-unregister', input) as Promise<void>,
+  bindInspectorBrowserReferences: (sessionId: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) =>
+    ipcRenderer.invoke('inspector:browser-bind', { sessionId, references }) as Promise<Array<{ tabId: string; id: number; browser: 'cardbush'; url: string; title: string }>>,
+  onInspectorBrowserAction: (callback: (detail: import('./integratedBrowser').BrowserTabAction) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, detail: import('./integratedBrowser').BrowserTabAction) => callback(detail);
+    ipcRenderer.on('inspector:browser-action', listener);
+    return () => ipcRenderer.removeListener('inspector:browser-action', listener);
+  },
   translateInspectorPage: (input: import('./browserTranslationTypes').BrowserTranslationRequest) =>
     ipcRenderer.invoke('inspector:translate', input) as Promise<import('./browserTranslationTypes').BrowserTranslationResult>,
   updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) =>

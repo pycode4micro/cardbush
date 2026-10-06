@@ -18,6 +18,15 @@ export function installInspectorWindowOpen(owner: WebContents): void {
     guest.on('focus', activate);
     // Guest mouse/focus events do not bubble into the renderer's React tree.
     guest.on('before-mouse-event', (_event, input) => { if (input.type === 'mouseDown') activate(); });
+    // Sites can probe native apps from hidden frames or HTTP redirects, without
+    // opening a popup. Cancel those navigations before disturbing the document;
+    // session permissions also deny Chromium's direct external-protocol dispatch.
+    guest.on('will-frame-navigate', event => {
+      if (!isEmbeddedDocumentUrl(event.url)) event.preventDefault();
+    });
+    guest.on('will-redirect', (event, url) => {
+      if (!isEmbeddedDocumentUrl(url)) event.preventDefault();
+    });
     guest.on('will-navigate', (event, url) => {
       const opener = guest.getURL();
       if (!opener.startsWith('cardbush-agent://')) return;
@@ -33,6 +42,12 @@ export function installInspectorWindowOpen(owner: WebContents): void {
       return { action: 'deny' };
     });
   });
+}
+
+function isEmbeddedDocumentUrl(value: string): boolean {
+  try {
+    return ['http:', 'https:', 'about:', 'blob:', 'data:', 'file:', 'cardbush-file:', 'cardbush-agent:'].includes(new URL(value).protocol);
+  } catch { return false; }
 }
 
 function inspectorWindowTarget(value: string, opener: string): string {

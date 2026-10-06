@@ -1869,7 +1869,7 @@ export class InMemoryRuntimeHost {
     };
     const saveIncrementalMessages = () => {
       if (!compactionTransaction?.incremental || !activeContextCompaction) return;
-      const next = compactionTransaction.job().messages;
+      const next = compactionTransaction.canonicalMessages;
       // Only append real notices, model calls and their receipts. They remain
       // canonical on stop/recovery; source history is not replaced piecemeal.
       for (const [index, message] of next.slice(messages.length).entries()) {
@@ -2230,8 +2230,8 @@ export class InMemoryRuntimeHost {
           this.#contextCompactionAuthorizations.set(turnKey, { state: compactionJob.state, format: checkpointFormat });
           dispatchMessages = compactionJob.messages;
           dispatchOutputTokens = compactionJob.outputTokens;
-          // Maintenance never continues an unfinished provider response. The
-          // source prefix remains exact, with one notice and bounded corrections.
+          // Maintenance never continues an unfinished provider response. Each
+          // job retains complete source exchanges, one notice and bounded corrections.
           dispatchProviderState = freshResponseChain();
           let maintenancePressure = await this.#measureContextPressure(
             { ...request, maxOutputTokens: dispatchOutputTokens },
@@ -2277,6 +2277,7 @@ export class InMemoryRuntimeHost {
                   outputTokens: dispatchOutputTokens,
                   ...(maintenancePressure.requestBody ? { requestBody: maintenancePressure.requestBody } : {}),
                   ...(maintenancePressure.countFailure ? { countFailure: maintenancePressure.countFailure } : {}) });
+              saveIncrementalMessages();
               this.#recovery.save({ request, messages, nextRound: round + 1,
                 cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
               continue;

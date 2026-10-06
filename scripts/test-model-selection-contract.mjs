@@ -73,7 +73,7 @@ assert.match(apiSource, /item\.maxCompletionTokens[\s\S]*?item\.max_output_token
 assert.match(modelStoreSource, /config\.maxOutputTokens \?\? config\.maxCompletionTokens \?\? config\.max_completion_tokens/);
 assert.match(modelStoreSource, /maxCompletionTokens: config\.maxOutputTokens/);
 assert.match(modelStoreSource, /migrateMissingCredentials/);
-assert.match(modelStoreSource, /config\.apiKey\) return config/);
+assert.match(modelStoreSource, /config\.apiKey \|\| config\.authentication\?\.kind === 'chatgpt'\) return config/);
 assert.match(modelStoreSource, /normalizedEndpoint\(candidate\.baseURL\) === baseURL/);
 assert.match(runtimeChatSource, /request\.modelConfig\?\.maxCompletionTokens \?\? resolvedModel\.maxOutputTokens/);
 assert.match(apiSource, /kind: 'models\.get'/);
@@ -93,6 +93,10 @@ assert.match(
   'Missing Product Host credentials must be migrated once from the legacy local store',
 );
 assert.match(appSource, /model\.hasApiKey === true \|\| model\.apiKey\.trim\(\)/);
+assert.doesNotMatch(appSource, /defaultModelConfigId\([\s\S]{0,120}chat\.selectedModel/,
+  'A conversation selection must never be saved as the shared default');
+assert.match(appSource, /defaultModelId=\{backendDefaultModelId\}/);
+assert.match(appSource, /onUseModel=\{setBackendDefaultModelId\}/);
 
 const composerSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'composer', 'Composer.tsx'),

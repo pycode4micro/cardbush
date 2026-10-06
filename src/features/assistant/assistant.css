@@ -23,6 +23,7 @@
 .assistant-message-row { width:min(100%,var(--chat-track-width,704px)); margin:0 auto; content-visibility:visible; }
 .assistant-message { display:flex; flex-direction:column; margin:0 0 22px; max-width:92%; width:fit-content; }
 .assistant-message>div { padding:14px 18px; border-radius:22px; background:var(--surface-strong, var(--surface, #8882)); overflow-wrap:anywhere; min-width:0; }
+.theme-bright .assistant-message-assistant>div { background:var(--user-bubble); }
 .assistant-message-user { margin-left:auto; }
 .assistant-message-user>div { background:color-mix(in srgb,var(--accent, #7297bd) 40%,var(--surface,#8882)); }
 .assistant-message-user p { margin:0; white-space:pre-wrap; }

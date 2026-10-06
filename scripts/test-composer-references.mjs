@@ -198,6 +198,29 @@ test('browser sources use live navigation and exclude file previews, while selec
   assert.deepEqual(refs.promptReferenceParts(selected)[0].reference, browser);
 });
 
+test('browser references resolve exact CardBush guest identities and never substitute their URL', async () => {
+  const selected = { ...browser, pageId: '73' };
+  const content = refs.promptReferenceMarkdown(selected);
+  assert.deepEqual(refs.parsePromptReference(refs.promptReferenceHref(selected)), selected);
+  const calls = [];
+  const resolveBrowser = async (sessionId, references) => {
+    calls.push({sessionId,references});
+    return [{tabId:browser.tabId,id:73,browser:'cardbush',url:browser.url,title:browser.title}];
+  };
+  const result = await resolvePromptReferenceContext(content+' '+content, 'current', undefined, 'en', undefined, undefined, undefined, resolveBrowser);
+  assert.deepEqual(calls,[{sessionId:'current',references:[selected]}]);
+  assert.match(result.content,/"browser": "cardbush"/);
+  assert.match(result.content,/"pageId": 73/);
+  assert.match(result.content,/"controlStatus": "bound"/);
+  assert.match(result.content,/Do not open or substitute the same URL in another browser/);
+  const missing = refs.promptReferenceMarkdown({kind:'user-turn',sessionId:'current',turnId:'missing',messageId:'missing',title:'Unavailable'});
+  await assert.rejects(resolvePromptReferenceContext(content+' '+missing,'current',undefined,'en',undefined,undefined,undefined,resolveBrowser),/Cannot reference/);
+  assert.equal(calls.length,1,'an invalid draft does not change the browser target');
+  const { rejectRemoteBrowserReferences } = load('src/backend/promptReferenceContext.ts');
+  await assert.rejects(resolvePromptReferenceContext(content,'remote',undefined,'en',undefined,undefined,undefined,rejectRemoteBrowserReferences),/远程 Agent/);
+  await assert.rejects(resolvePromptReferenceContext(content,'current',undefined,'en',undefined,undefined,undefined,async()=>{throw Error('selected tab closed');}),/selected tab closed/);
+});
+
 test('the picker lists current-conversation user messages only and preserves duplicate titles as distinct identities', () => {
   const message = { id: 'ui-1', messageId: 'user-1', turnId: 'turn-1', conversationId: 'current', role: 'user', content: 'same' };
   const choices = referenceableUserMessages([message, { ...message, id: 'ui-2', messageId: 'user-2' },

@@ -2,6 +2,10 @@
 
 设置入口：应用中心 → 设置 → 浏览器 → Browser Use。
 
+本机 Browser Use 同时支持 CardBush 内置浏览器与外部 Chrome / Edge。在输入框通过 `@ → CardBush 浏览器` 选择标签页，会把当前会话绑定到那个真实的内置页面；相同网址的 Chrome / Edge 标签不是同一目标。内置页面无需扩展、配对或开启外部连接器。Agent 可通过 `list_browsers` 选择 `connectionId: cardbush`，再使用 `new_page` 创建内置标签。快照、点击、输入、导航和截图使用同一组 Browser Use 工具。
+
+内置浏览器只开放用户在该会话中引用的标签或 Agent 为该会话新建的标签。已关闭、被替换、应用重启后尚未重新选择的目标会明确报错，不按网址寻找替代页面，也不切换到 Chrome / Edge。远程 Agent 不具备控制本机内置标签的通道，需在本机会话中操作。当前内置模式不支持 `download_file` 的任务跟踪接口；它会明确返回不支持，不转发到外部浏览器。
+
 开启连接器，在要使用的 Chrome 或 Edge 中加载随应用提供的 CardBush Browser Use 扩展。管理页分别为 `chrome://extensions` 和 `edge://extensions`。首次使用选择对应浏览器、可选填写连接名称，生成配对码后粘贴到扩展。两种浏览器和不同用户配置需要分别配对，可以同时连接。升级后重新加载原扩展；正常重启自动重连，打开扩展可立即重试。配对码五分钟仅限制首次接受，已完成的配对不会在五分钟后过期。
 
 默认连接用于尚未选择浏览器的会话。模型使用 `browser_use` 的 `list_browsers` 查看连接，用 `select_browser` 显式选择；绑定后不会因为默认值改变、断线或重启而切换。成功切换后重新获取页面和元素 ID。
@@ -10,4 +14,4 @@
 
 断线时不确定动作是否已执行，应先恢复连接并观察，避免重复发送、下载或提交。不要读取配对文件或把配对码发送给模型/第三方。
 
-本次仅支持 Windows 11 的 Chrome、Edge；内置浏览器、Computer Use 与 Browser Use 各自独立。高级远程调试仍只用于主动开启调试的 Chrome，不自动切换模式。
+本次面向 Windows 11。Computer Use 仍是独立能力。高级远程调试仍只用于主动开启调试的 Chrome；操作内置标签请使用普通 Browser Use 模式，不自动切换模式。

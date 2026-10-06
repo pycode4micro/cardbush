@@ -13,6 +13,7 @@ export interface ModelProviderConfig {
   capabilityStore?: ProviderCapabilityStore;
   capabilityScope?: string;
   anthropicThinkingMode?: 'adaptive' | 'budget';
-  /** Local JSON-body budget, independent of the model's context window. */
+  /** Local JSON-body budget, default 40,000,000 bytes. Can override for a known
+   * transport limit; independent of the model's context window. */
   maxRequestBodyBytes?: number;
 }

@@ -73,6 +73,7 @@ import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { ConversationInspectorContext, ConversationInspectorOutlet, useConversationInspectorOutlets } from './features/inspector/ConversationInspector';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { ComposerReferenceContext, inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
+import { useInspectorBrowserActions } from './features/inspector/useInspectorBrowserActions';
 import { Composer } from './features/composer';
 import { WelcomeProjectSwitcher } from './features/chat/WelcomeComposer';
 import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
@@ -342,7 +343,7 @@ function CardbushApp() {
     if (isCurrent()) setBackendCapabilities(capabilities);
   }, []));
   const [modelConfigSyncReady, setModelConfigSyncReady] = useState(false);
-  const [backendDefaultModelName, setBackendDefaultModelName] = useState('');
+  const [backendDefaultModelId, setBackendDefaultModelId] = useState(() => window.localStorage.getItem('cardbush.selected_model') ?? '');
   const lastSavedModelConfigSignatureRef = useRef('');
   const projectItemsRef = useRef(projectItems);
   const theme = resolveTheme(themePreference, systemDark);
@@ -426,7 +427,7 @@ function CardbushApp() {
             persistAppSettings(next);
             return next;
           });
-          setBackendDefaultModelName(defaultConfig?.id ?? '');
+          setBackendDefaultModelId(defaultConfig?.id ?? '');
           return;
         }
         const legacy = normalizeManagedModelConfigs(readManagedModelConfigs());
@@ -459,7 +460,7 @@ function CardbushApp() {
             persistAppSettings(next);
             return next;
           });
-          setBackendDefaultModelName(savedDefault?.id ?? '');
+          setBackendDefaultModelId(savedDefault?.id ?? '');
         }
       } catch {
         lastSavedModelConfigSignatureRef.current = '';
@@ -491,6 +492,8 @@ function CardbushApp() {
     else if (section === 'team') setSection('chat');
   }, [backendCapabilities.teamMode, section]);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
+    defaultModelId: backendDefaultModelId,
+    modelsReady: modelConfigSyncReady,
     runtimeReady: runtimeStartup.phase === 'ready',
     viewActive: section === 'chat',
     language,
@@ -568,28 +571,12 @@ function CardbushApp() {
     }
   }, [language]);
   useEffect(() => {
-    const defaultSelection = backendDefaultModelName.trim();
-    if (!defaultSelection) {
-      return;
-    }
-    const defaultConfig = appSettings.managedModelConfigs.find(
-      (config) =>
-        config.id === defaultSelection ||
-        config.modelName.trim().toLowerCase() === defaultSelection.toLowerCase(),
-    );
-    if (defaultConfig && chat.selectedModel !== defaultConfig.id) {
-      chat.setSelectedModel(defaultConfig.id);
-    }
-    setBackendDefaultModelName('');
-  }, [appSettings.managedModelConfigs, backendDefaultModelName, chat]);
-
-  useEffect(() => {
-    if (!modelConfigSyncReady || backendDefaultModelName.trim()) {
+    if (!modelConfigSyncReady) {
       return;
     }
     const defaultId = defaultModelConfigId(
       appSettings.managedModelConfigs,
-      chat.selectedModel,
+      backendDefaultModelId,
     );
     const signature = modelConfigSignature(
       appSettings.managedModelConfigs,
@@ -603,8 +590,10 @@ function CardbushApp() {
       defaultModelId: defaultId,
       models: appSettings.managedModelConfigs,
     }).then((saved) => {
+      if (lastSavedModelConfigSignatureRef.current !== signature) return;
       const sanitized = normalizeManagedModelConfigs(saved.models);
       const savedDefaultId = defaultModelConfigId(sanitized, saved.defaultModelId || defaultId);
+      setBackendDefaultModelId(current => current === backendDefaultModelId ? savedDefaultId : current);
       lastSavedModelConfigSignatureRef.current = modelConfigSignature(
         sanitized,
         savedDefaultId,
@@ -625,8 +614,7 @@ function CardbushApp() {
     });
   }, [
     appSettings.managedModelConfigs,
-    backendDefaultModelName,
-    chat.selectedModel,
+    backendDefaultModelId,
     modelConfigSyncReady,
   ]);
 
@@ -922,6 +910,7 @@ function CardbushApp() {
   const closeInspectorTab = (closingIdentity: string) => {
     closeInspectorTabs(new Set([closingIdentity]));
   };
+  useInspectorBrowserActions({ open: openInspectorTab, activate: selectInspectorTab, close: closeInspectorTab, show: () => setInspectorOpen(true) });
   const closeOtherInspectorTabs = (identity: string) => {
     closeInspectorTabs(new Set(inspectorTabs
       .filter((tab) => tab.id !== identity)
@@ -957,6 +946,7 @@ function CardbushApp() {
       const previous = current[identity];
       if (
         previous?.url === navigation.url &&
+        previous.guestWebContentsId === navigation.guestWebContentsId &&
         previous.title === navigation.title &&
         previous.canGoBack === navigation.canGoBack &&
         previous.canGoForward === navigation.canGoForward &&
@@ -2117,6 +2107,7 @@ function CardbushApp() {
             systemLanguage={systemLanguage}
             settings={appSettings}
             selectedModel={chat.selectedModel}
+            defaultModelId={backendDefaultModelId}
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
             conversations={chat.conversations}
@@ -2136,7 +2127,7 @@ function CardbushApp() {
             onThemePreferenceChange={setThemePreference}
             onLanguageModeChange={setLanguageMode}
             onSettingsChange={updateAppSettings}
-            onUseModel={chat.setSelectedModel}
+            onUseModel={setBackendDefaultModelId}
             sidebarCollapsed={sidebarCollapsed}
             compactLayout={compactLayout}
             sidebarPresence={sidebarPresence}

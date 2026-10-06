@@ -7,6 +7,7 @@ import { ConversationJournal } from '../dist/conversationJournal.js';
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
 import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id } from '@cardbush/bush-protocol';
+import { withToolDisplayTitle } from '../dist/toolDisplay.js';
 
 const temporary = () => mkdtempSync(join(tmpdir(), 'assistant-conversation-'));
 const entry = (key, content = '请帮我检查文件', role = 'user', source = 'text') => ({ id: key, content, role, source, visibility: 'conversation', createdAt: new Date().toISOString() });
@@ -25,6 +26,105 @@ const parent = (registry, voice = false) => ({ protocol: 'bush.session_turn_requ
   turnId: 'assistant-turn', model: 'fixture', prefixMessages: [{ role: 'system', content: 'Execution instructions only.' }],
   inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Check the files' } }], tools: registry?.definitions() ?? [],
   metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'task_free' });
+
+test('assistant accepts provider display metadata on all five tools, including await without task_ids', async () => {
+  const journal = new ConversationJournal(temporary()), tasks = [], delegated = [], receipts = [];
+  const title = { zh: '核对后台任务', en: 'Check background tasks' };
+  const batches = [
+    [{ name: 'subagent', args: { prompt: 'Read only: inspect the plugin' } }],
+    [{ name: 'await_subagent', args: {} }, { name: 'page_write', args: { content: '已派出任务。' } }],
+    [{ name: 'send_subagent_message', args: { task_id: 'child', prompt: 'Include the supported parameters' } },
+      { name: 'read_subagent_conversation', args: { task_id: 'child' } }],
+  ];
+  let round = 0;
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks, checkpoint: () => ({}),
+    delegate: async input => {
+      delegated.push(input);
+      if (input.action === 'subagent') tasks.push({ taskId: 'child', status: 'running', finalResponse: '' });
+      return { taskId: 'child', status: 'running' };
+    }, provider: { async *stream(request) {
+      const index = round++;
+      receipts.push(...request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content)));
+      for (const definition of request.tools) assert.ok(withToolDisplayTitle(definition).inputSchema.properties._display_title);
+      yield* response(request, { calls: (batches[index] ?? []).map((call, i) => ({ ...call, id: `${index}-${i}`, args: { ...call.args, _display_title: title } })) });
+    } } });
+  try {
+    assistant.command({ action: 'turn', sessionId: id, entry: entry('decorated'), parent: parent(), profile: assistantProfileSchema.parse({}) });
+    await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+    assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
+    assert.deepEqual(receipts.filter(receipt => receipt.status === 'failed'), []);
+    assert.deepEqual(delegated.map(input => input.action), ['subagent', 'send_subagent_message', 'read_subagent_conversation']);
+    assert.ok(delegated.every(input => !('_display_title' in input)));
+    assert.ok(receipts.some(receipt => receipt.status === 'watching' && receipt.tasks[0].taskId === 'child'));
+    assert.equal(journal.read(id).filter(item => item.source === 'page').length, 1);
+  } finally { assistant.close(); }
+});
+
+test('assistant distinguishes malformed arguments, foreign tasks and disabled delegation', async () => {
+  const journal = new ConversationJournal(temporary()), results = new Map(), delegated = [];
+  const calls = [
+    { id: 'all', name: 'await_subagent', args: {} },
+    { id: 'wrong-type', name: 'await_subagent', args: { task_ids: 'child' } },
+    { id: 'bad-id', name: 'await_subagent', args: { task_ids: [123] } },
+    { id: 'foreign', name: 'await_subagent', args: { task_ids: ['foreign'] } },
+    { id: 'unknown-field', name: 'subagent', args: { prompt: 'Inspect', approved: true } },
+    { id: 'missing-prompt', name: 'subagent', args: {} },
+    { id: 'missing-task', name: 'send_subagent_message', args: { prompt: 'Continue' } },
+    { id: 'invalid-cursor', name: 'read_subagent_conversation', args: { task_id: 'child', cursor: 'broken' } },
+    { id: 'disabled', name: 'subagent', args: { prompt: 'Inspect' } },
+  ];
+  let round = 0;
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+    delegate: async input => { delegated.push(input); throw Object.assign(Error('Subagent delegation is disabled for this parent.'), { code: 'realtime_subagent_disabled' }); },
+    provider: { async *stream(request) {
+      for (const message of request.messages) if (message.role === 'tool') results.set(message.toolCallId, JSON.parse(message.content));
+      yield* response(request, { calls: round++ ? [] : calls.map(call => ({ ...call, args: { ...call.args, _display_title: { zh: '查询任务', en: 'Inspect tasks' } } })) });
+    } } });
+  try {
+    assistant.command({ action: 'turn', sessionId: id, entry: entry('validation'), parent: parent(), profile: assistantProfileSchema.parse({}) });
+    await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+    assert.deepEqual(results.get('all'), { status: 'settled', tasks: [] });
+    for (const key of ['wrong-type', 'bad-id', 'unknown-field', 'missing-prompt', 'missing-task', 'invalid-cursor'])
+      assert.equal(results.get(key)?.code, 'invalid_tool_arguments', key);
+    assert.match(results.get('wrong-type').error, /task_ids/);
+    assert.equal(results.get('foreign').code, 'subagent_not_owned');
+    assert.equal(results.get('disabled').code, 'realtime_subagent_disabled');
+    assert.equal(delegated.length, 1, 'invalid calls never reach execution');
+  } finally { assistant.close(); }
+});
+
+test('text assistant dispatch reaches the actual child loop and reports completion asynchronously', async () => {
+  const sessions = new SessionStore(), registry = new ToolRegistry(), tasks = new SubagentTaskStore(), childGate = gate(), childRequests = [];
+  sessions.ensureSession(id);
+  let rounds = 0;
+  const host = new InMemoryRuntimeHost({ dataRoot: temporary(), sessionStore: sessions, toolRegistry: registry, subagentTaskStore: tasks,
+    provider: { async *stream(request) {
+      if (request.metadata.agentRole === 'child') {
+        childRequests.push(request); await childGate.promise;
+        yield* response(request, { text: 'Verified plugin parameters.' }); return;
+      }
+      const index = rounds++;
+      if (index === 0) yield* response(request, { calls: [{ id: 'real-dispatch', name: 'subagent', args: {
+        prompt: 'Read only: inspect the plugin parameters', _display_title: { zh: '检查插件参数', en: 'Inspect plugin parameters' } } }] });
+      else if (index === 1) yield* response(request, { text: '已交给后台处理。' });
+      else yield* response(request, { text: '后台已核实插件参数。' });
+    } } });
+  const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
+  try {
+    await command({ action: 'turn', entry: entry('actual-child'), parent: parent(registry), profile: assistantProfileSchema.parse({}) });
+    await until(() => childRequests.length > 0);
+    await until(async () => !(await command({ action: 'read' })).busy);
+    assert.equal(tasks.list(id).length, 1);
+    assert.equal(tasks.list(id)[0].status, 'running', 'the assistant can reply while the child works');
+    assert.equal(childRequests[0].model, 'fixture');
+    assert.equal(childRequests[0].permissionMode, 'task_free');
+    assert.ok(childRequests[0].messages.some(message => message.content.includes('Read only: inspect')));
+    childGate.resolve();
+    await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '后台已核实插件参数。'));
+    assert.equal(tasks.list(id)[0].status, 'completed');
+    assert.equal((await command({ action: 'read' })).error, '');
+  } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
+});
 
 test('conversation journal survives restart, deduplicates retries and repairs only an incomplete final append', () => {
   const root = temporary(), journal = new ConversationJournal(root), message = entry('speech', '中文语音');

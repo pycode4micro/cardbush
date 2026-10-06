@@ -161,7 +161,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
     ? new Date(submittedAt).toISOString()
     : new Date().toISOString();
   const referencedInput = await resolvePromptReferenceContext(effectiveUserInput, request.sessionId, existingSession, request.uiLanguage,
-    (turnId, messageId) => runtime.client.getUserMessage(request.sessionId, turnId, messageId, signal), maxContextTokens);
+    (turnId, messageId) => runtime.client.getUserMessage(request.sessionId, turnId, messageId, signal), maxContextTokens, undefined, runtime.resolveBrowserReferences);
   const runtimeRequest = createProductAgentTurnRequest({
     ...sharedAgentInput,
     conversationStyle: resolveConversationStyle(request.sessionId),

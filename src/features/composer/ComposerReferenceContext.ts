@@ -28,6 +28,6 @@ export function inspectorBrowserReferences(tabs: InspectorTab[], navigation: Rec
     const current = navigation[tab.id];
     const url = current?.url || tab.detail.target;
     if (!isBrowserReferenceUrl(url)) return [];
-    return [{ kind: 'browser', tabId: tab.id, url, title: current?.title || tab.detail.title || url }];
+    return [{ kind: 'browser', tabId: tab.id, ...(current?.guestWebContentsId ? { pageId: String(current.guestWebContentsId) } : {}), url, title: current?.title || tab.detail.title || url }];
   });
 }

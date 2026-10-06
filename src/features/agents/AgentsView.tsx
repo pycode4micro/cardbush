@@ -187,6 +187,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
   const disabledSkills = useMemo(() => disabledSkillNames ?? new Set<string>(), [disabledSkillNames]);
   const availableModels = useMemo(() => [...models.models].sort((a, b) => Number(b.id === models.defaultModelId) - Number(a.id === models.defaultModelId)), [models]);
   const chat = useCardbushChat(availableModels, models.models, { runtimeReady: true,
+    defaultModelId: models.defaultModelId,
     activeConversationId: sessionId, viewActive: active,
     onModelReasoningChange: (id, effort) => saveModelReasoning(id, effort, connectionId),
     language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputAvailable && visualInputEnabled, disabledSkillNames: disabledSkills,

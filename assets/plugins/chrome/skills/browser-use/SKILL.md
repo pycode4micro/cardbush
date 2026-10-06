@@ -1,13 +1,17 @@
 ---
 name: browser-use
-description: 在 Windows 11 上通过 Browser Use 操作用户已配对的 Chrome 或 Edge，复用登录状态并隔离会话标签组。适用于需要用户浏览器登录状态的网页操作、表单、截图及下载；本地网页预览优先使用 CardBush 内置浏览器。
+description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签或已配对的 Chrome、Edge。尊重 @ 标签页的真实身份，支持网页读取、点击、表单和截图；外部浏览器另支持跟踪下载。
 ---
 
 # Browser Use
 
-使用宿主暴露的 `browser_use` MCP 工具。支持 Windows 11 的 Chrome 和 Edge；连接器通过同一扩展分别配对各浏览器和用户配置。
+使用宿主暴露的 `browser_use` MCP 工具。支持 CardBush 内置浏览器，以及 Windows 11 上通过扩展分别配对的 Chrome、Edge 和用户配置。
 
 ## 选择连接
+
+- 用户 `@` CardBush 标签页时，宿主已绑定真实内置页面；先 `list_pages` 和新的 `take_snapshot`，再操作返回的页面和元素。不能把相同网址的 Chrome / Edge 页面视为同一标签，不能重新打开网址替代原页面。
+- 主动使用内置浏览器时，`select_browser` 传 `connectionId: cardbush`，再 `new_page`；无需扩展或配对。只有当前会话明确引用或新建的内置标签可用。关闭、替换或重启后的目标不可用时，请用户重新 @，不自动回退到外部浏览器。远程 Agent 不能控制本机内置标签。
+- 内置模式支持快照、点击、输入、导航、截图和页面脚本；暂不支持跟踪下载工具，收到明确的不支持错误时不要换浏览器重试。
 
 - 用户指定 Chrome、Edge 或某个账号配置时，先 `list_browsers`，再用返回的连接 ID 调用 `select_browser`。多个同类连接时按用户提供的连接名称判断；仍有歧义再询问。
 - 未指定时使用设置中的默认连接。首次页面调用会固定会话归属；修改默认值不改变已绑定会话。
@@ -18,7 +22,7 @@ description: 在 Windows 11 上通过 Browser Use 操作用户已配对的 Chrom
 
 - 用户只需打开网页并保留观看（例如直播间）、且未指定浏览器或账号配置时，优先使用宿主 `open_external_url`，不要求先连接 Browser Use。它由主进程交给系统默认浏览器，返回仅确认打开请求已发出，不代表页面加载成功。读取、点击等自动操作仍使用本技能的连接器；离线时不以默认浏览器替代用户指定的浏览器/配置。
 - 不用 `terminal_exec` / `Start-Process` / `start` 打开需要保留的用户浏览器：终端结束会清理新启动的子进程。工具不可用时提供链接，不关闭进程保护或通过保活终端绕过清理。
-- `list_pages` 只列本会话标签组。`new_page` 创建隔离标签；未指定网址时使用宿主主页设置。
+- `list_pages` 只列本会话可操作的标签。外部浏览器限定本会话标签组；内置浏览器限定已引用或新建的页面。`new_page` 在已选浏览器创建标签；未指定网址时使用宿主主页设置。
 - 个人标签页必须由用户在扩展面板中选择目标 CardBush 会话、授权并复制进组。配对不等于网站授权，不绕过授权或搜索其他会话标签。
 - 优先使用 `take_snapshot` 返回的元素 ID 配合 click / fill / type_text；页面变化后重新观察。
 - `take_snapshot` 默认渐进返回，正文只在 `content` 中出现一次；`structuredContent` 给出数量和续读游标。优先用 `rootUid`、`query`、`roles` 缩小范围，需要更多时传 `cursor`，不必自动读完整页。游标沿用同一次采集，最多保留三分钟；导航、重新采集、释放连接或缓存回收后会明确报失效。它不是实时更新的页面状态。

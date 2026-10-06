@@ -77,7 +77,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
     <SettingsCard title={language === 'zh' ? '浏览器连接' : 'Browser connection'}>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
-        <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? 'CardBush 自有连接器，连接 Chrome 或 Edge 并使用对应浏览器的登录状态。默认关闭，仅操作你授权的页面。' : 'CardBush’s own connector for Chrome or Edge, using that browser’s sign-in. Off by default; only authorized pages can be controlled.'}</small></span>
+        <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '控制 CardBush 内置浏览器，以及配对的 Chrome、Edge。通过 @ 选择内置标签页即可操作，无需扩展或配对；Chrome、Edge 的连接器默认关闭，单独授权。' : 'Control CardBush tabs and paired Chrome or Edge profiles. Select an integrated tab with @; no extension or pairing is needed. Chrome/Edge connectors are off by default and authorized separately.'}</small></span>
       </label>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />

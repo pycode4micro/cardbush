@@ -27,6 +27,7 @@ import {
 } from './inspectorTargets';
 
 export type InspectorNavigationState = {
+  guestWebContentsId?: number;
   url: string;
   title: string;
   canGoBack: boolean;
@@ -128,6 +129,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       const url = webview.getURL?.() || fallbackNavigation.url;
       requestedUrlRef.current = url;
       onNavigationStateChange(identity, {
+        guestWebContentsId: webview.getWebContentsId?.(),
         url,
         title: webview.getTitle?.().trim() || '',
         canGoBack: webview.canGoBack?.() ?? false,
@@ -269,6 +271,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
+      if (isInspectorBrowserTarget(target, mediaType)) {
+        try {
+          const guestWebContentsId = webview.getWebContentsId?.();
+          if (guestWebContentsId) void window.cardbushDesktop?.registerInspectorBrowser?.({ tabId: identity, guestWebContentsId }).catch(() => {});
+        } catch { /* A closing or replaced guest is registered by the next dom-ready. */ }
+      }
     };
     const start = (event: Event) => {
       const detail = event as Event & { isMainFrame?: boolean; isInPlace?: boolean; url?: string };
@@ -363,6 +371,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webview.addEventListener('page-title-updated', updateTitle);
     webview.addEventListener('context-menu', contextMenu);
     return () => {
+      try {
+        const guestWebContentsId = webview.getWebContentsId?.();
+        if (guestWebContentsId) void window.cardbushDesktop?.unregisterInspectorBrowser?.({ tabId: identity, guestWebContentsId }).catch(() => {});
+      } catch { /* The main process also removes destroyed guests. */ }
       stopActivation?.();
       stopOpenLink?.();
       window.clearTimeout(deadline);

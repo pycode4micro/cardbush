@@ -34,20 +34,29 @@ body.inspector-layout-resizing { user-select: none; }
 .desktop-shell.inspector-covered > .right-inspector { --side-panel-width: calc(100cqw - 2px); position: absolute; inset: 0; width: 100%; max-width: 100%; height: 100%; border-left: 0; border-radius: 0; z-index: 20; }
 /* Cover follows the actual viewport, while normal reveal/hide keeps its fixed inner width. */
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
-.desktop-shell.inspector-covered > .right-inspector .right-inspector-body { padding-bottom: 70px; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-resizer { display: none; }
+.desktop-shell.inspector-conversation-covered > .main-stage { flex: 0 0 0; width: 0; visibility: hidden; pointer-events: none; }
+.desktop-shell.inspector-conversation-covered > .right-inspector { flex: 1 0 0; width: 0; transition: none; }
+.desktop-shell.inspector-conversation-covered > .right-inspector .right-inspector-content { width: 100%; }
 /* Keep the inspector in the same layout while dragging. Taking it out of flex
    expands the conversation underneath it and changes the pointer's origin. */
 body.right-inspector-resizing .desktop-shell > .right-inspector { transition: none; }
 .desktop-shell { position: relative; }
 .inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
 .inspector-conversation-covered .inspector-cover-controls { left: calc(var(--layout-sidebar-space) + (100% - var(--layout-sidebar-space)) / 2); width: min(680px, calc(100% - var(--layout-sidebar-space) - 32px)); }
-.inspector-conversation-covered > .right-inspector .right-inspector-body { padding-bottom: 70px; }
 .inspector-conversation-covered > .right-inspector .right-inspector-resizer { left: calc(var(--panel-resize-hit-width) / 2); }
-.inspector-cover-capsule { display: flex; background: var(--surface-alt, var(--surface)); border: 1px solid var(--border); border-radius: 28px; padding: 4px; box-shadow: 0 6px 25px var(--shadow); pointer-events: auto; }
-.inspector-cover-capsule button { border: 0; border-radius: 24px; padding: 8px 18px; display: flex; align-items: center; gap: 7px; background: transparent; color: var(--text); font: inherit; }
-.inspector-cover-capsule button + button { border-left: 1px solid var(--border); }
-.inspector-cover-capsule button:hover { background: var(--hover); }
+.inspector-cover-capsule {
+  display: inline-flex; width: max-content; max-width: 100%; gap: 2px; padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(22px) saturate(1.5); -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: 0 10px 32px #0003, 0 2px 6px #0001, inset 0 1px 0 #ffffff38;
+  pointer-events: auto; user-select: none;
+}
+.inspector-cover-capsule button { position: relative; border: 0; border-radius: 999px; padding: 8px 16px; display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; background: transparent; color: var(--text); font: inherit; line-height: 1.2; white-space: nowrap; }
+.inspector-cover-capsule button + button::before { content: ''; position: absolute; left: -2px; top: 25%; height: 50%; width: 1px; background: color-mix(in srgb, var(--text) 14%, transparent); }
+.inspector-cover-capsule button:hover, .inspector-cover-capsule button[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.inspector-cover-capsule button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .inspector-quick-input { width: 100%; pointer-events: auto; }
 .inspector-quick-input .composer-stack { margin: 0; max-width: none; width: 100%; }
 .composer-stack.input-only .composer-tools, .composer-stack.input-only .model-select, .composer-stack.input-only .composer-note { display: none; }

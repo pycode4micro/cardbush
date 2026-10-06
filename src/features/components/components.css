@@ -47,6 +47,9 @@ body.component-layout-editing iframe { pointer-events: none !important; }
 .builtin-suggestions .welcome-suggestions { width: 100%; margin: 0; }
 .builtin-input { height: 100%; overflow: auto; padding: 16px; display: flex; flex-direction: column; justify-content: safe center; gap: 8px; }
 .builtin-input .composer-stack { margin: 0; width: 100%; max-width: none; flex: none; }
+/* The component's placement owns width, including the compact welcome/editor
+   input. Shared composer defaults load later and must not clamp its inner box. */
+.builtin-input .composer-stack.compact { max-width: none; }
 .builtin-input .composer-surface { box-shadow: none; }
 .builtin-input :is(textarea, .composer-prompt-editor) { max-height: 100px; }
 .builtin-unavailable, .builtin-input-notice { margin: 0; color: var(--text-soft); font-size: 12px; }

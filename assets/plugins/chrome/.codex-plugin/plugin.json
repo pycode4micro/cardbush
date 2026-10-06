@@ -1,7 +1,7 @@
 {
   "name": "chrome",
-  "version": "2.1.1",
-  "description": "Browser Use for Chrome and Edge on Windows 11, with separate pairings and session-bound browser selection.",
+  "version": "2.2.0",
+  "description": "Browser Use for CardBush integrated tabs and paired Chrome or Edge on Windows 11, with explicit per-conversation targets.",
   "author": { "name": "CardBush" },
   "license": "Apache-2.0",
   "keywords": ["browser-use", "chrome", "edge", "browser", "tabs"],
@@ -9,8 +9,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Browser Use",
-    "shortDescription": "Control authorized Chrome and Edge pages",
-    "longDescription": "Pair Chrome, Edge, and their profiles separately on Windows 11 and choose a default browser. Each session uses a specific browser connection and its own tab group; disconnecting does not switch browsers automatically. Personal tabs must be explicitly copied into the group through the extension before they can be accessed. Advanced remote debugging remains available only for Chrome with debugging explicitly enabled.",
+    "shortDescription": "Control CardBush, Chrome and Edge pages",
+    "longDescription": "Use @ to control the exact CardBush integrated tab without pairing, or separately pair Chrome and Edge profiles on Windows 11. Each conversation retains its selected browser. Closed or unavailable tabs never redirect control to another browser with the same URL. External personal tabs require extension authorization. Advanced remote debugging remains a separate Chrome-only mode.",
     "developerName": "CardBush",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
@@ -22,8 +22,8 @@
     "runtime": { "platforms": ["win32"], "requires": ["browserUi"] },
     "localizations": {
       "zh": {
-        "shortDescription": "连接 Chrome 和 Edge，按会话操作授权页面",
-        "longDescription": "在 Windows 11 上分别配对 Chrome、Edge 及其用户配置，并选择默认浏览器。每个会话绑定明确的浏览器连接和独立标签组；断线不会自动切换。个人标签须在扩展中明确复制进组后才能访问。高级远程调试模式仍仅用于主动开启调试的 Chrome。",
+        "shortDescription": "操作 CardBush 内置标签及授权的 Chrome、Edge 页面",
+        "longDescription": "通过 @ 操作准确的 CardBush 内置标签，无需扩展配对；也可分别配对 Windows 11 上的 Chrome、Edge 及其用户配置。每个会话保持明确的浏览器目标，标签关闭或不可用时不会转到其他浏览器的同网址页面。外部个人标签仍需在扩展中授权。高级远程调试是独立的 Chrome 专用模式。",
         "defaultPrompt": ["打开网页并检查页面内容", "使用 Edge 或 Chrome 操作授权网页"]
       }
     }

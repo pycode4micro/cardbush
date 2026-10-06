@@ -130,18 +130,3 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
   }), undefined));
   ipcMain.handle('voice:cancel', (event, id) => authorized(event).cancel(event.sender.id, id));
 }
-
-/** Keep microphone permission limited to the application frame, never embedded HTML. */
-export function installVoiceMediaPermissions(window: BrowserWindow) {
-  const trusted = (contents: Electron.WebContents | null, isMainFrame: boolean, url?: string) =>
-    !window.isDestroyed() && contents === window.webContents && isMainFrame && (!url || url === window.webContents.getURL());
-  window.webContents.session.setPermissionCheckHandler((contents, permission, _origin, details) => {
-    if (permission !== 'media') return true; // Preserve Electron's existing handling of unrelated permissions.
-    return trusted(contents, details.isMainFrame, details.requestingUrl) && details.mediaType === 'audio';
-  });
-  window.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
-    if (permission !== 'media') { callback(true); return; }
-    const types = (details as Electron.MediaAccessPermissionRequest).mediaTypes;
-    callback(trusted(contents, details.isMainFrame, details.requestingUrl) && Boolean(types?.length && types.every(type => type === 'audio')));
-  });
-}
