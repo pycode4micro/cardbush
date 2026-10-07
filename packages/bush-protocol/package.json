@@ -11,8 +11,14 @@
       "import": "./dist/index.js"
     },
     "./conversational-subagent-tools": {
-      "types": "./dist/conversationalSubagentTools.d.cts",
-      "default": "./dist/conversationalSubagentTools.cjs"
+      "import": {
+        "types": "./dist/conversationalSubagentTools.d.ts",
+        "default": "./dist/conversationalSubagentTools.js"
+      },
+      "require": {
+        "types": "./dist/conversationalSubagentTools.d.cts",
+        "default": "./dist/conversationalSubagentTools.cjs"
+      }
     },
     "./runtime-fixture": {
       "types": "./dist/runtimeFixture.d.ts",
@@ -20,7 +26,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-conversational-subagent-cjs.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --test test/*.test.mjs"

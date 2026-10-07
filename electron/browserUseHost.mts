@@ -54,6 +54,24 @@ export class BrowserUseRouter {
       return pages;
     });
   }
+  /** Called through private Runtime RPC after the host verifies child ownership. */
+  inheritScope(parent: string, child: string, signal?: AbortSignal) {
+    if ([parent, child].some(scope => typeof scope !== 'string' || !scope || scope.length > 160) || parent === child)
+      return Promise.reject(new Error('Invalid browser delegation scopes.'));
+    return this.serialized(parent, () => this.serialized(child, async () => {
+      signal?.throwIfAborted();
+      if (this.routes.get(parent) !== 'cardbush') return { inherited: false };
+      // Guidance without a new parent binding must preserve both the child's
+      // page selection and any browser it explicitly chose while working.
+      if (this.integrated.hasInheritedScope(parent, child)) return { inherited: true };
+      // Persist the browser identity first so a stale/missing grant cannot fall
+      // through to Chrome/Edge, including after a restart or failed transfer.
+      await this.releaseExternal(child, { signal });
+      signal?.throwIfAborted();
+      this.save(child, 'cardbush');
+      return { inherited: this.integrated.inheritScope(parent, child) };
+    }));
+  }
   private async releaseExternal(scope: string, options: Options = {}) {
     if (this.routes.get(scope) !== 'external') return;
     try { await this.options.external('debugger.detachScope', { scopeId: scope }, options); }

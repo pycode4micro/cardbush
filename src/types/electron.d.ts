@@ -90,6 +90,9 @@ declare global {
       toggleMaximize: () => Promise<void>;
       closeToTray: () => Promise<void>;
       isMaximized: () => Promise<boolean>;
+      isWindowVisible?: () => Promise<boolean>;
+      onWindowVisibilityChanged?: (callback: (visible: boolean) => void) => () => void;
+      onWindowResizeGesture?: (callback: (gesture: import('../../electron/windowResize').WindowResizeGesture) => void) => () => void;
       windowMenuContext: () => Promise<{ editTargetId: number }>;
       executeWindowMenuAction: (action: import('../../electron/windowMenu').WindowMenuAction, editTargetId?: number) => Promise<void>;
       onWindowMenuKeyDown: (callback: (gesture: { key: string; code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }) => void) => () => void;
@@ -410,8 +413,8 @@ declare global {
       unregisterInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => Promise<void>;
       bindInspectorBrowserReferences: (sessionId: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) => Promise<Array<{ tabId: string; id: number; browser: 'cardbush'; url: string; title: string }>>;
       onInspectorBrowserAction: (callback: (detail: import('../../electron/integratedBrowser').BrowserTabAction) => void) => () => void;
+      browser?: import('../../electron/browserUi').BrowserUiBridge;
       readBrowserConfiguration: () => Promise<import('@cardbush/bush-protocol').BrowserConfiguration>;
-      translateInspectorPage?: (input: import('../../electron/browserTranslationTypes').BrowserTranslationRequest) => Promise<import('../../electron/browserTranslationTypes').BrowserTranslationResult>;
       updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) => Promise<import('@cardbush/bush-protocol').BrowserConfiguration>;
       showInspectorContextMenu: (payload: {
         guestWebContentsId: number;

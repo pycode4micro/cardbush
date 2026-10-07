@@ -43,6 +43,46 @@ export function useInspectorWorkspace({
   const inspectorControlsVisible = inspectorOpen && (inspectorCover || conversationCovered);
   const multiPageRestore = useRef<{ width: number; sidebar: boolean } | null>(null);
   const coverRestore = useRef<{ section: AppSection; sidebar: boolean; width: number } | null>(null);
+  const windowResize = useRef<{ startWidth: number; inspectorWidth: number; preferredWidth: number } | null>(null);
+  const resizeContext = useRef({ inspectorOpen, inspectorCover, compactLayout, sidebarCollapsed, sidebarWidth });
+  resizeContext.current = { inspectorOpen, inspectorCover, compactLayout, sidebarCollapsed, sidebarWidth };
+  useLayoutEffect(() => {
+    const clear = () => {
+      windowResize.current = null;
+      mainStageRef.current?.parentElement?.classList.remove('inspector-window-resizing');
+    };
+    const unsubscribe = window.cardbushDesktop?.onWindowResizeGesture?.(gesture => {
+      const shell = mainStageRef.current?.parentElement;
+      const context = resizeContext.current;
+      if (!shell) { clear(); return; }
+      if (gesture.phase === 'start') {
+        clear();
+        const panel = shell.querySelector(':scope > .right-inspector');
+        if (!['right', 'top-right', 'bottom-right'].includes(gesture.edge) || !context.inspectorOpen ||
+          context.inspectorCover || context.compactLayout || conversationCoverRequested.current ||
+          !panel || getComputedStyle(panel).position === 'absolute') return;
+        const available = gesture.startWidth - (window.innerWidth - shell.clientWidth)
+          - (context.sidebarCollapsed ? 0 : context.sidebarWidth);
+        windowResize.current = {
+          startWidth: gesture.startWidth,
+          inspectorWidth: Math.min(preferredWidthRef.current, Math.max(minimumInspectorWidth, available - minimumConversationWidth)),
+          preferredWidth: preferredWidthRef.current,
+        };
+        shell.classList.add('inspector-window-resizing');
+        return;
+      }
+      const resize = windowResize.current;
+      if (!resize) return;
+      const preferred = gesture.phase === 'cancel' || Math.abs(gesture.width - resize.startWidth) < 1 ? resize.preferredWidth
+        : Math.max(minimumInspectorWidth, Math.round(resize.inspectorWidth + gesture.width - resize.startWidth));
+      preferredWidthRef.current = preferred;
+      if (gesture.phase === 'end') window.localStorage.setItem('cardbush.inspector_width', String(preferred));
+      clear();
+      // The ordinary viewport fitting effect handles minimums and overlays.
+      setInspectorWidthState(preferred);
+    });
+    return () => { unsubscribe?.(); clear(); };
+  }, [mainStageRef]);
   const setInspectorWidth = useCallback((width: number, keepConversationVisible = false) => {
     const next = Math.min(
       inspectorMaximum(windowMaximized, window.innerWidth),
@@ -143,12 +183,20 @@ export function useInspectorWorkspace({
       const panel = shell.querySelector(':scope > .right-inspector');
       const overlay = compactLayout || panel && getComputedStyle(panel).position === 'absolute';
       const available = shell.clientWidth - (sidebarCollapsed ? 0 : sidebarWidth);
+      const resize = windowResize.current;
+      if (resize) {
+        // Right-edge drags allocate their width delta to the inspector, keeping
+        // the conversation boundary fixed until the inspector reaches its minimum.
+        preferredWidthRef.current = Math.abs(window.innerWidth - resize.startWidth) < 1 ? resize.preferredWidth
+          : Math.max(minimumInspectorWidth, Math.round(resize.inspectorWidth + window.innerWidth - resize.startWidth));
+      }
       const next = overlay ? preferredWidthRef.current
         : conversationCoverRequested.current ? available
         : Math.min(preferredWidthRef.current, Math.max(minimumInspectorWidth, available - minimumConversationWidth));
-      // Fit the current viewport without overwriting the user's preferred width.
-      // Maximizing/restoring and resizing either window edge share this rule.
+      // Ordinary viewport changes (including maximize/restore) only fit the
+      // preferred width. A native right-edge gesture explicitly adjusts it.
       inspectorWidthRef.current = next;
+      if (resize && panel instanceof HTMLElement) panel.style.setProperty('--right-inspector-width', `${next}px`);
       setInspectorWidthState(current => current === next ? current : next);
     };
     fit();

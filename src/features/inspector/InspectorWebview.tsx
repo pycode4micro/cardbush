@@ -17,9 +17,8 @@ import { MediaInspectorPreview } from './MediaInspectorPreview';
 import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import { DeferredResizePreview } from './DeferredResizePreview';
-import { useBrowserTranslation } from './useBrowserTranslation';
-import { browserTranslationError } from './BrowserTranslateButton';
-import type { BrowserTranslationState } from '../../../electron/browserTranslationTypes';
+import { BrowserPageTools, type BrowserPageToolsHandle } from '../browser/BrowserPageTools';
+import { browserIconUrl, rememberBrowserSiteIcon } from '../browser/browserSiteIcons';
 import {
   normalizeInspectorBrowserAddress,
   inspectorFilePath,
@@ -31,10 +30,12 @@ export type InspectorNavigationState = {
   guestWebContentsId?: number;
   url: string;
   title: string;
+  faviconUrl?: string;
+  audible?: boolean;
+  audioMuted?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   loading: boolean;
-  translation?: BrowserTranslationState;
 };
 
 export type InspectorWebviewHandle = {
@@ -42,7 +43,9 @@ export type InspectorWebviewHandle = {
   goForward: () => void;
   reload: () => void;
   navigate: (address: string) => void;
-  toggleTranslation: () => void;
+  find?: () => void;
+  toggleDevice?: () => void;
+  toggleAudioMuted?: () => void;
 };
 
 type ElectronInspectorWebview = HTMLElement & {
@@ -56,6 +59,9 @@ type ElectronInspectorWebview = HTMLElement & {
   loadURL?: (url: string) => Promise<void>;
   reload?: () => void;
   setZoomFactor?: (factor: number) => void;
+  isCurrentlyAudible?: () => boolean;
+  isAudioMuted?: () => boolean;
+  setAudioMuted?: (muted: boolean) => void;
 };
 
 export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
@@ -85,10 +91,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   startPage,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
+  const toolsRef = useRef<BrowserPageToolsHandle>(null);
   const activateRef = useRef(onActivate); activateRef.current = onActivate;
   const languageRef = useRef(language); languageRef.current = language;
   const webviewDomReadyRef = useRef(false);
   const requestedUrlRef = useRef(source);
+  const faviconRef = useRef<{ page: string; icon: string } | null>(null);
   const [currentUrl, setCurrentUrl] = useState(source);
   const filePath = inspectorFilePath(target);
   const media = mediaType ? inspectorMediaTarget(target, mediaType) : null;
@@ -105,16 +113,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const [hasDocument, setHasDocument] = useState(false);
   const [webviewRevision, setWebviewRevision] = useState(0);
   const [previewError, setPreviewError] = useState<'timeout' | 'load' | 'crash' | null>(null);
-  const translation = useBrowserTranslation(language, () => {
-    const webview = webviewRef.current;
-    if (!webview?.isConnected || !webviewDomReadyRef.current || rendererPreview) return undefined;
-    try { return webview.getWebContentsId?.(); } catch { return undefined; }
-  });
 
   useEffect(() => {
     requestedUrlRef.current = source;
-    translation.reset();
-  }, [source, translation.reset]);
+  }, [source]);
 
   const publishNavigation = useCallback(() => {
     const webview = webviewRef.current;
@@ -124,7 +126,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       canGoBack: false,
       canGoForward: false,
       loading: loadingRef.current,
-      translation: translation.stateRef.current,
     };
     if (!webview?.isConnected || !webviewDomReadyRef.current) {
       setCurrentUrl(fallbackNavigation.url);
@@ -139,10 +140,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         guestWebContentsId: webview.getWebContentsId?.(),
         url,
         title: /^about:blank(?:[?#]|$)/i.test(url) ? (languageRef.current === 'zh' ? '新标签页' : 'New tab') : webview.getTitle?.().trim() || '',
+        faviconUrl: faviconRef.current?.page === url ? faviconRef.current.icon : undefined,
+        audible: webview.isCurrentlyAudible?.() ?? false,
+        audioMuted: webview.isAudioMuted?.() ?? false,
         canGoBack: webview.canGoBack?.() ?? false,
         canGoForward: webview.canGoForward?.() ?? false,
         loading: loadingRef.current,
-        translation: translation.stateRef.current,
       });
     } catch {
       // Electron throws when a <webview> is queried between React mounting and
@@ -151,11 +154,20 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webviewDomReadyRef.current = false;
       onNavigationStateChange(identity, fallbackNavigation);
     }
-  }, [identity, onNavigationStateChange, source, translation.stateRef]);
-  useEffect(() => { if (!rendererPreview) publishNavigation(); }, [translation.state, publishNavigation, rendererPreview, language]);
+  }, [identity, onNavigationStateChange, source]);
+  useEffect(() => { if (!rendererPreview) publishNavigation(); }, [publishNavigation, rendererPreview, language]);
 
   useImperativeHandle(forwardedRef, () => ({
-    toggleTranslation: translation.toggle,
+    find: () => toolsRef.current?.find(),
+    toggleDevice: () => toolsRef.current?.toggleDevice(),
+    toggleAudioMuted: () => {
+      const webview = webviewRef.current;
+      if (!webview?.isConnected || !webviewDomReadyRef.current) return;
+      try {
+        webview.setAudioMuted?.(!webview.isAudioMuted?.());
+        publishNavigation();
+      } catch { /* A tab can close or replace its guest during the click. */ }
+    },
     goBack: () => {
       const webview = webviewRef.current;
       if (!webview?.isConnected || !webviewDomReadyRef.current) return;
@@ -233,7 +245,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         publishNavigation();
       }
     },
-  }), [identity, fileTitle, onNavigationStateChange, publishNavigation, rendererPreview, target, translation.toggle]);
+  }), [identity, fileTitle, onNavigationStateChange, publishNavigation, rendererPreview, target]);
 
   const publishFileNavigation = useCallback((isLoading: boolean) => {
     loadingRef.current = isLoading;
@@ -271,9 +283,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webviewDomReadyRef.current = true;
       setHasDocument(true);
       setPreviewError(current => current === 'timeout' ? null : current);
-      // Clear zoom inherited from the former fit-to-width behavior. Wide pages
-      // keep their normal font size and scroll; resizing never changes zoom.
-      try { webview.setZoomFactor?.(1); } catch { /* Guest may be navigating away. */ }
+      // Browser zoom belongs to the site/user, and survives document navigation.
+      if (!isInspectorBrowserTarget(target, mediaType)) {
+        try { webview.setZoomFactor?.(1); } catch { /* Guest may be navigating away. */ }
+      }
       window.clearTimeout(deadline);
       loadingRef.current = false;
       setLoading(false);
@@ -290,7 +303,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       // Lazy frames and in-page navigation can start the browser's spinner too.
       // Only a new top-level document changes this preview's loading lifecycle.
       if (!detail.isMainFrame || detail.isInPlace) return;
-      translation.reset();
       if (detail.url) requestedUrlRef.current = detail.url;
       setPreviewError(null);
       armDeadline();
@@ -307,7 +319,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     const fail = (event: Event) => {
       const detail = event as Event & { isMainFrame?: boolean; errorCode?: number };
       if (detail.isMainFrame === false || detail.errorCode === -3) return;
-      translation.reset();
+      if (event.type === 'render-process-gone') webviewDomReadyRef.current = false;
       window.clearTimeout(deadline);
       setPreviewError(event.type === 'render-process-gone' ? 'crash' : 'load');
       loadingRef.current = false;
@@ -316,11 +328,27 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     };
     const navigate = (event: Event) => {
       const url = (event as Event & { url?: string }).url?.trim();
-      if (url && url.split('#')[0] !== requestedUrlRef.current.split('#')[0]) translation.reset();
       if (url) requestedUrlRef.current = url;
       publishNavigation();
     };
     const updateTitle = () => publishNavigation();
+    const updateFavicon = (event: Event) => {
+      if (!webview.isConnected || !webviewDomReadyRef.current) return;
+      try {
+        const page = webview.getURL?.() || '';
+        const candidates = (event as Event & { favicons?: string[] }).favicons;
+        const icon = candidates?.map(browserIconUrl).find(Boolean);
+        if (!icon || !/^https?:\/\//i.test(page)) return;
+        faviconRef.current = { page, icon };
+        rememberBrowserSiteIcon(page, icon);
+        publishNavigation();
+      } catch { /* A favicon update can race with guest teardown. */ }
+    };
+    const stopAudio = window.cardbushDesktop?.browser?.onAudioStateChanged?.(guestId => {
+      if (!webview.isConnected || !webviewDomReadyRef.current) return;
+      try { if (webview.getWebContentsId?.() === guestId) publishNavigation(); }
+      catch { /* Ignore audio notifications from a closing/replaced guest. */ }
+    });
     const stopActivation = window.cardbushDesktop?.onInspectorGuestActivated?.(detail => {
       if (!webview.isConnected || !webviewDomReadyRef.current) return;
       try { if (webview.getWebContentsId?.() === detail.guestWebContentsId) activateRef.current?.(identity); }
@@ -376,6 +404,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webview.addEventListener('did-navigate', navigate);
     webview.addEventListener('did-navigate-in-page', navigate);
     webview.addEventListener('page-title-updated', updateTitle);
+    webview.addEventListener('page-favicon-updated', updateFavicon);
     webview.addEventListener('context-menu', contextMenu);
     return () => {
       try {
@@ -384,6 +413,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       } catch { /* The main process also removes destroyed guests. */ }
       stopActivation?.();
       stopOpenLink?.();
+      stopAudio?.();
       window.clearTimeout(deadline);
       webview.removeEventListener('dom-ready', ready);
       webview.removeEventListener('did-start-navigation', start);
@@ -394,6 +424,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('did-navigate', navigate);
       webview.removeEventListener('did-navigate-in-page', navigate);
       webview.removeEventListener('page-title-updated', updateTitle);
+      webview.removeEventListener('page-favicon-updated', updateFavicon);
       webview.removeEventListener('context-menu', contextMenu);
     };
   }, [
@@ -403,13 +434,13 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     source,
     target,
     webviewRevision,
-    translation.reset,
   ]);
 
   const showStartPage = Boolean(startPage) && isInspectorBrowserTarget(target, mediaType)
     && /^about:blank(?:[?#]|$)/i.test(currentUrl) && !previewError && (!loading || !hasDocument);
   return (
     <DeferredResizePreview className={`right-inspector-preview ${loading ? 'loading' : 'ready'}${showStartPage ? ' showing-start-page' : ''}`}>
+      {!rendererPreview && isInspectorBrowserTarget(target, mediaType) && <BrowserPageTools ref={toolsRef} webviewRef={webviewRef} revision={webviewRevision} language={language}/>}
       <InspectorErrorBoundary
         key={`${target}:${filePreviewRevision}:${webviewRevision}`}
         target={target}
@@ -448,12 +479,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         })}
       </InspectorErrorBoundary>
       {showStartPage && <div className="inspector-new-tab-page">{startPage}</div>}
-      {translation.state.status === 'error' && !previewError && (
-        <div className="inspector-translation-notice" role="status">
-          <span>{browserTranslationError(translation.state.error, language)}</span>
-          <button type="button" onClick={translation.reset} aria-label={language === 'zh' ? '关闭翻译提示' : 'Dismiss translation notice'}>×</button>
-        </div>
-      )}
       {!rendererPreview && previewError && (
         <div className="inspector-preview-error" role="alert">
           <p>{language === 'zh' ? '无法加载预览，文件可能不可用、格式不受支持，或加载已超时。' : 'Preview unavailable. The file may be missing, unsupported, or taking too long to load.'}</p>

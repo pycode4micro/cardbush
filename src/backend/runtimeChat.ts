@@ -10,6 +10,7 @@ import type {
   ToolExecutionRecord,
 } from '@cardbush/bush-protocol';
 import {
+  ASSISTANT_CONVERSATION_COMMAND,
   planStateSchema,
   reasoningEffortSchema,
   resolveModelReasoningEffort,
@@ -178,7 +179,6 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
   });
   // Voice/page entries are independent of Turn commits. Include their recent text
   // as historical data so a later typed request or child can refer to the call.
-  const { ASSISTANT_CONVERSATION_COMMAND } = await import('@cardbush/bush-protocol');
   if ((await runtime.client.getCapabilities()).supportedCommands.includes(ASSISTANT_CONVERSATION_COMMAND)) {
     const journal = await runtime.client.command({ kind: ASSISTANT_CONVERSATION_COMMAND, payload: { action: 'read', sessionId: request.sessionId } },
       value => value as import('./conversationJournal').ConversationJournalSnapshot);

@@ -49,7 +49,6 @@ import {
 import { McpClientManager, McpOAuthCoordinator, type CredentialState } from '@cardbush/bush-mcp-client';
 import { RuntimePluginState } from './runtimePluginState.mjs';
 import { ProxyFetchPool } from './proxyFetch.mjs';
-import { translateBrowserTexts } from './browserTranslationModel.mjs';
 import { openPluginAgentMcp } from './pluginAgentMcp.mjs';
 import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
 import { registerDesktopBrowserTools } from './desktopBrowserTools.mjs';
@@ -281,7 +280,6 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
-  if (command.kind === 'runtime.browser_translate') return translateBrowserTexts(providers, command.payload, signal);
   if (command.kind === 'runtime.personalization') {
     const { personalizationCommandSchema } = await import('@cardbush/bush-protocol');
     const payload = personalizationCommandSchema.parse(command.payload);
@@ -871,6 +869,11 @@ host = new InMemoryRuntimeHost({
     read: (input, signal) => mcpHost.request('agents.read-child', input, signal),
     guide: (input, signal) => mcpHost.request('agents.guide-child', input, signal),
   },
+  ...(!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && process.env.CARDBUSH_BROWSER_USE_URL?.trim() ? {
+    inheritBrowserScope: async (parentSessionId: string, childSessionId: string, signal?: AbortSignal) => {
+      await mcpHost.request('browser.inherit-scope', { parentSessionId, childSessionId }, signal);
+    },
+  } : {}),
   subagentModels: {
     list: signal => mcpHost.request<import('@cardbush/bush-runtime').SubagentModelOption[]>('subagent.models', {}, signal),
     resolve: async (modelId, signal) => {

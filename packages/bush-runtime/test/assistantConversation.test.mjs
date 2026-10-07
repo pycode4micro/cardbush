@@ -200,7 +200,7 @@ test('long assistant history checkpoints through the text model, retaining origi
       ? { calls: [{ id: `memory-${seen.length}`, name: 'checkpoint_context', args: { updates: [{ source: 0, summary: '记录了项目约束，尚无执行结果。' }] } }] }
       : { text: '已记住约束。' }); } } });
   try {
-    assistant.command({ action: 'turn', sessionId: id, entry: entry('recent', '请记住'), parent: parent(), profile: assistantProfileSchema.parse({}) });
+    assistant.command({ action: 'turn', sessionId: id, entry: entry('recent', '请记住'), parent: { ...parent(), metadata: { contextWindowTokens: 8000 } }, profile: assistantProfileSchema.parse({}) });
     await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
     assert.ok(seen.some(request => request.tools[0]?.name === 'checkpoint_context'));

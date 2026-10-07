@@ -122,7 +122,7 @@ const summarySource = fs.readFileSync(
   'utf8',
 );
 const workSummaryInspectorSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'features', 'chat', 'WorkSummaryInspector.tsx'),
+  path.join(process.cwd(), 'src', 'features', 'chat', 'TurnHistoryInspector.tsx'),
   'utf8',
 );
 assert.doesNotMatch(summarySource, /data-testid="work-summary-history"/);

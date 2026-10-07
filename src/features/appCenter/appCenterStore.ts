@@ -3,6 +3,7 @@ import { usePluginCatalog } from '../plugins/pluginCatalog';
 import type { AppLanguage } from '../../types';
 import type { ApplicationPromptReference } from '../../shared/promptReferences';
 import { applicationCatalog, defaultAppCenterPreferences, normalizeAppCenterPreferences, type AppCenterPreferences } from './appCenterModel';
+import { normalizeWebApplications, type WebApplicationInfo } from '@cardbush/bush-protocol';
 
 export const appCenterStorageKey = 'cardbush_app_center_v1';
 let cached = defaultAppCenterPreferences, raw: string | null | undefined;
@@ -20,6 +21,15 @@ function subscribe(fn: () => void) {
 export function saveAppCenterPreferences(next: AppCenterPreferences) {
   const value = normalizeAppCenterPreferences(next);
   localStorage.setItem(appCenterStorageKey, JSON.stringify(value)); read(); listeners.forEach(fn => fn());
+}
+export function installWebApplication(info: WebApplicationInfo, pin = false) {
+  const prefs = read(), existing = prefs.webApps?.find(app => app.identity === info.identity);
+  const app = normalizeWebApplications([{ ...info, id: existing?.id ?? `web:${crypto.randomUUID()}` }])[0];
+  if (!app) throw Error('网页应用信息无效。Invalid web app.');
+  if (pin && !prefs.shortcuts.includes(app.id) && prefs.shortcuts.length >= 4) throw Error('快捷方式已满，请先移除一个。Remove a shortcut before pinning this app.');
+  saveAppCenterPreferences({ ...prefs, webApps: [...(prefs.webApps ?? []).filter(item => item.id !== app.id), app],
+    shortcuts: pin && !prefs.shortcuts.includes(app.id) ? [...prefs.shortcuts, app.id] : prefs.shortcuts });
+  return app;
 }
 export function useAppCenterPreferences() { return useSyncExternalStore(subscribe, () => raw === undefined ? read() : cached, () => defaultAppCenterPreferences); }
 export function useApplications(language: AppLanguage) {

@@ -3,6 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async ({ run, until, pause, window, root }) => {
+  require('../../dist-electron/windowResize.js').installWindowResizeEvents(window);
+  await run(`cardbushDesktop.onWindowResizeGesture = callback => {
+    const ipc = require('electron').ipcRenderer;
+    const listener = (_event, gesture) => callback(gesture);
+    ipc.on('window:resize-gesture', listener);
+    return () => ipc.removeListener('window:resize-gesture', listener);
+  }; void 0`);
   const browserPreview = 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box}body{margin:0;background:#143a3f;color:#fff;font:16px system-ui;padding:24px;height:100vh;overflow:hidden}
     h1{font-size:24px;margin:0 0 18px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;height:calc(100% - 45px)}

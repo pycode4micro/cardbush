@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { InMemoryRuntimeHost, SessionStore, SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
 
 test('one subagent entry guides the current child and rejects stale names and foreign IDs', async () => {
-  const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), guidance = [];
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), guidance = [], browserScopes = [];
   let dispatched = 0;
   registerSubagentTool(registry, tasks, async () => { dispatched++; throw Error('must not dispatch'); }, {
-    guideChild: async input => { guidance.push(input); return { status: 'queued' }; },
+    inheritBrowserScope: async (parent, child) => { browserScopes.push([parent, child]); },
+    guideChild: async input => { assert.deepEqual(browserScopes, [['parent', input.sessionId]], 'new browser selection is available before guidance is delivered'); guidance.push(input); return { status: 'queued' }; },
     loadPluginAgents: async () => [{ id: 'fixture:reviewer', description: 'Read only', mcpServers: ['docs'] }],
   });
   const request = { requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' };
@@ -27,6 +28,7 @@ test('one subagent entry guides the current child and rejects stale names and fo
   assert.equal((await invoke('subagent', { task_id: 'unknown', prompt: 'x' })).kind, 'failed');
   assert.equal((await invoke('subagent', { resume_task_id: 'old', prompt: 'x' })).kind, 'failed');
   assert.equal(guidance.length, 1); assert.equal(dispatched, 0); assert.equal(tasks.list('parent').length, 2);
+  assert.deepEqual(browserScopes, [['parent', 'child']], 'foreign task IDs never transfer grants');
   assert.equal(registry.resolve('list_plugin_agents'), undefined);
   const options = await invoke('list_subagent_options', {});
   assert.equal(options.result.agent_roles[0].id, 'fixture:reviewer');
@@ -46,9 +48,10 @@ test('resumes original child session after host recreation with its own history,
   const dataRoot = await mkdtemp(join(tmpdir(), 'subagent-resume-'));
   t.after(() => rm(dataRoot, { recursive: true, force: true }));
   const sessions = new SessionStore(), tasks = new SubagentTaskStore();
-  const requests = [], parentRounds = new Map(); let resumeId;
+  const requests = [], parentRounds = new Map(), browserScopes = []; let resumeId;
   const provider = { async *stream(request) {
     if (request.metadata.agentRole === 'child') {
+      assert.deepEqual(browserScopes.at(-1), ['parent', request.sessionId]);
       requests.push(request);
       yield* respond(request, undefined, undefined, requests.length === 1 ? 'private child identity alpha; read position 4' : 'continued alpha'); return;
     }
@@ -56,7 +59,8 @@ test('resumes original child session after host recreation with its own history,
     if (round === 1) yield* respond(request, 'subagent', resumeId ? { task_id: resumeId, prompt: 'continue' } : { prompt: 'first task' });
     else yield* respond(request);
   } };
-  const makeHost = () => new InMemoryRuntimeHost({ provider, sessionStore: sessions, subagentTaskStore: tasks, dataRoot });
+  const makeHost = () => new InMemoryRuntimeHost({ provider, sessionStore: sessions, subagentTaskStore: tasks, dataRoot,
+    inheritBrowserScope: async (parent, child) => { browserScopes.push([parent, child]); } });
   let host = makeHost();
   const run = async (turn) => host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: `r-${turn}`, sessionId: 'parent', turnId: turn, model: turn === 'first' ? 'original-model' : 'new-parent-model',
     tools: await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} }), messages: [{ role: 'system', content: 'original prefix' }, { role: 'user', content: turn }], metadata: {} });
@@ -65,6 +69,7 @@ test('resumes original child session after host recreation with its own history,
   host = makeHost();
   assert.equal((await run('second')).payload.status, 'completed');
   assert.equal(requests.length, 2);
+  assert.deepEqual(browserScopes, [['parent', requests[0].sessionId], ['parent', requests[0].sessionId]], 'initial and resumed children inherit browser scope');
   assert.equal(requests[1].sessionId, requests[0].sessionId);
   assert.notEqual(requests[1].turnId, requests[0].turnId);
   assert.equal(requests[1].model, 'original-model');

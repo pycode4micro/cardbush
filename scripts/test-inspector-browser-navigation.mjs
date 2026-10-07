@@ -16,14 +16,21 @@ import { InspectorWebview } from '${local('src/features/inspector/InspectorWebvi
 import { InspectorTabPages } from '${local('src/features/inspector/InspectorTabPages.tsx')}';
 import { addPanel, panelRects, resizePanelSplit, swapPanels } from '${local('src/features/inspector/panelLayout.ts')}';
 import { InspectorTileFrame } from '${local('src/features/inspector/InspectorTileFrame.tsx')}';
-import { BrowserTranslateButton } from '${local('src/features/inspector/BrowserTranslateButton.tsx')}';
 import { BrowserBookmarkButton } from '${local('src/features/inspector/BrowserBookmarkButton.tsx')}';
 import { RightInspectorResizer } from '${local('src/components/RightInspectorResizer.tsx')}';
 import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
 import { useSoftPanelPresence } from '${local('src/hooks/useSoftPanelPresence.ts')}';
 import { InspectorActions } from '${local('src/features/inspector/InspectorActions.tsx')}';
 import { InspectorTabStrip } from '${local('src/features/inspector/InspectorTabStrip.tsx')}';
-import { toggleBrowserBookmark } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
+import { useInspectorTabStrip } from '${local('src/hooks/useInspectorTabStrip.ts')}';
+import { BrowserSiteIcon } from '${local('src/features/browser/BrowserSiteIcon.tsx')}';
+import { BrowserTabAudioButton } from '${local('src/features/browser/BrowserTabAudioButton.tsx')}';
+import { BrowserMenu } from '${local('src/features/browser/BrowserMenu.tsx')}';
+import { BrowserInstallButton } from '${local('src/features/browser/BrowserInstallButton.tsx')}';
+import { AppCenterProvider, AppCenterDock } from '${local('src/features/appCenter/AppCenter.tsx')}';
+import { installWebApplication } from '${local('src/features/appCenter/appCenterStore.ts')}';
+import { ConversationHostContext } from '${local('src/features/conversationHost.ts')}';
+import { toggleBrowserBookmark, importBrowserBookmarks } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
 import { newBrowserTab } from '${local('src/features/browser/browserStartPage.ts')}';
 import { useInspectorBrowserActions } from '${local('src/features/inspector/useInspectorBrowserActions.ts')}';
 import { inspectorBrowserReferences } from '${local('src/features/composer/ComposerReferenceContext.ts')}';
@@ -36,6 +43,7 @@ window.toolClicks=[];
 function Harness() {
   const tabs=useInspectorTabs(), refs=React.useRef({});
   const [navigation,setNavigation]=React.useState({});
+  const strip=useInspectorTabStrip(tabs.activeId,tabs.tabs.length);
   const [address,setAddress]=React.useState('');
   const [layout,setLayout]=React.useState(null);
   const [covered,setCovered]=React.useState(false);
@@ -49,7 +57,7 @@ function Harness() {
     tabs.openTab({id:detail.newTab ? crypto.randomUUID() : detail.target,kind:'resource',detail});
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
-  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark};
+  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark,importBrowserBookmarks,installWebApplication};
   useInspectorBrowserActions({open:tabs.openTab,activate:tabs.activateTab,close:id=>tabs.closeTabs(new Set([id])),show:()=>setInspectorOpen(true)});
   window.browserFixture.reference = async (sessionId,tabId) => {
     const reference=inspectorBrowserReferences(tabs.tabs,navigation).find(tab=>tab.tabId===tabId);
@@ -59,15 +67,22 @@ function Harness() {
   const active=navigation[tabs.activeId];
   React.useEffect(()=>setAddress(active?.url==='about:blank'?'':active?.url||''),[active?.url,tabs.activeId]);
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
+    <ConversationHostContext.Provider value={{id:'browser-fixture',plugins:[],pluginCommands:[]}}><AppCenterProvider language={language} onNavigate={app=>open({target:app.target,title:app.title})}>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
-    <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/></div></section>
+    <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/></div><AppCenterDock language={language}/></section>
     {presence.mounted && <aside className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
       inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
     <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>
     <div className="right-inspector-viewport"><div className="right-inspector-content">
-      <header className="right-inspector-toolbar with-tabs"><InspectorTabStrip language={language} onNewTab={()=>open(newBrowserTab(language))}>
-      {tabs.tabs.map(tab=><div className={'right-inspector-tab'+(tab.id===tabs.activeId?' active':'')} key={tab.id}><button role="tab" className="right-inspector-tab-select" data-tab={tab.id} onClick={()=>tabs.activateTab(tab.id)}><span>{navigation[tab.id]?.title||tab.detail.title||tab.id}</span></button></div>)}
-      </InspectorTabStrip></header>
+      <header className="right-inspector-toolbar with-tabs"><InspectorTabStrip language={language} stripRef={strip.ref} onNewTab={()=>open(newBrowserTab(language))}>
+      {tabs.tabs.map(tab=><div className={'right-inspector-tab'+(tab.id===tabs.activeId?' active':'')} key={tab.id} data-inspector-tab-id={tab.id}>
+        <button role="tab" aria-selected={tab.id===tabs.activeId} className="right-inspector-tab-select" data-tab={tab.id}
+          title={(navigation[tab.id]?.title||tab.detail.title||tab.id)+'\\n'+(navigation[tab.id]?.url||tab.detail.target)} onClick={()=>tabs.activateTab(tab.id)}>
+          <BrowserSiteIcon url={navigation[tab.id]?.url||tab.detail.target} icon={navigation[tab.id]?.faviconUrl}/>
+          <span className="right-inspector-tab-title">{navigation[tab.id]?.title||tab.detail.title||tab.id}</span>
+        </button><BrowserTabAudioButton navigation={navigation[tab.id]} handle={refs.current[tab.id]} language={language} title={navigation[tab.id]?.title||tab.id}/>
+        <button className="right-inspector-tab-close" aria-label="关闭标签页" onClick={()=>tabs.closeTabs(new Set([tab.id]))}>×</button></div>)}
+      </InspectorTabStrip><BrowserMenu language={language} navigation={active} handle={refs.current[tabs.activeId]} onNavigate={url=>open({target:url,newTab:true})} onSettings={()=>toolClicks.push('browser-settings')}/></header>
       <nav><button id="new-tab" onClick={()=>open(newBrowserTab(language))}>新标签页</button>
       <button id="back" disabled={!active?.canGoBack} onClick={()=>refs.current[tabs.activeId]?.goBack()}>后退</button>
       <button id="forward" disabled={!active?.canGoForward} onClick={()=>refs.current[tabs.activeId]?.goForward()}>前进</button>
@@ -75,9 +90,8 @@ function Harness() {
       <output id="address">{active?.url}</output></nav>
       <div className="right-inspector-navigation"><form className="right-inspector-address editable" onSubmit={event=>{event.preventDefault();refs.current[tabs.activeId]?.navigate(address);}}>
         <input aria-label="Address" placeholder="搜索或输入网址" value={address} onChange={event=>setAddress(event.target.value)}/>
+        <BrowserInstallButton language={language} navigation={active}/>
         <BrowserBookmarkButton address={active?.url||''} title={active?.title||''} language={language}/>
-        <BrowserTranslateButton address={active?.url||''} language={language} state={active?.translation} loading={active?.loading}
-          onClick={()=>refs.current[tabs.activeId]?.toggleTranslation()}/>
       </form></div>
       <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId} layout={layout} language="zh"
         onActivate={tabs.activateTab}
@@ -97,6 +111,7 @@ function Harness() {
     </div></div>
     </aside>}
     </main>
+    </AppCenterProvider></ConversationHostContext.Provider>
   </div>;
 }
 createRoot(document.getElementById('root')).render(<React.StrictMode><Harness/></React.StrictMode>);
@@ -115,7 +130,7 @@ try {
   const require = createRequire(import.meta.url), env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
   const worker = process.argv.includes('--browser-use') ? 'scripts/test-integrated-browser-use.cjs' : 'scripts/test-inspector-browser-navigation.cjs';
-  const run = spawnSync(require('electron'), [worker, directory], { env, windowsHide: true, stdio: 'inherit', timeout: 60_000 });
+  const run = spawnSync(require('electron'), [worker, directory, ...process.argv.slice(2).filter(arg => ['--browser-ui', '--browser-chrome', '--browser-audio', '--web-apps'].includes(arg))], { env, windowsHide: true, stdio: 'inherit', timeout: 60_000 });
   assert.equal(run.status, 0, String(run.error ?? 'Browser navigation regression failed'));
 } finally {
   assert.ok(directory.startsWith(parent + sep + 'inspector-browser-'));

@@ -61,6 +61,7 @@ AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）�
 | **自己的初始桌面** | 编排时钟、日历、对话引导及两种输入框；导入自定义 HTML 组件，拖拽、缩放、辅助线吸附，通过事件和已授权动作交互，并自动跟随主题。 |
 | **浏览器工作区** | 收藏常用页面，使用多页面 Beta，展开右侧内容区并通过浮动的返回／输入胶囊继续交流。 |
 | **执行任务的工具** | 搜索和编辑文件、执行命令、调度子 Agent、安装 MCP 插件与技能、安排自动化；支持申请批准与完全访问。 |
+| **文档插件** | 内置 XLSX、PPTX、Word、PDF 四个插件，包含技能、制作工具库、渐进式读取和校验；Office 转 PDF、XLSX 公式重算可使用本机 LibreOffice。 |
 | **本地与远端** | 内置 Agent、SSH 项目、独立 Agent 服务；个人 Linux Agent 可选独立图形桌面、Computer Use 和 Browser Use。 |
 | **连续的工作上下文** | 会话持久化、上下文恢复、归档工具结果检索和使用记录；习惯记忆与下一步预测可选，默认关闭。 |
 
@@ -108,6 +109,7 @@ Linux 的 CPU／内存限制尚未与 Windows 完全一致。外部插件是独�
 | --- | --- |
 | 接入模型 | [服务商、协议与 OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
 | 使用个人助手 | [持续对话、任务、附件与重置](docs/PERSONAL_ASSISTANT.md) |
+| 处理办公文档 | [内置 XLSX、PPTX、Word、PDF 插件](docs/DOCUMENT_PLUGINS.md) |
 | 配置语音 | [实时通话](docs/REALTIME_VOICE.md) · [本地识别与朗读模型](docs/LOCAL_VOICE_MODELS.md) |
 | 自定义工作区 | [HTML 组件、布局与多页面](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [应用中心](assets/skills/cardbush-docs/references/app-center.md) |
 | 部署远端 Agent | [服务部署](docs/AGENT_SERVICES.md) · [Docker 与可选 Linux 桌面](deploy/agent/README.md) · [SSH 项目](docs/SSH_WORKSPACES.md) |

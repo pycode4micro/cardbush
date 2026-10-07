@@ -29,7 +29,7 @@ async function fixture(t) {
   }};
 }
 const result=value=>{assert.equal(value.kind,'returned',JSON.stringify(value));return value.result;};
-const model={model:'fixture',metadata:{maxContextTokens:32000}};
+const model={model:'fixture',metadata:{contextWindowTokens:32000}};
 const summarizeProvider=fn=>({async *stream(request){let records;try{records=JSON.parse(request.messages.at(-1).content);}catch{}const answer=await fn(request,records);
   yield event(request,0,'text_delta',{delta:typeof answer==='string'?answer:JSON.stringify(answer)});
   yield event(request,1,'response_completed',{finishReason:'stop'});}});
@@ -156,6 +156,113 @@ test('threshold invokes one protocol-independent model summary, replaces records
   gate.resolve();const status=await a;assert.equal(status.notes,0);assert.equal(status.habits,1);assert.ok(status.estimatedTokens<1000);assert.equal(status.running,false);
   await memory.compact(settings,model,false);assert.equal(calls,1,'no repeated auto-summary without new data');
   assert.equal((await f.store.check('A 股 数据表',settings))[0].kind,'habit');
+});
+
+async function seedSummaryRecords(store,settings,count) {
+  for(let i=0;i<count;i++)await write(store,{habit:`Preference ${i}: `+'For market reports provide a dated XLSX table with sources. '.repeat(8)},settings,{sessionId:'budget',turnId:String(i)});
+}
+async function expireSummaryCooldown(path) {
+  const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(path);
+  try { db.exec('UPDATE memory_state SET retry_after=0; UPDATE memory_summary_attempts SET retry_after=0 WHERE retry_after IS NOT NULL'); }
+  finally { db.close(); }
+}
+
+test('maintenance sizes serialized input and output against contextWindowTokens and progresses in small batches',async t=>{
+  const counts=[];
+  for(const context of [6000,400000]) {
+    const f=await fixture(t),seen=[],settings={...on,summaryTokenThreshold:200000};
+    await seedSummaryRecords(f.store,settings,40);
+    const memory=new IndividuationMemory(f.path,summarizeProvider((request,rows)=>{
+      seen.push(request);counts.push(rows.length);
+      assert.equal(request.metadata.contextWindowTokens,context);
+      assert.ok(memoryTokens(JSON.stringify(request.messages))+32+request.maxOutputTokens+512<=context);
+      assert.ok(rows.length<=32&&rows.length<40,'whole memory is not dumped into a single response');
+      return {habits:[{text:'Market reports include dated XLSX tables and sources.',sources:rows.map(r=>r.id)}],predictions:[],reviews:[]};
+    }));t.after(()=>memory.close());
+    // The obsolete key is deliberately contradictory: only the runtime's real key counts.
+    await memory.compact(settings,{...model,metadata:{contextWindowTokens:context,maxContextTokens:2048}});
+    assert.equal(seen.length,1);
+    assert.ok((await f.store.status(settings)).records>1,'remaining records are preserved for later batches');
+  }
+  assert.ok(counts[0]<counts[1],'small model contexts receive smaller record batches');
+});
+
+test('truncated maintenance retries a smaller snapshot without applying incomplete JSON or losing originals',async t=>{
+  const f=await fixture(t),settings={...on,summaryTokenThreshold:200000},sizes=[];
+  await seedSummaryRecords(f.store,settings,12);
+  const memory=new IndividuationMemory(f.path,{async *stream(request) {
+    const rows=JSON.parse(request.messages.at(-1).content);sizes.push(rows.length);
+    assert.equal((await f.store.status(settings)).records,12,'no source was removed by the failed first attempt');
+    if(sizes.length===1) {
+      yield event(request,0,'text_delta',{delta:'{"habits":['});
+      yield event(request,1,'usage',{inputTokens:1400,outputTokens:request.maxOutputTokens});
+      yield event(request,2,'response_completed',{finishReason:'length'});
+    } else {
+      yield event(request,0,'text_delta',{delta:JSON.stringify({habits:[{text:'Use dated XLSX tables for market reports.',sources:rows.map(r=>r.id)}],predictions:[],reviews:[]})});
+      yield event(request,1,'response_completed',{finishReason:'stop'});
+    }
+  }});t.after(()=>memory.close());
+  const status=await memory.compact(settings,model);
+  assert.equal(sizes.length,2);assert.ok(sizes[1]<sizes[0]);assert.equal(status.lastError,null);
+  assert.equal(status.records,12-sizes[1]+1);assert.ok(status.historyChanges>12,'consolidation is reversible history');
+});
+
+test('a successful partial batch does not prevent automatic continuation without new memory writes',async t=>{
+  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000};
+  await seedSummaryRecords(f.store,settings,16);
+  const snapshot=await f.store.begin(settings,false,10000,undefined,{maxRecords:3});
+  assert.equal(snapshot.records.length,3);
+  const status=await f.store.apply(snapshot,{habits:[{text:'Market reports use dated XLSX tables.',sources:snapshot.records.map(r=>r.id)}],predictions:[],reviews:[]},settings);
+  assert.ok(status.estimatedTokens>settings.summaryTokenThreshold);
+  const next=await f.store.begin(settings,false,10000,undefined,{maxRecords:3});
+  assert.ok(next,'the next automatic pass can process remaining records');
+  assert.ok(next.records.every(row=>!snapshot.records.some(old=>old.id===row.id)));
+  await f.store.fail(next.lease,'fixture release');
+});
+
+test('unchanged deterministic failures stay suppressed across cooldown expiry, restart and unrelated new notes',async t=>{
+  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000},requests=[];
+  await seedSummaryRecords(f.store,settings,48);
+  const provider={async *stream(request) {
+    requests.push(request);
+    yield event(request,0,'usage',{inputTokens:1234,outputTokens:request.maxOutputTokens});
+    yield event(request,1,'response_completed',{finishReason:'length'});
+  }};
+  const memory=new IndividuationMemory(f.path,provider);
+  await assert.rejects(memory.compact(settings,model,false),/memory_summary_output_limit.*finish=length/);
+  assert.equal(requests.length,3,'bounded shrinking retries, never an unbounded loop');
+  const sizes=requests.map(r=>JSON.parse(r.messages.at(-1).content).length);
+  assert.ok(sizes[0]>sizes[1]&&sizes[1]>sizes[2]);
+  assert.equal((await f.store.status(settings)).records,48);
+  await memory.close();await expireSummaryCooldown(f.path);
+  const restarted=new IndividuationMemory(f.path,provider);t.after(()=>restarted.close());
+  await restarted.compact(settings,model,false);assert.equal(requests.length,3);
+  await write(f.store,{habit:'A new unrelated preference in a different topic.'},settings,{sessionId:'other',turnId:'new'});
+  await restarted.compact(settings,model,false);assert.equal(requests.length,3,'an unrelated database revision does not retry the same failed batch');
+  await assert.rejects(restarted.compact(settings,model,true),/memory_summary_output_limit/);
+  assert.equal(requests.length,6,'an explicit manual retry is still allowed');
+});
+
+test('maintenance diagnostics distinguish invalid JSON and transient provider failure without echoing provider content',async t=>{
+  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000};let calls=0,mode='network';
+  await seedSummaryRecords(f.store,settings,12);
+  const memory=new IndividuationMemory(f.path,{async *stream(request) {
+    calls++;
+    if(mode==='network')yield event(request,0,'response_failed',{code:'connection_error',message:'https://private.invalid/?secret=do-not-echo',retryable:true});
+    else {
+      yield event(request,0,'text_delta',{delta:'do-not-echo invalid JSON'});
+      yield event(request,1,'response_completed',{finishReason:'stop'});
+    }
+  }});t.after(()=>memory.close());
+  await assert.rejects(memory.compact(settings,model,false),/memory_summary_provider_failure/);
+  let status=await f.store.status(settings);assert.ok(!status.lastError.includes('do-not-echo'));
+  await memory.compact(settings,model,false);assert.equal(calls,1);
+  await expireSummaryCooldown(f.path);mode='invalid';
+  await assert.rejects(memory.compact(settings,model,false),/memory_summary_invalid_json/);assert.equal(calls,2);
+  await expireSummaryCooldown(f.path);await memory.compact(settings,model,false);assert.equal(calls,2,'invalid output is not a transient network error');
+  status=await f.store.status(settings);assert.equal(status.records,12);assert.ok(!status.lastError.includes('do-not-echo'));
+  await assert.rejects(memory.compact(settings,{...model,model:'changed-model'},false),/memory_summary_invalid_json/);
+  assert.equal(calls,3,'a different model configuration can retry the same content');
 });
 
 test('reviews require later user evidence, persist hits/misses, and consolidate conditional habits',async t=>{

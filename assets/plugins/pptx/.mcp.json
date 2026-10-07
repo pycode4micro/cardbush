@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "documents": {
+      "tool_timeout_sec": 150,
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1",
+        "CARDBUSH_SOFFICE": "${CARDBUSH_SOFFICE:-}",
+        "SOFFICE_PATH": "${SOFFICE_PATH:-}"
+      },
+      "type": "stdio",
+      "command": "${CARDBUSH_NODE_EXECUTABLE}",
+      "args": [
+        "${PLUGIN_ROOT}/server.cjs"
+      ],
+      "cwd": "${PLUGIN_DATA}"
+    }
+  }
+}

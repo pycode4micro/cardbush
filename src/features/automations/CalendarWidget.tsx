@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { ChevronLeft, ChevronRight, Settings2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDataControls, useCalendarData } from './CalendarDataControls';
@@ -55,7 +56,7 @@ export function CalendarWidget({ language }: { language: 'zh' | 'en' }) {
 function CalendarSettings({ data, zh, onClose }: { data: ReturnType<typeof useCalendarData>; zh: boolean; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
-  return <dialog ref={dialog} className="calendar-settings-dialog" aria-label={zh ? '日历设置' : 'Calendar settings'} onCancel={onClose}>
+  return <dialog ref={dialog} className="calendar-settings-dialog" aria-label={zh ? '日历设置' : 'Calendar settings'} onCancel={dialogEventHandler(onClose)}>
     <header><strong>{zh ? '日历设置' : 'Calendar settings'}</strong><button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={onClose}><X size={16}/></button></header>
     <CalendarDataControls data={data} zh={zh} expanded/>
   </dialog>;

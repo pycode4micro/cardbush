@@ -1,4 +1,5 @@
 import { prefersReducedMotion } from '../../../shared/motionPreference';
+import { isWindowVisible, watchWindowVisibility } from '../../../shared/windowVisibility';
 import type {
   AssistantStreamBufferRelease,
   AssistantStreamRoute,
@@ -12,19 +13,17 @@ export interface FrameStreamScheduler {
 
 export const browserFrameScheduler: FrameStreamScheduler = {
   schedule(callback) {
-    if (typeof requestAnimationFrame === 'function' && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    if (typeof requestAnimationFrame === 'function' && typeof document !== 'undefined' && isWindowVisible()) {
       const id = requestAnimationFrame(callback);
       return () => cancelAnimationFrame(id);
     }
     const id = window.setTimeout(callback, 16);
     return () => window.clearTimeout(id);
   },
-  visible: () => (typeof document === 'undefined' || document.visibilityState !== 'hidden') &&
+  visible: () => isWindowVisible() &&
     !(prefersReducedMotion()),
   watchVisibility(callback) {
-    if (typeof document === 'undefined' || !document.addEventListener) return () => {};
-    document.addEventListener('visibilitychange', callback);
-    return () => document.removeEventListener('visibilitychange', callback);
+    return watchWindowVisibility(callback);
   },
 };
 

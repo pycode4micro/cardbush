@@ -6,7 +6,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const packages = ['cardbush-platform', 'bush-protocol', 'bush-runtime', 'bush-product-agent',
   'cardbush-product-host', 'bush-provider-openai', 'bush-mcp-client', 'cardbush-apps-mcp',
-  'cardbush-chrome-mcp', 'bush-runtime-electron'];
+  'cardbush-chrome-mcp', 'cardbush-document-tools', 'bush-runtime-electron'];
 function run(args) {
   const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', windowsHide: true });
   if (result.error) throw result.error;
@@ -27,6 +27,10 @@ run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-re
 run(['--test', 'scripts/test-release-privacy.mjs', 'scripts/test-repository-privacy.mjs']);
 run(['--test', 'scripts/test-process-host-build.mjs']);
 run(['--test', 'scripts/test-notification-sound.mjs']);
+run(['--test', 'scripts/test-window-visibility.mjs']);
+run(['--test', 'scripts/test-dialog-events.mjs']);
+run(['--test', 'scripts/test-browser-site-icons.mjs']);
+run(['--test', 'scripts/test-renderer-boundaries.mjs', 'scripts/test-preload-state.mjs']);
 run(['--test', 'scripts/test-appearance-preferences.mjs', 'scripts/test-conversation-styles.mjs', 'scripts/test-app-preferences.mjs']);
 run(['--test', 'scripts/test-app-center.mjs', 'scripts/test-local-applications.mjs', 'scripts/test-calendar-import.mjs']);
 run(['scripts/test-local-applications-native.mjs']);
@@ -42,6 +46,7 @@ run(['--test', 'scripts/test-guidance-queue-lock.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-shared-configuration.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-model-protocols-host.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
+run(['--test', 'scripts/test-document-plugins.mjs']);
 for (const script of ['test-plugin-install-transaction.mjs', 'test-plugin-marketplaces.mjs']) run(['scripts/' + script]);
 for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', 'test-conversation-switching.mjs', 'test-session-read-fences.mjs', 'test-startup-runtime-contract.mjs', 'test-runtime-host-lifecycle.mjs',
   'test-local-path-metadata.mjs', 'test-settings-layout-contract.mjs', 'test-panel-motion-contract.mjs',
@@ -50,6 +55,7 @@ for (const script of ['test-background-startup.mjs', 'test-first-message.mjs', '
   'test-history-tool-contract.mjs', 'test-turn-guidance-contract.mjs', 'test-assistant-timing-contract.mjs',
   'test-message-media-contract.mjs', 'test-product-skills-contract.mjs']) run(['scripts/' + script]);
 if (!process.argv.includes('--no-ui')) {
+  run(['scripts/test-renderer-windows.cjs']);
   run(['scripts/test-runtime-host-env.cjs']);
   run(['scripts/run-settings-context-ui-test.mjs', 'sandbox']);
   run(['scripts/run-settings-context-ui-test.mjs', 'agents']);
@@ -64,7 +70,12 @@ if (!process.argv.includes('--no-ui')) {
   for (const view of ['html-references', 'code-rendering', 'markdown-tables', 'status-indicators', 'loop-previews', 'startup-presentation', 'composer-resize', 'pasted-text', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
   for (const view of ['html-components', 'inspector-cover', 'composer-presentation', 'page-navigation']) run(['scripts/run-app-views-test.mjs', view]);
   run(['scripts/test-inspector-browser-navigation.mjs']);
+  run(['scripts/test-inspector-browser-navigation.mjs', '--browser-ui']);
+  run(['scripts/test-inspector-browser-navigation.mjs', '--browser-chrome']);
+  run(['scripts/test-inspector-browser-navigation.mjs', '--browser-audio']);
+  run(['scripts/test-inspector-browser-navigation.mjs', '--web-apps']);
   run(['scripts/test-automations-ui.mjs']);
   run(['scripts/test-plugin-uninstall-worker.cjs']);
   run(['scripts/test-window-menu.mjs']);
+  run(['scripts/test-window-visibility-ui.cjs']);
 }

@@ -21,9 +21,12 @@
 .assistant-body,.assistant-chat { display:flex; flex:1; min-height:0; min-width:0; }
 .assistant-chat { display:block; }
 .assistant-message-row { width:min(100%,var(--chat-track-width,704px)); margin:0 auto; content-visibility:visible; }
-.assistant-message { display:flex; flex-direction:column; margin:0 0 22px; max-width:92%; width:fit-content; }
+.assistant-message { display:flex; flex-direction:column; margin:0 0 22px; max-width:92%; min-width:0; width:fit-content; }
 .assistant-message>div { padding:14px 18px; border-radius:22px; background:var(--surface-strong, var(--surface, #8882)); overflow-wrap:anywhere; min-width:0; }
-.theme-bright .assistant-message-assistant>div { background:var(--user-bubble); }
+.assistant-message-assistant>div { background:var(--user-bubble); }
+/* The quick transcript sits on a raised surface; give replies their own bubble
+   in either theme, including when portaled outside the assistant view. */
+.quick-input-transcript .assistant-message-assistant>div { background:color-mix(in srgb,var(--text) 6%,var(--surface-strong)); border:1px solid color-mix(in srgb,var(--text) 10%,transparent); }
 .assistant-message-user { margin-left:auto; }
 .assistant-message-user>div { background:color-mix(in srgb,var(--accent, #7297bd) 40%,var(--surface,#8882)); }
 .assistant-message-user p { margin:0; white-space:pre-wrap; }

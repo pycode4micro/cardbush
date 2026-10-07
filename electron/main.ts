@@ -10,12 +10,13 @@ import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceContro
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
-import { BrowserTranslationService } from './browserTranslation';
 import { IntegratedBrowser } from './integratedBrowser';
+import { registerBrowserUiIpc } from './browserUi';
 import { registerVoiceIpc } from './voiceIpc';
 import { installAppSessionPermissions } from './appSessionPermissions';
-import { createBrowserTranslator } from './browserTranslationBridge';
-import type { BrowserTranslationRequest } from './browserTranslationTypes';
+import { installWindowResizeEvents } from './windowResize';
+import { installWindowVisibilityEvents, isWindowVisible } from './windowVisibility';
+import { showWindowPopupMenu } from './windowPopupMenu';
 import { McpDesktopHost } from './mcpDesktopHost';
 import {
   app,
@@ -635,6 +636,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
   installMainWindowNavigationGuard(window);
+  installWindowResizeEvents(window);
   installMainRendererResilience(window);
   window.webContents.once('did-finish-load', () => {
     applyCardbushWindowIcon(window, windowIcon, 'did-finish-load', loadedWindowIcon.sourcePath);
@@ -909,6 +911,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   installPreviewResourceProtection(target.webContents);
   installInspectorWindowOpen(target.webContents);
+  browserUi.attach(target.webContents);
   installSandboxFrameNavigationGuard(target.webContents);
   target.webContents.setWindowOpenHandler(({ url }) => {
     if (sendUiPreviewToInspector(target, url)) {
@@ -1287,6 +1290,7 @@ function createCardlingWindow() {
 }
 
 function loadRenderer(target: BrowserWindow, mode: 'main' | 'cardling' | 'shadow') {
+  installWindowVisibilityEvents(target);
   if (devServerUrl) {
     const url = new URL(devServerUrl);
     if (mode !== 'main') {
@@ -2012,6 +2016,13 @@ ipcMain.handle('window:close-to-tray', () => {
 });
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle('window:is-visible', event => {
+  const target = BrowserWindow.fromWebContents(event.sender);
+  if (!target || (target !== mainWindow && target !== cardlingWindow &&
+      target !== shadowWindows.get(event.sender.id)?.window) ||
+      event.senderFrame !== event.sender.mainFrame) throw Error('Window visibility is only available to its application renderer.');
+  return isWindowVisible(target);
+});
 
 ipcMain.handle('window:menu-context', (event) => windowMenuContext(event, mainWindow));
 ipcMain.handle('window:menu-action', (event, action: unknown, editTargetId: unknown) =>
@@ -3246,20 +3257,15 @@ ipcMain.handle('image:gallery-start', (event, root: string, recursive: boolean) 
 ipcMain.handle('image:gallery-next', (event, id: string) => imageGalleryScanner.next(imageGalleryOwner(event), id));
 ipcMain.handle('image:gallery-close', (event, id: string) => imageGalleryScanner.close(imageGalleryOwner(event), id));
 
+const browserUi = registerBrowserUiIpc(assertMainWindowSender);
 ipcMain.handle('browser:settings-read', async event => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).read();
 });
-const browserTranslation = new BrowserTranslationService(id => electronWebContents.fromId(id), createBrowserTranslator(async () => ({
-  product: await ensureRuntimeServicesReady(), runtime: await ensureRuntimeHostReady(),
-})));
-ipcMain.handle('inspector:translate', (event, input: BrowserTranslationRequest) => {
-  assertMainWindowSender(event.sender.id);
-  return browserTranslation.run(event.sender.id, input);
-});
 ipcMain.handle('inspector:browser-register', (event, input: { tabId: string; guestWebContentsId: number }) => {
   assertMainWindowSender(event.sender.id);
   integratedBrowser.register(event.sender, input);
+  browserUi.track(event.sender, input.guestWebContentsId);
 });
 ipcMain.handle('inspector:browser-unregister', (event, input: { tabId: string; guestWebContentsId: number }) => {
   assertMainWindowSender(event.sender.id);
@@ -3344,7 +3350,7 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   if (template.length === 0) {
     return;
   }
-  Menu.buildFromTemplate(template).popup({ window: mainWindow ?? undefined });
+  if (mainWindow && !guest.isDestroyed()) showWindowPopupMenu(mainWindow, Menu.buildFromTemplate(template));
 });
 
 ipcMain.handle('cardling:update-state', (event, payload: CardlingDesktopState) => {
@@ -3493,7 +3499,7 @@ ipcMain.handle('shell:file-context-menu', async (event, targetPath: string, opti
     ...(image ? { copyImage: () => { if (!event.sender.isDestroyed()) event.sender.copyImageAt(Math.round(image.x), Math.round(image.y)); } } : {}),
     onError: error => { void showWindowError(sourceWindow, options.language === 'en' ? 'File operation failed' : '文件操作失败', error instanceof Error ? error.message : String(error)); },
   }));
-  menu.popup({ window: sourceWindow });
+  showWindowPopupMenu(sourceWindow, menu);
   return '';
 });
 
@@ -4182,6 +4188,11 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal) => {
+        if (operation === 'browser.inherit-scope') {
+          const input = payload as { parentSessionId: string; childSessionId: string };
+          signal.throwIfAborted();
+          return (await browserUseRouter()).inheritScope(input?.parentSessionId, input?.childSessionId, signal);
+        }
         if (operation === 'ssh.workspace') {
           const input = payload as { action: string; uri: string; path?: string; write?: boolean; owner: string; name: string; input: Record<string, unknown> };
           const manager = await sshConnections();

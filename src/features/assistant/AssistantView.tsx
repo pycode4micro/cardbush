@@ -9,7 +9,7 @@ import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
 import { SettingsDropdown } from '../settings/SettingsDropdown';
-import { AgentDesktopView } from '../agents/AgentDesktopView';
+import { AgentDesktopPanel as AgentDesktopView } from '../agents/AgentDesktopPanel';
 import type { AgentConnection, AgentOperation } from '../../../electron/agentTypes';
 import { AssistantBulb } from './AssistantBulb';
 import { AssistantSettingsDialog } from './AssistantSettingsDialog';
@@ -27,6 +27,7 @@ import '../chat/conversationComposerLayout.css';
 import './assistant.css';
 import { useLoopSubagentTasks } from '../subagents/useLoopSubagentTasks';
 import { AssistantTaskBubble } from './AssistantTaskBubble';
+import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
 
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
@@ -164,7 +165,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
     return <div className="message-list-item assistant-message-row" data-message-role={entry.role} data-message-id={entry.id} key={entry.id}><article className={`assistant-message assistant-message-${entry.role}${arriving.has(entry.id) ? ' assistant-message-arriving' : ''}`}>
     <div>{entry.role === 'assistant' ? <MarkdownContent content={entry.content} language={language}/> : <>
       <MessageImageStrip paths={(entry.attachments ?? []).filter(file => file.type === 'image').flatMap(file => file.path ? [file.path] : [])} language={language}/>
-      <MessageFileAttachmentStrip attachments={(entry.attachments ?? []).filter(file => file.type !== 'image')} language={language}/><p>{entry.content}</p>
+      <MessageFileAttachmentStrip attachments={(entry.attachments ?? []).filter(file => file.type !== 'image')} language={language}/><p><PromptReferenceFallback content={entry.content}/></p>
     </>}</div>
     <time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</time>
   </article></div>;

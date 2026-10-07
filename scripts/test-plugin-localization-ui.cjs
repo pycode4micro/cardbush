@@ -3,7 +3,7 @@ const { readFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { app, BrowserWindow, protocol } = require('electron');
 const directory = resolve(process.argv[2]);
-const manifests = ['computer-use', 'chrome'].map(id => JSON.parse(readFileSync(resolve('assets/plugins', id, '.codex-plugin/plugin.json'), 'utf8')));
+const manifests = ['computer-use', 'chrome', 'xlsx', 'pptx', 'docx', 'pdf'].map(id => JSON.parse(readFileSync(resolve('assets/plugins', id, '.codex-plugin/plugin.json'), 'utf8')));
 app.disableHardwareAcceleration();
 app.setPath('userData', join(directory, 'localization-profile'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: { standard: true, secure: true } }]);

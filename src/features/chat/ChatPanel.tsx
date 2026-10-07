@@ -85,7 +85,7 @@ import {
 import { summarizeChangeReports, type ConversationChangeReport } from '../tools';
 import { recentReviewTurns } from '../sidebar/reviewModel';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
-import { CardlingSceneHost } from '../cardling/CardlingSceneHost';
+import { CardlingScenePanel } from '../cardling/CardlingScenePanel';
 import {
   cardlingSceneKey,
   cardlingSceneRevisionKey,
@@ -2788,7 +2788,7 @@ export function ChatPanel({
           </div>
         )}
         {activeScene && (
-          <CardlingSceneHost
+          <CardlingScenePanel
             scene={activeScene}
             language={language}
             initialAutoPlay={activeSceneInitialAutoPlay}

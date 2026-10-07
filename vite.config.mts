@@ -24,20 +24,46 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
+            // Stable library boundaries stay behind the preview's dynamic
+            // imports; changing a viewer must not invalidate its whole engine.
+            {
+              name: 'three-core',
+              test: /node_modules[\\/]three[\\/]build[\\/]three\.core\.js$/,
+              priority: 40,
+              entriesAware: true,
+            },
+            {
+              name: 'three-webgl',
+              test: /node_modules[\\/]three[\\/]build[\\/]three\.module\.js$/,
+              priority: 40,
+              entriesAware: true,
+            },
+            {
+              name: 'spreadsheet-codec',
+              test: /node_modules[\\/]styled-exceljs[\\/]/,
+              priority: 40,
+              entriesAware: true,
+            },
             {
               name: 'react-vendor',
               test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
               priority: 30,
+              entriesAware: true,
             },
             {
               name: 'ui-vendor',
               test: /node_modules[\\/](lucide-react|react-virtuoso)[\\/]/,
               priority: 20,
+              entriesAware: true,
             },
             {
               name: 'chat-runtime',
               test: /[\\/]src[\\/](backend|hooks)[\\/]/,
               priority: 10,
+              // A group is a naming/cache boundary, not permission to load
+              // every member in every window. In particular, Vite's shared
+              // preload helper must not pull chat state into Office previews.
+              entriesAware: true,
             },
           ],
         },

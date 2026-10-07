@@ -1,0 +1,21 @@
+.right-inspector-address .browser-install-button { display: grid; place-items: center; flex: none; width: 28px; height: 26px; padding: 0; border: 0; border-radius: 6px; color: var(--text-soft); background: transparent; cursor: pointer; }
+.right-inspector-address .browser-install-button:hover, .right-inspector-address .browser-install-button.installed { color: var(--accent); background: var(--hover); }
+.browser-install-dialog { width: min(430px, calc(100vw - 28px)); margin: auto; padding: 22px; border: 1px solid var(--border); border-radius: 17px; color: var(--text); background: var(--surface); box-shadow: 0 18px 60px #0004; font: inherit; }
+.browser-install-dialog::backdrop { background: #0005; }
+.browser-install-dialog form { display: flex; flex-direction: column; gap: 16px; }
+.browser-install-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.browser-install-dialog h2 { font-size: 17px; margin: 0; }
+.browser-install-dialog button { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border: 0; border-radius: 8px; font: inherit; color: var(--text); background: var(--surface-raised); cursor: pointer; }
+.browser-install-dialog header button { padding: 5px; background: transparent; }
+.browser-install-identity { display: flex; align-items: center; gap: 16px; }
+.browser-install-identity label { display: grid; flex: 1; min-width: 0; gap: 7px; font-size: 12px; color: var(--text-soft); }
+.browser-install-identity input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); font: inherit; font-size: 14px; }
+.browser-install-dialog p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-soft); }
+.browser-install-url { overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
+.browser-install-pin { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.browser-install-pin input { accent-color: var(--accent); }
+.browser-install-dialog footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.browser-install-dialog footer [role="status"] { flex: 1; font-size: 11px; color: var(--text-soft); }
+.browser-install-dialog button[type="submit"] { color: var(--surface); background: var(--text); }
+.browser-install-dialog button:disabled { opacity: .5; cursor: default; }
+.browser-install-dialog [role="alert"] { color: var(--warning); overflow-wrap: anywhere; }

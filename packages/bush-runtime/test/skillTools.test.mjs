@@ -102,20 +102,23 @@ test('discovers additions, edits and removals during a turn while preserving dis
 
 test('finds bundled skills from natural Chinese requests and exact English names', async () => {
   const registry = new ToolRegistry();
-  registerSkillTools(registry, [fileURLToPath(new URL('../../../assets/skills', import.meta.url))]);
+  registerSkillTools(registry, ['../../../assets/skills', ...['xlsx', 'pptx', 'docx', 'pdf'].map(id => `../../../assets/plugins/${id}/skills`)]
+    .map(root => fileURLToPath(new URL(root, import.meta.url))));
   const search = registry.resolve('search_skills');
   for (const [query, expected] of [
     ['帮我分析视频中的动作', 'video-understanding'],
-    ['制作演示文稿', 'pptx'],
-    ['分析 Excel 销售表格', 'xlsx'],
+    ['制作演示文稿', 'pptx:pptx'],
+    ['分析 Excel 销售表格', 'xlsx:xlsx'],
+    ['创建 Word 文档', 'docx:docx'],
+    ['读取 PDF 页面', 'pdf:pdf'],
     ['修改应用主题', 'cardbush-docs'],
     ['卸载插件', 'cardbush-docs'],
     ['帮我把这个插件卸载掉', 'cardbush-docs'],
     ['在CardBush添加MCP服务', 'cardbush-docs'],
     ['cardbush-docs', 'cardbush-docs'],
     ['导入万年历和中国农历转换', 'cardbush-docs'],
-    ['PPTX', 'pptx'],
-    ['ｘｌｓｘ', 'xlsx'],
+    ['PPTX', 'pptx:pptx'],
+    ['ｘｌｓｘ', 'xlsx:xlsx'],
   ]) {
     const result = await search.execute(context({ query, limit: 8 }, 'search'));
     assert.equal(result.matches[0]?.name, expected, query);

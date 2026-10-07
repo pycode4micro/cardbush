@@ -31,6 +31,7 @@ test('application references append selection facts without invoking tools or ch
     { kind: 'application', id: 'external:example', title: '本地应用', applicationKind: 'external', target: 'http://localhost:8989/' },
     { kind: 'application', id: 'local:editor', title: '本地编辑器', applicationKind: 'local', target: 'C:\\Program Files\\编辑器\\editor.exe' },
     ...['zh', 'en'].flatMap(language => applicationCatalog(language, [], defaultAppCenterPreferences).map(applicationReference)),
+    { kind: 'application', id: 'web:example', title: '网页应用', applicationKind: 'web', target: 'https://example.test/' },
   ];
   for (const entry of entries) {
     const link = refs.promptReferenceMarkdown(entry); assert.deepEqual(refs.parsePromptReference(refs.promptReferenceHref(entry)), entry);
@@ -47,6 +48,7 @@ test('application references append selection facts without invoking tools or ch
     { ...entries[0], componentId: 'different' }, { ...entries[1], target: 'javascript:alert(1)' },
     { ...entries[1], target: 'https://user:secret@example.test/' }, { ...entries[1], target: 'file:///C:/program.exe' },
     { ...entries[2], target: 'editor.exe --run' }, { ...entries[2], target: 'https://example.test/app.exe' },
+    { ...entries.at(-1), target: 'file:///C:/program.exe' }, { ...entries.at(-1), id: 'builtin:plugins' },
   ]) assert.equal(refs.parsePromptReference(refs.promptReferenceHref(entry)), null);
 });
 test('SSH references follow the selected execution environment and never carry credentials', async () => {

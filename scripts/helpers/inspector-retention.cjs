@@ -11,7 +11,7 @@ module.exports = async ({ window, read, waitFor, activeReady, origin, webContent
   const guest = webContents.fromId(guestId);
   const ids = () => read('[...document.querySelectorAll("webview")].map(view=>view.getWebContentsId())');
   const beforeIds = await ids();
-  await guest.loadURL(origin + '/translation');
+  await guest.loadURL(origin + '/retention-document');
   await activeReady();
   await click(guest,'input'); // Chromium may skip history created without a user gesture.
   await guest.executeJavaScript(`

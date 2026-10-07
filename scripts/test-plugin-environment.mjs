@@ -9,11 +9,24 @@ import { PluginMarketplaceService } from '../dist-electron/pluginMarketplaces.js
 import { loadEnabledProductPluginMcpServers, loadProductPluginCatalog } from '../dist-electron/productPlugins.js';
 import { PluginConnectionManager } from '../dist-electron/pluginConnectionManagement.mjs';
 import { pluginMcpServer } from '../dist-electron/pluginMcpConfiguration.mjs';
-import { MissingPluginEnvironmentError, pluginDataDirectory } from '../dist-electron/pluginEnvironment.js';
+import { MissingPluginEnvironmentError, pluginDataDirectory, pluginHostEnvironment } from '../dist-electron/pluginEnvironment.js';
 
 const execute = promisify(execFile);
 const absent = 'CARDBUSH_TEST_PLUGIN_UNCONFIGURED_37CB';
 assert.equal(process.env[absent], undefined);
+
+test('managed plugin processes receive the host runtime and packaged resource guard paths', () => {
+  const name = 'CARDBUSH_PROCESS_HOST_DIRECTORY', previous = process.env[name];
+  try {
+    process.env[name] = resolve('resources/process-guard');
+    const environment = pluginHostEnvironment('pdf', resolve('assets/plugins/pdf'));
+    assert.equal(environment.CARDBUSH_NODE_EXECUTABLE, process.execPath);
+    assert.equal(environment[name], process.env[name]);
+    assert.match(environment.CARDBUSH_DOCUMENT_TOOLS_ENTRY, /dist[\\/]server\.mjs$/);
+  } finally {
+    if (previous === undefined) delete process.env[name]; else process.env[name] = previous;
+  }
+});
 
 async function fixture(t, servers) {
   const parent = resolve(tmpdir());

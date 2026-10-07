@@ -64,7 +64,9 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("浏览器已连接")');
     await read('connectorActions=[]; void 0');
     assert.equal(await read('document.querySelector(".chrome-radio-setting input").checked'), true);
-    assert.equal(await read('document.querySelector(".settings-field input").value'), 'https://www.google.com/');
+    assert.equal(await read('document.querySelector(".browser-import-controls select").value'), 'chrome:Default');
+    await read('document.querySelector(".browser-import-controls button").click(); void 0');
+    await until('document.querySelector(".browser-bookmark-import [role=status]")?.textContent.includes("已导入 1")');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='关闭连接器').click(); void 0");
     await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='开启连接器').click(); void 0");
@@ -88,10 +90,10 @@ app.whenReady().then(async () => {
         const themeAccent=getComputedStyle(sample).color;sample.remove();
         return {theme:document.querySelector('.app').className, color:getComputedStyle(title).color, background:getComputedStyle(content).backgroundColor,
           radioAccent:getComputedStyle(document.querySelector('.chrome-radio-setting input')).accentColor, themeAccent,
-          left:rect.left, top:rect.top, width:rect.width, overflow:content.scrollWidth>content.clientWidth+1, input:document.querySelector('.settings-field input').value};
+          left:rect.left, top:rect.top, width:rect.width, overflow:content.scrollWidth>content.clientWidth+1, input:document.querySelector('.browser-import-controls select').value};
       })()`);
       assert.equal(state.overflow, false, theme + ' settings do not overflow horizontally');
-      assert.equal(state.input, 'https://www.google.com/', 'theme changes retain the home page field');
+      assert.equal(state.input, 'chrome:Default', 'theme changes retain the selected bookmark import profile');
       assert.notEqual(state.color, state.background, 'settings headings stay visible');
       assert.equal(state.radioAccent, state.themeAccent, theme + ' radio buttons use the theme accent');
       if (palettes.length) assert.ok(['left','top','width'].every(key=>Math.abs(state[key]-palettes[0][key])<=1), theme + ' preserves panel position within its one-pixel border');

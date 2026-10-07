@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -13,7 +13,8 @@ export type MemoryRow = { seq: number; id: string; kind: 'habit'|'prediction'|'n
   scope: number; tokens: number; revision: number; created: number; updated: number; observations: number;
   hits: number; misses: number; metadata: string; state:'active'|'retracted'|'disputed'|'superseded'|'consolidated';
   origin:'agent'|'user'|'summary';applies_when:string;expires:number|null;confirmed:number|null;rejected:number|null;replaced_by:string };
-export type MemorySnapshot = { lease: string; revision: number; records: MemoryRow[]; tokens: number };
+export type MemorySnapshot = { lease: string; revision: number; records: MemoryRow[]; tokens: number; complete: boolean; fingerprint?: string };
+export type MemoryBatchOptions = { recordTokens?: (row: MemoryRow) => number; maxRecords?: number; retryKey?: string };
 export type MemorySummary = { habits: Array<MemoryNote & { sources: string[] }>; predictions: Array<MemoryNote & { sources: string[] }>;
   reviews: Array<{ prediction: string; evidence: string; outcome: 'hit'|'miss'; reason: string }> };
 const mask = (settings: IndividuationSettings) => (settings.habits ? 1 : 0) | (settings.predictions ? 2 : 0);
@@ -45,6 +46,7 @@ export class IndividuationStore {
         CREATE TABLE IF NOT EXISTS memory_reviews(id TEXT PRIMARY KEY,outcome TEXT,reason TEXT,updated INTEGER);
         CREATE TABLE IF NOT EXISTS memory_state(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER DEFAULT 0,compacted INTEGER DEFAULT -1,
           lease TEXT,lease_until INTEGER DEFAULT 0,retry_after INTEGER DEFAULT 0,last_summary INTEGER,last_error TEXT,hits INTEGER DEFAULT 0,misses INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS memory_summary_attempts(fingerprint TEXT PRIMARY KEY,code TEXT NOT NULL,retry_after INTEGER,updated INTEGER NOT NULL);
         INSERT OR IGNORE INTO memory_state(id) VALUES(1); BEGIN IMMEDIATE;`);
       initializeMemoryJournal(db);
       // Import the old structured records once; predictions remain hypotheses, never queued actions.
@@ -343,7 +345,7 @@ export class IndividuationStore {
       inactiveRecords:Number(db.prepare("SELECT COUNT(*) count FROM memory_records WHERE kind!='evidence' AND (state!='active' OR expires<=?) AND (scope & ?)=scope").get(now,mask(settings))!.count),
       historyChanges:Number(db.prepare('SELECT COUNT(*) count FROM memory_changes').get()!.count)};
   }
-  async begin(settings:IndividuationSettings,manual:boolean,budget:number,signal?:AbortSignal):Promise<MemorySnapshot|null> {
+  async begin(settings:IndividuationSettings,manual:boolean,budget:number,signal?:AbortSignal,options:MemoryBatchOptions={}):Promise<MemorySnapshot|null> {
     if(!mask(settings) || !existsSync(this.path)) return null;
     return this.transaction((db,now)=>{
       const state=db.prepare('SELECT * FROM memory_state WHERE id=1').get()!;
@@ -356,33 +358,39 @@ export class IndividuationStore {
       const evidence=new Map<string,MemoryRow[]>();
       for(const row of rows) if(row.kind==='evidence') for(const id of metadata(row).related??[]) evidence.set(id,[...(evidence.get(id)??[]),row]);
       const records:MemoryRow[]=[],selected=new Set<string>(); let tokens=0,inputTokens=0;
+      const cost=options.recordTokens??((row:MemoryRow)=>row.tokens+80);
       // Count serialization overhead too; many tiny records must not bypass the model input budget.
       const add=(row:MemoryRow)=>{
         if(selected.has(row.id))return true;
-        if((inputTokens+row.tokens+80>budget || records.length>=512)&&records.length)return false;
-        selected.add(row.id);records.push(row);tokens+=row.tokens;inputTokens+=row.tokens+80;return true;
+        if((inputTokens+cost(row)>budget || records.length>=(options.maxRecords??512))&&records.length)return false;
+        selected.add(row.id);records.push(row);tokens+=row.tokens;inputTokens+=cost(row);return true;
       };
       for(const row of rows) {
         if(row.kind==='evidence') {
           const parents=(metadata(row).related??[]).flatMap(id=>byId.has(id)?[byId.get(id)!]:[]);
           const missing=parents.filter(parent=>!selected.has(parent.id));
-          if(inputTokens+row.tokens+80+missing.reduce((sum,parent)=>sum+parent.tokens+80,0)>budget&&records.length)continue;
+          if((inputTokens+cost(row)+missing.reduce((sum,parent)=>sum+cost(parent),0)>budget || records.length+missing.length+1>(options.maxRecords??512))&&records.length)continue;
           for(const parent of missing)add(parent);
         }
         if(!add(row))break;
         // Bring subsequent evidence next to its forecast, even when created much later.
         for(const followup of evidence.get(row.id)??[]) if(!add(followup))break;
       }
-      const lease=randomUUID(); db.prepare('UPDATE memory_state SET lease=?,lease_until=?,last_error=NULL WHERE id=1').run(lease,now+180_000);
-      return {lease,revision:Number(state.revision),records,tokens};
+      const fingerprint=options.retryKey?createHash('sha256').update(JSON.stringify([options.retryKey,records.map(row=>[row.id,row.revision])])).digest('hex'):undefined;
+      if(!manual&&fingerprint) {
+        const failed=db.prepare('SELECT retry_after FROM memory_summary_attempts WHERE fingerprint=?').get(fingerprint);
+        if(failed&&(failed.retry_after===null||Number(failed.retry_after)>now))return null;
+      }
+      const lease=randomUUID(); db.prepare('UPDATE memory_state SET lease=?,lease_until=? WHERE id=1').run(lease,now+180_000);
+      return {lease,revision:Number(state.revision),records,tokens,complete:selected.size===rows.length,...(fingerprint?{fingerprint}:{})};
     },signal);
   }
   async apply(snapshot:MemorySnapshot,summary:MemorySummary,settings:IndividuationSettings,signal?:AbortSignal) {
     return this.transaction((db,now)=>{
       const state=db.prepare('SELECT * FROM memory_state WHERE id=1').get()!;
-      if(state.lease!==snapshot.lease) throw new Error('Memory summary was superseded; original records were retained.');
-      if(Number(state.revision)!==snapshot.revision) throw new Error('Memory changed while summarizing; original records were retained.');
-      if(snapshot.records.some(row=>!activeMemory(row,now)))throw new Error('Memory expired while summarizing; original records were retained.');
+      if(state.lease!==snapshot.lease) throw Object.assign(new Error('Memory summary was superseded; original records were retained.'),{code:'memory_snapshot_changed'});
+      if(Number(state.revision)!==snapshot.revision) throw Object.assign(new Error('Memory changed while summarizing; original records were retained.'),{code:'memory_snapshot_changed'});
+      if(snapshot.records.some(row=>!activeMemory(row,now)))throw Object.assign(new Error('Memory expired while summarizing; original records were retained.'),{code:'memory_snapshot_changed'});
       const originals=new Map(snapshot.records.map(r=>[r.id,r]));
       if(memoryHistoryFull(db))throw new Error('Memory history is full; original records were retained.');
       const historyBefore=new Map(originals),affected=new Set(originals.keys());
@@ -465,11 +473,21 @@ export class IndividuationStore {
       for(const id of reviewIds)db.prepare('INSERT INTO memory_change_reviews VALUES(?,?)').run(changeId,id);
       db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1');
       const revision=Number(db.prepare('SELECT revision FROM memory_state WHERE id=1').get()!.revision);
-      db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=0,last_summary=?,last_error=NULL,compacted=? WHERE id=1').run(now,revision);
+      db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=0,last_summary=?,last_error=NULL,compacted=? WHERE id=1').run(now,snapshot.complete?revision:-1);
       return this.readStatus(db,settings,now);
     },signal);
   }
-  async fail(lease:string,message:string) {
-    await this.transaction((db,now)=>db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=?,last_error=? WHERE id=1 AND lease=?').run(now+300_000,message.slice(0,300),lease));
+  async fail(lease:string,message:string,failure?:{fingerprint?:string;code:string;retryable:boolean}) {
+    await this.transaction((db,now)=>{
+      const updated=db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=?,last_error=? WHERE id=1 AND lease=?')
+        .run(now+300_000,message.slice(0,300),lease);
+      if(updated.changes&&failure?.fingerprint) {
+        // A content/configuration fingerprint survives restarts and unrelated
+        // writes. Deterministic failures require changed input or a manual retry.
+        db.prepare('INSERT OR REPLACE INTO memory_summary_attempts VALUES(?,?,?,?)')
+          .run(failure.fingerprint,failure.code,failure.retryable?now+300_000:null,now);
+        db.exec('DELETE FROM memory_summary_attempts WHERE fingerprint NOT IN (SELECT fingerprint FROM memory_summary_attempts ORDER BY updated DESC LIMIT 256)');
+      }
+    });
   }
 }

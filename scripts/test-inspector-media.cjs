@@ -59,11 +59,11 @@ app.whenReady().then(async () => {
       'src/shared/recoverableLazy.tsx',
       'src/shared/fileContextMenu.ts',
       'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
-      'src/features/inspector/useBrowserTranslation.ts', 'src/features/inspector/BrowserTranslateButton.tsx',
       'src/features/inspector/MediaInspectorPreview.tsx',
       'src/features/tools/PlainSourceLines.tsx',
       'src/features/tools/VirtualSourceLines.tsx', 'src/features/tools/sourcePreviewBlocks.ts',
       'src/features/inspector/DeferredResizePreview.tsx',
+      'src/features/browser/BrowserPageTools.tsx',
       'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',
       'src/features/inspector/TextInspectorPreview.tsx', 'src/features/inspector/filePreviewRegistry.ts',
       'src/features/inspector/inspectorFilePreviewRenderers.tsx',
@@ -79,6 +79,7 @@ app.whenReady().then(async () => {
         if(cache[file]) return cache[file].exports;
         const module = cache[file] = {exports:{}};
         function resolve(name) {
+          if(name.endsWith('.css')) return {};
           if(name === '../chatMessages') return {}; // unrelated Markdown renderer
           // The real gallery and its image navigation are exercised by test:image-gallery.
           if(name === '../chatMessages/ImagePreviewDialog') return {ImagePreviewDialog:()=>null};

@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useSettingsHost } from '../settings/SettingsHostContext';
 import { BrowserConnectionSettings } from '../browser/BrowserConnectionSettings';
 import { ComputerUseSettings } from '../computerUse/ComputerUseSettings';
@@ -444,7 +445,7 @@ export function PluginManagementPanel({
         setConfiguration(saved);
         setLocalSkills(await onReloadSkills());
         void loadConnections();
-      }} />{marketProxyOpen && configuration && <dialog className="plugin-proxy-dialog" ref={node => { if (node && !node.open) node.showModal(); }} onCancel={() => setMarketProxyOpen(false)}>
+      }} />{marketProxyOpen && configuration && <dialog className="plugin-proxy-dialog" ref={node => { if (node && !node.open) node.showModal(); }} onCancel={dialogEventHandler(() => setMarketProxyOpen(false))}>
         <header><h3>{language === 'zh' ? '市场与插件默认' : 'Marketplace and plugin default'}</h3><button type="button" className="plugin-back" onClick={() => setMarketProxyOpen(false)}>{language === 'zh' ? '关闭代理设置' : 'Close proxy settings'}</button></header>
         <NetworkProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
           onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())} />

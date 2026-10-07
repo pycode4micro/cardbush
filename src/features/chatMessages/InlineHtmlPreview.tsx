@@ -2,6 +2,7 @@ import { createElement, memo, useCallback, useContext, useEffect, useId, useRef,
 import { ChevronDown, ChevronUp, Maximize2, MoreHorizontal, Play, RotateCw, X } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { basename } from '../../shared/localPaths';
+import { isWindowVisible, watchWindowVisibility } from '../../shared/windowVisibility';
 import { resolveFilePreview } from '../inspector/filePreviewRegistry';
 import { openInspector } from '../inspector/inspectorEvents';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
@@ -31,7 +32,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const [inViewport, setInViewport] = useState(false);
   const [nearViewport, setNearViewport] = useState(false);
   const [activated, setActivated] = useState(false);
-  const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden');
+  const [pageVisible, setPageVisible] = useState(isWindowVisible);
   const [closed, setClosed] = useState(false);
   // Visible pages bypass buffer preloading, regardless of the Turn's age.
   const visible = pageVisible && !closed && (inViewport || (nearViewport && activated));
@@ -199,9 +200,10 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   }, []);
 
   useEffect(() => {
-    const update = () => setPageVisible(document.visibilityState !== 'hidden');
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
+    const update = () => setPageVisible(isWindowVisible());
+    const unwatchVisibility = watchWindowVisibility(update);
+    update();
+    return unwatchVisibility;
   }, []);
 
   useEffect(() => {

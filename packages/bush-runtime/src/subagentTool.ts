@@ -84,6 +84,7 @@ export function registerSubagentTool(
     permissionPolicy?: SubagentPermissionPolicy;
     models?: SubagentModelCatalog;
     remoteAgents?: RemoteSubagentBridge;
+    inheritBrowserScope?: (parentSessionId: string, childSessionId: string, signal?: AbortSignal) => Promise<void>;
     guideChild?: (input: RuntimeGuidanceRequest) => Promise<unknown>;
     loadPluginAgents?: () => Promise<PluginAgent[]>;
     runBackground?: <T>(session: string, turn: string, taskId: string, run: (signal: AbortSignal) => Promise<T>) => Promise<T>;
@@ -214,6 +215,7 @@ export function registerSubagentTool(
               sessionId: running.childSessionId, turnId: running.childTurnId, messageId, content: context.input.prompt }, context.signal);
           } else {
             if (!options.guideChild) throw new Error('Running child guidance is unavailable.');
+            await options.inheritBrowserScope?.(context.sessionId, running.childSessionId, context.signal);
             receipt = await options.guideChild({ protocol: 'bush.runtime_guidance.v1', sessionId: running.childSessionId,
               turnId: running.childTurnId, messageId, content: context.input.prompt,
               createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent',
@@ -320,6 +322,9 @@ export function registerSubagentTool(
       // Host adapters validate dependencies after acquiring Agent-local MCP connections.
       if (!profile?.mcpServers?.some(server => typeof server !== 'string')) validateAgentSkills(profile, childRequest, registry);
 
+      // Copy host-authorized grants before execution, keeping the child's scope
+      // independent. Model-supplied URLs or page IDs never grant browser access.
+      await options.inheritBrowserScope?.(context.sessionId, childSessionId, context.signal);
       if (previous && tasks.list(context.sessionId).some(task => task.childSessionId === previous.childSessionId && task.status === 'running')) throw new Error('This child session is still running.');
 
       tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,

@@ -18,10 +18,14 @@ export function useOutsideDismiss(
     window.addEventListener('pointerdown', pointer, true);
     window.addEventListener('keydown', key, true);
     window.addEventListener('blur', dismiss);
+    // Native webview input never bubbles through this window. The host observes
+    // guest focus/mouse-down without intercepting or replaying the page's click.
+    const stopGuestDismiss = window.cardbushDesktop?.onInspectorGuestActivated?.(() => dismiss());
     return () => {
       window.removeEventListener('pointerdown', pointer, true);
       window.removeEventListener('keydown', key, true);
       window.removeEventListener('blur', dismiss);
+      stopGuestDismiss?.();
     };
   }, [open, containers, dismiss]);
 }

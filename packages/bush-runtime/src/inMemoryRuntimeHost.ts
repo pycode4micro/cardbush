@@ -259,6 +259,7 @@ export interface InMemoryRuntimeHostOptions {
   subagentPermissionPolicy?: SubagentPermissionPolicy;
   subagentModels?: import('./cleanAgentSettings.js').SubagentModelCatalog;
   remoteAgents?: import('./subagentTool.js').RemoteSubagentBridge;
+  inheritBrowserScope?: (parentSessionId: string, childSessionId: string, signal?: AbortSignal) => Promise<void>;
   loadPluginExtensions?: PluginExtensionLoader;
   pluginNetwork?: (pluginId: string) => Promise<{ fetch: typeof fetch; env: Record<string, string> }>;
   automation?: AutomationScheduler;
@@ -574,6 +575,7 @@ export class InMemoryRuntimeHost {
       {
         asyncDispatch: true,
         remoteAgents: options.remoteAgents,
+        inheritBrowserScope: options.inheritBrowserScope,
         guideChild: payload => this.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload }),
         readChildConversation: sessionId => this.#childConversation(sessionId),
         saveChildRequest: request => this.#subagentResume.save(request),

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 const protocol = 'cardbush.mcp_host.v1';
-export type McpHostOperation = 'agents.list' | 'agents.delegate' | 'agents.read-child' | 'agents.guide-child' | 'ssh.workspace' | 'credentials.read' | 'credentials.write' | 'open-url' | 'browser.open-external' | 'agent.desktop.tool' | 'elicitation' | 'authentication' | 'openai.access-token' | 'siwc.access-token' | 'automation.prepare-model' | 'subagent.models' | 'subagent.prepare-model' | 'automation.changed' | 'network.configuration' | 'network.route' | 'resources.acquire' | 'resources.release';
+export type McpHostOperation = 'agents.list' | 'agents.delegate' | 'agents.read-child' | 'agents.guide-child' | 'ssh.workspace' | 'credentials.read' | 'credentials.write' | 'open-url' | 'browser.open-external' | 'browser.inherit-scope' | 'agent.desktop.tool' | 'elicitation' | 'authentication' | 'openai.access-token' | 'siwc.access-token' | 'automation.prepare-model' | 'subagent.models' | 'subagent.prepare-model' | 'automation.changed' | 'network.configuration' | 'network.route' | 'resources.acquire' | 'resources.release';
 type Request = { protocol: typeof protocol; type: 'request'; id: string; operation: McpHostOperation; payload: unknown };
 type Response = { protocol: typeof protocol; type: 'response'; id: string; result?: unknown; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> };
 type Cancel = { protocol: typeof protocol; type: 'cancel'; id: string };

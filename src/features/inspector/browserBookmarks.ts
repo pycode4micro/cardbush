@@ -1,4 +1,4 @@
-export type BrowserBookmark = { id: string; title: string; url: string };
+export type BrowserBookmark = { id: string; title: string; url: string; folder?: string };
 export const browserBookmarksKey = 'cardbush.browser_bookmarks.v1';
 
 export function bookmarkUrl(input: unknown): string | undefined {
@@ -17,6 +17,7 @@ export function normalizeBookmarks(input: unknown): BrowserBookmark[] {
     if (!url || seen.has(url)) return [];
     seen.add(url);
     return [{ id: url, url, title: typeof item.title === 'string' && item.title.trim()
-      ? item.title.trim().slice(0, 120) : new URL(url).host }];
-  }).slice(0, 100);
+      ? item.title.trim().slice(0, 300) : new URL(url).host,
+      ...(typeof item.folder === 'string' && item.folder.trim() ? { folder: item.folder.trim().slice(0, 1000) } : {}) }];
+  });
 }

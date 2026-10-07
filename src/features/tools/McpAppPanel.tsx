@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, Loader2, Maximize2, Minimize2, PanelsTopLeft, RotateCw, X } from 'lucide-react';
 import { conversationRuntime, type ConversationRuntime } from '../../backend/conversationRuntime';
@@ -220,7 +221,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
         : (zh ? '界面暂时未能加载' : 'Unable to load the interface')
     : documentFailure?.kind === 'runtime' ? (zh ? '插件界面运行出错，可重试。' : 'The plugin interface encountered an error. Try again.')
       : (zh ? '部分界面资源加载失败，可重试。' : 'Some interface resources failed to load. Try again.');
-  return <div className="mcp-app-anchor" style={full ? { height: inlineSpace } : undefined}><dialog ref={panel} className={`mcp-app-panel ${full ? 'fullscreen' : ''} ${presentation === 'modal' ? 'reference-view' : ''} ${prefersBorder ? '' : 'unframed'}`} aria-label={displayTitle} aria-modal={full || undefined} onCancel={event => { event.preventDefault(); presentation === 'modal' ? close() : setDisplayMode(false); }}>
+  return <div className="mcp-app-anchor" style={full ? { height: inlineSpace } : undefined}><dialog ref={panel} className={`mcp-app-panel ${full ? 'fullscreen' : ''} ${presentation === 'modal' ? 'reference-view' : ''} ${prefersBorder ? '' : 'unframed'}`} aria-label={displayTitle} aria-modal={full || undefined} onCancel={dialogEventHandler(event => { event.preventDefault(); presentation === 'modal' ? close() : setDisplayMode(false); })}>
     <header className="mcp-app-heading">
       <span className="mcp-app-title" title={view ? String(view.tool.name) : undefined}><PanelsTopLeft size={16} /><strong>{displayTitle}</strong></span>
       <span className="mcp-app-actions">

@@ -40,6 +40,7 @@ window.fixtureOverview={revision:2,servers:[{id:'blender',name:'Blender MCP',des
 window.fixtureOverview.snapshot.servers.push({id:'browser_use',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__browser_use__tool'+i}))});
 window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];window.externalUrls=[];window.externalOpenFails=false;
 window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},openExternal:async url=>{if(externalOpenFails)throw Error('fixture browser unavailable');externalUrls.push(url)}};
+window.cardbushDesktop.browser={profiles:async()=>[{id:'chrome:Default',browser:'chrome',name:'Fixture profile'}],importBookmarks:async()=>({bookmarks:[{title:'Fixture favorite',url:'https://favorite.example/'}],skipped:0})};
 window.localInstalls=[];window.localNotifications=[];
 window.cardbushDesktop.installLocalPlugin=kind=>new Promise((resolve,reject)=>{localInstalls.push(kind);window.finishLocalInstall=resolve;window.failLocalInstall=reject});
 window.accountStatus={state:'signed_out',experimental:true};window.accountListeners=new Set();window.accountActions=[];window.accountFailure=false;window.deferCancelledAccount=false;

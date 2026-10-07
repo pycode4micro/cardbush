@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { Settings2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AppLanguage } from '../../types';
@@ -20,7 +21,7 @@ function FlowDialog({ language, flow, onChange, onClose }: {
   const dialog = useRef<HTMLDialogElement>(null), zh = language === 'zh';
   useEffect(() => { dialog.current?.showModal(); const element = dialog.current; return () => element?.close(); }, []);
   return <dialog ref={dialog} className="composer-layout-dialog" aria-label={zh ? '输入框与会话布局' : 'Composer and conversation layout'}
-    onPointerDown={event => event.stopPropagation()} onClose={event => { if (!event.currentTarget.open) onClose(); }}>
+    onPointerDown={event => event.stopPropagation()} onClose={dialogEventHandler(event => { if (!event.currentTarget.open) onClose(); })}>
     <header><strong>{zh ? '输入框与会话布局' : 'Composer and conversation layout'}</strong>
       <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={onClose}><X size={16}/></button></header>
     <label>{zh ? '发送后的输入框位置' : 'Composer position after sending'}

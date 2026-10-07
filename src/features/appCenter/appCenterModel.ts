@@ -1,10 +1,11 @@
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import type { ApplicationPromptReference } from '../../shared/promptReferences';
 import { normalizeLocalApplications, type LocalApplication } from '../../shared/localApplications';
+import { normalizeWebApplications, type WebApplication } from '@cardbush/bush-protocol';
 
-export type AppCenterPreferences = { shortcuts: string[]; display: 'always' | 'hover'; links: Array<{ id: string; title: string; url: string }>; localApps?: LocalApplication[]; order?: string[] };
+export type AppCenterPreferences = { shortcuts: string[]; display: 'always' | 'hover'; links: Array<{ id: string; title: string; url: string }>; localApps?: LocalApplication[]; webApps?: WebApplication[]; order?: string[] };
 export const defaultAppCenterPreferences: AppCenterPreferences = { shortcuts: ['builtin:plugins', 'builtin:automations'], display: 'always', links: [] };
-export type ApplicationEntry = { id: string; title: string; description: string; kind: 'builtin' | 'plugin' | 'external' | 'local'; icon?: string;
+export type ApplicationEntry = { id: string; title: string; description: string; kind: 'builtin' | 'plugin' | 'external' | 'local' | 'web'; icon?: string;
   target: string; plugin?: CardbushAppPlugin; componentId?: string; launch?: NonNullable<CardbushAppPlugin['components'][number]['app']>; shortcut?: 'openSettings' | 'openPlugins' | 'openAutomations' };
 
 export function applicationLink(value: unknown): string | undefined {
@@ -22,8 +23,9 @@ export function normalizeAppCenterPreferences(value: unknown): AppCenterPreferen
   }).slice(0, 100);
   return { display: input.display === 'hover' ? 'hover' : 'always', links,
     ...(Array.isArray(input.localApps) ? { localApps: normalizeLocalApplications(input.localApps) } : {}),
-    ...(Array.isArray(input.order) ? { order: [...new Set(input.order.filter(id => typeof id === 'string' && /^(builtin|plugin|external|local):/.test(id) && id.length <= 400))].slice(0, 200) } : {}),
-    shortcuts: Array.isArray(input.shortcuts) ? [...new Set(input.shortcuts.filter(id => typeof id === 'string' && /^(builtin|plugin|external|local):/.test(id) && id.length <= 400))].slice(0, 4) : defaultAppCenterPreferences.shortcuts };
+    ...(Array.isArray(input.webApps) ? { webApps: normalizeWebApplications(input.webApps) } : {}),
+    ...(Array.isArray(input.order) ? { order: [...new Set(input.order.filter(id => typeof id === 'string' && /^(builtin|plugin|external|local|web):/.test(id) && id.length <= 400))].slice(0, 200) } : {}),
+    shortcuts: Array.isArray(input.shortcuts) ? [...new Set(input.shortcuts.filter(id => typeof id === 'string' && /^(builtin|plugin|external|local|web):/.test(id) && id.length <= 400))].slice(0, 4) : defaultAppCenterPreferences.shortcuts };
 }
 
 export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPlugin[], prefs: AppCenterPreferences): ApplicationEntry[] {
@@ -41,6 +43,7 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
     }))),
     ...prefs.links.map(link => ({ id: link.id, kind: 'external' as const, target: link.url, title: link.title, description: new URL(link.url).host })),
     ...(prefs.localApps ?? []).map(app => ({ id: app.id, kind: 'local' as const, target: app.path, title: app.title, description: app.path, icon: app.icon })),
+    ...(prefs.webApps ?? []).map(app => ({ id: app.id, kind: 'web' as const, target: app.url, title: app.title, description: `${zh ? '网页应用' : 'Web app'} · ${new URL(app.url).host}`, icon: app.icon })),
   ];
   const order = new Map((prefs.order ?? []).map((id, index) => [id, index]));
   return entries.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));

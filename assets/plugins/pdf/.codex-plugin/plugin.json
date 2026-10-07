@@ -1,0 +1,39 @@
+{
+  "name": "pdf",
+  "version": "1.0.0",
+  "description": "Create, inspect, edit and render PDF files",
+  "author": {
+    "name": "CardBush"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "defaultPrompt": [
+      "Create, inspect, edit and render PDF files"
+    ],
+    "logo": "./assets/logo.svg",
+    "brandColor": "#C34343",
+    "shortDescription": "Create, inspect, edit and render PDF files",
+    "developerName": "CardBush",
+    "displayName": "PDF",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "longDescription": "Create, inspect, edit and render PDF files. Bundled document libraries, progressive inspection, isolated authoring jobs and explicit validation. LibreOffice is optional for Office conversion and formula recalculation."
+  },
+  "cardbush": {
+    "localizations": {
+      "zh": {
+        "defaultPrompt": [
+          "创建、检查、编辑和渲染 PDF"
+        ],
+        "shortDescription": "创建、检查、编辑和渲染 PDF",
+        "longDescription": "创建、检查、编辑和渲染 PDF。内置文档工具库、渐进式读取、独立制作进程和明确的校验结果。Office 格式转换和公式重算可使用本机 LibreOffice。"
+      }
+    }
+  }
+}

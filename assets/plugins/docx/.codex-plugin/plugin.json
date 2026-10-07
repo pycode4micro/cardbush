@@ -1,0 +1,39 @@
+{
+  "name": "docx",
+  "version": "1.0.0",
+  "description": "Create and edit DOCX, read legacy DOC",
+  "author": {
+    "name": "CardBush"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "defaultPrompt": [
+      "Create and edit DOCX, read legacy DOC"
+    ],
+    "logo": "./assets/logo.svg",
+    "brandColor": "#356BB3",
+    "shortDescription": "Create and edit DOCX, read legacy DOC",
+    "developerName": "CardBush",
+    "displayName": "Word Documents",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "longDescription": "Create and edit DOCX, read legacy DOC. Bundled document libraries, progressive inspection, isolated authoring jobs and explicit validation. LibreOffice is optional for Office conversion and formula recalculation."
+  },
+  "cardbush": {
+    "localizations": {
+      "zh": {
+        "defaultPrompt": [
+          "创建、编辑 DOCX，读取旧版 DOC"
+        ],
+        "shortDescription": "创建、编辑 DOCX，读取旧版 DOC",
+        "longDescription": "创建、编辑 DOCX，读取旧版 DOC。内置文档工具库、渐进式读取、独立制作进程和明确的校验结果。Office 格式转换和公式重算可使用本机 LibreOffice。"
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "xlsx",
+  "version": "1.0.0",
+  "description": "Create, inspect and edit spreadsheets",
+  "author": {
+    "name": "CardBush"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "defaultPrompt": [
+      "Create, inspect and edit spreadsheets"
+    ],
+    "logo": "./assets/logo.svg",
+    "brandColor": "#218358",
+    "shortDescription": "Create, inspect and edit spreadsheets",
+    "developerName": "CardBush",
+    "displayName": "Spreadsheets",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "longDescription": "Create, inspect and edit spreadsheets. Bundled document libraries, progressive inspection, isolated authoring jobs and explicit validation. LibreOffice is optional for Office conversion and formula recalculation."
+  },
+  "cardbush": {
+    "localizations": {
+      "zh": {
+        "defaultPrompt": [
+          "创建、检查和编辑电子表格"
+        ],
+        "shortDescription": "创建、检查和编辑电子表格",
+        "longDescription": "创建、检查和编辑电子表格。内置文档工具库、渐进式读取、独立制作进程和明确的校验结果。Office 格式转换和公式重算可使用本机 LibreOffice。"
+      }
+    }
+  }
+}

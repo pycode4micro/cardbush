@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
 import { Edit3, Mic, MicOff, RotateCcw, Volume2, VolumeX } from 'lucide-react';
 import { confirmAction } from '../../components/confirmAction';
@@ -54,7 +55,7 @@ function AssistantRenameDialog({ language, onClose }: { language: 'zh' | 'en'; o
     dialog.current?.showModal(); input.current?.focus(); input.current?.select();
     return () => { if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
-  return <dialog ref={dialog} className="assistant-rename-dialog" aria-labelledby="assistant-rename-title" onCancel={onClose}>
+  return <dialog ref={dialog} className="assistant-rename-dialog" aria-labelledby="assistant-rename-title" onCancel={dialogEventHandler(onClose)}>
     <form onSubmit={event => {
       event.preventDefault();
       if (!name.trim()) { setError(zh ? '请输入名称。' : 'Enter a name.'); input.current?.focus(); return; }

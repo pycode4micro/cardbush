@@ -30,7 +30,9 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
     if (reference.kind === 'application') {
       if (seen.has(reference.id)) continue;
       seen.add(reference.id);
-      sources.push({ ...reference, note: reference.applicationKind === 'external'
+      sources.push({ ...reference, note: reference.applicationKind === 'web'
+        ? 'User-selected web app installed in CardBush. Open its URL in the CardBush integrated browser when requested; browser=cardbush. This is an app reference, not a bound live tab or an execution result, and grants no extra tools or permissions.'
+        : reference.applicationKind === 'external'
         ? 'User-selected application link. This identifies the app; it has not been opened or executed. It does not grant tools or permissions. Use available tools if the user asks to operate it.'
         : 'User-selected application reference, not an execution result. Identify the requested app and use its existing available tools as needed. This reference does not install, enable, invoke or grant permissions to an app.' });
       continue;

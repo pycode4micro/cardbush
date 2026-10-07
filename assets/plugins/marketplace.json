@@ -6,14 +6,70 @@
   "plugins": [
     {
       "name": "computer-use",
-      "source": { "source": "local", "path": "./computer-use" },
-      "policy": { "installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_INSTALL" },
+      "source": {
+        "source": "local",
+        "path": "./computer-use"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
       "category": "Productivity"
     },
     {
       "name": "chrome",
-      "source": { "source": "local", "path": "./chrome" },
-      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "source": {
+        "source": "local",
+        "path": "./chrome"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "source": {
+        "source": "local",
+        "path": "./xlsx"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT"
+      },
+      "name": "xlsx",
+      "category": "Productivity"
+    },
+    {
+      "source": {
+        "source": "local",
+        "path": "./pptx"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT"
+      },
+      "name": "pptx",
+      "category": "Productivity"
+    },
+    {
+      "source": {
+        "source": "local",
+        "path": "./docx"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT"
+      },
+      "name": "docx",
+      "category": "Productivity"
+    },
+    {
+      "source": {
+        "source": "local",
+        "path": "./pdf"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT"
+      },
+      "name": "pdf",
       "category": "Productivity"
     }
   ]

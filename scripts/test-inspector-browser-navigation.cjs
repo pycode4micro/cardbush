@@ -5,8 +5,9 @@ const http = require('node:http');
 const path = require('node:path');
 const { installInspectorWindowOpen } = require('../dist-electron/inspectorWindowOpen.js');
 const { installAppSessionPermissions } = require('../dist-electron/appSessionPermissions.js');
-const { BrowserTranslationService } = require('../dist-electron/browserTranslation.js');
 const { IntegratedBrowser } = require('../dist-electron/integratedBrowser.js');
+const { BrowserUiService, registerBrowserUiIpc } = require('../dist-electron/browserUi.js');
+const { BrowserBookmarkImporter } = require('../dist-electron/browserImport.js');
 const directory = path.resolve(process.argv[2]);
 app.setPath('userData', path.join(directory, 'profile'));
 app.on('window-all-closed', () => {});
@@ -17,17 +18,36 @@ app.whenReady().then(async () => {
   const delayedDocuments = [];
   let backgroundPageRequests = 0;
   const server = http.createServer((req, res) => {
+    if (req.url === '/metadata/app.webmanifest') {
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json' });
+      res.end(JSON.stringify({ name: '演示网页应用', id: '/web-app', start_url: '../web-app/start', scope: '../web-app/', icons: [{ src: '../site-logo.svg', sizes: '192x192' }] })); return;
+    }
+    if (req.url.startsWith('/web-app/')) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end('<title>网站正文</title><link rel="manifest" href="/metadata/app.webmanifest"><link rel="icon" href="/site-logo.svg"><h1>网页应用</h1>'); return;
+    }
+    if (['/site-logo.svg', '/site-logo-alt.svg', '/favicon.ico'].includes(req.url)) {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+      res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="${req.url.includes('alt') ? '#ea580c' : '#2563eb'}"/><path d="M8 16h16M16 8v16" stroke="white" stroke-width="3"/></svg>`); return;
+    }
+    if (req.url === '/tab-design') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end('<title>品牌工作台 · 商品与成交数据</title><link rel="icon" href="/site-logo.svg"><h1>浏览器外观验证</h1>'); return;
+    }
+    if (req.url === '/browser-menu-download') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="browser-test.bin"', 'Content-Length': 1024 * 1024 });
+      let sent = 0;
+      const timer = setInterval(() => { res.write(Buffer.alloc(32768, 7)); sent += 32768; if (sent === 1024 * 1024) { clearInterval(timer); res.end(); } }, 80);
+      res.once('close', () => clearInterval(timer)); return;
+    }
     if (req.url === '/external-redirect') { res.writeHead(302, { Location: 'bytedance://probe/redirect' }); res.end(); return; }
     if (req.url === '/redirect') { res.writeHead(302, { Location: '/landing?query=%E6%A8%A1%E5%9E%8B' }); res.end(); return; }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    if (req.url === '/translation') {
-      res.end(`<title>Translation example</title><style>body{font:16px/1.6 sans-serif;margin:24px;min-height:2200px}</style>
-        <h1>Overview</h1><p>Read <a href="#details" onclick="window.linkClicks=(window.linkClicks||0)+1;return false">more details</a> here.</p>
-        <p class="repeat">Repeated label</p><p class="repeat">Repeated label</p><code>keep_code()</code>
-        <input value="Private value"><textarea>Private textarea</textarea><div contenteditable>Private editable draft</div>
-        <div hidden>Private hidden</div><div style="display:none">Private invisible</div><div translate="no">Private untranslated</div>`); return;
+    if (req.url === '/browser-tools') { res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><title>Browser tools test</title><style>body{background:#caf0df;font:20px sans-serif}p{margin:40px}</style><button id="menu-probe" onclick="window.menuClicks=(window.menuClicks||0)+1">Page action</button><input id="menu-input" aria-label="Page input"><p>needle first</p><p>needle second</p><p>needle third</p><iframe id="menu-frame" src="/menu-frame" style="display:block;width:240px;height:70px"></iframe><a id="download" href="/browser-menu-download" download>Download</a>'); return; }
+    if (req.url === '/menu-frame') { res.end('<button onclick="parent.frameClicks=(parent.frameClicks||0)+1">Frame action</button>'); return; }
+    if (req.url === '/retention-document') {
+      res.end('<title>Browser state</title><style>body{margin:24px;min-height:2200px}</style><input aria-label="Draft" value="Initial draft">'); return;
     }
-    if (req.url === '/translation-long') { res.end('<title>Long page</title>' + Array.from({length:85}, (_,i)=>`<p>Paragraph ${i}</p>`).join('')); return; }
     if (req.url === '/delayed-frame') { delayedFrames.push(res); return; }
     if (req.url === '/delayed-document') { delayedDocuments.push(res); return; }
     if (req.url === '/background-frame') {
@@ -73,24 +93,15 @@ app.whenReady().then(async () => {
   installInspectorWindowOpen(window.webContents);
   const integrated = new IntegratedBrowser({ getContents: id => webContents.fromId(id), defaultOwner: () => window.webContents,
     action: (ownerId, action) => webContents.fromId(ownerId)?.send('inspector:browser-action', action) });
-  ipcMain.handle('inspector:browser-register', (event, input) => integrated.register(event.sender, input));
+  const uiService = new BrowserUiService(path.join(directory, 'browser-library'), new BrowserBookmarkImporter({ chrome: path.join(directory, 'chrome'), edge: path.join(directory, 'edge') }));
+  const ui = registerBrowserUiIpc(id => assert.equal(id, window.webContents.id), () => uiService);
+  ui.attach(window.webContents);
+  ipcMain.handle('inspector:browser-register', (event, input) => { integrated.register(event.sender, input); ui.track(event.sender, input.guestWebContentsId); });
   ipcMain.handle('inspector:browser-unregister', (event, input) => integrated.unregister(event.sender.id, input));
   const { BrowserConfigStore } = await import('@cardbush/product-host');
   const store = new BrowserConfigStore(path.join(directory, 'browser.json'));
   ipcMain.handle('browser:settings-read', () => store.read());
   ipcMain.handle('browser:settings-update', (_event, input) => store.update(input));
-  const translationCalls = [];
-  let translationMode = 'normal', modeCalls = 0;
-  const translation = new BrowserTranslationService(id => webContents.fromId(id), async (texts, language, jobId, signal) => {
-    translationCalls.push({ texts, language, jobId, signal }); modeCalls++;
-    if (translationMode === 'hold') await new Promise((_, reject) => {
-      signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
-      if (signal.aborted) reject(new Error('cancelled'));
-    });
-    if (translationMode === 'second-batch-fails' && modeCalls === 2) throw new Error('fixture provider failure');
-    return texts.map(item => ({ ...item, text: (language === 'zh' ? '中文：' : 'English: ') + item.text }));
-  });
-  ipcMain.handle('inspector:translate', (event, input) => translation.run(event.sender.id, input));
   const externallyOpened=[];
   ipcMain.handle('shell:open-external', (_event, target) => { externallyOpened.push(target); });
   const errors = [];
@@ -129,6 +140,22 @@ app.whenReady().then(async () => {
     const original = webContents.fromId(originalId);
     await until(() => original.executeJavaScript('!!document.querySelector("#blank")'), 'source page');
     await original.executeJavaScript('window.retainedState="search-state"');
+    if (process.argv.includes('--browser-audio')) {
+      await require('./helpers/browser-audio.cjs')({ window, original, origin, read, waitFor, activeReady, until, click, webContents });
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.argv.includes('--web-apps')) {
+      await require('./helpers/browser-web-apps.cjs')({ window, original, origin, read, waitFor, activeReady, until, pause, click, externallyOpened, webContents });
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.argv.includes('--browser-chrome')) {
+      await require('./helpers/browser-chrome.cjs')({ window, original, origin, read, waitFor, activeReady, until, pause, click });
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.argv.includes('--browser-ui')) {
+      await require('./helpers/browser-menu.cjs')({ window, original, origin, directory, read, waitFor, activeReady, until, pause, click, uiService });
+      assert.deepEqual(errors, []); return;
+    }
     await require('./helpers/browser-external-protocols.cjs')({ window, original, origin, read, until, pause, externalPermissions });
     await waitFor('!document.querySelector(".deferred-resize-preview[data-resizing]")');
     await pause(200);
@@ -316,8 +343,6 @@ app.whenReady().then(async () => {
     await waitFor('document.querySelector(".right-inspector-tab-page.active .inspector-preview-error")===null');
     assert.equal(delayedDocuments.length, 1, 'a late successful load clears timeout UI without reloading');
     await read('window.setTimeout=normalTimeout; void 0');
-    await require('./helpers/browser-translation-ui.cjs')({ window, read, waitFor, activeReady, origin, webContents,
-      translation, calls: translationCalls, setMode: value => { translationMode = value; modeCalls = 0; } });
     await require('./helpers/inspector-retention.cjs')({ window, read, waitFor, activeReady, origin, webContents, pause, click });
     assert.deepEqual(errors, []);
     console.log('Inspector browser: single-row chrome, real drag/cancel, full-cover guest sizing/restore, selected-page external action, preserved guests, navigation, local new tabs, Google search and loading recovery passed.');

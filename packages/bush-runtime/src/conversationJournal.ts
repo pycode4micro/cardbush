@@ -2,12 +2,19 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, truncateSy
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { conversationEntrySchema, type ConversationEntry } from '@cardbush/bush-protocol';
+import { AssistantModelHistory } from './assistantModelHistory.js';
 
 /** External conversation messages never reserve or alter a foreground Turn sequence. */
 export class ConversationJournal {
   private cache = new Map<string, ConversationEntry[]>();
+  private histories = new Map<string, AssistantModelHistory>();
   constructor(private root: string) {}
   private file(sessionId: string) { return join(this.root, createHash('sha256').update(sessionId).digest('hex') + '.jsonl'); }
+  modelHistory(sessionId: string) {
+    let history = this.histories.get(sessionId);
+    if (!history) { history = new AssistantModelHistory(this.file(sessionId).replace(/\.jsonl$/, '.model.jsonl')); this.histories.set(sessionId, history); }
+    return history;
+  }
   read(sessionId: string): ConversationEntry[] {
     let entries = this.cache.get(sessionId);
     if (!entries) {
@@ -43,5 +50,5 @@ export class ConversationJournal {
     this.cache.set(sessionId, [...entries, entry]);
     return entry;
   }
-  forget(sessionId: string) { rmSync(this.file(sessionId), { force: true }); this.cache.delete(sessionId); }
+  forget(sessionId: string) { this.modelHistory(sessionId).clear(); rmSync(this.file(sessionId), { force: true }); this.cache.delete(sessionId); }
 }

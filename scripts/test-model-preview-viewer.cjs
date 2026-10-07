@@ -37,6 +37,7 @@ app.whenReady().then(async () => {
       assert.ok(node, name); return node.getText(main);
     }).join('\n');
     const deps = { fs, path, protocol, net, pathToFileURL, ModelPreviewError,
+      localResourcePath: require('../dist-electron/localResourcePath.js').localResourcePath,
       app: { getAppPath: () => root }, devServerUrl: undefined, localFileProtocol: 'cardbush-file', __dirname: path.join(root, 'dist-electron'),
       ModelPreviewService: class extends ModelPreviewService { constructor(options) { super({ ...options, tempRoot: scratch }); } },
     };
@@ -50,7 +51,9 @@ app.whenReady().then(async () => {
     host = new BrowserWindow({ show: false, width: 800, height: 760, webPreferences: {
       sandbox: true, nodeIntegration: false, contextIsolation: true, webviewTag: true, backgroundThrottling: false,
     } });
+    const requestedAssets = [];
     host.webContents.session.webRequest.onBeforeRequest((details, done) => {
+      requestedAssets.push(details.url);
       if (/^https?:/.test(details.url)) errors.push('Unexpected remote resource: ' + details.url);
       done({ cancel: /^https?:/.test(details.url) });
     });
@@ -70,12 +73,16 @@ app.whenReady().then(async () => {
     process.env.CARDBUSH_BLENDER_PATH = path.join(scratch, 'not-installed.exe');
     await open(source);
     await until(() => run("!document.getElementById('error').hidden && document.getElementById('error').textContent.includes('Blender')"), 'missing dependency fallback');
+    assert.equal(requestedAssets.some(url => /(?:three-(?:core|webgl)|sceneView-).*\.js/.test(url)), false,
+      'missing Blender must render its recovery UI without loading the 3D engine');
     assert.equal(await run('typeof require'), 'undefined');
     assert.notEqual(guest.getOSProcessId(), host.webContents.getOSProcessId(), '3D viewer is isolated from the main renderer');
     if (executable) {
       process.env.CARDBUSH_BLENDER_PATH = executable;
       await run("document.getElementById('retry').click()");
       await until(() => run("!!document.querySelector('canvas') && document.getElementById('status').hidden && document.getElementById('error').hidden"), 'real Blender model ready');
+      assert.ok(requestedAssets.some(url => /three-core.*\.js/.test(url)), 'a prepared scene loads the shared 3D core');
+      assert.ok(requestedAssets.some(url => /three-webgl.*\.js/.test(url)), 'a prepared scene loads the WebGL renderer');
       assert.equal(await run("document.querySelectorAll('#scenes option').length"), 2);
       assert.ok(await run("document.querySelectorAll('#objects input').length") >= 1);
       assert.equal(await run("document.getElementById('animation-controls').hidden"), false);

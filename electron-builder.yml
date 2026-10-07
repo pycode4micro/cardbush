@@ -7,6 +7,8 @@ npmRebuild: false
 beforePack: scripts/rebuild-native-dependencies.cjs
 afterPack: scripts/package-privacy-check.cjs
 asarUnpack:
+  # Canvas loads ICU data adjacent to the native binding, outside Electron's virtual FS.
+  - '**/node_modules/@napi-rs/**/*'
   - node_modules/@img/**/*
   - node_modules/sharp/**/*
   - packages/cardbush-apps-mcp/dist/native/**/*.dll
@@ -26,6 +28,7 @@ files:
   - packages/*/dist/**/*
   - packages/*/dist-cjs/**/*
   - packages/*/package.json
+  - packages/cardbush-document-tools/THIRD_PARTY_NOTICES.md
   - assets/**/*
   - '!assets/plugins/chrome/extension/**/*'
   - '!assets/skills/**/*'
@@ -40,6 +43,8 @@ files:
   - '!node_modules/cpu-features/**/*'
   - '!node_modules/ssh2/lib/protocol/crypto/build/**/*'
   - '!**/*.map'
+  - '!assets/plugins/**/__pycache__/**/*'
+  - '!assets/plugins/**/*.pyc'
   - '!**/*.pfx'
   - '!**/*.p12'
   - '!**/*.key'

@@ -10,7 +10,7 @@ from unittest.mock import patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "assets/skills/xlsx/scripts"))
+sys.path.insert(0, str(ROOT / "assets/plugins/xlsx/skills/xlsx/scripts"))
 import recalc
 
 
@@ -140,7 +140,7 @@ class WorkbookConversionTests(unittest.TestCase):
                 pass
 
     def test_cli_failure_is_json_and_nonzero(self):
-        command = [sys.executable, "-B", str(ROOT / "assets/skills/xlsx/scripts/recalc.py"), str(self.source), str(self.output), "--soffice", str(self.root / "missing-engine")]
+        command = [sys.executable, "-B", str(ROOT / "assets/plugins/xlsx/skills/xlsx/scripts/recalc.py"), str(self.source), str(self.output), "--soffice", str(self.root / "missing-engine")]
         result = subprocess.run(command, capture_output=True, text=True, timeout=10, encoding="utf-8")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(json.loads(result.stdout)["status"], "error")

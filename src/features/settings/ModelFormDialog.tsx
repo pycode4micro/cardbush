@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, X } from 'lucide-react';
 import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, resolveModelReasoningEffort, reasoningEffortsForProtocol, type ModelApiProtocol } from '@cardbush/bush-protocol';
@@ -63,7 +64,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
     } catch (failure) { setFormError(agentErrorText(failure)); }
   };
   return <dialog ref={dialog} className="model-config-dialog" aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }} onKeyDown={event => event.stopPropagation()}>
+    onCancel={dialogEventHandler(event => { event.preventDefault(); if (!busy) onCancel(); })} onKeyDown={event => event.stopPropagation()}>
     <header className="model-dialog-header"><div><h2 id={titleId}>{model ? zh ? '编辑模型' : 'Edit model' : zh ? '添加模型' : 'Add model'}</h2>
       <p>{zh ? '选择接入协议，填写服务地址和模型信息。' : 'Choose an API protocol and configure the model connection.'}</p></div>
       <button type="button" className="icon-button" disabled={busy} aria-label={zh ? '关闭' : 'Close'} onClick={onCancel}><X size={18}/></button></header>

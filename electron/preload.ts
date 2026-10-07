@@ -95,6 +95,13 @@ type ShadowWindowPayload = {
   initialMode: 'readonly' | 'fork';
 };
 
+// did-finish-load can precede a deferred window's React subscription. Keep only
+// the latest state, so the companion also starts correctly after a slow load.
+let latestCardlingState: CardlingDesktopState | undefined;
+ipcRenderer.on('cardling:state', (_event, payload: CardlingDesktopState) => {
+  latestCardlingState = payload;
+});
+
 const desktopApi = {
   voice: {
     setCallActive: (active: boolean) => ipcRenderer.invoke('voice:call-active', active),
@@ -259,6 +266,17 @@ const desktopApi = {
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+  isWindowVisible: () => ipcRenderer.invoke('window:is-visible') as Promise<boolean>,
+  onWindowVisibilityChanged: (callback: (visible: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible);
+    ipcRenderer.on('window:visibility-changed', listener);
+    return () => ipcRenderer.removeListener('window:visibility-changed', listener);
+  },
+  onWindowResizeGesture: (callback: (gesture: import('./windowResize').WindowResizeGesture) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, gesture: Parameters<typeof callback>[0]) => callback(gesture);
+    ipcRenderer.on('window:resize-gesture', listener);
+    return () => ipcRenderer.removeListener('window:resize-gesture', listener);
+  },
   windowMenuContext: () => ipcRenderer.invoke('window:menu-context') as Promise<{ editTargetId: number }>,
   executeWindowMenuAction: (action: import('./windowMenu').WindowMenuAction, editTargetId?: number) =>
     ipcRenderer.invoke('window:menu-action', action, editTargetId) as Promise<void>,
@@ -549,6 +567,7 @@ const desktopApi = {
       callback(payload);
     };
     ipcRenderer.on('cardling:state', listener);
+    if (latestCardlingState) callback(latestCardlingState);
     return () => ipcRenderer.removeListener('cardling:state', listener);
   },
   setCardlingExpanded: (expanded: boolean) =>
@@ -588,6 +607,27 @@ const desktopApi = {
     ipcRenderer.invoke('shell:file-context-menu', targetPath, options) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
+  browser: {
+    profiles: () => ipcRenderer.invoke('browser:profiles'),
+    importBookmarks: (profileId?: string) => ipcRenderer.invoke('browser:bookmarks-import', profileId),
+    page: (id: number, command: import('./browserUi').BrowserPageCommand) => ipcRenderer.invoke('browser:page', id, command),
+    webApplication: (id: number, expectedUrl: string) => ipcRenderer.invoke('browser:web-application', id, expectedUrl),
+    history: (query = '', offset = 0) => ipcRenderer.invoke('browser:history', query, offset),
+    downloads: (query = '', offset = 0) => ipcRenderer.invoke('browser:downloads', query, offset),
+    removeVisit: (id: string) => ipcRenderer.invoke('browser:history-remove', id),
+    downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'show') => ipcRenderer.invoke('browser:download-action', id, action),
+    clearData: (input: import('./browserUi').BrowserClearData) => ipcRenderer.invoke('browser:clear-data', input),
+    onFind: (callback: (guestId: number) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, guestId: number) => callback(guestId);
+      ipcRenderer.on('browser:find', listener);
+      return () => ipcRenderer.removeListener('browser:find', listener);
+    },
+    onAudioStateChanged: (callback: (guestId: number) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, guestId: number) => callback(guestId);
+      ipcRenderer.on('browser:audio-state-changed', listener);
+      return () => ipcRenderer.removeListener('browser:audio-state-changed', listener);
+    },
+  } satisfies import('./browserUi').BrowserUiBridge,
   readBrowserConfiguration: () => ipcRenderer.invoke('browser:settings-read') as Promise<BrowserConfiguration>,
   registerInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => ipcRenderer.invoke('inspector:browser-register', input) as Promise<void>,
   unregisterInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => ipcRenderer.invoke('inspector:browser-unregister', input) as Promise<void>,
@@ -598,8 +638,6 @@ const desktopApi = {
     ipcRenderer.on('inspector:browser-action', listener);
     return () => ipcRenderer.removeListener('inspector:browser-action', listener);
   },
-  translateInspectorPage: (input: import('./browserTranslationTypes').BrowserTranslationRequest) =>
-    ipcRenderer.invoke('inspector:translate', input) as Promise<import('./browserTranslationTypes').BrowserTranslationResult>,
   updateBrowserConfiguration: (input: { startPage: string; expectedRevision: number }) =>
     ipcRenderer.invoke('browser:settings-update', input) as Promise<BrowserConfiguration>,
   onInspectorOpenLink: (callback: (detail: { guestWebContentsId: number; target: string }) => void) => {

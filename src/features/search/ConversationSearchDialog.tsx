@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { Edit3, FolderOpen, LoaderCircle, MessageSquare, Search } from 'lucide-react';
 import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
@@ -151,7 +152,7 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
 
   return <dialog ref={dialogRef} className="conversation-search-dialog" data-conversation-search role="dialog" aria-modal="true"
     aria-label={zh ? '搜索会话' : 'Search chats'} onKeyDown={onKeyDown}
-    onCancel={event => { event.preventDefault(); finish(); }}
+    onCancel={dialogEventHandler(event => { event.preventDefault(); finish(); })}
     onPointerDown={event => { pointerStartedOutside.current = event.target === event.currentTarget && outside(event); }}
     onClick={event => { if (pointerStartedOutside.current && event.target === event.currentTarget && outside(event)) finish(); }}>
     <header className="conversation-search-header">

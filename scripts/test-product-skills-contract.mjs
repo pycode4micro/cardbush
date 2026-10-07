@@ -37,10 +37,11 @@ try {
   // Read the bundled catalog through the product loader, preserving CardBush's
   // metadata extensions and checking every declared resource still exists.
   const bundledRoot = path.resolve('assets/skills');
-  for (const summary of await listProductSkills([bundledRoot])) {
-    const detail = await readProductSkill([bundledRoot], summary.name);
+  const builtinRoots = [bundledRoot, ...['xlsx', 'pptx', 'docx', 'pdf'].map(name => path.resolve('assets/plugins', name, 'skills'))];
+  for (const summary of await listProductSkills(builtinRoots)) {
+    const detail = await readProductSkill(builtinRoots, summary.name);
     assert.ok(detail.name && detail.description && detail.content, summary.name);
-    assert.equal(path.basename(detail.packageDir), detail.name);
+    assert.equal(path.basename(detail.packageDir), detail.name.split(':').at(-1));
     const references = [
       ...detail.requiredReads,
       ...detail.conditionalReads.map(item => item.split(/:\s/, 1)[0]),
@@ -53,14 +54,14 @@ try {
       assert.ok((await fs.stat(target)).isFile(), `${detail.name}: ${reference}`);
     }
   }
-  const presentation = await readProductSkill([bundledRoot], 'pptx');
+  const presentation = await readProductSkill(builtinRoots, 'pptx:pptx');
   assert.deepEqual(presentation.requiredReads, [], 'read-only PPTX tasks do not need generation references');
   assert.ok(presentation.conditionalReads.length > 0);
-  const spreadsheet = await readProductSkill([bundledRoot], 'xlsx');
+  const spreadsheet = await readProductSkill(builtinRoots, 'xlsx:xlsx');
   assert.ok(spreadsheet.conditionalReads.length > 0);
   assert.ok(spreadsheet.resourceQuickRefs.every(item => item.path && item.label && item.use_when && item.gives_you && item.not_for));
-  for (const name of ['cardbush-docs', 'pptx', 'xlsx']) {
-    const detail = await readProductSkill([bundledRoot], name);
+  for (const name of ['cardbush-docs', 'pptx:pptx', 'xlsx:xlsx', 'docx:docx', 'pdf:pdf']) {
+    const detail = await readProductSkill(builtinRoots, name);
     assert.match(detail.content, /^license: Apache-2\.0$/m);
     assert.equal(await fs.readFile(path.join(detail.packageDir, 'LICENSE.txt'), 'utf8'), await fs.readFile('LICENSE', 'utf8'));
   }

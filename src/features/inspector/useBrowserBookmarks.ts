@@ -17,6 +17,13 @@ function subscribe(listener: () => void) {
   window.addEventListener(changed, listener); window.addEventListener('storage', storage);
   return () => { window.removeEventListener(changed, listener); window.removeEventListener('storage', storage); };
 }
+export function importBrowserBookmarks(items: Array<{ url: string; title: string; folder?: string }>) {
+  const current = snapshot(), next = normalizeBookmarks([...current, ...items]);
+  // localStorage writes are atomic: quota failures preserve the old collection.
+  localStorage.setItem(browserBookmarksKey, JSON.stringify(next));
+  window.dispatchEvent(new Event(changed));
+  return { added: next.length - current.length, duplicates: items.length - (next.length - current.length) };
+}
 export function toggleBrowserBookmark(address: string, title: string) {
   const url = bookmarkUrl(address);
   if (!url) return;

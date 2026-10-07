@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import test from 'node:test';
+import * as protocol from '@cardbush/bush-protocol';
 const exports = {};
 const localApps = {};
 new Function('exports', ts.transpileModule(readFileSync('src/shared/localApplications.ts', 'utf8'), {
@@ -9,8 +10,18 @@ new Function('exports', ts.transpileModule(readFileSync('src/shared/localApplica
 }).outputText)(localApps);
 new Function('exports', 'require', ts.transpileModule(readFileSync('src/features/appCenter/appCenterModel.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText)(exports, name => { assert.equal(name, '../../shared/localApplications'); return localApps; });
+}).outputText)(exports, name => { if (name === '@cardbush/bush-protocol') return protocol; assert.equal(name, '../../shared/localApplications'); return localApps; });
 const { normalizeAppCenterPreferences, applicationLink, applicationCatalog, applicationReference, moveApplication } = exports;
+
+test('web apps join the catalog, dock and references without becoming external links or plugins', () => {
+  const app = { ...protocol.websiteApplication('https://example.test/app/', 'Website'), id: 'web:example' };
+  const prefs = normalizeAppCenterPreferences({ webApps: [app], shortcuts: [app.id], order: [app.id] });
+  assert.deepEqual(normalizeAppCenterPreferences(JSON.parse(JSON.stringify(prefs))), prefs);
+  assert.equal(prefs.links.length, 0);
+  const entry = applicationCatalog('zh', [], prefs)[0];
+  assert.equal(entry.id, app.id); assert.equal(entry.kind, 'web'); assert.equal(entry.target, app.url);
+  assert.deepEqual(applicationReference(entry), { kind: 'application', id: app.id, title: app.title, applicationKind: 'web', target: app.url });
+});
 test('app preferences validate external links and preserve shortcut order independently of plugin availability', () => {
   const normalized = normalizeAppCenterPreferences({ display: 'hover', shortcuts: ['builtin:settings', 'plugin:demo:canvas', 'builtin:settings'], links: [
     { id: 'external:local', title: ' Preview ', url: 'http://localhost:8888' },

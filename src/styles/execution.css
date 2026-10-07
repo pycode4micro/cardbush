@@ -129,6 +129,7 @@
 
 .assistant-completed-summary svg {
   opacity: 0.58;
+  transform: rotate(-90deg);
   transition: transform 140ms ease, opacity 140ms ease;
 }
 
@@ -138,7 +139,7 @@
 }
 
 .assistant-completed-summary svg.expanded {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .assistant-completed-content {
@@ -756,6 +757,7 @@
 
 .tool-execution-summary > svg:last-child {
   opacity: 0;
+  transform: rotate(-90deg);
   transition: opacity 140ms ease, transform 140ms ease;
 }
 
@@ -777,7 +779,10 @@
   font-weight: 700;
 }
 
-.tool-execution-summary > svg.expanded,
+.tool-execution-summary > svg.expanded {
+  transform: rotate(0deg);
+}
+
 .tool-change-header svg.expanded {
   transform: rotate(180deg);
 }
@@ -1130,11 +1135,12 @@
 
 .tool-execution-row > svg:last-child {
   opacity: 0.45;
+  transform: rotate(-90deg);
   transition: transform 140ms ease;
 }
 
 .tool-execution-row > svg.expanded {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .tool-execution-row-content {

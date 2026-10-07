@@ -7,6 +7,7 @@ function fixture(run) {
   const results = new Map(); const requests = [];
   const target = { id: 'saved-http-agent', name: 'Build server', agentId: 'pinned-agent' };
   registerSubagentTool(registry, tasks, async () => { throw Error('Must not run locally'); }, {
+    inheritBrowserScope: async () => { assert.fail('Remote tasks must not inherit local browser grants'); },
     createTaskId: () => `remote-${++serial}`, asyncDispatch: true,
     remoteAgents: { list: async () => [target], run: (input, signal) => { requests.push(input); return run(input, signal); } },
     onAsyncResult: item => results.set(item.taskId, item.result),

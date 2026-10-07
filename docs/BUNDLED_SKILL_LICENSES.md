@@ -4,6 +4,8 @@
 
 2026-10-05：CardBush 专属技能入口合并为 `cardbush-docs`。原 `cardbush-agent-deploy` 的部署和网络资料移入该技能的 references，许可保持 Apache-2.0。以下四项表格保留 9 月 28 日的历史处理记录；当前加载器不再发现独立的部署技能。
 
+2026-10-07：XLSX、PPTX 技能迁入同名内置插件，新增 DOCX、PDF 插件。四个入口默认安装，共用 CardBush 原创的 `@cardbush/document-tools` 运行包，包含通过 npm 生产依赖分发的开源制作库；没有复制 OpenAI / Anthropic 的专有引擎或技能。原有 Python 参考仍为可选环境路径；日常制作无需 Python，LibreOffice 仍由用户环境提供。当前接口见 [文档插件](DOCUMENT_PLUGINS.md)，固定版本及许可见 [第三方说明](../packages/cardbush-document-tools/THIRD_PARTY_NOTICES.md)。下文关于外部库的描述属于迁移前的历史状态。
+
 | 技能 | 本次处理 | 当前许可与范围 |
 | --- | --- | --- |
 | `cardbush-docs` | 保留 CardBush 文档与日历实现，统一技能入口许可；其首次提交是项目文档整合提交 `e092dd3` | Apache-2.0，许可全文随技能携带 |

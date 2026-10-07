@@ -1,13 +1,20 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { App } from './App';
-import { CardlingWindow } from './CardlingWindow';
-import { ShadowWindow } from './ShadowWindow';
 import './styles/theme.css';
 import './styles/app.css';
 import './styles/windowMaterial.css';
 import './styles/appearance.css';
+import { installWindowVisibility } from './shared/windowVisibility';
+import { DeferredModuleNotice, recoverableLazy } from './shared/recoverableLazy';
+
+const stopWindowVisibility = installWindowVisibility();
+const disposeWindowVisibility = () => {
+  stopWindowVisibility();
+  window.removeEventListener('pagehide', disposeWindowVisibility);
+};
+window.addEventListener('pagehide', disposeWindowVisibility, { once: true });
+if (import.meta.hot) import.meta.hot.dispose(disposeWindowVisibility);
 
 function rendererFailureMessage(value: unknown) {
   return value instanceof Error ? `${value.name}: ${value.message}` : String(value);
@@ -37,15 +44,19 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 const rendererWindow = new URLSearchParams(window.location.search).get('window');
+const language = navigator.language.startsWith('zh') ? 'zh' : 'en';
+// Select the window before importing its state owners. Companion and shadow
+// windows must not initialize or download the main workspace just to render.
+const RootWindow = recoverableLazy('window', async () => {
+  if (rendererWindow === 'cardling') return { default: (await import('./CardlingWindow')).CardlingWindow };
+  if (rendererWindow === 'shadow') return { default: (await import('./ShadowWindow')).ShadowWindow };
+  return { default: (await import('./App')).App };
+}, (_props, retry) => <DeferredModuleNotice language={language} retry={retry} />);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {rendererWindow === 'cardling' ? (
-      <CardlingWindow />
-    ) : rendererWindow === 'shadow' ? (
-      <ShadowWindow />
-    ) : (
-      <App />
-    )}
+    <React.Suspense fallback={null}>
+      <RootWindow />
+    </React.Suspense>
   </React.StrictMode>,
 );

@@ -13,7 +13,11 @@ import './features/agents/agents.css';
 import { withWorkspaceReference } from './shared/promptReferences';
 import { recentReviewTurns } from './features/sidebar/reviewModel';
 import { InspectorTabStrip } from './features/inspector/InspectorTabStrip';
+import { BrowserTabAudioButton } from './features/browser/BrowserTabAudioButton';
+import { BrowserSiteIcon } from './features/browser/BrowserSiteIcon';
 import { newBrowserTab } from './features/browser/browserStartPage';
+import { BrowserMenu } from './features/browser/BrowserMenu';
+import { BrowserInstallButton } from './features/browser/BrowserInstallButton';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
 import { AppCenterProvider } from './features/appCenter/AppCenter';
@@ -87,7 +91,6 @@ import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
 import { BrowserBookmarkButton } from './features/inspector/BrowserBookmarkButton';
-import { BrowserTranslateButton } from './features/inspector/BrowserTranslateButton';
 import { InspectorPageDialog } from './features/inspector/InspectorPageDialog';
 import { InspectorTileFrame } from './features/inspector/InspectorTileFrame';
 import {
@@ -936,6 +939,9 @@ function CardbushApp() {
         previous?.url === navigation.url &&
         previous.guestWebContentsId === navigation.guestWebContentsId &&
         previous.title === navigation.title &&
+        previous.faviconUrl === navigation.faviconUrl &&
+        previous.audible === navigation.audible &&
+        previous.audioMuted === navigation.audioMuted &&
         previous.canGoBack === navigation.canGoBack &&
         previous.canGoForward === navigation.canGoForward &&
         previous.loading === navigation.loading
@@ -2063,6 +2069,7 @@ function CardbushApp() {
       data-diff-indicators={appearance.diffIndicators}
     >
       <AppCenterProvider language={language} onNavigate={(application, environmentId) => {
+        if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings('profile', 'plugins'); return; }
         if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
@@ -2431,12 +2438,12 @@ function CardbushApp() {
                                 className="right-inspector-tab-select"
                                 role="tab"
                                 aria-selected={active}
-                                title={targetTitle}
+                                title={`${label}\n${targetTitle}`}
                                 onClick={() => activateInspectorTab(tab)}
                               >
                                 {tab.kind === 'resource'
                                   ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
-                                    ? <Globe2 size={13} aria-hidden="true" />
+                                    ? <BrowserSiteIcon url={navigation?.url || tab.detail.target} icon={navigation?.faviconUrl}/>
                                     : <FileText size={13} aria-hidden="true" />
                                   : tab.kind === 'review' || tab.kind === 'conversation'
                                     ? <Clipboard size={13} aria-hidden="true" />
@@ -2445,8 +2452,10 @@ function CardbushApp() {
                                       : tab.kind === 'subagent'
                                         ? <Bot size={13} aria-hidden="true" />
                                         : <ShadowCloneIcon size={13} />}
-                                <span>{label}</span>
+                                <span className="right-inspector-tab-title">{label}</span>
                               </button>
+                              {tab.kind === 'resource' && isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType) &&
+                                <BrowserTabAudioButton navigation={navigation} handle={inspectorWebviewRefs.current.get(tab.id)} language={language} title={label}/>}
                               <button
                                 type="button"
                                 className="right-inspector-tab-close"
@@ -2507,7 +2516,7 @@ function CardbushApp() {
                                   >
                                     {tab.kind === 'resource'
                                       ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
-                                        ? <Globe2 size={14} aria-hidden="true" />
+                                        ? <BrowserSiteIcon url={navigation?.url || tab.detail.target} icon={navigation?.faviconUrl}/>
                                         : <FileText size={14} aria-hidden="true" />
                                       : tab.kind === 'review' || tab.kind === 'conversation'
                                         ? <Clipboard size={14} aria-hidden="true" />
@@ -2518,6 +2527,8 @@ function CardbushApp() {
                                             : <ShadowCloneIcon size={14} />}
                                     <span>{label}</span>
                                   </button>
+                                  {tab.kind === 'resource' && isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType) &&
+                                    <BrowserTabAudioButton navigation={navigation} handle={inspectorWebviewRefs.current.get(tab.id)} language={language} title={label} menu/>}
                                   <button
                                     type="button"
                                     role="menuitem"
@@ -2543,6 +2554,11 @@ function CardbushApp() {
                         </div>
                       )}
                     </div>
+                    <BrowserMenu language={language}
+                      navigation={displayedInspectorTarget && isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType) ? activeInspectorNavigation : undefined}
+                      handle={inspectorWebviewRefs.current.get(activeInspectorTabIdentity)}
+                      onNavigate={url => openInspectorTarget({ target: url, newTab: true })}
+                      onSettings={() => openSettings('browser')}/>
                   </>
                 ) : (
                   <strong />
@@ -2664,9 +2680,8 @@ function CardbushApp() {
                         spellCheck={false}
                         onChange={(event) => setInspectorAddressDraft(event.target.value)}
                       />
+                      <BrowserInstallButton language={language} navigation={activeInspectorNavigation}/>
                       <BrowserBookmarkButton address={activeInspectorAddress} title={activeInspectorNavigation?.title || inspectorTabLabel(displayedInspectorTarget)} language={language}/>
-                      <BrowserTranslateButton address={activeInspectorAddress} language={language} state={activeInspectorNavigation?.translation}
-                        loading={activeInspectorNavigation?.loading} onClick={() => inspectorWebviewRefs.current.get(activeInspectorTabIdentity)?.toggleTranslation()}/>
                     </form>
                   ) : (
                     <div className="right-inspector-address" title={activeInspectorAddress}>

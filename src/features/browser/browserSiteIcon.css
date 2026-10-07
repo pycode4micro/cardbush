@@ -1,0 +1,3 @@
+.browser-site-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; overflow: hidden; vertical-align: middle; }
+.browser-site-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.browser-site-icon > svg { opacity: .65; }

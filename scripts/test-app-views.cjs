@@ -69,12 +69,14 @@ async function buildViews() {
     'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-lifecycle' ? ['src/shared/windowVisibility.ts'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-cover' ? [
       'src/features/composer/ComposerPortalContext.ts', 'src/features/inspector/InspectorTabPages.tsx',
       'src/features/inspector/InspectorTileFrame.tsx', 'src/features/inspector/panelLayout.ts',
       'src/components/CompactSidebarBackdrop.tsx',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components' ? [
+      'src/shared/dialogEvents.ts',
       'src/features/components/ComponentsApp.tsx', 'src/features/components/HtmlComponentSurface.tsx',
       'src/features/components/HtmlComponentContext.ts', 'src/features/components/componentStore.ts',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',

@@ -1,4 +1,5 @@
 import { prefersReducedMotion } from '../../shared/motionPreference';
+import { isWindowVisible, watchWindowVisibility } from '../../shared/windowVisibility';
 import { useEffect, useRef } from 'react';
 
 const TAU = Math.PI * 2;
@@ -95,8 +96,8 @@ export function StarWordmark() {
       if (prefersReducedMotion()) {
         pointer = undefined;
         for (const star of stars) { star.x = star.homeX; star.y = star.homeY; star.vx = 0; star.vy = 0; }
-        if (!document.hidden && intersecting) draw(0, 0);
-      } else if (!document.hidden && intersecting && width > 0) frame = requestAnimationFrame(tick);
+        if (isWindowVisible() && intersecting) draw(0, 0);
+      } else if (isWindowVisible() && intersecting && width > 0) frame = requestAnimationFrame(tick);
     }
     function resize() {
       if (!canvas || !maskContext || !context) return;
@@ -145,7 +146,7 @@ export function StarWordmark() {
     }
     function up() { if (pointer) pointer.down = false; }
     function leave() { pointer = undefined; }
-    function refreshColors() { updatePalette(); if (prefersReducedMotion() && !document.hidden && intersecting) draw(0, 0); }
+    function refreshColors() { if (!isWindowVisible()) return; updatePalette(); if (prefersReducedMotion() && intersecting) draw(0, 0); }
     const resizeObserver = new ResizeObserver(resize);
     const intersectionObserver = new IntersectionObserver(entries => { intersecting = entries[0]?.isIntersecting ?? false; syncMotion(); });
     const themeObserver = new MutationObserver(records => {
@@ -157,7 +158,8 @@ export function StarWordmark() {
       if (element) themeObserver.observe(element, { attributes: true, attributeFilter: ['class', 'style', 'data-start-theme', 'data-motion-preference'] });
     }
     resizeObserver.observe(canvas); intersectionObserver.observe(canvas);
-    motion.addEventListener('change', syncMotion); document.addEventListener('visibilitychange', syncMotion);
+    motion.addEventListener('change', syncMotion);
+    const unwatchVisibility = watchWindowVisibility(syncMotion);
     canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerdown', down);
     canvas.addEventListener('pointerup', up); canvas.addEventListener('pointerleave', leave);
     canvas.addEventListener('lostpointercapture', leave);
@@ -165,7 +167,7 @@ export function StarWordmark() {
     resize();
     return () => {
       stop(); clearInterval(clock); resizeObserver.disconnect(); intersectionObserver.disconnect(); themeObserver.disconnect();
-      motion.removeEventListener('change', syncMotion); document.removeEventListener('visibilitychange', syncMotion);
+      motion.removeEventListener('change', syncMotion); unwatchVisibility();
       canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerdown', down);
       canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointerleave', leave);
       canvas.removeEventListener('lostpointercapture', leave);

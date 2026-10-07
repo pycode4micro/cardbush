@@ -80,7 +80,7 @@ import {
   type MaintenanceClearResult,
   type McpServerConfigInput,
 } from '../backend/api';
-import packageMetadata from '../../package.json';
+import { version as packageVersion } from '../../package.json';
 import { PluginIcon } from '../components/PluginIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { CompactSidebarBackdrop } from '../components/CompactSidebarBackdrop';
@@ -116,7 +116,7 @@ import type {
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
 // Store builds inject the MSIX identity version; other channels keep their own version.
-const applicationVersion = import.meta.env.VITE_CARDBUSH_APP_VERSION || packageMetadata.version;
+const applicationVersion = import.meta.env.VITE_CARDBUSH_APP_VERSION || packageVersion;
 const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
 const defaultFontSettings = {
   family: '',

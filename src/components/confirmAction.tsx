@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../shared/dialogEvents';
 import { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { focusEditor } from '../shared/editorFocus';
@@ -62,8 +63,8 @@ function ConfirmationDialog({ title, message, confirmLabel, cancelLabel, previou
     };
   }, []);
   return <dialog ref={dialog} className="confirm-action-dialog" aria-labelledby="confirm-action-title"
-    aria-describedby="confirm-action-message" onCancel={event => { event.preventDefault(); onFinish(false); }}
-    onClose={() => onFinish(false)} onKeyDown={event => event.stopPropagation()}>
+    aria-describedby="confirm-action-message" onCancel={dialogEventHandler(event => { event.preventDefault(); onFinish(false); })}
+    onClose={dialogEventHandler(() => onFinish(false))} onKeyDown={event => event.stopPropagation()}>
     <h2 id="confirm-action-title">{title}</h2>
     <p id="confirm-action-message">{message}</p>
     <footer>

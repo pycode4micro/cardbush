@@ -3,7 +3,8 @@ import type { WebContents } from 'electron';
 
 type Reference = { tabId: string; pageId?: string; url?: string };
 type Entry = { tabId: string; ownerId: number; guestId: number };
-type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string };
+type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; bindingRevision: number;
+  inheritedFrom?: { parentId: string; revision: number } };
 export type BrowserTabAction = { action: 'open' | 'activate' | 'close'; tabId: string; url?: string };
 const pageCommands = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.resolveNode', 'DOM.describeNode', 'DOM.getContentQuads',
@@ -73,19 +74,42 @@ export class IntegratedBrowser {
       return entry;
     });
     const previous = this.scopes.get(scopeId);
-    const scope: Scope = previous?.ownerId === owner.id ? previous : { ownerId: owner.id, entries: new Map(), selected: '' };
+    const scope: Scope = previous?.ownerId === owner.id ? previous : { ownerId: owner.id, entries: new Map(), selected: '', bindingRevision: 0 };
     for (const entry of selected) scope.entries.set(entry.tabId, entry);
     scope.selected = selected[0].tabId;
+    scope.bindingRevision++;
     this.scopes.set(scopeId, scope);
     this.options.action(owner.id, { action: 'activate', tabId: scope.selected });
     return selected.map(entry => ({ ...this.page(entry, scope), browser: 'cardbush' as const }));
   }
   hasScope(scopeId: string): boolean { return this.scopes.has(scopeId); }
+  hasInheritedScope(parentId: string, childId: string): boolean {
+    const parent = this.scopes.get(parentId), child = this.scopes.get(childId);
+    return !!parent && child?.ownerId === parent.ownerId && child.inheritedFrom?.parentId === parentId
+      && child.inheritedFrom.revision === parent.bindingRevision;
+  }
+  /** Trusted local delegation only. Copy exact grants, never all registered tabs. */
+  inheritScope(parentId: string, childId: string) {
+    const parent = this.scopes.get(parentId);
+    // A closed tab or lost scope must fail when it is used, not prevent an
+    // otherwise unrelated child task from starting after a browser restart.
+    if (!parent) return false;
+    const previous = this.scopes.get(childId);
+    if (previous && previous.ownerId !== parent.ownerId) unavailable('The parent browser window changed. Start a new child for the selected window.', 'cardbush_scope_owner_changed');
+    if (this.hasInheritedScope(parentId, childId)) return true;
+    const child: Scope = { ownerId: parent.ownerId, entries: new Map(previous?.entries), selected: parent.selected || previous?.selected || '',
+      bindingRevision: (previous?.bindingRevision ?? 0) + 1, inheritedFrom: { parentId, revision: parent.bindingRevision } };
+    // Preserve stale identities too: normal guest validation rejects them and
+    // cannot silently select a different live tab if the chosen one has closed.
+    for (const entry of parent.entries.values()) child.entries.set(entry.tabId, entry);
+    this.scopes.set(childId, child);
+    return true;
+  }
   select(scopeId: string): void {
     if (this.scopes.has(scopeId)) return;
     const owner = this.options.defaultOwner();
     if (!owner || owner.isDestroyed()) unavailable('No CardBush window is available.', 'cardbush_browser_unavailable');
-    this.scopes.set(scopeId, { ownerId: owner.id, entries: new Map(), selected: '' });
+    this.scopes.set(scopeId, { ownerId: owner.id, entries: new Map(), selected: '', bindingRevision: 0 });
   }
   private guest(entry: Entry): WebContents {
     const guest = this.options.getContents(entry.guestId);
@@ -122,7 +146,7 @@ export class IntegratedBrowser {
       while (Date.now() < deadline) {
         signal?.throwIfAborted();
         const entry = this.entries.get(this.key(scope.ownerId, tabId));
-        if (entry) { scope.entries.set(tabId, entry); scope.selected = tabId; return this.page(entry, scope); }
+        if (entry) { scope.entries.set(tabId, entry); scope.selected = tabId; scope.bindingRevision++; return this.page(entry, scope); }
         await new Promise(resolve => setTimeout(resolve, 30));
       }
       unavailable('CardBush requested a new tab but it has not become ready. It may still open; do not automatically replay this request.', 'cardbush_page_open_timeout');
@@ -140,6 +164,7 @@ export class IntegratedBrowser {
     const guest = this.guest(entry);
     if (method === 'tabs.activate') {
       scope.selected = entry.tabId;
+      scope.bindingRevision++;
       this.options.action(scope.ownerId, { action: 'activate', tabId: entry.tabId });
       return this.page(entry, scope);
     }
@@ -148,6 +173,7 @@ export class IntegratedBrowser {
       this.unregister(scope.ownerId, { tabId: entry.tabId, guestWebContentsId: guest.id });
       scope.entries.delete(entry.tabId);
       if (scope.selected === entry.tabId) scope.selected = '';
+      scope.bindingRevision++;
       return { closed: true, pageId: guest.id };
     }
     if (method === 'tabs.navigate') {

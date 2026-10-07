@@ -15,7 +15,10 @@ including the MPL-2.0-covered axe-core dependency.
 
 The CardBush-authored cardbush-docs skill (including the former
 cardbush-agent-deploy documentation) and the
-replacement pptx and xlsx skills carry Apache-2.0 license texts in their folders.
-The replacement Office skills do not redistribute the previous proprietary
-skill implementation. External Office libraries and renderers retain their
-own licenses. See docs/BUNDLED_SKILL_LICENSES.md for scope and migration details.
+document plugins (xlsx, pptx, docx, pdf) carry Apache-2.0 license texts in their
+folders. They do not redistribute the previous proprietary skill implementation.
+The shared @cardbush/document-tools runtime bundles third-party libraries with
+their original licenses in node_modules. See
+packages/cardbush-document-tools/THIRD_PARTY_NOTICES.md and
+docs/BUNDLED_SKILL_LICENSES.md for scope and migration details.
+LibreOffice is an optional externally installed engine, not part of this bundle.

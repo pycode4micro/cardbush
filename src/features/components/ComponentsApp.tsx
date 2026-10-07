@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { AppLanguage } from '../../types';
@@ -57,7 +58,7 @@ export function ComponentsApp({ language }: { language: AppLanguage }) {
 function ComponentImport({ language, onClose, onAdd }: { language: AppLanguage; onClose: () => void; onAdd: (component: HtmlComponent) => void }) {
   const zh = language === 'zh', dialog = useRef<HTMLDialogElement>(null), [title, setTitle] = useState(''), [html, setHtml] = useState(''), [allowActions, setAllowActions] = useState(false), [error, setError] = useState('');
   useEffect(() => { dialog.current?.showModal(); const element = dialog.current; return () => element?.close(); }, []);
-  return <dialog className="inspector-page-dialog component-import" ref={dialog} aria-label={zh ? '自定义组件' : 'Custom component'} onCancel={onClose}>
+  return <dialog className="inspector-page-dialog component-import" ref={dialog} aria-label={zh ? '自定义组件' : 'Custom component'} onCancel={dialogEventHandler(onClose)}>
     <form onSubmit={event => { event.preventDefault(); try {
       if (!title.trim() || !html.trim()) throw new Error(zh ? '请填写名称和 HTML 内容' : 'Enter a name and HTML content');
       if (new TextEncoder().encode(html).length > maxComponentBytes) throw new Error(zh ? 'HTML 内容不能超过 256 KiB' : 'HTML must not exceed 256 KiB');

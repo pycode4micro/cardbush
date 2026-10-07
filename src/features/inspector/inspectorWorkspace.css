@@ -15,13 +15,9 @@ body.inspector-tile-dragging, body.inspector-tile-dragging * { cursor: grabbing 
 .inspector-tile-frame .right-inspector-navigation { padding: 5px; gap: 2px; }
 .inspector-tile-frame .right-inspector-address { min-width: 0; }
 .inspector-tile-frame .right-inspector-address input { min-width: 0; width: 100%; }
-.right-inspector-address :is(.inspector-bookmark-button, .inspector-translate-button) { flex: none; width: 26px; height: 26px; padding: 4px; border: 0; background: transparent; color: var(--text-soft); border-radius: 50%; }
-.right-inspector-address :is(.inspector-bookmark-button, .inspector-translate-button):hover,
-.right-inspector-address :is(.inspector-bookmark-button, .inspector-translate-button)[aria-pressed="true"] { color: var(--text); background: var(--hover); }
-.right-inspector-address .inspector-translate-button[data-error] { color: var(--text); }
-.inspector-translation-notice { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 4px 16px var(--shadow); font-size: 12px; }
-.inspector-translation-notice span { flex: 1; }
-.inspector-translation-notice button { flex: none; border: 0; background: transparent; color: inherit; padding: 2px 6px; border-radius: 50%; cursor: pointer; }
+.right-inspector-address .inspector-bookmark-button { flex: none; width: 26px; height: 26px; padding: 4px; border: 0; background: transparent; color: var(--text-soft); border-radius: 50%; }
+.right-inspector-address .inspector-bookmark-button:hover,
+.right-inspector-address .inspector-bookmark-button[aria-pressed="true"] { color: var(--text); background: var(--hover); }
 .inspector-tile-divider { position: absolute; z-index: 6; touch-action: none; }
 .inspector-tile-divider.axis-x { width: 8px; margin-left: -4px; cursor: col-resize; }
 .inspector-tile-divider.axis-y { height: 8px; margin-top: -4px; cursor: row-resize; }
@@ -37,12 +33,29 @@ body.inspector-layout-resizing { user-select: none; }
 /* Cover follows the actual viewport, while normal reveal/hide keeps its fixed inner width. */
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-resizer { display: none; }
-.desktop-shell.inspector-conversation-covered > .main-stage { flex: 0 0 0; width: 0; visibility: hidden; pointer-events: none; }
-.desktop-shell.inspector-conversation-covered > .right-inspector { flex: 1 0 0; width: 0; border-left: 0; transition: none; }
-.desktop-shell.inspector-conversation-covered > .right-inspector .right-inspector-content { width: 100%; }
+.desktop-shell > .main-stage {
+  opacity: 1; transform: none;
+  transition: opacity 180ms ease, transform var(--panel-motion-duration) var(--panel-motion-ease), visibility 0s;
+}
+.desktop-shell.inspector-conversation-covered > .main-stage {
+  opacity: 0; transform: translateX(-14px); visibility: hidden; pointer-events: none;
+  transition-delay: 0s, 0s, var(--panel-motion-duration);
+}
+/* Let the existing panel flex-basis motion close the remaining conversation
+   space, just like the sidebar. Keep the guest at its final width and clip it. */
+.desktop-shell.inspector-conversation-covered > .right-inspector {
+  flex-basis: calc(100cqw - 2px - var(--layout-sidebar-space)); border-left: 0;
+}
+.desktop-shell.inspector-conversation-covered > .right-inspector .right-inspector-content { width: calc(100cqw - 2px - var(--layout-sidebar-space)); }
 /* Keep the inspector in the same layout while dragging. Taking it out of flex
    expands the conversation underneath it and changes the pointer's origin. */
 body.right-inspector-resizing .desktop-shell > .right-inspector { transition: none; }
+.desktop-shell.inspector-window-resizing > .right-inspector { transition: none; }
+/* Only the automatic snap animates during a drag; retain pointer capture so
+   continuing to the window edge can still enter full cover. */
+body.right-inspector-resizing .desktop-shell.inspector-conversation-covered > .right-inspector {
+  transition: flex-basis var(--panel-motion-duration) var(--panel-motion-ease);
+}
 .desktop-shell { position: relative; }
 .inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
 .inspector-conversation-covered .inspector-cover-controls { left: calc(var(--layout-sidebar-space) + (100% - var(--layout-sidebar-space)) / 2); width: min(680px, calc(100% - var(--layout-sidebar-space) - 32px)); }
@@ -115,8 +128,29 @@ body.right-inspector-resizing .inspector-conversation-covered > .right-inspector
 .inspector-start-tools > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-start-tools kbd { border-radius: 6px; padding: 2px 6px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text-soft); font: inherit; font-size: 11px; white-space: nowrap; }
 .inspector-start-tools > button:focus-visible, .inspector-bookmark-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.inspector-start-bookmarks { margin-top: 36px; }
+.inspector-start-bookmarks { margin-top: 36px; min-width: 0; }
 .inspector-start-sites { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 10px; }
 .inspector-start-sites .inspector-bookmark-entry { flex: 0 0 112px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 17px; padding: 18px 10px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--text-mid); font: inherit; cursor: pointer; }
-.inspector-start-sites .inspector-bookmark-entry strong { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.inspector-start-sites .inspector-bookmark-entry strong { width: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; font-weight: 500; line-height: 1.5; }
+.inspector-bookmark-library { margin-top: 28px; min-width: 0; padding-bottom: 12px; }
+.inspector-bookmark-library > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.inspector-bookmark-library h2 { display: flex; align-items: center; gap: 9px; margin: 0; }
+.inspector-bookmark-library h2 > span { color: var(--text-soft); font-size: 11px; font-weight: 400; }
+.inspector-bookmark-library > header > div { display: flex; gap: 4px; }
+.inspector-bookmark-library > header button, .inspector-bookmarks-more { padding: 5px 9px; border: 0; border-radius: 7px; color: var(--text-soft); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.inspector-bookmark-library > header button:hover, .inspector-bookmarks-more:hover { color: var(--text); background: var(--hover); }
+.inspector-bookmark-search { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 11px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-soft); }
+.inspector-bookmark-search:focus-within { border-color: var(--accent); }
+.inspector-bookmark-search > svg { flex: none; }
+.inspector-bookmark-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
+.inspector-bookmark-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 6px; }
+.inspector-bookmark-link { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: 10px; color: var(--text); background: color-mix(in srgb, var(--text) 3%, var(--surface)); text-align: left; font: inherit; cursor: pointer; }
+.inspector-bookmark-link:hover { border-color: var(--border); background: color-mix(in srgb, var(--text) 7%, var(--surface)); }
+.inspector-bookmark-label { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 5px; }
+.inspector-bookmark-label > strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.5; font-size: 13px; font-weight: 500; }
+.inspector-bookmark-label > small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 11px; }
+.inspector-bookmark-label > small > svg { vertical-align: -2px; margin-right: 5px; }
+.inspector-bookmarks-empty { margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.7; }
+.inspector-bookmarks-more { display: block; margin: 12px auto 0; }
+.inspector-bookmark-library button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media(max-width:720px) { .desktop-shell.inspector-multi-page { --conversation-pane-min-width: 0px; } .inspector-tile-frame .right-inspector-navigation > .inspector-tile-history { display: none; } }

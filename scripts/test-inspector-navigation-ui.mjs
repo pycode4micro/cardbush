@@ -127,7 +127,7 @@ try {
     resolveId(id) {
       if(id.endsWith('__inspector_navigation__.tsx')) return '\0inspector-navigation.tsx';
       if(id.endsWith('runtime-client/ElectronRuntimeSession')) return '\0inspector-runtime';
-      if(id.endsWith('subagents/SubagentConversation')) return '\0child-navigation-view.tsx';
+      if(id.endsWith('/SubagentConversation')) return '\0child-navigation-view.tsx';
     },
     load(id) {
       if(id==='\0inspector-navigation.tsx') return source;

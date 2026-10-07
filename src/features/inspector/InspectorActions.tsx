@@ -1,8 +1,12 @@
-import { Clipboard, Clock3, FolderOpen, Globe2, PanelsTopLeft, Plus } from 'lucide-react';
+import { Clipboard, Clock3, FolderOpen, PanelsTopLeft, Plus } from 'lucide-react';
 import { useBrowserBookmarks } from './useBrowserBookmarks';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage } from '../../types';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
+import { useState } from 'react';
+import { BrowserLibraryDialog } from '../browser/BrowserLibraryDialog';
+import { BrowserSiteIcon } from '../browser/BrowserSiteIcon';
+import { BrowserStartBookmarks } from '../browser/BrowserStartBookmarks';
 
 /** Local new-tab content; navigation continues in the same browser tab. */
 export function InspectorActions({
@@ -33,6 +37,7 @@ export function InspectorActions({
   const zh = language === 'zh';
   const shortcuts = useKeyboardShortcuts();
   const bookmarks = useBrowserBookmarks();
+  const [bookmarkDialog, setBookmarkDialog] = useState<'bookmarks' | 'import' | null>(null);
   const actions = [
     ...(onOpenReview ? [{
       id: 'review', icon: <Clipboard size={16} aria-hidden="true" />,
@@ -89,12 +94,15 @@ export function InspectorActions({
       {onOpenBookmark && <section className="inspector-start-bookmarks" aria-label={zh ? '常用网站' : 'Shortcuts'}>
         <h2>{zh ? '常用网站' : 'Shortcuts'}</h2>
         <div className="inspector-start-sites">
-          {(bookmarks.length ? bookmarks : [{id:'google',title:'Google',url:'https://www.google.com/'}]).map(bookmark =>
-            <button key={bookmark.id} type="button" className="inspector-bookmark-entry" title={bookmark.url} onClick={() => onOpenBookmark(bookmark.url)}>
-              <Globe2 size={27} aria-hidden="true"/><strong>{bookmark.title}</strong>
+          {(bookmarks.length ? bookmarks.slice(0, 12) : [{id:'google',title:'Google',url:'https://www.google.com/'}]).map(bookmark =>
+            <button key={bookmark.id} type="button" className="inspector-bookmark-entry" title={`${bookmark.title}\n${bookmark.url}`} onClick={() => onOpenBookmark(bookmark.url)}>
+              <BrowserSiteIcon url={bookmark.url} size={27}/><strong>{bookmark.title}</strong>
             </button>)}
         </div>
       </section>}
+      {onOpenBookmark && <BrowserStartBookmarks language={language} onNavigate={onOpenBookmark}
+        onImport={() => setBookmarkDialog('import')} onManage={() => setBookmarkDialog('bookmarks')}/>}
+      {bookmarkDialog && <BrowserLibraryDialog kind={bookmarkDialog} language={language} onClose={() => setBookmarkDialog(null)} onNavigate={onOpenBookmark}/>}
     </div>
   );
 }

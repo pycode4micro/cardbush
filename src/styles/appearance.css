@@ -1,4 +1,12 @@
 /* Preferences affect typography and interaction without scaling window geometry. */
+/* Native visibility stays independent of background task and voice timers. */
+html[data-window-visible="false"] *,
+html[data-window-visible="false"] *::before,
+html[data-window-visible="false"] *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+
 .app {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: var(--ui-font-weight, 400);

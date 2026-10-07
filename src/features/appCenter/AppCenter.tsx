@@ -1,8 +1,10 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { AppWindow, Blocks, CalendarClock, ExternalLink, Globe, LayoutGrid, Pencil, Pin, Plus, Search, Settings, Trash2, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
+import { BrowserSiteIcon } from '../browser/BrowserSiteIcon';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { observeExplicitInteraction } from '../../shared/explicitInteraction';
@@ -21,6 +23,7 @@ const allowDrop = (event: DragEvent) => { if (event.dataTransfer.types.includes(
 export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; size?: number }) {
   const [failedIcon, setFailedIcon] = useState('');
   if (app.plugin) return <PluginGlyph plugin={app.plugin} />;
+  if (app.kind === 'web') return <BrowserSiteIcon url={app.target} icon={app.icon} size={size}/>;
   if (app.kind === 'local') return app.icon && app.icon !== failedIcon
     ? <img className="composer-plugin-option-logo" src={app.icon} alt="" draggable={false} onError={() => setFailedIcon(app.icon ?? '')}/>
     : <AppWindow size={size} aria-hidden="true"/>;
@@ -94,6 +97,10 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     if (suppressClick.current) return;
     opener.current = null; setOpen(false);
     try {
+      if (app.kind === 'web') {
+        if (!applicationLink(app.target)) throw new Error(zh ? '应用地址无效。' : 'Invalid app URL.');
+        current.current.onNavigate(app); return;
+      }
       if (app.kind === 'local') {
         if (!window.cardbushDesktop?.localApplications) throw new Error(zh ? '请在桌面应用中打开本地应用。' : 'Open local apps from the desktop app.');
         await window.cardbushDesktop.localApplications.open(app.target);
@@ -205,7 +212,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
   }, []);
   const startDrag = useCallback((event: DragEvent, id: string) => {
     event.dataTransfer.setData(dragType, id); event.dataTransfer.effectAllowed = 'move'; suppressClick.current = true;
-    const icon = event.currentTarget.querySelector('.app-center-tile-icon > svg, .app-center-tile-icon > img, :scope > svg, :scope > img');
+    const icon = event.currentTarget.querySelector('.app-center-tile-icon svg, .app-center-tile-icon img, :scope > svg, :scope > img, :scope > .browser-site-icon svg, :scope > .browser-site-icon img');
     dragPreview.current?.remove();
     if (icon) {
       const preview = document.createElement('div');
@@ -247,7 +254,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
   return <AppCenterContext.Provider value={context}>
     {children}
     {presence.mounted && <dialog ref={dialog} className="app-center-drawer" data-visible={presence.visible} data-dragging={Boolean(dragging)} aria-labelledby="app-center-title" aria-modal={!dragging} role="dialog"
-      onCancel={event => { event.preventDefault(); setOpen(false); }} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
+      onCancel={dialogEventHandler(event => { event.preventDefault(); setOpen(false); })} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
       <div className="app-center-content" inert={!open ? true : undefined}>
         <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{zh ? '应用中心' : 'App center'}</h2></div>
           <button type="button" className="app-center-icon" aria-label={zh ? '关闭应用中心' : 'Close app center'} title={zh ? '关闭 · Esc' : 'Close · Esc'} onClick={() => setOpen(false)}><X size={18}/></button>
@@ -260,6 +267,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
             {(app.kind === 'external' || app.launch?.kind === 'url') && <ExternalLink className="app-center-external" size={12}/>}</button>
           <div className="app-center-tile-actions"><button type="button" className={`app-center-icon${prefs.shortcuts.includes(app.id) ? ' selected' : ''}`} aria-pressed={prefs.shortcuts.includes(app.id)} aria-label={`${prefs.shortcuts.includes(app.id) ? (zh ? '取消固定' : 'Unpin') : (zh ? '固定到快捷方式' : 'Pin shortcut')} ${app.title}`} onClick={() => pin(app)}><Pin size={14}/></button>
             {app.kind === 'local' && <button type="button" className="app-center-icon" aria-label={`${zh ? '移除' : 'Remove'} ${app.title}`} title={zh ? '从应用中心移除' : 'Remove from app center'} onClick={() => save({ ...prefs, localApps: prefs.localApps?.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id) })}><Trash2 size={14}/></button>}
+            {app.kind === 'web' && <button type="button" className="app-center-icon" aria-label={`${zh ? '移除' : 'Remove'} ${app.title}`} title={zh ? '移除网页应用，保留网站数据' : 'Remove web app; keep site data'} onClick={() => save({ ...prefs, webApps: prefs.webApps?.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id), order: prefs.order?.filter(id => id !== app.id) })}><Trash2 size={14}/></button>}
             {app.kind === 'external' && <><button type="button" className="app-center-icon" aria-label={`${zh ? '编辑' : 'Edit'} ${app.title}`} onClick={() => setLink({ id: app.id, title: app.title, url: app.target })}><Pencil size={14}/></button>
               <button type="button" className="app-center-icon" aria-label={`${zh ? '删除' : 'Delete'} ${app.title}`} onClick={() => save({ ...prefs, links: prefs.links.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id) })}><Trash2 size={14}/></button></>}
           </div>

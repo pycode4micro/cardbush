@@ -1,0 +1,51 @@
+.browser-menu-popover {
+  position: fixed; inset: auto; margin: 0; padding: 6px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 14px;
+  color: var(--text); background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  box-shadow: 0 12px 38px #0003; backdrop-filter: blur(18px); font: inherit;
+}
+.browser-menu-popover > button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; text-align: left; color: inherit; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.browser-menu-popover button:hover, .browser-menu-popover button:focus-visible { background: color-mix(in srgb, var(--text) 9%, transparent); outline: none; }
+.browser-menu-popover button:disabled { opacity: .38; cursor: default; }
+.browser-menu-popover [role="separator"] { height: 1px; background: var(--border); margin: 5px 4px; }
+.browser-menu-zoom { display: flex; align-items: center; gap: 3px; padding: 5px 8px; font-size: 12px; }
+.browser-menu-zoom > span { flex: 1; }
+.browser-menu-zoom > button { display: grid; place-items: center; width: 27px; height: 27px; border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+.browser-menu-zoom output { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+.browser-find-bar, .browser-device-bar { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 9px; background: var(--surface); color: var(--text); border-bottom: 1px solid var(--border); font-size: 12px; }
+.browser-find-bar input { flex: 1 1 120px; min-width: 70px; }
+.browser-find-bar output { font-size: 11px; color: var(--text-soft); font-variant-numeric: tabular-nums; }
+.browser-device-bar input { width: 62px; }
+.browser-device-bar select { max-width: 115px; }
+.browser-find-bar button, .browser-device-bar button { display: grid; place-items: center; border: 0; border-radius: 5px; width: 27px; height: 27px; background: transparent; color: inherit; cursor: pointer; }
+.browser-find-bar button:hover, .browser-device-bar button:hover { background: var(--surface-raised); }
+.browser-find-bar input, .browser-device-bar input, .browser-device-bar select { padding: 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-raised); color: inherit; font: inherit; }
+.right-inspector-preview .right-inspector-webview { flex: 1 1 0; min-height: 0; }
+.browser-inline-error { flex: 0 0 auto; padding: 6px 10px; color: var(--warning); font-size: 12px; overflow-wrap: anywhere; }
+.browser-library-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 64px); box-sizing: border-box; margin: auto; padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 20px 80px #0004; font: inherit; }
+.browser-library-dialog::backdrop { background: #0005; }
+.browser-library-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.browser-library-dialog h2 { margin: 0; font-size: 17px; }
+.browser-library-dialog p, .browser-bookmark-import p { font-size: 12px; line-height: 1.65; }
+.browser-library-dialog button, .browser-bookmark-import button { padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.browser-library-dialog button:disabled, .browser-bookmark-import button:disabled { opacity: .5; cursor: default; }
+.browser-library-dialog [role="alert"], .browser-bookmark-import [role="alert"] { color: var(--warning); overflow-wrap: anywhere; }
+.browser-library-dialog input:not([type="checkbox"]), .browser-import-controls select { box-sizing: border-box; min-width: 0; border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; background: var(--surface-raised); color: inherit; font: inherit; font-size: 12px; }
+.browser-library-search { width: 100%; margin-bottom: 12px; }
+.browser-library-list { min-height: 100px; max-height: min(55vh, 520px); overflow: auto; scrollbar-width: thin; }
+.browser-library-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--border); }
+.browser-library-row > svg, .browser-library-row > button:not(.browser-library-link) { flex: 0 0 auto; }
+.browser-library-dialog .browser-library-link { flex: 1; min-width: 0; border: 0; background: transparent; text-align: left; padding: 4px; }
+.browser-library-link strong, .browser-download-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.browser-library-link small, .browser-download-info small { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 11px; }
+.browser-download-info { min-width: 0; flex: 1; }
+.browser-download-info progress { width: 100%; height: 4px; accent-color: var(--accent); }
+.browser-library-dialog footer { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.browser-library-dialog footer small { flex: 1; color: var(--text-soft); }
+.browser-import-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.browser-import-controls select { flex: 1 1 170px; }
+.browser-muted { color: var(--text-soft); }
+.browser-clear-options { display: grid; gap: 12px; }
+.browser-clear-options label { display: flex; gap: 9px; align-items: center; font-size: 13px; }
+.browser-clear-options input { accent-color: var(--accent); }
+.browser-clear-options > button { justify-self: end; }

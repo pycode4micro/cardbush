@@ -53,6 +53,49 @@ module.exports = async ({ run, until, pause, window, root }) => {
     showComponents();
   `);
   await until('document.querySelectorAll(".html-component-frame").length===2','component canvas');
+  await run(`
+    window.outerCancelCount=0;
+    renderView(h('dialog',{className:'cancel-test-parent',ref:node=>{if(node&&!node.open)node.showModal()},
+      onCancel:views.dialogEventHandler(event=>{event.preventDefault();outerCancelCount++}),style:{width:900,height:650}},
+      h(views.HtmlComponentContext.Provider,{value:componentHost},h(views.ComponentsApp,{language:'zh'}))));
+  `);
+  const importButton = await run(`(()=>{const rect=[...document.querySelectorAll('.components-app > header button')].find(x=>x.textContent==='自定义组件').getBoundingClientRect();return {x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)}})()`);
+  // A real gesture gives the nested modal its own Chromium CloseWatcher group.
+  window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...importButton});
+  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...importButton});
+  await until('!!document.querySelector(".component-import:modal")','component import opens');
+  await run(`
+    {
+    const input=document.querySelector('.component-import input:not([type])');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'未保存的组件');
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    document.querySelector('.component-import input[type=file]').dispatchEvent(new Event('cancel',{bubbles:true}));
+    }
+    void 0;
+  `);
+  await pause();
+  assert.equal(await run('!!document.querySelector(".component-import:modal")'),true,'cancelling file selection must retain component import');
+  assert.equal(await run('outerCancelCount'),0,'file cancellation does not dismiss the containing dialog either');
+  assert.equal(await run('document.querySelector(".component-import input:not([type])").value'),'未保存的组件','file cancellation retains unsaved draft');
+  await run(`
+    {
+    const files=new DataTransfer();files.items.add(new File(['<main>导入内容</main>'],'example.html',{type:'text/html'}));
+    const input=document.querySelector('.component-import input[type=file]');input.files=files.files;
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+    } void 0;
+  `);
+  await until('document.querySelector(".component-import textarea").value.includes("导入内容")','file import still works');
+  await run('document.querySelector(".component-import input[type=file]").dispatchEvent(new Event("cancel",{bubbles:true}));void 0');
+  assert.equal(await run('document.querySelector(".component-import textarea").value'),'<main>导入内容</main>','cancel/reselect retains imported HTML');
+  window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+  window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  await until('!document.querySelector(".component-import")','Escape still closes the component dialog');
+  assert.equal(await run('outerCancelCount'),0,'Escape on a nested dialog must not cancel its parent');
+  assert.equal(await run('document.querySelector(".cancel-test-parent").open'),true);
+  window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+  window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  await until('outerCancelCount===1','the parent still handles its own Escape');
+  await run('showComponents()');
   await run('[...document.querySelectorAll("button")].find(x=>x.textContent==="编辑布局").click();');
   await until('!!document.querySelector(".welcome-layout-editor")','new conversation layout edit');
   assert.equal(await run('document.querySelectorAll("[data-welcome-component]").length'),4,'editor starts with the welcome page, not the component catalog');

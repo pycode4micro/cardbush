@@ -61,6 +61,7 @@ Each conversation remembers its own model selection within its environment. The 
 | **Your start page** | Arrange clocks, a calendar, conversation starters and either composer style. Import custom HTML components, drag and resize with alignment guides, and use theme-aware events and permitted actions. |
 | **A browser workspace** | Save favorite pages, use multiple panes in Beta, and expand the right panel with a floating return/input capsule. |
 | **Tools that act** | Search and edit files, run commands, use subagents, add MCP plugins and skills, and schedule automations. Choose Ask for approval or Full access. |
+| **Document plugins** | Built-in XLSX, PPTX, Word and PDF plugins combine skills with bundled authoring libraries, progressive reading and validation. LibreOffice is optional for Office-to-PDF conversion and XLSX formula recalculation. |
 | **Local or remote** | Use the built-in Agent, an SSH project or an independent Agent service. Optionally give a personal Linux Agent its own graphical desktop, Computer Use and Browser Use. |
 | **Continuity** | Persistent conversations, context recovery, searchable archived tool results and usage records. Habit memory and next-step predictions are optional and off by default. |
 
@@ -108,6 +109,7 @@ Sandbox settings detect the host environment; dependency installation requires a
 | --- | --- |
 | Connect a model | [Providers, protocols and OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
 | Use the personal assistant | [Conversation, tasks, attachments and reset](docs/PERSONAL_ASSISTANT.md) |
+| Work with documents | [Built-in XLSX, PPTX, Word and PDF plugins](docs/DOCUMENT_PLUGINS.md) |
 | Set up voice | [Realtime calls](docs/REALTIME_VOICE.md) · [Local speech recognition and voices](docs/LOCAL_VOICE_MODELS.md) |
 | Customize your workspace | [HTML components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [App Center](assets/skills/cardbush-docs/references/app-center.md) |
 | Run an Agent remotely | [Service deployment](docs/AGENT_SERVICES.md) · [Docker and optional Linux desktop](deploy/agent/README.md) · [SSH projects](docs/SSH_WORKSPACES.md) |

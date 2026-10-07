@@ -6,6 +6,7 @@ import { ComposerPresentationContext } from '../composer/ComposerPresentationCon
 import type { BuiltinComponent } from './componentModel';
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { CalendarWidget } from '../automations/CalendarWidget';
+import { isWindowVisible, watchWindowVisibility } from '../../shared/windowVisibility';
 
 function useLocalTime() {
   const [now, setNow] = useState(() => new Date());
@@ -13,13 +14,13 @@ function useLocalTime() {
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       clearTimeout(timer);
-      if (document.hidden) return;
+      if (!isWindowVisible()) return;
       setNow(new Date());
       timer = setTimeout(tick, 1000 - Date.now() % 1000);
     };
     tick();
-    document.addEventListener('visibilitychange', tick);
-    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', tick); };
+    const unwatchVisibility = watchWindowVisibility(tick);
+    return () => { clearTimeout(timer); unwatchVisibility(); };
   }, []);
   return now;
 }

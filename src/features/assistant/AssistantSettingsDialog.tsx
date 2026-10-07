@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Lightbulb, RotateCcw, X } from 'lucide-react';
 import { readAssistantProfile, saveAssistantProfile } from './assistantProfile';
@@ -31,13 +32,10 @@ export function AssistantSettingsDialog({ language, onClose }: { language: 'zh' 
       onClose();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
   };
-  return <dialog ref={dialog} className="assistant-settings-dialog" aria-labelledby="assistant-settings-title" onCancel={event => {
-    // File pickers also emit a bubbling cancel event; only Escape on this dialog
-    // should dismiss the settings and discard its draft.
-    if (event.target !== event.currentTarget) return;
+  return <dialog ref={dialog} className="assistant-settings-dialog" aria-labelledby="assistant-settings-title" onCancel={dialogEventHandler(event => {
     event.preventDefault();
     onClose();
-  }} onClick={event => {
+  })} onClick={event => {
     if (event.target !== event.currentTarget) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();

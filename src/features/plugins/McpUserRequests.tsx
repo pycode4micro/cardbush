@@ -1,3 +1,4 @@
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
 import type { McpUserRequest } from '../../../electron/mcpDesktopHost';
 import './mcp-integration.css';
@@ -37,7 +38,7 @@ function McpRequestForm({ request, zh }: { request: McpUserRequest; zh: boolean 
     finally { setBusy(false); }
   };
   const update = (name: string, value: unknown) => setValues(current => { const next = { ...current }; if (value === undefined) delete next[name]; else next[name] = value; return next; });
-  return <dialog className="mcp-request-dialog" ref={dialog} aria-labelledby="mcp-request-title" onCancel={event => { event.preventDefault(); void answer('cancel'); }}>
+  return <dialog className="mcp-request-dialog" ref={dialog} aria-labelledby="mcp-request-title" onCancel={dialogEventHandler(event => { event.preventDefault(); void answer('cancel'); })}>
     <form ref={form} onSubmit={event => { event.preventDefault(); void answer('accept'); }}>
       <h2 id="mcp-request-title">{credentials ? (zh ? '保存插件 OAuth 凭据' : 'Save plugin OAuth credentials') : authentication ? (zh ? '插件需要登录' : 'Plugin sign-in required') : (zh ? '插件需要你的输入' : 'Plugin needs your input')}</h2>
       <p className="mcp-request-origin">{request.serverId}{request.sessionId && <> · {zh ? '会话' : 'Task'} {request.sessionId.slice(-12)}</>}</p>

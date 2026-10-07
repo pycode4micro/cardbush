@@ -7,7 +7,7 @@ import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import './agents.css';
 import { AgentConnectionForm } from './AgentConnectionForm';
 import { AgentConnectionStatus } from './AgentConnectionStatus';
-import { AgentDesktopView } from './AgentDesktopView';
+import { AgentDesktopPanel as AgentDesktopView } from './AgentDesktopPanel';
 import type { AgentConnectionsController } from './useAgentConnections';
 import { TopBar } from '../../components/TopBar';
 import { ChatPanel } from '../chat/ChatPanel';

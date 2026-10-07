@@ -42,6 +42,7 @@ async function buildFixture(directory) {
         import {realtimeConversationContext} from ${file('src/features/voice/realtimeAgentBridge.ts')};
         import {useAssistantProfile} from ${file('src/features/assistant/assistantProfile.ts')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/features/voice/voice.css')};
+        import ${file('src/features/inspector/inspectorWorkspace.css')};
         window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),
           voice:{settings:async()=>({engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,voice:'female',language:'zh-CN'}),
             cancel:async()=>{},setCallActive:async()=>{},transcribe:async()=>{if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);return{text:'录音发送也应定位到最新消息'};}}};
@@ -323,6 +324,7 @@ app.whenReady().then(async () => {
     await read(`fixture.entries.push({id:'after-task-reset',role:'user',content:'重新开始',source:'text',visibility:'conversation',createdAt:new Date().toISOString()});void 0`);
     await until('document.querySelectorAll(".assistant-message").length===1');
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),0,'reset does not resurrect earlier tasks');
+    await require('./helpers/assistant-reference-bubbles.cjs')({read,until,fill,click,pause,win,directory});
     assert.deepEqual(errors, []);
     console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, saved layout/resize, scroll follow, simple Composer, host selection, file picker/send/retry, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
   } finally { win.destroy(); clearTimeout(deadline); }

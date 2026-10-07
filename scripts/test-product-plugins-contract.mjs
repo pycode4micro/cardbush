@@ -19,6 +19,7 @@ const catalog = await loadProductPluginCatalog([{ path: bundledRoot, source: 'bu
 assert.deepEqual(catalog.map((plugin) => plugin.id), [
   'computer-use',
   'chrome',
+  'xlsx', 'pptx', 'docx', 'pdf',
 ]);
 for (const plugin of catalog) {
   assert.match(plugin.manifestPath, /\.codex-plugin[\\/]plugin\.json$/);
@@ -89,7 +90,7 @@ try {
       [{ path: bundledRoot, source: 'bundled' }],
       appsConfigPath,
     ),
-    [...(computerUsePlugin?.skillRoots ?? []), ...(chromePlugin?.skillRoots ?? [])],
+    catalog.flatMap(plugin => plugin.skillRoots ?? []),
   );
   assert.deepEqual(
     await loadEnabledProductPluginSkillRootEntries(
@@ -109,6 +110,8 @@ try {
         pluginName: 'Browser Use',
         pluginSource: 'bundled',
       })),
+      ...catalog.filter(plugin => ['xlsx', 'pptx', 'docx', 'pdf'].includes(plugin.id)).flatMap(plugin =>
+        plugin.skillRoots.map(path => ({ path, pluginId: plugin.id, pluginName: plugin.name, pluginSource: 'bundled' }))),
     ],
   );
   await writeFile(appsConfigPath, JSON.stringify({
@@ -122,7 +125,7 @@ try {
       [{ path: bundledRoot, source: 'bundled' }],
       appsConfigPath,
     ),
-    computerUsePlugin?.skillRoots,
+    catalog.filter(plugin => plugin.id !== 'chrome').flatMap(plugin => plugin.skillRoots ?? []),
   );
 
   await assert.rejects(installProductPlugin(join(bundledRoot, 'chrome'), temporary), /core capability/);

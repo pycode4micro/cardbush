@@ -75,6 +75,21 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run("lifecycleCard(1).querySelector('.inline-html-heading .inline-html-close').click()"); await pause();
     assert.equal(webContents.fromId(vizId), undefined, 'visualization close destroys its guest too');
     await run("lifecycleCard(1).querySelector('.inline-html-reopen').click()"); await ready(1);
+    const nativeGuests = await run('lifecycleIds()');
+    await run(`
+      window.lifecycleOldDesktop=window.cardbushDesktop;
+      window.cardbushDesktop={...lifecycleOldDesktop,isWindowVisible:async()=>true,
+        onWindowVisibilityChanged:fn=>{window.lifecycleNativeVisibility=fn;return()=>{window.lifecycleNativeVisibility=null}}};
+      window.lifecycleStopVisibility=views.installWindowVisibility();
+      undefined;
+    `);
+    await pause();
+    assert.equal(await run('document.visibilityState'), 'visible');
+    await run('lifecycleNativeVisibility(false)');
+    await until("document.querySelectorAll('webview').length===0", 'native hide releases all preview guests even with background throttling disabled');
+    assert.ok(nativeGuests.every(id => !webContents.fromId(id)));
+    await run('lifecycleNativeVisibility(true)'); await ready(1);
+    await run('lifecycleStopVisibility();window.cardbushDesktop=lifecycleOldDesktop;undefined');
     const pageGuests = await run('lifecycleIds()');
     await run("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.lifecyclePageHidden?'hidden':'visible'});window.lifecyclePageHidden=true;document.dispatchEvent(new Event('visibilitychange'))");
     await until("document.querySelectorAll('webview').length===0", 'hidden page releases all guests');

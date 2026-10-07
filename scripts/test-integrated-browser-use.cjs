@@ -130,6 +130,8 @@ async function run() {
   success(await call('release_browser'));
   assert.equal(guest.debugger.isAttached(),false);
   success(await call('take_snapshot',{limit:3}));
+  const assistantChild=await require('./helpers/assistant-browser.cjs')({router,ui,call,success,failure,guest,pageId,url,directory,until});
+  assert.equal(externalCalls.length,externalBefore,'assistant delegation never switches to Chrome');
   const newTab=success(await call('new_page',{url}));
   assert.notEqual(newTab.id,pageId);assert.ok(newTab.tabId.startsWith('browser:'));
   await until(()=>ui(`browserFixture.activeId===${JSON.stringify(newTab.tabId)}`),'New CardBush tab not visible in inspector');
@@ -143,6 +145,10 @@ async function run() {
   await ui(`browserFixture.closeTabs(new Set([${JSON.stringify(url)}]))`);
   await until(()=>guest.isDestroyed(),'Selected guest did not close');
   failure(await call('list_pages'),'cardbush_page_unavailable');
+  failure(await call('list_pages',{},assistantChild),'cardbush_page_unavailable');
+  await router.inheritScope('personal-assistant',assistantChild);
+  await router.inheritScope('personal-assistant','child-after-close');
+  failure(await call('list_pages',{},'child-after-close'),'cardbush_page_unavailable');
   assert.equal(externalCalls.length,externalBefore,'closed targets never fall back to Chrome');
   // An old @ with the same inspector identity cannot retarget a newly created guest.
   await ui(`browserFixture.open({target:${JSON.stringify(url)}})`);
@@ -151,9 +157,18 @@ async function run() {
   // Persisted CardBush selection after restart is fail-closed until explicitly re-selected.
   const restarted=new BrowserUseRouter(new IntegratedBrowser({getContents:()=>undefined,defaultOwner:()=>window.webContents,action(){}}),{external,routesPath});
   await assert.rejects(restarted.request('tabs.list',{scopeId:scope}),error=>error.code==='cardbush_browser_reselect_required');
+  await assert.rejects(restarted.request('tabs.list',{scopeId:assistantChild}),error=>error.code==='cardbush_browser_reselect_required');
+  assert.deepEqual(await restarted.inheritScope('personal-assistant','new-child-after-restart'),{inherited:false},'missing tabs cannot block unrelated child tasks');
+  await assert.rejects(restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),error=>error.code==='cardbush_browser_reselect_required');
   assert.equal(externalCalls.length,externalBefore);
   success(await call('select_browser',{connectionId:externalId}));
   assert.equal(success(await call('list_pages')).selectedPageId,637760547);
-  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
+  success(await call('select_browser',{connectionId:externalId},assistantChild));
+  await router.inheritScope('personal-assistant',assistantChild);
+  assert.equal(success(await call('list_pages',{},assistantChild)).selectedPageId,637760547,'unchanged parent binding preserves an explicitly selected child browser');
+  await ui(`browserFixture.reference('personal-assistant',${JSON.stringify(url)})`);
+  await router.inheritScope('personal-assistant',assistantChild);
+  assert.notEqual(success(await call('list_pages',{},assistantChild)).selectedPageId,637760547,'a fresh parent reference switches the child back to the intended CardBush tab');
+  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, assistant child delegation and re-binding, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
 }
 run().then(async()=>{await client?.close();await endpoint?.close();fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(0);},async error=>{console.error(error);await client?.close().catch(()=>{});await endpoint?.close().catch(()=>{});fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(1);});

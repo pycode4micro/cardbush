@@ -29,7 +29,13 @@ module.exports = async ({run,until,pause,window,root}) => {
     assert.equal(restored.minimum,maximized.minimum,'window modes share the same split policy');
     fs.writeFileSync(path.join(root,'tmp','inspector-window-restored.png'),(await window.webContents.capturePage()).toPNG());
 
-    // Compare resizing from the left and right to the same available width.
+    const taller = {...window.getBounds(),height:820};
+    window.emit('will-resize', {preventDefault(){}}, taller, {edge:'bottom-right'});
+    window.setBounds(taller);window.emit('resized');await pause(120);
+    assert.equal((await layout()).preferred,'720','height-only corner resizing must not save a temporarily clamped width');
+
+    // Programmatic viewport changes have no native drag intent, even if the
+    // window origin changes. They must retain the ordinary fitting behavior.
     for(const x of [0,360]) {
       window.setBounds({x,y:60,width:1440,height:800});await readable();await pause(300);
       assert.equal((await layout()).browser,720,'larger viewport restores the preferred width');
@@ -47,6 +53,60 @@ module.exports = async ({run,until,pause,window,root}) => {
     await readable();await pause(350);
     assert.equal((await layout()).preferred,'720');
     window.webContents.setZoomFactor(1);await readable();await pause(350);
+
+    // Supply native edge intent, then resize the real isolated BrowserWindow.
+    // CSS pixel deltas must stay correct at non-default renderer zoom too.
+    for (const [zoom, edge] of [[1, 'right'], [1.25, 'bottom-right']]) {
+      window.webContents.setZoomFactor(zoom);
+      window.setBounds({x:100,y:60,width:1440,height:900});
+      await run('coverWorkspace.setInspectorWidth(500,true)');await readable();await pause(300);
+      const before = await layout(), bounds = window.getBounds(), viewport = window.getContentBounds().width;
+      for (const delta of [200, 280]) {
+        const next = {...bounds,width:bounds.width+delta};
+        window.emit('will-resize', {preventDefault(){}}, next, {edge});
+        await until('document.querySelector(".desktop-shell").classList.contains("inspector-window-resizing")','native right edge starts pane resizing');
+        window.setBounds(next);
+        const expected = Math.round(before.browser+(window.getContentBounds().width-viewport)/zoom);
+        await until(`Math.abs(document.querySelector('.right-inspector').getBoundingClientRect().width-${expected})<2`,'right pane follows the outer edge');
+        const after = await layout();
+        assert.ok(Math.abs(after.chat-before.chat)<2,'right edge preserves conversation width');
+        assert.ok(Math.abs(after.boundary-before.boundary)<2,'right edge keeps the inner divider stationary');
+        assert.equal(await run('getComputedStyle(document.querySelector(".right-inspector")).transitionDuration'),'0s','pane tracks a native resize without animation lag');
+      }
+      window.emit('resized');
+      await until('!document.querySelector(".desktop-shell").classList.contains("inspector-window-resizing")','native gesture ends');
+      const resized = await layout();
+      assert.equal(resized.preferred,String(Math.round(resized.browser)),'manual right-edge width is remembered');
+      const left = {...window.getBounds(),x:20,width:window.getBounds().width+80};
+      window.emit('will-resize', {preventDefault(){}}, left, {edge:'left'});
+      window.setBounds(left);window.emit('resized');await pause(300);
+      assert.ok(Math.abs((await layout()).browser-resized.browser)<2,'left edge leaves the right pane width intact');
+      assert.ok((await layout()).chat>resized.chat+50,'left edge allocates space to the conversation');
+      window.setPosition(60,80);await pause(100);
+      assert.equal((await layout()).preferred,resized.preferred,'moving a window cannot resize its inspector');
+    }
+    window.webContents.setZoomFactor(1);
+    window.setBounds({x:0,y:0,width:1440,height:900});
+    await run('coverWorkspace.setInspectorWidth(720,true)');await readable();await pause(300);
+
+    const narrow = {...window.getBounds(),width:1020};
+    window.emit('will-resize', {preventDefault(){}}, narrow, {edge:'top-right'});
+    await until('document.querySelector(".desktop-shell").classList.contains("inspector-window-resizing")','right corner starts resizing');
+    window.setBounds(narrow);
+    await until('coverWorkspace.inspectorWidth===380','inward drag respects the right pane minimum');
+    window.emit('resized');await readable();await pause(100);
+    assert.equal((await layout()).preferred,'380','minimum-sized pane can be restored predictably');
+
+    window.setBounds({x:0,y:0,width:1440,height:900});
+    await run('coverWorkspace.setInspectorWidth(720,true)');await readable();await pause(300);
+    window.emit('will-resize', {preventDefault(){}}, {...window.getBounds(),width:1540}, {edge:'right'});
+    await until('document.querySelector(".desktop-shell").classList.contains("inspector-window-resizing")','interrupted resize starts');
+    window.setSize(1540,900);
+    await until('coverWorkspace.inspectorWidth===820','interrupted resize has a preview');
+    window.emit('maximize');
+    await until('!document.querySelector(".desktop-shell").classList.contains("inspector-window-resizing") && coverWorkspace.inspectorWidth===720','window mode change cancels native resizing');
+    assert.equal((await layout()).preferred,'720','maximize cannot save its delta as a manual pane width');
+    window.setSize(1440,900);await readable();await pause(300);
 
     // The remaining divider is genuinely draggable in an ordinary split.
     const point=await run(`(()=>{const r=document.querySelector('.right-inspector-resizer').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.top+100)};})()`);
@@ -80,7 +140,7 @@ module.exports = async ({run,until,pause,window,root}) => {
     assert.equal(await run('document.querySelector("webview").getWebContentsId()'),guestId,'window transitions preserve the same browser');
     assert.equal(await guest.executeJavaScript('window.layoutDraft'),'unsent browser state');
     assert.equal(await run('document.querySelector("textarea[data-composer-input]").value'),'keep draft','chat draft also survives');
-    console.log('Inspector window layout passed: restore/maximize sizes, both window edges, sidebar toggles, 125% zoom, draggable split, intentional cover and no duplicate boundary.');
+    console.log('Inspector window layout passed: native right-edge allocation, left-edge/move isolation, restore/maximize sizes, sidebar toggles, 125% zoom, draggable split, intentional cover and no duplicate boundary.');
   } finally {
     window.webContents.setZoomFactor(1);window.setBounds(originalBounds);
     await run('coverWorkspace.setWindowMaximized(false);coverWorkspace.setInspectorWidth(500,true)');await pause(300);

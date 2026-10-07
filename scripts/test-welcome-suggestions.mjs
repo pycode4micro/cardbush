@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
 import { InMemoryRuntimeHost, SessionStore } from '../packages/bush-runtime/dist/index.js';
@@ -12,7 +12,15 @@ function load(file) {
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText;
-  new Function('exports', 'require', code)(exports, createRequire(resolve(file)));
+  const require = createRequire(resolve(file));
+  new Function('exports', 'require', code)(exports, specifier => {
+    if (specifier.startsWith('.')) {
+      const base = resolve(dirname(file), specifier);
+      const source = [base, base + '.ts', base + '.tsx'].find(candidate => existsSync(candidate));
+      if (source && /\.tsx?$/.test(source)) return load(source);
+    }
+    return require(specifier);
+  });
   return exports;
 }
 const { buildWelcomeSuggestions, welcomePromptProse, welcomeTerms } = load('src/features/chat/welcomeSuggestionRanking.ts');
