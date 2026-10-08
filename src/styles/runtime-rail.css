@@ -451,7 +451,7 @@
   color: var(--accent);
 }
 
-.processing-context-panel.running .runtime-plan-detail li.in_progress > svg,
+.runtime-plan-detail .runtime-plan-spinner,
 .runtime-goal-rounds li svg.lucide-loader-circle {
   animation: cardbush-spin 900ms linear infinite;
 }

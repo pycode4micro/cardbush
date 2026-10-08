@@ -3,11 +3,13 @@ import {
   type FileRenderContext,
   type FileViewerRenderedInstance,
   type FileViewerZoomProvider,
+  type FileRenderExportAdapter,
 } from '@file-viewer/core';
 import pptFontUrl from '@file-viewer/ppt/ppt-font-cjk.otf?url';
 import pptWasmUrl from '@file-viewer/ppt/ppt-native.wasm?url';
 import pptWorkerUrl from '@file-viewer/ppt/worker.mjs?url';
 import spreadsheetWorkerUrl from '@file-viewer/renderer-spreadsheet/worker/sheet.worker.js?url';
+import pptxWorkerUrl from './office/pptx.worker.ts?worker&url';
 
 import './styles/officePreview.css';
 
@@ -52,7 +54,7 @@ root.innerHTML = `
     <section class="office-preview-error" hidden aria-live="assertive">
       <strong>完整预览加载失败</strong>
       <p data-office-error-message></p>
-      <button type="button" data-office-action="compat">使用兼容预览</button>
+      ${extension === '.pptx' ? '' : '<button type="button" data-office-action="compat">使用兼容预览</button>'}
     </section>
   </div>`;
 
@@ -68,6 +70,7 @@ let renderedInstance: FileViewerRenderedInstance | null = null;
 let zoomProvider: FileViewerZoomProvider | null = null;
 let unsubscribeZoom: (() => void) | null = null;
 let previewReady = false;
+let exportAdapter: FileRenderExportAdapter | null = null;
 
 if (surfaceElement == null) {
   throw new Error('Office preview surface is missing.');
@@ -217,6 +220,7 @@ async function renderOfficeFile() {
 
   setProgress(previewKind === 'spreadsheet' ? '正在还原工作簿…' : '正在还原幻灯片…');
   const context: FileRenderContext = {
+    registerExportAdapter: adapter => { exportAdapter = adapter; },
     filename: fileName,
     url: sourceUrl.toString(),
     signal: abortController.signal,
@@ -232,6 +236,7 @@ async function renderOfficeFile() {
         resizableRows: true,
       },
       presentation: {
+        ...(extension === '.pptx' ? { workerUrl: pptxWorkerUrl, workerType: 'module' as const } : {}),
         pptWasmUrl,
         pptFontUrl,
         pptWorkerUrl,
@@ -257,6 +262,11 @@ async function renderOfficeFile() {
   }
 
   previewReady = true;
+  if (extension === '.pptx' && exportAdapter && parameters.get('export') === 'png') {
+    const { presentationSnapshot } = await import('./office/presentationSnapshot');
+    (window as unknown as { cardbushPresentationExport: ReturnType<typeof presentationSnapshot> }).cardbushPresentationExport =
+      presentationSnapshot(exportAdapter);
+  }
   connectZoomProvider();
   setProgress(previewKind === 'spreadsheet' ? '工作簿已完整加载' : '幻灯片已完整加载', true);
 }

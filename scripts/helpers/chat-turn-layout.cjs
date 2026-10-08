@@ -5,6 +5,8 @@ const path = require('node:path');
 module.exports = async ({ run, until, pause, window, root }) => {
   await run(`
     window.layoutOriginal = { ...chatProps };
+    window.layoutMotionPreference = document.documentElement.dataset.motionPreference;
+    document.documentElement.dataset.motionPreference = 'off';
     window.goalCancelled = 0;
     window.turnReviews = [];
     window.layoutTool = { id: 'layout-tool', name: 'terminal_exec', state: 'completed', success: true,
@@ -30,6 +32,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
       onCancelGoal: async () => { goalCancelled++; }, onOpenChangeReview: (...args) => turnReviews.push(args) });
   `);
   await until("!!document.querySelector('.message-list .runtime-plan-detail')", 'live plan belongs to the current turn');
+  assert.equal(await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).animationName"), 'cardbush-spin', 'live plan spinner no longer requires the removed processing panel');
+  assert.equal(await run("getComputedStyle(document.querySelector('.runtime-plan-detail .completed > svg')).animationName"), 'none', 'completed steps do not rotate');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).backgroundImage"), 'none', 'plan is the only animated activity indicator');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-model.fallback svg')).animationName"), 'none', 'the fallback thinking icon also stays still while a plan is visible');
+  const planRotation = await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).transform");
+  await pause(130);
+  assert.notEqual(await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).transform"), planRotation, 'plan circle visibly rotates over time');
   assert.equal(await run("document.querySelector('.message-row.assistant .message-actions')"), null,
     'running loops mount no copy, retry or feedback actions');
   assert.equal(await run("document.querySelector('.composer-runtime-rail')"), null, 'empty queue leaves no status rail');
@@ -104,12 +113,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run(`window.completedLayoutPlan = { ...layoutPlan, nodes: layoutPlan.nodes.map(node => ({ ...node, status: 'completed' })) };
     updateChat({ messages: [layoutUser, { ...layoutAssistant, taskPlan: completedLayoutPlan }] });`);
   await until("!document.querySelector('.runtime-plan-detail')", 'all completed steps hide the live board before the turn finishes');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'thinking-mask-sweep', 'finishing the plan restores the thinking mask while work continues');
   assert.ok(await run("!!document.querySelector('.runtime-goal-detail') && !!document.querySelector('.turn-change-review')"),
     'plan completion preserves the goal and changed-files entry');
   await run("updateChat({ activeGoal: null, changeReports: [] })");
   await until("!document.querySelector('.turn-runtime-details')", 'a completed plan alone leaves no empty progress container');
   await run("updateChat({ messages: [layoutUser, layoutAssistant] })");
   await until("!!document.querySelector('.runtime-plan-detail')", 'new unfinished work restores the plan board');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'none', 'restoring the plan stops the thinking mask immediately');
   await run(`layoutAssistant = { ...layoutAssistant, status: 'completed', content: '会话布局已优化。',
     taskPlan: undefined, loopHistory: [{ ...layoutHistory, taskPlan: { ...completedLayoutPlan, active: false } }],
     metadata: { cardbush_turn_started_at: '2026-09-28T05:00:00Z',
@@ -149,12 +160,26 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run(`window.nextLayoutUser = { ...layoutUser, id: 'layout-next-user', turnId: 'layout-next', content: '继续检查' };
     window.nextLayoutAssistant = { id: 'layout-next-assistant', conversationId: 'layout-session', turnId: 'layout-next',
       role: 'assistant', status: 'streaming', content: '正在检查。' };
-    updateChat({ messages: [layoutUser, layoutAssistant, nextLayoutUser, nextLayoutAssistant], sending: true, activeTurnId: 'layout-next' });`);
+    updateChat({ messages: [layoutUser, layoutAssistant, nextLayoutUser, nextLayoutAssistant], selectedModel: 'gpt-6-astra', sending: true, activeTurnId: 'layout-next' });`);
   await until("!!document.querySelector('[data-message-id=layout-next-assistant] .assistant-thinking-process')", 'new turn starts');
+  await run("window.maskLabel=document.querySelector('[data-message-id=layout-next-assistant] .assistant-thinking-label');window.maskAnimation=maskLabel.getAnimations()[0];maskAnimation.pause();maskAnimation.currentTime=1100;undefined;");
+  assert.equal(await run("getComputedStyle(maskLabel).animationName"), 'thinking-mask-sweep', 'a new planless turn shows the running text mask');
+  assert.equal(await run("getComputedStyle(maskLabel).getPropertyValue('--thinking-mask-color').trim()"), '#000', 'dark theme uses a black mask over light text');
+  const positions = await run("maskAnimation.effect.getKeyframes().map(frame=>frame.backgroundPositionX)");
+  assert.deepEqual(positions, ['100%', '0%'], 'the enlarged mask moves through the text from left to right');
+  await run("maskLabel.scrollIntoView({block:'center',behavior:'instant'});undefined;");
+  await pause(180);
+  fs.writeFileSync(path.join(root, 'tmp', 'turn-thinking-mask-dark.png'), (await window.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.app').classList.replace('theme-dark','theme-bright');undefined;");
+  assert.equal(await run("getComputedStyle(maskLabel).getPropertyValue('--thinking-mask-color').trim()"), '#fff', 'light theme uses a light mask over dark text');
+  await pause(100);
+  fs.writeFileSync(path.join(root, 'tmp', 'turn-thinking-mask-bright.png'), (await window.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.app').classList.replace('theme-bright','theme-dark');maskAnimation.play();undefined;");
   assert.equal(await run("document.querySelector('[data-message-id=layout-next-assistant] .message-actions')"), null);
   await until("getComputedStyle(document.querySelector('[data-message-id=layout-assistant] .message-actions')).opacity === '0'",
     'previous turn actions return to hover-only when new work starts');
   await run("document.querySelector('.app').classList.add('has-custom-background')");
+  assert.equal(await run("getComputedStyle(maskLabel).animationName"), 'thinking-mask-sweep', 'custom backgrounds retain the same planless running feedback');
   assert.equal(await run("getComputedStyle(document.querySelector('[data-message-id=layout-assistant] .message-actions')).opacity"), '0',
     'custom backgrounds do not force older actions visible');
   await run("document.querySelector('[data-message-id=layout-assistant] .message-actions button').focus()");
@@ -171,6 +196,6 @@ module.exports = async ({ run, until, pause, window, root }) => {
     'older actions fade out after keyboard focus leaves');
   await run("updateChat({ activeConversationId: 'layout-other', messages: [], activeGoal: null })");
   await until("!document.querySelector('.turn-runtime-details') && !document.querySelector('.composer-runtime-rail')", 'switching sessions clears live state');
-  await run('updateChat(layoutOriginal)');
-  console.log('Turn layout passed: inline history, archived plans, live reasoning, goal cancellation, scoped review, queue-only rail and stable input position.');
+  await run("if (layoutMotionPreference === undefined) delete document.documentElement.dataset.motionPreference; else document.documentElement.dataset.motionPreference=layoutMotionPreference;updateChat(layoutOriginal);");
+  console.log('Turn layout passed: live plan rotation, exclusive theme-aware thinking masks, inline history, archived plans, live reasoning, goal cancellation, scoped review, queue-only rail and stable input position.');
 };

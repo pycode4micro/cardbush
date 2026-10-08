@@ -413,6 +413,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .right-inspector-tab-select,
+.right-inspector-tab-lock,
 .right-inspector-tab-close {
   position: relative;
   z-index: 1;
@@ -446,6 +447,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   white-space: nowrap;
 }
 
+.right-inspector-tab-lock,
 .right-inspector-tab-close {
   width: 24px;
   height: 24px;
@@ -459,13 +461,29 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .right-inspector-tab:hover .right-inspector-tab-close,
 .right-inspector-tab.active .right-inspector-tab-close,
+.right-inspector-tab:hover .right-inspector-tab-lock,
+.right-inspector-tab.active .right-inspector-tab-lock,
+.right-inspector-tab-lock:focus-visible,
 .right-inspector-tab-close:focus-visible {
   opacity: 0.68;
 }
 
+.right-inspector-tab-lock:hover,
 .right-inspector-tab-close:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.right-inspector-tab-lock.locked {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.right-inspector-tab-menu-item > .right-inspector-tab-lock {
+  width: 24px;
+  flex: 0 0 24px;
+  justify-content: center;
+  padding: 0;
 }
 
 .right-inspector-tab-audio,

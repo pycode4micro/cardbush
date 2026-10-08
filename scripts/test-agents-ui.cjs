@@ -48,16 +48,18 @@ app.whenReady().then(async () => {
       import {ChatSidebar} from ${JSON.stringify(path.join(root, 'src/features/sidebar/ChatSidebar.tsx'))};
       import ${JSON.stringify(path.join(root, 'src/styles/theme.css'))};
       import ${JSON.stringify(path.join(root, 'src/styles/app.css'))};
-      import {ConversationInspectorContext,ConversationInspectorOutlet,useConversationInspectorOutlets} from ${JSON.stringify(path.join(root,'src/features/inspector/ConversationInspector.tsx'))};
+      import {ConversationInspectorContext,ConversationInspectorOutlet,useConversationInspectorActions,useConversationInspectorOutlets} from ${JSON.stringify(path.join(root,'src/features/inspector/ConversationInspector.tsx'))};
+      import {agentInspectorWorkspace,localInspectorWorkspace} from ${JSON.stringify(path.join(root,'src/features/inspector/inspectorSessions.ts'))};
+      import {InspectorTabLock} from ${JSON.stringify(path.join(root,'src/features/inspector/InspectorTabLock.tsx'))};
       import {useInspectorTabs} from ${JSON.stringify(path.join(root,'src/hooks/useInspectorTabs.ts'))};
       import {InspectorTabPages} from ${JSON.stringify(path.join(root,'src/features/inspector/InspectorTabPages.tsx'))};
       import {RightInspectorResizer} from ${JSON.stringify(path.join(root,'src/components/RightInspectorResizer.tsx'))};
       const noop=()=>{};
-      function Fixture(){const agents=useAgentConnections();const tabs=useInspectorTabs();const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[sharedVision,setSharedVision]=useState(false);window.fixtureVision=sharedVision;const[viewActive,setViewActive]=useState(true);const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:window.models.models});
+      function Fixture(){const agents=useAgentConnections();const[viewActive,setViewActive]=useState(true);const scope=viewActive?agentInspectorWorkspace(agents.selectedId,agents.selectedSessions[agents.selectedId]||''):localInspectorWorkspace('fixture');const tabs=useInspectorTabs(scope);const registry=useConversationInspectorOutlets();const[width,setWidth]=useState(440);const[setting,setSetting]=useState(null);const[sharedVision,setSharedVision]=useState(false);window.fixtureVision=sharedVision;const[preferences,setPreferences]=useState({conversationStyle:{mode:'natural',customTone:''},thinking:{visible:true},guidance:{deliveryMode:'queue'},managedModelConfigs:window.models.models});
         const[composerTarget,setComposerTarget]=useState(null);window.fixtureComposerTarget=setComposerTarget;window.refreshAgentConnections=agents.refresh;
         window.openFixtureSettings=(id,section='mcp')=>setSetting({id,section});
-        const open=useCallback((id,title)=>tabs.openTab({id,title,kind:'conversation'}),[tabs.openTab]);const close=useCallback(id=>tabs.closeTabs(new Set([id])),[tabs.closeTabs]);
-        return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.tabs.length>0}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button><button onClick={()=>setViewActive(false)}>Local view</button><button onClick={()=>setViewActive(true)}>Agent view</button>{['a1','a2','a3'].map(id=><button key={id} onClick={()=>agents.select('a',id)}>{id}</button>)}</nav>
+        const {open,close}=useConversationInspectorActions({open:(id,title)=>{tabs.openTab({id,title,kind:'conversation'});tabs.setOpen(true);},close:id=>tabs.disposeTabs(new Set([id]))});window.fixtureInspector=tabs;
+        return <ConversationInspectorContext.Provider value={{open,close,outlets:registry.outlets,visible:tabs.open,visibleTabIds:new Set(tabs.open?[tabs.activeId]:[])}}> <div className="app theme-dark fixture-shell"><nav className="fixture-nav" hidden><button onClick={()=>agents.select('a')}>Select A</button><button onClick={()=>agents.select('b')}>Select B</button><button onClick={()=>agents.select('')}>Overview</button><button onClick={()=>setViewActive(false)}>Local view</button><button onClick={()=>setViewActive(true)}>Agent view</button>{['a1','a2','a3'].map(id=><button key={id} onClick={()=>agents.select('a',id)}>{id}</button>)}</nav>
         <ChatSidebar language="zh" section="agents" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}} agents={agents.connections} activeAgentId={agents.selectedId} agentSessions={agents} onAgentSelect={agents.select} onSectionChange={()=>agents.select('')} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop} onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenPlugins={noop} onOpenSearch={noop}/>
         <main className="main-stage" hidden={!!setting}><AgentsView composerPortalTarget={composerTarget} active={viewActive} language="zh" agents={agents} visualInputEnabled={sharedVision} onOpenSettings={section=>setSetting({section})}/></main>
         {setting&&<SettingsView active onReady={noop} language="zh" languageMode="zh" systemLanguage="zh" themePreference="dark"
@@ -68,10 +70,10 @@ app.whenReady().then(async () => {
           sidebarCollapsed={false} sidebarPresence={{mounted:true,visible:true}} sidebarWidth={260} onSidebarCollapse={noop} onSidebarWidthChange={noop}
           onToggleSkill={noop} onReloadSkills={async()=>[]} onLoadSkillDetail={async()=>null}
           visualInputAvailable visualInputEnabled={sharedVision} onVisualInputEnabledChange={setSharedVision}/>}
-        {tabs.tabs.length>0&&<aside id="right-inspector" className="right-inspector soft-panel-visible" style={{'--right-inspector-width':width+'px'}}>
+        {tabs.allTabs.length>0&&<aside id="right-inspector" aria-hidden={!tabs.open} inert={!tabs.open} className={'right-inspector '+(tabs.open?'soft-panel-visible':'soft-panel-hidden')} style={{'--right-inspector-width':width+'px'}}>
           <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} label="调整右侧栏"/>
-          <div className="right-inspector-viewport"><div className="right-inspector-content"><header className="right-inspector-toolbar"><span>审查</span><button aria-label="关闭审查" onClick={()=>close(tabs.activeId)}>×</button></header>
-          <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId}>{tab=><ConversationInspectorOutlet id={tab.id} register={registry.register}/>}</InspectorTabPages></div></div></div>
+          <div className="right-inspector-viewport"><div className="right-inspector-content"><header className="right-inspector-toolbar"><span>审查</span>{tabs.activeId&&<InspectorTabLock language="zh" locked={tabs.lockedIds.has(tabs.activeId)} onToggle={()=>tabs.toggleLock(tabs.activeId)}/>}<button aria-label="关闭审查" onClick={()=>tabs.closeTabs(new Set([tabs.activeId]))}>×</button></header>
+          <div className="right-inspector-body"><InspectorTabPages tabs={tabs.allTabs} activeId={tabs.activeId}>{tab=><ConversationInspectorOutlet id={tab.id} register={registry.register}/>}</InspectorTabPages></div></div></div>
         </aside>}</div></ConversationInspectorContext.Provider>};createRoot(document.getElementById('root')).render(<Fixture/>);` : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__agents_fixture__.tsx'), formats: ['iife'], name: 'AgentsFixture' }, rollupOptions: { output: { inlineDynamicImports: true } } } });
   const output = Array.isArray(result) ? result.flatMap(item => item.output) : result.output; const js = output.find(item => item.type === 'chunk').code; const css = output.filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => item.source).join('\n');
@@ -570,10 +572,27 @@ app.whenReady().then(async () => {
     assert.ok(await run("document.querySelector('.agent-chat .composer-stack textarea').value.includes('/srv/b/note.txt')"),'comment retains server path');
     await run("document.querySelector('[data-inspector-toggle]').click()");
     await until("!!document.querySelector('#right-inspector .change-review-dialog')",'reopen remote review');
+    await until("!!document.querySelector('.review-add-comment')", 'reopened review loaded');
+    await run("window.retainedReview=document.querySelector('#right-inspector .change-review-dialog');window.retainedReviewId=fixtureInspector.activeId;document.querySelector('.review-add-comment').click();undefined;");
+    await until("!!document.querySelector('textarea[aria-label=代码评论]')", 'retained review draft');
+    await run("var field=document.querySelector('textarea[aria-label=代码评论]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'跨会话保留审查草稿');field.dispatchEvent(new Event('input',{bubbles:true}));undefined;");
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select A').click()");
-    await until("!document.querySelector('#right-inspector') && document.querySelector('.agent-sidebar-row.active .project-title')?.textContent==='Build Agent'",'leaving the remote session closes its scoped review');
+    await until("document.querySelector('#right-inspector')?.getAttribute('aria-hidden')==='true' && document.querySelector('.agent-sidebar-row.active .project-title')?.textContent==='Build Agent'",'leaving hides the old remote review while retaining its portal');
+    assert.ok(await run("retainedReview===document.querySelector('#right-inspector .change-review-dialog')"), 'remote portal remains mounted while switching hosts');
     await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Select B').click()");
     await until("document.querySelector('.agent-chat .composer-stack textarea')?.value.includes('请补充服务端校验')",'return to B preserves its comment draft');
+    await until("fixtureInspector.activeId===retainedReviewId && fixtureInspector.open", 'B restores its original selected review');
+    assert.ok(await run("retainedReview===document.querySelector('#right-inspector .change-review-dialog')"), 'return reuses the original remote review DOM');
+    assert.equal(await run("document.querySelector('textarea[aria-label=代码评论]').value"), '跨会话保留审查草稿', 'review editor state survives navigation');
+    await run("document.querySelector('.right-inspector-tab-lock').click();[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Local view').click();undefined;");
+    await until("fixtureInspector.activeId===retainedReviewId && fixtureInspector.open", 'locked SSH review follows the local conversation');
+    assert.ok(await run("retainedReview===document.querySelector('#right-inspector .change-review-dialog')"), 'locked review keeps its remote host context');
+    await run("document.querySelector('.right-inspector-tab-lock').click();undefined;");
+    await until("fixtureInspector.tabs.length===0", 'unlock removes the remote page from the local workspace');
+    assert.ok(await run("retainedReview===document.querySelector('#right-inspector .change-review-dialog')"), 'unlock retains the remote original');
+    await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Agent view').click();undefined;");
+    await until("fixtureInspector.activeId===retainedReviewId", 'remote review returns to its owner');
+    await run("document.querySelector('[aria-label=关闭审查]').click();undefined;");
     const remoteMenu = async label => {
       await run("document.querySelector('[data-agent-id=b] .remote-conversation').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:100,clientY:260}))");
       await until("!!document.querySelector('[role=menuitem]')",'remote context menu');

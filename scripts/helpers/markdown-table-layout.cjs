@@ -26,8 +26,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
       renderView(h('section', { className: 'main-stage', style: { width: tableWidth + 'px', flex: '1 1 auto' } }, h(views.ChatPanel, chatProps)));
     };
     showTableFixture();
-    window.tableGeometry = () => {
-      const wrapper = document.querySelector('.markdown-table-scroll');
+    window.tableGeometry = (index = 0) => {
+      const wrapper = document.querySelectorAll('.markdown-table-scroll')[index];
       const prose = wrapper.closest('.markdown-content');
       const item = wrapper.closest('.message-list-item');
       const scroller = document.querySelector('.message-list');
@@ -58,14 +58,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
         label + ': prose uses the narrower reading width');
       assert.ok(Math.abs(box.composer.left - box.prose.left) <= 1 && Math.abs(box.composer.right - box.prose.right) <= 1,
         label + ': composer and prose stay aligned');
-      assert.ok(Math.abs(box.table.width - Math.min(box.available.width, 908)) <= 1,
-        label + ': table keeps its previous boundaries independently of prose width');
+      assert.ok(Math.abs(box.table.width - box.prose.width) <= 1,
+        label + ': wrappable content stays within the prose track: ' + JSON.stringify(box));
       assert.ok(box.rows.some(height => height > 48), label + ': longer explanations wrap across lines');
-      if (box.available.width > box.prose.width + 20) {
-        assert.ok(box.table.width > box.prose.width + 10, label + ': wide panes lend spare width to the table');
-        assert.ok(Math.abs(box.table.left + box.table.width / 2 - box.prose.left - box.prose.width / 2) < 1,
-          label + ': extension is balanced');
-      }
+      assert.ok(Math.abs(box.table.left - box.prose.left) <= 1,
+        label + ': a fitting table starts at the prose edge');
       if (theme === 'theme-dark' && width === 1200 && !inset) {
         window.webContents.invalidate(); await pause(100);
         fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
@@ -80,7 +77,54 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!document.querySelector('.assistant-active-transcript .markdown-table-scroll')", 'streaming table');
   await pause(280);
   const live = await run('tableGeometry()');
-  assert.ok(live.overflow <= 1 && live.table.width > live.prose.width + 10, 'streaming table wraps and uses the same extension');
+  assert.ok(live.overflow <= 1 && Math.abs(live.table.width - live.prose.width) <= 1, 'streaming wrappable tables stay aligned too');
+
+  const compact = [
+    '| 页 | 内容 |', '| --- | --- |',
+    '| 1 | 封面：满版仰拍楼宇照，居中三行白标题 + 左上样本文字 / 右上日期 |',
+    '| 2 | 议程：浅底深字，01–06 两列编号条目 |',
+    '| 3–7 | 人工智能 / 算力与芯片 / 连接技术 / 量子与前沿 / 挑战与建议，页眉照片带 + 三栏「细线标题 + 正文」 |',
+    '| 8 | 关键数据：四组数字（藏青细线 + 大号深色数字） |',
+    '| 9 | 技术路线图 2026–2030：细线节点 |',
+    '| 10 | 结束页：满版照片 + 居中致谢 + 底部素材说明 |',
+  ].join('\n');
+  const dense = (columns) => [
+    '| ' + Array.from({ length: columns }, () => '指标').join(' | ') + ' |',
+    '| ' + Array(columns).fill('---').join(' | ') + ' |',
+    '| ' + Array(columns).fill('值').join(' | ') + ' |',
+  ].join('\n');
+  // Expansion is driven by the actual table, independently for each block.
+  for (const theme of ['theme-dark', 'theme-bright']) {
+    await run(`viewTheme = ${JSON.stringify(theme)};
+      showTableFixture({ sending: false, activeTurnId: '', messages: [{ ...tableMessage, content: ${JSON.stringify(compact + '\n\n' + dense(26) + '\n\n' + compact)} }] });`);
+    await until("document.querySelectorAll('.markdown-table-scroll').length === 3", 'independent compact and dense tables');
+    const [before, wide, after] = await run('[tableGeometry(0), tableGeometry(1), tableGeometry(2)]');
+    for (const box of [before, after]) {
+      assert.ok(Math.abs(box.table.width - box.prose.width) <= 1 && Math.abs(box.table.left - box.prose.left) <= 1,
+        theme + ': the screenshot table fits without forced expansion');
+      assert.ok(box.overflow <= 1 && box.paneOverflow <= 1, theme + ': compact rows wrap without scrollbars');
+    }
+    assert.ok(wide.table.width > wide.prose.width + 10 && wide.table.width < 908,
+      theme + ': dense columns borrow only the necessary width: ' + JSON.stringify(wide));
+    assert.ok(wide.overflow <= 1 && wide.paneOverflow <= 1, theme + ': borrowing avoids horizontal scrolling');
+    assert.ok(Math.abs(wide.table.left + wide.table.width / 2 - wide.prose.left - wide.prose.width / 2) <= 1,
+      theme + ': the necessary extension is balanced');
+  }
+  await run(`showTableFixture({ sending: true, activeTurnId: 'table-turn', messages: [{ ...tableMessage, status: 'streaming', metadata: {}, content: ${JSON.stringify(dense(26))} }] })`);
+  await until("!!document.querySelector('.assistant-active-transcript .markdown-table-scroll')", 'dense streaming table');
+  assert.ok((await run('tableGeometry()')).table.width > live.prose.width + 10, 'dense streaming tables can expand');
+  await run(`showTableFixture({ messages: [{ ...tableMessage, status: 'streaming', metadata: {}, content: ${JSON.stringify(compact)} }] })`);
+  await until("document.querySelectorAll('.markdown-table-scroll tbody tr').length === 6", 'dense table replaced with compact content');
+  const restored = await run('tableGeometry()');
+  assert.ok(Math.abs(restored.table.width - restored.prose.width) <= 1, 'replacing wide content immediately restores prose alignment');
+  // Beyond the pane's available width, keep scrolling local to the table.
+  await run(`tableWidth = 520; document.querySelector('.app').style.width = '520px';
+    showTableFixture({ sending: false, activeTurnId: '', messages: [{ ...tableMessage, content: ${JSON.stringify(dense(40))} }] })`);
+  await until("document.querySelectorAll('.markdown-table-scroll th').length === 40", 'unavoidably wide table');
+  const bounded = await run('tableGeometry()');
+  assert.ok(bounded.overflow > 1 && bounded.paneOverflow <= 1, 'extreme tables scroll locally without overflowing the conversation');
+  assert.ok(bounded.table.left >= bounded.available.left - 1 && bounded.table.right <= bounded.available.right + 1,
+    'fallback table remains inside the narrow pane');
   // User/quoted tables and the inspector do not borrow the outer pane width.
   for (const role of ['user', 'assistant']) {
     const quoted = role === 'assistant' ? content.split('\n').map(line => '> ' + line).join('\n') : content;
@@ -93,5 +137,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelectorAll('.markdown-table-scroll tbody tr').length === 5", 'inspector table');
   assert.ok(await run("(() => { const table = document.querySelector('.markdown-table-scroll'); return table.scrollWidth <= table.clientWidth + 1; })()"), 'inspector wraps the same content');
   await run('renderView(null)');
-  console.log('Markdown table layout passed: wrapped Chinese/English, code and file links, balanced expansion, narrow/docked panes, streaming and bounded nested tables.');
+  console.log('Markdown table layout passed: fitting tables align with prose, dense tables expand only as needed, independent blocks, content changes, narrow/docked panes, streaming and bounded nested tables.');
 };

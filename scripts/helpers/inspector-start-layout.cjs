@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async ({ run, until, pause, window, root }) => {
+  await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/features/inspector/inspectorWorkspace.css'), 'utf8'));
   await run(`
     window.inspectorActions = [];
     window.startProps = {
@@ -29,13 +30,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
         const body = document.querySelector('.right-inspector-body').getBoundingClientRect();
         const actions = document.querySelector('.right-inspector-start-actions').getBoundingClientRect();
         return { topAligned: Math.abs(actions.y - body.y) < 2,
+          columns: getComputedStyle(document.querySelector('.inspector-start-tools')).gridTemplateColumns.split(' ').length,
           contained: [...document.querySelectorAll('[data-inspector-action]')].every(button => {
             const bounds = button.getBoundingClientRect();
             const text = button.querySelector('strong');
             return bounds.left >= body.left && bounds.right <= body.right && text.scrollWidth <= text.clientWidth;
           }) };
       })()`);
-      assert.deepEqual(layout, { topAligned: true, contained: true }, `${theme} ${width}px layout`);
+      assert.deepEqual(layout, { topAligned: true, columns: width > 500 ? 2 : 1, contained: true }, `${theme} ${width}px layout`);
     }
   }
   for (const id of ['review', 'files', 'shadow']) {

@@ -432,8 +432,11 @@
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-.app.has-custom-background .assistant-thinking,
 .app.has-custom-background .assistant-thinking-label {
+  color: var(--text);
+}
+
+.app.has-custom-background .assistant-thinking {
   color: var(--text);
   background: none;
   -webkit-background-clip: border-box;

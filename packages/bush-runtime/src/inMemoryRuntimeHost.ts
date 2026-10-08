@@ -923,6 +923,21 @@ export class InMemoryRuntimeHost {
       case GET_RUNTIME_SESSION_COMMAND: {
         const input = runtimeSessionReadRequestSchema.parse(command.payload);
         const snapshot = this.#sessions.snapshot(input.sessionId);
+        if (snapshot?.metadata?.agentRole === 'child') {
+          // A read-only UI projection; never return the child's private request/binding.
+          const active = this.#recovery.cacheRoots().find(item => item.request.sessionId === input.sessionId &&
+            this.#activeTurns.has(JSON.stringify([input.sessionId, item.request.turnId])))?.request;
+          const latest = snapshot.turns.at(-1);
+          const saved = active || await this.#subagentResume.load(input.sessionId);
+          const model = active?.model || latest?.usage.model || saved?.model;
+          const replay = [...latest?.messages ?? []].reverse().find(entry => entry.message.role === 'assistant' &&
+            entry.message.providerReplay?.model === model)?.message;
+          const modelConfigId = active?.providerBinding?.bindingId ||
+            (replay?.role === 'assistant' ? replay.providerReplay?.providerBinding?.bindingId : undefined) ||
+            (saved?.model === model ? saved?.providerBinding?.bindingId : undefined);
+          if (model) snapshot.metadata.executionModel = { model, modelConfigId,
+            turnId: active?.turnId || latest?.turnId || saved?.turnId };
+        }
         if (!snapshot || input.messageProjection === "full") return snapshot ?? null;
         return conversationSessionSnapshot(snapshot);
       }

@@ -57,7 +57,9 @@ module.exports = async ({ window, read, waitFor, activeReady, origin, webContent
   await read(`browserFixture.toggleBrowserBookmark(${JSON.stringify(origin+'/favorite')},'收藏网站'); document.querySelector('.right-inspector-new-tab').click(); void 0`);
   await waitFor('browserFixture.tabs.length===8'); await activeReady();
   assert.notEqual(await read('browserFixture.activeId'), firstTab, 'blank tabs have independent identities');
-  await click(window.webContents, prefix+'.inspector-bookmark-entry');
+  await click(window.webContents, prefix+'[data-site-view=bookmarks]');
+  await waitFor(`document.querySelector('${prefix}.inspector-bookmark-link')!==null`);
+  await click(window.webContents, prefix+'.inspector-bookmark-link');
   await waitFor(`browserFixture.navigation[browserFixture.activeId]?.url===${JSON.stringify(origin+'/favorite')}`);
   await activeReady();
   assert.equal(await read('browserFixture.tabs.length'), 8, 'bookmarks navigate within the new tab');

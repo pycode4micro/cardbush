@@ -1,12 +1,13 @@
-import { Clipboard, Clock3, FolderOpen, PanelsTopLeft, Plus } from 'lucide-react';
-import { useBrowserBookmarks } from './useBrowserBookmarks';
+import { Clipboard, Clock3, Ellipsis, FolderOpen, PanelsTopLeft, Plus, Save } from 'lucide-react';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage } from '../../types';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { useState } from 'react';
 import { BrowserLibraryDialog } from '../browser/BrowserLibraryDialog';
-import { BrowserSiteIcon } from '../browser/BrowserSiteIcon';
 import { BrowserStartBookmarks } from '../browser/BrowserStartBookmarks';
+import { InspectorLayoutDialog } from './InspectorLayoutDialog';
+import { useSavedInspectorLayouts } from './useSavedInspectorLayouts';
+import type { SavedInspectorLayout } from './savedInspectorLayouts';
 
 /** Local new-tab content; navigation continues in the same browser tab. */
 export function InspectorActions({
@@ -21,6 +22,8 @@ export function InspectorActions({
   onOpenBookmark,
   onMultiPage,
   multiPage = false,
+  onSaveLayout,
+  onOpenLayout,
 }: {
   language: AppLanguage;
   filesAvailable: boolean;
@@ -33,11 +36,14 @@ export function InspectorActions({
   onOpenBookmark?: (url: string) => void;
   onMultiPage?: () => void;
   multiPage?: boolean;
+  onSaveLayout?: () => void;
+  onOpenLayout?: (layout: SavedInspectorLayout) => void;
 }) {
   const zh = language === 'zh';
   const shortcuts = useKeyboardShortcuts();
-  const bookmarks = useBrowserBookmarks();
   const [bookmarkDialog, setBookmarkDialog] = useState<'bookmarks' | 'import' | null>(null);
+  const savedLayouts = useSavedInspectorLayouts();
+  const [editingLayout, setEditingLayout] = useState<SavedInspectorLayout | null>(null);
   const actions = [
     ...(onOpenReview ? [{
       id: 'review', icon: <Clipboard size={16} aria-hidden="true" />,
@@ -90,19 +96,20 @@ export function InspectorActions({
       {onAddPage && <button type="button" className="inspector-add-page" onClick={onAddPage}>
         <Plus size={16} aria-hidden="true"/><span><strong>{zh ? '添加页面' : 'Add page'}</strong></span>
       </button>}
+      {multiPage && onSaveLayout && <button type="button" data-inspector-action="save-layout" onClick={onSaveLayout}>
+        <Save size={16} aria-hidden="true"/><span><strong>{zh ? '保存多页面' : 'Save layout'}</strong></span>
+      </button>}
+      {onOpenLayout && savedLayouts.map(layout => <div key={layout.id} className="inspector-saved-layout" data-saved-layout={layout.id}>
+        <button type="button" className="inspector-saved-layout-open" onClick={() => onOpenLayout(layout)}>
+          <PanelsTopLeft size={16} aria-hidden="true"/><span><strong>{layout.name}</strong></span><small>{layout.pages.length}</small>
+        </button>
+        <button type="button" className="inspector-saved-layout-edit" aria-label={zh ? `编辑 ${layout.name}` : `Edit ${layout.name}`} onClick={() => setEditingLayout(layout)}><Ellipsis size={15} aria-hidden="true"/></button>
+      </div>)}
       </section>
-      {onOpenBookmark && <section className="inspector-start-bookmarks" aria-label={zh ? '常用网站' : 'Shortcuts'}>
-        <h2>{zh ? '常用网站' : 'Shortcuts'}</h2>
-        <div className="inspector-start-sites">
-          {(bookmarks.length ? bookmarks.slice(0, 12) : [{id:'google',title:'Google',url:'https://www.google.com/'}]).map(bookmark =>
-            <button key={bookmark.id} type="button" className="inspector-bookmark-entry" title={`${bookmark.title}\n${bookmark.url}`} onClick={() => onOpenBookmark(bookmark.url)}>
-              <BrowserSiteIcon url={bookmark.url} size={27}/><strong>{bookmark.title}</strong>
-            </button>)}
-        </div>
-      </section>}
       {onOpenBookmark && <BrowserStartBookmarks language={language} onNavigate={onOpenBookmark}
         onImport={() => setBookmarkDialog('import')} onManage={() => setBookmarkDialog('bookmarks')}/>}
       {bookmarkDialog && <BrowserLibraryDialog kind={bookmarkDialog} language={language} onClose={() => setBookmarkDialog(null)} onNavigate={onOpenBookmark}/>}
+      {editingLayout && <InspectorLayoutDialog language={language} saved={editingLayout} snapshot={null} onClose={() => setEditingLayout(null)}/>}
     </div>
   );
 }

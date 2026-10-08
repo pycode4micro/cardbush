@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { access, copyFile, link, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, link, mkdir, mkdtemp, rm, stat, writeFile, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { dirname, basename, extname, join, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -72,6 +72,28 @@ export async function authorDocument(kind, request) {
     for (const { file, hash } of originals) if (await fingerprint(file) !== hash) throw new Error('An original changed during editing; outputs were not published.');
     return { status: 'created', validations,
       note: 'Structure was checked. Review formula results and render the output before claiming calculation or visual correctness.' };
+  });
+}
+
+export async function renderPresentation(request) {
+  const source = absolute(request.path); assertFormat('pptx', source);
+  if (extname(request.output).toLowerCase() !== '.png') throw new Error('Presentation preview output must be a new PNG.');
+  const executable = process.env.CARDBUSH_PRESENTATION_EXPORT_EXECUTABLE;
+  const entry = process.env.CARDBUSH_PRESENTATION_EXPORT_ENTRY;
+  if (!executable || !entry) throw Object.assign(new Error('CardBush desktop PNG renderer is unavailable on this host. Use a desktop host or an installed Office renderer.'), { code: 'document_engine_unavailable' });
+  await fileBytes(source);
+  const before = await fingerprint(source);
+  if (request.expected_sha256 && request.expected_sha256 !== before) throw new Error('Presentation changed since inspection.');
+  return withOutputs([request.output], async ([output], root) => {
+    const job = join(root, 'presentation.json'), receipt = join(root, 'presentation-result.json');
+    await writeFile(job, JSON.stringify({ ...request, path: source, output, expected_sha256: before }));
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    const command = await runResourceManagedCommand({ executable, args: [entry, '--cardbush-presentation-export', job, receipt],
+      env, cwd: root, timeoutMs: 90_000, memoryCeilingBytes: 768 * 1024 ** 2, maxOutputBytes: 32_768 });
+    const result = await readFile(receipt, 'utf8').then(JSON.parse).catch(() => null);
+    if (command.exitCode !== 0 || !result?.ok) throw new Error(result?.error ?? `Presentation renderer failed (${command.exitCode}): ${command.stderr.slice(-1000)}`);
+    if (await fingerprint(source) !== before) throw new Error('Presentation changed while rendering.');
+    return { status: 'rendered', ...result.result };
   });
 }
 

@@ -3,9 +3,10 @@ import { localConversationBackend, type ConversationBackend } from '../../backen
 import type { ConversationRuntime } from '../../backend/conversationRuntime';
 import type { SubagentDispatchEvent, SubagentTaskSnapshot } from '../../types';
 import { SUBAGENT_DISPATCH_UI_EVENT } from './subagentObservabilityEvents';
+import { subagentExecutionModel, type SubagentExecutionModel } from './subagentConversationModel';
 
 /** Child sessions are hidden from Recents, but use the ordinary conversation controller. */
-export function subagentConversationBackend({ base = localConversationBackend, runtime, sessionId, readTasks, knownTask, onSubmitted, onTasksChanged }: {
+export function subagentConversationBackend({ base = localConversationBackend, runtime, sessionId, readTasks, knownTask, onSubmitted, onTasksChanged, onExecutionModel }: {
   base?: ConversationBackend;
   runtime: ConversationRuntime;
   sessionId: string;
@@ -13,6 +14,7 @@ export function subagentConversationBackend({ base = localConversationBackend, r
   knownTask: () => SubagentTaskSnapshot;
   onSubmitted: () => void;
   onTasksChanged?: (tasks: SubagentTaskSnapshot[]) => void;
+  onExecutionModel?: (model: SubagentExecutionModel) => void;
 }): ConversationBackend {
   const requireContinuation = async (signal?: AbortSignal) => {
     const capabilities = await runtime.client.getCapabilities(signal);
@@ -24,11 +26,24 @@ export function subagentConversationBackend({ base = localConversationBackend, r
     keepRunningOnUnmount: !base.scope,
     fetchConversations: async () => {
       const session = await runtime.client.getSession(sessionId);
+      const model = subagentExecutionModel(session?.metadata?.executionModel);
+      if (model) onExecutionModel?.(model);
       return session ? [api.runtimeConversation(session)] : [];
     },
+    streamTurnEvents: request => base.streamTurnEvents({ ...request, onContextWindowUsage: usage => {
+      if (usage.sessionId === sessionId && usage.model) onExecutionModel?.({ model: usage.model, turnId: usage.turnId });
+      request.onContextWindowUsage?.(usage);
+    } }),
     streamChat: async request => {
       await requireContinuation(request.signal);
-      return base.streamChat({ ...request, onStart: start => { request.onStart?.(start); onSubmitted(); } });
+      return base.streamChat({ ...request, onStart: start => {
+        onExecutionModel?.({ model: request.model, modelConfigId: request.modelConfig?.id, turnId: start.turnId });
+        request.onStart?.(start); onSubmitted();
+      },
+        onContextWindowUsage: usage => {
+          if (usage.sessionId === sessionId && usage.model) onExecutionModel?.({ model: usage.model, turnId: usage.turnId });
+          request.onContextWindowUsage?.(usage);
+        } });
     },
     editMessage: async (...args) => { await requireContinuation(args[0].signal); return base.editMessage(...args); },
     ...(base.queue ? { queue: { ...base.queue, enqueue: async request => { await requireContinuation(request.signal); await base.queue!.enqueue(request); } } } : {}),

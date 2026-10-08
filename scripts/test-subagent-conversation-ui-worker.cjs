@@ -15,12 +15,24 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(join(process.argv[2],'index.html'));
     await until(`window.streams.has('a') && !!document.querySelector('[data-composer-input]')`);
+    await until(`document.querySelector('.model-select')?.textContent.includes('gpt-6-astra')`);
+    assert.equal(await read(`localStorage.getItem('cardbush.conversation_model:'+JSON.stringify(['subagent:a','a']))`),'gpt','repair the old child UI default from the actual inherited binding');
     assert.equal(await read(`document.querySelectorAll('.subagent-conversation .chat-panel').length`),1);
     await until(`document.querySelector('.send-button svg.lucide-square') !== null`);
     await until(`document.querySelector('.tool-execution-block')?.textContent.includes('读取布局文件')`);
     assert.ok(await read(`document.body.innerText.includes('上一轮已核对文件范围。')`),'initial running status must not fence out existing history');
     await read(`window.retainedChildComposer=document.querySelector('.composer-surface');window.retainedChildTool=document.querySelector('.tool-execution-block');window.retainedChildInput=document.querySelector('[data-composer-input]');`);
     await wait(3200);
+    assert.match(await read(`document.querySelector('.model-select').textContent`),/gpt-6-astra/,'polling keeps the executed model rather than the global default');
+    await read(`document.querySelector('.model-select').click()`);
+    await until(`!!document.querySelector('.composer-popover')`);
+    await read(`Array.from(document.querySelectorAll('.composer-popover button')).find(n=>n.textContent.includes('deepseek-flash')).click()`);
+    await wait(1700);
+    assert.match(await read(`document.querySelector('.model-select').textContent`),/deepseek-flash/,'explicit selection for the next message is not reset by polling');
+    assert.ok(await read(`!!document.querySelector('.assistant-thinking-model.model-openai')`),'running thought branding still follows the executing model after choosing a different next-turn model');
+    await read(`document.querySelector('.model-select').click()`);
+    await until(`!!document.querySelector('.composer-popover')`);
+    await read(`Array.from(document.querySelectorAll('.composer-popover button')).find(n=>n.textContent.includes('gpt-6-astra')).click()`);
     assert.ok(await read(`document.querySelector('.send-button svg.lucide-square') !== null`),'empty running composer keeps Stop across polling');
     assert.ok(await read(`document.querySelector('.composer-surface')===retainedChildComposer && document.querySelector('.tool-execution-block')===retainedChildTool && document.querySelector('[data-composer-input]')===retainedChildInput`),'polling preserves composer and tool DOM');
     const geometry=await read(`(()=>{const panel=document.querySelector('.subagent-conversation').getBoundingClientRect(),composer=document.querySelector('.composer-surface').getBoundingClientRect(),row=document.querySelector('.message-row.assistant').getBoundingClientRect();return {bottom:panel.bottom-composer.bottom,left:row.left-composer.left,right:row.right-composer.right,padding:getComputedStyle(document.querySelector('.composer-dock')).paddingBottom}})()`);
@@ -51,11 +63,13 @@ app.whenReady().then(async () => {
     await read(`window.setSource(true,'a')`);
     await until(`!!document.querySelector('.composer-queue-button')`);
     await read(`window.show('b')`); await until(`window.streams.has('b')`);
+    await until(`document.querySelector('.model-select')?.textContent.includes('deepseek-flash')`);
     assert.equal(await read(`document.querySelectorAll('.composer-queue-button').length`),0,'sibling does not inherit child queue');
     await read(`window.finish('a')`);
     await until(`window.calls.some(item=>item.kind==='send'&&item.sessionId==='a'&&item.text==='完成后检查字体') && window.streams.has('a')`);
     assert.equal(await read(`window.calls.filter(item=>item.kind==='send'&&item.text==='完成后检查字体').length`),1,'accepted queue continues once after closing its view');
     assert.equal(await read(`window.calls.find(item=>item.kind==='send'&&item.text==='完成后检查字体').sourceEnabled`),false,'queued Source state is frozen despite later toggle');
+    assert.equal(await read(`window.calls.find(item=>item.kind==='send'&&item.text==='完成后检查字体').modelConfigId`),'gpt','a child continuation uses the correctly displayed inherited configuration');
     assert.equal(await read(`window.calls.find(item=>item.kind==='guide').sourceEnabled`),true,'Source defaults on for child guidance');
     await read(`window.finish('a'); window.show('a')`);
     await until(`document.body.innerText.includes('完成后检查字体')`);
@@ -88,6 +102,7 @@ app.whenReady().then(async () => {
     assert.ok(!await read(`document.body.innerText.includes('请先检查宽度')`),'sibling transcript is isolated');
     assert.equal(await read(`document.querySelector('[data-composer-input]').value`),'');
     await read(`window.show('a')`);await until(`document.querySelector('[data-composer-input]')?.value==='未发送草稿'`);
+    await until(`document.querySelector('.model-select')?.textContent.includes('gpt-6-astra')`);
     await until(`document.body.innerText.includes('继续检查边距') && document.body.innerText.includes('请先检查宽度')`);
     assert.ok(await read(`window.reads.every(id=>id==='a'||id==='b')`));
     await wait(300);writeFileSync(resolve('tmp/subagent-conversation-dark.png'),(await window.webContents.capturePage()).toPNG());
@@ -96,7 +111,7 @@ app.whenReady().then(async () => {
     assert.ok(await read(`(()=>{const input=document.querySelector('[data-composer-input]').getBoundingClientRect(), panel=document.querySelector('aside').getBoundingClientRect();return input.width>0&&input.left>=panel.left&&input.right<=panel.right&&input.bottom<=innerHeight})()`),'composer stays inside narrow inspector');
     writeFileSync(resolve('tmp/subagent-conversation-bright.png'),(await window.webContents.capturePage()).toPNG());
     assert.deepEqual(errors,[]);
-    console.log('Subagent conversation UI passed: shared transcript/composer, running queue → guidance, live parent follow-ups through old task cards, dispatch notifications/polling, ordered history deduplication, session isolation, retained draft, both languages and themes.');
+    console.log('Subagent conversation UI passed: actual inherited model, stale default repair, next-turn selection, executing thought branding, shared transcript/composer, queue/guidance, parent follow-ups, polling, isolated sibling models, retained draft, both languages and themes.');
     window.destroy();app.exit(0);
   } catch(error) {console.error(error);console.error(errors);console.error(await read('JSON.stringify(window.calls)'));writeFileSync(resolve('tmp/subagent-conversation-failed.png'),(await window.webContents.capturePage()).toPNG());window.destroy();app.exit(1);}
 });

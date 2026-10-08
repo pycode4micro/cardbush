@@ -99,7 +99,6 @@ import type {
   SubagentPermissionRouting,
   ReasoningLevel,
   ReferencePlanMode,
-  RuntimeStartupStatus,
   SkillSummary,
   PluginCommandSummary,
 } from '../../types';
@@ -112,6 +111,7 @@ import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
 import { useRuntimeDelegationWorkspace, selectRuntimePluginChoice } from '../../plugins/runtimeExtensions';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
+import { useRuntimeStartupStatus } from '../../shared/useRuntimeStartupStatus';
 
 type ComposerImageAttachment = {
   id: string;
@@ -128,35 +128,6 @@ type ComposerFileAttachment = {
   size?: number;
   pastedText?: { id: string; lines: number; preview: string };
 };
-
-function useRuntimeStartupStatus(enabled = true): RuntimeStartupStatus {
-  const [status, setStatus] = useState<RuntimeStartupStatus>(() =>
-    window.cardbushDesktop?.runtimeStartupStatus
-      ? { phase: 'initializing', attempt: 0, startedAt: new Date().toISOString() }
-      : { phase: 'ready', attempt: 0, startedAt: new Date().toISOString() },
-  );
-  useEffect(() => {
-    if (!enabled) return;
-    const desktop = window.cardbushDesktop;
-    if (!desktop?.runtimeStartupStatus || !desktop.onRuntimeStartupStatus) return undefined;
-    let disposed = false;
-    const apply = (next: RuntimeStartupStatus) => {
-      if (!disposed) setStatus(next);
-    };
-    const unsubscribe = desktop.onRuntimeStartupStatus(apply);
-    void desktop.runtimeStartupStatus().then(apply).catch((error) => apply({
-      phase: 'error',
-      attempt: 0,
-      startedAt: new Date().toISOString(),
-      error: error instanceof Error ? error.message : String(error),
-    }));
-    return () => {
-      disposed = true;
-      unsubscribe();
-    };
-  }, [enabled]);
-  return enabled ? status : { phase: 'ready', attempt: 0, startedAt: '' };
-}
 
 type ComposerQueuedMessage = {
   id: string;

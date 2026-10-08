@@ -30,7 +30,8 @@ test('document plugins install by default and disable/uninstall hides their skil
     const plugin = catalog.find(p => p.id === id);
     assert.equal(plugin.installation, 'INSTALLED_BY_DEFAULT');
     assert.deepEqual(plugin.components.map(c => c.kind), ['skill', 'mcp']);
-    await assert.rejects(access(resolve('assets/skills', id)), 'the standalone duplicate must be removed');
+    // A leftover Python cache directory is not a discoverable skill.
+    await assert.rejects(access(resolve('assets/skills', id, 'SKILL.md')), 'the standalone duplicate skill entry must be removed');
   }
   assert.deepEqual((await f.servers()).map(s => s.id), ids.map(id => `plugin_${id}_documents`));
   const skills = await loadEnabledProductPluginSkillRootEntries(roots, f.config);
@@ -63,7 +64,7 @@ for (const kind of ids) test(`${kind} launches from the product configuration an
   t.after(() => client.close());
   await client.connect(transport);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 4);
+  assert.equal(tools.length, kind === 'pptx' ? 5 : 4);
   assert.ok(tools.find(tool => tool.name === 'author_document').inputSchema.required.includes('code'));
   const call = async (name, args) => {
     const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 60000 });

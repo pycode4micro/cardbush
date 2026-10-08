@@ -623,6 +623,20 @@ async function consumeRuntimeEvents(
         break;
       }
       case 'permission_requested': {
+        // Reconnects replay the request before its resolution. Check the journal
+        // before restoring a wait or notifying the user about historical work.
+        const subsequentEvents = await runtime.client.listTurnEvents({
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          afterSequence: event.sequence,
+        }, signal);
+        const resolved = subsequentEvents.some(fact =>
+          fact.kind === 'turn_terminal' || (
+            (fact.kind === 'permission_answered' || fact.kind === 'permission_rejected' ||
+              fact.kind === 'permission_cancelled' || fact.kind === 'permission_expired') &&
+            fact.payload.permissionId === event.payload.permissionId
+          ));
+        if (resolved || signal.aborted) break;
         const interaction = permissionInteraction(runtime, event);
         const toolCallId = event.payload.toolCallId;
         const queuedExecution = toolCallId

@@ -3,12 +3,14 @@ import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { pptxWorkerPlugin } from './scripts/pptx-worker-plugin.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  plugins: [react(), pptxWorkerPlugin(rootDir)],
+  worker: { plugins: () => [pptxWorkerPlugin(rootDir)] },
   build: {
     outDir: 'dist',
     // Open windows may still import chunks from the previous build. Keep their

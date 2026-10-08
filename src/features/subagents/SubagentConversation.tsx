@@ -21,6 +21,7 @@ import { conversationWorkspaceRoot } from '../conversationWorkspace';
 import { useConversationViewState, conversationViewKey } from '../../shared/conversationViewState';
 import { subagentConversationBackend } from './subagentConversationBackend';
 import { subagentTaskPresentation } from './subagentTaskPresentation';
+import { subagentModelConfig, type SubagentExecutionModel } from './subagentConversationModel';
 import './subagent-conversation.css';
 
 export type SubagentConversationOptions = {
@@ -85,11 +86,20 @@ export function SubagentConversationView({ task, language, active, refresh, refr
 }) {
   const sessionId = task.childSessionId!, zh = language === 'zh';
   const [models, setModels] = useState<ManagedModelConfig[]>([]);
+  const [modelsReady, setModelsReady] = useState(false);
+  const [executionModel, setExecutionModel] = useState<SubagentExecutionModel>();
+  const observeModel = useCallback((next: SubagentExecutionModel) => setExecutionModel(current => {
+    // Usage receipts have no configuration ID; retain the precise binding from
+    // the session projection when they refer to the same executing Turn.
+    const value = current?.model === next.model && current.turnId === next.turnId
+      ? { ...current, ...next, modelConfigId: next.modelConfigId || current.modelConfigId } : next;
+    return JSON.stringify(current) === JSON.stringify(value) ? current : value;
+  }), []);
   const [configurationError, setConfigurationError] = useState('');
   useEffect(() => {
     let alive = true;
     const load = () => void (call ? call<{ models: ManagedModelConfig[]; defaultModelId: string }>('product.command', { kind: 'models.get' }) : api.fetchModelConfigs())
-      .then(value => { if (alive) { setModels([...value.models].sort((a, b) => Number(b.id === value.defaultModelId) - Number(a.id === value.defaultModelId))); setConfigurationError(''); } })
+      .then(value => { if (alive) { setModels([...value.models].sort((a, b) => Number(b.id === value.defaultModelId) - Number(a.id === value.defaultModelId))); setModelsReady(true); setConfigurationError(''); } })
       .catch(error => { if (alive) setConfigurationError(String(error.message ?? error)); });
     const reasoningChanged = (event: Event) => { if ((event as CustomEvent<{ connectionId: string }>).detail.connectionId === (host?.environmentId ?? '')) load(); };
     load(); window.addEventListener('cardbush:shared-configuration-updated', load);
@@ -101,11 +111,23 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   knownTask.current = task;
   const [observedTasks, setObservedTasks] = useState<SubagentTaskSnapshot[]>([]);
   const backend = useMemo(() => subagentConversationBackend({ base, runtime, sessionId, readTasks, knownTask: () => knownTask.current,
-    onSubmitted: () => accepted.current?.(), onTasksChanged: setObservedTasks }), [base, runtime, sessionId, readTasks]);
+    onSubmitted: () => accepted.current?.(), onTasksChanged: setObservedTasks, onExecutionModel: observeModel }), [base, runtime, sessionId, readTasks, observeModel]);
+  const executionConfig = subagentModelConfig(models, executionModel);
   const chat = useCardbushChat(models, models, { runtimeReady: true, activeConversationId: sessionId, viewActive: active,
+    defaultModelId: executionConfig?.id, modelsReady: modelsReady && !!executionConfig,
     onModelReasoningChange: (id, effort) => api.saveModelReasoning(id, effort, host?.environmentId),
     language, reasoningTraceVisible: thinkingVisible, standardImageInputEnabled: visualInputEnabled, disabledSkillNames,
     interactiveRequestsAvailable: true, contextWindowUsageAvailable: true, workspaceChangesAvailable: true }, backend);
+  const synchronizedModel = useRef('');
+  useEffect(() => {
+    if (!executionConfig || !executionModel) return;
+    const identity = JSON.stringify([executionModel.turnId, executionModel.model, executionConfig.id]);
+    if (identity === synchronizedModel.current) return;
+    synchronizedModel.current = identity;
+    // Repair old UI defaults once per executed Turn. A subsequent manual model
+    // selection still applies to the user's next message and is not reset by polling.
+    if (chat.selectedModel !== executionConfig.id) chat.setSelectedModel(executionConfig.id);
+  }, [executionConfig, executionModel, chat.selectedModel, chat.setSelectedModel]);
   const [draft, setDraft] = useConversationViewState(conversationViewKey(host?.environmentId, sessionId, 'subagent-draft'), () => '', Boolean);
   const [submissionPending, setSubmissionPending] = useState(false);
   const send = (text: string): Promise<boolean> => {
@@ -170,7 +192,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host?.id ?? sessionId } : null}
         connectionRecovery={chat.activeConnectionRecovery} error={error || taskError || configurationError || chat.error || (displayedStatus === 'failed' ? task.errorMessage ?? '' : '')} notice={chat.notice}
         onClearError={() => { setError(''); chat.clearError(); }} onClearNotice={chat.clearNotice}
-        draft={draft} onDraftChange={setDraft} selectedModel={chat.selectedModel} selectedModelConfig={selectedModel} availableModels={models} onModelChange={chat.setSelectedModel} onConfigureModels={onConfigureModels}
+        draft={draft} onDraftChange={setDraft} selectedModel={chat.selectedModel} selectedModelConfig={selectedModel} executingModel={executionModel?.model} availableModels={models} onModelChange={chat.setSelectedModel} onConfigureModels={onConfigureModels}
         contextWindowMaxTokens={selectedModel?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS} contextWindowUsage={chat.activeContextWindowUsage}
         permissionMode={chat.permissionMode} onPermissionModeChange={chat.setPermissionMode} subagentPermissionRouting={chat.subagentPermissionRouting} onSubagentPermissionRoutingChange={chat.setSubagentPermissionRouting}
         referencePlanAvailable referencePlanMode={chat.referencePlanMode} onReferencePlanModeChange={chat.setReferencePlanMode}

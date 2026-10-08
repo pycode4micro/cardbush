@@ -5,7 +5,8 @@ import { createRequire } from 'node:module';
 const rootVariables = ['PLUGIN_ROOT', 'CARDBUSH_PLUGIN_ROOT', 'CODEX_PLUGIN_ROOT', 'CLAUDE_PLUGIN_ROOT'];
 const dataVariables = ['PLUGIN_DATA', 'CLAUDE_PLUGIN_DATA'];
 const processHostVariables = ['CARDBUSH_PROCESS_HOST_DIRECTORY', 'CARDBUSH_PROCESS_HOST_PATH'];
-export const pluginHostVariables = new Set([...rootVariables, ...dataVariables, ...processHostVariables, 'CARDBUSH_NODE_EXECUTABLE', 'CARDBUSH_DOCUMENT_TOOLS_ENTRY']);
+export const pluginHostVariables = new Set([...rootVariables, ...dataVariables, ...processHostVariables, 'CARDBUSH_NODE_EXECUTABLE', 'CARDBUSH_DOCUMENT_TOOLS_ENTRY',
+  'CARDBUSH_PRESENTATION_EXPORT_EXECUTABLE', 'CARDBUSH_PRESENTATION_EXPORT_ENTRY']);
 
 /** Share the existing Hook data directory; package updates never replace it. */
 export function pluginDataDirectory(pluginId: string, dataRoot: string) {
@@ -17,6 +18,10 @@ export function pluginHostEnvironment(pluginId: string, root: string, dataRoot?:
   try { documents = createRequire(__filename).resolve('@cardbush/document-tools/server'); } catch { /* Older standalone hosts may not include document tools. */ }
   return Object.fromEntries([
     ['CARDBUSH_NODE_EXECUTABLE', process.execPath],
+    ...(process.versions.electron ? [
+      ['CARDBUSH_PRESENTATION_EXPORT_EXECUTABLE', process.execPath],
+      ['CARDBUSH_PRESENTATION_EXPORT_ENTRY', join(__dirname, 'bootstrap.js')],
+    ] : []),
     ...(documents ? [['CARDBUSH_DOCUMENT_TOOLS_ENTRY', documents]] : []),
     ...processHostVariables.filter(name => process.env[name]).map(name => [name, process.env[name]!]),
     ...rootVariables.map(name => [name, root]),

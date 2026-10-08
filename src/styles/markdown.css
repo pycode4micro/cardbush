@@ -423,15 +423,23 @@
   scrollbar-width: thin;
 }
 
-/* Top-level assistant tables keep their own width as the prose track narrows.
-   Quotes, lists, user bubbles, tool panels and archived details stay bounded. */
+/* Borrow space only when a table's minimum content width exceeds the prose
+   track. Ordinary tables stay aligned; nested surfaces remain bounded. */
 @container chat-message (min-width: 1px) {
   .message-list-item > .message-row.assistant .assistant-final-answer > .message-inline-media-content > .markdown-content > .markdown-table-scroll,
   .message-list-item > .message-row.assistant .assistant-active-transcript-segment > .assistant-message-content > .message-inline-media-content > .markdown-content > .markdown-table-scroll {
-    --markdown-table-outset: max(0px, calc((min(100cqi, var(--chat-table-width, calc(var(--chat-track-width, 780px) + 128px))) - 100%) / 2));
-    width: calc(100% + 2 * var(--markdown-table-outset));
-    max-width: none;
-    margin-inline: calc(-1 * var(--markdown-table-outset));
+    position: relative;
+    left: 50%;
+    width: max-content;
+    min-width: 100%;
+    max-width: min(100cqi, var(--chat-table-width, calc(var(--chat-track-width, 780px) + 128px)));
+    transform: translateX(-50%);
+  }
+
+  .message-list-item > .message-row.assistant .assistant-final-answer > .message-inline-media-content > .markdown-content > .markdown-table-scroll > table,
+  .message-list-item > .message-row.assistant .assistant-active-transcript-segment > .assistant-message-content > .message-inline-media-content > .markdown-content > .markdown-table-scroll > table {
+    width: min-content;
+    min-width: 100%;
   }
 }
 

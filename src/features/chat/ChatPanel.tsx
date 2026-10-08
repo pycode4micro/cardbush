@@ -215,6 +215,7 @@ export function ChatPanel({
   notice,
   selectedModel,
   selectedModelConfig,
+  executingModel,
   contextWindowMaxTokens,
   contextWindowUsage,
   availableModels,
@@ -318,6 +319,7 @@ export function ChatPanel({
   notice: string | null;
   selectedModel: string;
   selectedModelConfig?: ManagedModelConfig;
+  executingModel?: string;
   contextWindowMaxTokens?: number;
   contextWindowUsage?: RuntimeContextWindowUsage;
   availableModels: ManagedModelConfig[];
@@ -2551,7 +2553,7 @@ export function ChatPanel({
         activeAssistantMessageId={
           activeAssistantForRender?.message.id ?? ''
         }
-        selectedModel={selectedModelConfig?.modelName ?? selectedModel}
+        selectedModel={message.turnId === activeTurnId && executingModel ? executingModel : selectedModelConfig?.modelName ?? selectedModel}
         goalObjective={activeGoal?.objective ?? ''}
         onRegenerate={onRegenerate}
         onEditUserMessage={onEditUserMessage}
@@ -2563,7 +2565,7 @@ export function ChatPanel({
       />
       {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
         conversationId={activeConversationId} turnId={activeTurnId} language={language}
-        model={selectedModelConfig?.modelName ?? selectedModel} thinkingVisible={thinkingVisible}
+        model={executingModel || selectedModelConfig?.modelName || selectedModel} thinkingVisible={thinkingVisible}
         reasoningActive={!activeAssistantForRender}
         stopping={stopping} retryAvailable={guidanceAvailable} onRetry={onRetryGuidance} />}
       {(activeAssistantForRender?.message.id === message.id || goalMessageId === message.id) && (

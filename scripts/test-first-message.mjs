@@ -24,6 +24,9 @@ function fixture(scope) {
     exports: {}, crypto: webcrypto, AbortController, console: { warn() {} },
     window: { cardbushDesktop: { inspectAttachments: async paths => { inspected.push(paths); return []; } }, setTimeout },
     backend: { scope }, selectedModel: 'fixture', managedModelConfigs: [], requestContext: {},
+    activeConversationId: 'new', defaultModelId: 'fixture', availableModels: [],
+    resolveConversationModelId: () => 'fixture', resolveModelReasoningEffort: () => 'default',
+    selectConversationModel() {}, readConversationModel: () => 'fixture',
     referencePlanMode: 'normal', permissionMode: 'ask', subagentPermissionRouting: 'parent', reasoningLevel: 'none',
     languageRef: { current: 'zh' }, activeConversation: candidate, activeConversationIdRef: { current: 'new' },
     workspaceSwitchesRef: { current: new Map() }, conversationsRef: { current: [] }, preparedConversationsRef: { current: { new: candidate } },
@@ -43,7 +46,7 @@ function fixture(scope) {
     resolveConversationSource: () => true,
     streamChat: async request => { streams.push(request); await completion.promise; },
     loadTeamFlow: async () => null, beginHistoryRead: () => ({}), fetchMessages: async () => [], refreshGoal: async () => null,
-    markSessionAttention() {}, reloadConversations: async () => {}, truncateText: text => text,
+    markSessionAttention() {}, markTurnAttention: async () => {}, reloadConversations: async () => {}, truncateText: text => text,
     isPendingInteractionConflictError: () => false,
     markOptimisticChatRequestFailed: (all, id, userId, assistantId) => ({ ...all, [id]: all[id].filter(message => message.id !== assistantId)
       .map(message => message.id === userId ? { ...message, metadata: { message_delivery: 'failed' } } : message) }),

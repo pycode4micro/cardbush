@@ -22,11 +22,34 @@
 }
 
 .assistant-thinking-label {
+  --thinking-mask-color: #fff;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   color: color-mix(in srgb, var(--text-soft) 92%, var(--text));
+}
+
+.theme-dark .assistant-thinking-label {
+  --thinking-mask-color: #000;
+}
+
+/* Move the darker/lighter band through the glyphs, without covering the row,
+   moving its contents, or adding another status icon. */
+.assistant-thinking-process.running-mask .assistant-thinking-label {
+  background-image: linear-gradient(90deg, currentColor 40%, var(--thinking-mask-color) 50%, currentColor 60%);
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-mask-sweep 2.2s linear infinite;
+}
+
+@keyframes thinking-mask-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
 }
 
 .assistant-thinking-model {
@@ -58,7 +81,7 @@
   filter: none;
 }
 
-.assistant-thinking-model.fallback svg {
+.assistant-thinking-process.running-mask .assistant-thinking-model.fallback svg {
   animation: cardbush-spin 1.35s linear infinite;
 }
 
@@ -229,7 +252,6 @@
 
 .task-plan-block li.in_progress svg {
   color: var(--accent);
-  animation: cardbush-spin 1.2s linear infinite;
 }
 
 .task-plan-block li.completed {

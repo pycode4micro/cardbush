@@ -1,15 +1,16 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
+import { useInspectorSessionRef, useInspectorSessionState } from './useInspectorSessionState';
 
 const splitWidthKey = 'cardbush.inspector_split_width';
 const coveredConversationWidth = 320;
 const usableConversationWidth = minimumConversationWidth;
 
 /** Keep a readable split, including restored widths and live resize previews. */
-export function useInspectorRecovery({ open, covered, width }: { open: boolean; covered: boolean; width: number }) {
+export function useInspectorRecovery({ workspaceId = 'shared', open, covered, width }: { workspaceId?: string; open: boolean; covered: boolean; width: number }) {
   const mainStageRef = useRef<HTMLElement | null>(null);
-  const [conversationCovered, setConversationCovered] = useState(false);
-  const coveredRef = useRef(false);
+  const [conversationCovered, setConversationCovered] = useInspectorSessionState(workspaceId, false);
+  const coveredRef = useInspectorSessionRef(workspaceId, false);
   const splitWidthRef = useRef<number | undefined>(undefined);
   const loaded = useRef(false);
   if (!loaded.current) {
@@ -71,7 +72,7 @@ export function useInspectorRecovery({ open, covered, width }: { open: boolean; 
     if (shell) previews.observe(shell, { childList: true });
     schedule();
     return () => { observer.disconnect(); previews.disconnect(); cancelAnimationFrame(frame); };
-  }, [open, covered, width]);
+  }, [open, covered, width, coveredRef, setConversationCovered]);
 
   return { mainStageRef, conversationCovered, splitWidthRef };
 }

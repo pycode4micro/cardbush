@@ -132,7 +132,6 @@ import {
   type FrameStreamCheckpoint,
 } from '../features/chatMessages/transcript/frameStreamBuffer';
 import {
-  hasCompletedAssistantForTurn,
   chatMessageTurnId,
   findUserMessageForAssistantRegenerate,
   persistedChatMessageId,
@@ -288,6 +287,8 @@ export function useCardbushChat(
   const selectedReasoningConfig = modelConfigFor(managedModelConfigs, selectedModel) ?? modelConfigFor(availableModels, selectedModel);
   const reasoningLevel: ReasoningLevel = resolveModelReasoningEffort(selectedReasoningConfig ?? {}) ?? 'default';
   const controllersRef = useRef<Record<string, AbortController>>({});
+  const goalByConversationRef = useRef(goalByConversation);
+  goalByConversationRef.current = goalByConversation;
   const goalTurnControllersRef = useRef<
     Record<string, { turnId: string; controller: AbortController }>
   >({});
@@ -982,9 +983,35 @@ export function useCardbushChat(
       return current;
     } catch {
       // Preserve the last confirmed state across transient sidecar failures.
-      return null;
+      return goalByConversationRef.current[normalized] ?? null;
     }
   }, [goalAvailable]);
+
+  const markTurnAttention = useCallback(async (
+    sessionId: string,
+    terminal: TurnTerminalSnapshot | null | undefined,
+    body: string,
+    knownGoal?: ExperimentalGoal | null,
+  ) => {
+    if (!terminal?.turnId.trim() || terminal.stopped || terminal.status === 'stopped') return;
+    if (terminal.status === 'failed') {
+      markSessionAttention(sessionId, 'error', terminal.stopReason ||
+        localize('任务执行失败。', 'The task failed.'), terminal.turnId);
+      return;
+    }
+    if (terminal.status !== 'completed' && terminal.status !== 'awaiting_user_action') return;
+    const goal = knownGoal === undefined ? await refreshGoal(sessionId) : knownGoal;
+    if (goal?.status === 'active') return;
+    if (goal?.status === 'blocked' || terminal.stopReason === 'task_plan_waiting') {
+      markSessionAttention(sessionId, 'waiting', truncateText(
+        goal?.statusReason || goal?.objective ||
+        localize('任务需要你的确认。', 'The task needs your input.'), 180), terminal.turnId);
+      return;
+    }
+    if (terminal.status !== 'completed') return;
+    markSessionAttention(sessionId, 'completed', truncateText(
+      body.replace(/\s+/g, ' ').trim() || goal?.statusReason || goal?.objective || '', 180), terminal.turnId);
+  }, [localize, markSessionAttention, refreshGoal]);
 
   const applyGoalExecution = useCallback((
     sessionId: string,
@@ -1238,6 +1265,7 @@ export function useCardbushChat(
       controller,
     };
     const assistantId = `goal-turn-${normalizedTurnId}`;
+    let terminalSnapshot: TurnTerminalSnapshot | null = null;
     const initialCursor = goalTurnCursorRef.current[normalizedTurnId] ?? {
       sequence: 0,
       lastEventId: '',
@@ -1385,6 +1413,7 @@ export function useCardbushChat(
         });
       },
       onDone: (terminal) => {
+        terminalSnapshot = withTerminalTurnId(terminal, normalizedTurnId);
         terminalTurnIdsRef.current.add(normalizedTurnId);
         if (goalStreamCheckpointsRef.current[normalizedSessionId]?.turnId === normalizedTurnId) {
           delete goalStreamCheckpointsRef.current[normalizedSessionId];
@@ -1478,19 +1507,12 @@ export function useCardbushChat(
             clearSessionRunning(normalizedSessionId);
           }
         }
-        if (refreshedGoal?.status === 'complete') {
-          markSessionAttention(
+        if (refreshedGoal?.status === 'complete' || refreshedGoal?.status === 'blocked') {
+          await markTurnAttention(
             normalizedSessionId,
-            'completed',
-            truncateText(refreshedGoal.statusReason || refreshedGoal.objective, 180),
-            normalizedTurnId,
-          );
-        } else if (refreshedGoal?.status === 'blocked') {
-          markSessionAttention(
-            normalizedSessionId,
-            'waiting',
-            truncateText(refreshedGoal.statusReason || refreshedGoal.objective, 180),
-            normalizedTurnId,
+            terminalSnapshot ?? matchingTerminalSnapshot(loaded?.latestTurn, normalizedTurnId),
+            refreshedGoal.statusReason || refreshedGoal.objective,
+            refreshedGoal,
           );
         }
         if (backend.keepRunningOnUnmount && terminalTurnIdsRef.current.has(normalizedTurnId) && !controllersRef.current[normalizedSessionId]) {
@@ -1505,6 +1527,7 @@ export function useCardbushChat(
     scheduleQueuedMessage,
     localize,
     markSessionAttention,
+    markTurnAttention,
     markSessionDone,
     markSessionRunning,
     mergeContextWindowUsage,
@@ -2264,7 +2287,7 @@ export function useCardbushChat(
           [sessionId]: undefined,
         }));
         void reloadConversations().catch(() => undefined);
-        return true;
+        return sessionResult;
       } catch {
         failedAttempts += 1;
         if (failedAttempts >= 5) {
@@ -2671,15 +2694,7 @@ export function useCardbushChat(
         if (loadedMessages && loadedMessages.length > 0) {
           applyHistoryRead(historyRead, loadedMessages);
         }
-        const refreshedGoal = await refreshGoal(sessionId);
-        if (refreshedGoal?.status !== 'active') {
-          markSessionAttention(
-            sessionId,
-            'completed',
-            truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
-            activeTurnIdsRef.current[sessionId] ?? '',
-          );
-        }
+        await markTurnAttention(sessionId, terminalSnapshot, finalAssistantText);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (isPendingInteractionConflictError(caught)) {
@@ -2729,37 +2744,26 @@ export function useCardbushChat(
             });
             if (activeConversationIdRef.current === sessionId) setError(recovered ? null : errorMessage(caught));
             if (recovered) {
-              const refreshedGoal = await refreshGoal(sessionId);
-              if (refreshedGoal?.status !== 'active') {
-                markSessionAttention(
-                  sessionId,
-                  'completed',
-                  truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
-                  turnId,
-                );
-              }
-            } else {
+              await markTurnAttention(sessionId,
+                terminalSnapshot ?? matchingTerminalSnapshot(recovered.latestTurn, turnId), finalAssistantText);
+            } else if (!controller.signal.aborted) {
               markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
             }
             return;
           }
           const historyRead = beginHistoryRead(sessionId);
-          const loadedMessages = await fetchMessages(sessionId, {
+          const loaded = await fetchSessionMessages(sessionId, {
             includeSuperseded: true,
           }).catch(() => null);
-          if (loadedMessages && loadedMessages.length > 0) {
-            applyHistoryRead(historyRead, loadedMessages, undefined,
-              hasCompletedAssistantForTurn(loadedMessages, turnId));
+          const recoveredTerminal = terminalSnapshot ?? matchingTerminalSnapshot(loaded?.latestTurn, turnId);
+          if (loaded && loaded.messages.length > 0) {
+            applyHistoryRead(historyRead, loaded.messages, undefined, Boolean(recoveredTerminal));
             void reloadConversations().catch(() => undefined);
           }
-          if (loadedMessages && hasCompletedAssistantForTurn(loadedMessages, turnId)) {
+          if (controller.signal.aborted) return;
+          if (recoveredTerminal) {
             if (activeConversationIdRef.current === sessionId) setError(null);
-            markSessionAttention(
-              sessionId,
-              'completed',
-              truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
-              turnId,
-            );
+            await markTurnAttention(sessionId, recoveredTerminal, finalAssistantText);
           } else {
             if (activeConversationIdRef.current === sessionId) setError(errorMessage(caught));
             markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
@@ -2795,6 +2799,7 @@ export function useCardbushChat(
       loadTeamFlow,
       localize,
       markSessionAttention,
+      markTurnAttention,
       markSessionDone,
       markSessionRunning,
       mergeTeamFlowStreamEvent,
@@ -3246,15 +3251,7 @@ export function useCardbushChat(
         if (loadedMessages && loadedMessages.length > 0) {
           applyHistoryRead(historyRead, loadedMessages);
         }
-        const refreshedGoal = await refreshGoal(sessionId);
-        if (refreshedGoal?.status !== 'active') {
-          markSessionAttention(
-            sessionId,
-            'completed',
-            truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
-            activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId ?? '',
-          );
-        }
+        await markTurnAttention(sessionId, terminalSnapshot, finalAssistantText);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (
@@ -3271,16 +3268,9 @@ export function useCardbushChat(
           if (activeConversationIdRef.current === sessionId) setError(recovered ? null : errorMessage(caught));
           const turnId = activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId;
           if (recovered) {
-            const refreshedGoal = await refreshGoal(sessionId);
-            if (refreshedGoal?.status !== 'active') {
-              markSessionAttention(
-                sessionId,
-                'completed',
-                truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
-                turnId,
-              );
-            }
-          } else {
+            await markTurnAttention(sessionId,
+              terminalSnapshot ?? matchingTerminalSnapshot(recovered.latestTurn, turnId), finalAssistantText);
+          } else if (!controller.signal.aborted) {
             markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
           }
           return;
@@ -3330,6 +3320,7 @@ export function useCardbushChat(
       loadTeamFlow,
       localize,
       markSessionAttention,
+      markTurnAttention,
       markSessionDone,
       markSessionRunning,
       mergeContextWindowUsage,
@@ -4486,6 +4477,15 @@ function terminalSnapshotFromLatestTurn(
     terminalEventSequence: turn.terminalEventSequence,
     raw: {},
   };
+}
+
+function matchingTerminalSnapshot(
+  latestTurn: SessionLatestTurn | undefined,
+  turnId: string | undefined,
+): TurnTerminalSnapshot | null {
+  if (!turnId?.trim() || latestTurn?.turnId !== turnId ||
+      !['completed', 'failed', 'stopped', 'awaiting_user_action'].includes(latestTurn.status)) return null;
+  return terminalSnapshotFromLatestTurn(latestTurn);
 }
 
 function isTurnGuidanceBoundary(update: StreamExecutionUpdate) {

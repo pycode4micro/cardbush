@@ -31,12 +31,16 @@ test('human continuation keeps child ownership, original role and policy; parent
   const { host, sessions, tasks, registry, seen, start, read } = setup();
   await start();
   const task = tasks.list('parent')[0];
-  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'human-r', sessionId: task.childSessionId, turnId: 'human-turn', model: 'fixture',
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'human-r', sessionId: task.childSessionId, turnId: 'human-turn', model: 'human-model',
     prefixMessages: [{ role: 'system', content: 'ordinary root role must not replace child role' }], tools: registry.definitions(),
     inputMessages: [{ messageId: 'human-message', message: { role: 'user', content: '用户补充：只修改颜色' } }],
     permissionMode: 'all_free', metadata: { projectDir: '/wrong', workspaceDir: '/wrong' } });
   assert.equal(terminal.payload.status, 'completed');
   const request = seen.find(item => item.turnId === 'human-turn');
+  assert.equal(request.model, 'human-model', 'the UI projection does not change manual continuation model selection');
+  const projected = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: task.childSessionId } });
+  assert.deepEqual(projected.metadata.executionModel, { model: 'human-model', modelConfigId: undefined, turnId: 'human-turn' });
+  assert.equal(sessions.snapshot(task.childSessionId).metadata.executionModel, undefined, 'display metadata is a read-only projection');
   assert.equal(request.metadata.agentRole, 'child');
   assert.equal(request.metadata.parentSessionId, 'parent');
   assert.equal(request.permissionMode, 'task_free');
@@ -69,6 +73,9 @@ test('live child guidance is visible to the parent and concurrent sends cannot r
   for (let i = 0; !tasks.list('parent').length && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
   const task = tasks.list('parent')[0]; assert.ok(task);
   for (let i = 0; !seen.some(item => item.sessionId === task.childSessionId) && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const projected = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: task.childSessionId } });
+  assert.deepEqual(projected.metadata.executionModel, { model: 'fixture', modelConfigId: undefined, turnId: task.childTurnId }, 'the inherited model is visible before the child produces a response');
+  assert.ok(!JSON.stringify(projected.metadata.executionModel).includes('private child role'), 'projection exposes no private request content');
   await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: { protocol: 'bush.runtime_guidance.v1', sessionId: task.childSessionId, turnId: task.childTurnId,
     messageId: 'user-guide', content: '先确认边界再继续', createdAt: new Date().toISOString() } });
   const page = await read(task.taskId);

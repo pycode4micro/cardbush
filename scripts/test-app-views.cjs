@@ -66,6 +66,21 @@ async function buildViews() {
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness' ? [
+      'src/shared/useRuntimeStartupStatus.ts', 'src/features/composer/Composer.tsx',
+      'src/features/composer/ComposerReferenceContext.ts', 'src/features/composer/ComposerPresentationContext.ts',
+      'src/features/conversationHost.ts',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-layouts' ? [
+      'src/features/inspector/InspectorLayoutDialog.tsx', 'src/features/inspector/savedInspectorLayouts.ts',
+      'src/hooks/useInspectorTabs.ts',
+    ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-sessions' ? [
+      'src/hooks/useInspectorTabs.ts', 'src/features/inspector/inspectorSessions.ts',
+      'src/features/inspector/InspectorTabLock.tsx', 'src/features/inspector/panelLayout.ts',
+      'src/features/inspector/ConversationInspector.tsx',
+      'src/features/inspector/useInspectorBrowserActions.ts', 'src/hooks/useSoftPanelPresence.ts',
+    ] : []),
     'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
@@ -192,7 +207,7 @@ app.whenReady().then(async () => {
     } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'media-reveal', 'review-preview', 'inspector-cover'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -306,6 +321,21 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no startup presentation renderer errors');
       assert.deepEqual(errors, []);
       return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness') {
+      await require('./helpers/runtime-readiness.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no runtime readiness renderer errors');
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-layouts') {
+      await require('./helpers/inspector-saved-layouts.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no saved layout renderer errors');
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-sessions') {
+      await require('./helpers/inspector-sessions.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no conversation workspace renderer errors');
+      assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'conversation-search') {
       await require('./helpers/conversation-search.cjs')({ run, until, pause, window, root });

@@ -16,13 +16,16 @@ window.addEventListener('error',event=>console.error(event.error?.stack)); windo
 window.projectChild=childConversationMessages;
 const now=()=>new Date().toISOString(), root=createRoot(document.getElementById('root'));
 const tasks={}, histories={}, selectedTasks={}; let render;
+localStorage.setItem('cardbush.conversation_model:'+JSON.stringify(['subagent:a','a']),'deepseek');
+const executionFor=id=>({model:id==='a'?'gpt-6-astra':'deepseek-flash',modelConfigId:id==='a'?'gpt':'deepseek',turnId:taskFor(id).childTurnId});
 const taskFor=id=>tasks[id]??(tasks[id]={protocol:'bush.subagent_task.v1',taskId:'task-'+id,parentSessionId:'parent',parentTurnId:'parent-turn',childSessionId:id,childTurnId:'initial-'+id,requestPrompt:'主 Agent 派发：检查布局 '+id,status:'running',terminal:false,createdAt:now(),updatedAt:now(),usage:{},raw:{}});
 const history=id=>histories[id]??=[{id:'previous-'+id,role:'assistant',conversationId:id,turnId:'previous-turn-'+id,content:'上一轮已核对文件范围。',status:'completed',createdAt:now()}];
 const conversation=id=>({id,title:'Child '+id,preview:'',updatedAt:now(),projectDir:'C:/fixture'});
-const runtime={client:{getSession:async id=>({sessionId:id,turns:[],supersededMessageIds:[],metadata:{title:'Child '+id,agentRole:'child',parentSessionId:'parent'},updatedAt:now()}),getCapabilities:async()=>({features:['subagent_conversations']}),
+const runtime={client:{getSession:async id=>({sessionId:id,turns:[],supersededMessageIds:[],metadata:{title:'Child '+id,agentRole:'child',parentSessionId:'parent',executionModel:executionFor(id)},updatedAt:now()}),getCapabilities:async()=>({features:['subagent_conversations']}),
   stopTurn:async input=>{window.calls.push({kind:'stop',...input});window.finish(input.sessionId,'stopped');return {accepted:true,terminal:false,reason:'stop_accepted'};},revertWorkspaceChanges:async()=>{},restoreWorkspaceChanges:async()=>{}},answerPermission:async()=>{},dispose(){}};
 const load=async id=>{window.reads.push(id);return {conversation:conversation(id),messages:structuredClone(history(id)),toolExecutions:[]};};
 const stream=async request=>{const {sessionId,turnId}=request; window.calls.push({kind:'watch',sessionId,turnId});
+  request.onContextWindowUsage?.({sessionId,turnId,model:executionFor(sessionId).model,measuredAt:now(),source:'fixture',raw:{}});
   request.onStart?.({sessionId,turnId,createdAt:now()}); const emit=()=>{request.onDelta?.('正在检查布局。',{turnId,messageId:'live-'+turnId,channel:'assistant',assistantSegmentIndex:1,createdAt:now(),sequence:2});
   request.onToolExecution?.({id:'tool-'+turnId,name:'read_file',state:'completed',success:true,summary:'读取布局文件',output:'width: 100%',durationMs:12,createdAt:now(),turnId,
     metadata:{displayTitles:{zh:'读取布局文件',en:'Read layout file'},turnId}});};
@@ -36,7 +39,7 @@ const base={
   fetchTeamFlow:async()=>null,updateExperimentalGoal:async()=>{},replyInteraction:async()=>{},cancelInteraction:async()=>{},
   updateConversation:async input=>conversation(input.sessionId),
   streamTurnEvents:stream,
-  streamChat:async request=>{window.calls.push({kind:'send',sessionId:request.sessionId,text:request.userInput,sourceEnabled:request.sourceEnabled});
+  streamChat:async request=>{window.calls.push({kind:'send',sessionId:request.sessionId,text:request.userInput,sourceEnabled:request.sourceEnabled,model:request.model,modelConfigId:request.modelConfig?.id});
     const turnId='human-'+crypto.randomUUID(),createdAt=now(),messageId='user-'+turnId;
     history(request.sessionId).push({id:messageId,role:'user',conversationId:request.sessionId,turnId,content:request.userInput,createdAt});
     request.onStart?.({sessionId:request.sessionId,turnId,userMessageId:messageId,createdAt});
@@ -50,7 +53,8 @@ window.finish=(id,status='completed')=>{
   const task=taskFor(id);tasks[id]={...task,status,terminal:true,updatedAt:now()};
   if(!history(id).some(message=>message.turnId===task.childTurnId && message.metadata?.subagent_author==='parent'))history(id).push({id:'assignment-'+task.childTurnId,role:'user',conversationId:id,turnId:task.childTurnId,content:task.requestPrompt,createdAt:task.createdAt,metadata:{subagent_author:'parent'}});
   const entry=window.streams.get(id); if(entry){const turnId=entry.request.turnId;history(id).push({id:'answer-'+turnId,role:'assistant',content:status==='stopped'?'已停止':'检查完成，布局正常。',status,conversationId:id,turnId,createdAt:now()});entry.request.onFinalAssistantText?.(status==='stopped'?'已停止':'检查完成，布局正常。',{turnId,messageId:'answer-'+turnId,createdAt:now(),channel:'assistant',assistantSegmentIndex:1,sequence:3});entry.request.onDone?.({turnId,status,stopped:status==='stopped',completedAt:now(),raw:{}});entry.request.onMessages?.(structuredClone(history(id)),true);window.streams.delete(id);entry.resolve();}render();};
-const models={defaultModelId:'fixture',models:[{id:'fixture',modelName:'fixture',provider:'openai',apiKey:'',baseUrl:'https://api.example.invalid/v1',hasApiKey:true,maxContextTokens:400000,maxCompletionTokens:8000}]};
+const models={defaultModelId:'deepseek',models:[{id:'deepseek',modelName:'deepseek-flash',provider:'openai',apiKey:'',baseUrl:'https://deepseek.example.invalid/v1',hasApiKey:true,maxContextTokens:128000,maxCompletionTokens:8000},
+  {id:'gpt',modelName:'gpt-6-astra',provider:'openai',apiKey:'',baseUrl:'https://api.example.invalid/v1',hasApiKey:true,maxContextTokens:400000,maxCompletionTokens:8000}]};
 const call=async()=>models;
 let current='a',language='zh',theme='dark';
 const readTasks=async()=>Object.values(tasks);

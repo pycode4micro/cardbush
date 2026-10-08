@@ -613,6 +613,12 @@ const desktopApi = {
     page: (id: number, command: import('./browserUi').BrowserPageCommand) => ipcRenderer.invoke('browser:page', id, command),
     webApplication: (id: number, expectedUrl: string) => ipcRenderer.invoke('browser:web-application', id, expectedUrl),
     history: (query = '', offset = 0) => ipcRenderer.invoke('browser:history', query, offset),
+    frequentSites: () => ipcRenderer.invoke('browser:frequent-sites'),
+    onHistoryChanged: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('browser:history-changed', listener);
+      return () => ipcRenderer.removeListener('browser:history-changed', listener);
+    },
     downloads: (query = '', offset = 0) => ipcRenderer.invoke('browser:downloads', query, offset),
     removeVisit: (id: string) => ipcRenderer.invoke('browser:history-remove', id),
     downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'show') => ipcRenderer.invoke('browser:download-action', id, action),

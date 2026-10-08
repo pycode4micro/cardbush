@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
+import { webcrypto } from 'node:crypto';
 
 const source = fs.readFileSync('src/features/notificationSound.ts', 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -138,4 +139,114 @@ test('the actual chat callback includes foreground completion, waiting and error
   assert.equal(sounds[1].notificationId, 'prompt');
   exports.mark('background', 'error', 'failed', 'next');
   assert.equal(sounds[2].kind, 'error');
+});
+
+// Execute the real send/edit callbacks and recovery against controlled transport
+// facts. In particular, resolving the stream or loading history is not a terminal.
+const hookSource = ts.createSourceFile('hook.ts', fs.readFileSync('src/hooks/useCardbushChat.ts', 'utf8'), ts.ScriptTarget.Latest, true);
+const hookBody = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useCardbushChat').body;
+const callbackNames = ['sendMessage', 'runControlAssistantStream', 'recoverInterruptedSession', 'refreshGoal', 'markTurnAttention'];
+const callbackCode = callbackNames.map(name => {
+  const declaration = hookBody.statements.flatMap(node => ts.isVariableStatement(node) ? [...node.declarationList.declarations] : [])
+    .find(node => node.name.getText(hookSource) === name);
+  return `exports.${name} = ${declaration.initializer.arguments[0].getText(hookSource)};`;
+}).join('\n');
+const helperCode = ['withTerminalTurnId', 'terminalSnapshotFromLatestTurn', 'matchingTerminalSnapshot'].map(name =>
+  hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(hookSource)).join('\n');
+const attachmentSource = ts.createSourceFile('attachments.ts', fs.readFileSync('src/shared/chatAttachments.ts', 'utf8'), ts.ScriptTarget.Latest, true);
+const attachments = attachmentSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'chatAttachmentsFromOutbound')
+  .getText(attachmentSource).replace(/^export /, '');
+const turnCode = ts.transpileModule(`${helperCode}\n${attachments}\n${callbackCode}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const terminalFact = (status, turnId = 'turn') => ({ turnId, status, stopped: status === 'stopped', stopReason: '', stopScenario: '', raw: {} });
+
+function turnFixture({ status, transport, latestTurn, goal = null, goalReadFails = false } = {}) {
+  const attention = [], candidate = { id: 'chat', title: 'Chat', preview: '', updatedAt: '' };
+  const identity = value => value;
+  let messages = {};
+  const context = {
+    exports: {}, crypto: webcrypto, AbortController, console: { warn() {} },
+    window: { setTimeout, cardbushDesktop: {} }, backend: {}, requestContext: {},
+    activeConversation: candidate, activeConversationId: 'chat', activeConversationIdRef: { current: 'chat' },
+    activeTurnIdsRef: { current: {} }, terminalTurnIdsRef: { current: new Set() }, controllersRef: { current: {} },
+    workspaceSwitchesRef: { current: new Map() }, conversationsRef: { current: [] }, preparedConversationsRef: { current: { chat: candidate } },
+    messagesByConversation: messages, messagesByConversationRef: { current: messages }, viewActiveRef: { current: true },
+    selectedModel: 'fixture', defaultModelId: 'fixture', availableModels: [], managedModelConfigs: [],
+    referencePlanMode: 'normal', permissionMode: 'ask', subagentPermissionRouting: 'parent', languageRef: { current: 'zh' },
+    resolveConversationModelId: () => 'fixture', resolveModelReasoningEffort: () => 'default', selectConversationModel() {}, readConversationModel: () => 'fixture',
+    modelConfigFor: () => ({}), selectedModelName: () => 'fixture', normalizeDisabledToolNames: () => [],
+    splitStreamAttachmentMentions: text => ({ displayInput: text, userInput: text, files: [], images: [] }), streamAttachmentsForVision: identity,
+    firstUserTitleSource: (_messages, text) => text, resolveConversationSource: () => true, isSessionSending: () => false,
+    persistPreparedConversation: async () => candidate, persistAutoConversationTitle() {},
+    conversationProjectRequestDir: () => undefined, conversationWorkspaceRoot: () => undefined,
+    setMessagesByConversation: update => { messages = update(messages); context.messagesByConversationRef.current = messages; },
+    setConversations: update => update([]), upsertConversationPreview: identity, conversationPreviewFromMessages: () => '',
+    markSessionRunning: (sessionId, turnId) => { if (turnId) context.activeTurnIdsRef.current[sessionId] = turnId; },
+    clearSessionRunning() {}, markSessionDone() {}, clearConnectionRecovery() {}, setPendingInteraction() {},
+    setError() {}, setConnectionRecoveryByConversation() {}, beginHistoryRead: () => ({}), isHistoryReadCurrent: () => true, applyHistoryRead() {},
+    fetchMessages: async () => [], fetchSessionMessages: async () => ({ messages: [], latestTurn }), loadTeamFlow: async () => null, reloadConversations: async () => {},
+    createFrameStreamBuffers: () => ({ push() {}, completeSegment: async () => {}, flushToolBoundary() {}, releaseTerminal: async () => {}, flushAllStreaming: async () => {}, dispose() {} }),
+    assignTurnToLocalMessages: identity, markOptimisticChatRequestAccepted: identity, applyAssistantStreamRoute: identity,
+    markLocalMessageTurnStarted: identity, applyTurnTerminalSnapshot: identity, appendToolExecution: identity, applyGoalExecution() {},
+    goalAvailable: true, goalByConversationRef: { current: { chat: goal } }, setGoalByConversation() {}, currentExperimentalGoal: goals => goals[0],
+    fetchExperimentalGoals: async () => { if (goalReadFails) throw Error('goal read interrupted'); return goal ? [goal] : []; },
+    markSessionAttention: (...args) => attention.push(args), localize: zh => zh, truncateText: text => text,
+    scheduleQueuedMessage() {}, isPendingInteractionConflictError: () => false,
+    isNetworkTransportError: error => error.transport === true, errorMessage: String, rawErrorMessage: String,
+  };
+  vm.runInNewContext(turnCode, context);
+  Object.assign(context, context.exports);
+  const stream = async (controller, handlers) => {
+    handlers.onStart({ turnId: 'turn' });
+    // Several loop rounds and tool results must remain quiet until a real terminal.
+    for (let round = 0; round < 3; round++) {
+      handlers.onDelta('partial', { turnId: 'turn' });
+      handlers.onAssistantSegmentCompleted('partial', { turnId: 'turn' });
+      handlers.onToolExecution({ id: `tool-${round}`, state: 'completed' });
+      assert.equal(attention.length, 0, 'loop output does not notify');
+    }
+    if (status) handlers.onDone(terminalFact(status));
+    if (transport === 'aborted') controller.abort();
+    if (transport) throw Object.assign(Error('stream interrupted'), { transport: transport !== 'other' });
+  };
+  context.streamChat = request => stream(context.controllersRef.current.chat, request);
+  return { context, attention, run: async route => {
+    if (route === 'send') await context.sendMessage('test message');
+    else await context.runControlAssistantStream({ conversation: candidate, initialMessages: [], rollbackMessages: [],
+      tempAssistant: { id: 'assistant', conversationId: 'chat', role: 'assistant', content: '' }, stream });
+    return attention.map(args => args[1]);
+  } };
+}
+
+for (const route of ['send', 'edit']) {
+  test(`${route}: stream endings notify only successful or failed terminal facts`, async () => {
+    for (const [status, expected] of [[undefined, []], ['stopped', []], ['failed', ['error']], ['completed', ['completed']], ['awaiting_user_action', []]]) {
+      assert.deepEqual(await turnFixture({ status }).run(route), expected, status ?? 'no terminal');
+    }
+  });
+  test(`${route}: recovery never mistakes an older turn or history without a terminal for completion`, async () => {
+    for (const [latestTurn, expected] of [[undefined, []], [terminalFact('completed', 'older-turn'), []],
+      [terminalFact('running'), []], [terminalFact('completed'), ['completed']], [terminalFact('failed'), ['error']], [terminalFact('stopped'), []]]) {
+      assert.deepEqual(await turnFixture({ transport: 'network', latestTurn }).run(route), expected);
+    }
+    assert.deepEqual(await turnFixture({ transport: 'aborted', latestTurn: terminalFact('completed') }).run(route), []);
+  });
+  test(`${route}: active goal continuation stays quiet even when refreshing its state fails`, async () => {
+    for (const goalReadFails of [false, true]) {
+      assert.deepEqual(await turnFixture({ status: 'completed', goal: { status: 'active', objective: 'continue' }, goalReadFails }).run(route), []);
+    }
+    assert.deepEqual(await turnFixture({ status: 'completed', goal: { status: 'blocked', objective: 'needs input' } }).run(route), ['waiting']);
+  });
+}
+
+test('non-network history reconciliation uses the matching terminal rather than any assistant final message', async () => {
+  for (const [status, expected] of [['completed', ['completed']], ['failed', ['error']], ['stopped', []]]) {
+    assert.deepEqual(await turnFixture({ transport: 'other', latestTurn: terminalFact(status) }).run('send'), expected);
+  }
+  assert.deepEqual(await turnFixture({ transport: 'other', latestTurn: terminalFact('completed', 'older-turn') }).run('send'), ['error']);
+});
+
+test('a genuine task-plan wait is an input cue rather than a completion cue', async () => {
+  const f = turnFixture();
+  await f.context.markTurnAttention('chat', { ...terminalFact('completed'), stopReason: 'task_plan_waiting' }, 'partial');
+  assert.deepEqual(f.attention.map(args => args[1]), ['waiting']);
 });

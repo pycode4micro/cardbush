@@ -160,6 +160,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('!!document.querySelector(".inspector-quick-input .send-button svg.lucide-square")','running turn shows stop');
   await until('document.querySelector(".quick-input-status")?.textContent.includes("正在处理")','quick input reports the live turn');
   assert.ok(await run('document.querySelector(".inspector-quick-input").getBoundingClientRect().height<100'),'collapsed status and single-line input share a compact surface');
+  await require('./quick-input-dismiss.cjs')({run,until,pause,window,guest,guestId});
   await run('window.retainedQuickComposer=document.querySelector(".inspector-quick-input textarea");void 0');
   await pause(250);fs.writeFileSync(path.join(root,'tmp','inspector-quick-input-working.png'),(await window.webContents.capturePage()).toPNG());
   await run('document.querySelector(".quick-input-status").click()');
@@ -168,7 +169,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelector(".inspector-quick-input textarea")===retainedQuickComposer'),true,'expansion keeps the same composer in place');
   assert.equal(await run('document.querySelectorAll("[data-composer-input]").length'),1,'preview never creates a second composer');
   assert.equal(await run('coverStops'),0,'viewing progress never cancels the turn');
-  assert.equal(await guest.executeJavaScript('window.pageClicks'),1,'preview preserves the browser document');
+  assert.equal(await guest.executeJavaScript('window.pageClicks'),2,'preview preserves the browser document');
   await run('document.querySelector(".quick-input-status").click()');
   await until('document.querySelector(".quick-input-transcript")?.hidden','preview collapses in place');
   await run('coverUpdate({error:"fixture request failed"})');await until('document.querySelector(".quick-input-status")?.dataset.state==="error"','quick input exposes failures');

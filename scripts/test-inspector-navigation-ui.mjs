@@ -44,7 +44,8 @@ state = reduce(state, { type: 'close', ids: new Set(state.tabs.map(tab => tab.id
 assert.deepEqual(state, { tabs: [], activeId: '' });
 const appSource = await readFile('src/App.tsx', 'utf8');
 assert.doesNotMatch(appSource, /\[workSummaryInspector|displayedWorkSummaryInspector|active && displayedReviewConversation/);
-assert.match(appSource, /<InspectorTabPages tabs=\{displayedInspectorTabs\}/);
+assert.match(appSource, /useInspectorTabs\(inspectorWorkspaceId\)/, 'tab selection belongs to the active conversation');
+assert.match(appSource, /<InspectorTabPages tabs=\{retainedInspectorTabs\}/, 'inactive conversations keep their mounted pages');
 assert.match(appSource, /reviewConversationsById\.get\(tab\.conversationId\)/);
 
 const parent = resolve('tmp');

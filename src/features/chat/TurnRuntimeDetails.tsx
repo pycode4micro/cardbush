@@ -95,7 +95,7 @@ export function TurnRuntimeDetails({ language, running, stopping, taskPlan, goal
               {node.status === 'completed' ? (
                 <CheckCircle2 size={13} />
               ) : node.status === 'in_progress' && running ? (
-                <LoaderCircle size={13} />
+                <LoaderCircle size={13} className="runtime-plan-spinner" />
               ) : (
                 <Clock3 size={13} />
               )}

@@ -7,7 +7,7 @@ import { useLiveThinkingNotice } from '../composer/useLiveThinkingNotice';
 import { activeToolStatusLabel } from '../tools/toolExecutionState';
 
 export const AssistantThinkingScope = createContext({
-  activeConversationId: '', activeTurnId: '', enabled: false, running: false,
+  activeConversationId: '', activeTurnId: '', enabled: false, running: false, hasPlan: false,
 });
 
 export function AssistantThinkingProcessLine(props: {
@@ -18,15 +18,16 @@ export function AssistantThinkingProcessLine(props: {
   const scope = useContext(AssistantThinkingScope);
   // Reasoning updates only this tail slot, leaving the transcript and media intact.
   const notice = useLiveThinkingNotice(scope);
-  return <AssistantThinkingDetail {...props} notice={notice} />;
+  return <AssistantThinkingDetail {...props} notice={notice} animate={scope.running && !scope.hasPlan} />;
 }
 
-export function AssistantThinkingDetail({ language, model, execution, notice, statusLabel }: {
+export function AssistantThinkingDetail({ language, model, execution, notice, statusLabel, animate = true }: {
   language: AppLanguage;
   model: string;
   execution?: ChatToolExecution;
   notice?: ThinkingNotice | null;
   statusLabel?: string;
+  animate?: boolean;
 }) {
   const logo = modelLogoFor(model);
   const thinking = execution ? null : notice;
@@ -35,7 +36,7 @@ export function AssistantThinkingDetail({ language, model, execution, notice, st
   return (
     <details className="turn-thinking-detail" open={expanded}>
       <summary
-        className="assistant-thinking-process"
+        className={`assistant-thinking-process${animate ? ' running-mask' : ''}`}
         aria-expanded={expanded}
         aria-disabled={!thinking}
         onClick={event => {

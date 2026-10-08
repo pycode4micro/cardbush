@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFile, writeFile } from 'node:fs/promises';
 import { inspectDocument } from './inspect.mjs';
-import { authorDocument, convertDocument, findOffice, renderPdf } from './jobs.mjs';
+import { authorDocument, convertDocument, findOffice, renderPdf, renderPresentation } from './jobs.mjs';
 import { libraries, pdfReader } from './sdk.mjs';
 
 async function environment(kind) {
@@ -13,6 +13,7 @@ async function environment(kind) {
     const reader = await pdfReader(await pdf.save()); await reader.close();
   }
   return { kind, ready: true, engine: 'CardBush document tools', office: await findOffice(),
+    ...(kind === 'pptx' ? { pngPreview: Boolean(process.env.CARDBUSH_PRESENTATION_EXPORT_EXECUTABLE && process.env.CARDBUSH_PRESENTATION_EXPORT_ENTRY), pngPreviewEngine: 'CardBush PPTX / Chromium' } : {}),
     libraries: { xlsx: ['exceljs', 'jszip', '@xmldom/xmldom'], pptx: ['pptxgenjs', 'jszip', '@xmldom/xmldom'],
       docx: ['docx', 'word-extractor', 'jszip', '@xmldom/xmldom'], pdf: ['pdf-lib', '@pdf-lib/fontkit', 'pdfjs-dist', '@napi-rs/canvas'] }[kind],
     officeRequiredFor: ['Office to PDF', 'XLSX formula recalculation', 'legacy DOC conversion'],
@@ -25,6 +26,7 @@ try {
     : action === 'author' ? await authorDocument(kind, request)
     : action === 'convert' ? await convertDocument(kind, request)
     : action === 'render' ? await renderPdf(request)
+    : action === 'presentation-render' ? await renderPresentation(request)
     : action === 'environment' ? await environment(kind) : (() => { throw new Error('Unsupported document action.'); })();
   await writeFile(resultFile, JSON.stringify({ ok: true, result }));
 } catch (error) {

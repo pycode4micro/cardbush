@@ -540,83 +540,12 @@ function spreadsheetColumnLabel(column: number) {
 }
 
 async function renderPptx(filePath: string, title: string) {
-  const bytes = await fs.promises.readFile(filePath);
-  const jsZipScript = await fs.promises.readFile(
-    path.join(path.dirname(require.resolve('jszip')), '..', 'dist', 'jszip.min.js'),
-    'utf8',
-  );
-  const nodeModulesRoot = path.resolve(path.dirname(require.resolve('jszip')), '..', '..');
-  const pptxModulePath = path.join(
-    nodeModulesRoot,
-    '@jvmr',
-    'pptx-to-html',
-    'dist',
-    'index.js',
-  );
-  const pptxRendererScript = (await fs.promises.readFile(pptxModulePath, 'utf8'))
-    .replace(/^import JSZip from ["']jszip["'];?\s*/m, 'const JSZip = globalThis.JSZip;\n')
-    .replace(/export\s*\{\s*pptxToHtml\s*\};?\s*$/m, 'globalThis.pptxToHtml = pptxToHtml;');
-  return officeDocumentShell(
-    title,
-    'PowerPoint 演示文稿 · 画布布局',
-    '<div id="pptx-container" class="slide-deck"><div class="office-loading">正在还原幻灯片主题与画布…</div></div>',
-    {
-      app: 'powerpoint',
-      scripts: `${jsZipScript}\n${pptxRendererScript}\n${pptxBootstrapScript(bytes.toString('base64'))}`,
-    },
-  );
-}
-
-function pptxBootstrapScript(base64: string) {
-  return `
-    (() => {
-      const binary = atob(${JSON.stringify(base64)});
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-      const container = document.getElementById('pptx-container');
-      globalThis.pptxToHtml(bytes.buffer, { width: 960, height: 540, scaleToFit: true, letterbox: true })
-        .then((slides) => {
-          container.innerHTML = '';
-          for (let index = 0; index < slides.length; index += 1) {
-            const stage = document.createElement('section');
-            stage.className = 'slide-stage';
-            stage.dataset.slide = String(index);
-            stage.hidden = index !== 0;
-            const number = document.createElement('div');
-            number.className = 'slide-stage-number';
-            number.textContent = String(index + 1);
-            const canvas = document.createElement('div');
-            canvas.className = 'slide-stage-canvas';
-            canvas.innerHTML = slides[index];
-            stage.append(number, canvas);
-            container.append(stage);
-          }
-          const fitSlides = () => {
-            container.querySelectorAll('.slide-stage-canvas').forEach((canvas) => {
-              const viewport = canvas.querySelector('.slide-container');
-              if (!viewport) return;
-              const userZoom = Number(document.documentElement.style.getPropertyValue('--office-user-zoom')) || 1;
-              const scale = Math.max(0.2, Math.min(2, canvas.clientWidth / 960 * userZoom));
-              viewport.style.position = 'absolute';
-              viewport.style.inset = '0 auto auto 0';
-              viewport.style.width = '960px';
-              viewport.style.height = '540px';
-              viewport.style.transformOrigin = 'top left';
-              viewport.style.transform = 'scale(' + scale + ')';
-            });
-          };
-          fitSlides();
-          new ResizeObserver(fitSlides).observe(container);
-          window.addEventListener('office:viewport-change', fitSlides);
-          globalThis.cardbushSlidesReady?.();
-        })
-        .catch((error) => {
-          container.innerHTML = '<section class="empty-state"><h2>PowerPoint 样式渲染失败</h2><p>' +
-            String(error && error.message || error).replace(/[&<>"']/g, (character) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character])) +
-            '</p></section>';
-        });
-    })();
-  `;
+  // Keep compatibility URLs on the same PPTX engine instead of approximating
+  // shape geometry, fonts and media with a separate HTML converter.
+  const target = 'cardbush-file://office-preview/?path=' + encodeURIComponent(filePath);
+  return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>' + escapeHtml(title) +
+    '</title><meta http-equiv="refresh" content="0;url=' + escapeHtml(target) +
+    '"></head><body><a href="' + escapeHtml(target) + '">打开演示文稿预览</a></body></html>';
 }
 
 async function renderLegacyBinary(

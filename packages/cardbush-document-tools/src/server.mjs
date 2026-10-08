@@ -38,7 +38,7 @@ export function createDocumentServer(kind) {
       try {
         const result = await runDocumentJob(kind, action, input, context.mcpReq.signal);
         const content = [{ type: 'text', text: JSON.stringify(result) }];
-        if (action === 'render') {
+        if (action === 'render' || action === 'presentation-render') {
           const image = await readFile(result.outputs[0].path);
           if (image.length <= 8 * 1024 * 1024) content.push({ type: 'image', data: image.toString('base64'), mimeType: 'image/png' });
         }
@@ -58,6 +58,10 @@ export function createDocumentServer(kind) {
     z.object({ path: filePath, output: filePath, expected_sha256: sha256.optional() }), 'convert', false);
   else register('render_pdf_page', 'Render one PDF page to a new PNG for visual inspection; attaches the image when small enough. Use successive page numbers as needed.',
     z.object({ path: filePath, output: filePath, page: z.number().int().min(1).default(1), scale: z.number().min(0.25).max(3).default(1.5) }), 'render', false);
+  if (kind === 'pptx') register('render_presentation', 'Render actual PPTX slides to a new PNG using the same Chromium renderer as CardBush desktop preview. Single page by default; pages makes a contact sheet in the supplied order. Does not edit the source. Requires the CardBush desktop host; no HTML approximation or embedded thumbnail fallback.',
+    z.object({ path: filePath, output: filePath, expected_sha256: sha256.optional(),
+      pages: z.array(z.number().int().min(1)).min(1).max(50).default([1]),
+      width: z.number().int().min(320).max(3840).default(1440), columns: z.number().int().min(1).max(8).default(3) }), 'presentation-render', false);
   return server;
 }
 export function startDocumentServer(kind) { return serveStdio(() => createDocumentServer(kind)); }

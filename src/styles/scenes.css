@@ -1011,38 +1011,3 @@
   padding: 24px clamp(20px, 4vw, 48px);
   overflow: auto;
 }
-
-.right-inspector-start-actions {
-  width: 100%;
-  max-width: 560px;
-  min-width: 0;
-  justify-self: center;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-}
-
-.right-inspector-start-actions > button {
-  min-height: 48px;
-  grid-template-columns: 24px minmax(max-content, 1fr) minmax(0, auto);
-  padding: 10px 13px;
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-}
-
-.right-inspector-start-actions strong {
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 550;
-}
-
-.right-inspector-start-actions kbd {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 2px 7px;
-  border-radius: 5px;
-  color: var(--text-soft);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  font-family: inherit;
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  white-space: nowrap;
-}

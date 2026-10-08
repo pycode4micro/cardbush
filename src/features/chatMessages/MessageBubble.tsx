@@ -2946,8 +2946,10 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubbleVie
   const activeTurnId = props.activeTurnId || props.message.turnId || '';
   const enabled = props.thinkingVisible === true;
   const running = isActiveMessageBubble(props);
-  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running }),
-    [activeConversationId, activeTurnId, enabled, running]);
+  const plan = props.message.taskPlan ?? [...(props.message.loopHistory ?? [])].reverse().find(message => message.taskPlan)?.taskPlan;
+  const hasPlan = Boolean(plan?.nodes.some(node => node.status !== 'completed'));
+  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running, hasPlan }),
+    [activeConversationId, activeTurnId, enabled, running, hasPlan]);
   return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId} sourceReferences={props.message.role === 'assistant'}>
     <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
       <AssistantThinkingScope.Provider value={thinkingScope}>

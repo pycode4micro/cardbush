@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BrowserBookmarkImporter, browserWebUrl, type BookmarkImportResult, type BrowserProfile } from './browserImport';
-import { BrowserLibrary, type BrowserDownload, type BrowserLibraryPage, type BrowserVisit } from './browserLibrary';
+import { BrowserLibrary, type BrowserDownload, type BrowserLibraryPage, type BrowserVisit, type BrowserFrequentSite } from './browserLibrary';
 import type { WebApplicationInfo } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export type BrowserPageCommand = { action: 'status' | 'print' | 'screenshot' }
@@ -17,6 +17,8 @@ export type BrowserUiBridge = {
   page: (guestId: number, command: BrowserPageCommand) => Promise<BrowserPageResult>;
   webApplication: (guestId: number, expectedUrl: string) => Promise<WebApplicationInfo>;
   history: (query?: string, offset?: number) => Promise<BrowserLibraryPage<BrowserVisit>>;
+  frequentSites: () => Promise<BrowserFrequentSite[]>;
+  onHistoryChanged: (callback: () => void) => () => void;
   downloads: (query?: string, offset?: number) => Promise<BrowserLibraryPage<BrowserDownload>>;
   removeVisit: (id: string) => Promise<void>;
   downloadAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'show') => Promise<void>;
@@ -32,8 +34,12 @@ export class BrowserUiService {
   private sessions = new Set<Session>();
   private downloads = new Map<string, DownloadItem>();
   private devices = new Map<number, Extract<BrowserPageCommand, { action: 'device' }>['size']>();
-  private owners = new WeakSet<WebContents>();
-  constructor(directory: string, readonly importer = new BrowserBookmarkImporter()) { this.library = new BrowserLibrary(join(directory, 'library.json')); }
+  private owners = new Set<WebContents>();
+  constructor(directory: string, readonly importer = new BrowserBookmarkImporter()) {
+    this.library = new BrowserLibrary(join(directory, 'library.json'), () => {
+      for (const owner of this.owners) if (!owner.isDestroyed()) owner.send('browser:history-changed');
+    });
+  }
   private downloadRecord(id: string, item: DownloadItem): BrowserDownload {
     return { id, url: item.getURL(), name: item.getFilename(), path: item.getSavePath(), received: item.getReceivedBytes(),
       total: item.getTotalBytes(), state: item.getState(), paused: item.isPaused(), startedAt: item.getStartTime() * 1000 };
@@ -41,6 +47,7 @@ export class BrowserUiService {
   attach(owner: WebContents) {
     if (this.owners.has(owner)) return;
     this.owners.add(owner);
+    owner.once('destroyed', () => this.owners.delete(owner));
     // A URL may download before dom-ready. Attach before the first navigation,
     // while keeping URL filtering in the history store (local previews are excluded).
     owner.on('did-attach-webview', (_event, guest) => this.track(owner, guest.id));
@@ -185,6 +192,7 @@ export function registerBrowserUiIpc(assertSender: (id: number) => void, createS
     return readWebsiteApplication(guest, expectedUrl);
   });
   handle('history', (_owner, query: string, offset: number) => get().library.list('history', typeof query === 'string' ? query : '', offset));
+  handle('frequent-sites', () => get().library.frequentSites());
   handle('downloads', (_owner, query: string, offset: number) => get().library.list('downloads', typeof query === 'string' ? query : '', offset));
   handle('history-remove', (_owner, id: string) => get().library.removeVisit(id));
   handle('download-action', (_owner, id: string, action: string) => get().downloadAction(id, action));

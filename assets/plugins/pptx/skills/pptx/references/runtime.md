@@ -2,6 +2,8 @@
 
 author_document 接收 code、inputs: [{path, sha256?}]、outputs: [绝对路径]。代码获得 tools、输入副本 inputs、输出暂存文件 outputs。等待所有异步写入；输出必须是新路径。适用通常的代码执行授权和资源保护。
 
+tools.PptxGenJS 暴露制作库本身，可以选择页面尺寸、富文本、字体与样式、图片与裁切、形状、表格和原生图表，不经过预设版式包装。下面仅演示写入接口，不是设计模板；实际页面由内容与视觉方向决定。
+
 ```js
 const deck = new tools.PptxGenJS();
 deck.layout = 'LAYOUT_WIDE';
@@ -13,4 +15,4 @@ await deck.writeFile({ fileName: outputs[0] });
 
 tools 还包括 fs、JSZip、DOMParser、XMLSerializer。修改已有文件时加载输入副本，按 inspect_document 返回的部件路径定位文本节点，结合页面和上下文消除重复文本歧义，保留 run 样式和其他 ZIP 部件。新增页面、图表、媒体时需要同步关系文件与内容类型；无法验证时不要承诺无损。
 
-convert_document 将 PPTX/POTX 输出成新 PDF，依赖本机 LibreOffice。PDF 插件的 render_pdf_page 可逐页查看。预览字体和动画可能与 PowerPoint 不同；结论限定在实际检查范围。
+视觉复核见 [预览指导](preview.md)。桌面主机可用 render_presentation 将实际 PPTX 页面输出为新 PNG；pages 可选择多页生成联系表，使用与应用预览相同的渲染引擎。先检查 document_environment 的 pngPreview。convert_document 将 PPTX/POTX 输出成新 PDF，依赖本机 LibreOffice；PDF 插件的 render_pdf_page 可逐页查看。预览字体和动画可能与 PowerPoint 不同，结论限定在实际检查范围。

@@ -75,6 +75,16 @@ module.exports = async ({ run, until, pause, win, root, liveDesktop = false }) =
   assert.equal(await run("document.querySelector('.agent-desktop-view [role=alert]')?.textContent||''"), '');
   if (liveDesktop) await pause(1200); // Include the next real frame after the acknowledged input.
   fs.writeFileSync(path.join(root, liveDesktop ? 'tmp/agent-desktop-ui-live.png' : 'tmp/agent-desktop-ui.png'), (await win.webContents.capturePage()).toPNG());
+  await run("window.retainedDesktop=document.querySelector('.agent-desktop-view');window.lockedDesktopFrames=desktopCalls.filter(c=>c.operation==='desktop.frame').length;document.querySelector('.right-inspector-tab-lock').click();[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Local view').click();undefined;");
+  await until("document.querySelector('#right-inspector')?.getAttribute('aria-hidden')==='false' && document.querySelector('.right-inspector-tab-lock')?.getAttribute('aria-pressed')==='true'", 'locked remote desktop follows local view');
+  assert.ok(await run("retainedDesktop===document.querySelector('.agent-desktop-view')"), 'same remote desktop stays mounted');
+  await until("desktopCalls.filter(c=>c.operation==='desktop.frame').length>lockedDesktopFrames", 'locked desktop keeps receiving frames across conversations', 8000);
+  assert.ok(await run("!!desktopToken"), 'visible locked desktop keeps its control lease');
+  await run("document.querySelector('.right-inspector-tab-lock').click();undefined;");
+  await until("fixtureInspector.tabs.length===0 && desktopToken===null", 'unlock hides foreign desktop and releases control', 8000);
+  assert.ok(await run("retainedDesktop===document.querySelector('.agent-desktop-view')"), 'unlock preserves the originating desktop page');
+  await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Agent view').click();undefined;");
+  await until("fixtureInspector.activeId.startsWith('agent-desktop:') && document.querySelector('.agent-desktop-screen img')?.naturalWidth===1600", 'original remote desktop restores');
   await run("document.querySelector('[aria-label=\"关闭审查\"]').click();undefined;");
   await until("desktopToken===null&&!document.querySelector('.agent-desktop-view')", 'closing preview releases control', 8000);
   const frames = await run('desktopCalls.length');

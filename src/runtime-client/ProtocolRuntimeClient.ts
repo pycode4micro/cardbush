@@ -18,6 +18,7 @@ import {
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_USER_MESSAGE_COMMAND,
+  LIST_RUNTIME_TURN_EVENTS_COMMAND,
   LIST_RUNTIME_USER_PROMPTS_COMMAND,
   runtimeUserPromptsRequestSchema,
   runtimeUserPromptSchema,
@@ -44,6 +45,8 @@ import {
   decodeContextSnapshot,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
+  runtimeEventCursorSchema,
+  runtimeEventSchema,
   runtimeSessionIdentitySchema,
   runtimeSessionReadRequestSchema,
   runtimeSessionListRequestSchema,
@@ -155,6 +158,12 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
       (input) => input == null ? null : sessionSnapshotSchema.parse(input),
       signal,
     );
+  }
+
+  listTurnEvents(input: { sessionId: string; turnId: string; afterSequence?: number }, signal?: AbortSignal): Promise<RuntimeEvent[]> {
+    const payload = { ...runtimeTurnIdentitySchema.parse(input), ...runtimeEventCursorSchema.parse(input) };
+    return this.command({ kind: LIST_RUNTIME_TURN_EVENTS_COMMAND, payload },
+      value => runtimeEventSchema.array().parse(value), signal);
   }
 
   getConversationSession(

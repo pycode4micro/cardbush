@@ -2,7 +2,7 @@
 
 author_document 接收 code、inputs: [{path, sha256?}]、outputs: [绝对路径]。代码获得 tools、输入副本路径 inputs 和输出暂存路径 outputs；await 全部操作后返回。它执行普通代码，适用现有工具授权和资源保护；临时目录不是安全沙箱。
 
-tools.ExcelJS 是固定版本 ExcelJS，tools.fs 是文件 API，还有 JSZip、DOMParser、XMLSerializer。示例 code：
+tools.ExcelJS 是固定版本 ExcelJS，tools.fs 是文件 API，还有 JSZip、DOMParser、XMLSerializer。单元格、公式、字体、底色、边框、对齐、条件格式、表对象、图片和页面设置由代码自由组合，没有固定成稿样式。原生图表的能力边界见 [设计指导](design.md)。下面仅演示文件接口，不是报告模板。示例 code：
 
 ```js
 const book = new tools.ExcelJS.Workbook();

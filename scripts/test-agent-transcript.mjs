@@ -18,6 +18,9 @@ const read = command => {
   if (command.kind === 'runtime.get_session') return fixture.snapshot ?? null;
   if (command.kind === 'runtime.get_tool_execution') return fixture.records?.find(r => r.toolCall.id === command.payload.toolCallId) ?? null;
   if (command.kind === 'runtime.get_user_message') return fixture.guidance?.find(m => m.messageId === command.payload.messageId) ?? null;
+  if (command.kind === 'runtime.list_turn_events') return fixture.events.filter(event =>
+    event.sessionId === command.payload.sessionId && event.turnId === command.payload.turnId &&
+    event.sequence > (command.payload.afterSequence ?? 0));
   throw Error(`Unexpected command: ${command.kind}`);
 };
 const listeners = new Set();
@@ -187,6 +190,34 @@ test('same permission identity on two hosts answers only the selected Runtime', 
   assert.equal(answered.length, 1); assert.equal(answered[0][0], 'a');
   assert.equal(a.runtime.interactions.pendingRuntimeInteraction(sessionId), null);
   assert.equal(b.runtime.interactions.pendingRuntimeInteraction(sessionId).id, 'same');
+});
+
+for (const resolution of [undefined, 'permission_answered', 'permission_rejected', 'permission_cancelled', 'permission_expired', 'turn_terminal']) {
+  test(`permission replay restores only a live wait (${resolution ?? 'pending'}) on local and remote hosts`, async () => {
+    const requested = event(1, 'permission_requested', { permissionId: 'approval', toolCallId: 'read-tool',
+      reason: 'Read private file', actions: ['read'], targets: [{ kind: 'filesystem_path', value: '/srv/private' }],
+      requestedCapabilityIds: ['filesystem.read'] });
+    const events = [requested];
+    if (resolution) events.push(event(2, resolution, resolution === 'turn_terminal'
+      ? { status: 'stopped', reason: 'user_stopped', details: {} }
+      : { permissionId: 'approval', reason: 'resolved', answerId: 'answer', grantedCapabilityIds: ['filesystem.read'] }));
+    for (const mode of ['local', 'remote']) {
+      const before = commands.length;
+      const result = await project(events, mode);
+      assert.equal(result.observations.permissions.length, resolution ? 0 : 1);
+      const lookup = commands.slice(before).find(command => command.kind === 'runtime.list_turn_events');
+      assert.deepEqual(plain(lookup.payload), { sessionId, turnId, afterSequence: 1 }, 'only read facts after this request');
+    }
+  });
+}
+
+test('resolving another permission never hides the current live request', async () => {
+  const result = await project([
+    event(1, 'permission_requested', { permissionId: 'current', reason: 'Read', actions: ['read'],
+      targets: [{ kind: 'filesystem_path', value: '/srv/private' }], requestedCapabilityIds: ['filesystem.read'] }),
+    event(2, 'permission_answered', { permissionId: 'other', answerId: 'answer', grantedCapabilityIds: [] }),
+  ]);
+  assert.deepEqual(result.observations.permissions.map(request => request.id), ['current']);
 });
 
 const outputLimitSnapshot = () => decodeSessionSnapshot({

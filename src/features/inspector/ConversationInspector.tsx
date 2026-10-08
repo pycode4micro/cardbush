@@ -1,4 +1,4 @@
-import { createContext, useCallback, useState } from 'react';
+import { createContext, useCallback, useRef, useState } from 'react';
 
 /** A conversation can render scoped content inside the shared inspector tabs.
  * Portals preserve its host context, including remote file and Runtime routing. */
@@ -7,7 +7,16 @@ export const ConversationInspectorContext = createContext<{
   close: (id: string) => void;
   outlets: ReadonlyMap<string, HTMLDivElement>;
   visible: boolean;
+  visibleTabIds?: ReadonlySet<string>;
 } | null>(null);
+
+/** Portal cleanup depends on these callbacks; navigation must not look like unmounting its host. */
+export function useConversationInspectorActions(actions: { open(id: string, title: string): void; close(id: string): void }) {
+  const current = useRef(actions); current.current = actions;
+  const open = useCallback((id: string, title: string) => current.current.open(id, title), []);
+  const close = useCallback((id: string) => current.current.close(id), []);
+  return { open, close };
+}
 
 export function useConversationInspectorOutlets() {
   const [outlets, setOutlets] = useState<ReadonlyMap<string, HTMLDivElement>>(new Map());

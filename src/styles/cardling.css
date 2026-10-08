@@ -653,7 +653,7 @@
   :where(html:not([data-motion-preference="off"])) .message-list-item.user-message-entering .user-bubble,
   :where(html:not([data-motion-preference="off"])) .cardling-card,
   :where(html:not([data-motion-preference="off"])) .assistant-thinking,
-  :where(html:not([data-motion-preference="off"])) .assistant-thinking-label,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-process.running-mask .assistant-thinking-label,
   :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop,
   :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop svg,
   :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop::after,
@@ -662,7 +662,8 @@
   }
 
   :where(html:not([data-motion-preference="off"])) .assistant-thinking,
-  :where(html:not([data-motion-preference="off"])) .assistant-thinking-label {
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-process.running-mask .assistant-thinking-label {
+    background-image: none;
     color: var(--text-soft);
     -webkit-text-fill-color: var(--text-soft);
   }
@@ -676,7 +677,8 @@
   /* These spinners communicate live execution state rather than decoration.
      Keep a slower, steady rotation when the OS reduces motion so they do not
      become indistinguishable from a stalled task. */
-  :where(html:not([data-motion-preference="off"])) .assistant-thinking-model.fallback svg,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-process.running-mask .assistant-thinking-model.fallback svg,
+  :where(html:not([data-motion-preference="off"])) .runtime-plan-detail .runtime-plan-spinner,
   :where(html:not([data-motion-preference="off"])) .composer-runtime-screen.running .runtime-screen-line.processing > svg,
   :where(html:not([data-motion-preference="off"])) .runtime-context-compaction-spinner {
     animation-name: cardbush-spin !important;

@@ -55,3 +55,37 @@ test('history and downloads serialize concurrent writes, page results and keep f
   assert.equal((await library.list('downloads')).total, 0); assert.equal(await readFile(downloadPath, 'utf8'), 'keep this file');
   assert.equal((await new BrowserLibrary(file).list('history')).total, 0);
 });
+
+test('frequent sites rank all retained visits by site, persist and follow history changes', async t => {
+  const root = await fixture(t), file = join(root, 'records.json');
+  const history = Array.from({ length: 65 }, (_, i) => ({ id: `recent-${i}`, url: `https://recent-${i}.example/page`, title: 'Recent page', visitedAt: 1000 - i, visits: 1 }));
+  history.push(
+    { id: 'work-a', url: 'https://work.example/report?private=query', title: 'Report', visitedAt: 20, visits: 4 },
+    { id: 'work-b', url: 'https://work.example/draft#section', title: 'Draft', visitedAt: 30, visits: 3 },
+    { id: 'second', url: 'https://second.example/page', title: 'Page', visitedAt: 10, visits: 5 },
+  );
+  await writeFile(file, JSON.stringify({ history, downloads: [] }));
+  let notifications = 0;
+  const library = new BrowserLibrary(file, () => notifications++);
+  const sites = await library.frequentSites();
+  assert.equal(sites.length, 8);
+  assert.deepEqual(sites[0], { url: 'https://work.example/', title: 'work.example', visits: 7, visitedAt: 30 }, 'older frequent visits beyond the first history page still rank first, without sensitive paths or duplicate origins');
+  assert.equal(sites[1].url, 'https://second.example/');
+  assert.equal(sites[2].url, 'https://recent-0.example/', 'equally visited sites use recency');
+  await library.visit('https://work.example/report?private=query', 'Updated title', false);
+  assert.equal((await library.frequentSites())[0].visits, 7, 'title changes do not inflate frequency');
+  assert.equal(notifications, 1);
+  const pending = library.visit('https://work.example/new', 'New page');
+  assert.equal((await library.frequentSites())[0].visits, 8, 'reads include pending visits');
+  await pending;
+  assert.deepEqual(await new BrowserLibrary(file).frequentSites(), await library.frequentSites(), 'ranking survives restarting');
+  await library.removeVisit('work-a');
+  assert.equal((await library.frequentSites())[0].url, 'https://second.example/', 'deleting history changes ranking');
+  assert.equal(notifications, 3);
+  await library.clear(false, true);
+  assert.equal(notifications, 3, 'download changes do not invalidate site history');
+  await library.clear(true, false);
+  assert.deepEqual(await library.frequentSites(), []);
+  assert.deepEqual(await new BrowserLibrary(file).frequentSites(), []);
+  assert.equal(notifications, 4);
+});

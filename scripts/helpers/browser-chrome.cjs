@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-module.exports = async ({ window, original, origin, read, waitFor, activeReady, pause, click }) => {
+module.exports = async ({ window, original, origin, read, waitFor, activeReady, pause, click, uiService }) => {
   const active = '.right-inspector-tab-page.active ';
   const search = active + '.inspector-bookmark-search input';
   const typeSearch = async value => read(`(()=>{const input=document.querySelector(${JSON.stringify(search)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -23,12 +23,30 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
     await read(`document.querySelector('.right-inspector-new-tab').click(); void 0`); await activeReady();
   }
   const newTabId = await read('browserFixture.activeId');
+  await waitFor(`document.querySelector('${active}.inspector-bookmark-entry strong')?.textContent===${JSON.stringify(new URL(origin).host)}`, 'visited site appears without bookmarking its URL');
+  assert.equal(await read(`document.querySelectorAll('${active}.inspector-bookmark-entry').length`), 1, '55 bookmarks do not populate frequent sites');
+  await uiService.library.visit('https://frequent.example/page', 'Another site');
+  await waitFor(`document.querySelectorAll('${active}.inspector-bookmark-entry').length===2`, 'open new tabs update when history changes');
+  await uiService.library.clear(true, false);
+  await waitFor(`document.querySelector('${active}.inspector-bookmark-entry strong')?.textContent==='Google'`, 'clearing history removes derived frequent sites');
+  await original.loadURL(origin + '/tab-design#live-history');
+  await waitFor(`document.querySelector('${active}.inspector-bookmark-entry strong')?.textContent===${JSON.stringify(new URL(origin).host)}`, 'actual background browser navigation updates frequent sites');
+  await original.executeJavaScript(`document.querySelector('link[rel=icon]').href='/site-logo-alt.svg'; void 0`);
+  await waitFor(`document.querySelector('${active}.inspector-bookmark-entry .browser-site-icon img')?.src===${JSON.stringify(origin + '/site-logo-alt.svg')}`, 'frequent sites reuse the latest native favicon');
+  for (const theme of ['bright', 'dark']) {
+    await read(`document.querySelector('.app').className='app theme-${theme}'; void 0`);
+    await pause(160);
+    await fs.mkdir(path.resolve('tmp'), { recursive: true });
+    await fs.writeFile(path.resolve('tmp', `browser-frequent-${theme}.png`), (await window.webContents.capturePage()).toPNG());
+  }
+  await read(`document.querySelector('${active}[data-site-view=bookmarks]').click(); void 0`);
   await waitFor(`document.querySelectorAll('${active}.inspector-bookmark-link').length===24`);
   assert.equal(await read(`document.querySelector('.right-inspector-tab.active .browser-site-icon img')`), null, 'blank tabs do not reuse a previous page icon');
   await waitFor(`document.querySelector('${active}.inspector-bookmark-link .browser-site-icon img')?.naturalWidth>0`, 'bookmarks reuse the visited site logo');
   assert.equal(await read(`document.querySelector('${active}.inspector-bookmark-link .browser-site-icon img').src`), origin + '/site-logo-alt.svg');
-  const layout = await read(`(()=>{const top=document.querySelector('${active}.inspector-start-bookmarks').getBoundingClientRect();const collection=document.querySelector('${active}.inspector-bookmark-library').getBoundingClientRect();return {top:top.bottom,collection:collection.top,width:collection.width};})()`);
-  assert.ok(layout.collection > layout.top && layout.width > 400, 'collection appears below the existing shortcuts');
+  const layout = await read(`(()=>{const top=document.querySelector('${active}.inspector-start-tools').getBoundingClientRect();const collection=document.querySelector('${active}.inspector-bookmark-library').getBoundingClientRect();return {top:top.bottom,collection:collection.top,width:collection.width};})()`);
+  assert.ok(layout.collection > layout.top && layout.width > 400 && layout.width <= 640, 'one bounded site collection sits below compact tools');
+  assert.equal(await read(`document.querySelector('${active}.inspector-start-bookmarks')`), null, 'no duplicate bookmark section');
   const noOverflow = () => read(`(()=>{const page=document.querySelector('${active}.inspector-new-tab-page');return page.scrollWidth<=page.clientWidth;})()`);
   assert.ok(await noOverflow(), 'many shortcuts never push the bookmark grid outside the new tab');
   const sizes = await read(`Array.from(document.querySelectorAll('.right-inspector-tab')).map(tab=>tab.getBoundingClientRect().width)`);
@@ -66,5 +84,5 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   await waitFor(`(()=>{const strip=document.querySelector('.right-inspector-tabs');const tab=document.querySelector('.right-inspector-tab.active').getBoundingClientRect();const r=strip.getBoundingClientRect();return strip.scrollWidth>strip.clientWidth&&tab.left>=r.left-1&&tab.right<=r.right+1;})()`, 'narrow pane scrolls to the active tab');
   const narrow = await read(`(()=>{const strip=document.querySelector('.right-inspector-tabs');const plus=document.querySelector('.right-inspector-new-tab').getBoundingClientRect();return {min:Math.min(...Array.from(strip.children).map(tab=>tab.getBoundingClientRect().width)),right:plus.right,width:innerWidth};})()`);
   assert.ok(narrow.min >= 148 && narrow.right < narrow.width, 'tabs remain readable and the new-tab button stays visible');
-  console.log('Browser appearance passed: native favicon updates, remembered bookmark logos, wider titles, 55-bookmark search/paging, direct navigation, narrow active-tab reveal, and light/dark rendering.');
+  console.log('Browser appearance passed: live frequent sites from native history, clear-history refresh, native favicons, 55-bookmark search/paging, direct navigation, narrow active-tab reveal, and light/dark rendering.');
 };

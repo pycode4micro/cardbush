@@ -5,7 +5,8 @@ import { panelDividers, panelRects, type PanelLayout } from './panelLayout';
 import './inspectorWorkspace.css';
 
 /** Switching tabs preserves each page's local state and its underlying guest. */
-export function InspectorTabPages({ tabs, activeId, children, layout = null, onResize, renderFrame, onActivate, language = 'en' }: {
+export function InspectorTabPages({ tabs, activeId, children, layout = null, onResize, renderFrame, onActivate, language = 'en', workspaceId = 'shared' }: {
+  workspaceId?: string;
   language?: AppLanguage;
   tabs: InspectorTab[];
   activeId: string;
@@ -21,6 +22,7 @@ export function InspectorTabPages({ tabs, activeId, children, layout = null, onR
   resize.current = onResize;
   const rects = panelRects(layout);
   useEffect(() => () => cancelDrag.current?.(false), []);
+  useEffect(() => { cancelDrag.current?.(false); }, [workspaceId]);
   useEffect(() => { if (!layout) cancelDrag.current?.(false); }, [layout]);
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>, divider: ReturnType<typeof panelDividers>[number]) => {

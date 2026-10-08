@@ -93,6 +93,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
   const toolsRef = useRef<BrowserPageToolsHandle>(null);
   const activateRef = useRef(onActivate); activateRef.current = onActivate;
+  const openTargetRef = useRef(onOpenTarget); openTargetRef.current = onOpenTarget;
   const languageRef = useRef(language); languageRef.current = language;
   const webviewDomReadyRef = useRef(false);
   const requestedUrlRef = useRef(source);
@@ -359,7 +360,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       try {
         if (webview.getWebContentsId?.() !== detail.guestWebContentsId) return;
       } catch { return; } // A guest can be replaced while its IPC event is in flight.
-      onOpenTarget({ target: detail.target });
+      openTargetRef.current({ target: detail.target });
     });
     const contextMenu = (event: Event) => {
       const params = (event as Event & {
@@ -428,7 +429,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('context-menu', contextMenu);
     };
   }, [
-    onOpenTarget,
     publishNavigation,
     rendererPreview,
     source,

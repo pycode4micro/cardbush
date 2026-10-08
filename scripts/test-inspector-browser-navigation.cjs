@@ -149,7 +149,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []); return;
     }
     if (process.argv.includes('--browser-chrome')) {
-      await require('./helpers/browser-chrome.cjs')({ window, original, origin, read, waitFor, activeReady, until, pause, click });
+      await require('./helpers/browser-chrome.cjs')({ window, original, origin, read, waitFor, activeReady, until, pause, click, uiService });
       assert.deepEqual(errors, []); return;
     }
     if (process.argv.includes('--browser-ui')) {

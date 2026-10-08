@@ -4,7 +4,7 @@ module.exports = async ({ run, until, pause }) => {
   await run(`
     // The data: fixture is not a secure context; supply the native implementation.
     window.workspaceRandomUUID=crypto.randomUUID; crypto.randomUUID=require('node:crypto').randomUUID;
-    window.workspaceConfirm=window.confirm; window.confirm=()=>false;
+    window.workspaceConfirm=window.confirm; window.confirm=()=>{throw Error('Multipage must not ask for confirmation');};
     localStorage.setItem('cardbush.inspector_width','560');
     function WorkspaceFixture(){
       const [section,setSection]=React.useState('automations'),[sidebarCollapsed,setSidebarCollapsed]=React.useState(false);
@@ -21,9 +21,7 @@ module.exports = async ({ run, until, pause }) => {
   `);
   try {
     await until('!!window.workspaceFixture','workspace hook mounted');
-    await run('workspaceFixture.toggleMultiPage()'); await pause();
-    assert.equal(await run('workspaceFixture.inspectorTabs.length'),0,'declined beta prompt makes no tabs');
-    const failure = await run('try { window.confirm=()=>true;workspaceFixture.toggleMultiPage(); null } catch (error) { error.stack }');
+    const failure = await run('try { workspaceFixture.toggleMultiPage(); null } catch (error) { error.stack }');
     assert.equal(failure, null);
     await until('workspaceFixture.inspectorTabs.length===2 && !!workspaceFixture.inspectorLayout','two panes created');
     assert.deepEqual(await run('[workspaceFixture.sidebarCollapsed,workspaceFixture.tabsMenu]'),[true,false]);
@@ -49,6 +47,6 @@ module.exports = async ({ run, until, pause }) => {
     await until('!workspaceFixture.inspectorCover','closing inspector releases cover');
     await run('renderView(null)'); await pause();
     assert.equal(await run('document.body.classList.contains("window-right-edge-resizing")'),false);
-    console.log('Inspector workspace ownership passed: beta cancellation, pane creation, menu closure, Escape, section/sidebar/width restore and close cleanup.');
+    console.log('Inspector workspace ownership passed: immediate pane creation without confirmation, menu closure, Escape, section/sidebar/width restore and close cleanup.');
   } finally { await run('window.confirm=workspaceConfirm; crypto.randomUUID=workspaceRandomUUID; void 0'); }
 };

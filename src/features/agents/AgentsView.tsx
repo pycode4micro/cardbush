@@ -113,6 +113,8 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
   const call = useCallback<Call>(async (operation, input) => await api().call(connection.id, operation, input) as never, [connection.id]);
   const { refreshSessions } = agents;
   const sessionId = agents.selectedSessions[connection.id] ?? '';
+  const visitedSessions = useRef(new Set<string>());
+  if (sessionId) visitedSessions.current.add(sessionId);
   const sessions = agents.sessionsByAgent[connection.id]?.sessions ?? [];
   const [models, setModels] = useState<Models>({ defaultModelId: '', models: [] });
   // The shared-conversation protocol added visionEnabled to chat.send.
@@ -168,12 +170,17 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
       <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '连接设置' : 'Connection settings'} aria-label={zh ? '连接设置' : 'Connection settings'} onClick={onEdit}><Settings size={15}/></button>
     </div>;
   return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
-    {info.capabilities.desktop && inspector?.outlets.get(desktopId) && createPortal(<AgentDesktopView call={call} name={connection.name} language={language} active={active && inspector.visible}/>, inspector.outlets.get(desktopId)!)}
+    {info.capabilities.desktop && inspector?.outlets.get(desktopId) && createPortal(<AgentDesktopView call={call} name={connection.name} language={language}
+      active={inspector.visibleTabIds?.has(desktopId) ?? (active && inspector.visible)}/>, inspector.outlets.get(desktopId)!)}
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
     {active && connection.configurationError ? <div className="agents-config-notice" role="status"><p>{connection.configurationError}</p><button onClick={onEdit}>{zh ? '连接设置与同步' : 'Connection settings and sync'}</button></div> : null}
     {active && connection.configurationWarnings?.length ? <div className="agents-config-notice" role="status">{connection.configurationWarnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
     {active && error && connection.connectionState !== 'reconnecting' && <div className="agents-error" role="alert">{error}</div>}
-    <AgentChat {...appearance} active={active && Boolean(sessionId)} title={title} headerActions={headerActions} onCreate={() => void create()} call={call} enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true} visualInputAvailable={visualInputAvailable} connectionId={connection.id} sessionId={sessionId} language={language} models={models} projects={projects} onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.('models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>
+    {[...visitedSessions.current].map(retainedSessionId => <AgentChat key={retainedSessionId} {...appearance} active={active && retainedSessionId === sessionId}
+      title={String(sessions.find(item => item.sessionId === retainedSessionId)?.metadata?.title || connection.name)} headerActions={headerActions} onCreate={() => void create()} call={call}
+      enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true}
+      visualInputAvailable={visualInputAvailable} connectionId={connection.id} sessionId={retainedSessionId} language={language} models={models} projects={projects}
+      onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.('models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>)}
     {active && !sessionId && <div className="agents-empty"><h2>{zh ? '有什么可以帮你？' : 'How can I help?'}</h2><p>{zh ? `与 ${connection.name} 开始新对话，或从左侧选择会话。` : `Start a chat with ${connection.name}, or select one in the sidebar.`}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{zh ? '开始对话' : 'Start chat'}</button></div>}
   </div>;
 }
@@ -204,11 +211,12 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
     inspectorRef.current?.open(summaryId, detail.title || (language === 'zh' ? '执行详情' : 'Execution details'));
   }, [sessionId, summaryId, language, setSummary]);
   const host = useMemo(() => ({ ...baseHost, conversationStyleAvailable: sharedSettings, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sharedSettings, sessionId, connection, openWorkSummary]);
-  useEffect(() => { if (active && preview) inspectorRef.current?.open(previewId, preview.name); }, [active, preview, previewId]);
+  // Reopening the chat must preserve its selected tab. Only a new file request
+  // should activate the preview (including clicks from a locked remote page).
+  useEffect(() => { if (preview) inspectorRef.current?.open(previewId, preview.name); }, [preview, previewId]);
   useEffect(() => () => {
-    if (!active) return;
     inspectorRef.current?.close(summaryId); inspectorRef.current?.close(previewId); closePreview();
-  }, [active, summaryId, previewId, closePreview]);
+  }, [summaryId, previewId, closePreview]);
   const [draft, updateDraft] = useConversationViewState(viewKey('draft'), () => sessionStorage.getItem(storageKey) ?? '', Boolean);
   const setDraft = useCallback((value: string | ((current: string) => string)) => updateDraft(current => {
     const next = typeof value === 'function' ? value(current) : value;
@@ -279,7 +287,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
     finally { setReverting(''); }
   };
   const reviewId = `agent-review:${host.id}`;
-  useEffect(() => () => inspectorRef.current?.close(reviewId), [active, reviewId]);
+  useEffect(() => () => inspectorRef.current?.close(reviewId), [reviewId]);
   const [review, setReview] = useConversationViewState<{ path: string; turnId?: string; requestId: string } | undefined>(viewKey('review'), () => undefined);
   const [comments, setComments] = useConversationViewState<ReviewCommentState>(viewKey('comments'), () => emptyReviewComments, value => Boolean(value.comments.length || value.draft));
   const openReview = (path = '', turnId?: string) => {
@@ -298,12 +306,11 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
       { value: '', label: zh ? '独立目录' : 'Private workspace', disabled: !management },
       ...projects.projects.map(project => ({ value: project.id, label: project.name, icon: <Folder size={14}/> })),
     ]}/></div>;
-  if (!active) return null;
   return <ConversationHostContext.Provider value={host}><ConversationExtractionProvider api={connection.extracts} activeSessionId={sessionId} contextWindowTokens={maxContextTokens}
     language={language} onOpen={onOpenSession} onFork={onForkSession}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || Boolean(reverting) }}>
-    <section className="agent-chat">
-      <ComposerPortalContext.Provider value={composerPortalTarget ?? null}>
+    <section className={active ? 'agent-chat' : 'agent-chat-retained-host'} hidden={!active}>
+      {active && <ComposerPortalContext.Provider value={composerPortalTarget ?? null}>
       <ChatPanel language={language} theme={theme} title={title} headerActions={headerActions}
         sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} inspectorOpen={inspector?.visible ?? false} onToggleInspector={() => openReview()}
         activeConversationId={host.id} activeProjectDir={workspaceRoot} projectPathAliases={[]} selectedProjectDir={selectedProject?.path ?? ''} availableProjects={availableProjects} onWelcomeProjectChange={selectProject}
@@ -329,7 +336,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
         onRetryGuidance={message => chat.retryTurnGuidance(message, () => setDraft(current => current.trim() === message.content.trim() ? '' : current))}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
-      </ComposerPortalContext.Provider>
+      </ComposerPortalContext.Provider>}
       {review && reviewOutlet && createPortal(<ConversationChangeDialog key={review.turnId ?? ''} embedded language={language}
         conversation={chat.activeConversation ?? { id: sessionId, title, updatedAt: '', preview: '' }}
         reports={reports} turns={recentReviewTurns(chat.activeMessages)} initialFilePath={review.path} initialTurnId={review.turnId} selectionRequestId={review.requestId}
@@ -338,7 +345,8 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
           requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.agent-chat [data-composer-input]')?.focus({ preventScroll: true }));
         }} notice={error} revertingChangeId={reverting} revertedChangeIds={new Set(reports.filter(report => report.reverted).map(report => report.id))}
         revertAvailable={!busy} onClose={() => inspector?.close(reviewId)} onRevert={revert}/>, reviewOutlet)}
-      {summary && inspector?.outlets.get(summaryId) && createPortal(<WorkSummaryInspector detail={summary} messages={chat.activeMessages} language={language} conversationOptions={{ theme, thinkingVisible, guidanceDeliveryMode,
+      {summary && inspector?.outlets.get(summaryId) && createPortal(<WorkSummaryInspector detail={summary} messages={chat.activeMessages} language={language}
+        active={inspector.visibleTabIds?.has(summaryId) ?? (active && inspector.visible)} conversationOptions={{ theme, thinkingVisible, guidanceDeliveryMode,
         visualInputEnabled: visualInputAvailable && visualInputEnabled, disabledSkillNames: disabledSkills, onToggleSkill, onConfigureModels: onConfigure }}/>, inspector.outlets.get(summaryId)!)}
       {preview && inspector?.outlets.get(previewId) && createPortal(<ConversationHostPreview key={preview.path} path={preview.path} language={language}/>, inspector.outlets.get(previewId)!)}
     </section>

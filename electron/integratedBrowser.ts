@@ -5,7 +5,7 @@ type Reference = { tabId: string; pageId?: string; url?: string };
 type Entry = { tabId: string; ownerId: number; guestId: number };
 type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; bindingRevision: number;
   inheritedFrom?: { parentId: string; revision: number } };
-export type BrowserTabAction = { action: 'open' | 'activate' | 'close'; tabId: string; url?: string };
+export type BrowserTabAction = { action: 'open' | 'activate' | 'close'; tabId: string; url?: string; sessionId?: string };
 const pageCommands = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.resolveNode', 'DOM.describeNode', 'DOM.getContentQuads',
   'DOM.getFrameOwner', 'DOM.getNodeForLocation', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.releaseObject',
@@ -43,6 +43,16 @@ export class IntegratedBrowser {
     action: (ownerId: number, action: BrowserTabAction) => void;
   }) {}
   private key(ownerId: number, tabId: string) { return JSON.stringify([ownerId, tabId]); }
+  private actionSession(scopeId: string): string {
+    const visited = new Set<string>();
+    while (!visited.has(scopeId)) {
+      visited.add(scopeId);
+      const parent = this.scopes.get(scopeId)?.inheritedFrom?.parentId;
+      if (!parent) break;
+      scopeId = parent;
+    }
+    return scopeId;
+  }
   register(owner: WebContents, input: { tabId: string; guestWebContentsId: number }): void {
     if (typeof input?.tabId !== 'string' || !input.tabId || input.tabId.length > 8192 || !Number.isSafeInteger(input.guestWebContentsId)) throw new Error('Invalid CardBush browser registration.');
     const guest = this.options.getContents(input.guestWebContentsId);
@@ -79,7 +89,7 @@ export class IntegratedBrowser {
     scope.selected = selected[0].tabId;
     scope.bindingRevision++;
     this.scopes.set(scopeId, scope);
-    this.options.action(owner.id, { action: 'activate', tabId: scope.selected });
+    this.options.action(owner.id, { action: 'activate', tabId: scope.selected, sessionId: this.actionSession(scopeId) });
     return selected.map(entry => ({ ...this.page(entry, scope), browser: 'cardbush' as const }));
   }
   hasScope(scopeId: string): boolean { return this.scopes.has(scopeId); }
@@ -141,7 +151,7 @@ export class IntegratedBrowser {
     if (method === 'debugger.detachScope') { this.release(scopeId); return { released: true, browser: 'cardbush' }; }
     if (method === 'tabs.create') {
       const url = pageUrl(params.url), tabId = `browser:${randomUUID()}`;
-      this.options.action(scope.ownerId, { action: 'open', tabId, url });
+      this.options.action(scope.ownerId, { action: 'open', tabId, url, sessionId: this.actionSession(scopeId) });
       const deadline = Date.now() + 15_000;
       while (Date.now() < deadline) {
         signal?.throwIfAborted();
@@ -165,11 +175,11 @@ export class IntegratedBrowser {
     if (method === 'tabs.activate') {
       scope.selected = entry.tabId;
       scope.bindingRevision++;
-      this.options.action(scope.ownerId, { action: 'activate', tabId: entry.tabId });
+      this.options.action(scope.ownerId, { action: 'activate', tabId: entry.tabId, sessionId: this.actionSession(scopeId) });
       return this.page(entry, scope);
     }
     if (method === 'tabs.close') {
-      this.options.action(scope.ownerId, { action: 'close', tabId: entry.tabId });
+      this.options.action(scope.ownerId, { action: 'close', tabId: entry.tabId, sessionId: this.actionSession(scopeId) });
       this.unregister(scope.ownerId, { tabId: entry.tabId, guestWebContentsId: guest.id });
       scope.entries.delete(entry.tabId);
       if (scope.selected === entry.tabId) scope.selected = '';
