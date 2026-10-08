@@ -107,7 +107,7 @@ app.whenReady().then(async()=>{
     await win.loadFile(path.join(directory,'index.html'));await dom('document.querySelector("button[aria-label=语音通话]")');
     await click('语音通话');await dom('document.querySelector(".voice-mini-status")?.textContent==="正在聆听"');
     await until(()=>audioFrames>=5);
-    assert.equal(received[0].session.tools.length,4);
+    assert.deepEqual(received[0].session.tools.map(tool=>tool.name).sort(), ['await_subagents','read_subagent_conversation','subagent']);
     holdAudio=true;await pause(650);
     assert.equal(peer.readyState,1,'a brief IPC stall must not disconnect capture');
     assert.equal(heldAudio.length,4,'microphone IPC concurrency stays bounded');

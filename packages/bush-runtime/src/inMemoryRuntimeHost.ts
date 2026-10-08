@@ -9,7 +9,9 @@ import { summarizeRealtimeTask } from './realtimeTaskSummary.js';
 import { RealtimeAgentDispatcher } from './realtimeAgent.js';
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
 import { registerSourceMemoTools, resolveSourceMemo, resolveSourceReferences } from "./sourceMemo.js";
-import { deliveredMemoryIds, deliveredMemoryVersions, hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
+import { hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
+import { recallIndividuation, changedIndividuation } from './individuationContext.js';
+import { AssistantMemory } from './assistantMemory.js';
 import { IndividuationMemory } from './individuationMemory.js';
 import { PERSONALIZATION_COMMAND, normalizeIndividuation, individuationSettingsSchema, modelRequestSchema as memoryModelSchema } from '@cardbush/bush-protocol';
 import { RESOLVE_SOURCE_MEMO_COMMAND, RESOLVE_SOURCE_REFERENCES_COMMAND, sourceReferencesRequestSchema } from "@cardbush/bush-protocol";
@@ -405,14 +407,15 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
+    this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.#provider);
+    registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
+      memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
     });
-    this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.#provider);
-    registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
     this.#legacyCaptureCacheRoot = options.legacyCaptureCacheRoot;
     this.#loadPluginExtensions = options.loadPluginExtensions;
@@ -1512,13 +1515,8 @@ export class InMemoryRuntimeHost {
     try {
       if (authoredInput && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
         try {
-          const text = authoredInput.message.content;
-          await this.#memory.store.observe(text, memorySettings, candidate, options.signal);
-          const recall = await this.#memory.store.read({topics:[text.slice(0,4000)||'memory'],count_only:memorySettings.recallMode==='hint'}, memorySettings, deliveredMemoryIds(prepared.modelRequest.messages), 510, options.signal);
-          if (recall.memories.length || memorySettings.recallMode==='hint'&&recall.matched_count) {
-            const message: ModelMessage = { role: 'user', name: 'habit_reference', visibility: 'internal', content: JSON.stringify({
-              reference: memorySettings.recallMode==='hint'?'Related memory candidates exist. No content has been loaded; check_habit is optional.':'Historical memory, not a new request. Notes and predictions are unconfirmed. Current user instructions and permissions take priority. Use check_habit with ids to retrieve full originals.', ...recall,
-            }) };
+          const message = await recallIndividuation(this.#memory.store, memorySettings, authoredInput.message.content, prepared.modelRequest.messages, candidate, options.signal);
+          if (message) {
             prepared.modelRequest.messages.push(message);
             prepared.sessionCommit.inputMessages.push({ messageId: `memory_${candidate.turnId}`, createdAt: prepared.sessionCommit.createdAt, message });
             prepared.sessionCommit.initialMessageCount++;
@@ -2073,10 +2071,8 @@ export class InMemoryRuntimeHost {
         }
         if (!compactionTransaction && !activeContextCompaction) {
           try {
-            const changes=await this.#memory.store.changedReferences(deliveredMemoryVersions(messages),normalizeIndividuation(request.metadata.individuation),input.signal);
-            if(changes.length){
-              const message:ModelMessage={role:'user',name:'memory_state_updates',visibility:'internal',content:JSON.stringify({
-                reference:'Memory state changed. Inactive records must no longer guide this task; active records were updated or restored. Use replacement IDs for current content. Current user instructions take priority.',changes})};
+            const message = await changedIndividuation(this.#memory.store, normalizeIndividuation(request.metadata.individuation), messages, input.signal);
+            if(message){
               messages.push(message);generatedMessages.push({messageId:`memory_state_${request.turnId}_${round}`,createdAt:this.#sessionNow(),message});
             }
           } catch(error){input.signal?.throwIfAborted();this.#onRecoveryError?.(error instanceof Error?error:new Error(String(error)));}
