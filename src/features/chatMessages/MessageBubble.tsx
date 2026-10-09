@@ -23,7 +23,6 @@ import {
   Target,
   ThumbsDown,
   ThumbsUp,
-  UsersRound,
   WrapText,
   X,
 } from 'lucide-react';
@@ -93,7 +92,8 @@ import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { InlineAudio, InlineVideo } from './InlineMedia';
 import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
-import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
+import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
+import { selectedTeamReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { MarkdownReference, parseMarkdownReference, UnavailableMarkdownReference } from './MarkdownReference';
 import { ConversationFileReference } from './ConversationFileReference';
@@ -955,10 +955,9 @@ function MessageBubbleView({
             attachments={fileAttachments}
             language={language}
           />
-          {messageTeamId && (
+          {messageTeamId && !selectedTeamReference(text) && (
             <div className="user-team-context" title={`Team: ${messageTeamId}`}>
-              <UsersRound size={12} />
-              <span>{messageTeamName || messageTeamId}</span>
+              <PromptReferenceLink reference={{ kind: 'team', id: messageTeamId, title: messageTeamName || messageTeamId }} />
             </div>
           )}
           {goalCommand && (

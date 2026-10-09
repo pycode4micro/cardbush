@@ -25,6 +25,37 @@ const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessage
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
 const { applicationCatalog, applicationReference, defaultAppCenterPreferences } = load('src/features/appCenter/appCenterModel.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
+test('Team selections survive prompt/history projection and resolve only a compact workflow reference', async () => {
+  const team = { kind: 'team', id: 'launch', title: '品牌 [宣传] 团队' };
+  const chip = refs.promptReferenceMarkdown(team);
+  assert.deepEqual(refs.parsePromptReference(refs.promptReferenceHref(team)), team);
+  assert.equal(refs.selectedTeamReference('`' + chip + '`'), undefined);
+  assert.equal(refs.selectedTeamReference('\\' + chip), undefined);
+  for (const id of ['', '../escape', 'two ids', 'x'.repeat(121)]) {
+    assert.equal(refs.parsePromptReference(refs.promptReferenceHref({ ...team, id })), null);
+  }
+  const initial = refs.withTeamReference('前文 后文', team, 3);
+  assert.equal(initial.content, `前文 ${chip} 后文`);
+  assert.equal(initial.content.slice(initial.caret), '后文');
+  const replacement = { ...team, id: 'review', title: '审核团队' };
+  const other = refs.promptReferenceMarkdown(user);
+  const draft = initial.content + '\n' + other + '\n`' + chip + '`';
+  const next = refs.withTeamReference(draft, replacement, draft.length);
+  assert.deepEqual(refs.selectedTeamReference(next.content), replacement);
+  assert.equal(refs.promptReferenceParts(next.content).filter(part => part.reference?.kind === 'team').length, 1);
+  assert.ok(next.content.includes(other));
+  assert.ok(next.content.includes('`' + chip + '`'));
+  assert.equal(refs.selectedTeamReference(refs.withTeamReference(next.content).content), undefined);
+  const authored = `${chip} 按流程完成文案 ${chip}`;
+  const resolved = await resolvePromptReferenceContext(authored, 'current');
+  assert.deepEqual(resolved.metadata, { composerReferenceContent: authored, team_id: team.id, team_name: team.title });
+  const facts = JSON.parse(resolved.content.split('Referenced context selected by the user (source material):\n')[1]);
+  assert.equal(facts.length, 1);
+  assert.equal(facts[0].id, team.id);
+  assert.equal(facts[0].kind, 'team');
+  assert.ok(JSON.stringify(facts).length < 500, 'no full workflow, employee prompts or hooks in ordinary prompts');
+  assert.equal(refs.authoredPromptContent(resolved.content, resolved.metadata), authored);
+});
 test('application references append selection facts without invoking tools or changing authored text', async () => {
   const entries = [
     { kind: 'application', id: 'plugin:sample:design', title: '设计 [草稿]', applicationKind: 'plugin', target: 'sample', componentId: 'design' },

@@ -37,3 +37,5 @@ export * from './realtimeTaskSummary.js';
 export * from './assistantConversation.js';
 export { normalizeToolDisplay, normalizeToolDisplayTitle } from './toolDisplay.js';
 export * from './webApplications.js';
+export * from './agentWorkflow.js';
+export * from './agentToolActivity.js';

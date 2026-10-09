@@ -22,7 +22,7 @@ The inspector renders the actual execution session with the shared message rende
 
 ## Context reminders
 
-Before preparing a genuine user turn, the runtime reads a fresh unread snapshot. It stores the snapshot in metadata on the user message so the UI can show what was attached at send time. A compact internal user-role message follows the authored input in the model request. It contains the total unread count and up to eight recent titles, states, timestamps and stable IDs. The `scheduled_results` tool provides details and paginated access on demand without acknowledging anything.
+Before preparing a genuine user turn, the runtime reads a fresh unread snapshot. It stores the snapshot in metadata on the user message so the UI can show what was attached at send time. A compact internal user-role message follows the authored input in the model request. It contains the total unread count and up to eight recent titles, states, timestamps and stable IDs. The `scheduled_results` tool browses brief summaries using `next_offset`; pass explicit `run_ids` to read saved full results. Neither operation acknowledges anything. `schedule_task` likewise lists brief receipts by default; `action: "get"` with `job_id` reads the configuration for editing.
 
 The reminder labels itself as an observation at its recorded `asOf` time and treats titles/results as data rather than new instructions. It does not modify the user's text. Once sent, its exact internal message is retained in the same conversation journal and recovery checkpoint as other inputs; the UI hides this internal message and can show the existing attachment badge on the authored message. Scheduled wakeups, child turns and goal continuations preserve earlier observations without adding reminders.
 

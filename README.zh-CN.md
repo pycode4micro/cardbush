@@ -82,7 +82,7 @@ AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）�
 
 应用中心只显示实际可打开的页面和用户选择的应用；普通 MCP 连接仍在插件设置中管理。`@` 引用向 Agent 提供应用上下文，不代表已经执行或授予权限。详见[应用中心说明](assets/skills/cardbush-docs/references/app-center.md)。
 
-Team 工作流作为独立插件安装，不包含在桌面安装包中，详见 [Team 插件架构](docs/TEAM_PLUGIN_EXTRACTION.md)。
+Team 是内置工作流管理器：注册可复用的 clean Agent，再使用已有会话和记忆框架装配串行、并行任务。详见[内置 Team 工作流](docs/TEAM_NATIVE_WORKFLOWS.md)。
 
 ### 平台能力
 

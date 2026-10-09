@@ -368,6 +368,7 @@ const desktopApi = {
       rawCount: number;
     }>,
   pickAttachments: () => ipcRenderer.invoke('dialog:pick-attachments') as Promise<string[]>,
+  markdownFile: (input: import('./mdPresentationFiles').MarkdownFileRequest) => ipcRenderer.invoke('markdown:file', input) as Promise<import('./mdPresentationFiles').MarkdownFile | null>,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   inspectAttachments: (paths: string[]) =>
     ipcRenderer.invoke('files:inspect-attachments', paths) as Promise<Array<{

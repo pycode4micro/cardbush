@@ -82,7 +82,7 @@ Remote deployment is **headless by default**. The optional [Docker desktop profi
 
 App Center entries open actual pages or user-selected applications. Ordinary MCP connectors remain in plugin settings. An `@` reference supplies context to the Agent; it does not execute an application or grant permissions. See [App Center behavior](assets/skills/cardbush-docs/references/app-center.md).
 
-Team workflows are a separate installable plugin, not part of the desktop bundle. See [Team plugin architecture](docs/TEAM_PLUGIN_EXTRACTION.md).
+Team is a native workflow manager: register reusable clean agents, then assemble serial/parallel tasks using their existing session and memory runtime. See [native Team workflows](docs/TEAM_NATIVE_WORKFLOWS.md).
 
 ### Platform support
 

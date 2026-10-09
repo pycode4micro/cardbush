@@ -435,7 +435,7 @@
 .loop-preview-summary small { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-mid); }
 .loop-preview-chevron { flex-shrink: 0; }
 .loop-preview-summary[aria-expanded="false"] .loop-preview-chevron { transform: rotate(-90deg); }
-.loop-subagent-previews .tool-preview-card { width: 196px; max-width: 100%; }
+.loop-subagent-preview, .loop-registration-preview { width: 196px; max-width: 100%; }
 .tool-image-artifacts.tool-image-thumbnails { margin: 0; gap: 8px; }
 .tool-image-thumbnail, .loop-image-status {
   width: 78px;

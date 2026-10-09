@@ -109,6 +109,14 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing' ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
     ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'team-composer' ? [
+      'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
+      'src/features/composer/Composer.tsx', 'src/features/composer/ComposerPromptInput.tsx',
+      'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
+      'src/features/team/teamWorkspaceStore.ts', 'src/features/chat/WorkSummaryInspector.tsx',
+      'src/backend/promptReferenceContext.ts', 'src/features/inspector/inspectorTabs.ts',
+      'src/hooks/useCardbushChat.ts',
+    ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory' ? [
       'src/features/settings/SettingsSummaryPanel.tsx', 'src/features/settings/useAppSettings.ts',
       'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
@@ -173,11 +181,12 @@ async function buildViews() {
       name: 'app-view-test-entry',
       enforce: 'pre',
       resolveId: (value, importer) => {
+        if (process.env.CARDBUSH_APP_VIEWS_CASE === 'team-composer' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0team-composer-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0loop-preview-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' && value === './backend/api' && importer?.endsWith('ShadowWindow.tsx')) return '\0shadow-view-api';
         return value.endsWith('__app_view_test__.ts') ? entryId : undefined;
       },
-      load: value => value === '\0loop-preview-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.loopFixtureClient};}` : value === '\0shadow-view-api'
+      load: value => value === '\0team-composer-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.teamFixtureClient};}` : value === '\0loop-preview-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.loopFixtureClient};}` : value === '\0shadow-view-api'
         ? ['closeShadowConversation', 'createShadowConversation', 'fetchSessionMessages', 'streamShadowConversationMessage', 'updateShadowConversationMode']
           .map(name => `export const ${name} = (...args) => window.shadowFixture.${name}(...args);`).join('\n')
         : value === entryId ? exports : undefined,
@@ -641,6 +650,11 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing') {
       await require('./helpers/composer-reference-sizing.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no composer reference renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'team-composer') {
+      await require('./helpers/team-composer.cjs')({ run, until, pause, window, root });
+      await require('./helpers/team-chat-selection.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no Team composer renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-layout') {
       await require('./helpers/composer-layout.cjs')({ run, until, pause, window, root });

@@ -12,6 +12,9 @@ const TurnHistoryInspector = recoverableLazy('turn-history',
 const SubagentTaskInspector = recoverableLazy('subagent-task',
   async () => ({ default: (await import('../subagents/SubagentTaskInspector')).SubagentTaskInspector }),
   (props, retry) => <DeferredModuleNotice language={props.language} retry={retry}/>);
+const AgentDefinitionInspector = recoverableLazy('agent-definition',
+  async () => ({ default: (await import('../team/AgentDefinitionInspector')).AgentDefinitionInspector }),
+  (props, retry) => <DeferredModuleNotice language={props.language} retry={retry}/>);
 
 export function WorkSummaryInspector({ detail, messages, language, active = true, conversationOptions }: {
   detail: WorkSummaryInspectorDetail;
@@ -23,6 +26,8 @@ export function WorkSummaryInspector({ detail, messages, language, active = true
   return <Suspense fallback={<div className="deferred-module-notice" role="status">{language === 'zh' ? '正在加载执行详情…' : 'Loading execution details…'}</div>}>
     {detail.kind === 'turn-history'
       ? <TurnHistoryInspector detail={detail} messages={messages} language={language} active={active}/>
-      : <SubagentTaskInspector detail={detail} language={language} active={active} conversationOptions={conversationOptions}/>}
+      : detail.kind === 'agent-definition'
+        ? <AgentDefinitionInspector detail={detail} language={language} active={active}/>
+        : <SubagentTaskInspector detail={detail} language={language} active={active} conversationOptions={conversationOptions}/>}
   </Suspense>;
 }

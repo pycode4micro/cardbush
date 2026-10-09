@@ -7,6 +7,7 @@ import { adoptDraftConversationSource, resolveConversationSource } from '../feat
 import { adoptDraftConversationStyle } from '../features/settings/conversationStyle';
 import { useConversationViewState } from '../shared/conversationViewState';
 import { submissionReceipt } from '../shared/submissionReceipt';
+import { selectedTeamReference, teamReferenceInstructions } from '../shared/promptReferences';
 import { localConversationBackend, type ConversationBackend } from '../backend/conversationBackend';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { resolveModelReasoningEffort, type ReasoningEffort } from '@cardbush/bush-protocol';
@@ -2352,8 +2353,9 @@ export function useCardbushChat(
         try { await switching; } catch { return; }
       }
       candidate = conversationsRef.current.find(item => item.id === sessionId) ?? preparedConversationsRef.current[sessionId] ?? candidate;
-      const turnTeamId = (queuedTeamId ?? requestContext.selectedTeamId)?.trim() || undefined;
-      const turnTeamName = (queuedTeamName ?? requestContext.selectedTeamName)?.trim() || undefined;
+      const selectedTeam = selectedTeamReference(trimmed);
+      const turnTeamId = (selectedTeam?.id ?? queuedTeamId ?? requestContext.selectedTeamId)?.trim() || undefined;
+      const turnTeamName = (selectedTeam?.title ?? queuedTeamName ?? requestContext.selectedTeamName)?.trim() || undefined;
       setConnectionRecoveryByConversation((current) => ({
         ...current,
         [sessionId]: undefined,
@@ -2392,7 +2394,7 @@ export function useCardbushChat(
       }
       if (queuedDelivery) removeQueuedMessage(queuedDelivery.item.id);
       markSessionRunning(sessionId);
-      const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
+      const teamInstructions = turnTeamId ? teamReferenceInstructions(turnTeamId) : undefined;
       const retryMessage = backend.isSubmissionRetry?.(sessionId, outbound.userInput)
         ? (messagesByConversationRef.current[sessionId] ?? []).filter(message => message.role === 'user' && message.metadata?.message_delivery === 'failed').at(-1)
         : undefined;
@@ -2486,7 +2488,7 @@ export function useCardbushChat(
             requestContext.interactiveRequestsAvailable === true,
           standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
           browserPrivacyMode: requestContext.browserPrivacyMode === true,
-          teamModeEnabled: requestContext.teamModeEnabled === true,
+          teamModeEnabled: Boolean(turnTeamId),
           teamId: turnTeamId,
           terminalRuntime: requestContext.terminalRuntime,
           disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
@@ -3425,8 +3427,8 @@ export function useCardbushChat(
       const initialMessages = [...keptMessages, replayedUser, tempAssistant];
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
-      const controlTeamId = teamIdFromMessage(sourceUserMessage) || requestContext.selectedTeamId;
+      const controlTeamId = teamIdFromMessage(sourceUserMessage) || undefined;
+      const teamInstructions = controlTeamId ? teamReferenceInstructions(controlTeamId) : undefined;
 
       await runControlAssistantStream({
         conversation,
@@ -3461,7 +3463,7 @@ export function useCardbushChat(
               requestContext.interactiveRequestsAvailable === true,
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
-            teamModeEnabled: requestContext.teamModeEnabled === true,
+            teamModeEnabled: Boolean(controlTeamId),
             teamId: controlTeamId,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
@@ -3579,9 +3581,16 @@ export function useCardbushChat(
             requestContext.standardImageInputEnabled === true,
           );
       const createdAt = new Date().toISOString();
+      const editedTeam = selectedTeamReference(outbound.userInput);
+      const editedMetadata = { ...editSourceMessage.metadata };
+      // Replaced prompt text is authoritative: removing a Team reference must
+      // also remove the old badge and routing, including during optimistic UI.
+      for (const key of ['team_id', 'team_name', 'teamId', 'teamName', 'composerReferenceContent']) delete editedMetadata[key];
+      if (editedTeam) Object.assign(editedMetadata, { team_id: editedTeam.id, team_name: editedTeam.title });
       const editedUser: ChatMessage = {
         ...editSourceMessage,
         content: outbound.displayInput,
+        metadata: editedMetadata,
         conversationId,
         turnId: undefined,
         createdAt,
@@ -3601,8 +3610,8 @@ export function useCardbushChat(
       ];
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
-      const controlTeamId = teamIdFromMessage(editSourceMessage) || requestContext.selectedTeamId;
+      const controlTeamId = editedTeam?.id;
+      const teamInstructions = controlTeamId ? teamReferenceInstructions(controlTeamId) : undefined;
 
       await runControlAssistantStream({
         conversation,
@@ -3636,7 +3645,7 @@ export function useCardbushChat(
               requestContext.interactiveRequestsAvailable === true,
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
-            teamModeEnabled: requestContext.teamModeEnabled === true,
+            teamModeEnabled: Boolean(controlTeamId),
             teamId: controlTeamId,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
@@ -4447,7 +4456,7 @@ function appendProjectPathAlias(
 }
 
 function teamIdFromMessage(message?: ChatMessage) {
-  return String(message?.metadata?.team_id ?? message?.metadata?.teamId ?? '').trim();
+  return selectedTeamReference(message?.content ?? '')?.id ?? String(message?.metadata?.team_id ?? message?.metadata?.teamId ?? '').trim();
 }
 
 function conversationProjectRequestDir(conversation: ConversationSummary) {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { SubagentTaskStore } from './subagentTaskStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
 import { settleAtAbort } from './abortSettlement.js';
+import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, type CatalogQuery } from './catalogPage.js';
 
 export class PluginBackgroundTasks {
   get busy() { return this.active.size > 0; }
@@ -15,10 +16,17 @@ export class PluginBackgroundTasks {
   private readonly active = new Map<string, { session: string; turn: string; controller: AbortController; promise: Promise<unknown> }>();
   private readonly delivered = new Map<string, Set<string>>();
   constructor(private readonly root: string, private readonly tasks: SubagentTaskStore, registry: ToolRegistry) {
-    registry.register<{ action: string; ids: string[] }>({
-      definition: { name: 'manage_plugin_agents', description: 'List, wait for, or stop background plugin Agent tasks belonging to this conversation. Completed results are persisted. Wait only when the result is needed; background work may continue after the parent turn finishes.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'wait', 'stop'] }, task_ids: { type: 'array', items: { type: 'string' } } }, required: ['action'], additionalProperties: false } },
+    registry.register<CatalogQuery & { action: string; ids: string[] }>({
+      definition: { name: 'manage_plugin_agents', description: 'Manage background Agent tasks in this conversation. list returns paginated status summaries only; query filters task identity or status. read requires task_ids and returns their saved results. wait returns results after completion; stop cancels selected work and returns status. Background work may outlive the parent turn.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'read', 'wait', 'stop'] }, task_ids: { type: 'array', maxItems: 32, items: { type: 'string', minLength: 1 } }, ...catalogPageProperties }, required: ['action'], additionalProperties: false } },
       manifest: { effect_kind: 'observation', operation: 'agent.background.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
-      decodeInput: input => { const value = input as Record<string, unknown>; if (!value || !['list', 'wait', 'stop'].includes(String(value.action)) || (value.task_ids !== undefined && (!Array.isArray(value.task_ids) || value.task_ids.some(id => typeof id !== 'string')))) throw new Error('Invalid background Agent action.'); return { action: String(value.action), ids: value.task_ids as string[] ?? [] }; },
+      decodeInput: input => {
+        const value = input as Record<string, unknown>;
+        if (!value || Array.isArray(value) || Object.keys(value).some(key => !['action', 'task_ids', 'query', 'offset', 'limit'].includes(key)) || !['list', 'read', 'wait', 'stop'].includes(String(value.action)) || (value.task_ids !== undefined && (!Array.isArray(value.task_ids) || value.task_ids.length > 32 || value.task_ids.some(id => typeof id !== 'string' || !id.trim())))) throw new Error('Invalid background Agent action.');
+        const ids = value.task_ids as string[] ?? [];
+        if (value.action === 'read' && !ids.length) throw new Error('read requires task_ids from list.');
+        if (value.action !== 'list' && ['query', 'offset', 'limit'].some(key => value[key] !== undefined)) throw new Error('Pagination and query apply only to list.');
+        return { ...decodeCatalogQuery(value), action: String(value.action), ids };
+      },
       execute: async context => {
         await this.results(context.sessionId);
         const tasks = this.tasks.list(context.sessionId).filter(task => task.background);
@@ -26,7 +34,13 @@ export class PluginBackgroundTasks {
         if (ids.some(id => !tasks.some(task => task.taskId === id))) throw new Error('Background Agent task belongs to another conversation or is unavailable.');
         if (context.input.action === 'stop') ids.forEach(id => this.active.get(id)?.controller.abort());
         if (context.input.action === 'wait') await settleAtAbort(Promise.allSettled(ids.map(id => this.active.get(id)?.promise)), context.signal, 'Background Agent wait cancelled.');
-        return this.tasks.list(context.sessionId).filter(task => task.background && ids.includes(task.taskId)).map(({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }) => ({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }));
+        const selected = this.tasks.list(context.sessionId).filter(task => task.background && ids.includes(task.taskId));
+        if (context.input.action === 'list' || context.input.action === 'stop') {
+          const summaries = selected.map(({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }) => ({ taskId, childSessionId, childTurnId, status, has_result: Boolean(finalResponse), error: briefText(errorMessage ?? '') }));
+          const { items, ...page } = catalogPage(summaries, context.input);
+          return { tasks: items, ...page };
+        }
+        return selected.map(({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }) => ({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }));
       },
     });
   }

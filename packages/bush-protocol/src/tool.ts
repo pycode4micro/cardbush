@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentToolActivitySchema } from './agentToolActivity.js';
 
 export const BUSH_TOOL_CALL_PROTOCOL = "bush.tool_call.v1" as const;
 export const BUSH_ACTION_MANIFEST_PROTOCOL =
@@ -237,6 +238,7 @@ export const toolExecutionSummarySchema = z.object({
   ordinal: z.number().int().nonnegative(),
   recordedAt: z.string().min(1),
   toolCall: toolCallSchema.pick({ protocol: true, id: true, name: true }),
+  agentActivity: agentToolActivitySchema.optional(),
   display: toolDisplaySchema.optional(),
   outcome: z.enum(["returned", "failed", "cancelled"]),
   actionManifest: actionManifestSchema.optional(),

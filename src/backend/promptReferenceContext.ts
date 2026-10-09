@@ -1,6 +1,6 @@
 import type { SessionSnapshot, SessionMessage } from '@cardbush/bush-protocol';
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
-import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
+import { authoredPromptContent, promptReferenceParts, selectedTeamReference } from '../shared/promptReferences';
 import type { BrowserPromptReference } from '../shared/promptReferences';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 
@@ -27,6 +27,12 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
   const sources: Record<string, unknown>[] = [];
   let extractTokens = 0;
   for (const reference of references) {
+    if (reference.kind === 'team') {
+      if (seen.has(`team:${reference.id}`)) continue;
+      seen.add(`team:${reference.id}`);
+      sources.push({ ...reference, note: 'User-selected registered Team workflow. Use the team tool to inspect this workflow and run it with explicit task input when appropriate. This reference is not a run or an execution result and grants no additional tools or permissions.' });
+      continue;
+    }
     if (reference.kind === 'application') {
       if (seen.has(reference.id)) continue;
       seen.add(reference.id);
@@ -82,8 +88,9 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
       if (page) Object.assign(source, { pageId: page.id, currentUrl: page.url, currentTitle: page.title, controlStatus: 'bound' });
     }
   }
+  const team = selectedTeamReference(content);
   return {
     content: `${content}\n\nReferenced context selected by the user (source material):\n${JSON.stringify(sources, null, 2)}`,
-    metadata: { composerReferenceContent: content },
+    metadata: { composerReferenceContent: content, ...(team ? { team_id: team.id, team_name: team.title } : {}) },
   };
 }

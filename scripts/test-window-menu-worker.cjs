@@ -147,8 +147,9 @@ app.whenReady().then(async () => {
     win.setContentSize(620,280);
     await until('Math.abs(innerHeight-280)<=2', 'short content viewport applied');
     await menu('view');
+    await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const bounds=await run(`(()=>{const n=document.querySelector('[role="menu"]');const r=n.getBoundingClientRect();return {bottom:r.bottom,height:r.height,scroll:n.scrollHeight,client:n.clientHeight,viewport:innerHeight}})()`);
-    assert.ok(bounds.bottom<=bounds.viewport); assert.ok(bounds.scroll>bounds.client,'long menus scroll in short windows');
+    assert.ok(bounds.bottom<=bounds.viewport); assert.ok(bounds.scroll>bounds.client,'long menus scroll in short windows: ' + JSON.stringify(bounds));
     await key('End'); assert.equal(await run(`document.activeElement.dataset.menuItem`),'toggleFullscreen');
     await key('Escape');
 

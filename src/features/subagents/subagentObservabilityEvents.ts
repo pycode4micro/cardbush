@@ -5,6 +5,13 @@ export const OPEN_WORK_SUMMARY_INSPECTOR_EVENT = 'cardbush:open-work-summary-ins
 
 export type WorkSummaryInspectorDetail =
   | {
+      kind: 'agent-definition';
+      sessionId: string;
+      entity: 'employee' | 'team';
+      entityId: string;
+      title?: string;
+    }
+  | {
       kind: 'turn-history';
       sessionId: string;
       turnId?: string;

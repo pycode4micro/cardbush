@@ -47,7 +47,7 @@ test('ordinary dispatch defaults to fork and retains the exact parent prefix and
   const f = fixture(), definition = f.registry.resolve('subagent').definition;
   assert.equal(definition.inputSchema.properties.mode.default, 'fork');
   assert.equal(definition.inputSchema.properties.inherit_context, undefined);
-  assert.match(definition.inputSchema.properties.mode.description, /clean only when the user explicitly requests/);
+  assert.match(definition.inputSchema.properties.mode.description, /registered agent_id/);
   const outcome = await invoke(f.registry, f.request, 'subagent', { prompt: '我继续实现，你先核实接口。' });
   assert.equal(outcome.kind, 'returned');
   assert.equal(outcome.result.mode, 'fork');
@@ -112,14 +112,15 @@ test('clean parent selections reach the child model, generation, skills, limits 
 
 test('clean options enumerate configured choices without credentials and identify child-unavailable tools', async () => {
   const f = fixture({ models: { list: async () => [{ id: 'reviewer', model: 'review-model', apiKey: 'PRIVATE-FIXTURE', providerBinding: { bindingId: 'private', revision: '1' }, maxOutputTokens: 6000 }], resolve: async () => { throw Error('Listing must not prepare a provider'); } } });
-  const outcome = await invoke(f.registry, f.request, 'list_subagent_options', {});
+  const outcome = await invoke(f.registry, f.request, 'list_subagent_options', { section: 'settings' });
   assert.equal(outcome.kind, 'returned', JSON.stringify(outcome));
-  assert.equal(outcome.result.default_mode, 'fork');
   assert.equal(outcome.result.defaults.permission_ceiling, 'all_free');
   assert.deepEqual(JSON.parse(JSON.stringify(outcome.result.models)), [{ id: 'reviewer', model: 'review-model', maxOutputTokens: 6000 }]);
   assert.ok(!JSON.stringify(outcome.result).includes('PRIVATE-FIXTURE'));
-  for (const name of ['subagent', 'root_only']) assert.equal(outcome.result.tools.find(tool => tool.name === name).child_available, false);
-  assert.equal(outcome.result.tools.find(tool => tool.name === 'read_file').child_available, true);
+  assert.equal(outcome.result.tools, undefined);
+  const tools = (await invoke(f.registry, f.request, 'list_subagent_options', { section: 'tools' })).result.tools;
+  for (const name of ['subagent', 'root_only']) assert.equal(tools.find(tool => tool.name === name).child_available, false);
+  assert.equal(tools.find(tool => tool.name === 'read_file').child_available, true);
 });
 
 test('invalid mode combinations and clean configuration fail before starting a child', async () => {

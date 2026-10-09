@@ -1,0 +1,46 @@
+.native-team-workspace { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 18px 20px; overflow: auto; min-height: 0; color: var(--text); font-size: 13px; line-height: 1.6; }
+.native-team-workspace nav, .native-team-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.native-team-workspace button, .native-team-sidebar button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; }
+.native-team-workspace button[aria-pressed="true"], .native-team-sidebar button.active { background: var(--surface-hover, var(--border)); }
+.native-team-workspace button:disabled { opacity: .5; cursor: default; }
+.native-team-columns { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 720px); gap: 24px; }
+.native-team-list { display: flex; flex-direction: column; gap: 8px; }
+.native-team-identity { display: flex; align-items: center; gap: 8px; }
+.native-team-identity > svg { flex-shrink: 0; }
+.native-team-list button { text-align: left; flex-direction: column; align-items: flex-start; overflow-wrap: anywhere; }
+.native-team-list > button:first-child { flex-direction: row; align-items: center; }
+.native-team-list small, .native-team-workspace p, .native-team-sidebar p { color: var(--text-mid); }
+.native-team-editor { display: flex; flex-direction: column; gap: 16px; }
+.native-team-editor label { display: flex; flex-direction: column; gap: 7px; }
+.native-team-editor input, .native-team-editor textarea, .native-team-editor select { font: inherit; width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.native-team-editor textarea { resize: vertical; }
+.native-team-editor .native-team-check { flex-direction: row; align-items: center; }
+.native-team-check input { width: auto; }
+.native-team-editor fieldset, .native-team-runs article { border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.native-team-editor fieldset > * + * { margin-top: 12px; }
+.native-team-runs { display: grid; gap: 16px; max-width: 980px; }
+.native-team-runs article > span { margin-left: 16px; color: var(--text-mid); }
+.native-team-runs details { margin: 10px 0; }
+.native-team-runs pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.native-team-workspace [role="alert"] { color: var(--danger, #c85845); }
+.native-team-sidebar { padding: 16px; gap: 12px; overflow: auto; }
+.native-team-app-dock { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
+.native-team-app-dock button { border: 0; background: transparent; padding: 6px; }
+.team-graph-tab { flex: 1; display: flex; min-height: 500px; }
+.team-graph-tab[hidden] { display: none; }
+.team-graph-workspace { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 12px; }
+.team-graph-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.team-graph-select { display: flex; gap: 8px; align-items: center; margin-right: 4px; color: var(--text-mid); }
+.team-graph-select select { font: inherit; max-width: 230px; color: var(--text); border: 0; background: var(--surface); padding: 6px 0; }
+.native-team-workspace .team-graph-header button, .native-team-workspace .team-graph-footer button { padding: 6px 9px; font-size: 12px; }
+.team-graph-save-state { font-size: 11px; color: var(--text-mid); margin-left: auto; }
+.team-graph-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--text-mid); }
+.team-graph-footer > span { min-width: 0; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+.native-team-workspace .team-graph-footer button { border: 0; background: transparent; color: var(--text-mid); }
+.native-team-workspace .team-save-workflow { background: var(--text); color: var(--surface); border-color: transparent; }
+.team-graph-welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 350px; padding: 30px; text-align: center; border: 1px dashed var(--border); border-radius: 14px; }
+.team-graph-welcome > svg { color: var(--text-mid); }.team-graph-welcome h2 { font-size: 20px; font-weight: 550; margin: 20px 0 0; }
+.team-draft-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; }.team-draft-notice span { flex: 1; min-width: 200px; }
+.native-team-workspace .md-node-list button { border: 0; background: transparent; padding: 9px 8px; }
+.native-team-workspace .md-node-list button[aria-pressed="true"] { background: color-mix(in srgb, var(--md-accent) 12%, transparent); }
+@media (max-width: 800px) { .native-team-columns { grid-template-columns: 1fr; } .native-team-list { flex-direction: row; flex-wrap: wrap; } }

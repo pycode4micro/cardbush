@@ -6,7 +6,7 @@ export { normalizeToolDisplayTitle } from '@cardbush/bush-protocol';
 export const TOOL_DISPLAY_TITLE = '_display_title';
 
 function acceptsDisplayTitle(definition: ToolDefinition): boolean {
-  // Context maintenance uses its own strict exchange, not the tool coordinator.
+  // These maintenance tools do not need a visible action title.
   if (definition.name === 'checkpoint_context' || definition.name === 'summary_for_user') return false;
   const schema = definition.inputSchema;
   if (schema.type !== 'object' || ['$ref', 'allOf', 'anyOf', 'oneOf', 'if', 'patternProperties'].some(key => key in schema)) return false;
@@ -41,7 +41,9 @@ export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): To
 }
 
 export function stripToolDisplayTitle(input: unknown, definition: ToolDefinition): unknown {
-  if (!acceptsDisplayTitle(definition) || !input || typeof input !== 'object' || Array.isArray(input) ||
+  // Summary calls still cross the normal coordinator. A stray UI title must not
+  // reject an otherwise valid memory write; checkpoint_context stays strict.
+  if ((!acceptsDisplayTitle(definition) && definition.name !== 'summary_for_user') || !input || typeof input !== 'object' || Array.isArray(input) ||
       !Object.prototype.hasOwnProperty.call(input, TOOL_DISPLAY_TITLE)) return input;
   const { [TOOL_DISPLAY_TITLE]: _title, ...argumentsOnly } = input as Record<string, unknown>;
   return argumentsOnly;

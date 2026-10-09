@@ -4,6 +4,7 @@ import { CLAUDE_TOOL_NAMES, type PluginCommand } from './pluginExtensions.js';
 import { bashExecutable, executePluginProcess } from './pluginHookRunner.js';
 import type { ToolRegistry, ToolAdmissionDecision, ToolHandlerContext } from './toolRegistry.js';
 import { childAgentDispatchDenial, childAgentToolDenial } from './childAgentPolicy.js';
+import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery } from './catalogPage.js';
 
 interface CommandInput { command: string; arguments: string; prepared?: CommandPlan }
 interface CommandPlan { command: PluginCommand; arguments: string; tokens: string[]; cwd: string; pieces: Array<{ text?: string; script?: string; admissionScript?: string }> }
@@ -22,10 +23,31 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
   const toolName = options.skill ? 'run_skill' : 'run_plugin_command';
   if (!options.skill)
   registry.register({
-    definition: { name: 'list_plugin_commands', description: 'List installed plugin Commands and their argument hints. Invoke a model-callable command with run_plugin_command; user-only commands require the user to send the shown slash command.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    definition: { name: 'list_plugin_commands', description: 'Discover installed plugin Commands with brief descriptions and argument hints. Search with query and continue with next_offset. Pass command for one full description and argument hint. Invoke with run_plugin_command; user-only commands require the shown slash command from the user.', inputSchema: { type: 'object', properties: { ...catalogPageProperties, command: { type: 'string', minLength: 1 } }, additionalProperties: false } },
     manifest: { effect_kind: 'observation', operation: 'plugins.commands.list', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
-    decodeInput: () => ({}), parallelSafe: true,
-    execute: async () => (await load()).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, userInvocable: command.userInvocable, modelInvocable: !command.disableModelInvocation })),
+    decodeInput: value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Command discovery arguments must be an object.');
+      const input = value as Record<string, unknown>;
+      if (Object.keys(input).some(key => !['command', 'query', 'offset', 'limit'].includes(key))) throw new Error('Invalid command discovery arguments.');
+      if (input.command !== undefined && (typeof input.command !== 'string' || !input.command.trim() || ['query', 'offset', 'limit'].some(key => input[key] !== undefined))) throw new Error('Use command alone to inspect one command.');
+      return { ...decodeCatalogQuery(input), command: (input.command as string | undefined)?.trim() };
+    }, parallelSafe: true,
+    execute: async context => {
+      const commands = (await load()).sort((a, b) => a.id.localeCompare(b.id));
+      const describe = (command: PluginCommand) => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, userInvocable: command.userInvocable, modelInvocable: !command.disableModelInvocation });
+      if (context.input.command) {
+        const command = commands.find(item => item.id === context.input.command);
+        if (!command) throw new Error('Plugin Command is unavailable.');
+        return describe(command);
+      }
+      const needle = context.input.query?.toLowerCase();
+      const summaries = commands.filter(command => !needle || `${command.id} ${command.description}`.toLowerCase().includes(needle)).map(command => ({
+        ...describe(command), description: briefText(command.description), argumentHint: briefText(command.argumentHint ?? '', 160),
+        ...(command.description.length > 320 || (command.argumentHint?.length ?? 0) > 160 ? { truncated: true } : {}),
+      }));
+      const { items, ...page } = catalogPage(summaries, { ...context.input, query: undefined });
+      return { commands: items, ...page };
+    },
   });
   registry.register<CommandInput>({
     definition: { name: toolName, description: `Invoke an installed plugin ${options.skill ? 'Skill using the exact plugin:name id from search_skills (reading SKILL.md alone does not invoke it)' : 'Command using its exact plugin:name id'} and argument string. The host checks invocation policy, dependencies and permissions, expands parameters and executes declared dynamic context. Follow the returned instructions.`,

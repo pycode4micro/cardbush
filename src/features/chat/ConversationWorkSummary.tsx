@@ -34,6 +34,8 @@ import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { openInspector, openMediaInspector } from '../inspector/inspectorEvents';
 import type { ProjectPathAlias } from '../conversationScope';
 import { workSummaryOutputs } from './workSummaryOutputs';
+import { TeamWorkSummary } from '../team/TeamWorkSummary';
+import { isEmployeeTask } from '../team/employeePresentation';
 const subagentTaskPageSize = 3;
 const outputPageSize = 5;
 const noPathAliases: ProjectPathAlias[] = [];
@@ -64,7 +66,8 @@ export function ConversationWorkSummary({
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
   const taskFeed = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
-  const subagentTasks = useMemo(() => childConversationSummaries(taskFeed), [taskFeed]);
+  const allTasks = useMemo(() => childConversationSummaries(taskFeed), [taskFeed]);
+  const subagentTasks = allTasks.filter(task => !isEmployeeTask(task));
   const visibleSubagentTasks = subagentTasks.slice(0, visibleSubagentTaskCount);
   const remainingSubagentTaskCount = Math.max(
     0,
@@ -159,6 +162,7 @@ export function ConversationWorkSummary({
               )}
             </div>
 
+            <TeamWorkSummary key={sessionId} messages={messages} tasks={allTasks.filter(isEmployeeTask)} sessionId={sessionId} language={language} />
             {subagentTasks.length > 0 && (
               <div className="work-summary-section work-summary-subagents" data-testid="work-summary-subagents">
                 <div className="work-summary-section-title">

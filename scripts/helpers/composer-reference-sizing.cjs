@@ -105,6 +105,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.setContentSize(430,740);
   await run(`window.viewTheme='theme-light';updateChat({draft:${JSON.stringify(withToken.draft)}})`);
   await until('!!document.querySelector(".composer-context-token")','narrow reference input');
+  await until('innerWidth === 430 && referenceGeometry().width < 430', 'native resize reaches the narrow composer before measuring');
   const narrow = await run('referenceGeometry()');
   await run('selectReferenceInput()'); await key('Backspace');
   await until('referenceInput().tagName==="TEXTAREA"','narrow input restored');

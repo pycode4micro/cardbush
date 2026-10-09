@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import {
   Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -26,15 +27,14 @@ import { AutomationPanel } from '../automations/AutomationPanel';
 import { PluginWorkspace } from '../plugins/PluginWorkspace';
 import { ComponentsApp } from '../components/ComponentsApp';
 
-import { RuntimeDelegationSurface } from '../../plugins/runtimeWorkspaces';
+import { TeamWorkspace } from '../team/TeamWorkspace';
+const MdPresentationApp = lazy(() => import('../mdPresentation/MdPresentationApp').then(module => ({ default: module.MdPresentationApp })));
 
 export function FeatureContentPanel({
   language,
   backendCapabilities,
   onOpenPluginPrompt,
   section,
-  activeProjectDir,
-  workflowValidationAvailable,
   skills,
   disabledSkillNames,
   onToggleSkill,
@@ -58,6 +58,7 @@ export function FeatureContentPanel({
   onOpenConversation: (conversationId: string) => void;
 }) {
   if (section === 'components') return <ComponentsApp language={language}/>;
+  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><MdPresentationApp language={language}/></Suspense>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
     onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;
@@ -80,11 +81,7 @@ export function FeatureContentPanel({
   if (section === 'team') {
     return (
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <RuntimeDelegationSurface slot="content"
-          language={language}
-          activeProjectDir={activeProjectDir}
-          workflowValidationAvailable={workflowValidationAvailable}
-        />
+        <TeamWorkspace language={language} />
       </Suspense>
     );
   }

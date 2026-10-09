@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { EmployeeIcon, employeeTaskTitle, isEmployeeTask } from '../team/employeePresentation';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, CircleStop, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
@@ -170,12 +171,12 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   return <ConversationHostContext.Provider value={host}>
     <ConversationMessageTargetContext.Provider value={`${backend.scope}:${sessionId}`}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || !!reverting }}>
-    <section className="subagent-conversation" aria-label={zh ? '子代理会话' : 'Subagent conversation'}>
+    <section className="subagent-conversation" aria-label={isEmployeeTask(task) ? (zh ? '员工会话' : 'Employee conversation') : (zh ? '子代理会话' : 'Subagent conversation')}>
       <header className="subagent-conversation-heading">
         <span className={`subagent-inspector-state ${status.tone}`}>
-          {displayedStatus === 'running' ? <LoaderCircle className="spin" size={16}/> : displayedStatus === 'failed' ? <TriangleAlert size={16}/> : displayedStatus === 'stopped' ? <CircleStop size={16}/> : <CheckCircle2 size={16}/>}
+          {isEmployeeTask(task) ? <EmployeeIcon size={18}/> : displayedStatus === 'running' ? <LoaderCircle className="spin" size={16}/> : displayedStatus === 'failed' ? <TriangleAlert size={16}/> : displayedStatus === 'stopped' ? <CircleStop size={16}/> : <CheckCircle2 size={16}/>}
         </span>
-        <div><strong>{task.agentName || task.teamMemberId || (zh ? '子 Agent' : 'Subagent')}</strong><small>{zh ? '主 Agent 的子会话' : 'Child of the parent Agent'} · {status.label}</small></div>
+        <div><strong>{employeeTaskTitle(task, language)}</strong><small>{isEmployeeTask(task) ? (zh ? '员工任务会话' : 'Employee task conversation') : (zh ? '主 Agent 的子会话' : 'Child of the parent Agent')} · {status.label}</small></div>
         <button type="button" disabled={refreshing} title={zh ? '刷新会话' : 'Refresh conversation'} onClick={() => void refreshAll().catch(error => setError(String(error)))}><RefreshCw size={15} className={refreshing ? 'spin' : ''}/></button>
       </header>
       <ChatPanel embedded welcomeEnabled={false} workSummaryAvailable={false}

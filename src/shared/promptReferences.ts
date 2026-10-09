@@ -5,8 +5,9 @@ export type BrowserPromptReference = { kind: 'browser'; tabId: string; pageId?: 
 export type TurnPromptReference = { kind: 'user-turn'; sessionId: string; turnId: string; messageId: string; title: string };
 export type ConversationExtractReference = { kind: 'conversation-extract'; id: string; title: string };
 export type SshPromptReference = { kind: 'ssh'; connectionId: string; path: string; title: string };
+export type TeamPromptReference = { kind: 'team'; id: string; title: string };
 export type ApplicationPromptReference = { kind: 'application'; id: string; title: string; applicationKind: 'builtin' | 'plugin' | 'external' | 'local' | 'web'; target: string; componentId?: string };
-export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference | SshPromptReference | ApplicationPromptReference;
+export type PromptReference = BrowserPromptReference | TurnPromptReference | ConversationExtractReference | SshPromptReference | ApplicationPromptReference | TeamPromptReference;
 export type PromptReferencePart = { text: string; start: number; reference?: PromptReference };
 
 export function promptReferenceHref(reference: PromptReference): string {
@@ -27,6 +28,9 @@ export function parsePromptReference(href: string): PromptReference | null {
     const title = value('title');
     const valid = (text: string) => Boolean(text.trim()) && !/[\x00-\x1f\x7f]/.test(text);
     if (!valid(title)) return null;
+    if (url.hostname === 'team' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/.test(value('id')) && title.length <= 200) {
+      return { kind: 'team', id: value('id'), title };
+    }
     if (url.hostname === 'application' && valid(value('id')) && value('id').length <= 400 && title.length <= 200) {
       const applicationKind = value('applicationKind'), target = value('target'), id = value('id');
       if (applicationKind === 'builtin' && ['plugins', 'automations', 'settings', 'components'].includes(target) && id === `builtin:${target}`)
@@ -88,6 +92,28 @@ export function promptReferenceParts(value: string): PromptReferencePart[] {
 export function withWorkspaceReference(draft: string, reference?: string): string {
   const content = promptReferenceParts(draft).filter(part => part.reference?.kind !== 'ssh').map(part => part.text).join('');
   return reference ? `${content}${content && !/\s$/.test(content) ? ' ' : ''}${reference} ` : content;
+}
+
+export function selectedTeamReference(content: string): TeamPromptReference | undefined {
+  return promptReferenceParts(content).flatMap(part => part.reference?.kind === 'team' ? [part.reference] : []).at(-1);
+}
+
+/** One explicit workflow per prompt, with the user's other text and references retained. */
+export function withTeamReference(draft: string, reference?: TeamPromptReference, caret = draft.length): { content: string; caret: number } {
+  const position = Math.max(0, Math.min(caret, draft.length));
+  let insertion = position;
+  const content = promptReferenceParts(draft).filter(part => {
+    if (part.reference?.kind !== 'team') return true;
+    insertion -= Math.max(0, Math.min(part.text.length, position - part.start));
+    return false;
+  }).map(part => part.text).join('');
+  const before = content.slice(0, insertion), after = content.slice(insertion);
+  const token = reference ? `${before && !/\s$/.test(before) ? ' ' : ''}${promptReferenceMarkdown(reference)}${after.startsWith(' ') ? '' : ' '}` : '';
+  return { content: `${before}${token}${after}`, caret: insertion + token.length };
+}
+
+export function teamReferenceInstructions(id: string): string {
+  return `Selected reusable Team: ${id}. Use the team tool to inspect its definition and run it with explicit task input when appropriate. Team members are registered clean Agents; no parent history is copied.`;
 }
 
 /** UI projection of authored text; the canonical model message retains the resolved facts. */

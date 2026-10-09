@@ -3,6 +3,7 @@ import { summarizeExecution, type ExecutionHistoryPage } from './executionHistor
 import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
+  agentToolActivity,
   WORKSPACE_REVIEW_TURN_LIMIT,
   parseSourceMemoReference,
   sourceMemoSchema,
@@ -264,6 +265,7 @@ export class ToolExecutionStore {
 }
 
 function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<object>): ToolExecutionSummary {
+  const activity = agentToolActivity(record);
   return {
     protocol: BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
     requestId: record.requestId,
@@ -278,6 +280,7 @@ function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<ob
       name: record.toolCall.name,
     },
     outcome: record.outcome,
+    ...(activity ? { agentActivity: activity } : {}),
     display: record.display,
     actionManifest: record.actionManifest,
     resultAvailable: Object.prototype.hasOwnProperty.call(record, "result"),

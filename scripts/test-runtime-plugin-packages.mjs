@@ -4,9 +4,9 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, access, symlink } from 'node:f
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { loadProductPluginCatalog, loadEnabledProductRuntimeExtensions, loadEnabledProductRuntimeRenderers, installProductPlugin } from '../dist-electron/productPlugins.js';
-import { installLocalProductPlugin } from '../dist-electron/localPluginInstall.js';
 import { RuntimePluginState } from '../dist-electron/runtimePluginState.mjs';
 import { InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
+import { installRuntimePluginFixture } from './fixtures/runtime-plugin.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'cardbush-independent-plugin-'));
 after(async () => { assert.ok(root.startsWith(tmpdir() + sep)); await rm(root, { recursive: true, force: true }); });
@@ -14,9 +14,9 @@ let sequence = 0;
 async function fixture() {
   const directory = join(root, String(++sequence)); await mkdir(directory);
   const installed = join(directory, 'plugins'), config = join(directory, 'apps.json');
-  await installLocalProductPlugin(resolve('release-plugins/team-0.2.0.zip'), installed);
+  await installRuntimePluginFixture(directory, installed);
   const roots = [{ path: installed, source: 'user' }];
-  const save = (installed = true, enabled = true) => writeFile(config, JSON.stringify({ serviceEnabled: true, plugins: [{ id: 'team', installed, enabled }] }));
+  const save = (installed = true, enabled = true) => writeFile(config, JSON.stringify({ serviceEnabled: true, plugins: [{ id: 'fixture-runtime', installed, enabled }] }));
   await save();
   const registry = new ToolRegistry();
   const host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false });
@@ -25,7 +25,7 @@ async function fixture() {
   return { directory, installed, config, roots, save, registry, host, errors, state };
 }
 
-test('host distribution and default catalog contain no Team implementation or dependency', async () => {
+test('Team is native and the host has no dependency on its former plugin package', async () => {
   assert.equal((await loadProductPluginCatalog([{ path: resolve('assets/plugins'), source: 'bundled' }])).some(plugin => plugin.id === 'team'), false);
   for (const file of ['package.json', 'packages/bush-runtime/package.json']) {
     const pkg = JSON.parse(await readFile(file, 'utf8'));
@@ -38,44 +38,59 @@ test('host distribution and default catalog contain no Team implementation or de
   }
 });
 
+test('an installed former Team package cannot replace the native tools or navigation', async () => {
+  const installed = join(root, 'retired-team'), plugin = join(installed, 'team');
+  await mkdir(join(plugin, '.codex-plugin'), { recursive: true });
+  await writeFile(join(plugin, '.codex-plugin/plugin.json'), JSON.stringify({ name: 'team', version: '0.2.0' }));
+  const config = join(installed, 'apps.json');
+  await writeFile(config, JSON.stringify({ plugins: [{ id: 'team', installed: true, enabled: true }] }));
+  const roots = [{ path: installed, source: 'user' }];
+  assert.deepEqual(await loadProductPluginCatalog(roots), []);
+  assert.deepEqual(await loadEnabledProductRuntimeExtensions(roots, config), []);
+  assert.deepEqual(await loadEnabledProductRuntimeRenderers(roots, config), []);
+  const host = new InMemoryRuntimeHost({ registerDefaultWorkspaceTools: false });
+  assert.ok(host.capabilities().features.includes('native_team_workflows'));
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+});
+
 test('ZIP installs a self-contained Runtime and UI; unchanged refresh keeps runtime state and file receipts', async () => {
   const f = await fixture();
   assert.ok(f.registry.definitions().some(tool => tool.name === 'subagent'));
-  assert.equal(f.registry.definitions().some(tool => tool.name === 'team_delegate'), false);
-  assert.deepEqual((await loadProductPluginCatalog(f.roots))[0].runtimeExtensions, ['team']);
+  assert.equal(f.registry.definitions().some(tool => tool.name === 'fixture_read'), false);
+  assert.deepEqual((await loadProductPluginCatalog(f.roots))[0].runtimeExtensions, ['fixture-runtime']);
   const renderers = await loadEnabledProductRuntimeRenderers(f.roots, f.config);
-  assert.equal(renderers.length, 1); assert.ok(renderers[0].source.length > 1000);
+  assert.equal(renderers.length, 1); assert.match(renderers[0].source, /plugin\.fixture\.configuration/);
   assert.equal(await f.state.refresh(), undefined);
-  assert.equal(f.registry.definitions().filter(tool => tool.name === 'team_delegate').length, 1);
+  assert.equal(f.registry.definitions().filter(tool => tool.name === 'fixture_read').length, 1);
   const call = (kind, payload = {}) => f.host.sendCommand({ kind, payload });
-  const before = await call('plugin.team.configuration', { action: 'read' });
-  assert.equal(before.path, join(f.directory, 'plugin-data/team/teams.json'));
-  await call('runtime.apply_team_snapshot', { protocol: 'bush.team_snapshot.v1', snapshotId: 'test', revision: 1, teams: [] });
-  const snapshot = await call('runtime.get_team_snapshot');
+  const before = await call('plugin.fixture.configuration', { action: 'read' });
+  assert.equal(before.path, join(f.directory, 'plugin-data/fixture-runtime/configuration.json'));
+  await call('plugin.fixture.apply_snapshot', { revision: 1, items: [] });
+  const snapshot = await call('plugin.fixture.get_snapshot');
   assert.deepEqual(await Promise.all([f.state.refresh(), f.state.refresh()]), [undefined, undefined]);
-  assert.deepEqual(await call('runtime.get_team_snapshot'), snapshot);
-  assert.deepEqual(await call('plugin.team.configuration', { action: 'read' }), before);
+  assert.deepEqual(await call('plugin.fixture.get_snapshot'), snapshot);
+  assert.deepEqual(await call('plugin.fixture.configuration', { action: 'read' }), before);
   assert.deepEqual(f.errors, []);
 });
 
 test('legacy loading flags, package replacement and restart preserve editable configuration and ordinary Subagent', async () => {
   const f = await fixture(); await f.state.refresh();
-  const input = { kind: 'plugin.team.configuration', payload: { action: 'read' } };
+  const input = { kind: 'plugin.fixture.configuration', payload: { action: 'read' } };
   const before = await f.host.sendCommand(input);
-  before.configuration.teams[0].name = 'Preserved custom team';
+  before.configuration.items[0].name = 'Preserved custom item';
   const saved = await f.host.sendCommand({ kind: input.kind, payload: { action: 'write', configuration: before.configuration, expectedHash: before.contentHash } });
   for (const installed of [true, false]) {
     await f.save(installed, false); await f.state.refresh();
-    assert.equal(f.registry.definitions().some(tool => tool.name === 'team_delegate'), false);
+    assert.equal(f.registry.definitions().some(tool => tool.name === 'fixture_read'), false);
     assert.ok(f.registry.definitions().some(tool => tool.name === 'subagent'));
     await assert.rejects(f.host.sendCommand(input));
     assert.deepEqual(await loadEnabledProductRuntimeRenderers(f.roots, f.config), []);
   }
   // Direct legacy state changes and package replacement are not full uninstall.
   // The desktop uninstall path also deletes plugin-data (test-plugin-uninstall).
-  await rm(join(f.installed, 'team'), { recursive: true, force: true });
-  assert.equal(JSON.parse(await readFile(saved.path, 'utf8')).teams[0].name, 'Preserved custom team');
-  await installLocalProductPlugin(resolve('release-plugins/team-0.2.0.zip'), f.installed);
+  await rm(join(f.installed, 'fixture-runtime'), { recursive: true, force: true });
+  assert.equal(JSON.parse(await readFile(saved.path, 'utf8')).configuration.items[0].name, 'Preserved custom item');
+  await installRuntimePluginFixture(f.directory, f.installed);
   await f.save(); await f.state.refresh();
   assert.deepEqual(await f.host.sendCommand(input), saved);
   const restarted = new InMemoryRuntimeHost({ registerDefaultWorkspaceTools: false });
@@ -86,38 +101,38 @@ test('legacy loading flags, package replacement and restart preserve editable co
 
 test('a broken updated plugin is disabled, leaves core usable and can recover without reloading the application', async () => {
   const f = await fixture(); await f.state.refresh();
-  const file = join(f.installed, 'team/dist/runtime.mjs');
+  const file = join(f.installed, 'fixture-runtime/dist/runtime.mjs');
   const original = await readFile(file, 'utf8');
   await writeFile(file, 'throw new Error("fixture damaged bundle");');
   assert.match(await f.state.refresh(), /fixture damaged bundle/);
   await f.state.refresh(); assert.equal(f.errors.length, 1);
-  assert.equal(f.registry.definitions().some(tool => tool.name === 'team_delegate'), false);
+  assert.equal(f.registry.definitions().some(tool => tool.name === 'fixture_read'), false);
   assert.ok(f.registry.definitions().some(tool => tool.name === 'subagent'));
   await writeFile(file, original + '\n// repaired update\n');
   assert.equal(await f.state.refresh(), undefined);
-  assert.equal(f.registry.definitions().filter(tool => tool.name === 'team_delegate').length, 1);
+  assert.equal(f.registry.definitions().filter(tool => tool.name === 'fixture_read').length, 1);
 });
 
 test('updating an in-use plugin defers replacement and does not block the core or admit old code to new turns', async () => {
   const f = await fixture(); await f.state.refresh();
-  const file = join(f.installed, 'team/dist/runtime.mjs');
-  const old = f.registry.resolve('team_delegate');
+  const file = join(f.installed, 'fixture-runtime/dist/runtime.mjs');
+  const old = f.registry.resolve('fixture_read');
   const hasActiveTurns = f.host.hasActiveTurns.bind(f.host);
   f.host.hasActiveTurns = () => true;
   await writeFile(file, await readFile(file, 'utf8') + '\n// changed during a turn\n');
   assert.match(await f.state.refresh(), /update pending/);
-  assert.equal(f.registry.resolve('team_delegate'), old);
-  assert.equal(f.registry.definitions().some(tool => tool.name === 'team_delegate'), false);
+  assert.equal(f.registry.resolve('fixture_read'), old);
+  assert.equal(f.registry.definitions().some(tool => tool.name === 'fixture_read'), false);
   f.host.hasActiveTurns = hasActiveTurns;
   assert.equal(await f.state.refresh(), undefined);
-  assert.notEqual(f.registry.resolve('team_delegate'), old);
-  assert.equal(f.registry.definitions().filter(tool => tool.name === 'team_delegate').length, 1);
+  assert.notEqual(f.registry.resolve('fixture_read'), old);
+  assert.equal(f.registry.definitions().filter(tool => tool.name === 'fixture_read').length, 1);
 });
 
 test('manifest API, entry existence and traversal checks reject invalid packages before installation', async () => {
   const directory = join(root, 'invalid'); await mkdir(join(directory, '.codex-plugin'), { recursive: true });
   const manifest = join(directory, '.codex-plugin/plugin.json');
-  for (const runtimeExtension of ['team', { apiVersion: 2, entry: './entry.mjs' }, { apiVersion: 1, entry: '../escape.mjs' }, { apiVersion: 1, entry: './missing.mjs' }]) {
+  for (const runtimeExtension of ['fixture-runtime', { apiVersion: 2, entry: './entry.mjs' }, { apiVersion: 1, entry: '../escape.mjs' }, { apiVersion: 1, entry: './missing.mjs' }]) {
     await writeFile(manifest, JSON.stringify({ name: 'invalid', version: '1', cardbush: { runtimeExtension } }));
     await assert.rejects(installProductPlugin(directory, join(root, 'invalid-install')));
     await assert.rejects(access(join(root, 'invalid-install/invalid')));

@@ -19,7 +19,7 @@ type Actions = {
   toggleSidebar: () => void; toggleInspector: () => void; search: () => void;
   openBrowser: () => void; focusBrowserAddress?: () => void; reloadBrowser?: () => void;
   openReview?: () => void; openHistory?: () => void; openShadow?: () => void;
-  previousConversation?: () => void; back?: () => void; forward?: () => void; openTeam?: () => void;
+  previousConversation?: () => void; back?: () => void; forward?: () => void;
 };
 
 /** Menu items route to existing application actions; no parallel command backend. */
@@ -87,7 +87,6 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       external('releases', '查看发布版本', 'View releases', '/releases'),
     ] },
   ];
-  if (actions.openTeam) menus.push({ id: 'beta', label: 'Beta', items: [item('team', 'Team', 'Team', actions.openTeam)] });
   return menus;
 }
 

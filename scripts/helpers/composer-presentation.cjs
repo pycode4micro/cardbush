@@ -49,6 +49,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelectorAll(".model-context-section,.model-reasoning-section,.model-picker-row.secondary").length'),0,'continuing simple menu only shows models');
   await run('document.querySelector(".model-select").click();document.querySelector(".send-button").click()');
   await until('!chatProps.sending','stop works after transition');
+  await require('./composer-multiline.cjs')({ run, until, pause, window, root });
   await run('updateChat({draft:"保留后续草稿"});window.continuingInput=document.querySelector("[data-composer-input]");saveInputStyle("simple","standard");');
   await until('!document.querySelector(".composer-stack.simple")','saved layout can override catalog with standard');
   assert.equal(await run('document.querySelector("[data-composer-input]")===continuingInput'),true,'style updates keep the input mounted');
@@ -69,6 +70,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     renderView(h(views.ComposerPortalContext.Provider,{value:presentationTarget},h(views.ChatPanel,chatProps)));`);
   await until('!!document.querySelector(".inspector-quick-input .composer-stack.input-only")','cover quick input remains available');
   assert.equal(await run('document.querySelectorAll(".composer-stack.simple").length'),0,'input-only capsule retains its own minimal layout');
+  await run('updateChat({draft:"网页快捷输入\\n第二行内容也应该在工具栏上方"});renderView(h(views.ComposerPortalContext.Provider,{value:presentationTarget},h(views.ChatPanel,chatProps)));');
+  await until('composerLayout().stacked && composerLayout().fullWidth', 'multiline quick input uses a separate toolbar row');
   await run('renderView(null);presentationTarget.remove();localStorage.removeItem(views.componentStorageKey);');
   console.log('Composer presentation passed: real welcome/send/stop transition, saved layout precedence, menu parity, drafts, explicit permissions, reopen, embedded/narrow and cover input.');
 };

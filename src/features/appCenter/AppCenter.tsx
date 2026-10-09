@@ -1,6 +1,6 @@
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { AppWindow, Blocks, CalendarClock, ExternalLink, Globe, LayoutGrid, Pencil, Pin, Plus, Search, Settings, Trash2, X } from 'lucide-react';
+import { AppWindow, Blocks, CalendarClock, ExternalLink, Globe, LayoutGrid, Network, Pencil, Pin, Plus, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
@@ -27,7 +27,7 @@ export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; siz
   if (app.kind === 'local') return app.icon && app.icon !== failedIcon
     ? <img className="composer-plugin-option-logo" src={app.icon} alt="" draggable={false} onError={() => setFailedIcon(app.icon ?? '')}/>
     : <AppWindow size={size} aria-hidden="true"/>;
-  const Icon = app.kind === 'external' ? Globe : app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : Settings;
+  const Icon = app.kind === 'external' ? Globe : app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? Network : Settings;
   return <Icon size={size} aria-hidden="true" />;
 }
 

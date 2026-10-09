@@ -107,6 +107,7 @@ body.right-inspector-resizing .inspector-conversation-covered > .right-inspector
 .composer-stack.input-only .composer-surface:not(.voice-call-active) > :is(textarea, .composer-prompt-editor) { grid-area: 1 / 1; min-height: 1.5em; max-height: min(160px, 20dvh); margin: 3px 0; padding: 0; }
 .composer-stack.input-only .composer-surface:not(.voice-call-active) > .composer-footer { grid-area: 1 / 2; padding: 0; }
 .composer-stack.input-only .composer-surface > :is(.composer-image-strip, .composer-file-strip, .composer-command-mode, .composer-attachment-progress) { grid-column: 1 / -1; }
+.composer-stack.input-only .composer-surface.is-multiline:not(.voice-call-active) > :is(textarea, .composer-prompt-editor, .composer-footer) { grid-column: 1 / -1; grid-row: auto; }
 .inspector-page-dialog { width: min(460px, calc(100% - 32px)); padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
 .inspector-page-dialog::backdrop { background: #0008; }
 .inspector-page-dialog form, .inspector-page-dialog label { display: flex; flex-direction: column; gap: 12px; }

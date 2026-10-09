@@ -40,6 +40,7 @@ const toolLogos: Record<string, LucideIcon> = {
   subagent: GitFork,
   await_subagents: Hourglass,
   team_delegate: UsersRound,
+  team: UsersRound,
   update_task_plan: ListChecks,
   update_goal: Target,
   request_permission: ShieldCheck,

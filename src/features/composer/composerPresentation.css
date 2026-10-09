@@ -7,4 +7,7 @@
 .composer-stack.simple .model-select { max-width: 130px; }
 .composer-stack.simple .model-select > svg:first-child, .composer-stack.simple .model-select > img { display: none; }
 .composer-stack.simple .composer-surface > :is(.composer-image-strip, .composer-file-strip, .composer-command-mode, .composer-attachment-progress) { grid-column: 1 / -1; grid-row: auto; }
+.composer-stack.simple .composer-surface.is-multiline:not(.voice-call-active) { align-items: stretch; border-radius: 22px; }
+.composer-stack.simple .composer-surface.is-multiline > :is(textarea, .composer-prompt-editor) { grid-column: 1 / -1; grid-row: auto; }
+.composer-stack.simple .composer-surface.is-multiline > .composer-footer { display: flex; grid-column: 1 / -1; grid-row: auto; }
 @container composer (max-width:400px) { .composer-stack.simple .model-select { width: 26px; min-width: 0; padding: 3px; } .composer-stack.simple .model-select > span { display: none; } }

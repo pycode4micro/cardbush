@@ -93,7 +93,8 @@ assert.match(source, /className="composer-command-mode goal"/);
 assert.match(source, /<Target size=\{15\}/);
 assert.match(source, /value=\{composerInputValue\}/);
 assert.match(source, /onDraftChange\(`\/goal\$\{next \? ` \$\{next\}` : ' '\}`\)/);
-assert.match(chatHookSource, /splitExplicitAttachmentMentions\(content\)/);
+assert.match(chatHookSource, /splitStreamAttachmentMentions\(trimmed\)/);
+assert.match(readSourceFile('src/shared/chatAttachments.ts', 'utf8'), /splitExplicitAttachmentMentions\(content\)/);
 const attachmentExports = {};
 vm.runInNewContext(ts.transpileModule(readSourceFile('src/shared/localPaths.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },

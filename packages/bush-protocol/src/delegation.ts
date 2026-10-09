@@ -29,6 +29,7 @@ export const subagentTaskSchema = z.object({
   teamId: z.string().min(1).optional(),
   teamMemberId: z.string().min(1).optional(),
   agentProfileId: z.string().min(1).optional(),
+  agentName: z.string().min(1).optional(),
   resumedFromTaskId: z.string().min(1).optional(),
   remote: z.object({ connectionId: z.string().min(1), agentId: z.string().optional() }).optional(),
   phase: z.enum(["discussion", "execution"]).optional(),

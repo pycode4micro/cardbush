@@ -88,7 +88,7 @@ and explain that the child should finish its assignment and report dependencies
 to the parent. The same restriction covers plugin Skill/Command `context: fork`;
 ordinary inline Skills remain available under the existing task policy.
 
-`team_delegate` is now supplied only by the optional Team plugin. Keeping its name in a child-policy exclusion list does not register or enable the tool; ordinary Subagents remain part of the core Runtime.
+The native `team` tool schedules registered clean employees through the same subagent dispatcher and permission boundary. Children cannot invoke it. The former Team plugin is no longer loaded; see [native Team workflows](TEAM_NATIVE_WORKFLOWS.md).
 
 ## Fork and clean dispatch
 
@@ -104,11 +104,15 @@ appends any explicit role instructions and a user assignment beginning with
 or their order. `system_prompt`, `allowed_tools` and `settings` are clean-only
 arguments and are rejected in fork mode.
 
-For clean mode, the parent calls `list_subagent_options` and chooses the applicable
-settings itself. The host supplies configured model IDs and limits, current tool
-and Skill scope, permission ceiling and installed Agent roles. Model credentials
-are resolved inside the host and are never included in this catalog. Skills can
-be discovered with `search_skills` within the displayed scope.
+For clean mode, `list_subagent_options` returns reusable employees and installed
+Agent roles by default, with query and pagination for large catalogs. Registered
+employees already carry their configuration. Use `agent_id` or `agent_type` to
+inspect one employee or plugin role only when needed.
+When configuration needs inspection, `section: "settings"` supplies configured
+model IDs, limits, Skill scope, permission ceiling and trusted hooks;
+`section: "tools"` searches and pages through child tool availability. Model
+credentials are never included. Skills can be discovered with `search_skills`
+within the displayed scope.
 
 The required `system_prompt` becomes the actual system message; `prompt` becomes
 the user assignment, preceded by the same child-state reminder. Neither parent

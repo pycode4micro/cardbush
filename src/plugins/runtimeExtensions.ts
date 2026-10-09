@@ -82,14 +82,6 @@ export function useRuntimeRendererPlugins(enabled = true) {
   useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => revision, () => revision);
   return enabled ? [...entries.values()] : [];
 }
-const empty: RuntimeRendererSnapshot = { title: '', choices: [], selectedId: '' };
-export function useRuntimeDelegationWorkspace(enabled = true) {
-  const plugins = useRuntimeRendererPlugins(enabled);
-  const plugin = plugins.find(entry => entry.snapshot?.role === 'delegation');
-  return { extensionId: plugin?.id, pluginName: plugin?.name || '', ...(plugin?.snapshot ?? empty),
-    ...(plugin?.error ? { error: plugin.error, choices: [], selectedId: '' } : {}) };
-}
-export function selectRuntimePluginChoice(id: string, choice: string) { entries.get(id)?.extension?.select(choice); }
 export async function prepareRuntimePluginTurn(request: unknown, tools: unknown[]) {
   await refreshRuntimeRendererPlugins();
   for (const { extension } of entries.values()) await extension?.prepareTurn?.(request, tools);

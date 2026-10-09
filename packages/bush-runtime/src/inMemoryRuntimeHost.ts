@@ -1,4 +1,8 @@
 import { ASSISTANT_CONVERSATION_COMMAND } from '@cardbush/bush-protocol';
+import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
+import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks } from './registeredAgents.js';
+import { TeamWorkflowManager } from './teamWorkflow.js';
+import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { REALTIME_AGENT_TOOL_COMMAND, realtimeAgentToolRequestSchema } from '@cardbush/bush-protocol';
@@ -344,6 +348,8 @@ export class InMemoryRuntimeHost {
   readonly #remoteAgents?: InMemoryRuntimeHostOptions['remoteAgents'];
   #voiceMaintenance = new Map<string, AbortController>();
   readonly #subagentResume: SubagentResumeStore;
+  readonly #registeredAgents: RegisteredAgentStore;
+  readonly #teams: TeamWorkflowManager;
   readonly #backgroundTools: BackgroundToolCalls;
   readonly #terminalNotifications: TerminalCompletionNotifications;
   readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
@@ -414,6 +420,7 @@ export class InMemoryRuntimeHost {
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
+      delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team'].includes(tool.name)),
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
     });
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
@@ -558,6 +565,7 @@ export class InMemoryRuntimeHost {
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     this.#subagentResume = new SubagentResumeStore(options.dataRoot ? join(runtimeDataRoot, 'subagent-context') : undefined);
+    this.#registeredAgents = new RegisteredAgentStore(options.dataRoot ? join(runtimeDataRoot, 'registered-agents') : undefined);
     this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
       this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result),
       (session, turn) => this.#terminalNotifications.list(session, turn));
@@ -565,7 +573,7 @@ export class InMemoryRuntimeHost {
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
       DEFAULT_SUBAGENT_PERMISSION_POLICY;
-    registerSubagentTool(
+    const subagents = registerSubagentTool(
       this.#toolRegistry,
       this.#subagentTasks,
       async (request, signal) => {
@@ -577,6 +585,8 @@ export class InMemoryRuntimeHost {
       },
       {
         asyncDispatch: true,
+        agents: this.#registeredAgents,
+        loadHooks: async () => (await options.loadPluginExtensions?.())?.hooks ?? [],
         remoteAgents: options.remoteAgents,
         inheritBrowserScope: options.inheritBrowserScope,
         guideChild: payload => this.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload }),
@@ -606,6 +616,22 @@ export class InMemoryRuntimeHost {
         ...(options.loadPluginExtensions ? { loadPluginAgents: async () => (await options.loadPluginExtensions!()).agents } : {}),
       },
     );
+    this.#teams = new TeamWorkflowManager(this.#registeredAgents, (context, input) => {
+      if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
+      return subagents.dispatch(context, input);
+    }, { directory: options.dataRoot ? join(runtimeDataRoot, 'teams') : undefined,
+      onResult: (run, promise) => {
+        // Do not join an independent Team at the parent's terminal barrier.
+        // Publish only a settled result to a still-active parent; idle parents can
+        // read the persisted run with team status/wait on their next turn.
+        void promise.then(result => {
+          this.#assistant.notifyTeamResult(result);
+          const notice = teamCompletionNotice(result);
+          const message = { role: 'user' as const, name: 'subagent_result' as const, content: JSON.stringify(notice) };
+          for (const key of this.#activeTurns) if (JSON.parse(key)[0] === run.parentSessionId) this.#trackAgentGuidance(key, `${run.id}-${notice.result_version}`, Promise.resolve(message));
+        }).catch(error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))));
+      } });
+    this.#teams.register(this.#toolRegistry);
     this.#extensionApi = {
       subagentTasks: this.#subagentTasks,
       hasActiveTurns: () => this.hasActiveTurns(),
@@ -659,6 +685,8 @@ export class InMemoryRuntimeHost {
         ].includes(kind),
       ),
       supportedCommands: [
+        AGENT_REGISTRY_COMMAND,
+        TEAM_WORKFLOW_COMMAND,
         PERSONALIZATION_COMMAND,
         MCP_APPS_COMMAND,
         GET_RUNTIME_WORKSPACE_COMMAND,
@@ -714,6 +742,8 @@ export class InMemoryRuntimeHost {
         ...(options.additionalSupportedCommands ?? []),
       ],
       features: [
+        'registered_clean_agents',
+        'native_team_workflows',
         "turn_stream",
         "reasoning_segments",
         "assistant_segments",
@@ -820,13 +850,14 @@ export class InMemoryRuntimeHost {
   }
 
   hasActiveTurns(): boolean {
-    return this.#activeTurns.size > 0;
+    return this.#activeTurns.size > 0 || this.#teams.hasActiveRuns();
   }
   async preparePluginUninstall(pluginId: string): Promise<void> {
     if (this.isExtensionBusy(pluginId)) throw new Error('插件仍在使用中，请在当前任务结束后重试卸载。');
     await this.#pluginHooks.removePlugin(pluginId);
   }
   hasActiveSession(sessionId: string): boolean {
+    if (this.#teams.hasActiveRuns(sessionId)) return true;
     if ((this.#cacheMaintenance || this.#workspaceActions) && (!this.#workspaceActionSessions || this.#workspaceActionSessions.has(sessionId))) return true;
     return [...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId);
   }
@@ -885,6 +916,24 @@ export class InMemoryRuntimeHost {
       }
     }
     switch (command.kind) {
+      case AGENT_REGISTRY_COMMAND: {
+        const input = command.payload as { action?: string; definition?: unknown; agent_id?: string; expected_revision?: number };
+        if (input?.action === 'list') return this.#registeredAgents.list();
+        if (input?.action === 'get' && typeof input.agent_id === 'string') {
+          const agent = await this.#registeredAgents.get(input.agent_id);
+          if (!agent) throw new Error('Agent definition is unavailable.');
+          return agent;
+        }
+        if (input?.action === 'save') {
+          const agent = registeredAgentSchema.parse(input.definition);
+          validateRegisteredHooks(agent, (await this.#loadPluginExtensions?.())?.hooks ?? []);
+          return this.#registeredAgents.put(agent, input.expected_revision!);
+        }
+        if (input?.action === 'delete' && typeof input.agent_id === 'string') { await this.#registeredAgents.remove(input.agent_id, input.expected_revision!); return { deleted: true }; }
+        throw new Error('Invalid Agent registry command.');
+      }
+      case TEAM_WORKFLOW_COMMAND:
+        return this.#teams.configure(command.payload);
       case PERSONALIZATION_COMMAND: {
         const payload = command.payload as { action?: unknown; settings?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string };
         const settings = individuationSettingsSchema.parse(payload.settings ?? {});
@@ -1277,6 +1326,7 @@ export class InMemoryRuntimeHost {
       }
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
+        await this.#teams.close();
         this.#assistant.close();
         for (const controller of this.#voiceMaintenance.values()) controller.abort();
         await this.#memory.close();
@@ -1385,7 +1435,7 @@ export class InMemoryRuntimeHost {
       }
       if (request.metadata?.agentRole === 'child' && !request.metadata.shadowMode && !await this.#subagentResume.load(input.sessionId)) await this.#subagentResume.save(request);
       try {
-        const terminal = request.metadata?.pluginAgentId && input.metadata?.agentRole !== 'child'
+        const terminal = (request.metadata?.pluginAgentId || request.metadata?.registeredAgentId) && input.metadata?.agentRole !== 'child'
           ? await this.#withPluginChildEnvironment(request, options.signal, () => this.#runSessionTurn(request, options))
           : await this.#runSessionTurn(request, options);
         if (followup) {
@@ -1513,7 +1563,7 @@ export class InMemoryRuntimeHost {
     }
     let workspaceStarted = false;
     try {
-      if (authoredInput && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
+      if (authoredInput && candidate.metadata.agentRole !== 'child' && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
         try {
           const message = await recallIndividuation(this.#memory.store, memorySettings, authoredInput.message.content, prepared.modelRequest.messages, candidate, options.signal);
           if (message) {
@@ -2069,7 +2119,7 @@ export class InMemoryRuntimeHost {
         if (!compactionTransaction && !activeContextCompaction) {
           messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
         }
-        if (!compactionTransaction && !activeContextCompaction) {
+        if (!compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           try {
             const message = await changedIndividuation(this.#memory.store, normalizeIndividuation(request.metadata.individuation), messages, input.signal);
             if(message){
@@ -3330,7 +3380,13 @@ export class InMemoryRuntimeHost {
   }
 
   async #withPluginChildEnvironment(request: RuntimeSessionTurnRequest, signal: AbortSignal | undefined, run: () => Promise<RuntimeEvent>): Promise<RuntimeEvent> {
-    const profile = request.metadata.pluginAgentId ? (await this.#loadPluginExtensions?.())?.agents.find(agent => agent.id === request.metadata.pluginAgentId) : undefined;
+    const employee = request.metadata.registeredAgent as DefinitionReceipt<RegisteredAgent> | undefined;
+    if (employee) {
+      const current = await this.#registeredAgents.get(employee.definition.id);
+      if (!current?.definition.enabled) throw new Error('The registered Agent is unavailable or disabled.');
+      validateRegisteredHooks(employee.definition, (await this.#loadPluginExtensions?.())?.hooks ?? []);
+    }
+    const profile = employee ? registeredAgentProfile(employee) : request.metadata.pluginAgentId ? (await this.#loadPluginExtensions?.())?.agents.find(agent => agent.id === request.metadata.pluginAgentId) : undefined;
     if (request.metadata.pluginAgentId && !profile) throw new Error('The requested plugin Agent is no longer enabled.');
     const lease = profile ? await this.#pluginAgentEnvironment.acquire(request, profile, signal) : undefined;
     try { return await run(); }
@@ -3413,7 +3469,7 @@ export class InMemoryRuntimeHost {
     results: SettledAgentGuidance[],
   ): ModelMessage[] {
     // Child results are model context, not messages authored by the user.
-    const internalResults = results.map(result => ({ ...result, message: {
+    const internalResults = results.filter(result => !teamCompletionAlreadyRead(result.message.content, messages)).map(result => ({ ...result, message: {
       ...result.message, visibility: 'internal' as const,
     } }));
     for (const result of internalResults) {

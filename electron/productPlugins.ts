@@ -56,11 +56,13 @@ export async function loadProductPluginCatalog(
     const rootPath = resolve(root.path);
     const entries = await marketplaceEntries(rootPath);
     for (const entry of entries) {
-      if (excludedIds?.has(entry.name)) continue;
+      // Team is now a native Runtime feature; do not activate its former package.
+      if (entry.name === 'team' || excludedIds?.has(entry.name)) continue;
       const pluginRoot = resolve(rootPath, entry.path);
       if (!inside(rootPath, pluginRoot)) continue;
       const resolved = await resolvePluginManifest(pluginRoot).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (!resolved) continue;
+      if (resolved.manifest.name === 'team') continue;
       if (root.source === 'user' && isCoreCapabilityId(String(resolved.manifest.name ?? ''))) continue;
       const plugin = await decodeManifest({
         resolved,

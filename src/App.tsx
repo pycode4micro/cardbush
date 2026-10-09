@@ -17,6 +17,7 @@ import { InspectorTabStrip } from './features/inspector/InspectorTabStrip';
 import { InspectorTabLock } from './features/inspector/InspectorTabLock';
 import { BrowserTabAudioButton } from './features/browser/BrowserTabAudioButton';
 import { BrowserSiteIcon } from './features/browser/BrowserSiteIcon';
+import { EmployeeIcon, isEmployeeTask } from './features/team/employeePresentation';
 import { newBrowserTab } from './features/browser/browserStartPage';
 import { BrowserMenu } from './features/browser/BrowserMenu';
 import { BrowserInstallButton } from './features/browser/BrowserInstallButton';
@@ -34,6 +35,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  UsersRound,
   Clipboard,
   Clock3,
   ExternalLink,
@@ -128,8 +130,8 @@ import {
   ConversationChangeDialog,
   type ProjectAction,
 } from './features/sidebar';
-import { refreshRuntimeRendererPlugins, useRuntimeDelegationWorkspace } from './plugins/runtimeExtensions';
-import { RuntimeDelegationSurface } from './plugins/runtimeWorkspaces';
+import { refreshTeamWorkspace, useTeamWorkspace } from './features/team/teamWorkspaceStore';
+import { NativeTeamSidebar } from './features/team/TeamSidebar';
 import { basename, fileUrl, samePath, stripWrappingQuotes } from './shared/localPaths';
 import {
   themeAccentColor,
@@ -472,9 +474,9 @@ function CardbushApp() {
     backendCapabilities.browserPrivacyMode && appSettings.browser.privacyMode;
   const reasoningTraceVisible =
     backendCapabilities.reasoningStream && appSettings.thinking.visible;
-  const teamWorkspace = useRuntimeDelegationWorkspace();
+  const teamWorkspace = useTeamWorkspace(backendCapabilities.teamMode);
   useEffect(() => {
-    if (backendCapabilities.teamMode) void refreshRuntimeRendererPlugins().catch(() => undefined);
+    if (backendCapabilities.teamMode) void refreshTeamWorkspace();
     else if (section === 'team') setSection('chat');
   }, [backendCapabilities.teamMode, section]);
   const assistantModel = useAssistantModel(availableModels, backendDefaultModelId, saveModelReasoning, language);
@@ -750,7 +752,7 @@ function CardbushApp() {
     setInspectorTabContextMenu(null);
   }, [language, openInspectorTab, setInspectorOpen]);
   const openWorkSummaryTab = useCallback((detail: WorkSummaryInspectorDetail) => {
-    if (!detail.sessionId.trim()) return;
+    if (!detail.sessionId.trim() && detail.kind !== 'agent-definition') return;
     openInspectorTab(workSummaryInspectorTab(detail, language));
     setInspectorOpen(true);
     setInspectorTabsMenuOpen(false);
@@ -1124,7 +1126,7 @@ function CardbushApp() {
   useEffect(() => {
     const handleOpenWorkSummaryInspector = (event: Event) => {
       const detail = (event as CustomEvent<WorkSummaryInspectorDetail>).detail;
-      if (!detail?.sessionId?.trim()) return;
+      if (!detail || (!detail.sessionId?.trim() && detail.kind !== 'agent-definition')) return;
       openWorkSummaryTab(detail);
     };
     window.addEventListener(
@@ -2054,7 +2056,6 @@ function CardbushApp() {
     previousConversation: conversationNavigation.canGoPrevious ? conversationNavigation.previous : undefined,
     back: pageNavigation.canGoBack ? pageNavigation.back : undefined,
     forward: pageNavigation.canGoForward ? pageNavigation.forward : undefined,
-    openTeam: backendCapabilities.teamMode ? () => { setSettingsOpen(false); setSection('team'); } : undefined,
   }, { sidebarVisible: !sidebarCollapsed, inspectorVisible: inspectorOpen && !settingsOpen,
     native: Boolean(window.cardbushDesktop?.executeWindowMenuAction), externalLinks: Boolean(window.cardbushDesktop?.openExternal) });
 
@@ -2086,7 +2087,7 @@ function CardbushApp() {
         if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
-        else setSection(application.target === 'automations' ? 'automations' : application.target === 'components' ? 'components' : 'plugins');
+        else setSection(application.target === 'automations' ? 'automations' : application.target === 'components' ? 'components' : application.target === 'team' ? 'team' : application.target === 'md-presentation' ? 'md-presentation' : 'plugins');
         if (compactLayout) collapseSidebar();
       }}>
       <GlobalTooltip/>
@@ -2176,7 +2177,7 @@ function CardbushApp() {
           {sidebarPresence.mounted && (
             <>
               {section === 'team' ? (
-                <RuntimeDelegationSurface slot="sidebar"
+                <NativeTeamSidebar
                   language={language}
                   onBack={() => setSection('chat')}
                   onOpenSettings={() => openSettings('profile')}
@@ -2460,8 +2461,10 @@ function CardbushApp() {
                                     ? <Clipboard size={13} aria-hidden="true" />
                                     : tab.kind === 'history' || tab.kind === 'automation'
                                       ? <Clock3 size={13} aria-hidden="true" />
+                                      : tab.kind === 'agent-definition'
+                                        ? tab.detail.entity === 'employee' ? <EmployeeIcon size={13} /> : <UsersRound size={13} />
                                       : tab.kind === 'subagent'
-                                        ? <Bot size={13} aria-hidden="true" />
+                                        ? isEmployeeTask(tab.detail.task) ? <EmployeeIcon size={13} /> : <Bot size={13} aria-hidden="true" />
                                         : <ShadowCloneIcon size={13} />}
                                 <span className="right-inspector-tab-title">{label}</span>
                               </button>
@@ -2534,8 +2537,10 @@ function CardbushApp() {
                                         ? <Clipboard size={14} aria-hidden="true" />
                                         : tab.kind === 'history' || tab.kind === 'automation'
                                           ? <Clock3 size={14} aria-hidden="true" />
+                                          : tab.kind === 'agent-definition'
+                                            ? tab.detail.entity === 'employee' ? <EmployeeIcon size={14} /> : <UsersRound size={14} />
                                           : tab.kind === 'subagent'
-                                            ? <Bot size={14} aria-hidden="true" />
+                                            ? isEmployeeTask(tab.detail.task) ? <EmployeeIcon size={14} /> : <Bot size={14} aria-hidden="true" />
                                             : <ShadowCloneIcon size={14} />}
                                     <span>{label}</span>
                                   </button>
@@ -2760,7 +2765,7 @@ function CardbushApp() {
                             <ShadowWindow embedded context={tab.context} />
                           ) : tab.kind === 'automation' ? (
                             <AutomationRunPanel jobId={tab.jobId} runId={tab.runId} language={language} active={active && inspectorPresence.visible} onOpenConversation={openAutomationConversation}/>
-                          ) : tab.kind === 'history' || tab.kind === 'subagent' ? (
+                          ) : tab.kind === 'history' || tab.kind === 'subagent' || tab.kind === 'agent-definition' ? (
                             <WorkSummaryInspector
                               detail={tab.detail}
                               messages={chat.messagesByConversation[tab.detail.sessionId] ?? []}

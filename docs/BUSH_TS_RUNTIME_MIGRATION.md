@@ -282,12 +282,13 @@ Runtime does not discover them by parsing prompt text.
 parent's model-visible conversation immediately before the dispatch call,
 preserves its System/Developer instructions and frozen Tool declarations, then
 appends role instructions and a new User assignment beginning with
-`你当前处于子agent状态`. Default `mode: fork` keeps the same system policy. Only
-when the user explicitly requests independent configuration should the parent use
-`mode: clean`: inspect `list_subagent_options`, provide the actual `system_prompt`
-and user `prompt`, and select tools, Skills, configured model, generation settings,
-execution limits and permission routing. Clean does not inherit conversation or
-system messages. See `SUBAGENT_PERMISSIONS.md` for the full configuration contract.
+`你当前处于子agent状态`. Default `mode: fork` keeps the same system policy.
+Independent roles use `mode: clean`: prefer a registered `agent_id` and task
+`prompt` to reuse saved configuration. One-off clean roles supply `system_prompt`
+and `prompt`; omitted settings use host defaults. Inspect
+`list_subagent_options` with `section: "settings"` or `section: "tools"` only when
+configuration needs to change. Clean does not inherit conversation or system
+messages. See `SUBAGENT_PERMISSIONS.md` for the full configuration contract.
 Child restrictions
 are enforced at Tool admission without removing default declarations; explicit
 Profile allowlists may still narrow the catalog. Recursive dispatch is rejected

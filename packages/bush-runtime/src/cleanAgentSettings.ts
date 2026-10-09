@@ -35,9 +35,9 @@ export interface CleanAgentSettings {
 const names = { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } };
 export const CLEAN_AGENT_SETTINGS_SCHEMA = {
   type: 'object', additionalProperties: false,
-  description: 'Clean mode only. Choose the child settings yourself from list_subagent_options. Omitted values keep the displayed host defaults. These choices cannot widen host permissions, tool or Skill restrictions.',
+  description: 'Clean mode only. Omit to use host defaults. Inspect list_subagent_options section=settings only when a task needs different configuration. These choices cannot widen host permissions, tool or Skill restrictions.',
   properties: {
-    model_id: { type: 'string', minLength: 1, description: 'Exact configured model id from list_subagent_options. Credentials are resolved by the host.' },
+    model_id: { type: 'string', minLength: 1, description: 'Exact configured model id from list_subagent_options section=settings. Credentials are resolved by the host.' },
     reasoning_effort: { type: 'string', enum: reasoningEffortSchema.options },
     max_context_tokens: { type: 'integer', minimum: 1 },
     max_output_tokens: { type: 'integer', minimum: 1 },

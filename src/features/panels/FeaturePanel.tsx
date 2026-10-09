@@ -1,7 +1,7 @@
 import { LoaderCircle } from 'lucide-react';
 import { Suspense } from 'react';
 import { TopBar } from '../../components/TopBar';
-import { useRuntimeDelegationWorkspace } from '../../plugins/runtimeExtensions';
+import { useTeamWorkspace } from '../team/teamWorkspaceStore';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { type AppLanguage, type AppSection, type BackendCapabilities, type SkillDetail, type SkillSummary } from '../../types';
 import { sectionLabels } from '../appSections';
@@ -53,7 +53,7 @@ export function FeaturePanel({
   onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
-  const teamWorkspace = useRuntimeDelegationWorkspace();
+  const teamWorkspace = useTeamWorkspace(section === 'team');
   const label = section === 'team' ? teamWorkspace.title || sectionLabels[section][language] : sectionLabels[section][language];
   return (
     <div className="feature-panel">

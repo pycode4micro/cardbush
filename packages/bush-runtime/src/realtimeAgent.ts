@@ -44,22 +44,26 @@ export class RealtimeAgentDispatcher {
       return { taskId: task!.taskId, status: task!.status, ...childConversationPage(source, input.cursor) };
     }
     const parent = input.parent;
-    if (!parent || parent.sessionId !== input.sessionId || !input.prompt) throw Error('A configured parent and prompt are required.');
+    if (!parent || parent.sessionId !== input.sessionId || !input.prompt && !input.nativeArguments) throw Error('A configured parent and tool arguments are required.');
     if (parent.metadata.agentRole === 'child') throw delegationError('realtime_parent_required', 'Only a parent conversation can delegate.');
-    if (!parent.tools.some(tool => tool.name === 'subagent')) throw delegationError('realtime_subagent_disabled', 'Subagent delegation is disabled for this parent. Enable it in the conversation tool settings; a spoken confirmation does not change this setting.');
+    if (!parent.tools.some(tool => tool.name === input.action)) throw delegationError('realtime_subagent_disabled', 'The requested delegation tool is disabled for this parent. Enable it in the conversation tool settings; a spoken confirmation does not change this setting.');
+    if (input.nativeArguments && (input.targetAgent || input.taskId || input.prompt)) throw Error('Native delegation arguments cannot be combined with the voice interface.');
     const context = sessions.assemble({ sessionId: input.sessionId, prefix: parent.prefixMessages,
       current: parent.inputMessages.map(item => item.message) });
     const request = modelRequestSchema.parse({ ...parent, protocol: BUSH_MODEL_REQUEST_PROTOCOL, messages: context.messages });
     const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => {
       throw Error('Delegation cannot request extra permission; the child retains the configured execution policy.');
     } } });
-    const outcome = await coordinator.execute({ protocol: BUSH_TOOL_CALL_PROTOCOL, id: input.callId, name: 'subagent',
-      argumentsText: JSON.stringify(task ? { prompt: input.prompt, task_id: task.taskId, run_in_background: true }
+    const native = input.nativeArguments && { ...input.nativeArguments };
+    if (native && input.action === 'subagent' && (!native.action || native.action === 'run') && !native.target_agent) native.run_in_background = true;
+    const outcome = await coordinator.execute({ protocol: BUSH_TOOL_CALL_PROTOCOL, id: input.callId, name: input.action,
+      argumentsText: JSON.stringify(native ?? (task ? { prompt: input.prompt, task_id: task.taskId, run_in_background: true }
         : input.targetAgent ? { prompt: input.prompt, target_agent: input.targetAgent }
-        : { prompt: input.prompt, run_in_background: true }) },
+        : { prompt: input.prompt, run_in_background: true })) },
       { requestId: request.requestId, sessionId: request.sessionId, turnId: request.turnId, round: 1, ordinal: 0 },
       undefined, { request, contextMessages: context.messages });
     if (outcome.kind !== 'returned') throw delegationError(outcome.error.code, outcome.error.message);
+    if (native) return outcome.result;
     return { ...(outcome.result as Record<string, unknown>), instructions: 'Request accepted; execution continues in the background. Continue the call. await_subagents registers a non-blocking result notification.' };
   }
 }

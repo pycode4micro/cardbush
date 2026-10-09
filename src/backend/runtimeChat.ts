@@ -3,6 +3,7 @@ import { readAgentInstructions } from './globalInstructions';
 import { resolveConversationStyle } from '../features/settings/conversationStyle';
 import { readIndividuation } from '../features/settings/individuation';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
+import { selectedTeamReference, teamReferenceInstructions } from '../shared/promptReferences';
 import type {
   RuntimeEvent,
   RuntimeProviderBindingRef,
@@ -11,6 +12,7 @@ import type {
 } from '@cardbush/bush-protocol';
 import {
   ASSISTANT_CONVERSATION_COMMAND,
+  agentToolActivity,
   planStateSchema,
   reasoningEffortSchema,
   resolveModelReasoningEffort,
@@ -61,6 +63,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
   const userMessageId = `message_${crypto.randomUUID()}`;
   const goalCommand = parseGoalCommand(request.userInput);
   const effectiveUserInput = goalCommand?.objective ?? request.userInput;
+  const selectedTeam = selectedTeamReference(effectiveUserInput);
   const rootModelId = request.modelConfig?.id.trim() || request.model;
   const [resolvedModel, subagentConfig, filesystemLocations] = await Promise.all([
     resolveProductModel(rootModelId),
@@ -108,7 +111,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
   const tools = selectRuntimeToolDefinitions(catalog, {
     allowedTools: request.allowedTools, disabledTools: request.disabledTools,
     interactiveRequests, vision, goalAvailable,
-    referencePlanMode: request.referencePlanMode, teamModeEnabled: request.teamModeEnabled,
+    referencePlanMode: request.referencePlanMode, teamModeEnabled: Boolean(selectedTeam) || request.teamModeEnabled,
   });
   const maxContextTokens = positiveInteger(
     request.modelConfig?.maxContextTokens ?? resolvedModel.maxContextTokens,
@@ -138,7 +141,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
     projectDir: request.projectDir,
     workspaceDir,
     instructionDocuments,
-    teamInstructions: request.teamInstructions,
+    teamInstructions: selectedTeam ? teamReferenceInstructions(selectedTeam.id) : request.teamInstructions,
     uiLanguage: request.uiLanguage,
     filesystemLocations,
     permissionMode,
@@ -146,7 +149,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
     childAgentPolicy,
     interactiveRequestsEnabled: request.interactiveRequestsEnabled,
     visionEnabled: vision,
-    teamId: request.teamId,
+    teamId: selectedTeam?.id ?? request.teamId,
     allowedSkills: request.allowedSkills,
     disabledSkills: request.disabledSkills,
     planEnabled: request.referencePlanMode !== 'off',
@@ -766,6 +769,7 @@ function toolRecord(
 ): ChatToolExecution {
   const returned = record.outcome === 'returned';
   const mcpServerId = configuredMcpServerId(record.toolCall);
+  const activity = agentToolActivity(record);
   const artifacts = returned
     ? toolArtifactsFromPayload({ result: record.result })
     : [];
@@ -778,6 +782,7 @@ function toolRecord(
     metadata: {
       actionManifest: record.actionManifest,
       nativeResult: record.result,
+      ...(activity ? { agentActivity: activity } : {}),
       lifecycleSequence: event.sequence,
       ...((record.display ?? event.payload.display)?.title ? { displayTitle: (record.display ?? event.payload.display)!.title } : {}),
       ...((record.display ?? event.payload.display)?.titles ? { displayTitles: (record.display ?? event.payload.display)!.titles } : {}),
@@ -816,6 +821,7 @@ function subagentDispatches(
   record: ToolExecutionRecord,
   event: Extract<RuntimeEvent, { kind: 'tool_returned' | 'tool_failed' }>,
 ) {
+  if (agentToolActivity(record)?.action !== 'run') return [];
   const output = object(record.result);
   const members = Array.isArray(output.members)
     ? output.members.map((item) => object(item))
@@ -845,6 +851,7 @@ function subagentDispatches(
     teamId: optionalString(output.teamId),
     teamMemberId: optionalString(item.memberId),
     agentProfileId: optionalString(item.agentProfileId),
+    agentName: optionalString(item.agentName),
     errorCode: record.error?.code,
     raw: item,
     };

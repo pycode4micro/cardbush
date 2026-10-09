@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } = require('node:fs');
+const { rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -44,7 +45,7 @@ async function run() {
     revision: 1,
     serviceEnabled: true,
     plugins: [{
-      id: 'team', installed: false, enabled: false, config: {},
+      id: 'fixture-runtime', installed: false, enabled: false, config: {},
     }, {
       id: 'computer-use',
       installed: true,
@@ -59,12 +60,16 @@ async function run() {
       installed: true,
       enabled: true,
       config: {},
-    }],
+    }, ...['xlsx', 'pptx', 'docx', 'pdf'].map(id => ({
+      // This fixture verifies browser/computer-use hot refresh; document plugin
+      // defaults and execution have their own integration tests.
+      id, installed: false, enabled: false, config: {},
+    }))],
   }));
 
-  const { installLocalProductPlugin } = require('../dist-electron/localPluginInstall.js');
+  const { installRuntimePluginFixture } = await import('./fixtures/runtime-plugin.mjs');
   const userPluginRoot = path.join(runtimeStateRoot, 'plugins');
-  await installLocalProductPlugin(path.join(repositoryRoot, 'release-plugins/team-0.2.0.zip'), userPluginRoot);
+  await installRuntimePluginFixture(runtimeStateRoot, userPluginRoot);
   await app.whenReady();
   const {
     RuntimeUtilityProcessController,
@@ -132,31 +137,33 @@ async function run() {
     );
     assert.equal(capabilityResponse.type, 'command_response');
     assert.equal(capabilityResponse.ok, true);
-    assert.equal(capabilityResponse.result.features.includes('product_team_snapshot'), false);
+    assert.ok(capabilityResponse.result.features.includes('native_team_workflows'));
+    assert.equal(capabilityResponse.result.features.includes('fixture_extension'), false);
     const originalPluginConfig = readFileSync(appsConfigPath, 'utf8');
-    let teamOperation = 0;
-    const teamCommand = (kind, payload = {}) => controller.command({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command',
-      operationId: `optional-team-${++teamOperation}`, command: { kind, payload } });
+    let pluginOperation = 0;
+    const pluginCommand = (kind, payload = {}) => controller.command({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command',
+      operationId: `optional-plugin-${++pluginOperation}`, command: { kind, payload } });
     try {
-      const withTeam = JSON.parse(originalPluginConfig);
-      const configuredTeam = withTeam.plugins.find(plugin => plugin.id === 'team');
-      configuredTeam.installed = true; configuredTeam.enabled = true;
-      writeFileSync(appsConfigPath, JSON.stringify(withTeam));
-      const enabled = await teamCommand(GET_RUNTIME_CAPABILITIES_COMMAND);
+      const withPlugin = JSON.parse(originalPluginConfig);
+      const configuredPlugin = withPlugin.plugins.find(plugin => plugin.id === 'fixture-runtime');
+      configuredPlugin.installed = true; configuredPlugin.enabled = true;
+      writeFileSync(appsConfigPath, JSON.stringify(withPlugin));
+      const enabled = await pluginCommand(GET_RUNTIME_CAPABILITIES_COMMAND);
       assert.equal(enabled.ok, true);
-      assert.equal(enabled.result.features.includes('product_team_snapshot'), true);
-      const configuration = await teamCommand('plugin.team.configuration', { action: 'read' });
+      assert.equal(enabled.result.features.includes('fixture_extension'), true);
+      const configuration = await pluginCommand('plugin.fixture.configuration', { action: 'read' });
       assert.equal(configuration.ok, true);
-      assert.equal(configuration.result.path, path.join(runtimeStateRoot, 'plugin-data', 'team', 'teams.json'));
-      assert.ok((await teamCommand(GET_RUNTIME_TOOL_CATALOG_COMMAND)).result.some(tool => tool.name === 'team_delegate'));
-      configuredTeam.enabled = false;
-      writeFileSync(appsConfigPath, JSON.stringify(withTeam));
-      assert.equal((await teamCommand(GET_RUNTIME_TOOL_CATALOG_COMMAND)).result.some(tool => tool.name === 'team_delegate'), false);
-      assert.equal((await teamCommand('runtime.get_team_snapshot')).ok, false);
+      assert.equal(configuration.result.path, path.join(runtimeStateRoot, 'plugin-data', 'fixture-runtime', 'configuration.json'));
+      assert.ok((await pluginCommand(GET_RUNTIME_TOOL_CATALOG_COMMAND)).result.some(tool => tool.name === 'fixture_read'));
+      configuredPlugin.enabled = false;
+      writeFileSync(appsConfigPath, JSON.stringify(withPlugin));
+      assert.equal((await pluginCommand(GET_RUNTIME_TOOL_CATALOG_COMMAND)).result.some(tool => tool.name === 'fixture_read'), false);
+      assert.equal((await pluginCommand('plugin.fixture.get_snapshot')).ok, false);
       writeFileSync(appsConfigPath, '{ malformed plugin config');
-      const unavailable = await teamCommand(GET_RUNTIME_CAPABILITIES_COMMAND);
+      const unavailable = await pluginCommand(GET_RUNTIME_CAPABILITIES_COMMAND);
       assert.equal(unavailable.ok, true, 'optional plugin failure does not block core capability reads');
-      assert.equal(unavailable.result.features.includes('product_team_snapshot'), false);
+      assert.equal(unavailable.result.features.includes('fixture_extension'), false);
+      assert.ok(unavailable.result.features.includes('native_team_workflows'));
     } finally { writeFileSync(appsConfigPath, originalPluginConfig); }
     let mcpObservation = 0;
     const waitForMcp = () => within((async () => {
@@ -519,10 +526,16 @@ async function run() {
       restartedController.stop();
     }
     console.log('Electron Utility Runtime Host contract passed.');
+  } catch (error) {
+    console.error('Runtime utility contract failed:', error);
+    throw error;
   } finally {
     controller.stop();
     await new Promise((resolve) => setTimeout(resolve, 200));
-    rmSync(runtimeStateRoot, {
+    // Yield while Windows releases the worker's files; do not hide an assertion
+    // failure behind synchronous cleanup retries that block process exit events.
+    assert.ok(runtimeStateRoot.startsWith(path.join(tmpdir(), 'cardbush-runtime-utility-')));
+    await rm(runtimeStateRoot, {
       recursive: true,
       force: true,
       maxRetries: 10,

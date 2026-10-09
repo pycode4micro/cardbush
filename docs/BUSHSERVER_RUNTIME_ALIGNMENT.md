@@ -2,7 +2,7 @@
 
 Baseline: BushServer `main` at `f67bcec` (2026-08-29).
 
-Update: Team execution and configuration UI are distributed as an independent native plugin ZIP, built from `packages/cardbush-team-plugin`; the desktop no longer imports that package. References below describe the original alignment checkpoint; see [the current Team boundary](TEAM_PLUGIN_EXTRACTION.md).
+Update: Team is now a native workflow manager over registered clean subagents. References below describe the original alignment checkpoint; see [the current Team boundary](TEAM_NATIVE_WORKFLOWS.md).
 
 CardBush runs one provider-independent TypeScript Agent Runtime in an Electron
 Utility Process. BushServer is the reference implementation and fixture source;
@@ -89,7 +89,9 @@ schedule_task
 search_skills
 read_archived_tool_result
 subagent
-team_delegate
+list_subagent_options
+await_subagents
+team
 request_permission
 ```
 

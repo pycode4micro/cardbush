@@ -32,7 +32,7 @@ test('one subagent entry guides the current child and rejects stale names and fo
   assert.equal(registry.resolve('list_plugin_agents'), undefined);
   const options = await invoke('list_subagent_options', {});
   assert.equal(options.result.agent_roles[0].id, 'fixture:reviewer');
-  assert.deepEqual(options.result.agent_roles[0].mcpServers, ['docs']);
+  assert.deepEqual(options.result.agent_roles[0], { id: 'fixture:reviewer', description: 'Read only' });
   const properties = registry.resolve('subagent').definition.inputSchema.properties;
   assert.ok(properties.task_id); assert.equal(properties.resume_task_id, undefined);
 });

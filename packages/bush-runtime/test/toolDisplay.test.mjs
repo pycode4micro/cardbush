@@ -88,6 +88,19 @@ test('MCP gateway title stays on its single receipt and never reaches strict nat
   assert.equal(calls, 1);
 });
 
+test('summary_for_user ignores stray presentation metadata without accepting unknown business fields', async () => {
+  const summary = { ...definition, name: 'summary_for_user' };
+  assert.deepEqual(withToolDisplayTitle(summary), summary, 'summary remains an invisible maintenance call');
+  const registry = new ToolRegistry(); let executions = 0;
+  registry.register({ definition: summary, manifest, decodeInput: strictInput, execute: () => { executions++; return { saved: true }; } });
+  const loop = new RuntimeToolLoop({ registry, executionStore: new ToolExecutionStore(), eventLog: new InMemoryRuntimeEventLog(), identity });
+  const title = { zh: '记录后续需求', en: 'Record next steps' };
+  const valid = await loop.execute([call('valid', summary.name, { path: '/fixture', _display_title: title })], { round: 1, assistantMessageId: 'a' });
+  assert.equal(JSON.parse(valid.messages[0].content).saved, true);
+  await loop.execute([call('invalid', summary.name, { path: '/fixture', unknown: true, _display_title: title })], { round: 2, assistantMessageId: 'b' });
+  assert.equal(executions, 1);
+});
+
 test('business fields and composite native schemas cannot be overwritten by host metadata', async () => {
   const checkpoint = { ...definition, name: 'checkpoint_context' };
   assert.deepEqual(withToolDisplayTitle(checkpoint), checkpoint, 'strict context maintenance must keep its own exchange schema');

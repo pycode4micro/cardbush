@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
+import { forwardRef, useContext, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import type { AppLanguage, CardbushAppPlugin, SkillSummary } from '../../types';
 import { fileUrl } from '../../shared/localPaths';
 import { focusEditor, observeEditorFocus, restoreNativeEditorFocus } from '../../shared/editorFocus';
@@ -7,6 +7,8 @@ import { promptReferenceParts, type PromptReference } from '../../shared/promptR
 import { openPromptReference } from './PromptReferenceLink';
 import { CONVERSATION_DRAG_TYPE } from '../chat/ConversationExtraction';
 import { skillPromptParts, type SkillLinkReference } from '../skills/skillReferences';
+import { ConversationHostContext } from '../conversationHost';
+import { ComposerReferenceContext } from './ComposerReferenceContext';
 
 type ComposerPromptPart = PluginPromptPart & { contextReference?: PromptReference; skillReference?: SkillLinkReference; skill?: SkillSummary };
 
@@ -34,6 +36,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   onSelectionChange(caret: number): void;
   onKeyDown(event: KeyboardEvent<HTMLElement>): void;
 }>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
+  const host = useContext(ConversationHostContext);
+  const { sessionId } = useContext(ComposerReferenceContext);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const editor = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
@@ -47,7 +51,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     : pluginPromptParts(skillPart.text, plugins).flatMap<ComposerPromptPart>(part => part.reference ? [{ ...part, start: skillPart.start + part.start }]
       : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
   // Remote application references have no local file resolver or launch side effects.
-  const parts = richReferences === 'applications' ? parsedParts.map(part => part.contextReference?.kind === 'application' ? part : { text: part.text, start: part.start }) : parsedParts;
+  const parts = richReferences === 'applications' ? parsedParts.map(part => ['application', 'team'].includes(part.contextReference?.kind ?? '') ? part : { text: part.text, start: part.start }) : parsedParts;
   const rich = Boolean(richReferences) && parts.some(isReference);
   useImperativeHandle(ref, () => ({
     focus: () => focusEditor(rich ? editor.current : textarea.current),
@@ -87,6 +91,13 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       else if (part.skillReference) chip.dataset.skillReference = part.text;
       else chip.dataset.contextReference = part.text;
       chip.title = part.skillReference?.path || (part.plugin ? part.plugin.name : reference?.kind === 'browser' ? reference.url : title);
+      if (reference?.kind === 'team') {
+        chip.title = `Team · ${title}`;
+        chip.classList.add('composer-team-token');
+        chip.tabIndex = 0;
+        chip.setAttribute('role', 'link');
+        chip.setAttribute('aria-label', `${language === 'zh' ? '查看 Team' : 'View team'} ${title}`);
+      }
       const logo = part.plugin?.logoPath || part.plugin?.logoDarkPath || part.skill?.logoPath || part.skill?.logoDarkPath;
       if (logo) {
         const image = document.createElement('img'); image.src = fileUrl(logo); image.alt = ''; image.draggable = false;
@@ -155,6 +166,13 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   };
   const keyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
+    const token = (event.target as Element).closest<HTMLElement>('.composer-team-token');
+    if (token && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault(); event.stopPropagation();
+      const reference = promptReferenceParts(token.dataset.contextReference ?? '')[0]?.reference;
+      if (reference) void openPromptReference(reference, host, sessionId);
+      return;
+    }
     onKeyDown(event);
     const node = editor.current;
     const selection = window.getSelection();
@@ -185,8 +203,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       select();
       const token = (event.target as Element).closest<HTMLElement>('[data-context-reference]');
       const reference = token && promptReferenceParts(token.dataset.contextReference ?? '')[0]?.reference;
-      if (reference?.kind === 'conversation-extract' && !(event.target as Element).closest('button')) {
-        event.preventDefault(); void openPromptReference(reference);
+      if ((reference?.kind === 'conversation-extract' || reference?.kind === 'team') && !(event.target as Element).closest('button')) {
+        event.preventDefault(); void openPromptReference(reference, host, sessionId);
       }
     }} onKeyUp={select} onKeyDown={keyDown}
     onCompositionStart={() => { composing.current = true; }}
@@ -282,6 +300,7 @@ function referenceGlyph(kind: PromptReference['kind'] | 'plugin'): SVGSVGElement
   path.setAttribute('d', kind === 'browser'
     ? 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c4 4 4 14 0 18-4-4-4-14 0-18Z'
     : kind === 'application' ? 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z'
+    : kind === 'team' ? 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'
     : kind === 'user-turn' || kind === 'conversation-extract' ? 'M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3ZM7 8h10M7 12h7'
     : 'M8 3h3a3 3 0 1 1 6 0h4v6a3 3 0 1 0 0 6v6h-6a3 3 0 1 0-6 0H3v-6a3 3 0 1 0 0-6V3Z');
   svg.append(path); return svg;

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalAwaitInput, conversationalReadInput, conversationalSubagentTools,
-  individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition } from '@cardbush/bush-protocol';
+  individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
 import { executeBufferedModelRound, type BufferedModelRetryStatus } from './bufferedModelRetry.js';
 import type { ModelProvider } from './modelProvider.js';
 import { ConversationJournal } from './conversationJournal.js';
@@ -11,6 +11,7 @@ import { stripToolDisplayTitle } from './toolDisplay.js';
 import { estimateContextPressure, requiresContextCompactionBeforeRound } from './contextCompaction.js';
 import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
+import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 
 const conversationalTools: ToolDefinition[] = [assistantPageTool, ...conversationalSubagentTools];
 
@@ -33,6 +34,7 @@ export class AssistantConversation {
     exists(id: string): boolean;
     tasks(id: string): SubagentTask[];
     delegate(input: unknown): Promise<unknown>;
+    delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   }) {}
@@ -75,7 +77,9 @@ export class AssistantConversation {
   private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal) {
     const id = PERSONAL_ASSISTANT_SESSION;
     const memoryTools = this.deps.memory?.definitions() ?? [];
-    const tools = [...conversationalTools, ...memoryTools];
+    const nativeTools = !profile.targetAgent && parent.metadata.assistantOutputMode !== 'voice'
+      ? (this.deps.delegationTools?.() ?? []).filter(tool => parent.tools.some(allowed => allowed.name === tool.name)) : [];
+    const tools = [...conversationalTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...nativeTools, ...memoryTools];
     const entries = this.journal.read(id);
     const history = this.journal.modelHistory(id);
     // Migrate the old visible-only journal once. Missing historical tool exchanges
@@ -103,7 +107,14 @@ export class AssistantConversation {
         content: JSON.stringify({ status: 'unknown', code: 'interrupted_tool_execution', error: 'Execution was interrupted before its receipt was saved. Check current state; do not assume success or repeat side effects.' }) })));
     }
     const consumed = history.read().entryIds;
-    const remaining = entries.filter(item => !consumed.has(item.id));
+    const queued = entries.filter(item => !consumed.has(item.id));
+    const redundant = queued.filter(item => item.source === 'task' && teamCompletionAlreadyRead(item.content, history.read().messages));
+    const redundantIds = new Set(redundant.map(item => item.id));
+    if (redundant.length) history.append([], [...redundantIds]);
+    const remaining = queued.filter(item => !redundantIds.has(item.id));
+    // A wait may finish while its completion notice is queued. Consuming that
+    // notice must not start another model reply or discard concurrent user input.
+    if (redundant.length && !remaining.length) return;
     const authored = remaining.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source) && !item.id.startsWith('memory-')).at(-1);
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).map(item => item.role === 'assistant' ? { role: 'assistant' as const, content: item.content, toolCalls: [] } : {
         role: 'user' as const,
@@ -200,6 +211,7 @@ export class AssistantConversation {
         return;
       }
       let memoryQueue: Promise<unknown> = Promise.resolve();
+      let delegationQueue: Promise<unknown> = Promise.resolve();
       const results = await Promise.all(toolCalls.map(async (call, ordinal) => {
         try {
           signal.throwIfAborted();
@@ -227,6 +239,15 @@ export class AssistantConversation {
               request, authored?.content, round, ordinal, signal));
             memoryQueue = execution.catch(() => undefined);
             output = await execution;
+          } else if (nativeTools.some(tool => tool.name === call.name)) {
+            // Preserve registration-before-assembly order within one model batch.
+            // Dispatch receipts are immediate; the child work remains independent.
+            const execution = delegationQueue.then(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }));
+            delegationQueue = execution.catch(() => undefined);
+            output = await execution;
+            signal.throwIfAborted();
+            const taskId = (output as { taskId?: string })?.taskId;
+            if (taskId) { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }
           } else {
             const input = call.name === 'subagent' ? conversationalSubagentInput.parse(args) : conversationalReadInput.parse(args);
             output = await this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
@@ -264,6 +285,14 @@ export class AssistantConversation {
       } catch (error) { this.error = error instanceof Error ? error.message : String(error); }
     }, 1200);
     this.timer.unref?.();
+  }
+  notifyTeamResult(run: TeamRun) {
+    if (this.stopped || !this.configured || run.parentSessionId !== PERSONAL_ASSISTANT_SESSION) return;
+    const content = JSON.stringify(teamCompletionNotice(run));
+    if (teamCompletionAlreadyRead(content, this.journal.modelHistory(PERSONAL_ASSISTANT_SESSION).read().messages)) return;
+    this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `team-${run.id}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
+      createdAt: new Date().toISOString(), content });
+    this.pending = true; void this.pump();
   }
   forget(sessionId: string) {
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }

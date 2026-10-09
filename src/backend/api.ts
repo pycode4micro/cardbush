@@ -1,5 +1,5 @@
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
-import { modelAuthenticationSchema } from '@cardbush/bush-protocol';
+import { agentToolActivity, modelAuthenticationSchema } from '@cardbush/bush-protocol';
 import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, reasoningEffortSchema, type ReasoningEffort } from '@cardbush/bush-protocol';
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
@@ -564,7 +564,7 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       subagentObservabilityProtocol: features.has('subagent_context_fork')
         ? 'bush.subagent_task.v1'
         : '',
-      teamMode: features.has('product_team_snapshot'),
+      teamMode: features.has('native_team_workflows'),
       teamAgentFlow: features.has('team_concurrent_execution'),
       contextWindowUsage: features.has('append_only_session_context'),
       workspaceChanges:
@@ -1393,6 +1393,7 @@ export function runtimeHistoryToolExecution(
   record: RuntimeToolExecutionRecord | RuntimeToolExecutionSummary,
 ): ChatToolExecution {
   const hasNativeResult = 'result' in record && record.result !== undefined;
+  const activity = 'agentActivity' in record ? record.agentActivity : agentToolActivity(record);
   const mcpServerId = configuredMcpServerId(record.toolCall);
   const artifacts = record.outcome === 'returned' && hasNativeResult
     ? toolArtifactsFromPayload({ result: record.result })
@@ -1418,6 +1419,7 @@ export function runtimeHistoryToolExecution(
     ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
+      ...(activity ? { agentActivity: activity } : {}),
       ...(record.display?.title ? { displayTitle: record.display.title } : {}),
       ...(record.display?.titles ? { displayTitles: record.display.titles } : {}),
       ...(mcpServerId ? { mcpServerId } : {}),
@@ -2159,8 +2161,8 @@ export async function sendTeamFlowAction(
   }
   throw new Error(
     localizedClientMessage(
-      '旧 Team Flow 动作协议已停用；当前 Team 由显式配置和 team_delegate 工具执行。',
-      'Legacy Team Flow actions are retired; Teams execute through explicit configuration and team_delegate.',
+      '旧 Team Flow 动作协议已停用；请通过内置 Team 管理或 team 工具操作流程。',
+      'Legacy Team Flow actions are retired; use native Team management or the team tool.',
     ),
   );
 }
@@ -2865,6 +2867,7 @@ function runtimeSubagentTask(task: RuntimeSubagentTask): SubagentTaskSnapshot {
     teamId: task.teamId,
     teamMemberId: task.teamMemberId,
     agentProfileId: task.agentProfileId,
+    agentName: task.agentName,
     requestPrompt: task.prompt,
     responsePrompt: task.finalResponse || undefined,
     status: task.status,

@@ -20,6 +20,9 @@ export function assertParentAgent(request?: Pick<ModelRequest, 'metadata'>): voi
 export function childAgentToolDenial(request: ModelRequest | undefined, registration: ToolRegistration) {
   if (request?.metadata.agentRole !== 'child') return undefined;
   const name = registration.definition.name;
+  if (request.metadata.registeredAgentReadOnly === true && registration.manifest.mutating !== false) {
+    return { code: 'registered_agent_read_only', message: 'This registered Agent has a read_only guard. This tool can mutate resources and is unavailable.' };
+  }
   if (name === 'subagent' || name === 'team_delegate' || name === 'await_subagents') {
     return childAgentDispatchDenial(request);
   }

@@ -22,6 +22,7 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - '!dist-electron/productA2A.js'
+  # Exclude artifacts left by builds before the native Team replacement.
   - '!dist-electron/teamPlugin.js'
   - '!packages/bush-runtime/dist/teamTool.*'
   - '!packages/bush-runtime/dist/teamSnapshotStore.*'

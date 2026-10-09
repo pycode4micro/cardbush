@@ -10,13 +10,13 @@ const local = path => resolve(path).replaceAll('\\', '/');
 const source = `
 import React from 'react'; import { createRoot } from 'react-dom/client';
 import { RuntimePluginWorkspace } from '${local('src/plugins/runtimeWorkspaces.tsx')}';
-import { refreshRuntimeRendererPlugins, useRuntimeDelegationWorkspace, selectRuntimePluginChoice, prepareRuntimePluginTurn } from '${local('src/plugins/runtimeExtensions.ts')}';
+import { refreshRuntimeRendererPlugins, useRuntimeRendererPlugins, prepareRuntimePluginTurn } from '${local('src/plugins/runtimeExtensions.ts')}';
 import '${local('src/styles/app.css')}'; import '${local('src/styles/theme.css')}';
 window.refreshPlugins = refreshRuntimeRendererPlugins;
-window.selectChoice = id => selectRuntimePluginChoice('team', id);
-window.prepareSelected = () => prepareRuntimePluginTurn({teamModeEnabled:true,teamId:'general'}, [{name:'read_file',description:'fixture',inputSchema:{type:'object'}}]);
-function Fixture() { const state=useRuntimeDelegationWorkspace(); window.selection=state;
-  return <div className="app theme-dark" style={{height:'100vh',display:'flex',flexDirection:'column'}}><output id="selected">{state.selectedId}</output><div style={{display:'flex',flex:1,minHeight:0}}><RuntimePluginWorkspace id="team" language="zh"/></div></div>;
+window.prepareSelected = () => prepareRuntimePluginTurn({}, [{name:'read_file',description:'fixture',inputSchema:{type:'object'}}]);
+function Fixture() { const entry=useRuntimeRendererPlugins().find(plugin=>plugin.id==='fixture-runtime'); window.selection=entry?.snapshot;
+  window.selectChoice = id => entry?.extension?.select(id);
+  return <div className="app theme-dark" style={{height:'100vh',display:'flex',flexDirection:'column'}}><output id="selected">{entry?.snapshot?.selectedId}</output><div style={{display:'flex',flex:1,minHeight:0}}><RuntimePluginWorkspace id="fixture-runtime" language="zh"/></div></div>;
 } createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {

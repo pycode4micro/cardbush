@@ -181,7 +181,7 @@ export class ElectronProductHostController {
 
   async resolveSubagentModel(modelId: string) {
     await this.#ensureLegacyModelCredentials();
-    return this.#resolveModel(modelId, 'The selected clean Agent model is not configured. Refresh list_subagent_options and select an available model.');
+    return this.#resolveModel(modelId, 'The selected clean Agent model is not configured. Use list_subagent_options section=settings to select an available model.');
   }
 
   async refreshMcp(uninstallPluginId?: string, updatePluginId?: string): Promise<unknown> {

@@ -158,7 +158,7 @@ export function buildChildTurnRequest(input: {
     inputMessages: [{
       messageId: `${input.ids.messageId}:individuation-preference`,
       message: { role: 'user', name: 'individuation_preference', visibility: 'internal',
-        content: individuationPreferenceText(parentRequest.metadata.individuation) },
+        content: individuationPreferenceText(input.metadata.individuation ?? parentRequest.metadata.individuation) },
     }, {
       messageId: input.ids.messageId,
       message: { role: "user", content: `${CHILD_AGENT_ASSIGNMENT_PREFIX}\n\n${input.prompt}` },

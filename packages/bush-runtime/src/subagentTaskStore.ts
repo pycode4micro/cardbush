@@ -51,6 +51,7 @@ export class SubagentTaskStore {
     teamId?: string;
     teamMemberId?: string;
     agentProfileId?: string;
+    agentName?: string;
     resumedFromTaskId?: string;
     remote?: SubagentTask['remote'];
     phase?: "discussion" | "execution";
@@ -185,6 +186,7 @@ export function projectSubagentTasks(
         "teamId",
         "teamMemberId",
         "agentProfileId",
+        "agentName",
         "resumedFromTaskId",
         "phase",
         "createdAt",

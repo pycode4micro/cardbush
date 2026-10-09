@@ -17,12 +17,19 @@ export type InspectorHistoryTab = {
 export type InspectorSubagentTab = {
   id: string; kind: 'subagent'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'subagent-task' }>; title: string;
 };
+export type InspectorDefinitionTab = {
+  id: string; kind: 'agent-definition'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'agent-definition' }>; title: string;
+};
 export type InspectorAutomationTab = { id: string; kind: 'automation'; jobId: string; runId: string; title: string };
 export type InspectorConversationTab = { id: string; kind: 'conversation'; title: string };
 export type InspectorTab = InspectorResourceTab | InspectorReviewTab | InspectorShadowTab
-  | InspectorHistoryTab | InspectorSubagentTab | InspectorAutomationTab | InspectorConversationTab;
+  | InspectorHistoryTab | InspectorSubagentTab | InspectorDefinitionTab | InspectorAutomationTab | InspectorConversationTab;
 
-export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, language: AppLanguage): InspectorHistoryTab | InspectorSubagentTab {
+export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, language: AppLanguage): InspectorHistoryTab | InspectorSubagentTab | InspectorDefinitionTab {
+  if (detail.kind === 'agent-definition') return {
+    id: `definition:${detail.sessionId}:${detail.entity}:${detail.entityId}`, kind: 'agent-definition', detail,
+    title: detail.title || detail.entityId,
+  };
   if (detail.kind === 'turn-history') {
     return {
       id: `history:${detail.sessionId}`, kind: 'history', detail,

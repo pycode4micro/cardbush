@@ -126,6 +126,63 @@ test('text assistant dispatch reaches the actual child loop and reports completi
   } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
 });
 
+for (const [foregroundWait, followUp] of [[false, false], [true, false], [true, true]]) test(`text assistant reads Team results once with ${foregroundWait ? 'foreground wait' : 'asynchronous completion'}${followUp ? ' and new user input' : ''}`, async () => {
+  const sessions = new SessionStore(), registry = new ToolRegistry(), childGate = gate(), children = [], receipts = [];
+  sessions.ensureSession(id);
+  const batches = [
+    { name: 'subagent', args: { action: 'save', expected_revision: 0, agent: { id: 'clerk', name: 'Clerk', system_prompt: 'Check verified inventory only.', memory: 'none' } } },
+    { name: 'team', args: { action: 'save', expected_revision: 0, definition: { id: 'inventory', name: 'Inventory', nodes: [{ id: 'check', agent_id: 'clerk', prompt: 'Check inventory' }] } } },
+    { name: 'team', args: { action: 'run', team_id: 'inventory', input: 'Order 42' } },
+  ];
+  let round = 0;
+  const host = new InMemoryRuntimeHost({ dataRoot: temporary(), sessionStore: sessions, toolRegistry: registry, provider: { async *stream(request) {
+    if (request.metadata.agentRole === 'child') {
+      children.push(request); await childGate.promise;
+      yield* response(request, { text: 'Inventory verified for order 42.' }); return;
+    }
+    receipts.push(...request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content)));
+    assert.ok(request.tools.some(tool => tool.name === 'team'));
+    assert.ok(request.tools.some(tool => tool.name === 'list_subagent_options'));
+    const index = round++;
+    if (followUp && index === 5) {
+      assert.ok(request.messages.some(message => message.role === 'user' && message.content === '同时到达的补充要求'));
+      yield* response(request, { text: '已处理补充要求。' }); return;
+    }
+    if (index < batches.length) {
+      yield* response(request, { calls: [{ ...batches[index], id: `native-${index}` }] }); return;
+    }
+    if (index === batches.length && !foregroundWait) {
+      yield* response(request, { text: '团队正在后台执行。' }); return;
+    }
+    const notices = request.messages.filter(message => message.name === 'background_task_result').map(message => JSON.parse(message.content));
+    const result = receipts.find(receipt => receipt.output_node_ids) ?? notices.find(notice => notice.type === 'team_result');
+    if (!result) {
+      const run = receipts.find(receipt => receipt.run_id);
+      yield* response(request, { calls: [{ id: 'read-team-result', name: 'team', args: { action: 'wait', run_id: run.run_id } }] }); return;
+    }
+    assert.equal(result.nodes[0].output, 'Inventory verified for order 42.');
+    assert.equal(request.messages.filter(message => message.content.includes('Inventory verified for order 42.')).length, 1);
+    yield* response(request, { text: '团队已确认库存。' });
+  } } });
+  const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
+  try {
+    await command({ action: 'turn', entry: entry('native-team'), parent: parent(registry), profile: assistantProfileSchema.parse({}) });
+    if (!foregroundWait) await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '团队正在后台执行。'));
+    await until(() => children.length === 1);
+    assert.equal(children[0].metadata.registeredAgentId, 'clerk');
+    assert.doesNotMatch(JSON.stringify(children[0].messages), /Execution instructions only/);
+    assert.deepEqual(receipts.filter(receipt => receipt.status === 'failed'), []);
+    if (followUp) await command({ action: 'turn', entry: entry('follow-up', '同时到达的补充要求'), parent: parent(registry), profile: assistantProfileSchema.parse({}) });
+    childGate.resolve();
+    await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '团队已确认库存。'));
+    await until(async () => !(await command({ action: 'read' })).busy);
+    assert.equal(round, followUp ? 6 : 5, 'async delivery needs no extra fetch, and deduplication must preserve new user input');
+    if (followUp) assert.equal((await command({ action: 'read' })).entries.filter(item => item.content === '已处理补充要求。').length, 1);
+    assert.equal((await command({ action: 'read' })).entries.filter(item => item.content === '团队已确认库存。').length, 1);
+    assert.equal((await command({ action: 'read' })).error, '');
+  } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
+});
+
 test('text assistant new and resumed children use its current model and publish the same execution model to the UI', async () => {
   const sessions = new SessionStore(), tasks = new SubagentTaskStore(), childRequests = [];
   sessions.ensureSession(id);

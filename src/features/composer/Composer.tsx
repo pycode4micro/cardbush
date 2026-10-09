@@ -23,8 +23,10 @@ import { pluginReference } from '../plugins/pluginPrompts';
 import { PluginGlyph } from '../plugins/PluginGlyph';
 import { ComposerReferenceContext, referenceableUserMessages } from './ComposerReferenceContext';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionBulbs } from '../chat/ConversationExtraction';
-import { promptReferenceMarkdown } from '../../shared/promptReferences';
+import { promptReferenceMarkdown, selectedTeamReference, withTeamReference, type TeamPromptReference } from '../../shared/promptReferences';
+import { openPromptReference } from './PromptReferenceLink';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
+import { useComposerMultiline } from './useComposerMultiline';
 import { pastedTextSummary } from './pastedText';
 import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
@@ -109,7 +111,7 @@ import { skillReference } from '../skills/skillReferences';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
-import { useRuntimeDelegationWorkspace, selectRuntimePluginChoice } from '../../plugins/runtimeExtensions';
+import { useTeamWorkspace, selectTeam } from '../team/teamWorkspaceStore';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 import { useRuntimeStartupStatus } from '../../shared/useRuntimeStartupStatus';
 
@@ -498,9 +500,11 @@ export function Composer({
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
-  const teamWorkspace = useRuntimeDelegationWorkspace(!host);
+  const teamWorkspace = useTeamWorkspace(!host && teamAvailable);
   const delegationCommand = teamWorkspace.command ? `/${teamWorkspace.command}` : '';
   const selectedTeam = teamAvailable ? teamWorkspace.choices.find((team) => team.id === teamWorkspace.selectedId) : undefined;
+  const draftTeam = selectedTeamReference(draft);
+  const teamInsertionCaret = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (!teamAvailable) setActiveMenu(menu => menu === 'teams' ? null : menu);
@@ -509,6 +513,8 @@ export function Composer({
 
   const goalDraft = composerGoalDraftPresentation(draft);
   const composerInputValue = goalDraft?.content ?? draft;
+  const multilineInput = useComposerMultiline(composerSurfaceRef, composerInputValue,
+    voiceComposer.visible ? null : portalTarget ? 'input-only' : simple ? 'simple' : null);
   const hasContent =
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
@@ -603,6 +609,7 @@ export function Composer({
     }
     if (teamAvailable && delegationCommand && draft.trim().toLowerCase() === delegationCommand.toLowerCase() && imageAttachments.length === 0 && fileAttachments.length === 0) {
       onDraftChange('');
+      teamInsertionCaret.current = 0;
       setCommandState(null);
       setPopoverAnchor(null);
       setActiveMenu('teams');
@@ -610,7 +617,11 @@ export function Composer({
     }
     const attachmentPaths = [...imageAttachments, ...fileAttachments]
       .map((item) => `@${item.path}`);
-    const value = [...attachmentPaths, draft.trimEnd()].filter(Boolean).join('\n');
+    // Capture the default in the submitted prompt too, so queues and history do
+    // not silently switch workflows when the workspace default changes later.
+    const prompt = !draftTeam && selectedTeam
+      ? withTeamReference(draft, { kind: 'team', id: selectedTeam.id, title: selectedTeam.name }).content : draft;
+    const value = [...attachmentPaths, prompt.trimEnd()].filter(Boolean).join('\n');
     const pastedIds = fileAttachments.flatMap(file => file.pastedText ? [file.pastedText.id] : []);
     if (pastedIds.length) {
       setAttachmentUploads(current => current + 1);
@@ -639,6 +650,7 @@ export function Composer({
   }
 
   function toggleMenu(menu: Exclude<ComposerMenu, null>, event?: React.MouseEvent<HTMLElement>) {
+    if (menu === 'teams') teamInsertionCaret.current = draft.length;
     if (event?.currentTarget) {
       setPopoverAnchor(composerPopoverAnchorFromTrigger(event.currentTarget, menu));
     }
@@ -937,7 +949,7 @@ export function Composer({
     focusComposer(before.length + replacement.length);
   }
 
-  function removeCommandToken() {
+  function removeCommandToken(restoreFocus = true) {
     const state = commandState;
     if (!state) {
       return;
@@ -948,7 +960,18 @@ export function Composer({
     const next = `${before}${needsTrim ? after.trimStart() : after}`;
     onDraftChange(next);
     setCommandState(null);
-    focusComposer(before.length);
+    if (restoreFocus) focusComposer(before.length);
+  }
+
+  function chooseTeam(reference?: TeamPromptReference) {
+    const next = withTeamReference(draft, reference, teamInsertionCaret.current);
+    if (!reference) selectTeam('');
+    onDraftChange(next.content);
+    setActiveMenu(null);
+    setPopoverAnchor(null);
+    setCommandState(null);
+    teamInsertionCaret.current = undefined;
+    focusComposer(next.caret);
   }
 
   const pluginCommandItems = useMemo<ComposerCommandItem[]>(() => plugins.map(plugin => ({
@@ -964,16 +987,16 @@ export function Composer({
         ...(styleAvailable ? [{ id: '/style', title: '/style', subtitle: language === 'zh' ? '选择当前会话的对话风格' : 'Choose a style for this chat', searchText: 'style 风格 对话 语气', icon: <MessageSquare size={16}/>, value: '/style ' }] : []),
         ...(delegationCommand ? [{
           id: delegationCommand,
-          title: language === 'zh' ? `选择 ${teamWorkspace.pluginName}` : `Select ${teamWorkspace.pluginName}`,
+          title: language === 'zh' ? '选择 Team' : 'Select Team',
           subtitle: language === 'zh'
-            ? '为下一轮选择可派发的 Team 成员集合'
-            : 'Choose the team member set for the next turn',
+            ? '选择已保存的团队流程'
+            : 'Choose a saved team workflow',
           icon: <UsersRound size={16} />,
           run: () => {
             setPopoverAnchor(null);
             setActiveMenu('teams');
           },
-          searchText: `${delegationCommand} ${teamWorkspace.pluginName} 团队 agent`,
+          searchText: `${delegationCommand} Team 团队 agent`,
         }] : []),
         {
           id: '/model',
@@ -1066,7 +1089,6 @@ export function Composer({
       styleAvailable,
       teamAvailable,
       delegationCommand,
-      teamWorkspace.pluginName,
       language,
       onCreateConversation,
       pluginCommands,
@@ -1145,7 +1167,11 @@ export function Composer({
       return;
     }
     if (item.run) {
-      removeCommandToken();
+      const openingTeam = item.id === delegationCommand;
+      if (openingTeam) teamInsertionCaret.current = commandState?.start ?? draft.length;
+      // The Team search box owns keyboard navigation. Do not steal its focus
+      // on the next animation frame after React mounts the picker.
+      removeCommandToken(!openingTeam);
       void item.run();
       return;
     }
@@ -1276,6 +1302,8 @@ export function Composer({
               onSelectSubagentPermissionRouting={onSubagentPermissionRoutingChange}
               onSelectReasoningLevel={onReasoningLevelChange}
               onSelectReferencePlanMode={onReferencePlanModeChange}
+              selectedTeamId={draftTeam?.id ?? selectedTeam?.id ?? ''}
+              onSelectTeam={chooseTeam}
               onConfigureModels={() => {
                 setActiveMenu(null);
                 setPopoverAnchor(null);
@@ -1289,6 +1317,7 @@ export function Composer({
               onClose={() => {
                 setActiveMenu(null);
                 setPopoverAnchor(null);
+                if (activeMenu === 'teams') focusComposer(teamInsertionCaret.current);
               }}
               anchor={popoverAnchor}
             />
@@ -1349,7 +1378,7 @@ export function Composer({
       <div
         ref={composerSurfaceRef}
         style={voiceComposer.style}
-        className={`composer-surface${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
+        className={`composer-surface${multilineInput ? ' is-multiline' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
         onPointerDown={(event) => {
           if (event.button !== 0 || voiceComposer.visible) return;
           const target = event.target;
@@ -1594,13 +1623,12 @@ export function Composer({
                 onClick={onToggleShadow}
               />
             )}
-            {selectedTeam && (
+            {selectedTeam && !draftTeam && (
               <button
                 className={`tool-chip composer-team-chip ${activeMenu === 'teams' ? 'active' : ''}`}
                 type="button"
-                data-composer-menu-trigger="true"
                 title={`${selectedTeam.name} · ${selectedTeam.id}`}
-                onClick={(event) => toggleMenu('teams', event)}
+                onClick={() => void openPromptReference({ kind: 'team', id: selectedTeam.id, title: selectedTeam.name }, host, referenceContext.sessionId)}
               >
                 <UsersRound size={14} />
                 <span>{selectedTeam.name}</span>
@@ -1888,6 +1916,8 @@ function ComposerPopover({
   onSelectSubagentPermissionRouting,
   onSelectReasoningLevel,
   onSelectReferencePlanMode,
+  selectedTeamId,
+  onSelectTeam,
   onClose,
   anchor,
 }: {
@@ -1917,6 +1947,8 @@ function ComposerPopover({
   onSelectSubagentPermissionRouting: (routing: SubagentPermissionRouting) => void;
   onSelectReasoningLevel: (level: ReasoningLevel) => void;
   onSelectReferencePlanMode: (mode: ReferencePlanMode) => void;
+  selectedTeamId: string;
+  onSelectTeam: (reference?: TeamPromptReference) => void;
   onClose: () => void;
   anchor: ComposerPopoverAnchor | null;
 }) {
@@ -2062,7 +2094,7 @@ function ComposerPopover({
           </section>
         </div>
       )}
-      {menu === 'teams' && <ComposerTeamPicker language={language} onClose={onClose} />}
+      {menu === 'teams' && <ComposerTeamPicker language={language} selectedId={selectedTeamId} onSelect={onSelectTeam} onClose={onClose} />}
       {menu === 'skills' && (
         <div className="popover-list skill-popover-list">
           {skills.length === 0 ? (
@@ -2251,8 +2283,8 @@ function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLangu
   return labels[menu][language];
 }
 
-function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onClose: () => void }) {
-  const workspace = useRuntimeDelegationWorkspace();
+function ComposerTeamPicker({ language, selectedId, onSelect, onClose }: { language: AppLanguage; selectedId: string; onSelect: (reference?: TeamPromptReference) => void; onClose: () => void }) {
+  const workspace = useTeamWorkspace();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardNavigating, setKeyboardNavigating] = useState(false);
@@ -2268,20 +2300,23 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
       {
         id: '',
         name: language === 'zh' ? '不使用 Team' : 'No team',
-        description: language === 'zh' ? '下一轮不提供 team_delegate' : 'Do not expose team_delegate next turn',
+        description: language === 'zh' ? '移除当前 Team 选择' : 'Remove the selected team',
       },
       ...teams,
     ],
     [language, teams],
   );
   const optionSignature = options.map((option) => option.id).join('\u0000');
-  const select = (teamId: string) => { if (workspace.extensionId) selectRuntimePluginChoice(workspace.extensionId, teamId); onClose(); };
+  const select = (teamId: string) => {
+    const team = teams.find(team => team.id === teamId);
+    onSelect(team ? { kind: 'team', id: team.id, title: team.name } : undefined);
+  };
 
-  useEffect(() => {
-    const selectedIndex = options.findIndex((option) => option.id === workspace.selectedId);
+  useLayoutEffect(() => {
+    const selectedIndex = options.findIndex((option) => option.id === selectedId);
     setActiveIndex(normalized && options.length > 1 ? 1 : Math.max(0, selectedIndex));
     setKeyboardNavigating(false);
-  }, [normalized, optionSignature, workspace.selectedId]);
+  }, [normalized, optionSignature, selectedId]);
 
   const moveActive = (nextIndex: number) => {
     const normalizedIndex = (nextIndex + options.length) % options.length;
@@ -2291,7 +2326,8 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing || options.length === 0) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || options.length === 0) return;
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Tab', 'Escape'].includes(event.key)) event.stopPropagation();
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       moveActive(activeIndex + 1);
@@ -2309,6 +2345,7 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
     }
     if (event.key === 'Enter' || (event.key === 'Tab' && keyboardNavigating)) {
       event.preventDefault();
+      if (event.repeat) return;
       select(options[activeIndex]?.id ?? '');
       return;
     }
@@ -2320,14 +2357,14 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
 
   return (
     <div className="composer-team-picker">
-      <label><Search size={14} /><input autoFocus role="combobox" aria-expanded="true" aria-controls={listboxId} aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-autocomplete="list" value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleKeyDown} placeholder={language === 'zh' ? '搜索 Team' : 'Search teams'} /></label>
+      <label><Search size={14} /><input autoFocus role="combobox" aria-label={language === 'zh' ? '搜索 Team' : 'Search teams'} aria-expanded="true" aria-controls={listboxId} aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-autocomplete="list" value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleKeyDown} placeholder={language === 'zh' ? '搜索 Team' : 'Search teams'} /></label>
       <div className="popover-list" id={listboxId} role="listbox">
-        <button ref={(element) => { optionRefs.current[0] = element; }} id={`${listboxId}-option-0`} role="option" aria-selected={!workspace.selectedId} className={`popover-row ${workspace.selectedId ? '' : 'active'} ${activeIndex === 0 && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} onMouseEnter={() => setActiveIndex(0)} onClick={() => select('')}>
-          <Circle size={14} /><span><strong>{options[0].name}</strong><small>{options[0].description}</small></span>{!workspace.selectedId && <Check size={14} />}
+        <button ref={(element) => { optionRefs.current[0] = element; }} id={`${listboxId}-option-0`} role="option" aria-selected={!selectedId} className={`popover-row ${selectedId ? '' : 'active'} ${activeIndex === 0 && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} onMouseEnter={() => setActiveIndex(0)} onClick={() => select('')}>
+          <Circle size={14} /><span><strong>{options[0].name}</strong><small>{options[0].description}</small></span>{!selectedId && <Check size={14} />}
         </button>
         {teams.map((team, index) => {
           const optionIndex = index + 1;
-          return <button ref={(element) => { optionRefs.current[optionIndex] = element; }} id={`${listboxId}-option-${optionIndex}`} role="option" aria-selected={workspace.selectedId === team.id} className={`popover-row ${workspace.selectedId === team.id ? 'active' : ''} ${activeIndex === optionIndex && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} key={team.id} onMouseEnter={() => setActiveIndex(optionIndex)} onClick={() => select(team.id)}><UsersRound size={14} /><span><strong>{team.name}</strong><small>{team.description || team.id}</small></span>{workspace.selectedId === team.id && <Check size={14} />}</button>;
+          return <button ref={(element) => { optionRefs.current[optionIndex] = element; }} id={`${listboxId}-option-${optionIndex}`} role="option" aria-selected={selectedId === team.id} className={`popover-row ${selectedId === team.id ? 'active' : ''} ${activeIndex === optionIndex && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} key={team.id} onMouseEnter={() => setActiveIndex(optionIndex)} onClick={() => select(team.id)}><UsersRound size={14} /><span><strong>{team.name}</strong><small>{team.description || team.id}</small></span>{selectedId === team.id && <Check size={14} />}</button>;
         })}
         {!workspace.loading && teams.length === 0 && <p className="composer-popover-empty">{workspace.error || (language === 'zh' ? '没有可用 Team' : 'No teams available')}</p>}
       </div>

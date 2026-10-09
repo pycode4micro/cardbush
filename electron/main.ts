@@ -2492,6 +2492,27 @@ ipcMain.handle('dialog:pick-attachments', async () => {
   return result.canceled ? [] : result.filePaths;
 });
 
+let markdownFiles: import('./mdPresentationFiles').MarkdownFiles | undefined;
+ipcMain.handle('markdown:file', async (event, input: import('./mdPresentationFiles').MarkdownFileRequest) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('Markdown files are only available to the application renderer.');
+  if (!markdownFiles) {
+    const { MarkdownFiles } = await import('./mdPresentationFiles.js');
+    markdownFiles = new MarkdownFiles(async (mode, name) => {
+      const filters = [{ name: 'Markdown', extensions: ['md', 'markdown'] }];
+      if (mode === 'open') {
+        const options: OpenDialogOptions = { title: '打开 Markdown', properties: ['openFile'], filters };
+        const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+        return result.canceled ? undefined : result.filePaths[0];
+      }
+      const options = { title: '保存 Markdown', filters, defaultPath: `${String(name || 'md-presentation').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
+      const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+      return result.canceled ? undefined : result.filePath;
+    });
+  }
+  return markdownFiles.command(input);
+});
+
 ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => {
   const uniquePaths = [...new Set(
     (Array.isArray(targetPaths) ? targetPaths : [])

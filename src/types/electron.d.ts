@@ -216,6 +216,7 @@ declare global {
         rawCount: number;
       }>;
       pickAttachments: () => Promise<string[]>;
+      markdownFile: (input: import('../../electron/mdPresentationFiles').MarkdownFileRequest) => Promise<import('../../electron/mdPresentationFiles').MarkdownFile | null>;
       getPathForFile: (file: File) => string;
       inspectAttachments: (paths: string[]) => Promise<Array<{
         path: string;
