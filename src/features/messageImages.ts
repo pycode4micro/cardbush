@@ -62,6 +62,8 @@ export function splitMessageMediaBlocks(content: string): MessageMediaBlock[] {
       mediaItems.push(media);
       continue;
     }
+    // A blank line between images is spacing, not a new gallery.
+    if (mediaItems.length && !line.trim()) continue;
     flushMedia();
     textLines.push(line);
   }

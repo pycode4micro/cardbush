@@ -69,12 +69,12 @@ export function FileMemoReference({ reference, children, inline = false, languag
   // Only a new disk version reloads the guest; focus refreshes retain its state.
   const htmlVersion = currentVersion ? [currentVersion.size, currentVersion.mtimeMs] : [status, memo.file.size, memo.file.mtimeMs];
   const media = inline && (status === 'available' || html) && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
-  if (host) return <span title={memo.note.purpose}>
+  if (host) return <span>
     <ConversationFileReference path={path} inline={media} language={language} fileVersion={JSON.stringify(htmlVersion)}>{label}</ConversationFileReference>
     {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
   </span>;
   const source = fileUrl(path);
-  return <span className="file-memo-reference" title={`${language === 'zh' ? '模型备注' : 'Model note'}: ${memo.note.purpose}`}>
+  return <span className="file-memo-reference">
     {media && html ? <InlineHtmlPreview key={path} path={path} fileVersion={JSON.stringify(htmlVersion)} title={typeof label === 'string' ? label : memo.file.name} language={language} />
       : media && isImagePath(path) ? <img src={source} alt={typeof children === 'string' ? children : memo.file.name}
       onError={() => setFailedMedia(mediaKey)}

@@ -33,16 +33,28 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run('lifecycleJump(1)'); await ready(1); await pause(320);
     assert.equal(await idAt(0), first, 'one-screen neighbour retains its existing guest');
     assert.equal(await webContents.fromId(first).executeJavaScript("document.querySelector('button').textContent"), '已选择', 'nearby filters survive scroll');
+    // Crossing the buffer briefly must not destroy and flash the same document.
+    for (let index = 0; index < 3; index++) {
+      await run('lifecycleJump(2)'); await pause(100);
+      assert.ok(webContents.fromId(first), 'a brief excursion retains the existing guest');
+      await run('lifecycleJump(0)'); await ready(0);
+      assert.equal(await idAt(0), first, 'scrolling back does not reload the HTML');
+      assert.equal(await webContents.fromId(first).executeJavaScript("document.querySelector('button').textContent"), '已选择', 'interactive state survives the buffer boundary');
+      assert.equal(await run("lifecycleCard(0).querySelector('.inline-html-status')===null"), true, 'scrolling back never replaces ready content with loading UI');
+    }
+    const presentation = await run("(()=>{const view=lifecycleCard(0).querySelector('webview'),style=getComputedStyle(view);return {animation:style.animationName,clip:style.clipPath,transform:style.transform}})()");
+    assert.deepEqual(presentation, {animation:'none',clip:'none',transform:'none'}, 'the guest has no persistent compositor reveal mask or transform');
     await run('lifecycleJump(80)');
     await until("!!lifecycleCard(80).querySelector('webview')", 'current viewport bypasses buffer preloading');
-    await ready(80); await pause(400);
+    await ready(80);
+    await until(`!lifecycleCard(0).querySelector('webview')`, 'unused guests are reclaimed after scroll settles');
     assert.equal(webContents.fromId(first), undefined, 'far-away old guest is actually destroyed');
     assert.equal(await run("lifecycleCard(0).querySelector('.inline-html-viewport').clientHeight>300"), true, 'placeholder preserves scrolling geometry');
     assert.ok(await run("document.querySelectorAll('webview').length<=4"), '200 Turns do not create 200 guests');
     assert.equal(await run("(()=>{const scroller=document.querySelector('.html-lifecycle-scroll'),bounds=scroller.getBoundingClientRect();return [...document.querySelectorAll('.inline-html-webview')].every(view=>{const r=view.closest('.inline-html-preview').getBoundingClientRect();return r.bottom>bounds.top-scroller.clientHeight&&r.top<bounds.bottom+scroller.clientHeight})})()"), true, 'only visible and adjacent pages stay mounted');
     for (const index of [3, 160, 20, 198, 0]) {
       (await run('lifecycleIds()')).forEach(id => openIds.add(id));
-      await run(`lifecycleJump(${index})`); await ready(index); await pause(60);
+      await run(`lifecycleJump(${index})`); await ready(index); await pause(850);
       assert.ok(await run("document.querySelectorAll('webview').length<=4"), 'fast scroll does not accumulate guests: '+index);
     }
     assert.notEqual(await idAt(0), first, 'the oldest Turn reloads when visible; no Turn count limit');

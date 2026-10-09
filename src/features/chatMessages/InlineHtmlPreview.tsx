@@ -12,6 +12,7 @@ import { captureInlineHtmlReadingPosition } from './inlineHtmlReadingPosition';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { ConversationHostContext } from '../conversationHost';
 import { useConversationFileSource } from '../conversationFileSource';
+import { connectInlineHtmlGuestDiagnostics, observeInlineHtmlDiagnostics, type InlineHtmlDiagnostics } from './inlineHtmlDiagnostics';
 
 /** Uses the same file adapter as the inspector; only an authored embed mounts it. */
 export function isHtmlPreviewPath(path: string) {
@@ -19,6 +20,7 @@ export function isHtmlPreviewPath(path: string) {
 }
 
 const expandedHeightLimit = 2400;
+const scrollRetentionMs = 750;
 const previewHeightLimit = () => Math.min(520, Math.max(220, Math.round(window.innerHeight * 0.6)));
 
 export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, language, fileVersion }: {
@@ -32,10 +34,14 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const [inViewport, setInViewport] = useState(false);
   const [nearViewport, setNearViewport] = useState(false);
   const [activated, setActivated] = useState(false);
+  const [retained, setRetained] = useState(false);
   const [pageVisible, setPageVisible] = useState(isWindowVisible);
   const [closed, setClosed] = useState(false);
   // Visible pages bypass buffer preloading, regardless of the Turn's age.
-  const visible = pageVisible && !closed && (inViewport || (nearViewport && activated));
+  const requested = inViewport || (nearViewport && activated);
+  // Scrolling across the buffer is not a new document. Keep the guest briefly
+  // so boundary jitter and a quick scroll back retain its painted surface/state.
+  const visible = pageVisible && !closed && (requested || retained);
   const [revision, setRevision] = useState(0);
   const [layout, setLayout] = useState<InlineHtmlLayout>({ height: 360, blocks: [] });
   const { height } = layout;
@@ -62,6 +68,24 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const folded = canExpand && !expanded;
   const guestHeight = Math.min(expandedHeightLimit, height);
   const viewportHeight = folded ? foldedHtmlHeight(layout, previewLimit) : guestHeight;
+  const diagnostics = useRef<InlineHtmlDiagnostics | undefined>(undefined);
+  const diagnosticState = useRef({});
+  diagnosticState.current = { inViewport, nearViewport, activated, retained, pageVisible, closed, requested, visible,
+    revision, state, visualization, expanded, height, viewportHeight, guestHeight, previewLimit };
+
+  useEffect(() => {
+    if (!container.current) return;
+    diagnostics.current = observeInlineHtmlDiagnostics(container.current, path, () => diagnosticState.current);
+    return () => { diagnostics.current?.dispose(); diagnostics.current = undefined; };
+  }, [path]);
+
+  useEffect(() => {
+    diagnostics.current?.record('state');
+  }, [inViewport, nearViewport, activated, retained, pageVisible, closed, visible, revision, state, visualization, expanded, height, viewportHeight]);
+
+  useEffect(() => {
+    diagnostics.current?.record('source-change', { available: Boolean(source) });
+  }, [source]);
 
   useEffect(() => { if (remoteFile.error) setState('failed'); }, [remoteFile.error]);
 
@@ -89,7 +113,8 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     });
   }, []);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (reason = 'manual') => {
+    diagnostics.current?.record('reload-request', { reason });
     const ticket = ++reloadTicket.current;
     setMenuOpen(false);
     if (stateRef.current === 'ready' && container.current) {
@@ -111,7 +136,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     if (!currentVersion) return;
     const previous = lastVersion.current;
     lastVersion.current = currentVersion;
-    if (visible && previous !== undefined && previous !== currentVersion) void reload();
+    if (visible && previous !== undefined && previous !== currentVersion) void reload('file-version');
   }, [currentVersion, visible, reload]);
 
   useEffect(() => () => {
@@ -140,6 +165,14 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     const delay = window.setTimeout(() => setActivated(true), 250);
     return () => window.clearTimeout(delay);
   }, [closed, pageVisible, nearViewport, inViewport, activated]);
+
+  useEffect(() => {
+    if (closed || !pageVisible) { setRetained(false); return; }
+    if (requested) { setRetained(true); return; }
+    if (!retained) return;
+    const timeout = window.setTimeout(() => setRetained(false), scrollRetentionMs);
+    return () => window.clearTimeout(timeout);
+  }, [closed, pageVisible, requested, retained]);
 
   useEffect(() => {
     if (!visible || !visualization) return;
@@ -174,6 +207,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
     // A placeholder retains layout outside the buffer; guests and scripts do not.
     const observer = new IntersectionObserver(entries => {
+      diagnostics.current?.record('intersection', { ratio: entries[0]?.intersectionRatio, intersecting: entries[0]?.isIntersecting });
       setInViewport(entries.some(entry => entry.isIntersecting && entry.intersectionRatio > 0));
     });
     observer.observe(host);
@@ -185,6 +219,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       previousHeight = height;
       bufferObserver?.disconnect();
       bufferObserver = new IntersectionObserver(entries => {
+        diagnostics.current?.record('buffer-intersection', { ratio: entries[0]?.intersectionRatio, intersecting: entries[0]?.isIntersecting });
         setNearViewport(entries.some(entry => entry.isIntersecting && entry.intersectionRatio > 0));
       }, { root: scroller, rootMargin: `${height}px 0px` });
       bufferObserver.observe(host);
@@ -212,10 +247,14 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     let settled = false;
     let failed = false;
     let disconnectPresentation: (() => void) | undefined;
+    let disconnectGuestDiagnostics: (() => void) | undefined;
     const deadline = window.setTimeout(() => fail(), 30000);
     const ready = () => {
+      diagnostics.current?.record('dom-ready', { settled });
       if (settled) return;
       settled = true;
+      if (diagnostics.current) disconnectGuestDiagnostics = connectInlineHtmlGuestDiagnostics(
+        webview as HTMLElement & { executeJavaScript(code: string): Promise<unknown> }, diagnostics.current);
       disconnectPresentation = connectInlineHtmlPresentation(webview, container.current!, value => {
         setLayout(value);
         restoreReadingPosition();
@@ -226,13 +265,14 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         if (failed) return;
         window.clearTimeout(deadline);
         setState('ready');
-      });
+      }, (event, detail) => diagnostics.current?.record(event, detail));
       const scrollY = readingPosition.current?.scrollY;
       if (scrollY) void (webview as HTMLElement & { executeJavaScript(code: string): Promise<unknown> })
         .executeJavaScript(`scrollTo(0,${JSON.stringify(scrollY)})`).catch(() => {});
     };
     const fail = (event?: Event) => {
       const detail = event as (Event & { isMainFrame?: boolean; errorCode?: number }) | undefined;
+      diagnostics.current?.record('guest-failed', { failure: event?.type ?? 'deadline', code: detail?.errorCode, mainFrame: detail?.isMainFrame });
       if (detail?.isMainFrame === false || detail?.errorCode === -3) return;
       failed = true;
       settled = true;
@@ -244,8 +284,12 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       setState('failed');
     };
     const navigated = (event: Event) => {
+      diagnostics.current?.record('did-navigate', { code: (event as Event & { httpResponseCode?: number }).httpResponseCode });
       if (((event as Event & { httpResponseCode?: number }).httpResponseCode ?? 0) >= 400) fail();
     };
+    const loading = (event: Event) => diagnostics.current?.record(event.type);
+    webview.addEventListener('did-start-loading', loading);
+    webview.addEventListener('did-stop-loading', loading);
     webview.addEventListener('dom-ready', ready);
     webview.addEventListener('did-navigate', navigated);
     webview.addEventListener('did-fail-load', fail);
@@ -254,6 +298,10 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       failed = true;
       window.clearTimeout(deadline);
       disconnectPresentation?.();
+      diagnostics.current?.record('guest-disconnect');
+      disconnectGuestDiagnostics?.();
+      webview.removeEventListener('did-start-loading', loading);
+      webview.removeEventListener('did-stop-loading', loading);
       webview.removeEventListener('dom-ready', ready);
       webview.removeEventListener('did-navigate', navigated);
       webview.removeEventListener('did-fail-load', fail);
@@ -291,8 +339,8 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     <span className="inline-html-toolbar">
       {fileLink}
       <span className="inline-html-actions">
-        <button className="inline-html-reopen" type="button" onClick={openPreview} aria-label={zh ? '打开 HTML 预览' : 'Open HTML preview'} title={zh ? '打开预览' : 'Open preview'}><Play size={13} /><span>{zh ? '预览' : 'Preview'}</span></button>
-        <button type="button" onClick={openFull} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
+        <button className="inline-html-reopen" type="button" onClick={openPreview} aria-label={zh ? '打开 HTML 预览' : 'Open HTML preview'}><Play size={13} /><span>{zh ? '预览' : 'Preview'}</span></button>
+        <button type="button" onClick={openFull} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'}><Maximize2 size={14} /></button>
       </span>
     </span>
   </span>;
@@ -306,14 +354,14 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         onClick={toggleExpansion}><ChevronUp size={14} />{zh ? '收起图表' : 'Collapse chart'}</button>}
       <button className="inline-html-menu-toggle" type="button" aria-label={zh ? '图表选项' : 'Visualization options'}
         aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={18} /></button>
-      <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'} title={zh ? '关闭预览' : 'Close preview'}><X size={14} /></button>
+      <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'}><X size={14} /></button>
     </span>}
     <span className="inline-html-toolbar" hidden={visualization && !menuOpen && state !== 'failed'}>
       {fileLink}
       <span className="inline-html-actions">
-        <button type="button" onClick={reload} aria-label={zh ? '重新加载 HTML' : 'Reload HTML'} title={zh ? '重新加载' : 'Reload'}><RotateCw size={14} /></button>
-        <button type="button" onClick={() => { setMenuOpen(false); openFull(); }} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'} title={zh ? '在侧栏展开' : 'Open in side panel'}><Maximize2 size={14} /></button>
-        {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'} title={zh ? '关闭预览' : 'Close preview'}><X size={14} /></button>}
+        <button type="button" onClick={() => void reload()} aria-label={zh ? '重新加载 HTML' : 'Reload HTML'}><RotateCw size={14} /></button>
+        <button type="button" onClick={() => { setMenuOpen(false); openFull(); }} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'}><Maximize2 size={14} /></button>
+        {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'}><X size={14} /></button>}
       </span>
     </span>
     <span id={viewportId} className={`inline-html-viewport is-${visible ? state : 'suspended'}`} style={visualization ? { height: viewportHeight } : undefined} aria-busy={visible && state === 'loading'}>
@@ -321,7 +369,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         key: `${source}:${revision}`,
         ref: frame,
         src: source,
-        title: label,
+        'aria-label': label,
         onFocus: () => setMenuOpen(false),
         className: 'inline-html-webview',
         // Keep one guest at its intrinsic height; folding must not reload or
@@ -332,7 +380,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       {(!visible || state !== 'ready') && <span className="inline-html-status" role="status">
         {state === 'failed' ? <>
           <span>{zh ? '预览暂时无法加载' : 'Preview could not load'}</span>
-          <button type="button" onClick={reload}>{zh ? '重试' : 'Retry'}</button>
+          <button type="button" onClick={() => void reload()}>{zh ? '重试' : 'Retry'}</button>
         </> : <span>{!visible ? (zh ? '预览已暂停' : 'Preview suspended') : (zh ? 'HTML 预览' : 'HTML preview')}</span>}
       </span>}
     </span>

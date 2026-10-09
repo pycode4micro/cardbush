@@ -10,6 +10,7 @@ const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'u
 const localPaths = read('src', 'shared', 'localPaths.ts');
 const messageMedia = read('src', 'features', 'messageImages.ts');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
+const imageGallery = read('src', 'features', 'chatMessages', 'MessageImageGallery.tsx');
 const inlineMedia = read('src', 'features', 'chatMessages', 'InlineMedia.tsx');
 const imagePreviewDialog = read('src', 'features', 'chatMessages', 'ImagePreviewDialog.tsx');
 const chatHook = read('src', 'hooks', 'useCardbushChat.ts');
@@ -46,10 +47,10 @@ assert.match(messageBubble, /<InlineVideo/);
 assert.match(messageBubble, /<InlineAudio/);
 assert.match(inlineMedia, /<video[\s\S]*?controls[\s\S]*?preload="metadata"/);
 assert.match(inlineMedia, /<audio[\s\S]*?controls[\s\S]*?preload="metadata"/);
-assert.match(messageBubble, /readImageDataUrl\(pathValue\)/);
-assert.match(messageBubble, /message-image-preview-fallback/);
+assert.match(imageGallery, /readImageDataUrl\(pathValue\)/);
+assert.match(imageGallery, /message-image-preview-fallback/);
 assert.match(
-  messageBubble,
+  imageGallery,
   /<img[\s\S]*?src=\{src\}[\s\S]*?loading="lazy"[\s\S]*?decoding="async"/,
   'historical image attachments must not synchronously decode every offscreen full-resolution image',
 );

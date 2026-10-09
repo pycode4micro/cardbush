@@ -101,6 +101,49 @@ app.whenReady().then(async()=>{
     assert.equal(await run('largeStartCount'),1,'load more does not rescan the same files');
     assert.equal(await run('document.querySelectorAll(".image-preview-canvas img").length'),1,'only the current original is decoded');
     await close();
+    // Both long contact sheets and ordinary image batches use the inline viewer.
+    window.setContentSize(1100,760);
+    await run(`galleryControls.setTheme('theme-dark');
+      window.inlineSource='前文\\n\\n![长图](<'+files.second.replaceAll('\\\\','/')+'>)\\n\\n![宽图][wide]\\n\\n后文\\n\\n[wide]: <'+files.third.replaceAll('\\\\','/')+'>\\n\\n~~~text\\n![代码示例](not-real.png)\\n~~~';
+      galleryControls.setInlineContent(inlineSource);galleryControls.setMode('inline')`);
+    await until('document.querySelectorAll(".message-image-thumbnail").length===2 && document.querySelector(".message-image-preview img")?.naturalHeight===1800','inline group');
+    const bounds = () => run(`(()=>{const gallery=document.querySelector('.message-image-gallery'),main=gallery.querySelector('.message-image-preview').getBoundingClientRect(),rail=gallery.querySelector('.message-image-thumbnails').getBoundingClientRect();return {mainHeight:main.height,width:gallery.getBoundingClientRect().width,right:rail.left>=main.right,overflow:document.documentElement.scrollWidth>innerWidth,mainCount:gallery.querySelectorAll('.message-image-preview').length}})()`);
+    const wideBounds = await bounds();
+    assert.ok(wideBounds.mainHeight<=280 && wideBounds.width<=560 && wideBounds.right);
+    assert.equal(wideBounds.mainCount,1);
+    assert.equal(await run('document.querySelectorAll(".message-image-gallery").length'),1,'blank lines and reference syntax form one gallery');
+    assert.equal(await run('document.querySelector(".markdown-content").textContent.includes("后文") && document.querySelector("pre").textContent.includes("![代码示例]")'),true,'prose and code stay in place');
+    await run('document.querySelectorAll(".message-image-thumbnail")[1].click()');
+    await until('document.querySelector(".message-image-preview img")?.naturalWidth===1800','thumbnail switch');
+    assert.equal(await run('Boolean(document.querySelector(".image-preview-dialog"))'),false,'thumbnail switches in place');
+    assert.equal((await bounds()).mainHeight,wideBounds.mainHeight,'switching image ratios keeps the transcript stable');
+    await run('galleryControls.setInlineContent(inlineSource.replace("后文","后文更新"))');await pause(80);
+    assert.equal(await run('document.querySelector(".message-image-preview img").naturalWidth'),1800,'text updates retain the selected image');
+    await run('document.querySelectorAll(".message-image-thumbnail")[1].focus()');await key('Up');
+    await until('document.querySelector(".message-image-preview img")?.naturalHeight===1800','inline keyboard switch');
+    await writeFile(resolve('tmp/message-image-gallery-dark.png'),(await window.webContents.capturePage()).toPNG());
+    await run('galleryControls.setTheme("theme-bright")');window.setContentSize(380,700);await pause(100);
+    const narrowBounds=await bounds();assert.ok(narrowBounds.right && !narrowBounds.overflow && narrowBounds.mainHeight<=280,'narrow layout keeps the thumbnails on the right');
+    await writeFile(resolve('tmp/message-image-gallery-narrow.png'),(await window.webContents.capturePage()).toPNG());
+    await run('document.querySelector(".message-image-preview").click()');await ready();
+    assert.equal(await run('document.querySelector(".image-preview-dialog header strong").textContent'),'长图','main image opens the selected original');await close();
+    await run(`galleryControls.setInlineContent(barePaths.join('\\n\\n'))`);
+    await until('document.querySelectorAll(".message-image-thumbnail").length===2','bare paths share the gallery');
+    await run(`galleryControls.setInlineContent('![单图](<'+files.second.replaceAll('\\\\','/')+'>)')`);
+    await until('document.querySelectorAll(".message-image-thumbnail").length===0 && document.querySelector(".message-image-preview img")?.naturalHeight===1800','single image');
+    assert.ok(await run('document.querySelector(".message-image-preview img").getBoundingClientRect().height<=280'),'single long image is capped too');
+    await run('galleryControls.setMode("document")');await until('!document.querySelector(".message-image-gallery") && Boolean(document.querySelector(".markdown-content img"))','document preview retains its layout');
+    assert.ok(await run('document.querySelector(".markdown-content img").getBoundingClientRect().height>280'),'document images are independent of chat sizing');
+    if (await run('reproImages.length>1')) {
+      window.setContentSize(1100,760);
+      await run(`galleryControls.setTheme('theme-dark');galleryControls.setInlineContent(reproImages.map((path,i)=>'![预览 '+(i+1)+'](<'+path.replaceAll('\\\\','/')+'>)').join('\\n\\n'));galleryControls.setMode('inline')`);
+      await until('document.querySelectorAll(".message-image-thumbnail").length===reproImages.length && document.querySelector(".message-image-preview img")?.naturalWidth>0','actual conversation image batch');
+      assert.ok((await bounds()).mainHeight<=280);
+      await run(`Promise.all([...document.querySelectorAll('.message-image-gallery img')].map(image=>image.decode()))`);
+      await pause(180);
+      const rectangle=await run(`(()=>{const r=document.querySelector('.message-image-gallery').getBoundingClientRect();return {x:Math.round(r.x),y:Math.round(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)}})()`);
+      await writeFile(resolve('tmp/message-image-gallery-repro.png'),(await window.webContents.capturePage(rectangle)).toPNG());
+    }
     assert.equal(errors.filter(message=>/React error|Uncaught|Maximum update/.test(message)).length,0,errors.join('\n'));
     console.log('Image gallery UI passed: cross-turn and loop images, native keyboard navigation, zoom reset, external images, stable append, scope switching, session isolation, attachment batch, inspector directory, Markdown/link entry points and narrow layouts.');
   } finally {await scanner.close(window.webContents.id);window.destroy();}

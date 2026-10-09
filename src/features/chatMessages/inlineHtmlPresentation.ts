@@ -76,6 +76,7 @@ const installPresentation = `(() => {
 export function connectInlineHtmlPresentation(
   element: HTMLElement, host: Element, onLayout: (layout: InlineHtmlLayout) => void, onMode: (visualization: boolean) => void,
   onReady: () => void,
+  diagnostic?: (event: string, detail: Record<string, unknown>) => void,
 ) {
   const guest = element as PreviewGuest;
   let disposed = false;
@@ -91,6 +92,7 @@ export function connectInlineHtmlPresentation(
     // React batches mode, measured height and readiness into one commit. Never
     // reveal the old file viewport before discovering the chart's dimensions.
     onMode(true);
+    diagnostic?.('layout-published', { height: pendingLayout.height, blocks: pendingLayout.blocks.length, first: !published });
     onLayout(pendingLayout);
     pendingLayout = undefined;
     if (!published) { published = true; onReady(); }
@@ -140,7 +142,7 @@ export function connectInlineHtmlPresentation(
   const updateTheme = () => {
     if (!started || disposed) return;
     const script = themeScript();
-    if (script) void guest.executeJavaScript(script).catch(() => {});
+    if (script) { diagnostic?.('theme-updated', {}); void guest.executeJavaScript(script).catch(() => {}); }
   };
   const themeObserver = new MutationObserver(updateTheme);
   // Appearance overrides may live on .app or its ancestor root.
@@ -153,6 +155,7 @@ export function connectInlineHtmlPresentation(
       // preview. Only content designed for this host opts into chart embedding.
       const optedIn = await guest.executeJavaScript(`document.querySelector('meta[name="cardbush:preview"]')?.content === 'visualization'`);
       if (disposed) return;
+      diagnostic?.('presentation-mode', { visualization: optedIn === true });
       if (optedIn !== true) { onMode(false); onReady(); return; }
       await guest.executeJavaScript(themeScript() + ';' + installPresentation);
       if (disposed) return;
@@ -163,9 +166,10 @@ export function connectInlineHtmlPresentation(
         const measured = await guest.executeJavaScript(`window.__cardbushInlinePresentation?.read(${JSON.stringify(previous)})`) as InlineHtmlLayout | undefined;
         if (disposed || !measured || !Number.isFinite(measured.height) || !Array.isArray(measured.blocks)) break;
         previous = JSON.stringify(measured);
+        diagnostic?.('layout-measured', { height: measured.height, blocks: measured.blocks.length });
         scheduleLayout(measured);
       }
-    } catch { /* A loaded document can decline or lose its presentation bridge. */ }
+    } catch { diagnostic?.('presentation-bridge-error', {}); }
     if (!disposed && !published) {
       // Keep an already measured layout, or use the bounded file viewport if
       // the bridge failed/returned no layout. Never leave a loaded file waiting.

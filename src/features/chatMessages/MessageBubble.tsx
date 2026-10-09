@@ -48,7 +48,6 @@ import {
   isAbsoluteLocalPath,
   isAudioPath,
   isImagePath,
-  isLocalFileResource,
   isVideoPath,
   mediaResourceUrl,
   resourceTargetKind,
@@ -72,6 +71,8 @@ import {
   remarkAutolinkBoundaries,
 } from './markdownFormat';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
+import { MessageImageGallery } from './MessageImageGallery';
+import { remarkImageGroups } from './remarkImageGroups';
 import { modelFailurePresentation } from './modelFailurePresentation';
 import { MessageToolArtifact, MessageToolOutputs } from '../tools/MessageToolOutputs';
 import { McpAppReferencesContext } from '../tools/McpAppReferenceLink';
@@ -326,14 +327,30 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     pathAliases: ProjectPathAlias[];
     language: AppLanguage;
     referenceMode: 'local' | 'remote';
+    compactImages: boolean;
   };
   const MarkdownRenderContext = createContext<MarkdownRenderSettings>({
-    workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh', referenceMode: 'local',
+    workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh', referenceMode: 'local', compactImages: true,
   });
   // Focus refreshes can replace alias arrays and media maps without changing
   // the message. Component types must stay stable so resolved files, media and
   // code controls retain their state; current settings arrive through context.
   const components: Components = {
+    div: ({ node, children, ...props }) => {
+      const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
+      if (node?.properties['data-message-image-gallery']) {
+        const images = node.children.flatMap(child => {
+          if (child.type !== 'element' || child.tagName !== 'img') return [];
+          const src = String(child.properties.src || '');
+          if (!src) return [];
+          const reference = markdownLocalFileReference(src, workspaceRoot);
+          return [{ path: reference ? remapProjectPath(reference.path, pathAliases) : src,
+            name: String(child.properties.alt || '') }];
+        });
+        return <MessageImageGallery images={images} language={language} />;
+      }
+      return <div {...props}>{children}</div>;
+    },
     a: ({ href, children, ...props }) => {
       const host = useContext(ConversationHostContext);
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
@@ -387,7 +404,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     img: ({ src, alt, ...props }) => {
       const host = useContext(ConversationHostContext);
       const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
-      const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
+      const { workspaceRoot, pathAliases, language, referenceMode, compactImages } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
@@ -420,6 +437,8 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         return <InlineAudio src={resolvedSource} language={language} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
+      if (compactImages) return <MessageImageGallery inline
+        images={[{ path: resolvedPath || src || '', name: alt ?? '' }]} language={language} />;
       return (
         <>
         <img
@@ -490,16 +509,27 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     pathAliases,
     language,
     referenceMode,
+    compactImages,
   }: MarkdownRenderSettings & { content: string }) {
     const richFileReferences = useContext(RichFileReferencesContext);
+    const presentedMedia = useContext(PresentedMediaContext);
     const sourceReferences = useSourceMemoReferences(content, richFileReferences);
-    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode }), [workspaceRoot, pathAliases, language, referenceMode]);
+    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages }), [workspaceRoot, pathAliases, language, referenceMode, compactImages]);
     const remarkPlugins = useMemo(() => {
       const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkAutolinkBoundaries];
       if (sourceReferences.size) plugins.push([remarkSourceMemoShorthand, { references: sourceReferences }]);
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
+      if (compactImages && richFileReferences) plugins.push([remarkImageGroups, { eligible: (url: string) => {
+        if (parseMarkdownReference(url)) return false;
+        const kind = resourceTargetKind(url);
+        if (referenceMode === 'remote' && kind !== 'url' && kind !== 'inline') return false;
+        const reference = markdownLocalFileReference(url, workspaceRoot);
+        const path = reference ? remapProjectPath(reference.path, pathAliases) : url;
+        return Boolean(mediaResourceUrl(path)) && !isHtmlPreviewPath(path) && !isVideoPath(path) && !isAudioPath(path)
+          && !/^data:(?:audio|video)\//i.test(path) && !presentedMedia.has(mediaPresentationKey(path));
+      } }]);
       return plugins;
-    }, [workspaceRoot, richFileReferences, referenceMode, sourceReferences]);
+    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia]);
     const urlTransform = useCallback((url: string, key: string) => {
       if (parseMarkdownReference(url)) return url;
       if (key === 'src' && /^(?:data:(?:image|audio|video)\/|blob:|cardbush-file:\/\/)/i.test(url)) return mediaResourceUrl(url);
@@ -2728,35 +2758,17 @@ export function MessageImageStrip({
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const presentedMedia = useContext(PresentedMediaContext);
   const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
-  const [preview, setPreview] = useState<ImagePreview | null>(null);
   if (resolvedPaths.length === 0) {
     return null;
   }
   return (
-    <>
-      <div className="message-image-strip">
-        {resolvedPaths.map((pathValue, index) => {
-          const presented = presentedMedia.get(mediaPresentationKey(pathValue));
-          if (presented) return <PresentedMediaReference key={`${pathValue}-${index}`} artifact={presented} />;
-          return (
-            <figure className="message-image-item" key={`${pathValue}-${index}`}>
-              <MessageImagePreviewButton
-                pathValue={pathValue}
-                language={language}
-                onPreview={setPreview}
-              />
-            </figure>
-          );
-        })}
-      </div>
-      {preview && (
-        <ImagePreviewDialog
-          image={preview}
-          language={language}
-          onClose={() => setPreview(null)}
-        />
-      )}
-    </>
+    <div className="message-image-strip">
+      {resolvedPaths.map((path, index) => {
+        const presented = presentedMedia.get(mediaPresentationKey(path));
+        return presented ? <PresentedMediaReference key={`${path}-${index}`} artifact={presented} /> : null;
+      })}
+      <MessageImageGallery images={resolvedPaths.filter(path => !presentedMedia.has(mediaPresentationKey(path))).map(path => ({ path }))} language={language} />
+    </div>
   );
 }
 
@@ -2782,100 +2794,32 @@ const MessageInlineMediaContent = memo(function MessageInlineMediaContent({
             />
           );
         }
-        return <div className="message-inline-media-block" key={`media-${index}`}>
-          {block.items.map((item, itemIndex) => item.type === 'image'
-            ? <MessageImageStrip key={itemIndex} paths={[item.path]} language={language} />
-            : <MessageMediaStrip key={itemIndex} videoPaths={item.type === 'video' ? [item.path] : []}
-              audioPaths={item.type === 'audio' ? [item.path] : []} language={language} />)}
-        </div>;
+        const media: ReactNode[] = [];
+        for (let itemIndex = 0; itemIndex < block.items.length; itemIndex += 1) {
+          const item = block.items[itemIndex];
+          if (item.type === 'image') {
+            const paths = [item.path];
+            while (block.items[itemIndex + 1]?.type === 'image') paths.push(block.items[++itemIndex].path);
+            media.push(<MessageImageStrip key={itemIndex} paths={paths} language={language} />);
+          } else media.push(<MessageMediaStrip key={itemIndex} videoPaths={item.type === 'video' ? [item.path] : []}
+            audioPaths={item.type === 'audio' ? [item.path] : []} language={language} />);
+        }
+        return <div className="message-inline-media-block" key={`media-${index}`}>{media}</div>;
       })}
     </div>
   );
 });
 
-function MessageImagePreviewButton({
-  pathValue,
-  language,
-  onPreview,
-}: {
-  pathValue: string;
-  language: AppLanguage;
-  onPreview: (image: ImagePreview) => void;
-}) {
-  const host = useContext(ConversationHostContext);
-  const source = useConversationFileSource(pathValue);
-  const name = basename(pathValue);
-  const [src, setSrc] = useState(source.source);
-  const [failed, setFailed] = useState(false);
-  const fallbackAttemptedRef = useRef(false);
-
-  useEffect(() => {
-    fallbackAttemptedRef.current = false;
-    setSrc(source.source);
-    setFailed(Boolean(source.error));
-  }, [pathValue, source.source, source.error]);
-
-  const recoverLocalImage = useCallback(async () => {
-    if (
-      host || fallbackAttemptedRef.current ||
-      !isLocalFileResource(pathValue) ||
-      !window.cardbushDesktop?.readImageDataUrl
-    ) {
-      setFailed(true);
-      return;
-    }
-    fallbackAttemptedRef.current = true;
-    try {
-      const dataUrl = await window.cardbushDesktop.readImageDataUrl(pathValue);
-      if (!dataUrl.startsWith('data:image/')) {
-        setFailed(true);
-        return;
-      }
-      setSrc(dataUrl);
-    } catch (error) {
-      console.warn('Unable to load local image preview', pathValue, error);
-      setFailed(true);
-    }
-  }, [pathValue]);
-
-  return (
-    <button
-      className={`message-image-preview${failed ? ' is-failed' : ''}`}
-      type="button"
-      aria-label={name}
-      onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { image: true, language })}
-      onClick={event => {
-        const thumbnail = event.currentTarget.querySelector('img');
-        if (!failed) onPreview({ src, name, path: pathValue,
-          naturalWidth: thumbnail?.naturalWidth, naturalHeight: thumbnail?.naturalHeight });
-      }}
-    >
-      {failed ? (
-        <span className="message-image-preview-fallback">
-          <FileIcon size={20} />
-          <span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>
-        </span>
-      ) : !src ? <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span> : (
-        <img
-          src={src}
-          alt={name}
-          loading="lazy"
-          decoding="async"
-          onError={() => void recoverLocalImage()}
-        />
-      )}
-    </button>
-  );
-}
-
 export const MarkdownContent = memo(function MarkdownContent({
   content,
   language,
   referenceMode,
+  compactImages = true,
 }: {
   content: string;
   language: AppLanguage;
   referenceMode?: 'local' | 'remote';
+  compactImages?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
@@ -2889,6 +2833,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           pathAliases={pathAliases}
           language={language}
           referenceMode={referenceMode ?? (host ? 'remote' : 'local')}
+          compactImages={compactImages}
         />
       </Suspense>
     </div>

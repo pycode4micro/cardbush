@@ -279,10 +279,12 @@ document.getElementById('value').textContent = select.value;`);
       renderHtmlMemo(false);
     `);
     await until("document.querySelector('.file-memo-reference .local-file-reference') !== null", 'memo file link');
+    assert.equal(await run("document.querySelector('.file-memo-reference').hasAttribute('title')"), false, 'file memo notes are not hover tooltips');
     assert.equal(await run("document.querySelectorAll('webview').length"), 0, 'normal memo references remain links');
     await run('renderHtmlMemo(true)');
     await ready();
     const memoPageId = (await guest()).id;
+    assert.equal(await run("document.querySelector('.file-memo-reference').hasAttribute('title') || document.querySelector('webview').hasAttribute('title') || Boolean(document.querySelector('.inline-html-actions button[title]'))"), false, 'embedded HTML and its controls have accessible labels without hover tooltips');
     await run("dispatchEvent(new Event('focus'))");
     await pause();
     assert.equal((await guest()).id, memoPageId, 'focus refresh keeps the same memo preview');
@@ -328,6 +330,9 @@ document.getElementById('value').textContent = select.value;`);
     await run('renderView(null)');
     await pause();
     assert.equal(webContents.fromId(finalMemoId), undefined, 'unmount releases the guest');
+    if (process.env.CARDBUSH_HTML_SCROLL_REVIEW_FILE) {
+      await require('./html-preview-scroll-review.cjs')({ run, until, pause, window, root, directory, guest, ready, clickHost });
+    }
     await require('./html-preview-updates.cjs')({ run, until, pause, window, root, directory, guest, ready, clickHost });
     await run(`
       window.savedThemeDesktop = window.cardbushDesktop;

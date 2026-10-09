@@ -22,8 +22,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const audioPath = path.join(directory, 'audio.wav').replaceAll('\\', '/');
     await fs.writeFile(audioPath, wav);
     await run(`
+      window.mediaVideoSource=${JSON.stringify(videoSource)};
+      window.mediaAudioSource=${JSON.stringify('data:audio/wav;base64,' + wav.toString('base64'))};
       window.mediaRender=()=>renderView(h('div',{className:'media-fixture',style:{width:620,padding:20}},
-        h('h2',null,'音视频预览'),h(views.InlineVideo,{'aria-label':'竖屏视频'}),h(views.InlineAudio,{'aria-label':'音频'})));
+        h('h2',null,'音视频预览'),h(views.InlineVideo,{'aria-label':'竖屏视频',src:mediaVideoSource,preload:'none'}),h(views.InlineAudio,{'aria-label':'音频',src:mediaAudioSource,preload:'none'})));
       mediaRender();
     `);
     await until("document.querySelectorAll('.inline-media-frame').length===2", 'reserved media frames');
@@ -34,8 +36,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       window.mediaSizes=[];window.revealCount=0;
       document.addEventListener('animationstart',event=>{if(event.animationName==='preview-reveal')revealCount++});
       window.mediaSample=()=>{mediaSizes.push([...document.querySelectorAll('.inline-media-frame')].map(node=>node.clientHeight));window.mediaSampleFrame=requestAnimationFrame(mediaSample)};mediaSample();
-      mediaElements[0].src=${JSON.stringify(videoSource)};
-      mediaElements[1].src=${JSON.stringify('data:audio/wav;base64,' + wav.toString('base64'))};
+      for(const media of mediaElements){media.preload='metadata';media.load();}
     `);
     await until("document.querySelectorAll('.inline-media-frame.is-ready').length===2", 'metadata starts reveals');
     assert.equal(await run('mediaElements[0].videoHeight>mediaElements[0].videoWidth'), true,

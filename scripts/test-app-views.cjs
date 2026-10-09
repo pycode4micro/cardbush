@@ -207,7 +207,7 @@ app.whenReady().then(async () => {
     } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'html-diagnostics', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -354,6 +354,11 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no HTML lifecycle renderer errors');
       assert.deepEqual(errors, []);
       return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-diagnostics') {
+      await require('./helpers/html-preview-diagnostics.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no HTML diagnostic renderer errors');
+      assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'ssh-review') {
       await require('./helpers/ssh-review.cjs')({ run, until, pause, window, root });

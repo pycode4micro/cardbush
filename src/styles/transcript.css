@@ -106,6 +106,16 @@
   contain-intrinsic-block-size: auto 220px;
 }
 
+/* Chromium can skip a live webview through an auto-contained ancestor even
+   while its preview buffer retains the guest. That changes guest visibility
+   and briefly blanks the surface when scrolling back. The preview already
+   reclaims distant guests; keep its row and placeholder geometry laid out. */
+.message-list-item:has(.inline-html-preview) {
+  content-visibility: visible;
+  contain: layout style;
+  contain-intrinsic-block-size: none;
+}
+
 /* A growing turn must never collapse to the offscreen height estimate while
    its transcript or tools are being appended. History keeps lazy layout. */
 .message-list-item.streaming,

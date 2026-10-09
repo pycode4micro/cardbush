@@ -12,12 +12,16 @@ const directory = await mkdtemp(join(parent, 'image-gallery-'));
 const project = join(directory, 'project');
 const sub = join(project, 'sub');
 const external = join(directory, 'external');
-const svg = color => `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600"><rect width="900" height="600" fill="${color}"/></svg>`;
+const svg = (color, width = 900, height = 600) => `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="${color}"/></svg>`;
 const files = { first: join(project, '图片 #1.svg'), second: join(sub, '2.svg'), third: join(sub, '3.svg'),
   external: join(external, 'outside.svg'), late: join(project, 'later.svg') };
 try {
   await Promise.all([mkdir(sub, { recursive: true }), mkdir(external, { recursive: true }), mkdir(join(project, 'node_modules'), { recursive: true })]);
   for (const [index, file] of Object.values(files).entries()) await writeFile(file, svg(['#438478', '#426689', '#9c722f', '#927190', '#345e79'][index]));
+  await writeFile(files.second, svg('#426689', 900, 1800));
+  await writeFile(files.third, svg('#9c722f', 1800, 600));
+  const barePaths = [join(directory, 'bare-1.png'), join(directory, 'bare-2.png')];
+  for (const file of barePaths) await writeFile(file, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==', 'base64'));
   await writeFile(join(project, 'node_modules', 'ignored.svg'), svg('#000'));
   await writeFile(join(project, 'not-image.txt'), 'text');
   await symlink(external, join(project, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -47,13 +51,14 @@ try {
 import {ImagePreviewDialog} from '${local('src/features/chatMessages/ImagePreviewDialog.tsx')}';
 import {ImageGalleryProvider} from '${local('src/features/chatMessages/ImageGalleryContext.tsx')}';
 import {sessionGalleryImages, galleryImage} from '${local('src/features/chatMessages/imageGallery.ts')}';
-import {MessageBubble} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
+import {MessageBubble,MarkdownContent} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {ToolImageArtifactViewer} from '${local('src/features/tools/ToolImageArtifactViewer.tsx')}';
 import {MediaInspectorPreview} from '${local('src/features/inspector/MediaInspectorPreview.tsx')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}';
 const files=${JSON.stringify(files)}, project=${JSON.stringify(project)};
 const ipc=window.require('electron').ipcRenderer;
-window.galleryIo={start:0,next:0,close:0,read:0};window.files=files;
+window.galleryIo={start:0,next:0,close:0,read:0};window.files=files;window.barePaths=${JSON.stringify(barePaths)};
+window.reproImages=${JSON.stringify(JSON.parse(process.env.CARDBUSH_GALLERY_REPRO_IMAGES || '[]'))};
 window.cardbushDesktop={
   startImageGallery:(...args)=>{window.galleryIo.start++;return ipc.invoke('test:gallery-start',...args)},
   nextImageGallery:id=>{window.galleryIo.next++;return ipc.invoke('test:gallery-next',id)},
@@ -67,10 +72,12 @@ const original=[{id:'old',role:'user',content:'',attachments:[{id:'a',type:'imag
  loopHistory:[{id:'loop',role:'assistant',content:'',toolExecutions:[{id:'tool',name:'inject_image_input',state:'completed',summary:'image',output:'',success:true,durationMs:0,createdAt:'2026-09-16T00:00:00Z',contentOffset:0,metadata:{},artifacts:[artifact]}]}]}];
 const no=()=>{};
 const messageProps={language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:'',onRegenerate:no,onEditUserMessage:no,onRetryGuidance:no,onRevertChangeReport:no,onOpenScene:no};
-function Fixture(){const [messages,setMessages]=React.useState(original),[session,setSession]=React.useState('session-a'),[mode,setMode]=React.useState('chat'),[open,setOpen]=React.useState(false),[theme,setTheme]=React.useState('theme-dark');
-window.galleryControls={setMessages,setSession,setMode,setOpen,setTheme,original,collect:sessionGalleryImages,galleryImage};
+function Fixture(){const [messages,setMessages]=React.useState(original),[session,setSession]=React.useState('session-a'),[mode,setMode]=React.useState('chat'),[open,setOpen]=React.useState(false),[theme,setTheme]=React.useState('theme-dark'),[inlineContent,setInlineContent]=React.useState('');
+window.galleryControls={setMessages,setSession,setMode,setOpen,setTheme,setInlineContent,original,collect:sessionGalleryImages,galleryImage};
 return <div className={'app '+theme}><ImageGalleryProvider sessionId={session} messages={messages} workspaceRoot={project} language="zh">
 {mode==='chat'?<><ToolImageArtifactViewer artifacts={[artifact]} language="zh"/><MessageBubble {...messageProps} message={messages[1]}/></>
+:mode==='inline'?<MessageBubble {...messageProps} message={{id:'inline',role:'assistant',content:inlineContent}}/>
+:mode==='document'?<MarkdownContent content={inlineContent} language="zh" compactImages={false}/>
 :mode==='inspector'?<MediaInspectorPreview kind="image" source={galleryImage(files.second).src} path={files.second} language="zh" onLoadingChange={no}/>
 :<button id="open-attachments" onClick={()=>setOpen(true)}>附件</button>}
 {open&&<ImagePreviewDialog language="zh" image={galleryImage(files.first)} images={[galleryImage(files.first),galleryImage(files.external)]} initialScope="attachments" onClose={()=>setOpen(false)}/>}
