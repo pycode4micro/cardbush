@@ -26,7 +26,7 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 
 ## 构建与启动
 
-需要 Node.js 22.12 及以上版本、npm 10 及以上版本。在仓库根目录安装依赖、构建并启动：
+需要 Node.js 24 LTS、npm 10 及以上版本，与 `.nvmrc`、CI 和 Agent Docker 镜像保持一致；Node.js 25 不在支持范围内。先在本机版本管理器中选择 Node.js 24，再在仓库根目录安装依赖、构建并启动：
 
 ```sh
 npm ci --ignore-scripts

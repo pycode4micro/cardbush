@@ -16,6 +16,12 @@ export const mcpOAuthConfigSchema = z.object({
   clientId: z.string().min(1).optional(),
   clientSecretEnv: z.string().min(1).optional(),
   clientSecretRef: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  expectedIssuer: z.string().url().refine(value => {
+    try {
+      const url = new URL(value);
+      return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+    } catch { return false; }
+  }, 'OAuth issuer must be an HTTP(S) URL without credentials, query or fragment.').optional(),
   callbackUrl: z.string().url().optional(),
   callbackPort: z.number().int().min(0).max(65535).optional(),
   resourceUrl: z.string().url().optional(),
@@ -30,6 +36,7 @@ export function mcpOAuthFromConfig(...layers: unknown[]) {
     const field = (camel: string, snake: string) => item[camel] !== undefined ? item[camel] : item[snake];
     const values = { clientId: field('clientId', 'client_id'), clientSecretEnv: field('clientSecretEnv', 'client_secret_env'),
       clientSecretRef: field('clientSecretRef', 'client_secret_ref'),
+      expectedIssuer: field('expectedIssuer', 'expected_issuer'),
       callbackUrl: field('callbackUrl', 'callback_url'), callbackPort: field('callbackPort', 'callback_port'),
       resourceUrl: field('resourceUrl', 'oauth_resource'), clientMetadataUrl: field('clientMetadataUrl', 'client_metadata_url'), scopes: item.scopes };
     // Normalize each layer before merging: either spelling in a user override wins.

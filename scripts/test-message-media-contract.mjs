@@ -51,7 +51,7 @@ assert.match(imageGallery, /readImageDataUrl\(pathValue\)/);
 assert.match(imageGallery, /message-image-preview-fallback/);
 assert.match(
   imageGallery,
-  /<img[\s\S]*?src=\{src\}[\s\S]*?loading="lazy"[\s\S]*?decoding="async"/,
+  /<MessageContentImage[\s\S]*?src=\{src\}[\s\S]*?loading="lazy"[\s\S]*?decoding="async"/,
   'historical image attachments must not synchronously decode every offscreen full-resolution image',
 );
 assert.match(imagePreviewDialog, /event\.ctrlKey[\s\S]*?event\.metaKey/);

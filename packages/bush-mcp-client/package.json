@@ -21,7 +21,7 @@
   "dependencies": {
     "@cardbush/bush-protocol": "^0.1.0",
     "@cardbush/bush-runtime": "^0.1.0",
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.3.1",
     "@cardbush/platform": "0.1.0",
     "cross-spawn": "^7.0.6"
   },

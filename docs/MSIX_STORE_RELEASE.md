@@ -37,12 +37,12 @@ replace these values exactly:
 
 `version` is the explicit Store package version, such as `1.0.0.0`. Use four
 integers, keep the last component zero, and increase the version for each update.
-Do not reuse one version for different beta builds. The npm application version
-in the source checkout is unchanged; `1.0.0-beta.5` itself is not a valid MSIX version.
+Do not reuse one version for different builds. Source version `1.0.8` corresponds
+to MSIX identity version `1.0.8.0`; the three-part source version itself is not a valid MSIX identity version.
 The MSIX build injects its identity version into About and Copy environment, and
 sets the packaged Electron version to the corresponding three-part SemVer. For
-example, identity `1.0.5.0` displays `1.0.5.0` and packages Electron metadata as
-`1.0.5`; EXE/AppImage and development builds retain their own source version.
+example, identity `1.0.8.0` displays `1.0.8.0` and packages Electron metadata as
+`1.0.8`; EXE/AppImage and development builds use `1.0.8`.
 Rebuild the package to apply this change; an existing MSIX is not modified.
 Confirm the highest
 version already used in Partner Center, including drafts/flights, before choosing

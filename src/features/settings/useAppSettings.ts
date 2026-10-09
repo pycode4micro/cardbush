@@ -6,7 +6,8 @@ import { normalizeIndividuation, readIndividuation, subscribeIndividuation } fro
 function withStoredIndividuation(settings: AppSettingsState): AppSettingsState {
   const stored = readIndividuation();
   const current = normalizeIndividuation(settings.individuation);
-  return current.habits === stored.habits && current.predictions === stored.predictions && current.summaryTokenThreshold === stored.summaryTokenThreshold
+  return current.habits === stored.habits && current.predictions === stored.predictions
+    && current.eventTokenThreshold === stored.eventTokenThreshold && current.habitTokenThreshold === stored.habitTokenThreshold && current.recallMode === stored.recallMode
     ? settings : { ...settings, individuation: stored };
 }
 

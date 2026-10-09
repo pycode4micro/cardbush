@@ -1,5 +1,6 @@
 import { ApplicationVoiceHost } from './features/voice/VoiceConversation';
 import { AssistantView } from './features/assistant/AssistantView';
+import { useAssistantModel } from './features/assistant/useAssistantModel';
 import {
   APPEARANCE_STORAGE_KEY,
   appearanceVariables,
@@ -476,6 +477,7 @@ function CardbushApp() {
     if (backendCapabilities.teamMode) void refreshRuntimeRendererPlugins().catch(() => undefined);
     else if (section === 'team') setSection('chat');
   }, [backendCapabilities.teamMode, section]);
+  const assistantModel = useAssistantModel(availableModels, backendDefaultModelId, saveModelReasoning, language);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     defaultModelId: backendDefaultModelId,
     modelsReady: modelConfigSyncReady,
@@ -2223,12 +2225,12 @@ function CardbushApp() {
               inspectorOpen={inspectorOpen} onToggleInspector={toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
               composerPortalTarget={section === 'assistant' && quickInputOpen ? quickInputTarget : null}
               subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}
-              composerControls={{ selectedModel: chat.selectedModel, availableModels, onModelChange: chat.setSelectedModel,
+              composerControls={{ ...assistantModel, availableModels,
                 onConfigureModels: () => openSettings('models'), referencePlanMode: chat.referencePlanMode, onReferencePlanModeChange: chat.setReferencePlanMode,
                 permissionMode: chat.permissionMode, onPermissionModeChange: chat.setPermissionMode,
                 subagentPermissionRouting: chat.subagentPermissionRouting, onSubagentPermissionRoutingChange: chat.setSubagentPermissionRouting,
-                reasoningLevelAvailable: backendCapabilities.reasoningLevelSelection, reasoningLevel: chat.reasoningLevel,
-                reasoningLevels: backendCapabilities.reasoningLevels, onReasoningLevelChange: chat.setReasoningLevel,
+                reasoningLevelAvailable: backendCapabilities.reasoningLevelSelection,
+                reasoningLevels: backendCapabilities.reasoningLevels,
                 skills: chat.skills, disabledSkillNames, onToggleSkill: toggleSkillEnabled }}
               onManageHosts={() => { agents.select('', undefined, 'settings'); setSection('agents'); }}/>
             {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView composerPortalTarget={section === 'agents' && quickInputOpen ? quickInputTarget : null} active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}

@@ -11,7 +11,7 @@ import { InMemoryProviderCapabilityStore, normalizeResponseStreamEvent, OpenAIRe
 
 const scope = 'arbitrary-service', model = 'arbitrary-model-714';
 const capability = { scope, model, capability: 'client_tool_search' };
-const compatibility = { scope, model, capability: 'responses_compatibility' };
+const compatibility = { scope, model, capability: 'responses_generation_compatibility' };
 function assertDisplayProjection(parameters, native) {
   const { _display_title, ...properties } = parameters.properties;
   assert.equal(_display_title.type, 'object');
@@ -284,18 +284,19 @@ test('explicit rejection falls back once, caches the fact, and pins portable his
   assert.equal(isNative(f.calls.at(-1).body), false);
 });
 
-test('all remote errors attempt collective compatibility once without inventing unsupported capability facts', async t => {
+test('auth, transient and ordinary validation failures do not select a different protocol', async t => {
   for (const failure of [
     ...[401, 403, 429, 500].map(status => ({ ...unsupported, status })),
     { status: 400, error: { code: 'invalid_value', param: 'tools[0].parameters', message: 'Invalid tool_search schema: unsupported property' } },
+    { status: 400, error: { code: 'unsupported_tool_type', param: 'tools[1].type', message: 'Unsupported function' } },
     { status: 400, error: { code: 'invalid_request_error', message: 'Invalid context' } },
   ]) {
     await t.test(`${failure.status} ${failure.error.param ?? ''}`, async t => {
       const f = await fixture(t, () => failure);
-      assert.equal((await executeModelRound(f.provider, request())).status, 'failed');
-      assert.equal(f.calls.length, 2); assert.equal(f.store.read(capability).status, 'unknown');
-      assert.deepEqual(f.calls.map(call => isNative(call.body)), [true, false]);
-      assert.equal(f.store.read(compatibility).status, 'supported');
+      assert.equal((await executeModelRound(f.provider, request({ tools: [...registry.definitions(), tool] }))).status, 'failed');
+      assert.equal(f.calls.length, 1); assert.equal(f.store.read(capability).status, 'unknown');
+      assert.deepEqual(f.calls.map(call => isNative(call.body)), [true]);
+      assert.equal(f.store.read(compatibility).status, 'unknown');
     });
   }
 });
@@ -317,20 +318,22 @@ test('native history can fall back without replaying partially exposed output', 
   assert.equal(g.calls.length, 1);
 });
 
-test('token counting failure selects compatible generation without a second native probe', async t => {
+test('counting validation cannot select generation compatibility; generation needs its own rejection', async t => {
   const f = await fixture(t, body => isNative(body) ? unsupported : {});
   assert.equal(await f.provider.countInputTokens(request()), undefined);
   assert.equal(f.calls.length, 1); assert.ok(f.calls.every(call => call.path.endsWith('/input_tokens')));
   assert.equal(f.store.read(capability).status, 'unknown');
   assert.equal(await f.provider.countInputTokens(request()), undefined);
-  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls.length, 2, 'a rejected counting input does not establish that the endpoint is absent');
+  assert.equal(f.store.read(compatibility).status, 'unknown');
   assert.equal((await executeModelRound(f.provider, request())).status, 'completed');
-  assert.equal(f.calls.length, 2); assert.equal(isNative(f.calls.at(-1).body), false);
+  assert.equal(f.calls.length, 4); assert.equal(isNative(f.calls.at(-1).body), false);
+  assert.deepEqual(f.calls.slice(-2).map(call => isNative(call.body)), [true, false]);
   const g = await fixture(t, (_body, path) => path.endsWith('/input_tokens') ? unsupported : {});
   assert.equal(await g.provider.countInputTokens(request()), undefined);
   assert.equal((await executeModelRound(g.provider, request())).status, 'completed');
-  assert.equal(g.calls.length, 2); assert.equal(g.store.read(compatibility).status, 'supported');
-  assert.equal(isNative(g.calls.at(-1).body), false);
+  assert.equal(g.calls.length, 2); assert.equal(g.store.read(compatibility).status, 'unknown');
+  assert.equal(isNative(g.calls.at(-1).body), true);
 });
 
 test('archived search definitions are injected only after all exact chunks, preserving earlier input', () => {
@@ -558,10 +561,10 @@ test('portable discovery projection leaves unrelated results and archive bytes u
     const params = toResponsesCreateParams(request({ messages: candidate }), { toolSearchMode: 'function' });
     assert.equal(params.input.find(item => item.type === 'function_call_output').output, content);
   }
-  messages[1].content = JSON.stringify({ ...JSON.parse(raw), action: 'search', more: true, next_offset: 5 });
+  messages[1].content = JSON.stringify({ ...JSON.parse(raw), action: 'search', more: true, next_cursor: 'mcp-search:1:fixture' });
   const page = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'function' });
   const receipt = JSON.parse(page.input.find(item => item.type === 'function_call_output').output);
-  assert.equal(receipt.more, true); assert.equal(receipt.next_offset, 5);
+  assert.equal(receipt.more, true); assert.equal(receipt.next_cursor, 'mcp-search:1:fixture');
   const locator = 'tool-result://s/t/load';
   messages[1].content = JSON.stringify({ archived: true, locator, originalChars: raw.length, preview: '' });
   const archive = JSON.stringify({ locator, offset: 0, next_offset: raw.length }) + '\n\n[text]\n' + raw;

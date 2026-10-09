@@ -28,7 +28,7 @@ If CardBush is useful to you, **[give it a star](https://github.com/pycode4micro
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-This README describes source version **1.0.0-beta.5**. The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. MSIX has its own four-part version number. There are currently no macOS, ARM64 or 32-bit packages.
+This README describes source version **1.0.8**; see the [version notes](docs/releases/1.0.8.md). The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. The corresponding MSIX package version is **1.0.8.0**. There are currently no macOS, ARM64 or 32-bit packages.
 
 ### Install and start
 
@@ -120,7 +120,7 @@ Some detailed guides are currently in Chinese; both READMEs link to the same imp
 
 ## Develop
 
-Node.js **>=22.12** and npm **>=10** are required; CI uses Node.js 24. Build installers on their target operating system.
+Node.js **24 LTS** and npm **>=10** are required. The project engine range, `.nvmrc`, CI and Agent Docker images use Node.js 24; Node.js 25 is not supported. Select Node.js 24 in your local version manager before installing dependencies. Build installers on their target operating system. See [dependency maintenance](docs/DEPENDENCY_SECURITY.md) for security overrides and validation.
 
 ```sh
 npm ci

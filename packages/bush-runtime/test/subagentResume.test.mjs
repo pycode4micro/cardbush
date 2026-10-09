@@ -44,7 +44,7 @@ function* respond(request, name, args, text = 'parent done') {
   else yield { ...base, sequence: 1, kind: 'text_delta', delta: text };
   yield { ...base, sequence: 2, kind: 'response_completed', finishReason: name ? 'tool_calls' : 'stop' };
 }
-test('resumes original child session after host recreation with its own history, prefix and model', async t => {
+test('resumes original fork history after host recreation with the current parent model configuration', async t => {
   const dataRoot = await mkdtemp(join(tmpdir(), 'subagent-resume-'));
   t.after(() => rm(dataRoot, { recursive: true, force: true }));
   const sessions = new SessionStore(), tasks = new SubagentTaskStore();
@@ -63,8 +63,12 @@ test('resumes original child session after host recreation with its own history,
     inheritBrowserScope: async (parent, child) => { browserScopes.push([parent, child]); } });
   let host = makeHost();
   const run = async (turn) => host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: `r-${turn}`, sessionId: 'parent', turnId: turn, model: turn === 'first' ? 'original-model' : 'new-parent-model',
-    tools: await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} }), messages: [{ role: 'system', content: 'original prefix' }, { role: 'user', content: turn }], metadata: {} });
-  assert.equal((await run('first')).payload.status, 'completed');
+    providerBinding: { bindingId: turn, revision: `revision-${turn}` },
+    maxOutputTokens: turn === 'first' ? 512 : 2048, reasoningEffort: turn === 'first' ? 'low' : 'high',
+    tools: await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} }), messages: [{ role: 'system', content: 'original prefix' }, { role: 'user', content: turn }],
+    metadata: { contextWindowTokens: turn === 'first' ? 128000 : 256000 } });
+  const first = await run('first');
+  assert.equal(first.payload.status, 'completed', JSON.stringify(first.payload));
   resumeId = tasks.list('parent')[0].taskId;
   host = makeHost();
   assert.equal((await run('second')).payload.status, 'completed');
@@ -72,7 +76,13 @@ test('resumes original child session after host recreation with its own history,
   assert.deepEqual(browserScopes, [['parent', requests[0].sessionId], ['parent', requests[0].sessionId]], 'initial and resumed children inherit browser scope');
   assert.equal(requests[1].sessionId, requests[0].sessionId);
   assert.notEqual(requests[1].turnId, requests[0].turnId);
-  assert.equal(requests[1].model, 'original-model');
+  assert.equal(requests[1].model, 'new-parent-model');
+  assert.deepEqual(requests[1].providerBinding, { bindingId: 'second', revision: 'revision-second' });
+  assert.equal(requests[1].maxOutputTokens, 2048);
+  assert.equal(requests[1].reasoningEffort, 'high');
+  assert.equal(requests[1].metadata.contextWindowTokens, 256000);
+  const projection = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: requests[0].sessionId } });
+  assert.deepEqual(projection.metadata.executionModel, { model: 'new-parent-model', modelConfigId: 'second', turnId: requests[1].turnId }, 'the child UI observes the new executing configuration');
   assert.ok(requests[1].messages.some(m => m.content.includes('private child identity alpha')));
   assert.equal(requests[1].messages.filter(m => m.content === 'original prefix').length, 1);
   assert.equal(tasks.list('parent')[1].resumedFromTaskId, resumeId);
@@ -109,10 +119,10 @@ test('resume preserves clean configuration while intersecting current permission
       session: { turns: [{ turnId: request.turnId, messages: [{ messageId: 'answer', message: { role: 'assistant', content: 'ok' } }] }] } };
   }, { createTaskId: () => `task${++taskIndex}`, saveChildRequest: async request => { saved = request; }, loadChildRequest: async () => saved });
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('unexpected'); } } });
-  const run = (args, metadata, tools = registry.definitions(), permissionMode = 'all_free') => coordinator.execute(
+  const run = (args, metadata, tools = registry.definitions(), permissionMode = 'all_free', model = 'fixture') => coordinator.execute(
     { protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name: 'subagent', argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId: 'parent', turnId: 't', round: 1, ordinal: 0 }, undefined,
-    { request: { requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools, metadata, permissionMode, maxOutputTokens: 4096 }, contextMessages: [] });
+    { request: { requestId: 'r', sessionId: 'parent', turnId: 't', model, tools, metadata, permissionMode, maxOutputTokens: 4096 }, contextMessages: [] });
   const first = await run({ prompt: 'first', mode: 'clean', system_prompt: 'private instructions', allowed_tools: ['read_file', 'write_file'],
     settings: { max_context_tokens: 8192, max_output_tokens: 512, max_turns: 4, permission_routing: 'parent',
       permission_mode: 'user_free', allowed_skills: ['a', 'b'], disabled_skills: ['old-disabled'], disabled_tools: ['write_file'] } },
@@ -120,9 +130,10 @@ test('resume preserves clean configuration while intersecting current permission
   assert.equal(first.kind, 'returned', JSON.stringify(first));
   const resumed = await run({ prompt: 'continue', task_id: 'task1' },
     { contextWindowTokens: 32768, pluginAgentMaxTurns: 2, allowedSkills: ['b', 'c'], disabledSkills: ['new-disabled'],
-      childAgentPolicy: { disabledTools: ['delete_file'] } }, registry.definitions().filter(tool => tool.name !== 'write_file'), 'task_free');
+      childAgentPolicy: { disabledTools: ['delete_file'] } }, registry.definitions().filter(tool => tool.name !== 'write_file'), 'task_free', 'new-parent-model');
   assert.equal(resumed.kind, 'returned', JSON.stringify(resumed));
   const child = requests[1];
+  assert.equal(child.model, 'fixture', 'explicit clean configuration remains independent');
   assert.equal(child.metadata.contextWindowTokens, 8192); assert.equal(child.maxOutputTokens, 512);
   assert.equal(child.metadata.pluginAgentMaxTurns, 2); assert.equal(child.permissionMode, 'task_free');
   assert.equal(child.metadata.permissionScopeSessionId, child.sessionId);
@@ -131,6 +142,10 @@ test('resume preserves clean configuration while intersecting current permission
   assert.ok(child.metadata.disabledTools.includes('write_file')); assert.ok(child.metadata.disabledTools.includes('delete_file'));
   assert.deepEqual(child.metadata.disabledSkills, ['old-disabled', 'new-disabled']);
   assert.deepEqual(child.prefixMessages, [{ role: 'system', content: 'private instructions' }]);
+  assert.equal((await run({ prompt: 'continue again', task_id: 'task2' }, { contextWindowTokens: 32768 }, registry.definitions(), 'task_free', 'third-model')).kind, 'returned');
+  assert.equal(requests[2].model, 'fixture');
+  assert.equal(requests[2].maxOutputTokens, 512);
+  assert.equal(requests[2].metadata.subagentMode, 'clean', 'repeated continuations retain the original explicit mode');
 });
 
 test('await_subagents any returns the first result while its sibling stays running', async () => {

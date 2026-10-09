@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mcpOAuthFromConfig } from '../dist/index.js';
+import { mcpOAuthFromConfig, mcpOAuthConfigSchema } from '../dist/index.js';
+
+test('trusted issuer survives configuration layering and rejects non-issuer URLs', () => {
+  assert.deepEqual(mcpOAuthFromConfig({ expectedIssuer: 'https://old.example' }, { expected_issuer: 'https://auth.example/tenant' }), { expectedIssuer: 'https://auth.example/tenant' });
+  assert.deepEqual(mcpOAuthFromConfig({ expected_issuer: 'https://old.example' }, { expectedIssuer: null }), {});
+  for (const value of ['file:///secret', 'https://user:pass@auth.example', 'https://auth.example?token=x', 'https://auth.example/#fragment']) {
+    assert.throws(() => mcpOAuthFromConfig({ expected_issuer: value }));
+  }
+  assert.equal(mcpOAuthConfigSchema.safeParse({ expectedIssuer: 'not a URL' }).success, false);
+});
 
 test('private references override legacy environment configuration and null clears either alias', () => {
   const ref = 'c'.repeat(64);

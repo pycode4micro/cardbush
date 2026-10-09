@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@cardbush/bush-runtime": "0.1.0",
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.3.1",
     "@napi-rs/canvas": "0.1.80",
     "@pdf-lib/fontkit": "1.1.1",
     "@xmldom/xmldom": "0.9.12",

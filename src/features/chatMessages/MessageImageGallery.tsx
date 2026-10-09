@@ -7,13 +7,13 @@ import { ConversationHostContext } from '../conversationHost';
 import { useConversationFileSource } from '../conversationFileSource';
 import { ImagePreviewDialog, type ImagePreviewSource } from './ImagePreviewDialog';
 import { galleryImageKey } from './imageGallery';
+import { MessageContentImage, MessageImageGalleryFrame } from './MessageImageGalleryFrame';
 
 export type MessageGalleryImage = { path: string; name?: string };
 
-export function MessageImageGallery({ images, language, inline = false }: {
+export function MessageImageGallery({ images, language }: {
   images: MessageGalleryImage[];
   language: AppLanguage;
-  inline?: boolean;
 }) {
   const uniqueImages = useMemo(() => {
     const seen = new Set<string>();
@@ -24,43 +24,20 @@ export function MessageImageGallery({ images, language, inline = false }: {
       return true;
     });
   }, [images]);
-  const [selectedPath, setSelectedPath] = useState('');
   const [preview, setPreview] = useState<ImagePreviewSource | null>(null);
-  const selected = uniqueImages.find(image => image.path === selectedPath) ?? uniqueImages[0];
-  const thumbnailRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  if (!selected) return null;
-  const multiple = uniqueImages.length > 1;
-  const Container = inline ? 'span' : 'div';
-  return <Container className={`message-image-gallery${multiple ? ' has-thumbnails' : ''}`}>
-    <MessageGalleryImageButton key={selected.path} image={selected} language={language} onPreview={setPreview} />
-    {multiple && <span className="message-image-thumbnails" role="group" aria-label={language === 'zh' ? '切换图片' : 'Choose image'}>
-      {uniqueImages.map((image, index) => <MessageGalleryImageButton
-        key={image.path} image={image} language={language} thumbnail
-        selected={image === selected}
-        buttonRef={element => { thumbnailRefs.current[index] = element; }}
-        onSelect={() => setSelectedPath(image.path)}
-        onNavigate={key => {
-          const next = key === 'Home' ? 0 : key === 'End' ? uniqueImages.length - 1
-            : (index + (key === 'ArrowUp' ? -1 : 1) + uniqueImages.length) % uniqueImages.length;
-          setSelectedPath(uniqueImages[next].path);
-          thumbnailRefs.current[next]?.focus();
-        }}
-      />)}
-    </span>}
+  if (!uniqueImages.length) return null;
+  return <>
+    <MessageImageGalleryFrame language={language}>
+      {uniqueImages.map(image => <MessageGalleryImageButton key={image.path} image={image} language={language} onPreview={setPreview} />)}
+    </MessageImageGalleryFrame>
     {preview && <ImagePreviewDialog image={preview} language={language} onClose={() => setPreview(null)} />}
-  </Container>;
+  </>;
 }
 
-function MessageGalleryImageButton({ image, language, thumbnail = false, selected, buttonRef,
-  onPreview, onSelect, onNavigate }: {
+function MessageGalleryImageButton({ image, language, onPreview }: {
   image: MessageGalleryImage;
   language: AppLanguage;
-  thumbnail?: boolean;
-  selected?: boolean;
-  buttonRef?: (element: HTMLButtonElement | null) => void;
-  onPreview?: (image: ImagePreviewSource) => void;
-  onSelect?: () => void;
-  onNavigate?: (key: string) => void;
+  onPreview: (image: ImagePreviewSource) => void;
 }) {
   const host = useContext(ConversationHostContext);
   const pathValue = image.path;
@@ -96,25 +73,18 @@ function MessageGalleryImageButton({ image, language, thumbnail = false, selecte
   const src = fallbackSource || source.source;
   const unavailable = failed || Boolean(source.error);
   return <button
-    ref={buttonRef}
-    className={`${thumbnail ? 'message-image-thumbnail' : 'message-image-preview'}${unavailable ? ' is-failed' : ''}`}
-    type="button" aria-label={name} aria-pressed={thumbnail ? selected : undefined}
+    className={`message-image-preview${unavailable ? ' is-failed' : ''}`}
+    type="button" aria-label={name}
     onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { image: true, language })}
     onClick={event => {
-      if (thumbnail) { onSelect?.(); return; }
       const element = event.currentTarget.querySelector('img');
-      if (!unavailable && src) onPreview?.({ src, name, path: pathValue,
+      if (!unavailable && src) onPreview({ src, name, path: pathValue,
         naturalWidth: element?.naturalWidth, naturalHeight: element?.naturalHeight });
     }}
-    onKeyDown={thumbnail ? event => {
-      if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
-        event.preventDefault(); onNavigate?.(event.key);
-      }
-    } : undefined}
   >
     {unavailable ? <span className="message-image-preview-fallback">
-      <FileIcon size={20} />{!thumbnail && <span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>}
+      <FileIcon size={20} /><span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>
     </span> : !src ? <span className="message-image-loading" role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>
-      : <img src={src} alt={name} loading="lazy" decoding="async" onError={() => void recoverLocalImage()} />}
+      : <MessageContentImage src={src} alt={name} loading="lazy" decoding="async" onError={() => void recoverLocalImage()} />}
   </button>;
 }

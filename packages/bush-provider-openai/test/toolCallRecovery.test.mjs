@@ -22,7 +22,7 @@ for (const mode of ['native-full', 'native-stored', 'compatible']) {
     const requests = [], writes = [], failures = [];
     const stored = mode === 'native-stored';
     const capabilities = new InMemoryProviderCapabilityStore();
-    if (mode === 'compatible') capabilities.observe({ scope: mode, model: 'fixture', capability: 'responses_compatibility' }, { status: 'supported' });
+    if (mode === 'compatible') capabilities.observe({ scope: mode, model: 'fixture', capability: 'responses_generation_compatibility' }, { status: 'supported' });
     const server = createServer(async (req, res) => {
       try {
         let raw = ''; for await (const chunk of req) raw += chunk;

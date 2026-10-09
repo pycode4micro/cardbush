@@ -45,7 +45,9 @@ export function toolOutputPresentation(executions: ChatToolExecution[], aliases:
   const inlineMedia = new Map<string, ChatToolArtifact>();
   for (const [source, key] of sourceKeys) {
     const artifact = byPath.get(key)!;
-    if (artifact.display !== 'attachment' && ['image', 'video', 'audio'].includes(artifact.type)) {
+    // Only images have a separate, on-demand execution viewer. Audio/video
+    // must render at an authored reference, never automatically after tools.
+    if (artifact.display !== 'attachment' && artifact.type === 'image') {
       inlineMedia.set(source, artifact);
       inlineMedia.set(key, artifact);
     }

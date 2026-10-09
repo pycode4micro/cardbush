@@ -28,7 +28,7 @@
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-本文介绍源码版本 **1.0.0-beta.5** 的能力。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。MSIX 使用独立的四段版本号。目前不提供 macOS、ARM64 或 32 位安装包。
+本文介绍源码版本 **1.0.8** 的能力，改动见[版本说明](docs/releases/1.0.8.md)。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。对应的 MSIX 包版本为 **1.0.8.0**。目前不提供 macOS、ARM64 或 32 位安装包。
 
 ### 安装与开始使用
 
@@ -118,7 +118,7 @@ Linux 的 CPU／内存限制尚未与 Windows 完全一致。外部插件是独�
 
 ## 开发与打包
 
-需要 Node.js **>=22.12**、npm **>=10**；CI 使用 Node.js 24。安装程序在对应操作系统上构建。
+需要 Node.js **24 LTS**、npm **>=10**。项目版本约束、`.nvmrc`、CI 与 Agent Docker 镜像统一采用 Node.js 24，不支持 Node.js 25；安装依赖前请在本机版本管理器中切换到 Node.js 24。安装程序在对应操作系统上构建。安全依赖覆盖与验证方法见[依赖维护说明](docs/DEPENDENCY_SECURITY.md)。
 
 ```sh
 npm ci

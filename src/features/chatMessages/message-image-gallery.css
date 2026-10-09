@@ -1,0 +1,110 @@
+/* The normal reply column is 720px; keep authored previews around half that
+   width, with a height cap for tall screenshots. Full-size viewers are separate. */
+:is(.message-row, .assistant-message) .markdown-content img.message-content-image {
+  max-width: min(50%, 360px);
+  max-height: min(40vh, 280px);
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+.message-image-gallery {
+  --message-image-height: min(280px, 40vh);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  width: min(100%, 360px);
+  max-width: 100%;
+  height: min(40vh, 280px);
+  margin: 10px 0;
+  overflow: hidden;
+}
+
+.message-image-gallery-stage {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.message-image-gallery-item:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+.message-image-gallery-item > :is(span, figure) {
+  display: contents;
+}
+
+.message-image-gallery-item > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.message-image-gallery:not(.is-ungrouped) .message-image-gallery-stage img.message-content-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 0;
+  border-radius: 0;
+}
+
+.message-image-gallery-rail {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-image-gallery-thumbnail {
+  flex: 0 0 46px;
+  width: 100%;
+  min-height: 46px;
+  padding: 2px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.message-image-gallery-thumbnail:is([aria-pressed="true"], :focus-visible) {
+  border-color: var(--accent);
+}
+
+.message-image-gallery .message-image-gallery-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 38px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.message-image-gallery.is-ungrouped,
+.message-image-gallery.is-ungrouped .message-image-gallery-stage {
+  display: contents;
+}
+
+.message-image-gallery.is-ungrouped .message-image-gallery-item {
+  display: block;
+  width: auto;
+  height: auto;
+  margin: 10px 0;
+}

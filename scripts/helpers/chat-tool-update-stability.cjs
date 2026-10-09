@@ -5,7 +5,6 @@ const assert = require('node:assert/strict');
 module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright' }) => {
   const fs = require('node:fs/promises');
   const path = require('node:path');
-  const styleKey = await window.webContents.insertCSS(await fs.readFile(path.join(root, 'src/features/tools/message-tool-outputs.css'), 'utf8'));
   await run('window.stabilityOriginal = { props: { ...chatProps }, theme: window.viewTheme }; void 0;');
   try {
   await run(`
@@ -107,7 +106,6 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
   console.log('Tool update stability passed (' + theme + '): lifecycle, large media, per-frame geometry, detached reading and disclosure.');
   } finally {
     await run('cancelAnimationFrame(window.stabilityFrame); window.viewTheme = stabilityOriginal.theme; updateChat(stabilityOriginal.props);');
-    await window.webContents.removeInsertedCSS(styleKey);
     await pause();
   }
 };

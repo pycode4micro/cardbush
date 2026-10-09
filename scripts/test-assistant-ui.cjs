@@ -99,6 +99,13 @@ app.whenReady().then(async () => {
   const fill = (selector, value) => read(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})();`);
   try {
     await win.loadFile(path.join(directory, 'index.html')); await until('document.querySelectorAll(".assistant-message").length===2');
+    if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'scroll') {
+      await read('sessionStorage.setItem("cardbush_scroll_debug","true")');
+      try { await require('./helpers/assistant-scroll.cjs')({ read, until, fill, click, pause, win, directory }); }
+      finally { fs.writeFileSync(path.join(directory, 'scroll-diagnostics.json'), JSON.stringify(await read('window.__cardbushScrollDebug??[]'), null, 2)); }
+      console.log('Assistant scroll UI passed. Diagnostics: ' + directory);
+      return;
+    }
     assert.equal(await read('document.body.innerText.includes("口头回复")||document.body.innerText.includes("工具日志")||document.body.innerText.includes("用户转写")'), false);
     await until('document.querySelector(".assistant-message-assistant h2")');
     await read('fixture.busy=true;fixture.retry={attempt:2,maxAttempts:3,nextRetryMs:1000,code:"ECONNRESET",createdAt:new Date().toISOString()};void 0');

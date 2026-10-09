@@ -33,7 +33,7 @@ import { ResponseToolCalls } from "./responsesToolCalls.js";
 import { ResponseText, ResponseTextError } from "./responsesText.js";
 import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
 import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
-import { compatibleToolImageProjection, RESPONSES_COMPATIBILITY_CAPABILITY } from "./responsesCompatibility.js";
+import { compatibleToolImageProjection, responsesCompatibilityRejection, RESPONSES_COMPATIBILITY_CAPABILITY } from "./responsesCompatibility.js";
 import { providerToolAliases, providerToolName } from "./toolNames.js";
 import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
 import { responsesInputFingerprint } from "./responsesInputFingerprint.js";
@@ -405,7 +405,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     options: ModelStreamOptions = {},
   ): Promise<ModelInputTokenCount | undefined> {
     options.signal?.throwIfAborted();
-    if (this.#config.chatGpt || this.#compatibilityMode(request) || this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
+    if (this.#config.chatGpt || this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
       return undefined;
     }
     const projection = await this.#project(request);
@@ -414,7 +414,6 @@ export class OpenAIResponsesProvider implements ModelProvider {
     // Do not send an oversized body to the counting endpoint either. Runtime
     // can use the local estimate and the independent byte budget to compact.
     if (budget.bytes > budget.maxBytes) return undefined;
-    if (projection.compatibilityMode) return undefined;
     try {
       const result = await this.#client.responses.inputTokens.count(
         toResponsesInputTokenCountParams(projection.params), { signal: options.signal,
@@ -435,7 +434,11 @@ export class OpenAIResponsesProvider implements ModelProvider {
     } catch (error) {
       if (options.signal?.aborted || error instanceof OpenAI.APIUserAbortError) throw error;
       const failure = providerFailureEvent(request.requestId, 0, error, false);
-      if (!failure.retryable) this.#enableCompatibility(request, "input_token_count");
+      // The counting route has its own capability. Its absence says nothing
+      // about generation, native tools, images or response continuation.
+      if ([404, 405, 501].includes(failure.status ?? 0)) {
+        this.#observeCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY, "unsupported", `input_token_count_http_${failure.status}`);
+      }
       this.#compatibilityDiagnostic(request, options, "input_token_count", "local_estimate", failure);
       return undefined;
     }
@@ -447,7 +450,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
   ): AsyncIterable<ModelEvent> {
     try {
       let projection = await this.#project(request);
-      // One collective fallback, regardless of the provider's error vocabulary.
+      // At most one compatibility retry after an explicit feature rejection.
       // Buffer only response_started: a header/created event is not usable output.
       for (let attempt = 0; attempt < 2; attempt++) {
         options.signal?.throwIfAborted();
@@ -530,8 +533,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
             yield failure;
             return;
           }
+          if (!responsesCompatibilityRejection(failure, params, error instanceof OpenAI.APIError ? error.param : undefined)) {
+            this.#compatibilityDiagnostic(request, options, "generation", "failed", failure);
+            yield failure;
+            return;
+          }
           const retry = !projection.compatibilityMode && attempt === 0 && !outputExposed;
-          this.#enableCompatibility(request, "generation");
+          this.#enableCompatibility(request);
           this.#compatibilityDiagnostic(request, options, "generation",
             retry ? "retry" : projection.compatibilityMode ? "failed" : "next_request", failure);
           if (!retry) { yield failure; return; }
@@ -549,9 +557,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
       this.#readCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY) === "supported";
   }
 
-  #enableCompatibility(request: ModelRequest, source: ProviderCompatibilityDiagnostic["source"]): void {
+  #enableCompatibility(request: ModelRequest): void {
     if (this.#readCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY) !== "supported") {
-      this.#observeCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY, "supported", `${source}_failed`);
+      this.#observeCapability(request.model, RESPONSES_COMPATIBILITY_CAPABILITY, "supported", "generation_protocol_rejected");
     }
   }
 

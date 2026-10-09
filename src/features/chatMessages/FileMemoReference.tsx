@@ -11,6 +11,7 @@ import { mediaPresentationKey, PresentedMediaContext } from './mediaPresentation
 import { FileMemoScopeContext } from './FileMemoScope';
 import { ConversationHostContext } from '../conversationHost';
 import { ConversationFileReference } from './ConversationFileReference';
+import { MessageContentImage, useImageGalleryFallback } from './MessageImageGalleryFrame';
 
 export function FileMemoReference({ reference, children, inline = false, language = 'zh', load = fetchFileMemo }: {
   reference: string; children?: ReactNode; inline?: boolean; language?: 'zh' | 'en';
@@ -39,6 +40,8 @@ export function FileMemoReference({ reference, children, inline = false, languag
     return () => { controller.abort(); window.removeEventListener('focus', refresh); };
   }, [reference, load, sessionId, turnId, fileName, key, host?.runtime]);
   const current = state?.key === key ? state : undefined;
+  const resolvedFile = current?.result && current.result.status !== 'unresolved' ? current.result.memo.file.path : undefined;
+  useImageGalleryFallback(Boolean(resolvedFile && !isImagePath(resolvedFile)));
   if (current?.failed || current?.result?.status === 'unresolved') {
     const reason = current.result?.status === 'unresolved' ? current.result.reason : undefined;
     const detail = current.failed
@@ -76,9 +79,11 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const source = fileUrl(path);
   return <span className="file-memo-reference">
     {media && html ? <InlineHtmlPreview key={path} path={path} fileVersion={JSON.stringify(htmlVersion)} title={typeof label === 'string' ? label : memo.file.name} language={language} />
-      : media && isImagePath(path) ? <img src={source} alt={typeof children === 'string' ? children : memo.file.name}
+      : media && isImagePath(path) ? <MessageContentImage src={source} alt={typeof children === 'string' ? children : memo.file.name}
+      role="button" tabIndex={0}
       onError={() => setFailedMedia(mediaKey)}
       onClick={() => openInspector(path, memo.file.name)}
+      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}
       onContextMenu={event => openFileContextMenu(event, path, { image: true, language })} />
       : media && isVideoPath(path) ? <InlineVideo src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : media && isAudioPath(path) ? <InlineAudio src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />

@@ -89,13 +89,15 @@ test('Responses compatibility fallback keeps the routing key and usage points to
   const wires = [];
   const provider = new OpenAIResponsesProvider({ apiKey: 'fixture', baseURL: ARK, fetch: async (_url, init) => {
     wires.push(JSON.parse(init.body));
-    return wires.length === 1 ? Response.json({ error: { message: 'Unsupported tool shape', code: 'unsupported_value' } }, { status: 400 }) : completed();
+    return wires.length === 1 ? Response.json({ error: { message: 'Unknown tool type: tool_search', code: 'unsupported_value' } }, { status: 400 }) : completed();
   } });
-  const host = new InMemoryRuntimeHost({ provider, registerDefaultWorkspaceTools: false });
+  const registry = new ToolRegistry();
+  const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-  const terminal = await host.runSessionTurn(turn());
+  const terminal = await host.runSessionTurn({ ...turn(), tools: registry.definitions() });
   assert.equal(terminal.payload.status, 'completed');
   assert.equal(wires.length, 2);
+  assert.deepEqual(wires.map(body => body.tools.some(tool => tool.type === 'tool_search')), [true, false]);
   assert.equal(wires[0].prompt_cache_key, wires[1].prompt_cache_key);
   const events = host.events('conversation-A', 'turn-1');
   const dispatches = events.filter(event => event.kind === 'provider_input_observed');

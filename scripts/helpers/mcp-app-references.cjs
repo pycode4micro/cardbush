@@ -11,7 +11,8 @@ module.exports = async ({ win, read, until, send, click }) => {
   const close = async () => { await read('document.querySelector("button[aria-label=关闭界面]").click()'); await until('!document.querySelector("iframe")'); };
   const reset = async script => { await read('clearFixture()'); await until('!document.querySelector(".message-row,.mcp-app-panel")'); await read(script); };
 
-  await until('!!document.querySelector(".message-row.streaming") && !!document.querySelector(".message-tool-artifact")');
+  await until('!!document.querySelector(".message-row.streaming")');
+  assert.equal(await read('document.querySelector(".message-tool-artifact")'), null, 'tool attachments do not add cards below the running transcript');
   assert.equal(await read('document.querySelector("iframe,.mcp-app-panel,.message-app-reference")'), null, 'loop text cannot load an App');
   assert.deepEqual(await read('operations'), [], 'running tool outputs do not discover, open or initialize Apps');
   await read('fixtureContent="没有提供 App 链接。";renderFixture(false)');

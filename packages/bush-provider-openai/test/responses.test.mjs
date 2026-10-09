@@ -662,10 +662,12 @@ test("falls back once and remembers an unsupported input-token count endpoint", 
     const observation = capabilityStore.read({
       scope: "unsupported-count-endpoint",
       model: request.model,
-      capability: "responses_compatibility",
+      capability: "input_token_count",
     });
-    assert.equal(observation.status, "supported");
-    assert.equal(observation.reason, "input_token_count_failed");
+    assert.equal(observation.status, "unsupported");
+    assert.equal(observation.reason, `input_token_count_http_${status}`);
+    assert.equal(capabilityStore.read({ scope: "unsupported-count-endpoint", model: request.model,
+      capability: "responses_generation_compatibility" }).status, "unknown");
   }
 
   const events = [];
@@ -715,12 +717,12 @@ test("logs count authentication failure, uses local estimation and surfaces a ge
   const diagnostics = [];
   assert.equal(await provider.countInputTokens(request, { onCompatibilityDiagnostic: event => diagnostics.push(event) }), undefined);
   assert.equal(await provider.countInputTokens(request), undefined);
-  assert.equal(countRequests, 1);
+  assert.equal(countRequests, 2, 'authentication errors do not establish a missing counting capability');
   assert.equal(diagnostics[0].error.status, 401);
   assert.equal(diagnostics[0].error.code, 'invalid_api_key');
   const events = [];
   for await (const event of provider.stream(request)) events.push(event);
-  assert.equal(countRequests, 2);
+  assert.equal(countRequests, 3, 'generation reports the authentication failure without a compatibility retry');
   assert.equal(events.at(-1).kind, 'response_failed');
   assert.equal(events.at(-1).status, 401);
   assert.deepEqual(capabilityStore.read({
@@ -913,12 +915,11 @@ test("does not hide a continuation failure after support was explicitly observed
     metadata: {},
   })) events.push(event);
 
-  assert.equal(received.length, 2);
+  assert.equal(received.length, 1);
   assert.equal(received[0].previous_response_id, "resp_previous");
   assert.equal(received[0].input.length, 1);
-  assert.equal(received[1].previous_response_id, undefined);
-  assert.equal(received[1].store, false);
-  assert.equal(received[1].input.length, 2);
+  assert.equal(capabilityStore.read({ scope: "known-continuation-endpoint", model: "response-model",
+    capability: "responses_generation_compatibility" }).status, "unknown");
   assert.equal(events.at(-1).kind, "response_failed");
   assert.equal(events.at(-1).retryable, false);
   assert.equal(events.at(-1).status, 400);

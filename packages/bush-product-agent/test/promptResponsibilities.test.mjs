@@ -57,7 +57,9 @@ test('maintenance and discovery retain their authorization and evidence boundari
 
 test('execution-specific guidance is discoverable on the tool or its parameter', () => {
   const subagent = tool('subagent');
-  assert.match(subagent.description, /asynchronously.*task ID/);
+  assert.match(subagent.description, /existing child with task_id/);
+  assert.match(subagent.description, /Continue independent parent work/);
+  assert.match(subagent.description, /use await_subagents.*instead of polling/);
   assert.match(subagent.inputSchema.properties.mode.description, /clean only when the user explicitly requests/);
   assert.match(subagent.inputSchema.properties.prompt.description, /original user's communication language/);
   assert.match(tool('await_subagents').description, /without polling/);

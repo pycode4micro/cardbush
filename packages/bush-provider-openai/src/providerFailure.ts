@@ -114,7 +114,8 @@ export function providerFailureEvent(
       code,
       message: error.message,
       retryable: !QUOTA_CODES.has(code) &&
-        (status === 408 || status === 409 || status === 429 || status >= 500),
+        (status === 408 || status === 409 || status === 429 ||
+          (status >= 500 && status !== 501 && status !== 505)),
       status,
       providerRequestId: error.requestID ?? undefined,
       retryAfterMs: retryAfterMs(error.headers),

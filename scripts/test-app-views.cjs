@@ -115,6 +115,7 @@ async function buildViews() {
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning' ? [
       'src/hooks/useCardbushChat.ts', 'src/features/settings/conversationModel.ts',
+      'src/features/assistant/useAssistantModel.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'pasted-text' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -726,6 +727,16 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-backdrop') {
+      await require('./helpers/composer-backdrop.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no backdrop renderer errors');
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'reflow-scroll') {
+      await require('./helpers/chat-reflow-scroll.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no reflow renderer errors');
+      assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll') {
       for (const theme of ['theme-dark']) await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme });
       assert.deepEqual(await run('failures'), [], 'no session scroll renderer errors');
@@ -843,6 +854,7 @@ app.whenReady().then(async () => {
       return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll') {
+      await require('./helpers/chat-reflow-scroll.cjs')({ run, until, pause });
       await require('./helpers/chat-window-scroll.cjs')({ run, until, pause, window });
       await require('./helpers/chat-window-scroll.cjs')({ run, until, pause, window, theme: 'theme-dark' });
       await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root });

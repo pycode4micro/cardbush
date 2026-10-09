@@ -5,6 +5,7 @@ import { basename, isAudioPath, isImagePath, isVideoPath, resourceTargetKind } f
 import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { InlineAudio, InlineVideo } from './InlineMedia';
 import type { AppLanguage } from '../../types';
+import { MessageContentImage, useImageGalleryFallback } from './MessageImageGalleryFrame';
 
 /** Authored remote references use the same viewers, but never resolve on this computer. */
 export function ConversationFileReference({ path, children, inline = false, language, fileVersion }: {
@@ -17,13 +18,14 @@ export function ConversationFileReference({ path, children, inline = false, lang
   const file = useConversationFileSource(path, Boolean(host && media), { revision: fileVersion });
   const label = children || basename(path);
   const kind = resourceTargetKind(path);
+  useImageGalleryFallback(!inline || !(isImagePath(path) || /\.svg$/i.test(path)));
   if (kind !== 'local-file' && kind !== 'ssh-file') return <span>{label} · {language === 'zh' ? '文件引用不可用' : 'File reference unavailable'}</span>;
   if (host && inline && html) return <InlineHtmlPreview path={path} title={typeof label === 'string' ? label : basename(path)} language={language} fileVersion={fileVersion} />;
   if (media && file.source && failed !== file.source) {
     const props = { src: file.source, onError: () => setFailed(file.source), 'aria-label': typeof label === 'string' ? label : basename(path) };
     if (isVideoPath(path)) return <InlineVideo {...props} language={language} />;
     if (isAudioPath(path)) return <InlineAudio {...props} language={language} />;
-    return <img {...props} alt={props['aria-label']} role="button" tabIndex={0} onClick={() => host?.openFile(path)}
+    return <MessageContentImage {...props} alt={props['aria-label']} role="button" tabIndex={0} onClick={() => host?.openFile(path)}
       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); host?.openFile(path); } }} />;
   }
   return <span className="file-memo-reference">

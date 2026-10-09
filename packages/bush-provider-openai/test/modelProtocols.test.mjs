@@ -120,14 +120,16 @@ test('Responses includes stable session headers for counting, follow-ups and con
 });
 
 test('Responses compatibility retry reuses the conversation ID', async () => {
-  const seen = [];
+  const seen = [], bodies = [];
   const provider = new OpenAIResponsesProvider({ apiKey: 'fixture-key', baseURL: 'https://opencode.ai/zen/go/v1', fetch: async (_url, init) => {
     seen.push(new Headers(init.headers).get('x-opencode-session'));
-    if (seen.length === 1) return Response.json({ error: { message: 'unsupported Responses field', code: 'unsupported_value' } }, { status: 400 });
+    bodies.push(JSON.parse(init.body));
+    if (seen.length === 1) return Response.json({ error: { message: 'Unsupported store', code: 'unsupported_value' } }, { status: 400 });
     return sse([{ type: 'response.completed', response: { id: 'resp-1', model: 'fixture', created_at: 1, status: 'completed', output: [], tools: [], store: false } }]);
   } });
-  assert.equal((await collect(provider.stream(req()))).at(-1).kind, 'response_completed');
+  assert.equal((await collect(provider.stream(req({ providerState: { strategy: 'response_chain' } })))).at(-1).kind, 'response_completed');
   assert.deepEqual(seen, ['conversation-A', 'conversation-A']);
+  assert.deepEqual(bodies.map(body => body.store), [true, false]);
 });
 
 for (const [adapter, Provider, events, path] of [

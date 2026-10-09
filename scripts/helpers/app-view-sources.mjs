@@ -16,6 +16,7 @@ export const appViewFiles = [
   'src/features/inspector/useInspectorRecovery.ts',
   'src/features/inspector/useInspectorTileDrag.ts',
   'src/features/chat/ChatPanel.tsx',
+  'src/features/chat/scrollDebug.ts',
   'src/features/chat/useConversationWorkSummary.ts',
   'src/features/chat/ScrollBottomButton.tsx',
   'src/features/chat/TaskWorkspaceBar.tsx',

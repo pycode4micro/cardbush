@@ -36,6 +36,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined, ca
 export class IntegratedBrowser {
   private readonly entries = new Map<string, Entry>();
   private readonly scopes = new Map<string, Scope>();
+  private readonly parents = new Map<string, string>();
   private readonly attached = new Set<number>();
   constructor(private readonly options: {
     getContents: (id: number) => WebContents | undefined;
@@ -47,11 +48,32 @@ export class IntegratedBrowser {
     const visited = new Set<string>();
     while (!visited.has(scopeId)) {
       visited.add(scopeId);
-      const parent = this.scopes.get(scopeId)?.inheritedFrom?.parentId;
+      const parent = this.parents.get(scopeId);
       if (!parent) break;
       scopeId = parent;
     }
     return scopeId;
+  }
+  /** Return only a newly created guest through the host-verified task ancestry. */
+  private grantCreatedPage(scopeId: string, entry: Entry): void {
+    for (let parentId = this.parents.get(scopeId); parentId; parentId = this.parents.get(parentId)) {
+      const previous = this.scopes.get(parentId);
+      // A parent re-bound in another window must not receive an old-window guest.
+      if (previous && previous.ownerId !== entry.ownerId) break;
+      const parent = previous ?? { ownerId: entry.ownerId, entries: new Map<string, Entry>(), selected: '', bindingRevision: 0 };
+      parent.entries.set(entry.tabId, entry);
+      if (!parent.selected) parent.selected = entry.tabId;
+      // An additive grant is not a new explicit binding. Keep both sides' page
+      // choices, including on the next child continuation.
+      this.scopes.set(parentId, parent);
+    }
+  }
+  private forgetClosedPage(entry: Entry): void {
+    for (const scope of this.scopes.values()) {
+      if (scope.entries.get(entry.tabId) !== entry) continue;
+      scope.entries.delete(entry.tabId);
+      if (scope.selected === entry.tabId) { scope.selected = ''; scope.bindingRevision++; }
+    }
   }
   register(owner: WebContents, input: { tabId: string; guestWebContentsId: number }): void {
     if (typeof input?.tabId !== 'string' || !input.tabId || input.tabId.length > 8192 || !Number.isSafeInteger(input.guestWebContentsId)) throw new Error('Invalid CardBush browser registration.');
@@ -93,6 +115,17 @@ export class IntegratedBrowser {
     return selected.map(entry => ({ ...this.page(entry, scope), browser: 'cardbush' as const }));
   }
   hasScope(scopeId: string): boolean { return this.scopes.has(scopeId); }
+  /** Trusted task ownership determines where pages appear, independently of browser grants. */
+  registerDelegation(parentId: string, childId: string): void {
+    if ([parentId, childId].some(id => typeof id !== 'string' || !id || id.length > 160) || parentId === childId)
+      throw new Error('Invalid browser delegation scopes.');
+    const previous = this.parents.get(childId);
+    if (previous && previous !== parentId) unavailable('The child belongs to another conversation.', 'cardbush_scope_parent_changed');
+    for (let ancestor: string | undefined = parentId; ancestor; ancestor = this.parents.get(ancestor)) {
+      if (ancestor === childId) unavailable('Browser delegation cannot contain a cycle.', 'cardbush_scope_cycle');
+    }
+    this.parents.set(childId, parentId);
+  }
   hasInheritedScope(parentId: string, childId: string): boolean {
     const parent = this.scopes.get(parentId), child = this.scopes.get(childId);
     return !!parent && child?.ownerId === parent.ownerId && child.inheritedFrom?.parentId === parentId
@@ -100,14 +133,15 @@ export class IntegratedBrowser {
   }
   /** Trusted local delegation only. Copy exact grants, never all registered tabs. */
   inheritScope(parentId: string, childId: string) {
+    this.registerDelegation(parentId, childId);
     const parent = this.scopes.get(parentId);
     // A closed tab or lost scope must fail when it is used, not prevent an
     // otherwise unrelated child task from starting after a browser restart.
     if (!parent) return false;
     const previous = this.scopes.get(childId);
     if (previous && previous.ownerId !== parent.ownerId) unavailable('The parent browser window changed. Start a new child for the selected window.', 'cardbush_scope_owner_changed');
-    if (this.hasInheritedScope(parentId, childId)) return true;
-    const child: Scope = { ownerId: parent.ownerId, entries: new Map(previous?.entries), selected: parent.selected || previous?.selected || '',
+    const child: Scope = this.hasInheritedScope(parentId, childId) ? previous! : {
+      ownerId: parent.ownerId, entries: new Map(previous?.entries), selected: parent.selected || previous?.selected || '',
       bindingRevision: (previous?.bindingRevision ?? 0) + 1, inheritedFrom: { parentId, revision: parent.bindingRevision } };
     // Preserve stale identities too: normal guest validation rejects them and
     // cannot silently select a different live tab if the chosen one has closed.
@@ -156,7 +190,12 @@ export class IntegratedBrowser {
       while (Date.now() < deadline) {
         signal?.throwIfAborted();
         const entry = this.entries.get(this.key(scope.ownerId, tabId));
-        if (entry) { scope.entries.set(tabId, entry); scope.selected = tabId; scope.bindingRevision++; return this.page(entry, scope); }
+        if (entry) {
+          scope.entries.set(tabId, entry); scope.selected = tabId; scope.bindingRevision++;
+          const page = this.page(entry, scope);
+          this.grantCreatedPage(scopeId, entry);
+          return page;
+        }
         await new Promise(resolve => setTimeout(resolve, 30));
       }
       unavailable('CardBush requested a new tab but it has not become ready. It may still open; do not automatically replay this request.', 'cardbush_page_open_timeout');
@@ -181,9 +220,7 @@ export class IntegratedBrowser {
     if (method === 'tabs.close') {
       this.options.action(scope.ownerId, { action: 'close', tabId: entry.tabId, sessionId: this.actionSession(scopeId) });
       this.unregister(scope.ownerId, { tabId: entry.tabId, guestWebContentsId: guest.id });
-      scope.entries.delete(entry.tabId);
-      if (scope.selected === entry.tabId) scope.selected = '';
-      scope.bindingRevision++;
+      this.forgetClosedPage(entry);
       return { closed: true, pageId: guest.id };
     }
     if (method === 'tabs.navigate') {

@@ -56,7 +56,7 @@ function fixture(t, adapter, steps, denied = false) {
   if (steps.includes('retry')) {
     // Test execution retries after wire capability negotiation has settled.
     // Responses' separate native-to-portable projection fallback has its own tests.
-    capabilityStore.observe({ scope: modelProviderCapabilityScope(config), model: 'fixture', capability: 'responses_compatibility' }, { status: 'supported' });
+    capabilityStore.observe({ scope: modelProviderCapabilityScope(config), model: 'fixture', capability: 'responses_generation_compatibility' }, { status: 'supported' });
   }
   const provider = createModelProvider({ ...config, capabilityStore,
     fetch: async (url, init) => {

@@ -56,7 +56,7 @@ test("HTTP retry policy respects Retry-After and stops for auth, input and exhau
     assert.equal(event.status, status);
     assert.equal(event.providerRequestId, "provider-request");
   }
-  for (const status of [400, 401, 403, 404, 413, 422]) {
+  for (const status of [400, 401, 403, 404, 413, 422, 501, 505]) {
     assert.equal(httpFailure(status, "fixture").retryable, false, status);
     assert.equal(httpFailure(status, "ECONNRESET").retryable, false, "HTTP status takes precedence");
   }

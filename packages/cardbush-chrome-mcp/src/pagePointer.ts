@@ -82,6 +82,7 @@ function pointsInViewport(quads: unknown, width: number, height: number): Point[
 export async function dispatchPointer(command: PageCommand, uid: string, action: 'click' | 'hover', doubleClick = false) {
   const handles = new Set<string>();
   let attemptedPresses = 0, completedClicks = 0, mouseMoved = false;
+  let hitTest: { viewport: Point; document: Point; scroll: Point } | undefined;
   const resolve = async (backendNodeId: number) => {
     const result = object(await command('DOM.resolveNode', { backendNodeId }));
     const id = object(result.object).objectId;
@@ -142,7 +143,26 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     let lastHitUid: string | undefined;
     let targetKind = 'element';
     const hitsTarget = async (point: Point) => {
-      const hit = object(await command('DOM.getNodeForLocation', { ...point, includeUserAgentShadowDOM: true, ignorePointerEventsNone: false }));
+      // Quads and mouse input use viewport coordinates; DOM hit testing uses
+      // document coordinates. Refresh after hover/each press, which may scroll.
+      const current = object(object(await command('Page.getLayoutMetrics')).cssVisualViewport);
+      const scroll = { x: Number(current.pageX), y: Number(current.pageY) };
+      if (!Number.isFinite(scroll.x) || !Number.isFinite(scroll.y)) {
+        throw new ChromeConnectorError('viewport_unavailable', 'No usable page scroll position. Take a fresh snapshot.');
+      }
+      const documentPoint = { x: Math.round(point.x + scroll.x), y: Math.round(point.y + scroll.y) };
+      hitTest = { viewport: point, document: documentPoint, scroll };
+      lastHitUid = undefined;
+      if (point.x < 0 || point.y < 0 || point.x >= Number(current.clientWidth) || point.y >= Number(current.clientHeight)) return false;
+      let hit: Record<string, unknown>;
+      try {
+        hit = object(await command('DOM.getNodeForLocation', { ...documentPoint, includeUserAgentShadowDOM: true, ignorePointerEventsNone: false }));
+      } catch (error) {
+        // A geometric miss is not a disconnected connector. Other transport
+        // errors still stop the action; never retry an uncertain mouse press.
+        if (error instanceof Error && /No node found at given location/.test(error.message)) return false;
+        throw error;
+      }
       const backendId = Number(hit.backendNodeId);
       lastHitUid = Number.isSafeInteger(backendId) ? `cb_${backendId}` : undefined;
       if (!lastHitUid) return false;
@@ -184,7 +204,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     if (error instanceof Error && error.name === 'AbortError') throw error;
     const normalized = error instanceof ChromeConnectorError ? error : new ChromeConnectorError('pointer_action_failed', error instanceof Error ? error.message : String(error));
     throw new ChromeConnectorError(normalized.code, `${normalized.message}${attemptedPresses ? ' A click may have taken effect; observe before retrying.' : ' No click was sent.'}`, {
-      ...normalized.details, uid, mouseMoved, attemptedPresses, completedClicks,
+      ...normalized.details, uid, mouseMoved, attemptedPresses, completedClicks, ...(hitTest ? { hitTest } : {}),
       inputDispatched: attemptedPresses ? 'possibly' : false, outcomeVerified: false,
     });
   } finally {

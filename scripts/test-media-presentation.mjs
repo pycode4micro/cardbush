@@ -51,7 +51,8 @@ test('ordinary filenames and opaque plugin UI do not fabricate presented media',
   assert.equal(result.inlineMedia.size, 0);
   for (const type of ['image', 'video', 'audio']) {
     const artifact = image(`C:/result-${type}`, { type });
-    assert.equal(present([execution([artifact])]).inlineMedia.has(key(artifact.path)), true);
+    assert.equal(present([execution([artifact])]).inlineMedia.has(key(artifact.path)), type === 'image',
+      'only the on-demand image viewer replaces an authored loop preview');
   }
 });
 

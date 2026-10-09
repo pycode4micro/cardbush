@@ -31,7 +31,13 @@ export function MemoryRecordsPanel({settings,connection,zh,refresh,onChanged,api
     const version=++generation.current;setRecords([]);setHistory([]);setNext(null);setEditing(undefined);setPurging(false);
     if(enabled)void load(0,version);else setBusy(false);
     return ()=>{generation.current++;};
-  },[connection,settings.habits,settings.predictions,tab,inactive,refresh,api]);
+  },[connection,settings.habits,settings.predictions,tab,inactive,api]);
+  const lastRefresh=useRef(refresh);
+  useEffect(()=>{
+    if(lastRefresh.current===refresh)return;lastRefresh.current=refresh;
+    const version=++generation.current;
+    if(enabled)void load(0,version);
+  },[refresh]);
   async function act(run:()=>Promise<MemoryMutation|unknown>) {
     if(lock.current)return;lock.current=true;setBusy(true);setError('');const version=generation.current;
     try {

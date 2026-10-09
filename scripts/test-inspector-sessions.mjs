@@ -93,24 +93,55 @@ test('an explicitly opened host portal can be viewed from either conversation wi
   assert.equal(retained(state).length, 0, 'host teardown removes its portal from every referencing conversation');
 });
 
-test('browser actions carry their root conversation through nested delegation', async () => {
+for (const parentSelected of [true, false]) test(`browser actions belong to the root conversation when the ${parentSelected ? 'parent' : 'child'} first selects a browser`, async () => {
   const { IntegratedBrowser } = load('electron/integratedBrowser.ts');
   const actions = [], guests = new Map();
+  let state = open(emptyInspectorSessions, local('unrelated'), 'unrelated-page');
   const owner = { id: 11, isDestroyed: () => false };
   let nextId = 30;
   const browser = new IntegratedBrowser({ defaultOwner: () => owner, getContents: id => guests.get(id), action: (_ownerId, action) => {
     actions.push(action);
+    const workspace = local(action.sessionId);
+    if (action.action === 'open') state = open(state, workspace, action.tabId);
+    else state = act(state, workspace, action.action === 'close'
+      ? { type: 'close', ids: new Set([action.tabId]) } : { type: 'activate', id: action.tabId });
     if (action.action === 'open') {
       const guest = { id: ++nextId, hostWebContents: owner, isDestroyed: () => false, getType: () => 'webview', getURL: () => action.url,
         getTitle: () => 'Background', once() {}, debugger: { isAttached: () => false } };
       guests.set(guest.id, guest); browser.register(owner, { tabId: action.tabId, guestWebContentsId: guest.id });
     }
   } });
-  browser.select('parent'); browser.inheritScope('parent', 'child'); browser.inheritScope('child', 'grandchild');
+  if (parentSelected) browser.select('parent');
+  assert.equal(browser.inheritScope('parent', 'child'), parentSelected);
+  assert.equal(browser.inheritScope('child', 'grandchild'), parentSelected);
+  browser.select('grandchild');
+  assert.equal(browser.hasScope('parent'), parentSelected, 'UI ownership never creates parent browser grants');
   const page = await browser.request('tabs.create', { scopeId: 'grandchild', url: 'https://example.com/' });
+  for (const scopeId of ['parent', 'child', 'grandchild']) {
+    assert.deepEqual((await browser.request('tabs.list', { scopeId })).map(page => page.id), [page.id], 'created pages return to every trusted ancestor');
+  }
+  assert.equal(view(state, local('parent')).activeId, page.tabId, 'the page appears in the root inspector');
+  assert.equal(view(state, local('grandchild')).tabs.length, 0, 'no hidden child workspace is created');
+  assert.equal(view(state, local('unrelated')).activeId, 'unrelated-page', 'background work does not take over another conversation');
   await browser.request('tabs.activate', { scopeId: 'grandchild', tabId: page.id });
   await browser.request('tabs.close', { scopeId: 'grandchild', tabId: page.id });
+  for (const scopeId of ['parent', 'child', 'grandchild']) {
+    assert.deepEqual(await browser.request('tabs.list', { scopeId }), [], 'explicit close removes the shared page from all granted scopes');
+  }
   assert.deepEqual(actions.map(action => [action.action, action.sessionId]), [['open', 'parent'], ['activate', 'parent'], ['close', 'parent']]);
+  assert.equal(view(state, local('parent')).tabs.length, 0);
+});
+
+test('trusted browser delegation rejects reparenting and cycles without granting pages', () => {
+  const { IntegratedBrowser } = load('electron/integratedBrowser.ts');
+  const browser = new IntegratedBrowser({ defaultOwner: () => null, getContents: () => undefined, action() {} });
+  browser.registerDelegation('parent', 'child');
+  browser.registerDelegation('parent', 'child');
+  browser.registerDelegation('child', 'grandchild');
+  assert.throws(() => browser.registerDelegation('other', 'child'), { code: 'cardbush_scope_parent_changed' });
+  assert.throws(() => browser.registerDelegation('grandchild', 'parent'), { code: 'cardbush_scope_cycle' });
+  assert.throws(() => browser.registerDelegation('parent', 'parent'), /Invalid browser delegation/);
+  for (const id of ['parent', 'child', 'grandchild', 'other']) assert.equal(browser.hasScope(id), false);
 });
 
 test('locking remote and task portals shares the same page and disposal removes all references', () => {

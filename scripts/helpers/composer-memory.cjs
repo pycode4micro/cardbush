@@ -8,10 +8,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
     renderView(null); localStorage.removeItem(views.individuationStorageKey);
     window.memorySends=[];
     window.memoryCalls=[];
-    window.memoryStats={estimatedTokens:1200,records:8,habits:2,predictions:2,notes:4,hits:3,misses:1,running:false,lastSummaryAt:null,lastError:null};
+    window.memoryStats={estimatedTokens:1200,eventTokens:800,habitTokens:400,records:8,habits:2,predictions:2,notes:4,hits:3,misses:1,running:false,lastSummaryAt:null,lastError:null};
     window.memoryCall=async(input,connection)=>{memoryCalls.push({input,connection});if(input.action==='summarize'){
       if(window.failMemorySummary)throw Error('fixture model unavailable');
-      return {...memoryStats,estimatedTokens:300,notes:0,lastSummaryAt:Date.now()};}return memoryStats;};
+      if(window.holdMemorySummary)return new Promise(resolve=>window.finishMemorySummary=resolve);
+      return {...memoryStats,estimatedTokens:300,eventTokens:100,habitTokens:200,notes:0,lastSummaryAt:Date.now()};}return memoryStats;};
     window.memoryRows=[{id:'habit_fixture',kind:'habit',text:'查看股市走势时默认关注 A 股。',revision:1,state:'active',origin:'agent',applies_when:'股市分析',
       created_at:Date.now()-86400000,age_days:1,expires_at:null,last_confirmed_at:null,last_rejected_at:null,source:{session_id:'fixture-session',turn_id:'first'},source_ids:[],replaced_by:[],content_cleared:false,truncated:false,hits:0,misses:0}];
     window.memoryHistory=[];window.memoryManagementCalls=[];window.memoryListCalls=0;
@@ -57,7 +58,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('memoryButton().getAttribute("aria-checked")'), 'false', 'default stays off');
   await run('memoryButton().click()');
   await until('habitInput().checked && memoryButton().getAttribute("aria-checked")==="true"', 'shortcut synchronizes settings');
-  assert.deepEqual(await run('views.readIndividuation()'), { habits: true, predictions: false, summaryTokenThreshold:10000, recallMode:'context' }, 'next-turn metadata reads the persisted flags');
+  assert.deepEqual(await run('views.readIndividuation()'), { habits: true, predictions: false, eventTokenThreshold:10000, habitTokenThreshold:10000, recallMode:'context' }, 'next-turn metadata reads the persisted flags');
   assert.equal(await run('document.querySelector("[data-composer-input]").value'), '保留我的草稿');
   assert.deepEqual(await run('memorySends'), [], 'memory change does not send the draft');
   await run('predictionInput().click();habitInput().click()');
@@ -67,10 +68,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
   await until('memoryButton().getAttribute("aria-checked")==="true"', 'keyboard activation');
-  assert.deepEqual(await run('views.readIndividuation()'), { habits: true, predictions: true, summaryTokenThreshold:10000, recallMode:'context' }, 'shortcut preserves independently enabled prediction');
+  assert.deepEqual(await run('views.readIndividuation()'), { habits: true, predictions: true, eventTokenThreshold:10000, habitTokenThreshold:10000, recallMode:'context' }, 'shortcut preserves independently enabled prediction');
   await run(`views.saveIndividuation({habits:false,predictions:true});updateMemorySettings(current=>({...current,thinking:{visible:true}}));`);
   await until('memorySettings.thinking.visible && !habitInput().checked', 'unrelated save uses latest preferences');
-  assert.deepEqual(await run('views.readIndividuation()'), { habits: false, predictions: true, summaryTokenThreshold:10000, recallMode:'context' }, 'immediate settings save cannot restore stale memory');
+  assert.deepEqual(await run('views.readIndividuation()'), { habits: false, predictions: true, eventTokenThreshold:10000, habitTokenThreshold:10000, recallMode:'context' }, 'immediate settings save cannot restore stale memory');
   await run(`localStorage.setItem(views.individuationStorageKey,JSON.stringify({habits:true,predictions:false}));
     window.dispatchEvent(Object.assign(new Event('storage'),{key:views.individuationStorageKey,storageArea:localStorage}));`);
   await until('habitInput().checked && !predictionInput().checked && memoryButton().getAttribute("aria-checked")==="true"', 'other-window storage updates both surfaces');
@@ -89,7 +90,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   fs.writeFileSync(path.join(root,'tmp','composer-memory-shortcut.png'),(await window.webContents.capturePage()).toPNG());
   await run('memoryButton().click()');
   await until('memoryButton().getAttribute("aria-checked")==="false"', 'simple composer can disable memory');
-  assert.deepEqual(await run('views.readIndividuation()'), { habits: false, predictions: false, summaryTokenThreshold:10000, recallMode:'context' });
+  assert.deepEqual(await run('views.readIndividuation()'), { habits: false, predictions: false, eventTokenThreshold:10000, habitTokenThreshold:10000, recallMode:'context' });
   window.setSize(820,780);await pause();
   await run(`views.saveIndividuation({habits:true,predictions:true});renderView(h('div',{className:'memory-settings',style:{height:'100%',overflow:'auto',padding:24}},h(MemoryPreferences)));void 0;`);
   await until('!!document.querySelector(".summary-memory-status strong")','independent summary settings');
@@ -98,21 +99,28 @@ module.exports = async ({ run, until, pause, window, root }) => {
   // Hidden windows do not always emit focusout when HTMLElement.blur() is called.
   await run('document.querySelector(".summary-threshold input").dispatchEvent(new FocusEvent("focusout",{bubbles:true}))');
   await until('document.querySelector(".summary-settings [role=alert]")?.textContent.includes("1,000")','invalid threshold rejected');
-  assert.equal(await run('views.readIndividuation().summaryTokenThreshold'),10000);
+  assert.equal(await run('views.readIndividuation().eventTokenThreshold'),10000);
   await run('document.querySelector(".summary-threshold input").focus();document.querySelector(".summary-threshold input").select()');
   await window.webContents.insertText('12345');await pause();await run('document.querySelector(".summary-threshold input").blur()');
   await run('document.querySelector(".summary-threshold input").dispatchEvent(new FocusEvent("focusout",{bubbles:true}))');
-  await until('views.readIndividuation().summaryTokenThreshold===12345','custom threshold persisted');
+  await until('views.readIndividuation().eventTokenThreshold===12345','custom threshold persisted');
+  await run('document.querySelectorAll(".summary-threshold input")[1].focus();document.querySelectorAll(".summary-threshold input")[1].select()');
+  await window.webContents.insertText('23456');await pause();
+  await run('document.querySelectorAll(".summary-threshold input")[1].dispatchEvent(new FocusEvent("focusout",{bubbles:true}))');
+  await until('views.readIndividuation().habitTokenThreshold===23456','independent habit threshold persisted');
+  assert.equal(await run('views.readIndividuation().eventTokenThreshold'),12345);
+  assert.deepEqual(await run('[...document.querySelectorAll(".summary-memory-status progress")].map(p=>p.max)'),[12345,23456]);
   await run('window.listCallsBeforeSummary=memoryListCalls;document.querySelector(".summary-memory-actions .primary-button").click()');
   await until('document.querySelector(".summary-memory-status strong")?.textContent.startsWith("300")','manual summary result replaces status');
   await until('memoryListCalls>listCallsBeforeSummary','manual summary refreshes memory records');
-  assert.deepEqual(await run('memoryCalls.find(c=>c.input.action==="summarize").input'),{action:'summarize',modelId:'fixture-model',settings:{habits:true,predictions:true,summaryTokenThreshold:12345,recallMode:'context'}});
+  assert.deepEqual(await run('memoryCalls.find(c=>c.input.action==="summarize").input'),{action:'summarize',modelId:'fixture-model',settings:{habits:true,predictions:true,eventTokenThreshold:12345,habitTokenThreshold:23456,recallMode:'context'}});
   await run('window.failMemorySummary=true;document.querySelector(".summary-memory-actions .primary-button").click()');
-  await until('document.querySelector(".summary-settings [role=alert]")?.textContent.includes("Original memory")','failure is visible and retry remains available');
+  await until('document.querySelector(".summary-settings [role=alert]")?.textContent.includes("did not fully complete")','failure is visible and retry remains available');
   assert.equal(await run('document.querySelector(".summary-memory-actions .primary-button").disabled'),false);
   await run(`window.failMemorySummary=false;document.querySelector('.summary-memory-actions .secondary-button').click();
     window.memoryAction=(label,scope=document)=>[...scope.querySelectorAll('button')].find(button=>button.textContent.trim()===label);void 0;`);
   await until('!!document.querySelector("[data-memory-id=habit_fixture]") && !document.querySelector("[data-memory-id=habit_fixture] button").disabled','records loaded with provenance');
+  await require('./summary-memory-stability.cjs')({run,until,pause});
   await run(`document.querySelector('[role=combobox][aria-label="Memory recall mode"]').click()`);
   await run(`document.querySelector('[role=option][value=hint]').click()`);
   await until('views.readIndividuation().recallMode==="hint"','counts-only recall setting persists');

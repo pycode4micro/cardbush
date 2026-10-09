@@ -26,3 +26,15 @@
 `npm run test:chat-tool-updates` 在隔离 Electron 中挂载真实 ChatPanel 与流更新函数，以 1280×720 图片和连续工具事件逐帧采样。深浅主题均检查内容高度、图片坐标、DOM 连通性和重复 load 次数，同时验证手动阅读历史、展开工具和迟到结果。该测试禁止网络与模型调用，不操作用户会话。
 
 `scripts/test-media-presentation.mjs` 覆盖媒体 Context 身份复用、产物新增/补全/删除、路径映射和会话隔离；原有流追加、工具分组和会话滚动测试继续覆盖其余交互。
+
+## Assistant 气泡跟随与输入框遮罩（2026-10-08）
+
+隔离 Electron 复现确认：同一用户输入先收到长回复、再收到短回复时，旧定位仍选第一条 assistant 消息。新气泡顶部在 1471px，可视区为 48–800px，距离底部仍有 915px。另一个入口是普通 `pointerdown` 被当成手动滚动，从而关闭后续跟随。
+
+现在每次新回复按最新气泡定位：短回复完整显示，超出阅读区的回复显示开头，空间允许时保留附近的用户提问。消息插入与 Markdown 后续测量都在绘制前完成定位；普通点击、底部向下滚动不取消跟随。上翻历史、拖动滚动条、触摸滚动和文本选择仍保留用户位置。自定义固定输入框布局继续使用原有定位规则。
+
+输入框渐变仍覆盖正文和两侧空白，但延伸范围减去原生滚动条宽度；主会话、assistant 和嵌入子会话共用此边界。
+
+诊断复用会话级开关：在应用渲染进程控制台执行 `sessionStorage.setItem('cardbush_scroll_debug', 'true')`，复现后查看 `window.__cardbushScrollDebug` 中 `assistant-viewport` 条目，或现有 `scroll` 调试日志。条目包含消息 ID、跟随状态、视口/内容高度、目标与实际滚动位置，不记录消息正文。内存只保留最近 300 条；执行 `sessionStorage.removeItem('cardbush_scroll_debug')` 可关闭，不写持久设置。
+
+`CARDBUSH_ASSISTANT_UI_CASE=scroll node scripts/test-assistant-ui.cjs` 输出几何日志及深浅主题截图，覆盖新回复首帧、同轮多次回复、长提问、迟到布局、普通点击、手动阅读和恢复跟随。`node scripts/run-app-views-test.mjs composer-backdrop` 验证主/子会话的遮罩边界。

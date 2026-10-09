@@ -210,10 +210,10 @@ test('conditions are searchable; expired predictions leave recall and evidence b
 test('consolidation cannot renew a forecast or promote a source that expired while the model was running',async t=>{
   const f=await fixture(t),expires=f.now()+1000;
   const id=firstId(await f.store.summarize({prediction:{text:'下一次查看股市行情时，用户可能要求将数据整理为 XLSX 表格。',applies_when:'查看股市',expires_at:new Date(expires).toISOString()}},on,owner));
-  const snapshot=await f.store.begin(on,true,10000);
+  const snapshot=await f.store.begin(on,'events',true);
   await f.store.apply(snapshot,{habits:[],predictions:[{text:'可能需要 XLSX。',applies_when:'查看股市',expires_at:new Date(expires+86400000).toISOString(),sources:[id]}],reviews:[]},on);
   const record=(await f.store.check('XLSX',on))[0];assert.equal(record.expires_at,expires);
-  const pending=await f.store.begin(on,true,10000);f.advance(2000);
+  const pending=await f.store.begin(on,'events',true);f.advance(2000);
   await assert.rejects(f.store.apply(pending,{habits:[{text:'股市需表格',applies_when:'查看股市',sources:[record.id]}],predictions:[],reviews:[]},on),/expired while summarizing/);
   assert.equal((await f.store.read({ids:[record.id]},on)).memories[0].state,'expired');
   assert.equal((await f.store.status(on)).habits,0);
@@ -243,21 +243,21 @@ test('user-pinned memory is protected from agent changes and background summariz
   await f.store.change({id,revision:row.revision,action:'confirm',reason:'用户确认'},on,{...owner,turnId:'pin'},'user');
   row=(await f.store.read({ids:[id]},on)).memories[0];assert.equal(row.origin,'user');assert.equal(row.last_confirmed_at,f.now());
   assert.equal((await f.tool('revise_memory',{id,revision:row.revision,action:'dispute',reason:'模型自行怀疑'})).status,'rejected');
-  assert.equal(await f.store.begin(on,true,10000),null);
+  assert.equal(await f.store.begin(on,'habits',true),null);
 });
 
 test('summary keeps historical IDs, source age and lineage; undo restores records and review totals',async t=>{
   const f=await fixture(t),id=firstId(await f.store.summarize({prediction:{text:'股市分析后可能需要 XLSX。'}},on,owner));
   const original=(await f.store.read({ids:[id]},on)).memories[0];f.advance(1000);
   await f.store.observe('给我 XLSX 股市报告。',on,{...owner,turnId:'followup'});
-  const snapshot=await f.store.begin(on,true,10000),evidence=snapshot.records.find(row=>row.kind==='evidence');
-  await f.store.apply(snapshot,{habits:[{text:'股市报告可按需附 XLSX。',sources:[id,evidence.id]}],predictions:[],reviews:[{prediction:id,evidence:evidence.id,outcome:'hit',reason:'用户明确要求'}]},on);
+  const snapshot=await f.store.begin(on,'events',true),evidence=snapshot.records.find(row=>row.kind==='evidence');
+  await f.store.apply(snapshot,{habits:[],predictions:[{text:'可能需要 XLSX。',sources:[id,evidence.id]}],reviews:[{prediction:id,evidence:evidence.id,outcome:'hit',reason:'用户明确要求'}]},on);
   const active=(await f.store.check('XLSX',on))[0];assert.equal(active.created_at,original.created_at);assert.ok(active.source_ids.includes(id));
   assert.equal((await f.store.read({ids:[id]},on)).memories[0].state,'consolidated');
   const event=(await f.store.history(on)).changes[0];assert.equal(event.actor,'summary');assert.equal(event.can_undo,true);
   assert.equal((await f.store.undo(event.id,on,{...owner,turnId:'undo-summary'})).status,'ok');
   const status=await f.store.status(on);assert.equal(status.hits,0);assert.equal(status.predictions,1);
-  const again=await f.store.begin(on,true,10000);assert.ok(again.records.some(row=>row.id===evidence.id));
+  const again=await f.store.begin(on,'events',true);assert.ok(again.records.some(row=>row.id===evidence.id));
   await f.store.apply(again,{habits:[],predictions:[],reviews:[{prediction:id,evidence:evidence.id,outcome:'hit',reason:'复盘恢复证据'}]},on);
   assert.equal((await f.store.status(on)).hits,1,'undo removed only the batch review ledger entries, allowing an honest re-review');
 });

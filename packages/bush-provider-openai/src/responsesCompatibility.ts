@@ -1,7 +1,34 @@
-import type { ResponseInputItem } from "openai/resources/responses/responses";
+import type { ResponseCreateParamsStreaming, ResponseInputItem } from "openai/resources/responses/responses";
+import type { ModelEvent } from "@cardbush/bush-protocol";
 
 /** Policy observation, not a claim that every individual extension is unsupported. */
-export const RESPONSES_COMPATIBILITY_CAPABILITY = "responses_compatibility";
+export const RESPONSES_COMPATIBILITY_CAPABILITY = "responses_generation_compatibility";
+
+/** A fallback can only address an explicitly rejected feature present on the wire.
+ * HTTP/auth/transport failures and ordinary input validation are not that evidence. */
+export function responsesCompatibilityRejection(
+  failure: Extract<ModelEvent, { kind: 'response_failed' }>,
+  params: ResponseCreateParamsStreaming,
+  parameter?: string | null,
+): boolean {
+  if (failure.retryable || (failure.status !== undefined && ![400, 422].includes(failure.status))) return false;
+  if (parameter && /\b(?:parameters|schema)\b/i.test(parameter)) return false;
+  const code = failure.code.toLowerCase();
+  const message = failure.message;
+  const unsupported = /(?:unsupported|not_supported|not_implemented|unknown_(?:parameter|field|tool|type)|unrecognized_(?:parameter|field|tool|type))/.test(code) ||
+    /\b(?:unsupported|not supported|does not support|not implemented|unknown (?:parameter|field|tool|type)|unrecognized (?:parameter|field|tool|type))\b/i.test(message);
+  if (!unsupported) return false;
+  const feature = `${parameter ?? ''} ${message}`;
+  const toolTypeIndex = parameter?.match(/^tools(?:\[(\d+)\]|\.(\d+))\.type$/);
+  const rejectedNativeTool = toolTypeIndex && params.tools?.[Number(toolTypeIndex[1] ?? toolTypeIndex[2])]?.type === 'tool_search';
+  if (params.tools?.some(tool => tool.type === 'tool_search') &&
+      (/\b(?:tool_search|additional_tools)\b/i.test(feature) || rejectedNativeTool)) return true;
+  if (params.previous_response_id && /\bprevious_response_id\b/i.test(feature)) return true;
+  if (params.store && /\bstore\b/i.test(feature)) return true;
+  return /\b(?:function_call_output|tool[_ ](?:output|result))\b/i.test(feature) && /\b(?:image|input_image)\b/i.test(feature) &&
+    Array.isArray(params.input) && params.input.some(item => item.type === 'function_call_output' &&
+      Array.isArray(item.output) && item.output.some(part => part.type === 'input_image'));
+}
 
 /** Portable tool images follow the complete result batch and retain call attribution. */
 export function compatibleToolImageProjection() {

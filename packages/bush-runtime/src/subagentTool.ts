@@ -169,7 +169,7 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Dispatch useful parallel work, or follow up on an existing child with task_id. Omit task_id only for new work; an existing running child receives guidance immediately, while a finished child resumes its original session and configuration. Continue independent parent work, then reconcile subagent_result; use await_subagents when only child results remain instead of polling. Background tasks may outlive this Turn and are managed by manage_plugin_agents. Host permissions and child-state restrictions remain enforced.",
+        "Dispatch useful parallel work, or follow up on an existing child with task_id. Omit task_id only for new work; an existing running child receives guidance immediately, while a finished child resumes its original session and instructions. Fork continuations inherit the parent's current model configuration; explicitly configured clean children retain their own configuration. Continue independent parent work, then reconcile subagent_result; use await_subagents when only child results remain instead of polling. Background tasks may outlive this Turn and are managed by manage_plugin_agents. Host permissions and child-state restrictions remain enforced.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -177,7 +177,7 @@ export function registerSubagentTool(
         properties: {
           prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Delegate new work to a saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only. It uses its own server workspace, model, tools and instructions; no parent history, credentials or local paths are copied. Results participate in await_subagents. Follow up with task_id.' } } : {}),
-          ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Follow up on a subagent owned by this parent. Running children receive guidance without a new task; finished children resume with their original history, model and execution host. Supply task_id and prompt only, with optional run_in_background for continuations; do not override configuration or create a duplicate task.' } } : {}),
+          ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Follow up on a subagent owned by this parent. Running children receive guidance without a new task; finished children retain their history and execution host. Fork children inherit the current parent model; clean children and remote hosts retain their own configuration. Supply task_id and prompt only, with optional run_in_background for continuations; do not override configuration or create a duplicate task.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork inherits the complete pre-dispatch conversation and system/tool prefix. Use clean only when the user explicitly requests independent configuration, not merely for a self-contained task. For clean, inspect list_subagent_options and choose system_prompt, settings and tool/Skill scope; parent history and system prompt are not copied.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required in clean mode; unavailable in fork mode. Sets the actual system message for the child. Define its role, behavior, communication language and output requirements. Host permissions cannot be overridden.' },
           allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
@@ -303,15 +303,21 @@ export function registerSubagentTool(
         const disabled = [...new Set([...(saved.metadata.disabledTools as string[] ?? []), ...(childRequest.metadata.disabledTools as string[] ?? [])])];
         const turnLimits = [saved.metadata.pluginAgentMaxTurns, childRequest.metadata.pluginAgentMaxTurns]
           .filter((value): value is number => typeof value === 'number');
+        // Keep the child's history and restrictions, but resolve inherited model
+        // settings again for this dispatch. Only explicit clean configuration is pinned.
+        const modelSource = saved.metadata.subagentMode === 'clean' ? saved : childRequest;
         childRequest = { ...saved, requestId: childRequest.requestId, turnId: childTurnId,
+          model: modelSource.model, providerBinding: modelSource.providerBinding,
+          maxOutputTokens: modelSource.maxOutputTokens, reasoningEffort: modelSource.reasoningEffort,
+          temperature: modelSource.temperature, topP: modelSource.topP, requestCapabilities: modelSource.requestCapabilities,
           inputMessages: childRequest.inputMessages, sessionMetadata: childRequest.sessionMetadata,
           tools: childRequest.tools.filter(tool => originalTools.has(tool.name)),
           permissionMode: levels[Math.min(levels.indexOf(saved.permissionMode), levels.indexOf(childRequest.permissionMode))] as typeof saved.permissionMode,
           metadata: { ...saved.metadata, ...childRequest.metadata, disabledTools: disabled,
-            // Model configuration belongs to the original child, even if the parent changed models.
-            contextWindowTokens: saved.metadata.contextWindowTokens,
-            childAgentModelMode: saved.metadata.childAgentModelMode,
-            childAgentModelId: saved.metadata.childAgentModelId,
+            subagentMode: saved.metadata.subagentMode,
+            contextWindowTokens: modelSource.metadata.contextWindowTokens,
+            childAgentModelMode: modelSource.metadata.childAgentModelMode,
+            childAgentModelId: modelSource.metadata.childAgentModelId,
             ...(turnLimits.length ? { pluginAgentMaxTurns: Math.min(...turnLimits) } : {}),
             permissionRouting: routing, permissionScopeSessionId: routing === 'parent' ? childSessionId : context.sessionId,
             childToolAllowlist: childRequest.tools.filter(tool => originalTools.has(tool.name)).map(tool => tool.name),
@@ -332,7 +338,7 @@ export function registerSubagentTool(
         ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
 
       const run = (signal = context.signal) => finishTask({
-        runChild: async (request, childSignal) => { if (!saved) await options.saveChildRequest?.(request); return runChild(request, childSignal); },
+        runChild: async (request, childSignal) => { await options.saveChildRequest?.(request); return runChild(request, childSignal); },
         childRequest,
         signal,
         childTurnId,

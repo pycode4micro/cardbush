@@ -257,7 +257,7 @@ for (const compatible of [false, true]) test(`real SDK truncation preserves exec
     { type: 'response.created', response: { id: 'unfinished-response', created_at: 1, store: true, status: 'in_progress', output: [] } },
     itemEvent(first), itemEvent(first), itemEvent(cut, 'added', 1), terminal([first, cut], 'incomplete'),
   ] : [terminal([message('Finished')])], { capabilityStore: {
-    read: ({ capability }) => ({ status: compatible && capability === 'responses_compatibility' ? 'supported' : 'unknown' }), observe() {},
+    read: ({ capability }) => ({ status: compatible && capability === 'responses_generation_compatibility' ? 'supported' : 'unknown' }), observe() {},
   } });
   const host = new InMemoryRuntimeHost({ provider: endpoint.provider, toolRegistry: tools, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));

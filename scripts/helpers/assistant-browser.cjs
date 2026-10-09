@@ -56,6 +56,9 @@ module.exports = async ({ router, ui, call, success, failure, guest, pageId, url
     assert.equal(tasks.list(parentId)[0].status, 'completed');
     assert.equal(success(await call('list_pages', {}, parentId)).selectedPageId, pageId, 'child selection does not change parent state');
     const childPage = success(await call('new_page', { url }, childId));
+    const parentPages = success(await call('list_pages', {}, parentId));
+    assert.equal(parentPages.selectedPageId, pageId, 'a returned page does not change the parent selection');
+    assert.deepEqual(parentPages.pages.map(page => page.id).sort(), [pageId, childPage.id].sort(), 'only the new child page is returned; other same-URL tabs stay private');
     await router.inheritScope(parentId, childId);
     assert.equal(success(await call('list_pages', {}, childId)).selectedPageId, childPage.id, 'repeated delegation keeps child selection until a new @ binding');
     await ui(`browserFixture.reference(${JSON.stringify(parentId)},${JSON.stringify(url)})`);

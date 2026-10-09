@@ -325,9 +325,11 @@ app.whenReady().then(async()=>{
   await read(`(()=>{const panel=document.querySelector('.plugin-mcp-settings');const details=Array.from(panel.querySelectorAll('details')).find(item=>item.querySelector('summary').textContent.includes('OAuth'));details.open=true;
     for(const [selector,value] of [['input[type=password]','PRIVATE_UI_FIXTURE_SECRET']]){const input=panel.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
   assert.equal(await read('document.querySelector(".plugin-mcp-settings input[type=password]").value'),'PRIVATE_UI_FIXTURE_SECRET');
+  await read(`(()=>{const label=Array.from(document.querySelectorAll('.plugin-mcp-settings label')).find(item=>item.textContent.includes('授权服务器地址'));const input=label.querySelector('input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'https://trusted.example/tenant');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   assert.ok(await read('Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="登录 / 重新授权").disabled'),'credentials must be saved before sign-in');
   await click('保存连接配置');
   await until('fixtureApps.plugins[2].config.mcp_servers?.echo?.oauth?.clientSecretRef');
+  assert.equal(await read('fixtureApps.plugins[2].config.mcp_servers.echo.oauth.expectedIssuer'),'https://trusted.example/tenant','trusted issuer is saved alongside the private credential reference');
   await until('document.querySelector(".plugin-mcp-settings input[type=password]").value===""');
   assert.equal(await read('JSON.stringify(fixtureApps).includes("PRIVATE_UI_FIXTURE_SECRET")'),false);
   assert.match(await read('document.querySelector(".plugin-mcp-settings input[type=password]").placeholder'),/加密保存/);

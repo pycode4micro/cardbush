@@ -60,10 +60,17 @@ export class BrowserUseRouter {
       return Promise.reject(new Error('Invalid browser delegation scopes.'));
     return this.serialized(parent, () => this.serialized(child, async () => {
       signal?.throwIfAborted();
+      // A child can be the first browser user in the task. Its pages still
+      // belong in the root conversation, even when there are no grants to copy.
+      this.integrated.registerDelegation(parent, child);
       if (this.routes.get(parent) !== 'cardbush') return { inherited: false };
       // Guidance without a new parent binding must preserve both the child's
       // page selection and any browser it explicitly chose while working.
-      if (this.integrated.hasInheritedScope(parent, child)) return { inherited: true };
+      if (this.integrated.hasInheritedScope(parent, child)) {
+        // Merge newly returned child pages without resetting a sibling's page
+        // selection or a browser it explicitly chose while working.
+        return { inherited: this.integrated.inheritScope(parent, child) };
+      }
       // Persist the browser identity first so a stale/missing grant cannot fall
       // through to Chrome/Edge, including after a restart or failed transfer.
       await this.releaseExternal(child, { signal });
@@ -90,7 +97,14 @@ export class BrowserUseRouter {
   };
   private async route(method: string, params: Params, options: Options): Promise<unknown> {
     options?.signal?.throwIfAborted();
-    const scope = String(params.scopeId), route = this.routes.get(scope);
+    const scope = String(params.scopeId);
+    let route = this.routes.get(scope);
+    // A trusted child may have created the task's first browser page. Adopt it
+    // on first use, while retaining any browser already bound by the parent.
+    if (!route && method !== 'browser.select' && this.integrated.hasScope(scope)) {
+      this.save(scope, 'cardbush');
+      route = 'cardbush';
+    }
     if (method === 'browser.list') {
       let external: Params = {};
       try { external = await this.options.external(method, params, options) as Params; }

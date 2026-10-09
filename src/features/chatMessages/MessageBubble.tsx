@@ -72,9 +72,9 @@ import {
 } from './markdownFormat';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { MessageImageGallery } from './MessageImageGallery';
+import { MessageContentImage, MessageImageGalleryFrame, useImageGalleryFallback } from './MessageImageGalleryFrame';
 import { remarkImageGroups } from './remarkImageGroups';
 import { modelFailurePresentation } from './modelFailurePresentation';
-import { MessageToolArtifact, MessageToolOutputs } from '../tools/MessageToolOutputs';
 import { McpAppReferencesContext } from '../tools/McpAppReferenceLink';
 import { LoopExecutionPreviews, isLoopPreviewExecution } from '../tools/LoopExecutionPreviews';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
@@ -337,17 +337,9 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
   // code controls retain their state; current settings arrive through context.
   const components: Components = {
     div: ({ node, children, ...props }) => {
-      const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
+      const { language } = useContext(MarkdownRenderContext);
       if (node?.properties['data-message-image-gallery']) {
-        const images = node.children.flatMap(child => {
-          if (child.type !== 'element' || child.tagName !== 'img') return [];
-          const src = String(child.properties.src || '');
-          if (!src) return [];
-          const reference = markdownLocalFileReference(src, workspaceRoot);
-          return [{ path: reference ? remapProjectPath(reference.path, pathAliases) : src,
-            name: String(child.properties.alt || '') }];
-        });
-        return <MessageImageGallery images={images} language={language} />;
+        return <MessageImageGalleryFrame language={language}>{children}</MessageImageGalleryFrame>;
       }
       return <div {...props}>{children}</div>;
     },
@@ -401,14 +393,16 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         </a>
       );
     },
-    img: ({ src, alt, ...props }) => {
+    img: ({ src, alt, node: _node, ...props }) => {
       const host = useContext(ConversationHostContext);
       const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
-      const { workspaceRoot, pathAliases, language, referenceMode, compactImages } = useContext(MarkdownRenderContext);
+      const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
       const internalReference = parseMarkdownReference(src);
+      useImageGalleryFallback(!richFileReferences && Boolean(internalReference)
+        || presentedMedia.has(mediaPresentationKey(src || '')));
       if (internalReference) return <MarkdownReference reference={internalReference} language={language} rich={richFileReferences} inline>{alt}</MarkdownReference>;
       const targetKind = resourceTargetKind(src || '');
       if (referenceMode === 'remote' && targetKind !== 'url' && targetKind !== 'inline') {
@@ -437,11 +431,9 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         return <InlineAudio src={resolvedSource} language={language} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
-      if (compactImages) return <MessageImageGallery inline
-        images={[{ path: resolvedPath || src || '', name: alt ?? '' }]} language={language} />;
       return (
         <>
-        <img
+        <MessageContentImage
           {...props}
           src={resolvedSource}
           alt={alt ?? ''}
@@ -520,9 +512,10 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       if (sourceReferences.size) plugins.push([remarkSourceMemoShorthand, { references: sourceReferences }]);
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       if (compactImages && richFileReferences) plugins.push([remarkImageGroups, { eligible: (url: string) => {
-        if (parseMarkdownReference(url)) return false;
+        const internal = parseMarkdownReference(url);
+        if (internal) return internal.kind === 'file';
         const kind = resourceTargetKind(url);
-        if (referenceMode === 'remote' && kind !== 'url' && kind !== 'inline') return false;
+        if (referenceMode === 'remote' && kind !== 'url' && kind !== 'inline') return Boolean(remoteMarkdownPath(url, workspaceRoot));
         const reference = markdownLocalFileReference(url, workspaceRoot);
         const path = reference ? remapProjectPath(reference.path, pathAliases) : url;
         return Boolean(mediaResourceUrl(path)) && !isHtmlPreviewPath(path) && !isVideoPath(path) && !isAudioPath(path)
@@ -1282,8 +1275,6 @@ function MessageBubbleView({
               {assistantBody}
             </AssistantCompletedDisclosure>
           )}
-          {completedArtifacts.length === 0 && <MessageToolOutputs key="tool-outputs"
-            artifacts={outputPresentation.artifacts.filter(artifact => !['image', 'video', 'audio'].includes(artifact.type))} language={language} />}
           {showFinalAnswer && finalAnswerBody}
           {timeoutPresentation && (
             <div
@@ -1621,7 +1612,6 @@ function AssistantMessageContent({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const mediaByExecution = useContext(ToolMediaContext);
   const sortedExecutions = [...executions].sort(compareToolExecutionOrder);
   const displayContent = sortedExecutions.some(hasExplicitToolContentOffset)
     ? content
@@ -1658,16 +1648,6 @@ function AssistantMessageContent({
     );
     blocks.push(<LoopExecutionPreviews key={`previews-${groupKey}`} executions={group.executions}
       message={message} language={language} active={active} />);
-    // Images open on demand from the separate execution preview row.
-    const media = group.executions.flatMap(execution => mediaByExecution.get(execution.id) ?? [])
-      .filter(artifact => artifact.type !== 'image');
-    if (media.length) {
-      blocks.push(
-        <div key={`media-${groupKey}`} className="message-tool-outputs message-tool-media-outputs">
-          {media.map(artifact => <MessageToolArtifact key={mediaPresentationKey(artifact.path)} artifact={artifact} language={language} />)}
-        </div>,
-      );
-    }
     cursor = group.offset;
   });
 

@@ -21,6 +21,7 @@ app.whenReady().then(async () => {
   try {
     await win.loadFile(join(directory, 'index.html'));
     await require('./helpers/mcp-app-references.cjs')({ win, read, until, send, click });
+    await require('./helpers/message-image-gallery.cjs')({ win, read, until });
     for (const [name, width, height, windowWidth] of [['square',2048,2048,880],['wide',2048,768,430],['portrait',768,2048,430]]) {
       await win.setContentSize(windowWidth, 720);
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><linearGradient id="bg"><stop stop-color="#183b45"/><stop offset="1" stop-color="#a5d4bf"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#bg)"/><circle cx="${width*.54}" cy="${height*.43}" r="${Math.min(width,height)*.23}" fill="#f2bd77"/><path d="M0 ${height} L${width*.35} ${height*.48} L${width*.62} ${height*.72} L${width} ${height*.4} V${height}Z" fill="#234d4f"/></svg>`;
@@ -112,11 +113,13 @@ app.whenReady().then(async () => {
     assert.deepEqual(await read('imageReads'), ['C:/fixture/apple.png'], 'tool updates do not read the image again');
     await read(`window.mediaBoundary=fixtureMessageOverrides.content.length;
       fixtureMessageOverrides={...fixtureMessageOverrides,content:fixtureMessageOverrides.content+'\\n\\n音视频返回后的说明。',toolExecutions:[...fixtureMessageOverrides.toolExecutions,{...loopCall,id:'generate-video-audio',sequence:3,createdAt:'2026-09-10T00:00:03Z',contentOffset:mediaBoundary,artifacts:[{id:'loop-video',name:'clip.mp4',path:'C:/fixture/clip.mp4',type:'video',display:'inline'},{id:'loop-audio',name:'voice.mp3',path:'C:/fixture/voice.mp3',type:'audio',display:'inline'}]}]};renderFixture(true)`);
-    await until('!!document.querySelector(".message-tool-media-outputs audio")&&Array.from(document.querySelectorAll(".markdown-content p")).some(node=>node.textContent==="音视频返回后的说明。")');
-    assert.deepEqual(await read('Array.from(document.querySelectorAll(".message-tool-media-outputs img,.message-tool-media-outputs video,.message-tool-media-outputs audio")).map(node=>node.tagName)'),['VIDEO','AUDIO']);
-    // Streaming Markdown can commit between reads; check both live nodes in
-    // one snapshot before asserting that media precedes the appended text.
-    await until('(()=>{const audio=document.querySelector(".message-tool-media-outputs audio"),tail=Array.from(document.querySelectorAll(".markdown-content p")).find(node=>node.textContent==="音视频返回后的说明。");return !!(audio&&tail&&(audio.compareDocumentPosition(tail)&Node.DOCUMENT_POSITION_FOLLOWING))})()');
+    await until('Array.from(document.querySelectorAll(".markdown-content p")).some(node=>node.textContent==="音视频返回后的说明。")');
+    assert.equal(await read('document.querySelector(".message-tool-outputs,audio,video")'), null,
+      'returning audio/video artifacts never inserts players under the thinking transcript');
+    await read('fixtureMessageOverrides={...fixtureMessageOverrides,content:fixtureMessageOverrides.content+"\\n\\nC:/fixture/voice.mp3\\nC:/fixture/clip.mp4"};renderFixture(true)');
+    await until('!!document.querySelector(".message-inline-media-block audio") && !!document.querySelector(".message-inline-media-block video")');
+    assert.deepEqual(await read('Array.from(document.querySelectorAll("audio,video")).map(node=>node.tagName)'), ['AUDIO','VIDEO'],
+      'explicit media references render once in authored order even when the files are tool artifacts');
     await win.setContentSize(880,850);
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     for(let attempt=0;attempt<3;attempt++){
@@ -145,15 +148,16 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".message-row")');
     const localCalls = await read('localRuntimeCalls');
     await read('mediaOnly=false;fixtureReports={};followup=null;followupHost=null;renderRemoteFixture(true)');
-    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth > 0');
+    await until('!!document.querySelector(".message-row.streaming")');
     assert.equal(await read('document.querySelector("iframe,.message-app-reference")'), null, 'remote loops also suppress interactive Apps');
     await read('renderRemoteFixture(false)'); await until('!!document.querySelector(".message-app-reference")');
+    await until('document.querySelector(".assistant-final-answer img")?.naturalWidth > 0');
     assert.equal(await read('remoteCommands.some(command=>command.payload.action==="open")'), false, 'remote completion shows a reference without loading App content');
     await openReference(); await until('!!fixtureReports.result');
     assert.deepEqual(await read('remoteReads'), ['/srv/result.png'], 'only inline media is fetched; remote document attachments stay lazy');
-    assert.equal(await read('document.querySelector(".message-tool-artifact img").src.startsWith("blob:")'), true);
+    assert.equal(await read('document.querySelector(".assistant-final-answer img").src.startsWith("blob:")'), true);
     assert.equal(await read('[...document.querySelectorAll("a,img")].some(node=>(node.href||node.src).startsWith("file:"))'), false, 'remote output never uses local file URLs');
-    await read('[...document.querySelectorAll(".message-tool-artifact button")].find(button=>button.textContent.includes("report.pdf")).click()');
+    await read('[...document.querySelectorAll(".assistant-final-answer button")].find(button=>button.textContent.includes("report.pdf")).click()');
     assert.deepEqual(await read('openedRemoteFiles'), ['/srv/report.pdf']);
     assert.equal(await read('remoteCommands.some(command=>command.kind==="runtime.mcp_app"&&command.payload.action==="open")'), true);
     await read('document.querySelector("iframe").contentWindow.postMessage({fixture:"message"},"*")');

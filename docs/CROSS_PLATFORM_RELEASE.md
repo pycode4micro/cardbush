@@ -80,7 +80,8 @@ that those fixtures cannot reproduce.
    main-branch build only uploads Actions artifacts, including an unsigned Windows
    development installer; it does not create or refresh a public Release. The
    `publish` job runs only for `v*` tags, checks the version and both checksums,
-   uploads to a draft, then publishes it as a prerelease.
+   uploads to a draft, then publishes it. Plain versions such as `1.0.8` are
+   regular releases; only versions with a prerelease suffix are marked prerelease.
 6. Verify the public tag, both versioned installers, per-platform checksum files
    and startup reports. Report the release URL only as published once that state
    is confirmed. If publication fails, keep the previous public release available

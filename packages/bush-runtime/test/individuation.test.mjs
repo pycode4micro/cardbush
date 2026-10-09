@@ -75,8 +75,10 @@ test('habit and prediction are persisted and retrieved independently before any 
     const records=await new IndividuationStore(f.path).check('',settings);
     assert.equal(records.length,1);assert.equal(records[0].kind,kind);assert.equal(records[0].text,input[kind]);
   }
-  const snapshot=await f.store.begin(on,true,10000);
-  assert.deepEqual(snapshot.records.map(r=>[r.kind,r.scope]),[['habit',1],['prediction',2]]);
+  const snapshot=await f.store.begin(on,'events',true);
+  assert.deepEqual(snapshot.records.map(r=>[r.kind,r.scope]),[['prediction',2]]);
+  await f.store.fail(snapshot.lease,'fixture release');
+  assert.deepEqual((await f.store.begin(on,'habits',true)).records.map(r=>[r.kind,r.scope]),[['habit',1]]);
 });
 
 test('each optional field follows only its own switch and never opens storage for a disabled category',async t=>{
@@ -100,7 +102,7 @@ test('deduplication and already-delivered filtering cannot collapse different me
   const records=await f.store.check('XLSX',on);assert.deepEqual(records.map(r=>r.kind).sort(),['habit','prediction']);
   const habit=records.find(r=>r.kind==='habit'),forecast=records.find(r=>r.kind==='prediction');
   assert.deepEqual((await f.store.check('XLSX',on,[habit.id])).map(r=>r.id),[forecast.id]);
-  const snapshot=await f.store.begin(on,true,10000);assert.equal(snapshot.records.length,2);
+  const snapshot=await f.store.begin(on,'events',true);assert.equal(snapshot.records.length,1);
   assert.ok(snapshot.records.every(r=>r.observations===1),'same-turn replay does not add observations');
 });
 
@@ -111,11 +113,12 @@ test('prediction evidence survives disabling habits and habits cannot be reviewe
   assert.equal((await store.status(on)).records,1,'a habit alone must not collect prediction evidence');
   await write(store,{prediction:'查看 A 股后，用户可能需要 XLSX 数据表。'},on,{...owner,turnId:'two'});
   time+=100;await store.observe('请给我一份 A 股 XLSX 数据表',on,{...owner,turnId:'three'});
-  const all=await store.begin(on,true,10000),habit=all.records.find(r=>r.kind==='habit'),forecast=all.records.find(r=>r.kind==='prediction'),evidence=all.records.find(r=>r.kind==='evidence');
+  const habit=(await store.check('',habits))[0];
+  const all=await store.begin(on,'events',true),forecast=all.records.find(r=>r.kind==='prediction'),evidence=all.records.find(r=>r.kind==='evidence');
   assert.deepEqual(JSON.parse(evidence.metadata).related,[forecast.id]);assert.equal(evidence.scope,2);
   await assert.rejects(store.apply(all,{habits:[],predictions:[],reviews:[{prediction:habit.id,evidence:evidence.id,outcome:'hit',reason:'invalid category'}]},on),/subsequent user evidence/);
   await store.fail(all.lease,'fixture release');
-  const onlyPredictions=await store.begin(predictions,true,10000);
+  const onlyPredictions=await store.begin(predictions,'events',true);
   assert.deepEqual(onlyPredictions.records.map(r=>r.kind),['prediction','evidence']);
   const reviewed=await store.apply(onlyPredictions,{habits:[],predictions:[{text:'看 A 股后可能需要 XLSX。',sources:[forecast.id,evidence.id]}],
     reviews:[{prediction:forecast.id,evidence:evidence.id,outcome:'hit',reason:'用户明确要求 XLSX'}]},predictions);
@@ -142,7 +145,7 @@ test('failed and cancelled persistence leave final response available',async t=>
 });
 
 test('threshold invokes one protocol-independent model summary, replaces records, and coalesces concurrent requests',async t=>{
-  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000};let calls=0;
+  const f=await fixture(t),settings={...on,habitTokenThreshold:1000};let calls=0;
   const gate=Promise.withResolvers();
   const memory=new IndividuationMemory(f.path,summarizeProvider(async(request,rows)=>{
     calls++;assert.deepEqual(request.tools,[]);assert.equal(request.metadata.runtimeMaintenance,'personalization_summary');await gate.promise;
@@ -167,84 +170,68 @@ async function expireSummaryCooldown(path) {
   finally { db.close(); }
 }
 
-test('maintenance sizes serialized input and output against contextWindowTokens and progresses in small batches',async t=>{
-  const counts=[];
+test('maintenance sends the whole category once when it fits and preserves it when context is insufficient',async t=>{
   for(const context of [6000,400000]) {
-    const f=await fixture(t),seen=[],settings={...on,summaryTokenThreshold:200000};
+    const f=await fixture(t),seen=[],settings={...on,habitTokenThreshold:200000};
     await seedSummaryRecords(f.store,settings,40);
     const memory=new IndividuationMemory(f.path,summarizeProvider((request,rows)=>{
-      seen.push(request);counts.push(rows.length);
-      assert.equal(request.metadata.contextWindowTokens,context);
+      seen.push(request);assert.equal(rows.length,40,'no arbitrary record batching');
+      assert.equal(request.metadata.memoryStage,'habits');
       assert.ok(memoryTokens(JSON.stringify(request.messages))+32+request.maxOutputTokens+512<=context);
-      assert.ok(rows.length<=32&&rows.length<40,'whole memory is not dumped into a single response');
       return {habits:[{text:'Market reports include dated XLSX tables and sources.',sources:rows.map(r=>r.id)}],predictions:[],reviews:[]};
     }));t.after(()=>memory.close());
-    // The obsolete key is deliberately contradictory: only the runtime's real key counts.
-    await memory.compact(settings,{...model,metadata:{contextWindowTokens:context,maxContextTokens:2048}});
-    assert.equal(seen.length,1);
-    assert.ok((await f.store.status(settings)).records>1,'remaining records are preserved for later batches');
+    const operation=memory.compact(settings,{...model,metadata:{contextWindowTokens:context,maxContextTokens:2048}});
+    if(context===6000){await assert.rejects(operation,/memory_summary_input_limit/);assert.equal(seen.length,0);assert.equal((await f.store.status(settings)).records,40);}
+    else {await operation;assert.equal(seen.length,1);assert.equal((await f.store.status(settings)).records,1);}
   }
-  assert.ok(counts[0]<counts[1],'small model contexts receive smaller record batches');
 });
 
-test('truncated maintenance retries a smaller snapshot without applying incomplete JSON or losing originals',async t=>{
-  const f=await fixture(t),settings={...on,summaryTokenThreshold:200000},sizes=[];
+test('truncated maintenance preserves the complete snapshot and retries only when explicitly requested',async t=>{
+  const f=await fixture(t),settings={...on,habitTokenThreshold:200000},sizes=[];
   await seedSummaryRecords(f.store,settings,12);
   const memory=new IndividuationMemory(f.path,{async *stream(request) {
     const rows=JSON.parse(request.messages.at(-1).content);sizes.push(rows.length);
-    assert.equal((await f.store.status(settings)).records,12,'no source was removed by the failed first attempt');
-    if(sizes.length===1) {
-      yield event(request,0,'text_delta',{delta:'{"habits":['});
-      yield event(request,1,'usage',{inputTokens:1400,outputTokens:request.maxOutputTokens});
-      yield event(request,2,'response_completed',{finishReason:'length'});
-    } else {
-      yield event(request,0,'text_delta',{delta:JSON.stringify({habits:[{text:'Use dated XLSX tables for market reports.',sources:rows.map(r=>r.id)}],predictions:[],reviews:[]})});
-      yield event(request,1,'response_completed',{finishReason:'stop'});
-    }
+    assert.equal((await f.store.status(settings)).records,12);
+    if(sizes.length===1){yield event(request,0,'text_delta',{delta:'{"habits":['});yield event(request,1,'response_completed',{finishReason:'length'});}
+    else {yield event(request,0,'text_delta',{delta:JSON.stringify({habits:[{text:'Use dated XLSX tables for market reports.',sources:rows.map(r=>r.id)}],predictions:[],reviews:[]})});yield event(request,1,'response_completed',{finishReason:'stop'});}
   }});t.after(()=>memory.close());
+  await assert.rejects(memory.compact(settings,model),/memory_summary_output_limit/);
+  assert.deepEqual(sizes,[12]);assert.equal((await f.store.status(settings)).records,12);
   const status=await memory.compact(settings,model);
-  assert.equal(sizes.length,2);assert.ok(sizes[1]<sizes[0]);assert.equal(status.lastError,null);
-  assert.equal(status.records,12-sizes[1]+1);assert.ok(status.historyChanges>12,'consolidation is reversible history');
+  assert.deepEqual(sizes,[12,12]);assert.equal(status.lastError,null);assert.equal(status.records,1);assert.ok(status.historyChanges>12);
 });
 
-test('a successful partial batch does not prevent automatic continuation without new memory writes',async t=>{
-  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000};
-  await seedSummaryRecords(f.store,settings,16);
-  const snapshot=await f.store.begin(settings,false,10000,undefined,{maxRecords:3});
-  assert.equal(snapshot.records.length,3);
-  const status=await f.store.apply(snapshot,{habits:[{text:'Market reports use dated XLSX tables.',sources:snapshot.records.map(r=>r.id)}],predictions:[],reviews:[]},settings);
-  assert.ok(status.estimatedTokens>settings.summaryTokenThreshold);
-  const next=await f.store.begin(settings,false,10000,undefined,{maxRecords:3});
-  assert.ok(next,'the next automatic pass can process remaining records');
-  assert.ok(next.records.every(row=>!snapshot.records.some(old=>old.id===row.id)));
-  await f.store.fail(next.lease,'fixture release');
+test('event and habit thresholds are independent and can be configured separately',async t=>{
+  assert.equal(on.eventTokenThreshold,10000);assert.equal(on.habitTokenThreshold,10000);
+  assert.deepEqual(normalizeIndividuation({eventTokenThreshold:4321,habitTokenThreshold:12345}),{...off,eventTokenThreshold:4321,habitTokenThreshold:12345});
+  const f=await fixture(t),settings={...on,eventTokenThreshold:1000,habitTokenThreshold:1000},stages=[];
+  for(let i=0;i<3;i++)await write(f.store,{habit:'Habit '+i+': '+'Use dated XLSX reports. '.repeat(25),prediction:'Forecast '+i+': '+'May request another dated report. '.repeat(15)},settings,{...owner,turnId:String(i)});
+  const initial=await f.store.status(settings);assert.ok(initial.estimatedTokens>1000);assert.ok(initial.eventTokens<1000&&initial.habitTokens<1000);
+  const memory=new IndividuationMemory(f.path,summarizeProvider((request,rows)=>{stages.push(request.metadata.memoryStage);return {habits:[],predictions:[{text:'May request dated reports.',sources:rows.map(r=>r.id)}],reviews:[]};}));t.after(()=>memory.close());
+  await memory.compact(settings,model,false);assert.deepEqual(stages,[],'combined total does not trigger either stage');
+  await write(f.store,{prediction:'Additional request: '+'May request another dated XLSX report. '.repeat(30)},settings,{...owner,turnId:'extra'});
+  await write(f.store,{prediction:'Another scenario: '+'May request more charts and tables. '.repeat(30)},settings,{...owner,turnId:'extra-two'});
+  assert.ok((await f.store.status(settings)).eventTokens>=1000);
+  await memory.compact(settings,model,false);assert.deepEqual(stages,['events']);assert.equal((await f.store.status(settings)).habits,3);
 });
 
-test('unchanged deterministic failures stay suppressed across cooldown expiry, restart and unrelated new notes',async t=>{
-  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000},requests=[];
+test('unchanged failures stay suppressed across restart and writes in the other category',async t=>{
+  const f=await fixture(t),settings={...on,habitTokenThreshold:1000},requests=[];
   await seedSummaryRecords(f.store,settings,48);
-  const provider={async *stream(request) {
-    requests.push(request);
-    yield event(request,0,'usage',{inputTokens:1234,outputTokens:request.maxOutputTokens});
-    yield event(request,1,'response_completed',{finishReason:'length'});
-  }};
+  const provider={async *stream(request){requests.push(request);yield event(request,0,'response_completed',{finishReason:'length'});}};
   const memory=new IndividuationMemory(f.path,provider);
-  await assert.rejects(memory.compact(settings,model,false),/memory_summary_output_limit.*finish=length/);
-  assert.equal(requests.length,3,'bounded shrinking retries, never an unbounded loop');
-  const sizes=requests.map(r=>JSON.parse(r.messages.at(-1).content).length);
-  assert.ok(sizes[0]>sizes[1]&&sizes[1]>sizes[2]);
-  assert.equal((await f.store.status(settings)).records,48);
+  await assert.rejects(memory.compact(settings,model,false),/memory_summary_output_limit.*finish=length/);assert.equal(requests.length,1);
+  assert.equal(JSON.parse(requests[0].messages.at(-1).content).length,48);
   await memory.close();await expireSummaryCooldown(f.path);
   const restarted=new IndividuationMemory(f.path,provider);t.after(()=>restarted.close());
-  await restarted.compact(settings,model,false);assert.equal(requests.length,3);
-  await write(f.store,{habit:'A new unrelated preference in a different topic.'},settings,{sessionId:'other',turnId:'new'});
-  await restarted.compact(settings,model,false);assert.equal(requests.length,3,'an unrelated database revision does not retry the same failed batch');
-  await assert.rejects(restarted.compact(settings,model,true),/memory_summary_output_limit/);
-  assert.equal(requests.length,6,'an explicit manual retry is still allowed');
+  await restarted.compact(settings,model,false);assert.equal(requests.length,1);
+  await write(f.store,{prediction:'An unrelated forecast.'},settings,{sessionId:'other',turnId:'new'});
+  await restarted.compact(settings,model,false);assert.equal(requests.length,1);
+  await assert.rejects(restarted.compact(settings,model,true),/memory_summary_output_limit/);assert.equal(requests.length,2);
 });
 
 test('maintenance diagnostics distinguish invalid JSON and transient provider failure without echoing provider content',async t=>{
-  const f=await fixture(t),settings={...on,summaryTokenThreshold:1000};let calls=0,mode='network';
+  const f=await fixture(t),settings={...on,habitTokenThreshold:1000};let calls=0,mode='network';
   await seedSummaryRecords(f.store,settings,12);
   const memory=new IndividuationMemory(f.path,{async *stream(request) {
     calls++;
@@ -270,26 +257,95 @@ test('reviews require later user evidence, persist hits/misses, and consolidate 
   await write(store,{prediction:'预测：下一次看 A 股走势时可能还会要求 XLSX 数据表。'},on,owner,'看看大 A 走势');
   time+=100;await store.observe('再看 A 股走势，还要一份 XLSX 数据表。',on,{...owner,turnId:'two'});
   time+=100;await store.observe('下次不要自动生成 XLSX 数据表，这次不需要。',on,{...owner,turnId:'three'});
-  const snapshot=await store.begin(on,true,10000);const note=snapshot.records.find(r=>r.kind==='prediction');const evidence=snapshot.records.filter(r=>r.kind==='evidence');assert.equal(evidence.length,2);
+  time+=100;await store.observe('请再次提供 A 股 XLSX 数据表。',on,{...owner,turnId:'four'});
+  const snapshot=await store.begin(on,'events',true);const note=snapshot.records.find(r=>r.kind==='prediction');const evidence=snapshot.records.filter(r=>r.kind==='evidence');assert.equal(evidence.length,3);
   const output={habits:[{text:'A 股分析可按需提供 XLSX；用户明确不需要时不要生成。',sources:[note.id,...evidence.map(r=>r.id)]}],predictions:[],
-    reviews:[{prediction:note.id,evidence:evidence[0].id,outcome:'hit',reason:'用户明确要求数据表'},{prediction:note.id,evidence:evidence[1].id,outcome:'miss',reason:'用户明确拒绝自动生成'}]};
-  const stats=await store.apply(snapshot,output,on);assert.equal(stats.hits,1);assert.equal(stats.misses,1);assert.equal(stats.records,1);
-  assert.equal((await store.check('XLSX',on))[0].hits,1);
+    reviews:[{prediction:note.id,evidence:evidence[0].id,outcome:'hit',reason:'用户明确要求数据表'},{prediction:note.id,evidence:evidence[1].id,outcome:'miss',reason:'用户明确拒绝自动生成'},{prediction:note.id,evidence:evidence[2].id,outcome:'hit',reason:'再次明确要求'}]};
+  const stats=await store.apply(snapshot,output,on);assert.equal(stats.hits,2);assert.equal(stats.misses,1);assert.equal(stats.records,1);
+  assert.equal((await store.check('XLSX',on))[0].hits,2);
   await assert.rejects(store.apply(snapshot,output,on),/superseded/,'a completed snapshot cannot count again');
 });
 
-test('invalid model output, invented evidence, and concurrent writes preserve original memory',async t=>{
-  const f=await fixture(t);await write(f.store,{prediction:'用户常要 A 股数据表；是否每次都要尚未验证。'},on,owner);
-  const snapshot=await f.store.begin(on,true,10000),source=snapshot.records[0];
-  await assert.rejects(f.store.apply(snapshot,{habits:[],predictions:[],reviews:[{prediction:source.id,evidence:source.id,outcome:'hit',reason:'invented'}]},on),/subsequent user evidence/);
-  assert.equal((await f.store.status(on)).records,1);await f.store.fail(snapshot.lease,'invalid evidence');
-  let calls=0;const memory=new IndividuationMemory(f.path,summarizeProvider(()=>{calls++;return 'bad JSON';}));
-  await assert.rejects(memory.compact(on,model,true));assert.equal((await f.store.status(on)).records,1);assert.ok((await f.store.status(on)).lastError);
-  await memory.compact({...on,summaryTokenThreshold:1000},model,false);assert.equal(calls,1);
-  const gate=Promise.withResolvers(),entered=Promise.withResolvers();const concurrent=new IndividuationMemory(f.path,summarizeProvider(async(_,rows)=>{entered.resolve();await gate.promise;return {habits:[{text:'按需提供 A 股数据表',sources:[rows[0].id]}],predictions:[],reviews:[]};}));
+test('invalid output is retained, while unrelated new memory does not cancel a valid summary',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,4);
+  const snapshot=await f.store.begin(on,'habits',true),source=snapshot.records[0];
+  await assert.rejects(f.store.apply(snapshot,{habits:[],predictions:[],reviews:[{prediction:source.id,evidence:source.id,outcome:'hit',reason:'invented'}]},on),/cannot create or review/);
+  assert.equal((await f.store.status(on)).records,4);await f.store.fail(snapshot.lease,'invalid evidence');
+  let calls=0;const memory=new IndividuationMemory(f.path,summarizeProvider(()=>{calls++;return 'bad JSON';}));t.after(()=>memory.close());
+  await assert.rejects(memory.compact(on,model,true));assert.equal((await f.store.status(on)).records,4);
+  await memory.compact(on,model,false);assert.equal(calls,1);
+  const gate=Promise.withResolvers(),entered=Promise.withResolvers();const concurrent=new IndividuationMemory(f.path,summarizeProvider(async(_,rows)=>{entered.resolve();await gate.promise;return {habits:[{text:'Use dated XLSX market reports.',sources:rows.map(row=>row.id)}],predictions:[],reviews:[]};}));t.after(()=>concurrent.close());
   const running=concurrent.compact(on,model);await entered.promise;
   await write(f.store,{habit:'用户新要求：xlsx 内同时保存来源日期。'},on,{...owner,turnId:'new'});gate.resolve();
-  await assert.rejects(running);assert.equal((await f.store.status(on)).records,2,'new and old memory both survive conflict');
+  await running;assert.equal((await f.store.status(on)).records,2);
+  assert.equal((await f.store.status(on)).lastError,null);
+  assert.ok((await f.store.list(on)).records.some(row=>row.text==='用户新要求：xlsx 内同时保存来源日期。'));
+});
+
+test('summarizing cannot overwrite a user edit to a selected source',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,2);
+  const snapshot=await f.store.begin(on,'habits',true),source=snapshot.records[0];
+  await f.store.change({id:source.id,revision:source.revision,action:'confirm',reason:'User pinned this preference'},on,
+    {sessionId:'settings',turnId:'pin',operationId:'pin'},'user','');
+  await assert.rejects(f.store.apply(snapshot,{habits:[{text:'Brief report preference',sources:[source.id]}],predictions:[],reviews:[]},on),
+    error=>error.code==='memory_snapshot_changed');
+  assert.equal((await f.store.list(on)).records.find(row=>row.id===source.id).origin,'user');
+});
+
+test('each stage has its own timeout and status stays running between stages',async t=>{
+  const f=await fixture(t),settings={...on,eventTokenThreshold:1000,habitTokenThreshold:1000};await seedSummaryRecords(f.store,settings,16);
+  await write(f.store,{prediction:'May need XLSX reports.'},settings,{...owner,turnId:'forecast'});
+  const first=Promise.withResolvers(),second=Promise.withResolvers(),between=Promise.withResolvers(),proceed=Promise.withResolvers();let calls=0;
+  const memory=new IndividuationMemory(f.path,summarizeProvider(async(request,rows)=>{
+    (++calls===1?first:second).resolve();await new Promise(resolve=>setTimeout(resolve,70000));
+    return {habits:request.metadata.memoryStage==='habits'?[{text:'Market reports use dated XLSX tables.',sources:rows.map(row=>row.id)}]:[],predictions:[],reviews:[]};
+  }));t.after(()=>memory.close());
+  const begin=memory.store.begin.bind(memory.store);let stages=0;
+  memory.store.begin=async(...args)=>{if(++stages===2){between.resolve();await proceed.promise;}return begin(...args);};
+  t.mock.timers.enable({apis:['setTimeout']});
+  const operation=memory.compact(settings,model);await first.promise;t.mock.timers.tick(70000);await between.promise;
+  assert.equal((await memory.store.status(settings)).running,false);assert.equal((await memory.status(settings)).running,true);
+  proceed.resolve();await second.promise;t.mock.timers.tick(70000);const status=await operation;
+  assert.equal(calls,2);assert.equal(status.running,false);assert.equal(status.lastError,null);assert.ok(status.estimatedTokens<700);
+});
+
+test('a single stalled batch reports timeout and releases its lease without removing memory',async t=>{
+  const f=await fixture(t),entered=Promise.withResolvers();await seedSummaryRecords(f.store,on,2);
+  const memory=new IndividuationMemory(f.path,{async *stream(_request,{signal}){
+    entered.resolve();await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+  }});t.after(()=>memory.close());
+  t.mock.timers.enable({apis:['setTimeout']});
+  const operation=memory.compact(on,model),failed=assert.rejects(operation,/memory_summary_timeout:/);
+  await entered.promise;t.mock.timers.tick(120_000);await failed;
+  const status=await memory.status(on);assert.equal(status.running,false);assert.equal(status.records,2);
+  assert.match(status.lastError,/memory_summary_timeout/);
+});
+
+test('maintenance respects the selected output ceiling and explains rejected summaries without retaining their text',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,3);
+  const memory=new IndividuationMemory(f.path,summarizeProvider(request=>{
+    assert.equal(request.maxOutputTokens,2048);
+    return {habits:[{text:'Never log this provider text',sources:['invented-private-id']}],predictions:[],reviews:[]};
+  }));t.after(()=>memory.close());
+  await assert.rejects(memory.compact(on,{...model,maxOutputTokens:2048}),/reason=unsupported_sources/);
+  const status=await memory.status(on);
+  assert.equal(status.records,3);assert.ok(!status.lastError.includes('private')&&!status.lastError.includes('provider text'));
+});
+
+test('maintenance inherits configured output tokens and reasoning unchanged for full-snapshot retries',async t=>{
+  for(const [maxOutputTokens,contextWindowTokens] of [[128000,400000],[8192,16000]]) {
+    const f=await fixture(t);await seedSummaryRecords(f.store,on,8);const requests=[];
+    const selected={...model,maxOutputTokens,reasoningEffort:'max',metadata:{contextWindowTokens}};
+    const memory=new IndividuationMemory(f.path,{async *stream(request){
+      requests.push(request);const rows=JSON.parse(request.messages.at(-1).content);
+      assert.equal(request.maxOutputTokens,maxOutputTokens);assert.equal(request.reasoningEffort,'max');assert.equal(rows.length,8);
+      if(requests.length===1){yield event(request,0,'usage',{outputTokens:maxOutputTokens});yield event(request,1,'response_completed',{finishReason:'length'});}
+      else {yield event(request,0,'text_delta',{delta:JSON.stringify({habits:[{text:'Market reports use dated XLSX tables.',sources:rows.map(row=>row.id)}],predictions:[],reviews:[]})});yield event(request,1,'response_completed',{finishReason:'stop'});}
+    }});t.after(()=>memory.close());
+    await assert.rejects(memory.compact(on,selected),/memory_summary_output_limit/);
+    const status=await memory.compact(on,selected);assert.equal(status.lastError,null);assert.equal(requests.length,2);
+    assert.equal(selected.reasoningEffort,'max');assert.equal(selected.maxOutputTokens,maxOutputTokens);
+  }
 });
 
 test('automatic context is relevant, bounded, internal and not duplicated by follow-up tools or later turns',async t=>{
@@ -308,27 +364,22 @@ test('automatic context is relevant, bounded, internal and not duplicated by fol
   assert.deepEqual(deliveredMemoryIds(toolMessages),deliveredMemoryIds(refs));
 });
 
-test('bounded batches keep forecast sources until all subsequent evidence can be reviewed',async t=>{
+test('one complete event snapshot reviews all evidence and retires originals when promoting a habit',async t=>{
   const f=await fixture(t);let now=1000;const store=new IndividuationStore(f.path,()=>now);
   await write(store,{prediction:'预测用户查看大 A 股市时还需要 XLSX 数据表。'},on,owner);
-  for(let i=0;i<6;i++){now+=100;await store.observe(`第 ${i} 次需要大 A 股市 XLSX 数据表。`+'需要包含来源日期。'.repeat(10),on,{...owner,turnId:String(i)});}
-  const all=await store.begin(on,true,10000),note=all.records.find(r=>r.kind==='prediction'),first=all.records.find(r=>r.kind==='evidence');
-  await store.fail(all.lease,'fixture');
-  const limited=await store.begin(on,true,note.tokens+first.tokens+161);
-  assert.equal(limited.records.length,2,'the forecast and one later user message fit the bounded input');
-  const partial=await store.apply(limited,{habits:[],predictions:[],reviews:[{prediction:note.id,evidence:first.id,outcome:'hit',reason:'explicit request'}]},on);
-  assert.equal(partial.hits,1);assert.equal(partial.records,6,'source stays with five remaining evidence rows');
-  const next=await store.begin(on,true,10000);assert.ok(next.records.some(r=>r.id===note.id));
-  const rest=next.records.filter(r=>r.kind==='evidence');assert.equal(rest.length,5);
-  const final=await store.apply(next,{habits:[{text:'大 A 股市分析通常需要带来源日期的 XLSX 表。',sources:[note.id,...rest.map(r=>r.id)]}],predictions:[],
-    reviews:rest.map(r=>({prediction:note.id,evidence:r.id,outcome:'hit',reason:'explicit request'}))},on);
-  assert.equal(final.hits,6);assert.equal(final.records,1);
+  for(let i=0;i<6;i++){now+=100;await store.observe('第 '+i+' 次需要大 A 股市 XLSX 数据表。'+'需要包含来源日期。'.repeat(10),on,{...owner,turnId:String(i)});}
+  const snapshot=await store.begin(on,'events',true),note=snapshot.records.find(row=>row.kind==='prediction'),evidence=snapshot.records.filter(row=>row.kind==='evidence');
+  assert.equal(evidence.length,6);
+  const final=await store.apply(snapshot,{habits:[{text:'大 A 股市分析通常需要带来源日期的 XLSX 表。',sources:snapshot.records.map(row=>row.id)}],predictions:[],
+    reviews:evidence.map(row=>({prediction:note.id,evidence:row.id,outcome:'hit',reason:'explicit request'}))},on);
+  assert.equal(final.hits,6);assert.equal(final.records,1);assert.equal(final.eventTokens,0);assert.equal(final.estimatedTokens,final.habitTokens);
+  assert.ok(final.estimatedTokens<snapshot.tokens);assert.equal((await store.read({ids:[note.id]},on)).memories[0].state,'consolidated');
 });
 
 test('manual runtime command works below threshold and a second database owner cannot take the active lease',async t=>{
   const f=await fixture(t);await write(f.store,{habit:'用户明确偏好：在股市分析中提供 XLSX 表格。'},habits,owner);
-  const snapshot=await f.store.begin(habits,true,10000);
-  assert.equal(await new IndividuationStore(f.path).begin(habits,true,10000),null);
+  const snapshot=await f.store.begin(habits,'habits',true);
+  assert.equal(await new IndividuationStore(f.path).begin(habits,'habits',true),null);
   await f.store.fail(snapshot.lease,'fixture unlock');
   let calls=0;const host=new InMemoryRuntimeHost({dataRoot:f.root,registerDefaultWorkspaceTools:false,provider:summarizeProvider((request,rows)=>{
     calls++;assert.equal(request.model,'manual-model');return {habits:[{text:'股市分析附 XLSX',sources:[rows[0].id]}],predictions:[],reviews:[]};
@@ -344,7 +395,7 @@ test('cancelling a model summary releases the lease and retains the source',asyn
   const memory=new IndividuationMemory(f.path,{async *stream(_request,{signal}){entered.resolve();await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}});
   const controller=new AbortController(),running=memory.compact(on,model,true,controller.signal);await entered.promise;controller.abort();
   await assert.rejects(running);const status=await f.store.status(on);assert.equal(status.records,1);assert.equal(status.running,false);assert.ok(status.lastError);
-  assert.ok(await f.store.begin(on,true,10000),'manual retry can acquire immediately');
+  assert.ok(await f.store.begin(on,'habits',true),'manual retry can acquire immediately');
 });
 const event = (request, sequence, kind, payload = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId,
   createdAt: new Date().toISOString(), sequence, kind, ...payload });

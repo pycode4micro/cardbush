@@ -5,6 +5,30 @@ import { join, resolve, sep } from 'node:path';
 import { CardbushAppsConfigStore, readCardbushSearchResultLimit } from '@cardbush/product-host';
 import { InMemoryRuntimeHost, modelToolDefinitions, registerMcpDiscovery, registerSkillTools, ToolRegistry } from '@cardbush/bush-runtime';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
+import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
+
+test('the shipped Browser Use catalog can be discovered for web research without a search-specific plugin', async () => {
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const add = (server, name, description) => registry.register({
+    definition: { name: `mcp__${server}__${name}`, description, inputSchema: { type: 'object' } },
+    manifest: { effect_kind: 'observation', operation: 'test', risk: 'low', owner: 'fixture', dispatch_scope: 'parent_session', mutating: false },
+    decodeInput: input => input, execute: () => { throw Error('Discovery must not execute tools'); },
+    mcpHook: { server, tool: name, call: async () => { throw Error('No network expected'); } },
+  });
+  const browser = createCardbushChromeServer({ connector: async () => { throw Error('No browser connection expected'); } });
+  for (const [name, tool] of Object.entries(browser._registeredTools)) add('browser_use', name, tool.description);
+  add('blender', 'search_api_docs', 'Full-text search over the bundled Blender Python API reference. Returns a ranked list of hits.');
+  add('blender', 'get_object_summary', 'Return the current object and its properties for the scene.');
+  add('github', 'search', 'Search repository code and current issues for the project.');
+  const request = { sessionId: 'browser-discovery', turnId: 'turn', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
+  const search = registry.resolve('mcp_search');
+  for (const query of ['web search news', 'search the internet for current news articles']) {
+    const result = await search.execute({ input: search.decodeInput({ query, limit: 5 }), turn: { request, contextMessages: [] } });
+    assert.equal(result.matches[0].name, 'mcp__browser_use__new_page');
+    assert.ok(result.matches.every(tool => tool.inputSchema === undefined && tool.loaded === false));
+    assert.ok(!result.matches.some(tool => tool.name === 'mcp__browser_use__export_image'));
+  }
+});
 
 async function fixture(t) {
   const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
@@ -108,7 +132,7 @@ test('saved default immediately affects both searches, overrides and pagination,
     const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), messages: [{ role: 'user', content: 'Find relevant tools' }], metadata: { mcpToolDiscovery: true } };
     const search = (name, input = {}) => {
       const tool = registry.resolve(name);
-      return tool.execute({ input: tool.decodeInput({ query: 'fixture', ...input }), turn: { request, contextMessages: request.messages } });
+      return tool.execute({ input: tool.decodeInput({ ...(input.cursor ? {} : { query: 'fixture' }), ...input }), turn: { request, contextMessages: request.messages } });
     };
     return { registry, request, search };
   };
@@ -127,10 +151,11 @@ test('saved default immediately affects both searches, overrides and pagination,
     assert.equal(JSON.stringify(modelToolDefinitions(runtime.registry, { ...runtime.request, turnId: `next-${limit}`, metadata: { mcpToolDiscovery: true } })), originalTools);
   }
   await api.savePluginSearchResultLimit(13);
-  const first = await runtime.search('mcp_search'), second = await runtime.search('mcp_search', { offset: first.next_offset });
-  assert.equal(first.next_offset, 13); assert.equal(second.next_offset, 26);
+  const first = await runtime.search('mcp_search'), second = await runtime.search('mcp_search', { cursor: first.next_cursor });
+  assert.ok(first.next_cursor); assert.ok(second.next_cursor);
   assert.equal(new Set([...first.matches, ...second.matches].map(item => item.name)).size, 26);
-  const last = await runtime.search('mcp_search', { offset: 50 });
+  const fullPage = await runtime.search('mcp_search', { limit: 50 });
+  const last = await runtime.search('mcp_search', { cursor: fullPage.next_cursor });
   assert.equal(last.matches.length, 2); assert.equal(last.more, false);
   assert.equal((await runtime.search('mcp_search', { query: 'absent_query_xyz' })).matches.length, 0);
   assert.equal(first.matches[0].inputSchema, undefined);

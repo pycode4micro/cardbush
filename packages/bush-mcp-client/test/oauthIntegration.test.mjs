@@ -18,7 +18,7 @@ test('private client credentials work without environment changes and refresh fr
   const { vault, store } = credentials();
   const ref = 'c'.repeat(64);
   const server = { id: 'private', transport: { kind: 'streamable_http', url: fixture.url + '/mcp',
-    oauth: { clientId: 'private-client', clientSecretRef: ref, clientSecretEnv: 'CARDBUSH_TEST_NONEXISTENT_PRIVATE_SECRET' } }, versionMode: 'legacy' };
+    oauth: { clientId: 'private-client', clientSecretRef: ref, expectedIssuer: fixture.url, clientSecretEnv: 'CARDBUSH_TEST_NONEXISTENT_PRIVATE_SECRET' } }, versionMode: 'legacy' };
   const oauth = new McpOAuthCoordinator(store, async url => { assert.equal((await fetch(url)).status, 200); });
   const manager = new McpClientManager({ registry: new ToolRegistry(), oauth });
   try {
@@ -33,7 +33,7 @@ test('private client credentials work without environment changes and refresh fr
     await store.write(ref, { clientSecret: { value: 'rotated-fixture-value', url: fixture.url + '/mcp', clientId: 'private-client' } });
     assert.equal((await provider.clientInformation()).client_secret, 'rotated-fixture-value', 'private entries never inherit a stale process/cache value');
     await assert.rejects(oauth.provider({ ...server, transport: { ...server.transport, url: 'https://another.example/mcp' } }).clientInformation(), /different endpoint or client ID/);
-    await assert.rejects(oauth.provider({ ...server, transport: { ...server.transport, oauth: { clientId: 'other-client', clientSecretRef: ref } } }).clientInformation(), /different endpoint or client ID/);
+    await assert.rejects(oauth.provider({ ...server, transport: { ...server.transport, oauth: { ...server.transport.oauth, clientId: 'other-client' } } }).clientInformation(), /different endpoint or client ID/);
     await oauth.logout(server);
     assert.equal(vault.has(ref), true, 'sign-out removes tokens, not the configured client credential');
   } finally { await manager.close(); oauth.close(); await fixture.close(); }
@@ -117,7 +117,7 @@ test('preset OAuth client, secret, fixed callback port, scopes and resource work
   let opened = 0;
   const oauth = new McpOAuthCoordinator(store, async url => { opened++; assert.equal((await fetch(url)).status, 200); });
   const server = { id: 'preset', required: true, versionMode: 'legacy', transport: { kind: 'streamable_http', url: fixture.url + '/mcp',
-    oauth: { clientId: 'preset-client', clientSecretEnv: variable, callbackPort: port, scopes: ['tools:read'], resourceUrl: fixture.url + '/mcp' } } };
+    oauth: { clientId: 'preset-client', clientSecretEnv: variable, expectedIssuer: fixture.url, callbackPort: port, scopes: ['tools:read'], resourceUrl: fixture.url + '/mcp' } } };
   const registry = new ToolRegistry(), manager = new McpClientManager({ registry, oauth });
   try {
     assert.equal((await manager.apply(serverSnapshot(server))).servers[0].health, 'auth_required', 'a required connection can wait for sign-in without rolling back the snapshot');

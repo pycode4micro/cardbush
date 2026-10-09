@@ -126,6 +126,49 @@ test('text assistant dispatch reaches the actual child loop and reports completi
   } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
 });
 
+test('text assistant new and resumed children use its current model and publish the same execution model to the UI', async () => {
+  const sessions = new SessionStore(), tasks = new SubagentTaskStore(), childRequests = [];
+  sessions.ensureSession(id);
+  let dispatch = true, resumeId;
+  const host = new InMemoryRuntimeHost({ dataRoot: temporary(), sessionStore: sessions, subagentTaskStore: tasks,
+    provider: { async *stream(request) {
+      if (request.metadata.agentRole === 'child') {
+        childRequests.push(request); yield* response(request, { text: `Verified with ${request.model}` }); return;
+      }
+      if (dispatch) {
+        dispatch = false;
+        yield* response(request, { calls: [{ id: `delegate-${request.requestId}`, name: 'subagent', args: {
+          prompt: 'Read only: inspect the current page', ...(resumeId ? { task_id: resumeId } : {}),
+        } }] });
+      } else yield* response(request, { text: '后台执行中。' });
+    } } });
+  const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
+  try {
+    for (const [index, model] of ['first-model', 'second-model'].entries()) {
+      dispatch = true;
+      const request = { ...parent(), requestId: `assistant-${index}`, turnId: `assistant-turn-${index}`, model,
+        tools: await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} }),
+        providerBinding: { bindingId: `config-${index}`, revision: `revision-${index}` },
+        maxOutputTokens: 8192 + index * 1024, reasoningEffort: index ? 'high' : 'low',
+        metadata: { assistantOutputMode: 'text', contextWindowTokens: 64000 + index * 16000 } };
+      await command({ action: 'turn', entry: entry(`switch-${index}`), parent: request, profile: assistantProfileSchema.parse({}) });
+      await until(async () => childRequests.length === index + 1 && tasks.list(id).every(task => task.status === 'completed') && !(await command({ action: 'read' })).busy);
+      assert.equal((await command({ action: 'read' })).error, '');
+      const child = childRequests[index];
+      assert.equal(child.model, model);
+      assert.deepEqual(child.providerBinding, request.providerBinding);
+      assert.equal(child.reasoningEffort, request.reasoningEffort);
+      assert.equal(child.maxOutputTokens, request.maxOutputTokens);
+      assert.equal(child.metadata.contextWindowTokens, request.metadata.contextWindowTokens);
+      const projection = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: child.sessionId } });
+      assert.deepEqual(projection.metadata.executionModel, { model, modelConfigId: `config-${index}`, turnId: child.turnId });
+      resumeId = tasks.list(id).at(-1).taskId;
+    }
+    assert.equal(childRequests[0].sessionId, childRequests[1].sessionId, 'model changes do not create a duplicate child');
+    assert.ok(childRequests[1].messages.some(message => message.content.includes('Verified with first-model')), 'child history is retained');
+  } finally { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
+});
+
 test('conversation journal survives restart, deduplicates retries and repairs only an incomplete final append', () => {
   const root = temporary(), journal = new ConversationJournal(root), message = entry('speech', '中文语音');
   journal.append('chat-a', message);

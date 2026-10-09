@@ -258,7 +258,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   min-width: 0;
   height: 36px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 26px;
+  grid-template-columns: minmax(0, 1fr) 24px 26px;
   align-items: center;
   gap: 4px;
   padding-right: 4px;
@@ -267,7 +267,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .right-inspector-tab-menu-item:has(> .right-inspector-tab-audio) {
-  grid-template-columns: minmax(0, 1fr) 24px 26px;
+  grid-template-columns: minmax(0, 1fr) 24px 24px 26px;
 }
 
 .right-inspector-tab-menu-item:hover {
@@ -461,8 +461,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .right-inspector-tab:hover .right-inspector-tab-close,
 .right-inspector-tab.active .right-inspector-tab-close,
-.right-inspector-tab:hover .right-inspector-tab-lock,
-.right-inspector-tab.active .right-inspector-tab-lock,
 .right-inspector-tab-lock:focus-visible,
 .right-inspector-tab-close:focus-visible {
   opacity: 0.68;
@@ -505,6 +503,17 @@ body.right-inspector-resizing .right-inspector-resizer {
 .right-inspector-tab-audio:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+/* Preserve tab geometry while revealing secondary actions on hover or keyboard focus. */
+.right-inspector-tab > :is(.right-inspector-tab-lock, .right-inspector-tab-audio) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.right-inspector-tab:is(:hover, :has(:focus-visible)) > :is(.right-inspector-tab-lock, .right-inspector-tab-audio) {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .right-inspector-navigation {

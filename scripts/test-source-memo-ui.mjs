@@ -15,7 +15,6 @@ import {FileMemoScope} from '${local('src/features/chatMessages/FileMemoScope.ts
 import {ImagePreviewDialog} from '${local('src/features/chatMessages/ImagePreviewDialog.tsx')}';
 import {InlineAudio,InlineVideo} from '${local('src/features/chatMessages/InlineMedia.tsx')}';
 import {LocalFileReferenceLink} from '${local('src/features/chatMessages/LocalFileReferenceLink.tsx')}';
-import {MessageToolOutputs} from '${local('src/features/tools/MessageToolOutputs.tsx')}';
 import {useConversationFileSource} from '${local('src/features/conversationFileSource.ts')}';
 import {ConversationHostContext} from '${local('src/features/conversationHost.ts')}';
 import {resolveConversationSource,setConversationSource,adoptDraftConversationSource} from '${local('src/features/settings/conversationSource.ts')}';
@@ -61,7 +60,6 @@ window.showResourceRegression=(remote=false)=>{
   }};
   root.render(<div key={String(remote)} className="app theme-dark" style={{padding:24}}><ConversationHostContext.Provider value={remote?regressionHost:null}>
     <MarkdownContent language="zh" content={'[13]('+regressionReference+')\\n\\n![鹈鹕骑车]('+regressionReference+')\\n\\n![无效来源](cardbush-source:invalid)\\n\\n![无效媒体](unknown:voice.mp3)\\n\\n![错误文件](cardbush-memo:9)'}/>
-    <MessageToolOutputs language="zh" artifacts={['image','audio','video','file'].map(type=>({id:type,name:type,path:regressionReference,type}))}/>
     <InlineAudio src="unknown:voice.mp3"/><InlineVideo src="unknown:clip.mp4"/>
     <LocalFileReferenceLink path={regressionReference}>Invalid file</LocalFileReferenceLink>
     {invalidTargets.map(path=><ResourceProbe key={path} path={path}/>)}

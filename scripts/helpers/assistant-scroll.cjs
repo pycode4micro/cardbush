@@ -9,9 +9,15 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
     await until(`fixture.sent.at(-1).text===${JSON.stringify(text)}`);
     await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
   };
-  const append = async (id, content) => {
+  const append = async (id, content, immediate = false) => {
     await read(`fixture.entries.push({id:${JSON.stringify(id)},role:'assistant',content:${JSON.stringify(content)},source:'page',visibility:'conversation',createdAt:new Date().toISOString()});void 0`);
     await until(`document.querySelector('[data-message-id="${id}"]')`);
+    if (immediate) {
+      await read('new Promise(resolve=>requestAnimationFrame(resolve))');
+      const result = await bounds(id);
+      assert.ok(result.row.top >= result.list.top && result.row.bottom < result.input.top,
+        'new short bubble is visible at its first rendered frame: ' + JSON.stringify(result));
+    }
     await pause(500);
   };
   const bounds = id => read(`(()=>{
@@ -35,8 +41,10 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
     'long results start with the question and the beginning, not their final paragraphs: ' + JSON.stringify(long));
   assert.ok(long.remaining > 500 && long.row.bottom > long.input.top);
   fs.writeFileSync(path.join(directory, 'assistant-long-result.png'), (await win.webContents.capturePage()).toPNG());
-  await append('long-result-continuation', '## 后续补充\n\n这是同一轮的另一条结果，不应抢走正在阅读的开头。');
-  assert.ok(Math.abs((await bounds('long-result')).top - long.top) < 2, 'multi-part results keep the first unread section visible');
+  await append('long-result-continuation', '## 后续补充\n\n这是同一轮新到达的短回复，应完整显示。', true);
+  const continuation = await bounds('long-result-continuation');
+  assert.ok(continuation.row.top >= continuation.list.top && continuation.row.bottom < continuation.input.top && continuation.remaining < 2,
+    'a new short reply is revealed even after a long reply: ' + JSON.stringify(continuation));
 
   await click('.scroll-bottom');
   await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
@@ -58,4 +66,31 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   await pause(450);
   assert.ok((await bounds('after-long-question')).remaining < 2, 'layout-only scroll events preserve following');
   await read('document.getElementById("assistant-late-layout").remove();void 0');
+
+  // Real pointer events used to detach on any click, including task/answer clicks.
+  await read(`(()=>{const row=document.querySelector('[data-message-id="after-long-question"]');
+    row.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:1,pointerType:'mouse'}));
+    row.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1,pointerType:'mouse'}));})();`);
+  await append('after-click', '点击气泡后收到的新回复，也应完整显示。\n\n' + '这是整理后的重点。'.repeat(40), true);
+  assert.ok((await bounds('after-click')).remaining < 2, 'ordinary content clicks do not disable following');
+
+  await read(`document.querySelector('.assistant-messages').dispatchEvent(new WheelEvent('wheel',{deltaY:100,bubbles:true}));void 0`);
+  await append('after-bottom-wheel', '在底部向下滚动过，新回复仍应自动出现。', true);
+  assert.ok((await bounds('after-bottom-wheel')).remaining < 2, 'wheel at the bottom does not strand the next result');
+
+  // Actual history navigation wins over both new replies and asynchronous layout.
+  await read(`(()=>{const list=document.querySelector('.assistant-messages');
+    list.dispatchEvent(new WheelEvent('wheel',{deltaY:-300,bubbles:true}));list.scrollTop-=300;})();`);
+  const reading = (await bounds('after-bottom-wheel')).top;
+  await append('while-manually-reading', '手动查看历史时保持位置。');
+  assert.ok(Math.abs((await bounds('after-bottom-wheel')).top - reading) < 2, 'manual history reading is preserved');
+  await click('.scroll-bottom');
+  await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
+  await append('after-resuming', '回到底部后恢复跟随。', true);
+
+  for (const theme of ['dark', 'light']) {
+    await read(`fixture.theme(${JSON.stringify(theme)});void 0`); await pause(100);
+    await require('./composer-backdrop.cjs').check(read);
+    fs.writeFileSync(path.join(directory, 'assistant-scroll-' + theme + '.png'), (await win.webContents.capturePage()).toPNG());
+  }
 };

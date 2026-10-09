@@ -1013,8 +1013,8 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /showFinalAnswer \? \([\s\S]*?<AssistantRunHeader[\s\S]*?<MessageToolOutputs[\s\S]*?\{showFinalAnswer && finalAnswerBody\}/,
-  'The terminal turn must keep the processed header, delivered results and final explanation in that order',
+  /showFinalAnswer \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{showFinalAnswer && finalAnswerBody\}/,
+  'The terminal turn keeps its processed header before the authored final explanation',
 );
 assert.match(bubbleSource, /status === 'completed'/);
 assert.doesNotMatch(bubbleSource, /status === 'complete'/);

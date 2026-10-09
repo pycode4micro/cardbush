@@ -4,6 +4,7 @@ import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, ty
 import type { ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
 import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
+import { MCP_SEARCH_CURSOR_LIMIT, MCP_SEARCH_QUERY_LIMIT, mcpSearchFingerprint, rankMcpTools, readMcpSearchCursor, writeMcpSearchCursor, type McpSearchCursor } from './mcpToolSearch.js';
 
 export const MCP_DISCOVERY_PROTOCOL = 'bush.mcp_discovery.v1';
 
@@ -18,7 +19,7 @@ export function projectMcpDiscoveryResult(text: string, maxChars?: number): stri
   if (result.action === 'search' || result.action === 'load') {
     const { next_step: _next, ...receipt } = result;
     if (result.action === 'search') {
-      delete receipt.protocol; delete receipt.sessionId; delete receipt.more;
+      delete receipt.protocol; delete receipt.sessionId;
       receipt.matches = result.matches.map(({ name, description, descriptionTruncated, loaded }: any) =>
         ({ name, description, ...(descriptionTruncated ? { descriptionTruncated } : {}), loaded }));
     }
@@ -188,23 +189,30 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
 
 export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'mcp.search', risk: 'low' as const, owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register<{ action: 'search' | 'load'; query: string; names?: string[]; server?: string; limit?: number; offset: number }>({
-    definition: { name: 'mcp_search', description: 'Discover MCP tools. action=search (default) requires query and returns short summaries; narrow by server or page with next_offset. action=load accepts one exact query OR names (up to 16 exact names) to load schemas together. Batch errors are per name; deferred names exceeded the result budget and still need loading. Load before calling via mcp_call; reuse visible schemas, reload only after change or compaction. Oversized single schemas use read_archived_tool_result. Discovery executes no tool and grants no permission.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['search', 'load'], default: 'search' }, query: { type: 'string', minLength: 1 }, names: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1 } }, server: { type: 'string' }, limit: { ...searchLimitParameter }, offset: { type: 'integer', minimum: 0, default: 0 } }, additionalProperties: false } },
+  registry.register<{ action: 'search' | 'load'; query: string; names?: string[]; server?: string; limit?: number; cursor?: McpSearchCursor }>({
+    definition: { name: 'mcp_search', description: 'Discover MCP tools. action=search (default) returns short summaries, not schemas. Start with query (keywords or * to list), optionally server. Continue by passing next_cursor as cursor, without query/server; a changed query starts a new search. Partial or empty matches do not prove a capability unavailable: try alternate keywords or its server. action=load accepts one exact query OR names (up to 16 exact names) to load schemas together. Batch errors are per name; deferred names exceeded the result budget and still need loading. Load tools with loaded=false before calling via mcp_call; reuse visible schemas, reload only after change or compaction. Oversized single schemas use read_archived_tool_result. Discovery executes no tool and grants no permission.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['search', 'load'], default: 'search' }, query: { type: 'string', minLength: 1, maxLength: MCP_SEARCH_QUERY_LIMIT }, names: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1 } }, server: { type: 'string', maxLength: 512 }, limit: { ...searchLimitParameter }, cursor: { type: 'string', minLength: 1, maxLength: MCP_SEARCH_CURSOR_LIMIT } }, additionalProperties: false } },
     manifest, parallelSafe: true,
     decodeInput: input => {
       const value = input as Record<string, unknown>;
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('MCP search requires an object.');
-      const unknown = Object.keys(value).filter(key => !['action', 'query', 'names', 'server', 'limit', 'offset'].includes(key));
+      if ('offset' in value) throw new Error('MCP search no longer accepts offset. Continue with the returned next_cursor as cursor, or start a changed query from its first page.');
+      const unknown = Object.keys(value).filter(key => !['action', 'query', 'names', 'server', 'limit', 'cursor'].includes(key));
       if (unknown.length) throw new Error(`Unknown MCP search fields: ${unknown.join(', ')}. Use action=search or action=load.`);
-      if (value.server !== undefined && typeof value.server !== 'string') throw new Error('server must be a string.');
+      if (value.server !== undefined && (typeof value.server !== 'string' || value.server.length > 512)) throw new Error('server must be a string of at most 512 characters.');
       const action = value.action ?? 'search';
       if (action !== 'search' && action !== 'load') throw new Error('action must be search or load.');
+      if (value.cursor !== undefined) {
+        if (action !== 'search' || value.query !== undefined || value.server !== undefined || value.names !== undefined) {
+          throw new Error('cursor continues its original search; omit query, server and names. To change the query, omit cursor.');
+        }
+        const cursor = readMcpSearchCursor(value.cursor);
+        return { action, query: cursor.query, server: cursor.server, cursor, limit: searchResultLimitSchema.optional().parse(value.limit) };
+      }
       if (value.names !== undefined) {
         if (action !== 'load' || value.query !== undefined || !Array.isArray(value.names) || !value.names.length || value.names.length > 16 || !value.names.every(name => typeof name === 'string' && name.trim())) throw new Error('names requires action=load and 1–16 exact names, without query.');
       } else if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('query must be nonempty.');
-      if (value.offset !== undefined && (!Number.isSafeInteger(value.offset) || Number(value.offset) < 0)) throw new Error('offset must be a nonnegative integer.');
-      if (action === 'load' && Number(value.offset)) throw new Error('action=load reads exact names and does not accept a page offset.');
-      return { action, query: typeof value.query === 'string' ? value.query.trim() : '', ...(Array.isArray(value.names) ? { names: [...new Set(value.names.map(name => (name as string).trim()))] } : {}), server: value.server as string | undefined, limit: searchResultLimitSchema.optional().parse(value.limit), offset: Number(value.offset) || 0 };
+      if (typeof value.query === 'string' && value.query.length > MCP_SEARCH_QUERY_LIMIT) throw new Error(`query must be at most ${MCP_SEARCH_QUERY_LIMIT} characters.`);
+      return { action, query: typeof value.query === 'string' ? value.query.trim() : '', ...(Array.isArray(value.names) ? { names: [...new Set(value.names.map(name => (name as string).trim()))] } : {}), server: value.server as string | undefined, limit: searchResultLimitSchema.optional().parse(value.limit) };
     },
     execute: async context => {
       if (!context.turn) throw new Error('MCP discovery requires a task.');
@@ -227,24 +235,27 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       const limit = context.input.action === 'load' ? 1 : await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
       const request = context.turn.request;
       const visible = new Set(request.tools.map(tool => tool.name));
-      const terms = [...new Set(context.input.query.toLocaleLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [])];
-      const candidates = request.tools.flatMap(tool => {
+      const catalog = request.tools.flatMap(tool => {
         const definition = available(registry, request, tool.name, visible);
         if (!definition) return [];
         const mcp = registry.resolve(tool.name)!.mcpHook!;
         if (context.input.server && mcp.server !== context.input.server) return [];
-        if (context.input.action === 'load') return [definition.name, mcp.tool].includes(context.input.query)
-          ? [{ definition, server: mcp.server, tool: mcp.tool, score: definition.name === context.input.query ? 2 : 1 }] : [];
-        const text = [mcp.server, mcp.tool, definition.name, definition.description].join(' ').toLocaleLowerCase();
-        const exact = [mcp.tool, definition.name].some(name => name.toLocaleLowerCase() === context.input.query.toLocaleLowerCase());
-        const score = (exact ? terms.length + 1 : 0) + terms.reduce((sum, term) => sum + (text.includes(term) ? 1 : 0), 0);
-        return score || context.input.server || context.input.query === '*' ? [{ definition, server: mcp.server, tool: mcp.tool, score }] : [];
-      }).sort((a, b) => b.score - a.score || a.definition.name.localeCompare(b.definition.name));
+        return [{ definition, server: mcp.server, tool: mcp.tool }];
+      });
+      const candidates = context.input.action === 'load' ? catalog.flatMap(entry => [entry.definition.name, entry.tool].includes(context.input.query)
+        ? [{ ...entry, score: entry.definition.name === context.input.query ? 2 : 1 }] : []).sort((a, b) => b.score - a.score)
+        : rankMcpTools(catalog, context.input.query);
+      const fingerprint = context.input.action === 'search' ? mcpSearchFingerprint(request.sessionId, context.input.query, context.input.server, candidates) : '';
+      if (context.input.cursor && context.input.cursor.fingerprint !== fingerprint) {
+        throw Object.assign(new Error('This MCP search cursor belongs to another conversation or its results changed. Start a new search with query; no page was skipped.'), { code: 'mcp_search_cursor_stale' });
+      }
       const loaded = loadedTools(registry, request);
       if (context.input.action === 'load' && (candidates.length === 0 || (candidates.length > 1 && candidates[0]!.score !== 2))) {
         throw new Error(candidates.length ? 'Tool name is ambiguous; use the exact qualified name returned by search.' : 'Tool not found or unavailable. Search for its current exact name.');
       }
-      const page = context.input.action === 'load' ? candidates.slice(0, 1) : candidates.slice(context.input.offset, context.input.offset + limit);
+      const offset = context.input.cursor?.offset ?? 0;
+      if (context.input.cursor && offset >= candidates.length) throw new Error('Invalid MCP search cursor position. Start a new search with query.');
+      const page = context.input.action === 'load' ? candidates.slice(0, 1) : candidates.slice(offset, offset + limit);
       const matches = page.map(candidate => {
         const version = revision(registry, candidate.definition);
         if (context.input.action !== 'load') return {
@@ -259,12 +270,13 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
         return { ...candidate.definition, ...reference };
       });
       remember(registry, request, loaded);
-      const next = context.input.offset + matches.length;
+      const next = offset + matches.length;
       return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, action: context.input.action,
         ...(context.input.action === 'load' && matches.some(match => 'interface' in match) ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
         matches, total: context.input.action === 'load' ? 1 : candidates.length,
         more: context.input.action !== 'load' && candidates.length > next,
-        ...(context.input.action !== 'load' && candidates.length > next ? { next_offset: next } : {}) };
+        ...(context.input.action !== 'load' ? { query: context.input.query,
+          ...(candidates.length > next ? { next_cursor: writeMcpSearchCursor({ query: context.input.query, server: context.input.server, offset: next, fingerprint }) } : {}) } : {}) };
     },
   });
   registry.register<{ name: string; arguments: Record<string, unknown> }>({

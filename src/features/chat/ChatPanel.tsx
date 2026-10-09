@@ -55,6 +55,7 @@ import {
 } from '../chatMessages';
 import { QuickContextRail } from './QuickContextRail';
 import { createChatScrollMotion } from './chatScrollMotion';
+import { observeConversationReflow } from './conversationReflow';
 import { submittedUserReadingOffset, updateResponseSpacer } from './responseSpacer';
 import {
   captureConversationScrollPosition,
@@ -112,7 +113,8 @@ import type {
 } from '../../types';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import { cssEscape } from '../../shared/cssEscape';
-import { observeWindowScrollDiagnostics, recordWindowScrollDiagnostic, windowScrollDiagnosticsActive } from './windowScrollDiagnostics';
+import { observeWindowScrollDiagnostics, windowScrollDiagnosticsActive } from './windowScrollDiagnostics';
+import { scrollDebug, scrollDebugEnabled } from './scrollDebug';
 import {
   BackendLoading,
   RuntimeStatusBanner,
@@ -132,39 +134,6 @@ const LazyRuntimeStreamPreTest = import.meta.env.DEV
   : null;
 
 type RefreshActiveSession = (options?: { silent?: boolean }) => Promise<void>;
-
-function scrollDebugEnabled() {
-  try {
-    // Detailed scroll traces are intentionally session-scoped. A persisted
-    // localStorage switch previously left synchronous IPC logging enabled in
-    // ordinary GUI runs long after the original diagnosis had finished.
-    return window.sessionStorage.getItem('cardbush_scroll_debug') === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function scrollDebug(label: string, data: Record<string, unknown>) {
-  recordWindowScrollDiagnostic(label, data);
-  if (!scrollDebugEnabled()) return;
-  const entry = {
-    at: new Date().toISOString(),
-    label,
-    ...data,
-  };
-  const buffer = window.__cardbushScrollDebug ?? [];
-  buffer.push(entry);
-  if (buffer.length > 300) {
-    buffer.splice(0, buffer.length - 300);
-  }
-  window.__cardbushScrollDebug = buffer;
-  console.debug('[cardbush:scroll]', entry);
-  void window.cardbushDesktop
-    ?.writeDebugLog?.('scroll', {
-      ...entry,
-    })
-    .catch(() => undefined);
-}
 
 export function ChatPanel({
   browserTabs = [],
@@ -571,6 +540,7 @@ export function ChatPanel({
   const streamScrollFrameRef = useRef<number | null>(null);
   const outerResizeFollowFrameRef = useRef<number | null>(null);
   const outerResizeSizesRef = useRef(new WeakMap<Element, string>());
+  const conversationReflowRef = useRef<ReturnType<typeof observeConversationReflow> | null>(null);
   const scrollTraceSequenceRef = useRef(0);
   const activeScrollTraceIdRef = useRef('');
   const scrollTraceObserveUntilRef = useRef(0);
@@ -1547,6 +1517,10 @@ export function ChatPanel({
         lastScrollTopRef.current = scroller.scrollTop;
         return;
       }
+      if (conversationReflowRef.current?.isReflowScroll()) {
+        lastScrollTopRef.current = scroller.scrollTop;
+        return;
+      }
       const previousScrollTop = lastScrollTopRef.current;
       const scrollDelta = scroller.scrollTop - previousScrollTop;
       lastScrollTopRef.current = scroller.scrollTop;
@@ -1854,7 +1828,7 @@ export function ChatPanel({
         })
         .sort()
         .join('|');
-      if (!resized) return;
+      if (!resized || conversationReflowRef.current?.isReflowing()) return;
       const beforeScrollTop = scroller?.scrollTop ?? null;
       const beforeScrollHeight = scroller?.scrollHeight ?? null;
       const beforeBottom = scroller
@@ -2361,6 +2335,37 @@ export function ChatPanel({
     shouldShowScrollBottomForMetrics,
     composerAnchored,
   ]);
+
+  const reflowOptions = {
+    paused: () => Boolean(scrollActivationRef.current?.restoring || scrollbarDragActiveRef.current ||
+      listScrollerRef.current?.dataset.cardbushPreserveScroll === '1'),
+    following: () => !composerAnchored && autoFollowStreamRef.current && !userDetachedFromBottomRef.current,
+    beforeRestore: cancelScheduledStreamFollow,
+    followTop: (readingTop: number) => {
+      const scroller = listScrollerRef.current!;
+      const stage = assistantStageAnchorRef.current && scroller.querySelector<HTMLElement>('.message-list-item:last-child');
+      if (!stage) return absoluteBottomScrollTop(scroller);
+      updateResponseSpacer(scroller, assistantStageAnchorRef.current);
+      const bottom = scroller.getBoundingClientRect().bottom - quickContextBottomInset - streamStatusHeight - 18;
+      return Math.max(readingTop, scroller.scrollTop + stage.getBoundingClientRect().bottom - bottom);
+    },
+    restored: () => {
+      const scroller = listScrollerRef.current!;
+      lastScrollTopRef.current = scroller.scrollTop;
+      const metrics = readBottomMetrics(scroller);
+      atBottomRef.current = metrics.visualAtBottom;
+      setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
+    },
+  };
+  const reflowOptionsRef = useRef(reflowOptions);
+  reflowOptionsRef.current = reflowOptions;
+  useLayoutEffect(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller || loading || showWelcome) return;
+    const reflow = observeConversationReflow(scroller, () => reflowOptionsRef.current);
+    conversationReflowRef.current = reflow;
+    return () => { reflow.dispose(); conversationReflowRef.current = null; };
+  }, [activeConversationId, scrollMountRevision, loading, showWelcome]);
 
   useEffect(() => {
     const scroller = listScrollerRef.current;

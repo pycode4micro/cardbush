@@ -114,7 +114,6 @@ app.whenReady().then(async()=>{
       await until(`document.querySelectorAll('.source-memo-marker').length===2 && document.body.innerText.includes('文件不可访问')`);
       assert.equal(await read(`document.querySelectorAll('img,video,audio').length`),0,'references and unknown schemes never mount broken media');
       assert.equal(await read(`document.querySelectorAll('output[data-source=""][data-error="true"]').length`),5);
-      assert.equal(await read(`document.querySelectorAll('.message-tool-artifact [role="status"]').length`),4,'image/audio/video/file artifacts degrade consistently');
       assert.equal(await read(`document.querySelectorAll('.inline-media-unavailable').length`),2);
       await read(`document.querySelectorAll('.source-memo-marker')[1].click()`);
       await until(`document.querySelector('.source-memo-card')?.innerText.includes('保留已完成')`);

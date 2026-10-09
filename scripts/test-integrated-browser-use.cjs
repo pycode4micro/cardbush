@@ -29,8 +29,9 @@ async function run() {
   window=new BrowserWindow({show:false,width:1100,height:800,webPreferences:{preload:path.resolve('dist-electron/preload.js'),
     sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:true,backgroundThrottling:false,offscreen:true}});
   installInspectorWindowOpen(window.webContents);
+  const browserActions=[];
   const integrated=new IntegratedBrowser({getContents:id=>webContents.fromId(id),defaultOwner:()=>window.webContents,
-    action:(ownerId,action)=>webContents.fromId(ownerId)?.send('inspector:browser-action',action)});
+    action:(ownerId,action)=>{browserActions.push(action);webContents.fromId(ownerId)?.send('inspector:browser-action',action);}});
   const externalCalls=[];
   const externalId='a'.repeat(32);
   const external=async(method,params)=>{
@@ -169,6 +170,42 @@ async function run() {
   await ui(`browserFixture.reference('personal-assistant',${JSON.stringify(url)})`);
   await router.inheritScope('personal-assistant',assistantChild);
   assert.notEqual(success(await call('list_pages',{},assistantChild)).selectedPageId,637760547,'a fresh parent reference switches the child back to the intended CardBush tab');
-  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, assistant child delegation and re-binding, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
+  for (const choice of ['unselected','external']) {
+    const parent=`first-browser-${choice}`, child=`${parent}-child`, grandchild=`${child}-child`;
+    if(choice==='external')success(await call('select_browser',{connectionId:externalId},parent));
+    const beforeCalls=externalCalls.length, beforeActions=browserActions.length;
+    assert.deepEqual(await router.inheritScope(parent,child),{inherited:false});
+    assert.deepEqual(await router.inheritScope(child,grandchild),{inherited:false});
+    success(await call('select_browser',{connectionId:'cardbush'},grandchild));
+    assert.deepEqual(success(await call('list_pages',{},grandchild)).pages,[],'UI ancestry grants no existing tabs');
+    failure(await call('select_page',{pageId:newTab.id},grandchild),'cardbush_page_not_authorized');
+    const created=success(await call('new_page',{url},grandchild));
+    await until(()=>ui(`browserFixture.activeId===${JSON.stringify(created.tabId)}`),'Child-created guest did not appear');
+    const beforeParentRead=externalCalls.length;
+    if(choice==='external') {
+      assert.equal(success(await call('list_pages',{},parent)).selectedPageId,637760547,'the parent keeps its external browser until it explicitly switches');
+      success(await call('select_browser',{connectionId:'cardbush'},parent));
+    }
+    const parentPages=success(await call('list_pages',{},parent));
+    assert.deepEqual(parentPages.pages.map(page=>page.id),[created.id],'the parent reads the exact child-created guest');
+    assert.equal(parentPages.selectedPageId,created.id);
+    if(choice==='unselected')assert.equal(externalCalls.length,beforeParentRead,'an unbound parent must not default to Chrome after receiving a child page');
+    const returnedSnapshot=await call('take_snapshot',{query:'Play first video'},parent);success(returnedSnapshot);
+    assert.match(returnedSnapshot.content[0].text,/role=button/,'the parent can read the real child page');
+    const returnedUid=returnedSnapshot.content[0].text.match(/uid=(cb_\d+) role=button/)?.[1];assert.ok(returnedUid);
+    success(await call('click',{uid:returnedUid},parent));
+    assert.equal(await webContents.fromId(created.id).executeJavaScript('window.clicks'),1,'parent actions reach the original child-created guest');
+    failure(await call('select_page',{pageId:created.id},otherScope),'cardbush_page_not_authorized');
+    await router.inheritScope(parent,child);
+    await router.inheritScope(child,grandchild);
+    assert.equal(success(await call('list_pages',{},grandchild)).selectedPageId,created.id,'guidance preserves child selection');
+    success(await call('select_page',{pageId:created.id},grandchild));
+    success(await call('close_page',{pageId:created.id},grandchild));
+    for(const sessionId of [parent,child,grandchild])assert.deepEqual(success(await call('list_pages',{},sessionId)).pages,[],'closing the returned guest clears all delegated views');
+    assert.deepEqual(browserActions.slice(beforeActions).map(action=>[action.action,action.sessionId]),
+      [['open',parent],['activate',parent],['close',parent]],'all native actions target the root workspace even without inherited browser grants');
+    assert.equal(externalCalls.length,beforeCalls+(choice==='external'?2:0),'only the explicit parent read and switch touch the external browser');
+  }
+  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, assistant child delegation and re-binding, returned descendant pages readable/clickable by parents, first-use routing and explicit external-browser preservation, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
 }
 run().then(async()=>{await client?.close();await endpoint?.close();fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(0);},async error=>{console.error(error);await client?.close().catch(()=>{});await endpoint?.close().catch(()=>{});fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(1);});

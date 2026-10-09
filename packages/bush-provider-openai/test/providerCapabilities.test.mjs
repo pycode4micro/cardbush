@@ -51,9 +51,9 @@ test("defaults to seven days and keeps the original expiry across reads and rest
   const path = join(root, "capabilities.json");
   let now = Date.parse("2026-09-19T00:00:00.000Z");
   const options = { now: () => now };
-  const policy = { ...identity, capability: "responses_compatibility" };
+  const policy = { ...identity, capability: "responses_generation_compatibility" };
   const first = new FileProviderCapabilityStore(path, options);
-  first.observe(policy, { status: "supported", reason: "generation_failed" });
+  first.observe(policy, { status: "supported", reason: "generation_protocol_rejected" });
   const expected = first.read(policy);
   assert.equal(expected.expiresAt, "2026-09-26T00:00:00.000Z");
 

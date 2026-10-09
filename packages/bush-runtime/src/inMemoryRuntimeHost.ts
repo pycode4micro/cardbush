@@ -888,7 +888,7 @@ export class InMemoryRuntimeHost {
       case PERSONALIZATION_COMMAND: {
         const payload = command.payload as { action?: unknown; settings?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string };
         const settings = individuationSettingsSchema.parse(payload.settings ?? {});
-        if (payload.action === 'status') return this.#memory.store.status(settings, signal);
+        if (payload.action === 'status') return this.#memory.status(settings, signal);
         if (payload.action === 'list') return this.#memory.store.list(settings,payload.cursor,payload.includeInactive,signal);
         if (payload.action === 'history') return this.#memory.store.history(settings,payload.cursor,signal);
         if (payload.action === 'purge_history') return this.#memory.store.purgeHistory(settings,signal);

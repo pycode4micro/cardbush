@@ -6,7 +6,8 @@ export const summaryTokenThresholdSchema = z.number().int().min(1000).max(200_00
 export const individuationSettingsSchema = z.object({
   habits: z.boolean().default(false),
   predictions: z.boolean().default(false),
-  summaryTokenThreshold: summaryTokenThresholdSchema.default(DEFAULT_SUMMARY_TOKEN_THRESHOLD),
+  eventTokenThreshold: summaryTokenThresholdSchema.default(DEFAULT_SUMMARY_TOKEN_THRESHOLD),
+  habitTokenThreshold: summaryTokenThresholdSchema.default(DEFAULT_SUMMARY_TOKEN_THRESHOLD),
   recallMode: z.enum(['context', 'hint']).default('context'),
 });
 export type IndividuationSettings = z.infer<typeof individuationSettingsSchema>;
@@ -14,7 +15,8 @@ export type IndividuationSettings = z.infer<typeof individuationSettingsSchema>;
 export function normalizeIndividuation(value: unknown): IndividuationSettings {
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return { habits: input.habits === true, predictions: input.predictions === true,
-    summaryTokenThreshold: summaryTokenThresholdSchema.safeParse(input.summaryTokenThreshold).data ?? DEFAULT_SUMMARY_TOKEN_THRESHOLD,
+    eventTokenThreshold: summaryTokenThresholdSchema.safeParse(input.eventTokenThreshold).data ?? DEFAULT_SUMMARY_TOKEN_THRESHOLD,
+    habitTokenThreshold: summaryTokenThresholdSchema.safeParse(input.habitTokenThreshold).data ?? DEFAULT_SUMMARY_TOKEN_THRESHOLD,
     recallMode: input.recallMode === 'hint' ? 'hint' : 'context' };
 }
 
@@ -101,6 +103,7 @@ export const personalizationCommandSchema = z.object({
 }).strict();
 export const personalizationStatusSchema = z.object({
   estimatedTokens: z.number().nonnegative(), records: z.number().nonnegative(),
+  eventTokens: z.number().nonnegative(), habitTokens: z.number().nonnegative(),
   habits: z.number().nonnegative(), predictions: z.number().nonnegative(), notes: z.number().nonnegative(),
   hits: z.number().nonnegative(), misses: z.number().nonnegative(),
   running: z.boolean(), lastSummaryAt: z.number().nullable(), lastError: z.string().nullable(),
@@ -108,8 +111,8 @@ export const personalizationStatusSchema = z.object({
 });
 export type PersonalizationStatus = z.infer<typeof personalizationStatusSchema>;
 
-const memorySummaryItemSchema = memoryNoteSchema.extend({ sources:z.array(z.string()).min(1).max(100) }).strict();
+const memorySummaryItemSchema = memoryNoteSchema.extend({ sources:z.array(z.string()).min(1).max(8000) }).strict();
 export const memorySummarySchema = z.object({
-  habits:z.array(memorySummaryItemSchema).max(60), predictions:z.array(memorySummaryItemSchema).max(30),
-  reviews:z.array(z.object({prediction:z.string(),evidence:z.string(),outcome:z.enum(['hit','miss']),reason:z.string().max(300)}).strict()).max(100),
+  habits:z.array(memorySummaryItemSchema).max(8000), predictions:z.array(memorySummaryItemSchema).max(8000),
+  reviews:z.array(z.object({prediction:z.string(),evidence:z.string(),outcome:z.enum(['hit','miss']),reason:z.string().max(300)}).strict()).max(40000),
 }).strict();

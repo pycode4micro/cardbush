@@ -58,8 +58,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     instructions: [
       "Browser Use controls CardBush's integrated browser and the user's paired Chrome or Edge on Windows 11. CardBush tabs do not need an extension or pairing.",
       'An @ CardBush browser reference identifies an exact integrated tab, not an interchangeable URL. The desktop binds that conversation to CardBush. Use list_pages, then a fresh snapshot; never substitute a Chrome/Edge page with the same URL. If the referenced tab is unavailable, report it and ask the user to select it again.',
-      'Use list_browsers and select_browser when the user names a browser or profile. Otherwise the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
-      'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, only tabs explicitly referenced by the user or created in this conversation are controllable. Use select_browser with connectionId cardbush to create integrated tabs.',
+      'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
+      'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, controllable tabs are those explicitly referenced by the user, created in this conversation, or newly created by its verified local descendant tasks. Selecting a browser does not grant unrelated tabs. Use select_browser with connectionId cardbush to create integrated tabs.',
       'Use new_page to create a tab in the selected browser. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
       'Call release_browser when browser work is complete; it detaches control and collapses external session groups without closing tabs.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
@@ -157,7 +157,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('list_browsers', toolDefinition(
     'List Browser Use connections',
-    'List the CardBush integrated browser and paired Chrome/Edge connections, online state, default and this conversation’s selection. No personal tabs or credentials are returned. CardBush needs no pairing.',
+    'Discover browsers available for web search, internet research and reading websites. List the CardBush integrated browser and paired Chrome/Edge connections, online state, default and this conversation’s selection. No personal tabs or credentials are returned. CardBush needs no pairing.',
     z.object({}), true,
   ), async (_input, context) => withToolResult(async () => {
     const result = record(await request('browser.list', {}, context));
@@ -213,7 +213,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open a tab in the selected browser, scoped to this conversation. CardBush opens it in the visible integrated browser; Chrome/Edge opens it in the session group. Omit url to open a blank new tab; pass an HTTP(S) URL to navigate directly.',
+    'Open a website in the selected browser, scoped to this conversation. For web search, current news or internet research, pass a search-engine URL with the query, then read results with take_snapshot. CardBush opens a visible integrated tab; Chrome/Edge uses the session group. Omit url for a blank new tab; otherwise pass an HTTP(S) URL.',
     z.object({ url: z.string().url().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -265,7 +265,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('take_snapshot', toolDefinition(
     'Take page snapshot',
-    'Read a bounded accessibility snapshot (default 60 rows, about 7000 escaped characters). Use returned uids with click/fill/hover. Narrow with rootUid, query, or roles. Continue with cursor and optional limit; a cursor reads the same captured snapshot for up to 3 minutes, not live updates. Navigation or a fresh snapshot invalidates it. Long fields are marked previews; use rootUid with fullText:true to read their text in chunks with offsets, then continue the cursor. Page text appears only in content; structuredContent contains pagination metadata.',
+    'Read webpage text, links and web search results as a bounded accessibility snapshot (default 60 rows, about 7000 escaped characters). Use returned uids with click/fill/hover. Narrow with rootUid, query, or roles. Continue with cursor and optional limit; a cursor reads the same captured snapshot for up to 3 minutes, not live updates. Navigation or a fresh snapshot invalidates it. Long fields are marked previews; use rootUid with fullText:true to read their text in chunks with offsets, then continue the cursor. Page text appears only in content; structuredContent contains pagination metadata.',
     snapshotSchema,
     true,
   ), async (input, context) => withToolResult(async () => {

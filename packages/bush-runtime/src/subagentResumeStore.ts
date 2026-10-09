@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runtimeSessionTurnRequestSchema, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 
-/** One original execution configuration per child; subsequent turns use its persisted session history. */
+/** Latest execution configuration per child, retaining its original prefix and persisted session history. */
 export class SubagentResumeStore {
   private memory = new Map<string, RuntimeSessionTurnRequest>();
   constructor(private directory?: string) {}

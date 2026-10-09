@@ -47,6 +47,14 @@ export function remarkImageGroups({ eligible }: { eligible: (url: string) => boo
           grouped.push(child);
         }
       }
+      // A lone image keeps its original inline renderer and document semantics.
+      for (const child of grouped) {
+        if (child.data?.hProperties?.['data-message-image-gallery'] &&
+          child.children!.filter(item => item.type === 'image' || item.type === 'imageReference').length < 2) {
+          delete child.data.hName;
+          delete child.data.hProperties['data-message-image-gallery'];
+        }
+      }
       node.children = grouped;
     };
     visit(tree);

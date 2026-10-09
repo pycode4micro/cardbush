@@ -28,6 +28,15 @@ export class McpOAuthConfigurationRequired extends Error {
 function validateClientConfiguration(options: NonNullable<Exclude<McpServerSnapshot['transport'], { kind: 'stdio' }>['oauth']>) {
   if (options.clientId && /^<[^<>]+>$/.test(options.clientId.trim())) throw new McpOAuthConfigurationRequired('Configure your OAuth client ID in this connection. The package contains an unfilled client ID placeholder.');
   if (!options.clientSecretRef && options.clientSecretEnv && !process.env[options.clientSecretEnv]) throw new McpOAuthConfigurationRequired('The configured OAuth client secret environment variable is empty or unavailable. Save the client secret in connection settings, or configure the environment before signing in.');
+  if ((options.clientSecretRef || options.clientSecretEnv) && !options.expectedIssuer) throw new McpOAuthConfigurationRequired('Configure the trusted OAuth authorization server URL (expectedIssuer) before using a client secret. Obtain it from the service provider; it must not be inferred from an authentication challenge.');
+}
+
+// Match the SDK's single trailing-slash tolerance, without broadening issuer identity.
+function sameIssuer(left: string, right: string) {
+  return left === right || left.endsWith('/') && left.slice(0, -1) === right || right.endsWith('/') && right.slice(0, -1) === left;
+}
+function boundCredential<T extends { issuer?: string }>(entries: Record<string, T> | undefined, issuer: string | undefined): T | undefined {
+  return issuer ? Object.values(entries ?? {}).find(entry => typeof entry.issuer === 'string' && sameIssuer(entry.issuer, issuer)) : undefined;
 }
 
 /** Credentials are owned by the desktop vault; neither snapshots nor model context contain tokens. */
@@ -54,6 +63,18 @@ export class McpOAuthCoordinator {
     if (server.transport.kind === 'stdio') throw new Error('OAuth requires an HTTP MCP service.');
     const options = server.transport.oauth ?? {};
     const key = credentialKey(server);
+    const checkIssuer = (issuer: string | undefined) => {
+      if (issuer && options.expectedIssuer && !sameIssuer(issuer, options.expectedIssuer)) {
+        throw new McpOAuthConfigurationRequired('The discovered OAuth authorization server does not match the configured expectedIssuer. No credentials were supplied to it.');
+      }
+    };
+    const storedIssuer = (stamp: string | undefined, contextIssuer: string | undefined) => {
+      if (!stamp || (contextIssuer && !sameIssuer(stamp, contextIssuer))) {
+        throw new McpOAuthConfigurationRequired('OAuth credentials must include a matching issuer. Sign in again to obtain credentials bound to the authorization server.');
+      }
+      checkIssuer(stamp);
+      return stamp;
+    };
     const read = () => {
       let data = this.#credentials.get(key);
       if (!data) { data = this.store.read(key).then(value => value ?? {}); this.#credentials.set(key, data); }
@@ -73,16 +94,29 @@ export class McpOAuthCoordinator {
         ...(options.scopes?.length ? { scope: options.scopes.join(' ') } : {}) },
       state: () => interactive?.state ?? '',
       clientInformation: async context => {
+        checkIssuer(context?.issuer);
         const secret = await this.#clientSecret(server);
-        if (options.clientId) return { client_id: options.clientId, ...(context?.issuer ? { issuer: context.issuer } : {}), ...(secret ? { client_secret: secret } : {}) };
+        const issuer = options.expectedIssuer ?? context?.issuer;
+        if (options.clientId) return { client_id: options.clientId, ...(issuer ? { issuer } : {}), ...(secret ? { client_secret: secret } : {}) };
         const saved = await read();
-        const client = saved.clients?.[context?.issuer ?? saved.issuer ?? ''];
+        const selectedIssuer = issuer ?? saved.issuer;
+        checkIssuer(selectedIssuer);
+        const client = boundCredential(saved.clients, selectedIssuer);
         if (!interactive && !client) throw new McpAuthenticationRequired();
         return client;
       },
-      saveClientInformation: (client, context) => update(saved => { const issuer = context?.issuer ?? client.issuer ?? ''; (saved.clients ??= {})[issuer] = client; }),
-      tokens: async context => { const saved = await read(); return saved.tokens?.[context?.issuer ?? saved.issuer ?? '']; },
-      saveTokens: (tokens, context) => update(saved => { const issuer = context?.issuer ?? tokens.issuer ?? ''; saved.issuer = issuer; (saved.tokens ??= {})[issuer] = tokens; }),
+      saveClientInformation: (client, context) => update(saved => {
+        const issuer = storedIssuer(client.issuer, context?.issuer); (saved.clients ??= {})[issuer] = client;
+      }),
+      tokens: async context => {
+        const saved = await read();
+        const issuer = context?.issuer ?? options.expectedIssuer ?? saved.issuer;
+        checkIssuer(issuer);
+        return boundCredential(saved.tokens, issuer);
+      },
+      saveTokens: (tokens, context) => update(saved => {
+        const issuer = storedIssuer(tokens.issuer, context?.issuer); saved.issuer = issuer; (saved.tokens ??= {})[issuer] = tokens;
+      }),
       redirectToAuthorization: async url => { if (!interactive) throw new McpAuthenticationRequired(); await this.openUrl(url.toString()); },
       saveCodeVerifier: value => { verifier = value; },
       codeVerifier: () => { if (!verifier) throw new Error('OAuth login expired. Start sign-in again.'); return verifier; },

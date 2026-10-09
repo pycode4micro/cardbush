@@ -293,6 +293,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
         </div>
         {!host.remote && network && !hosted && <details><summary>{zh ? 'OAuth 高级配置' : 'OAuth options'}</summary><div className="mcp-fields">
           {[['clientId', 'client_id', zh ? '客户端 ID（可选）' : 'Client ID (optional)'], ['scopes', 'scopes', zh ? '请求权限（空格分隔）' : 'Scopes (space separated)'],
+            ['expectedIssuer', 'expected_issuer', zh ? '授权服务器地址（issuer；使用客户端密钥时必填）' : 'Authorization server URL (issuer; required with a client secret)'],
             ['callbackUrl', 'callback_url', zh ? '本机回调地址（可选）' : 'Loopback callback (optional)'], ['callbackPort', 'callback_port', zh ? '本机回调端口（可选）' : 'Loopback port (optional)'], ['resourceUrl', 'oauth_resource', zh ? 'OAuth 资源地址（可选）' : 'OAuth resource URL (optional)'], ['clientMetadataUrl', 'client_metadata_url', zh ? 'CIMD 文档地址（可选）' : 'CIMD document URL (optional)'],
             ['clientSecretEnv', 'client_secret_env', zh ? '客户端密钥环境变量名（高级）' : 'Client secret environment variable (advanced)']].map(([key, alias, label]) => {
             const value = oauth[key] ?? oauth[alias];

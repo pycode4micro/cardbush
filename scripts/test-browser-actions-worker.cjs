@@ -76,6 +76,25 @@ app.whenReady().then(async () => {
     await succeeds(await click('#button', { doubleClick: true }));
     assert.equal((await evaluate('audit')).clicks, 3); tests++;
 
+    // Real CDP hit testing expects document coordinates after scrollIntoView.
+    for (const [left, top, zoom] of [[100, 2400, 1], [1500, 100, 1], [1500, 4000, 1], [100, 2400, 0.8], [100, 2400, 1.25]]) {
+      await load(`<style>body{margin:0;width:3000px;height:5000px}</style><button id="target" style="position:absolute;left:${left}px;top:${top}px">Scrolled target</button>`);
+      wc.setZoomFactor(zoom);
+      await succeeds(await click('#target'));
+      assert.deepEqual(await evaluate('audit.trusted'), [true]);
+      assert.ok(await evaluate('scrollX > 0 || scrollY > 0'));
+      wc.setZoomFactor(1); tests++;
+    }
+    await load('<style>body{height:5000px}</style><button id="target" style="position:fixed;top:100px;left:100px">Fixed through scroll</button>',
+      `target.addEventListener('mouseenter',()=>scrollBy(0,500),{once:true})`);
+    await succeeds(await click('#target'));
+    assert.equal(await evaluate('scrollY'), 500);
+    assert.deepEqual(await evaluate('audit.trusted'), [true]); tests++;
+
+    await load('<style>body{height:5000px}</style><button id="target" style="position:absolute;top:2400px">Scroll away on hover</button>',
+      `target.addEventListener('mouseenter',()=>scrollBy(0,500),{once:true})`);
+    await blocked('#target', 'element_changed');
+
     // Bing's actual failure pattern: the submit input has zero area; its label is visible.
     await load('<form><input id="query"><input id="submit" type="submit"><label id="label" for="submit">Search</label></form><style>#submit{padding:0;height:0;width:0;outline:0;border:0;position:absolute}#label{display:inline-block}</style>');
     for (let i = 0; i < 3; i++) {
@@ -132,6 +151,11 @@ app.whenReady().then(async () => {
     const invisibleFrame = await invoke('click', { uid: frameUid });
     assert.equal(invisibleFrame.isError, true, JSON.stringify(invisibleFrame));
     assert.equal(events.length, 0); tests++;
+
+    await load('<style>body{height:5000px}</style><iframe id="frame" style="position:absolute;top:2400px;width:500px;height:250px" srcdoc="<body style=height:2500px><button style=position:absolute;top:1800px;width:180px;height:50px onclick=window.clicked=true>Nested scroll</button></body>"></iframe>');
+    await succeeds(await invoke('click', { uid: await uid('frame.contentDocument.querySelector("button")') }));
+    assert.equal(await evaluate('frame.contentWindow.clicked'), true);
+    assert.ok(await evaluate('scrollY > 0 && frame.contentWindow.scrollY > 0')); tests++;
 
     await load('<button id="target" style="position:absolute;left:-30px;top:100px;transform:rotate(20deg);width:220px">Transformed and clipped</button>');
     await succeeds(await click('#target'));

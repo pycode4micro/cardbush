@@ -286,10 +286,11 @@ async function executeRuntimeCommand(
     if (payload.action !== 'summarize') return host.sendCommand({kind:command.kind,payload},signal);
     if (!payload.settings.habits && !payload.settings.predictions) return host.sendCommand({ kind: command.kind, payload: { action: 'status', settings: payload.settings } }, signal);
     if (!payload.modelId) throw new Error('Choose a configured model before summarizing memory.');
-    const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort }>('automation.prepare-model', { modelId: payload.modelId }, signal);
+    const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number; reasoningEffort?: import('@cardbush/bush-protocol').ReasoningEffort }>('automation.prepare-model', { modelId: payload.modelId }, signal);
     return host.sendCommand({ kind: command.kind, payload: { action: payload.action, settings: payload.settings, model: {
       protocol: 'bush.model_request.v1', requestId: randomUUID(), sessionId: 'personalization-memory', turnId: randomUUID(),
-      model: selected.model, providerBinding: selected.binding, reasoningEffort: selected.reasoningEffort, messages: [], tools: [], metadata: { maxContextTokens: selected.maxContextTokens },
+      model: selected.model, providerBinding: selected.binding, reasoningEffort: selected.reasoningEffort, maxOutputTokens: selected.maxOutputTokens,
+      messages: [], tools: [], metadata: { contextWindowTokens: selected.maxContextTokens },
     } } }, signal);
   }
   if ([GET_RUNTIME_CAPABILITIES_COMMAND, GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,

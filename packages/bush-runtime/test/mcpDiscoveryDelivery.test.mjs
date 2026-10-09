@@ -57,7 +57,7 @@ test('exact names rank before description mentions; pagination and isolated larg
   const { search } = fixture();
   assert.equal((await search({ query: 'upload-asset-from-url', limit: 1 })).matches[0].tool, 'upload-asset-from-url');
   const first = await search({ query: '*', limit: 2 });
-  const second = await search({ query: '*', limit: 2, offset: first.next_offset });
+  const second = await search({ cursor: first.next_cursor, limit: 2 });
   assert.equal(new Set([...first.matches, ...second.matches].map(tool => tool.name)).size, 4);
   const isolated = await search({ action: 'load', query: 'mcp__fixture__aaa_long' });
   const view = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(isolated)));
