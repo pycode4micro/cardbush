@@ -1,0 +1,54 @@
+/* Electron's rendering styles; the website supplies only its palette and reading width. */
+@import '../src/styles/transcript.css';
+@import '../src/styles/scenes.css';
+@import '../src/styles/markdown.css';
+@import '../src/styles/execution.css';
+@import '../src/styles/dialogs.css';
+@import '../src/styles/secondary-surfaces.css';
+
+:root {
+  --text: #302f29;
+  --text-mid: #655f53;
+  --text-soft: #918775;
+  --text-muted: #918775;
+  --muted: #918775;
+  --bg: #fcfbf8;
+  --app-bg: #fcfbf8;
+  --surface: #fcfbf8;
+  --surface-raised: #fffefa;
+  --surface-soft: #f3f0e8;
+  --surface-strong: #ebe6db;
+  --user-bubble: #eeece4;
+  --border: #ded7ca;
+  --hover: #eee9df;
+  --accent: #8a7551;
+  --info: #7b6949;
+  --info-hover: #51432d;
+  --success: #738465;
+  --warning: #b08b50;
+  --danger: #ac5848;
+  --shadow: #30230d18;
+  --chat-track-width: 754px;
+  --chat-table-width: 100%;
+  --ui-font-scale: 1;
+}
+
+.native-transcript { min-width: 0; color: var(--text); }
+.transcript.message-list { height: auto; }
+.native-transcript .message-row { width: 100%; margin-inline: 0; }
+.native-transcript .message-list-item { content-visibility: visible; contain-intrinsic-block-size: none; }
+.native-transcript .message-list-item.first { padding-top: 0; }
+.native-transcript .user-bubble { border-radius: 14px 14px 3px 14px; }
+.native-transcript .assistant-bubble { font-size: 14px; line-height: 1.85; }
+.native-transcript .message-actions button { width: 30px; height: 30px; border-radius: 6px; display: inline-grid; place-items: center; color: var(--text-soft); }
+.native-transcript .message-actions button:hover { background: var(--hover); color: var(--text); }
+.native-transcript [hidden] { display: none !important; }
+.native-transcript .markdown-content { min-width: 0; overflow-wrap: anywhere; }
+.native-transcript .markdown-table-scroll { max-width: 100%; }
+.image-preview-backdrop { position: fixed; inset: 0; display: grid; place-items: center; }
+@keyframes cardbush-spin { to { transform: rotate(360deg); } }
+@media(max-width:760px) {
+  .native-transcript .assistant-bubble { font-size: 13px; }
+  .image-preview-backdrop { padding: 12px; }
+  .image-preview-dialog { width: calc(100vw - 24px); height: calc(100dvh - 32px); }
+}

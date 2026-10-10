@@ -4,10 +4,14 @@ type Detail = Record<string, unknown>;
 const nodeIds = new WeakMap<Node, number>();
 let nextNodeId = 0;
 let nextTraceId = 0;
-let currentRecorder: { active(): boolean; record(label: string, detail: Detail): void } | undefined;
+let currentRecorder: { active(): boolean; record(label: string, detail: Detail): void; start(label: string, detail?: Detail): void } | undefined;
 
 export function windowScrollDiagnosticsActive() { return currentRecorder?.active() ?? false; }
 export function recordWindowScrollDiagnostic(label: string, detail: Detail) { currentRecorder?.record(label, detail); }
+/** Table streaming can disturb layout without any focus or window event. */
+export function captureMarkdownTableDiagnostic(table: HTMLElement) {
+  currentRecorder?.start('markdown-table-render', { target: describe(table) });
+}
 
 function describe(node: Node | null): Detail | null {
   if (!node) return null;
@@ -77,6 +81,15 @@ function install(scroller: HTMLElement, readState: () => Detail, config: WindowS
       anchors: anchors.map(item => ({ ...geometry(item),
         contentVisibility: getComputedStyle(item).contentVisibility,
         intrinsicBlockSize: getComputedStyle(item).containIntrinsicBlockSize })),
+      tables: [...scroller.querySelectorAll<HTMLElement>('.markdown-table-scroll')].filter(table => {
+        const bounds = table.getBoundingClientRect(), viewport = scroller.getBoundingClientRect();
+        return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+      }).slice(0, 4).map(table => ({ ...geometry(table),
+        rows: table.querySelectorAll('tr').length,
+        resolvedFiles: table.querySelectorAll('a.local-file-reference').length,
+        pendingFiles: table.querySelectorAll('.local-file-reference-pending').length,
+        unavailableFiles: table.querySelectorAll('.local-file-reference-unavailable').length,
+      })),
       restoring: scroller.hasAttribute('data-scroll-restoring'), preserveScroll: scroller.dataset.cardbushPreserveScroll,
     };
     const signature = JSON.stringify({ ...snapshot, state: { ...snapshot.state,
@@ -188,7 +201,7 @@ function install(scroller: HTMLElement, readState: () => Detail, config: WindowS
       if (ownTop) Object.defineProperty(scroller, 'scrollTop', ownTop); else Reflect.deleteProperty(scroller, 'scrollTop');
     });
   }
-  const recorder = { active, record }; currentRecorder = recorder;
+  const recorder = { active, record, start }; currentRecorder = recorder;
   const stop = () => {
     record('scroller-detached', { scroller: describe(scroller), state: readState() });
     flush('observer-disposed'); disposed = true;

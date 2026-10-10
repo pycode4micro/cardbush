@@ -1,4 +1,5 @@
 import type { ModelEvent, ModelRequest, ProviderInputProjection, ProviderCompatibilityDiagnostic, ProviderStreamDiagnostic } from "@cardbush/bush-protocol";
+import type { ModelRequestAttempts } from './modelRequestAttempts.js';
 
 export interface ModelRequestBodyBudget {
   /** UTF-8 bytes of the complete serialized HTTP body, including base64. */
@@ -8,6 +9,8 @@ export interface ModelRequestBodyBudget {
 
 export interface ModelStreamOptions {
   signal?: AbortSignal;
+  /** Shared by every dispatch/recovery of one frozen model round, not token counting. */
+  attempts?: ModelRequestAttempts;
   /** Full input fingerprints at each dispatch attempt, or of the local
    * projection during estimateInputTokens(). No API request is made by estimation.
    */
@@ -30,6 +33,7 @@ export interface ModelInputTokenCount {
  * normalized ModelEvent out. Adapters own wire roles, tool/image encoding,
  * streaming and opaque replay only. They never execute tools, append canonical
  * conversation messages, or decide Agent continuation/permissions/recovery.
+ * Wire-only negotiation before output uses the Runtime-owned attempts budget.
  * InMemoryRuntimeHost + executeModelRound own that loop for every adapter.
  */
 export interface ModelProvider {

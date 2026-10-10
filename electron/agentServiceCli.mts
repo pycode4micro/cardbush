@@ -10,6 +10,8 @@ const { values } = parseArgs({ options: {
   host: { type: 'string', default: '127.0.0.1' }, port: { type: 'string', default: '4780' }, help: { type: 'boolean' },
   sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' },
   desktop: { type: 'boolean', default: false },
+  'web-restricted': { type: 'boolean', default: false },
+  'disable-tools': { type: 'boolean', default: false },
 } });
 if (values.help) {
   process.stdout.write('Personal Agent 桌面（默认关闭）：--desktop。仅用于可选 Linux 桌面镜像；启动失败时拒绝启用，不降级到客户端桌面。详见 deploy/agent/README.md。\n\n');
@@ -22,7 +24,7 @@ if (values.help) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port.');
   if (values.sandbox && !['off', 'auto', 'required'].includes(values.sandbox)) throw new Error('--sandbox 只支持 off、auto 或 required。');
   if (values['sandbox-network'] && !['disabled', 'enabled'].includes(values['sandbox-network'])) throw new Error('--sandbox-network 只支持 disabled 或 enabled。');
-  const service = await AgentService.open({ dataRoot: resolve(values['data-dir']), name: values.name, desktop: values.desktop, env: {
+  const service = await AgentService.open({ dataRoot: resolve(values['data-dir']), name: values.name, desktop: values.desktop, toolsEnabled: !values['disable-tools'], webRestricted: values['web-restricted'], env: {
     ...(values.sandbox ? { CARDBUSH_EXECUTION_SANDBOX: values.sandbox } : {}),
     ...(values['sandbox-network'] ? { CARDBUSH_SANDBOX_NETWORK: values['sandbox-network'] } : {}),
   } });

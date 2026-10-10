@@ -12,6 +12,9 @@ import {
 import type { ModelProvider, ModelStreamOptions } from "./modelProvider.js";
 import { ToolCallAccumulator } from "./toolCallAccumulator.js";
 import { modelReplayMessageHash } from "./modelReplay.js";
+import { modelFailureAction } from './modelFailurePolicy.js';
+import { ModelRequestAttempts } from './modelRequestAttempts.js';
+export { isToolCallValidationFailure } from './modelFailurePolicy.js';
 
 export interface ModelRoundUsage {
   inputTokens?: number;
@@ -42,12 +45,6 @@ export interface FailedModelRound {
 }
 
 export type ModelRoundResult = CompletedModelRound | FailedModelRound;
-
-/** These failures happen before the Runtime dispatches any call in the batch. */
-export function isToolCallValidationFailure(error: { code: string }): boolean {
-  return ['incomplete_tool_call', 'provider_tool_call_incomplete',
-    'provider_tool_call_changed', 'provider_tool_search_invalid'].includes(error.code);
-}
 
 export interface ModelRoundOptions extends ModelStreamOptions {
   onEvent?: (event: ModelEvent) => void | Promise<void>;
@@ -92,11 +89,13 @@ export async function executeModelRound(
 
   for await (const candidate of provider.stream(request, {
     signal: options.signal, onInputProjection: options.onInputProjection,
+    attempts: options.attempts ?? new ModelRequestAttempts(),
     onRequestBodyBudget: options.onRequestBodyBudget,
     onCompatibilityDiagnostic: options.onCompatibilityDiagnostic,
     onStreamDiagnostic: options.onStreamDiagnostic,
   })) {
     const event = modelEventSchema.parse(candidate);
+    if (event.kind === 'response_failed') event.retryable = modelFailureAction(event) === 'retry';
     if (event.requestId !== request.requestId) {
       failure = localFailure(
         request.requestId,
@@ -183,6 +182,7 @@ export async function executeModelRound(
     );
   }
   if (failure) {
+    failure.retryable = modelFailureAction(failure) === 'retry';
     return {
       status: "failed",
       finishReason,

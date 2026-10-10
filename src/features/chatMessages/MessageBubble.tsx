@@ -73,6 +73,8 @@ import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './I
 import { MessageImageGallery } from './MessageImageGallery';
 import { MessageContentImage, MessageImageGalleryFrame, useImageGalleryFallback } from './MessageImageGalleryFrame';
 import { remarkImageGroups } from './remarkImageGroups';
+import { remarkStreamingTables } from './streamingTables';
+import { captureMarkdownTableDiagnostic } from '../chat/windowScrollDiagnostics';
 import { modelFailurePresentation } from './modelFailurePresentation';
 import { McpAppReferencesContext } from '../tools/McpAppReferenceLink';
 import { LoopExecutionPreviews, isLoopPreviewExecution } from '../tools/LoopExecutionPreviews';
@@ -328,6 +330,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     language: AppLanguage;
     referenceMode: 'local' | 'remote';
     compactImages: boolean;
+    streaming?: boolean;
   };
   const MarkdownRenderContext = createContext<MarkdownRenderSettings>({
     workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh', referenceMode: 'local', compactImages: true,
@@ -350,7 +353,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const reference = parseMarkdownReference(href);
       if (reference) return <MarkdownReference reference={reference} language={language} rich={richFileReferences}>{children}</MarkdownReference>;
       if (referenceMode === 'remote' && href && !/^(https?:\/\/|#)/i.test(href)) {
-        const path = remoteMarkdownPath(href, workspaceRoot);
+        const path = host?.fileReferencePath ? host.fileReferencePath(href) : remoteMarkdownPath(href, workspaceRoot);
         return host && path ? <ConversationFileReference path={path} language={language}>{children}</ConversationFileReference> : <span>{children}</span>;
       }
       const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
@@ -386,7 +389,8 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
               return;
             }
             event.preventDefault();
-            openInspector(href, href);
+            if (host?.openExternal) host.openExternal(href);
+            else openInspector(href, href);
           }}
         >
           {children}
@@ -404,6 +408,12 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       useImageGalleryFallback(!richFileReferences && Boolean(internalReference)
         || presentedMedia.has(mediaPresentationKey(src || '')));
       if (internalReference) return <MarkdownReference reference={internalReference} language={language} rich={richFileReferences} inline>{alt}</MarkdownReference>;
+      if (host?.fileReferencePath) {
+        const path = host.fileReferencePath(src || '');
+        return path && richFileReferences
+          ? <ConversationFileReference path={path} inline language={language}>{alt}</ConversationFileReference>
+          : <span>{alt}</span>;
+      }
       const targetKind = resourceTargetKind(src || '');
       if (referenceMode === 'remote' && targetKind !== 'url' && targetKind !== 'inline') {
         const path = remoteMarkdownPath(src, workspaceRoot);
@@ -488,11 +498,13 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         </h1>
       );
     },
-    table: ({ children, ...props }) => (
-      <div className="markdown-table-scroll">
+    table: ({ children, ...props }) => {
+      const ref = useRef<HTMLDivElement>(null);
+      useEffect(() => { if (ref.current) captureMarkdownTableDiagnostic(ref.current); }, [children]);
+      return <div className="markdown-table-scroll" ref={ref}>
         <table {...props}>{children}</table>
-      </div>
-    ),
+      </div>;
+    },
   };
 
   function MarkdownRenderer({
@@ -502,16 +514,21 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     language,
     referenceMode,
     compactImages,
+    streaming,
   }: MarkdownRenderSettings & { content: string }) {
+    const host = useContext(ConversationHostContext);
     const richFileReferences = useContext(RichFileReferencesContext);
     const presentedMedia = useContext(PresentedMediaContext);
     const sourceReferences = useSourceMemoReferences(content, richFileReferences);
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages }), [workspaceRoot, pathAliases, language, referenceMode, compactImages]);
     const remarkPlugins = useMemo(() => {
-      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkAutolinkBoundaries];
+      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm];
+      if (streaming) plugins.push(remarkStreamingTables);
+      plugins.push(remarkAutolinkBoundaries);
       if (sourceReferences.size) plugins.push([remarkSourceMemoShorthand, { references: sourceReferences }]);
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       if (compactImages && richFileReferences) plugins.push([remarkImageGroups, { eligible: (url: string) => {
+        if (host?.fileReferencePath) return Boolean(host.fileReferencePath(url));
         const internal = parseMarkdownReference(url);
         if (internal) return internal.kind === 'file';
         const kind = resourceTargetKind(url);
@@ -522,14 +539,18 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           && !/^data:(?:audio|video)\//i.test(path) && !presentedMedia.has(mediaPresentationKey(path));
       } }]);
       return plugins;
-    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia]);
+    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia, streaming, host?.fileReferencePath]);
     const urlTransform = useCallback((url: string, key: string) => {
+      if (host?.fileReferencePath) {
+        if (key === 'src' || !/^(https?:\/\/|#)/i.test(url)) return host.fileReferencePath(url) ?? '';
+        return defaultUrlTransform(url);
+      }
       if (parseMarkdownReference(url)) return url;
       if (key === 'src' && /^(?:data:(?:image|audio|video)\/|blob:|cardbush-file:\/\/)/i.test(url)) return mediaResourceUrl(url);
       if (referenceMode === 'remote') return /^(https?:\/\/|#)/i.test(url) ? defaultUrlTransform(url) : remoteMarkdownPath(url, workspaceRoot) ? url : '';
       const reference = markdownLocalFileReference(url, workspaceRoot);
       return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
-    }, [workspaceRoot, referenceMode]);
+    }, [workspaceRoot, referenceMode, host?.fileReferencePath]);
     return (
       <MarkdownRenderContext.Provider value={settings}>
         <ReactMarkdown
@@ -776,7 +797,7 @@ function MessageBubbleView({
   const [editText, setEditText] = useState(text);
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [assistantFeedback, setAssistantFeedback] =
-    useState<AssistantFeedbackRating | null>(() => readAssistantFeedback(feedbackId));
+    useState<AssistantFeedbackRating | null>(() => host?.messageFeedbackAvailable === false ? null : readAssistantFeedback(feedbackId));
   const [feedbackPulse, setFeedbackPulse] =
     useState<AssistantFeedbackRating | null>(null);
   const feedbackPulseFrameRef = useRef<number | null>(null);
@@ -797,7 +818,7 @@ function MessageBubbleView({
   useEffect(() => {
     setEditing(false);
     setSubmittingEdit(false);
-    setAssistantFeedback(readAssistantFeedback(feedbackId));
+    setAssistantFeedback(host?.messageFeedbackAvailable === false ? null : readAssistantFeedback(feedbackId));
     setFeedbackPulse(null);
     setEditText(splitMessageMedia(message.content).text);
   }, [message.id, feedbackId]);
@@ -851,6 +872,7 @@ function MessageBubbleView({
   }
 
   function toggleAssistantFeedback(rating: AssistantFeedbackRating) {
+    if (host?.messageFeedbackAvailable === false) return;
     const nextRating = assistantFeedback === rating ? null : rating;
     playAssistantFeedbackPulse(rating);
     setAssistantFeedback(nextRating);
@@ -1199,6 +1221,7 @@ function MessageBubbleView({
             <MessageInlineMediaContent
               content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
               language={language}
+              streaming={streamingFinalResponse}
             />
           )}
         </div>
@@ -1320,6 +1343,7 @@ function MessageBubbleView({
                 feedbackPulse === 'up' ? 'feedback-pop' : ''
               }`}
               type="button"
+              hidden={host?.messageFeedbackAvailable === false}
               aria-pressed={assistantFeedback === 'up'}
               title={language === 'zh' ? '有帮助' : 'Helpful'}
               onClick={() => toggleAssistantFeedback('up')}
@@ -1331,6 +1355,7 @@ function MessageBubbleView({
                 feedbackPulse === 'down' ? 'feedback-pop' : ''
               }`}
               type="button"
+              hidden={host?.messageFeedbackAvailable === false}
               aria-pressed={assistantFeedback === 'down'}
               title={language === 'zh' ? '不理想' : 'Needs improvement'}
               onClick={() => toggleAssistantFeedback('down')}
@@ -2754,9 +2779,11 @@ export function MessageImageStrip({
 const MessageInlineMediaContent = memo(function MessageInlineMediaContent({
   content,
   language,
+  streaming = false,
 }: {
   content: string;
   language: AppLanguage;
+  streaming?: boolean;
 }) {
   const blocks = splitMessageMediaBlocks(content);
   return (
@@ -2768,8 +2795,11 @@ const MessageInlineMediaContent = memo(function MessageInlineMediaContent({
               // The source range, rather than its words, establishes block identity.
               // eslint-disable-next-line react/no-array-index-key
               key={`text-${index}`}
-              content={block.content}
+              // Media splitting trims blank boundaries. Preserve a streamed
+              // tail's newline so the table parser can commit its final row.
+              content={block.content + (streaming && index === blocks.length - 1 && /[\r\n][ \t]*$/.test(content) ? '\n' : '')}
               language={language}
+              streaming={streaming && index === blocks.length - 1}
             />
           );
         }
@@ -2794,11 +2824,13 @@ export const MarkdownContent = memo(function MarkdownContent({
   language,
   referenceMode,
   compactImages = true,
+  streaming = false,
 }: {
   content: string;
   language: AppLanguage;
   referenceMode?: 'local' | 'remote';
   compactImages?: boolean;
+  streaming?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
@@ -2813,6 +2845,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           language={language}
           referenceMode={referenceMode ?? (host ? 'remote' : 'local')}
           compactImages={compactImages}
+          streaming={streaming}
         />
       </Suspense>
     </div>

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "images": {
+      "type": "stdio",
+      "command": "/opt/cardbush-python/bin/python",
+      "args": [
+        "${PLUGIN_ROOT}/web_image_server.py"
+      ],
+      "tool_timeout_sec": 150,
+      "startup_timeout_sec": 30,
+      "versionMode": "legacy"
+    }
+  }
+}

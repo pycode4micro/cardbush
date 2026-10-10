@@ -1,5 +1,30 @@
 
 
+.terminal-task-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 5px 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-task-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.terminal-task-status button:disabled { opacity: .6; cursor: default; }
+
 .assistant-thinking {
   display: inline-block;
   color: var(--text-soft);

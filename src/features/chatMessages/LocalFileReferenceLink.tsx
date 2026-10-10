@@ -8,6 +8,7 @@ import { FileTypeIcon } from './FileTypeIcon';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
 import { ImageGalleryContext } from './ImageGalleryContext';
 import { galleryImage, isGalleryImage } from './imageGallery';
+import { recordWindowScrollDiagnostic } from '../chat/windowScrollDiagnostics';
 
 type LocalReferenceMetadata = {
   path: string;
@@ -16,7 +17,12 @@ type LocalReferenceMetadata = {
   icon?: string;
 };
 
-const localReferenceMetadata = new Map<string, Promise<LocalReferenceMetadata | null>>();
+type LocalReferenceCacheEntry = {
+  pending: Promise<LocalReferenceMetadata | null>;
+  resolved?: { metadata: LocalReferenceMetadata | null };
+};
+
+const localReferenceMetadata = new Map<string, LocalReferenceCacheEntry>();
 
 type LocalReferenceInspection = {
   path: string;
@@ -49,9 +55,13 @@ export function LocalFileReferenceLink({
   const [inspection, setInspection] = useState<LocalReferenceInspection | null>(null);
   const targetKind = resourceTargetKind(path);
   const fileTarget = targetKind === 'local-file' || targetKind === 'ssh-file';
-  const inspectionComplete = knownFileName !== undefined || inspection?.path === path;
+  const key = path.startsWith('ssh://') ? path : path.toLowerCase();
+  // A remounted reference must reuse the result synchronously, without briefly
+  // switching back to the full, uninspected path on every history refresh.
+  const resolved = inspection?.path === path ? inspection : localReferenceMetadata.get(key)?.resolved;
+  const inspectionComplete = knownFileName !== undefined || Boolean(resolved);
   const metadata = knownFileName !== undefined ? { path, name: knownFileName, kind: 'file' as const }
-    : inspection?.path === path ? inspection.metadata : null;
+    : resolved?.metadata ?? null;
   const directoryLike = metadata?.kind === 'folder';
   const applicationLike = metadata?.kind === 'application';
   const pathLabel = basename(path);
@@ -68,19 +78,35 @@ export function LocalFileReferenceLink({
       setInspection({ path, metadata: null });
       return undefined;
     }
-    const key = path.startsWith('ssh://') ? path : path.toLowerCase();
-    let pending = localReferenceMetadata.get(key);
-    if (!pending) {
-      pending = inspect(path).catch(() => null);
-      localReferenceMetadata.set(key, pending);
+    let cached = localReferenceMetadata.get(key);
+    if (cached?.resolved) return;
+    if (!cached) {
+      recordWindowScrollDiagnostic('file-reference-inspection', { path, stage: 'requested' });
+      const entry: LocalReferenceCacheEntry = { pending: inspect(path).catch(() => null) };
+      entry.pending = entry.pending.then(metadata => {
+        entry.resolved = { metadata };
+        recordWindowScrollDiagnostic('file-reference-inspection', { path, stage: 'resolved', kind: metadata?.kind ?? 'unavailable' });
+        return metadata;
+      });
+      cached = entry;
+      localReferenceMetadata.set(key, entry);
     }
-    void pending.then((value) => {
+    void cached.pending.then((value) => {
       if (active) setInspection({ path, metadata: value });
     });
     return () => {
       active = false;
     };
-  }, [path, knownFileName, fileTarget]);
+  }, [path, key, knownFileName, fileTarget]);
+
+  if (fileTarget && !inspectionComplete) {
+    return (
+      <span className="local-file-reference-pending" title={path}>
+        <FileTypeIcon path={path} />
+        <span>{label}</span>
+      </span>
+    );
+  }
 
   if (!fileTarget || !inspectionComplete || !metadata) {
     return (

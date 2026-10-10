@@ -1,7 +1,7 @@
 import { commandInvocation, decodeCommandOutput as decodeProcessOutput } from '@cardbush/platform';
 import { randomUUID } from 'node:crypto';
 import { spawnResourceManagedProcess, type ProcessResourceGovernor, type GuardedProcess } from './processResourceGuard.js';
-import { isWithin } from './workspaceAccessPolicy.js';
+import { isWithin, normalizeIdentity } from './workspaceAccessPolicy.js';
 import type { ExecutionSandboxPolicy } from './executionSandbox.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 
@@ -28,6 +28,8 @@ interface ManagedTerminalSession {
   error: string;
   errorCode?: string;
   startedAt: number;
+  endedAt?: number;
+  lastOutputAt?: number;
   revision: number;
   stopRequested: boolean;
   closed: boolean;
@@ -43,6 +45,8 @@ interface ManagedTerminalSession {
 
 export class TerminalSessionManager {
   readonly #sessions = new Map<string, ManagedTerminalSession>();
+  // Reserve before the async spawn: simultaneous identical calls must not race.
+  readonly #runningCommands = new Map<string, string>();
   readonly #resourceGovernor?: ProcessResourceGovernor;
 
   constructor(options: { resourceGovernor?: ProcessResourceGovernor } = {}) {
@@ -76,6 +80,15 @@ export class TerminalSessionManager {
     const sessionId = `terminal_${randomUUID()}`;
     const exclusiveResources = decodeExclusiveResources(input.exclusiveResources);
     const releaseResources = runtimeExclusiveResources.acquire(sessionId, input.cwd, exclusiveResources);
+    const commandKey = JSON.stringify([input.ownerSessionId, normalizeIdentity(input.cwd), input.shell, input.command]);
+    const existingId = this.#runningCommands.get(commandKey);
+    if (existingId) {
+      releaseResources();
+      throw Object.assign(codedError('terminal_command_already_running', 'This exact command is already running in this session. Continue independent work; use its existing handle when the result is needed. Do not restart it.'), {
+        details: { terminalSessionId: existingId, state: this.#sessions.get(existingId)?.state ?? 'starting' },
+      });
+    }
+    this.#runningCommands.set(commandKey, sessionId);
     let guarded: GuardedProcess;
     try { guarded = await spawnResourceManagedProcess({
       executable: invocation.executable,
@@ -83,7 +96,7 @@ export class TerminalSessionManager {
       cwd: input.cwd,
       governor: this.#resourceGovernor,
       sandbox: input.sandbox,
-    }); } catch (error) { releaseResources(); throw error; }
+    }); } catch (error) { this.#runningCommands.delete(commandKey); releaseResources(); throw error; }
     const child = guarded.child;
     const terminal: ManagedTerminalSession = {
       sessionId,
@@ -131,7 +144,7 @@ export class TerminalSessionManager {
         terminal.error = error instanceof Error ? error.message : String(error);
         terminal.errorCode = 'terminal_cleanup_failed';
       }
-      finally { releaseResources(); }
+      finally { this.#runningCommands.delete(commandKey); releaseResources(); }
       if (report?.code && (!terminal.stopRequested || report.code === 'sandbox_cleanup_failed')) {
         terminal.error = report.message;
         terminal.errorCode = report.code;
@@ -139,6 +152,7 @@ export class TerminalSessionManager {
       terminal.state = terminal.stopRequested ? "stopped" : terminal.error || terminal.errorCode ? "failed" : "exited";
       terminal.exitCode = exitCode;
       terminal.signal = signal;
+      terminal.endedAt = Date.now();
       this.#notify(terminal);
       const releaseStreams = setTimeout(() => {
         child.stdout?.destroy();
@@ -240,6 +254,13 @@ export class TerminalSessionManager {
     };
   }
 
+  /** Non-consuming status for local UI observers. */
+  status(ownerSessionId: string, sessionId: string): Record<string, unknown> {
+    const terminal = this.#owned(ownerSessionId, sessionId);
+    return { terminalSessionId: terminal.sessionId, state: terminal.state, pid: terminal.pid,
+      exitCode: terminal.exitCode, ...terminalTiming(terminal) };
+  }
+
   list(ownerSessionId: string): Array<Record<string, unknown>> {
     return [...this.#sessions.values()]
       .filter((terminal) => terminal.ownerSessionId === ownerSessionId)
@@ -252,8 +273,7 @@ export class TerminalSessionManager {
         shell: terminal.shell,
         exclusiveResources: terminal.exclusiveResources,
         sandbox: terminal.guarded.sandbox ?? null,
-        startedAt: new Date(terminal.startedAt).toISOString(),
-        durationMs: Date.now() - terminal.startedAt,
+        ...terminalTiming(terminal),
         pendingOutput: terminal.stdoutBytes + terminal.stderrBytes > 0,
       }));
   }
@@ -283,7 +303,7 @@ export class TerminalSessionManager {
       shellExecutable: terminal.shellExecutable,
       ...(terminal.exclusiveResources.length ? { exclusiveResources: terminal.exclusiveResources } : {}),
       sandbox: terminal.guarded.sandbox ?? null,
-      durationMs: Date.now() - terminal.startedAt,
+      ...terminalTiming(terminal),
       exitCode: terminal.exitCode,
       signal: terminal.signal,
       stdout,
@@ -373,6 +393,7 @@ function appendTerminalOutput(
   channel: "stdout" | "stderr",
   chunk: Buffer,
 ): void {
+  if (chunk.length) terminal.lastOutputAt = Date.now();
   const chunks = terminal[channel];
   const byteKey = channel === "stdout" ? "stdoutBytes" : "stderrBytes";
   const truncatedKey = channel === "stdout" ? "stdoutTruncated" : "stderrTruncated";
@@ -390,6 +411,13 @@ function appendTerminalOutput(
     }
     terminal[truncatedKey] = true;
   }
+}
+
+function terminalTiming(terminal: ManagedTerminalSession) {
+  const observedAt = terminal.endedAt ?? Date.now();
+  return { startedAt: new Date(terminal.startedAt).toISOString(), durationMs: observedAt - terminal.startedAt,
+    lastOutputAt: terminal.lastOutputAt ? new Date(terminal.lastOutputAt).toISOString() : null,
+    outputIdleMs: observedAt - (terminal.lastOutputAt ?? terminal.startedAt) };
 }
 
 async function terminateProcessTree(terminal: ManagedTerminalSession): Promise<void> {

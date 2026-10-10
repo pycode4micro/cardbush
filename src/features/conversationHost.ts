@@ -21,6 +21,12 @@ export interface ConversationHost {
   openExtract?(id: string): void;
   readFile?(path: string): Promise<{ name: string; blob: Blob }>;
   previewFile?(path: string): Promise<{ source: string; dispose(): void }>;
+  /** Restricted web hosts own every media source, including URLs and inline data. */
+  resolveFileSource?(path: string, options: { preview?: boolean }): Promise<{ source: string; dispose(): void }>;
+  peekFileSource?(path: string): string | undefined;
+  messageFeedbackAvailable?: boolean;
+  fileReferencePath?(source: string): string | undefined;
+  openExternal?(url: string): void;
   readDirectory?(input: { directoryPath?: string; offset?: number }): Promise<WorkspaceDirectoryPage>;
   welcomeHistory?(signal: AbortSignal): Promise<RuntimeUserPrompt[]>;
   toolDetails(sessionId: string, turnId: string): Promise<ChatToolExecution[]>;

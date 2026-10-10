@@ -22,6 +22,29 @@ const attach = (store, listSessions) => {
   const tool = registry.resolve(EXECUTION_HISTORY_TOOL);
   return { tool, search: (input = query, sessionId = 'one', signal) => tool.execute({ sessionId, input: tool.decodeInput(input), signal }) };
 };
+
+test('structured task handles survive long prompts and MCP text envelopes and remain searchable', async () => {
+  const store = new ToolExecutionStore({ now: () => now });
+  const record = createRecord(store, 'created', 'one', { tool: 'mcp_call',
+    args: { name: 'generate_video', arguments: { prompt: 'creative directions '.repeat(2000) } },
+    result: { content: [{ type: 'text', text: JSON.stringify({ task: { id: 'cgt-20261010-987cq', status: 'running',
+      content: { video_url: 'https://cdn.invalid/file?token=PRIVATE' }, api_key: 'PRIVATE' }, output_path: 'C:/task/output/video.mp4' }) }] } });
+  const summary = summarizeExecution(record);
+  assert.ok(summary.references.includes('cgt-20261010-987cq'));
+  assert.ok(summary.references.includes('C:/task/output/video.mp4'));
+  assert.ok(summary.summary.length <= 640);
+  assert.doesNotMatch(summary.references.join(' '), /PRIVATE|https:/);
+  const { search } = attach(store, async () => [{ sessionId: 'one', metadata: {} }]);
+  const result = await search({ keywords: ['987cq'], description: 'Find generated task' });
+  assert.equal(result.match_type, 'identifier');
+  assert.equal(result.results[0].record_id, summary.id);
+  assert.ok(result.results[0].references.includes('cgt-20261010-987cq'));
+});
+
+test('archive reading does not create another searchable copy of the original work', () => {
+  const store = new ToolExecutionStore();
+  assert.equal(summarizeExecution(createRecord(store, 'page', 'one', { tool: 'read_archived_tool_result', result: { text: 'previous work' } })), undefined);
+});
 async function disk(t) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-execution-history-'));
   const handles = [];

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import OpenAI from "openai";
+import Anthropic from '@anthropic-ai/sdk';
 import { modelEventSchema } from "@cardbush/bush-protocol";
 import { providerFailureEvent } from "../dist/providerFailure.js";
 import { OpenAIResponsesProvider, normalizeResponseStreamEvent } from "../dist/index.js";
@@ -70,14 +71,43 @@ test("HTTP retry policy respects Retry-After and stops for auth, input and exhau
   assert.ok(dateDelay > 58000 && dateDelay <= 60000);
 });
 
-test("does not reinterpret an explicit provider terminal failure as a transport interruption", () => {
-  for (const code of ["server_error", "rate_limit_exceeded", "invalid_prompt", "context_length_exceeded"]) {
+test("streamed terminal failures use the same transient policy while retaining their original codes", () => {
+  for (const [code, retryable] of [["server_error", true], ["rate_limit_exceeded", true],
+    ["invalid_prompt", false], ["context_length_exceeded", false], ["unknown_vendor_error", false]]) {
     const state = { requestId: "retry-probe", sequence: 0, started: true };
     const response = {
       id: "response", created_at: 0, error: { code, message: "fixture" },
     };
     const [event] = normalizeResponseStreamEvent({ type: "response.failed", response }, state);
-    assert.equal(event.retryable, false);
+    assert.equal(event.retryable, retryable);
+    assert.equal(event.code, code);
+  }
+});
+
+test('HTTP and SDK stream errors honor typed quota, status and auth facts, never retry prose', () => {
+  for (const SDK of [OpenAI, Anthropic]) {
+    for (const [status, body, retryable, expectedStatus] of [
+      [429, { type: 'insufficient_quota' }, false, 429],
+      [429, { type: 'rate_limit_error' }, true, 429],
+      [503, { type: 'overloaded_error' }, true, 503],
+      [401, { code: 'server_error', status: 503 }, false, 401],
+      [undefined, { type: 'error', code: 503 }, true, 503],
+      [undefined, { type: 'error', code: 501 }, false, 501],
+      [undefined, { type: 'error', code: 505 }, false, 505],
+      [undefined, { type: 'authentication_error' }, false, undefined],
+      [undefined, { type: 'unknown_vendor_error', message: 'Please retry this temporary server error' }, false, undefined],
+    ]) {
+      const payload = { message: 'fixture', ...body };
+      // SSE readers construct APIError directly; generate(undefined) means a
+      // failed HTTP connection in both SDKs and would test the wrong boundary.
+      const error = status === undefined
+        ? new SDK.APIError(undefined, SDK === OpenAI ? payload : { error: payload }, undefined, new Headers(), payload.type)
+        : SDK.APIError.generate(status, { error: payload }, undefined, new Headers());
+      const event = failure(error);
+      assert.equal(event.retryable, retryable, `${SDK.name}: ${status}: ${JSON.stringify(body)}`);
+      assert.equal(event.status, expectedStatus);
+      if (typeof body.type === 'string' && body.type !== 'error' && body.code === undefined) assert.equal(event.code, body.type);
+    }
   }
 });
 

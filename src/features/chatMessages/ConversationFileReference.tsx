@@ -6,6 +6,7 @@ import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { InlineAudio, InlineVideo } from './InlineMedia';
 import type { AppLanguage } from '../../types';
 import { MessageContentImage, useImageGalleryFallback } from './MessageImageGalleryFrame';
+import { ImagePreviewDialog, type ImagePreviewSource } from './ImagePreviewDialog';
 
 /** Authored remote references use the same viewers, but never resolve on this computer. */
 export function ConversationFileReference({ path, children, inline = false, language, fileVersion }: {
@@ -13,6 +14,7 @@ export function ConversationFileReference({ path, children, inline = false, lang
 }) {
   const host = useContext(ConversationHostContext);
   const [failed, setFailed] = useState('');
+  const [preview, setPreview] = useState<ImagePreviewSource | null>(null);
   const html = isHtmlPreviewPath(path);
   const media = inline && (isImagePath(path) || /\.svg$/i.test(path) || isVideoPath(path) || isAudioPath(path));
   const file = useConversationFileSource(path, Boolean(host && media), { revision: fileVersion });
@@ -25,8 +27,10 @@ export function ConversationFileReference({ path, children, inline = false, lang
     const props = { src: file.source, onError: () => setFailed(file.source), 'aria-label': typeof label === 'string' ? label : basename(path) };
     if (isVideoPath(path)) return <InlineVideo {...props} language={language} />;
     if (isAudioPath(path)) return <InlineAudio {...props} language={language} />;
-    return <MessageContentImage {...props} alt={props['aria-label']} role="button" tabIndex={0} onClick={() => host?.openFile(path)}
-      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); host?.openFile(path); } }} />;
+    const open = () => setPreview({ src: file.source, path, name: props['aria-label'] });
+    return <><MessageContentImage {...props} alt={props['aria-label']} role="button" tabIndex={0} onClick={open}
+      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } }} />
+      {preview && <ImagePreviewDialog image={preview} language={language} onClose={() => setPreview(null)}/>}</>;
   }
   return <span className="file-memo-reference">
     <button type="button" className="markdown-file-link" onClick={() => host?.openFile(path)}>{label}</button>

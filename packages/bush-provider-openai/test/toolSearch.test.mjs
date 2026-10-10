@@ -143,7 +143,12 @@ test('native tool_search publishes complete loaded definitions without a duplica
   const f = await fixture(t, () => ({ output: [searchItem()] }));
   const first = request(), round = await executeModelRound(f.provider, first);
   const large = { ...tool, name: 'mcp__docs__large', description: 'x'.repeat(20000), server: 'docs', tool: 'large', revision: 'v2' };
-  const content = projectMcpDiscoveryResult(searchResult([{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }, large]));
+  const native = searchResult([{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }, large]);
+  const budgeted = projectMcpDiscoveryResult(native);
+  const budgetedParams = toResponsesCreateParams(request({ messages: [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: budgeted }] }));
+  assert.deepEqual(budgetedParams.input.find(item => item.type === 'tool_search_output').tools.map(tool => tool.name), [tool.name]);
+  assert.deepEqual(JSON.parse(budgeted).deferred, [large.name], 'default delivery defers complete oversized definitions');
+  const content = projectMcpDiscoveryResult(native, 64000);
   const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content }];
   const original = structuredClone(messages), params = toResponsesCreateParams(request({ messages }));
   const output = params.input.find(item => item.type === 'tool_search_output');

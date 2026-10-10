@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import Anthropic from '@anthropic-ai/sdk';
 import { BUSH_MODEL_EVENT_PROTOCOL, type ModelEvent } from "@cardbush/bush-protocol";
-import { ModelImageInputError } from "@cardbush/bush-runtime";
+import { ModelImageInputError, modelFailureAction } from "@cardbush/bush-runtime";
 import { RequestBodyBudgetError } from "./requestBodyBudget.js";
 
 type FailureEvent = Extract<ModelEvent, { kind: "response_failed" }>;
@@ -33,7 +33,26 @@ const PERMANENT_CODES = new Set([
   "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
   "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID",
 ]);
-const QUOTA_CODES = new Set(["insufficient_quota", "billing_hard_limit_reached", "billing_not_active"]);
+
+type FailurePayload = Omit<FailureEvent, 'protocol' | 'requestId' | 'sequence' | 'createdAt'>;
+type FailureDefaults = { code?: string; message?: string; status?: number; providerRequestId?: string };
+
+/** HTTP bodies, SDK exceptions and SSE error frames use the same structured policy.
+ * The HTTP envelope overrides body status; the prose never controls retryability. */
+export function providerErrorPayload(error: unknown, defaults: FailureDefaults = {}): FailurePayload {
+  const value = error && typeof error === 'object' ? error as Record<string, unknown> : {};
+  const body = value.error && typeof value.error === 'object' ? value.error as Record<string, unknown> : value;
+  const statusValue = body.status ?? body.status_code ?? (typeof body.code === 'number' ? body.code : undefined);
+  const status = defaults.status ?? (typeof statusValue === 'number' && Number.isInteger(statusValue) &&
+    statusValue >= 400 && statusValue <= 599 ? statusValue : undefined);
+  const code = typeof body.code === 'string' && body.code ? body.code
+    : typeof body.type === 'string' && body.type && body.type !== 'error' ? body.type
+    : status !== undefined ? `provider_http_${status}` : defaults.code ?? 'provider_response_error';
+  const message = typeof body.message === 'string' ? body.message : defaults.message ?? 'The provider failed to generate a response.';
+  const providerRequestId = defaults.providerRequestId ?? (typeof body.request_id === 'string' ? body.request_id : undefined);
+  return { kind: 'response_failed', code, message, retryable: modelFailureAction({ code, status }) === 'retry',
+    ...(status !== undefined ? { status } : {}), ...(providerRequestId ? { providerRequestId } : {}) };
+}
 
 function transportDiagnostics(error: unknown): Diagnostics {
   const queue: unknown[] = [error];
@@ -95,29 +114,20 @@ export function providerFailureEvent(
     return { ...base, code: error.code, message: error.message, retryable: false };
   }
   const diagnostics = transportDiagnostics(error);
-  if (error instanceof Anthropic.APIError && error.status === undefined && error.type) {
-    return { ...base, code: error.type, message: error.message,
-      retryable: ['overloaded_error', 'rate_limit_error', 'api_error'].includes(error.type),
-      providerRequestId: error.requestID ?? undefined, retryAfterMs: retryAfterMs(error.headers), diagnostics };
-  }
   // An explicit HTTP response wins over any provider-supplied error code.
   // In particular, a 401 with code="ECONNRESET" must never become a socket retry.
-  if ((error instanceof OpenAI.APIError || error instanceof Anthropic.APIError) && error.status !== undefined) {
+  if ((error instanceof OpenAI.APIError || error instanceof Anthropic.APIError) &&
+      !(error instanceof OpenAI.APIConnectionError || error instanceof Anthropic.APIConnectionError)) {
     // Anthropic reports input overflow as a typed 400 rather than an OpenAI
     // context code. Only its explicit overflow message enters shared recovery.
     const overflow = /^prompt is too long(?::|\s*$)/i.test(anthropicValidationMessage(error) ?? '');
-    const code = overflow ? 'context_length_exceeded'
-      : 'code' in error && typeof error.code === "string" && error.code ? error.code : `provider_http_${error.status}`;
-    const status = error.status;
+    const payload = providerErrorPayload(overflow ? { code: 'context_length_exceeded' } : error.error, {
+      status: error.status, message: error.message, providerRequestId: error.requestID ?? undefined,
+    });
     return {
       ...base,
-      code,
+      ...payload,
       message: error.message,
-      retryable: !QUOTA_CODES.has(code) &&
-        (status === 408 || status === 409 || status === 429 ||
-          (status >= 500 && status !== 501 && status !== 505)),
-      status,
-      providerRequestId: error.requestID ?? undefined,
       retryAfterMs: retryAfterMs(error.headers),
       diagnostics,
     };

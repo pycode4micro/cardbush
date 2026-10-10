@@ -152,7 +152,11 @@ test('MCP batch loads keep complete schemas, partial errors and current-scope ad
   assert.ok(appBatch.hostCapabilities);
   assert.equal(appBatch.matches[0].interface.resourceUri, 'ui://test/view.html');
   const large = await run({ action: 'load', names: ['mcp__test__large', 'mcp__test__large2', 'mcp__test__two'] });
-  assert.deepEqual(large.deferred, ['mcp__test__large2']); assert.equal(large.matches[0].description.length, 60000);
+  assert.equal(large.matches.length, 3, 'native evidence retains every complete schema');
+  assert.equal(large.matches[0].description.length, 60000);
+  const delivered = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(large)));
+  assert.deepEqual(delivered.deferred, ['mcp__test__large', 'mcp__test__large2']);
+  assert.deepEqual(delivered.matches.map(tool => tool.name), ['mcp__test__two']);
   registry.resolve('mcp__test__two').sessionScope = 'other';
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__test__two'), false);
   assert.equal((await run({ action: 'load', names: ['mcp__test__two'] })).errors.length, 1);

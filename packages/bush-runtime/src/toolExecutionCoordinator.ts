@@ -20,6 +20,7 @@ import type { PluginHookResult } from './pluginExtensions.js';
 import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
+import { webToolDenial } from './webToolPolicy.js';
 
 export interface ToolExecutionHooks {
   before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
@@ -94,6 +95,15 @@ export class ToolExecutionCoordinator {
     turn?: ToolHandlerContext["turn"],
     parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
   ): Promise<ToolExecutionOutcome> {
+    if (turn?.request.metadata.toolExecutionPolicy === 'none') {
+      return failedResult('tools_disabled', 'All tools are disabled by this service.', undefined, {}, 'permission');
+    }
+    if (turn?.request.metadata.toolExecutionPolicy === 'web_restricted') {
+      try {
+        const denial = await webToolDenial(turn.request, toolCall.name, JSON.parse(toolCall.argumentsText));
+        if (denial) return failedResult('web_tool_denied', denial, undefined, {}, 'permission');
+      } catch { return failedResult('web_tool_denied', 'Invalid restricted tool invocation.', undefined, {}, 'permission'); }
+    }
     if (
       turn &&
       !turn.request.tools.some((definition) => definition.name === toolCall.name)
@@ -150,6 +160,8 @@ export class ToolExecutionCoordinator {
           toolCall = { ...toolCall, argumentsText: JSON.stringify(parsedArguments) };
         }
       }
+      const webDenial = await webToolDenial(turn?.request, toolCall.name, parsedArguments);
+      if (webDenial) return failedResult('web_tool_denied', webDenial, undefined, {}, 'permission');
     } catch (error) {
       if (signal?.aborted || isAbortError(error)) return cancelledResult('plugin_hook_cancelled');
       return failedResult(
@@ -182,6 +194,14 @@ export class ToolExecutionCoordinator {
     if (registration.authorize) {
       let admission;
       try {
+        // Session workspace binding narrows ordinary taskRoots to one conversation.
+        // Web attachments belong to the account's personal folder across conversations.
+        // The immutable web gate above has already canonicalized and checked this read;
+        // give the native read admission that same scope without altering the live turn.
+        const personalRead = turn?.request.metadata.toolExecutionPolicy === 'web_restricted' &&
+          ['read_file', 'inject_image_input'].includes(toolCall.name);
+        const admissionTurn = personalRead ? { ...turn!, request: { ...turn!.request,
+          metadata: { ...turn!.request.metadata, taskRoots: turn!.request.metadata.webReadRoots } } } : turn;
         admission = await settleAtAbort(
           Promise.resolve(registration.authorize({
             requestId: identity.requestId,
@@ -191,7 +211,7 @@ export class ToolExecutionCoordinator {
             input,
             actionManifest,
             signal,
-            turn,
+            turn: admissionTurn,
           })),
           signal,
           "Tool admission was cancelled.",

@@ -9,6 +9,14 @@ const entry = (id, summary, extra = {}) => ({
 });
 const search = (entries, keywords, description = '查找执行记录') => searchExecutionSummaries(entries, { keywords, description });
 
+test('exact saved task handles outrank generic tool-name matches after compaction', () => {
+  const target = entry('target', 'name: generate_video; prompt: a long truncated prompt', { references: ['cgt-20261010-987cq'] });
+  const noise = Array.from({ length: 20 }, (_, i) => entry('noise-' + i, 'name: generate_video; queued'));
+  const result = executionHistoryResults(search([...noise, target], ['987cq', 'generate_video']), 0);
+  assert.equal(result.match_type, 'identifier'); assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].record_id, target.id);
+});
+
 test('a requested filename outranks a rare generic clue; pages never pad with weaker matches', () => {
   const target = entry('target', 'path: C:/render/cut_v2_clean.mp4; purpose: 视频定稿');
   const failed = entry('failed', 'command: check C:/render/cut_v2_clean.mp4; exitCode: 1', { outcome: 'failed' });

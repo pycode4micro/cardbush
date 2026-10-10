@@ -7,6 +7,7 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await window.webContents.insertCSS(
     fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8') + '\n' +
     fs.readFileSync(path.join(root, 'src/components/global-tooltip.css'), 'utf8') + '\n' + [
+      fs.readFileSync(path.join(root, 'src/components/hover-preview.css'), 'utf8'),
       'body[data-context-layout-test] .app { position: fixed; inset: 0; display: block; width: 100vw !important; height: 100vh !important; --chat-track-width: 780px; --chat-inline-gutter: clamp(18px, calc(3vw + 10px), 46px); }',
       '@media (max-width: 760px) { body[data-context-layout-test] .app { --chat-inline-gutter: 12px; } }',
       'body[data-context-layout-test] .chat-panel { position: absolute; left: var(--test-chat-left); top: 30px; width: var(--test-chat-width); height: calc(100% - 30px); min-width: 0; }',
@@ -159,10 +160,27 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
     const tickPoint = await run("(() => { const ticks = [...document.querySelectorAll('.quick-context-tick')]; const r = ticks[" + (edge === 'first' ? '0' : 'ticks.length - 1') + "].getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()");
     window.webContents.sendInputEvent({ type: 'mouseMove', ...tickPoint });
     await pause(450);
-    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 0, 'accessible turn labels do not create redundant hover help');
+    await until("!!document.querySelector('.turn-hover-preview:popover-open')", 'hover turn summary card');
+    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 1, 'one summary card replaces redundant hover help');
+    assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'no old text tooltip alongside the card');
+    const hoveredQuestion = await run("chatProps.messages.find(message => message.id === document.querySelector('.quick-context-tick.previewing').dataset.turnMessageId).content");
+    assert.equal(await run("document.querySelector('.turn-hover-preview strong').textContent"), hoveredQuestion.length > 160 ? hoveredQuestion.slice(0, 160) + '...' : hoveredQuestion, 'card names the hovered question');
+    assert.equal(await run("document.querySelector('.turn-hover-preview-reply').textContent.includes(" + JSON.stringify(hoveredQuestion === '追加一个新的问题' ? '暂时没有回复' : '我先全面') + ")"), true, 'card shows this turn’s reply or its empty state');
+    assert.equal(await run("document.querySelectorAll('.turn-hover-preview img, .turn-hover-preview .markdown-content, .quick-context-panel').length"), 0, 'hover stays a lightweight summary');
+    const card = await run("contextGeometry('.turn-hover-preview')");
+    assert.ok(card.popup.x >= card.body.x && card.popup.right <= card.body.right, 'summary stays inside its reading pane');
+    assert.ok(card.popup.height < 140, 'summary uses the compact reference design');
+    if (process.env.CARDBUSH_HOVER_PREVIEW_SCREENSHOT && edge === 'first') {
+      fs.writeFileSync(process.env.CARDBUSH_HOVER_PREVIEW_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
+    }
+    window.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(card.popup.x + card.popup.width / 2), y: Math.round(card.popup.y + card.popup.height / 2) });
+    await pause(180);
+    assert.equal(await run("!!document.querySelector('.turn-hover-preview')"), true, 'moving into the card keeps it visible');
+    await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await until("!document.querySelector('.turn-hover-preview')", 'Escape dismisses summary');
     assert.equal(await run("!!document.querySelector('.quick-context-turn-preview')"), false, 'no duplicate request preview');
     window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
-    await until("!document.querySelector('.global-tooltip')", 'leave tooltip');
+    await until("!document.querySelector('.global-tooltip, .turn-hover-preview')", 'leave preview');
   }
   await run("document.querySelector('.quick-context-tick').click()");
   await until("!!document.querySelector('.quick-context-panel')", 'reopen');
@@ -170,6 +188,7 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   window.webContents.sendInputEvent({type:'mouseMove', ...expandedTick});
   await pause(450);
   assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'open interactive turn preview replaces trigger help');
+  assert.equal(await run("!!document.querySelector('.turn-hover-preview')"), false, 'detail panel and hover summary are mutually exclusive');
   await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false });
   if (ownsDebugger) window.webContents.debugger.detach();
   await run("document.querySelector('.message-list').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))");

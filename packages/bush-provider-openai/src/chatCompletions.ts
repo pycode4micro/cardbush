@@ -81,6 +81,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
       const params = toChatCompletionsParams(await resolveLocalImageInputs(request), this.config.baseURL);
       options.signal?.throwIfAborted();
       recordProjection(this.#format, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
+      options.attempts?.dispatch();
       const stream = await this.#client.chat.completions.create(params, { signal: options.signal,
         headers: modelRequestHeaders(this.config.baseURL, this.config.defaultHeaders, request.sessionId) });
       yield emit({ kind: 'response_started' });

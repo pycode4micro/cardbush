@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async function testSidebarTitleLayout({ run, until, pause, window, root }) {
+  await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/components/hover-preview.css'), 'utf8'));
   window.setSize(1200, 800);
   await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/appearance.css'), 'utf8'));
   await run(`
@@ -85,6 +86,17 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
         assert.ok(Math.abs(rest.titleRect.right - (rest.rowRect.right - rightInset)) <= 1,
           'only visible status indicators reserve space beside the title');
         await hover(index);
+        await until("!!document.querySelector('.conversation-hover-preview:popover-open')", 'conversation metadata hover card');
+        assert.equal(await run("document.querySelector('.conversation-hover-preview strong').textContent"), await run(`sidebarTitles[${index}]`), 'card shows the full conversation title');
+        assert.equal(await run("document.querySelector('.conversation-hover-preview-project span').textContent"), 'apex', 'card names its actual project');
+        assert.equal(await run("document.querySelector('.conversation-hover-preview time').dateTime"), '2026-09-05T00:00:00Z');
+        assert.equal(await run("!!document.querySelector('.conversation-hover-preview .lucide-monitor')"), true, 'local chat uses the device icon');
+        assert.equal(await run("getComputedStyle(document.querySelector('.conversation-hover-preview')).getPropertyValue('--surface-raised').trim()"), await run("getComputedStyle(document.querySelector('.app')).getPropertyValue('--surface-raised').trim()"), 'hover card inherits the active theme');
+        if (width === 256 && index === 0) {
+          await pause(180);
+          fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+          fs.writeFileSync(path.join(root, 'tmp', `sidebar-hover-preview-${theme}.png`), (await window.webContents.capturePage()).toPNG());
+        }
         const geometry = await run(`sidebarGeometry(${index})`);
         assert.equal(geometry.pinOpacity, '1');
         assert.equal(geometry.menuOpacity, '1');
@@ -104,8 +116,13 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
   }
   await moveAway();
   await hover(3);
+  await until("!!document.querySelector('.conversation-hover-preview:popover-open')", 'pinned conversation metadata card');
+  assert.equal(await run("document.querySelector('.conversation-hover-preview-project span').textContent"), 'apex', 'pinned rows also show the project name instead of its directory');
   assert.equal(await run('sidebarGeometry(3).mask'), 'none', 'short titles need no mask');
   assert.equal(await run('sidebarGeometry(3).animation'), 'none', 'short titles need no marquee');
+  const archivePoint = await run("(() => { const r=sidebarRow(3).querySelector('.conversation-archive').getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()");
+  window.webContents.sendInputEvent({ type: 'mouseMove', ...archivePoint });
+  await until("!document.querySelector('.conversation-hover-preview')", 'quick actions suppress the metadata card');
   await moveAway();
   await run("document.querySelector('.app').style.setProperty('--sidebar-width', '256px')");
   await pause(320);
@@ -161,7 +178,8 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
       assert.ok(state.titleRect.right < indicator.rect.left, 'title must not overlap the visible spinner');
       assert.ok(Math.abs(indicator.rect.y + indicator.rect.height / 2 - state.rowRect.y - state.rowRect.height / 2) < 1,
         'rotation keeps the status centered in its row');
-      assert.equal(await run(`sidebarRow(${index}).getAttribute('title')`), '会话运行中');
+      assert.equal(await run(`sidebarRow(${index}).getAttribute('title')`), null, 'row no longer has the old running tooltip');
+      assert.equal(await run(`sidebarRow(${index}).querySelector('.conversation-running-indicator').getAttribute('aria-label')`), '会话运行中', 'running state stays accessible');
     }
     if (theme === 'theme-dark') {
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
@@ -196,7 +214,8 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
       'clearing attention returns the status lane to the title');
   }
   await run("showSidebarFixture({ language: 'en', attentionByConversation: {}, runningConversationIds: new Set(['sidebar-active']) })");
-  await until("sidebarRow(0).getAttribute('title') === 'Session running'", 'running tooltip follows UI language');
+  await until("sidebarRow(0).querySelector('.conversation-running-indicator')?.getAttribute('aria-label') === 'Session running'", 'accessible running state follows UI language');
+  assert.equal(await run("sidebarRow(0).getAttribute('title')"), null, 'English rows also omit the old status tooltip');
   window.webContents.debugger.attach('1.3');
   try {
     await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });

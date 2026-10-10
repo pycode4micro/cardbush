@@ -66,6 +66,7 @@ async function buildViews() {
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task' ? ['src/features/tools/TerminalTaskStatus.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness' ? [
       'src/shared/useRuntimeStartupStatus.ts', 'src/features/composer/Composer.tsx',
       'src/features/composer/ComposerReferenceContext.ts', 'src/features/composer/ComposerPresentationContext.ts',
@@ -447,7 +448,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -691,6 +692,14 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'markdown-table-links') {
+      await require('./helpers/markdown-table-links.cjs')({ run, until, pause, window, root });
+      if (process.env.CARDBUSH_APP_VIEWS_CASE) {
+        assert.deepEqual(await run('failures'), [], 'no table link renderer errors');
+        assert.deepEqual(errors, []);
+        return;
+      }
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'markdown-tables') {
       await require('./helpers/markdown-table-layout.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no table renderer errors');
@@ -817,6 +826,12 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'tool-disclosure') {
       assert.deepEqual(await run('failures'), [], 'no tool disclosure renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task') {
+      await require('./helpers/terminal-task-status.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no terminal status renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

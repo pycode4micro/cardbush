@@ -65,6 +65,7 @@ export interface SubagentDispatcher {
 interface AwaitSubagentsInput {
   taskIds: string[];
   mode: 'any' | 'all';
+  yieldTimeMs: number;
 }
 
 export interface JoinedSubagentResult {
@@ -77,6 +78,7 @@ type AwaitAsyncSubagentResults = (input: {
   parentTurnId: string;
   taskIds: string[];
   mode?: 'any' | 'all';
+  yieldTimeMs?: number;
 }) => Promise<JoinedSubagentResult[]>;
 
 export type SubagentChildRunner = ChildTurnRunner;
@@ -188,7 +190,7 @@ export function registerSubagentTool(
     execute: context => dispatch(context),
   });
   if (options.awaitAsyncResults && !registry.resolve(AWAIT_SUBAGENTS_TOOL)) {
-    registerAwaitSubagentsTool(registry, options.awaitAsyncResults);
+    registerAwaitSubagentsTool(registry, options.awaitAsyncResults, tasks);
   }
   return { dispatch };
 
@@ -400,17 +402,19 @@ export function registerSubagentTool(
 function registerAwaitSubagentsTool(
   registry: ToolRegistry,
   awaitAsyncResults: AwaitAsyncSubagentResults,
+  tasks: SubagentTaskStore,
 ): void {
   registry.register<AwaitSubagentsInput>({
     definition: {
       name: AWAIT_SUBAGENTS_TOOL,
       description:
-        "Wait without polling when progress depends on child results or no independent work remains. Returns completed results for reconciliation. Omit task_ids to select outstanding tasks from this parent Turn.",
+        "Briefly wait without polling only when progress depends on child results and no independent work remains. Do useful independent work first. Returns after yield_time_ms or new user guidance, without cancelling children. Do not loop on this tool: completed results arrive automatically and Runtime observes outstanding children before finishing the turn. Returns completed results for reconciliation. Omit task_ids to select outstanding tasks from this parent Turn.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         properties: {
           mode: { type: 'string', enum: ['any', 'all'], default: 'any', description: 'any resumes after the first selected task finishes; all joins every selected task. Remaining tasks keep running.' },
+          yield_time_ms: { type: 'integer', minimum: 0, maximum: 30000, default: 1000, description: 'Maximum suspension of this call, not the child task. Use 0 for a snapshot.' },
           task_ids: {
             type: "array",
             minItems: 1,
@@ -439,9 +443,13 @@ function registerAwaitSubagentsTool(
         parentTurnId: context.turnId,
         taskIds: context.input.taskIds,
         mode: context.input.mode,
+        yieldTimeMs: context.input.yieldTimeMs,
       });
+      const pending = tasks.list(context.sessionId, context.turnId).filter(task => !task.background && task.status === 'running' &&
+        (!context.input.taskIds.length || context.input.taskIds.includes(task.taskId)));
       return {
-        status: "joined",
+        status: pending.length ? joined.length ? 'partial' : 'pending' : 'joined',
+        ...(pending.length ? { pending_task_ids: pending.map(task => task.taskId), next_step: 'Continue independent work. Child results arrive automatically; do not repeatedly wait or dispatch duplicate tasks.' } : {}),
         taskIds: joined.map((result) => result.taskId),
         count: joined.length,
         results: joined.map((result) => ({ taskId: result.taskId, content: result.message.content })),
@@ -500,6 +508,7 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
     ...(task.agentProfileId ? { agentProfileId: task.agentProfileId, agentName: task.agentName } : {}),
     taskId: task.taskId,
     status: task.status,
+    ...(task.status === 'running' ? { next_step: 'Continue independent work now. The child result arrives automatically; wait only when it blocks the next step.' } : {}),
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
     mode: task.inheritContext ? 'fork' : 'clean',
@@ -583,13 +592,15 @@ function decodeAwaitInput(input: unknown): AwaitSubagentsInput {
     throw new Error("await_subagents input must be an object.");
   }
   const object = input as Record<string, unknown>;
-  const unexpected = Object.keys(object).filter((key) => !['task_ids', 'mode'].includes(key));
+  const unexpected = Object.keys(object).filter((key) => !['task_ids', 'mode', 'yield_time_ms'].includes(key));
   if (unexpected.length > 0) {
     throw new Error(`unsupported await_subagents arguments: ${unexpected.join(", ")}`);
   }
   if (object.mode !== undefined && object.mode !== 'any' && object.mode !== 'all') throw new Error('mode must be any or all.');
   const mode = object.mode === 'all' ? 'all' : 'any';
-  if (object.task_ids === undefined) return { taskIds: [], mode };
+  const yieldTimeMs = object.yield_time_ms ?? 1000;
+  if (!Number.isInteger(yieldTimeMs) || Number(yieldTimeMs) < 0 || Number(yieldTimeMs) > 30000) throw new Error('yield_time_ms must be an integer between 0 and 30000.');
+  if (object.task_ids === undefined) return { taskIds: [], mode, yieldTimeMs: Number(yieldTimeMs) };
   if (!Array.isArray(object.task_ids) || object.task_ids.length === 0) {
     throw new Error("task_ids must be a non-empty array when provided.");
   }
@@ -598,5 +609,5 @@ function decodeAwaitInput(input: unknown): AwaitSubagentsInput {
   );
   if (taskIds.some((value) => !value)) throw new Error("task_ids must contain non-empty strings.");
   if (new Set(taskIds).size !== taskIds.length) throw new Error("task_ids must be unique.");
-  return { taskIds, mode };
+  return { taskIds, mode, yieldTimeMs: Number(yieldTimeMs) };
 }

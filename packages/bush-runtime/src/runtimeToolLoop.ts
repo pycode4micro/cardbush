@@ -1,4 +1,6 @@
 import { projectMcpDiscoveryResult } from "./mcpToolDiscovery.js";
+import { projectArchivedToolResult } from './archivedToolResultProjection.js';
+import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
 import { toolCallDisplay } from './toolDisplay.js';
 import { modelMcpAppReference } from './mcpAppReference.js';
 import {
@@ -53,13 +55,12 @@ export interface RuntimeToolRoundResult {
   hookStopTurn?: string;
 }
 
-const DEFAULT_TOOL_RESULT_MAX_CHARS = 16_000;
 const TOOL_MESSAGE_OVERHEAD_TOKENS = 64;
 const MODEL_IMAGE_INPUT_ESTIMATED_TOKENS = 1_024;
 
 interface ModelToolResult {
   content: string;
-  format: "json" | "text" | "mcp_discovery";
+  format: "json" | "text" | "mcp_discovery" | "archive_read";
   appReference?: string;
 }
 
@@ -283,6 +284,9 @@ export class RuntimeToolLoop {
       if (name === "mcp_search" && outcome?.kind === "returned" && outcome.hookFeedback === undefined) {
         return { content: serializeNativeToolResult(result), format: "mcp_discovery" };
       }
+      if (name === 'read_archived_tool_result' && outcome?.kind === 'returned' && outcome.hookFeedback === undefined) {
+        return { content: serializeNativeToolResult(result), format: 'archive_read' };
+      }
       return text === undefined
         ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json", appReference: appReferences[ordinal] }
         : { content: text, format: "text", appReference: appReferences[ordinal] };
@@ -463,6 +467,10 @@ function projectNativeToolResultBody(
   toolCallId: string,
   maxChars?: number,
 ): string {
+  if (result.format === 'archive_read') {
+    const projected = projectArchivedToolResult(result.content, maxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS);
+    if (projected !== undefined) return projected;
+  }
   if (result.format === 'mcp_discovery') {
     const projected = projectMcpDiscoveryResult(result.content, maxChars);
     if (projected !== undefined) return projected;

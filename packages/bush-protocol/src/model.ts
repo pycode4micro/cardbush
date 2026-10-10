@@ -195,6 +195,8 @@ export const providerCompatibilityDiagnosticSchema = z.object({
   model: z.string().min(1),
   source: z.enum(["generation", "input_token_count"]),
   action: z.enum(["retry", "local_estimate", "next_request", "recovered", "failed"]),
+  providerAttempts: z.number().int().nonnegative().optional(),
+  recoveryAttempts: z.number().int().nonnegative().optional(),
   error: z.object({
     code: z.string(),
     message: z.string(),

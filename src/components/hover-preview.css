@@ -1,0 +1,74 @@
+.hover-preview {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: 0 8px 26px var(--shadow);
+  font: 13px/1.5 var(--app-font-family);
+  pointer-events: auto;
+  z-index: 10000;
+  animation: hover-preview-reveal 120ms ease-out;
+}
+
+.hover-preview-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.hover-preview-title strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hover-preview-title > svg { flex: 0 0 auto; color: var(--text-soft); }
+
+.turn-hover-preview-reply {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin: 5px 0 0;
+  color: var(--text-soft);
+  line-height: 21px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.conversation-hover-preview time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.conversation-hover-preview .hover-preview-title strong { flex: 0 1 auto; }
+
+.conversation-hover-preview-project {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+.conversation-hover-preview-project svg { flex: 0 0 auto; color: var(--text-soft); }
+.conversation-hover-preview-project span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@keyframes hover-preview-reveal { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hover-preview { animation: none; } }
+html[data-motion-preference="off"] .hover-preview { animation: none; }

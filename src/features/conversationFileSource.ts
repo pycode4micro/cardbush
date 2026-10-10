@@ -6,8 +6,8 @@ import { mediaResourceUrl, resourceTargetKind } from '../shared/localPaths';
 export function useConversationFileSource(path: string, enabled = true, options: { preview?: boolean; revision?: string | number } = {}): { source: string; error?: string } {
   const host = useContext(ConversationHostContext);
   const kind = resourceTargetKind(path);
-  const supported = kind !== 'unsupported';
-  const remote = Boolean(host && (kind === 'local-file' || kind === 'ssh-file'));
+  const supported = Boolean(host?.resolveFileSource) || kind !== 'unsupported';
+  const remote = Boolean(host && (host.resolveFileSource || kind === 'local-file' || kind === 'ssh-file'));
   const { preview, revision } = options;
   const key = JSON.stringify([host?.id, path, revision, preview]);
   const [file, setFile] = useState<{ key: string; source: string; error?: string }>();
@@ -16,6 +16,7 @@ export function useConversationFileSource(path: string, enabled = true, options:
     let alive = true, dispose: (() => void) | undefined;
     setFile(undefined);
     const load = async () => {
+      if (host?.resolveFileSource) return host.resolveFileSource(path, { preview });
       if (preview) {
         if (!host?.previewFile) throw Error('Remote preview is unavailable. Update and restart CardBush.');
         return host.previewFile(path);
@@ -30,7 +31,7 @@ export function useConversationFileSource(path: string, enabled = true, options:
       dispose = result.dispose; setFile({ key, source: result.source });
     }).catch(error => { if (alive) setFile({ key, source: '', error: String(error.message ?? error) }); });
     return () => { alive = false; dispose?.(); };
-  }, [host?.readFile, host?.previewFile, path, remote, enabled, preview, key]);
+  }, [host?.readFile, host?.previewFile, host?.resolveFileSource, path, remote, enabled, preview, key]);
   return !enabled ? { source: '' } : !supported ? { source: '', error: 'Unsupported resource address.' }
-    : remote ? file?.key === key ? file : { source: '' } : { source: mediaResourceUrl(path) };
+    : remote ? file?.key === key ? file : { source: host?.peekFileSource?.(path) ?? '' } : { source: mediaResourceUrl(path) };
 }

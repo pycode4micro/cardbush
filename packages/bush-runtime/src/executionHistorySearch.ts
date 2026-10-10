@@ -48,13 +48,14 @@ export function searchExecutionSummaries(entries: ExecutionHistoryEntry[], input
   // Only lexical structure matters here: paths, filenames, compound Tool names
   // and dated IDs are more specific than isolated words. No task-specific lists.
   const identifiers = new Set(keywords.filter(word => /[\p{L}\p{N}][._/-][\p{L}\p{N}]/u.test(normalizeHistoryText(word))));
-  const documents = entries.map(entry => ({ entry, texts: [entry.summary, entry.tool, entry.recordedAt, localDate(entry.recordedAt), entry.outcome] }));
+  const documents = entries.map(entry => ({ entry, texts: [entry.summary, ...(entry.references ?? []), entry.tool, entry.recordedAt, localDate(entry.recordedAt), entry.outcome] }));
   const scores = new Map(new Bm25Retriever(tokenizeHistory).search(documents, [...keywords, input.description])
     .map(match => [(match.record.entry as ExecutionHistoryEntry).id, match.score]));
   const candidates = documents.map(({ entry, texts }) => {
     const text = normalizeHistoryText(texts.join(' '));
     const matched = keywords.filter((_, index) => tests[index](text));
-    return { entry, matched, tier: matched.some(word => identifiers.has(word)) ? 2 : matched.length ? 1 : 0,
+    const referenceMatch = (entry.references ?? []).some(ref => tests.some(test => test(normalizeHistoryText(ref))));
+    return { entry, matched, tier: referenceMatch ? 3 : matched.some(word => identifiers.has(word)) ? 2 : matched.length ? 1 : 0,
       score: scores.get(entry.id) ?? 0 };
   });
   return candidates.filter(candidate => candidate.matched.length > 0 || candidate.score > 0)
@@ -68,9 +69,12 @@ export function searchExecutionSummaries(entries: ExecutionHistoryEntry[], input
 export function executionHistoryResults(matches: ReturnType<typeof searchExecutionSummaries>, offset: number) {
   const page = matches.slice(offset, offset + 5).filter(match => match.tier === matches[offset]?.tier);
   return { total_matches: matches.length,
-    match_type: page.length ? (page[0].tier === 2 ? 'identifier' : page[0].tier === 1 ? 'keywords' : 'related') : 'none',
+    match_type: page.length ? (page[0].tier >= 2 ? 'identifier' : page[0].tier === 1 ? 'keywords' : 'related') : 'none',
     results: page.map(({ entry, matched }) => ({ record_id: entry.id, recorded_at: entry.recordedAt,
       tool: entry.tool, outcome: entry.outcome, summary: entry.summary, matched_keywords: matched,
+      ...(entry.references?.length ? { references: [...entry.references].sort((left, right) =>
+        Number(matched.some(word => keywordMatcher(word)(normalizeHistoryText(right)))) -
+        Number(matched.some(word => keywordMatcher(word)(normalizeHistoryText(left))))).slice(0, 3) } : {}),
       ...(entry.toolCallId ? { locator: `tool-result://history/${entry.id}` } : {}) })),
     next_offset: offset + page.length < matches.length ? offset + page.length : null };
 }

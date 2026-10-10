@@ -17,6 +17,7 @@ export * from "./runtimeIpc.js";
 export * from "./session.js";
 export * from "./team.js";
 export * from "./tool.js";
+export * from './terminalControl.js';
 export * from "./turn.js";
 export * from "./workspace.js";
 export * from './automation.js';

@@ -44,7 +44,7 @@ test('background MCP waiting permits independent work, renews without model poll
 
 async function fixture(execute, extra = {}) {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry); remote(registry, execute, extra.authorize);
-  const completions = []; const jobs = new BackgroundToolCalls(registry, (_s, _t, id, promise) => completions.push({ id, promise })); jobs.register();
+  const completions = []; const jobs = new BackgroundToolCalls(registry, (_s, _t, id, promise) => completions.push({ id, promise }), undefined, extra.hasGuidance); jobs.register();
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
   const messages = [];
   const load = registry.resolve('mcp_search');
@@ -56,8 +56,81 @@ async function fixture(execute, extra = {}) {
   const run = (name, args, overrides = {}) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name, argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal: 0, ...overrides }, undefined,
     { request, contextMessages: messages, signal: controller.signal });
-  return { registry, jobs, run, completions, controller };
+  return { registry, jobs, run, completions, controller, request };
 }
+
+test('a bounded wait yields to independent work without cancelling or duplicating the background call', async t => {
+  let release, calls = 0, signal;
+  const f = await fixture(context => { calls++; signal = context.signal; return new Promise(resolve => { release = resolve; }); });
+  t.after(() => f.jobs.endTurn('s', 't'));
+  const started = await f.run('start_mcp_tool', { name: remoteName, arguments: {} });
+  assert.match(started.result.next_step, /Continue independent work/);
+  const yielded = await f.run('manage_tool_calls', { action: 'wait', yield_time_ms: 10 });
+  assert.equal(yielded.result.wake_reason, 'yield_timeout');
+  assert.equal(yielded.result.tasks[0].status, 'running');
+  assert.equal(signal.aborted, false);
+  // The model can execute another tool after the wait receipt, while the same job is pending.
+  f.registry.register({ definition: { name: 'independent', inputSchema: { type: 'object' } }, manifest,
+    decodeInput: v => v, execute: () => { assert.equal(signal.aborted, false); release({ structuredContent: { text: 'ready' } }); return 'worked'; } });
+  f.request.tools = f.registry.definitions();
+  assert.equal((await f.run('independent', {})).result, 'worked');
+  const completed = await f.run('manage_tool_calls', { action: 'wait', task_ids: [started.result.task_id] });
+  assert.equal(completed.result.wake_reason, 'task_completed');
+  assert.equal(calls, 1);
+  assert.equal(f.completions.length, 1);
+});
+
+test('new and already queued user guidance wake observers without stopping the job', async t => {
+  let release, queued = false, signal;
+  const f = await fixture(context => { signal = context.signal; return new Promise(resolve => { release = resolve; }); }, { hasGuidance: () => queued });
+  t.after(() => f.jobs.endTurn('s', 't'));
+  await f.run('start_mcp_tool', { name: remoteName, arguments: {} });
+  const waiting = f.run('manage_tool_calls', { action: 'wait', yield_time_ms: 30_000 });
+  await new Promise(resolve => setImmediate(resolve));
+  queued = true;
+  f.jobs.wakeForGuidance('s', 't');
+  assert.equal((await waiting).result.wake_reason, 'user_message');
+  assert.equal((await f.run('manage_tool_calls', { action: 'wait' })).result.wake_reason, 'user_message');
+  assert.equal(signal.aborted, false);
+  queued = false; release({ structuredContent: { text: 'finished' } });
+  assert.match((await f.completions[0].promise).content, /finished/);
+});
+
+test('user guidance resumes the model from an implicit join; pending work then completes exactly once', { timeout: 5000 }, async t => {
+  let release, jobSignal, waiting, wake;
+  const joining = new Promise(resolve => { waiting = resolve; });
+  const registry = new ToolRegistry(); let rounds = 0, handledGuidance = false;
+  remote(registry, ({ signal }) => { jobSignal = signal; return new Promise(resolve => { release = resolve; }); });
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, provider: { async *stream(request) {
+    rounds++;
+    if (rounds === 1) yield* response(request, { name: 'mcp_search', args: { action: 'load', query: remoteName } });
+    else if (rounds === 2) yield* response(request, { name: 'start_mcp_tool', args: { name: remoteName, arguments: {} } });
+    else if (rounds === 3) { yield* response(request); setImmediate(waiting); }
+    else if (rounds === 4) {
+      assert.equal(jobSignal.aborted, false);
+      assert.equal(request.messages.filter(m => m.content === 'do this independent step first').length, 1);
+      handledGuidance = true;
+      release({ structuredContent: { text: 'final background result' } });
+      yield* response(request);
+    } else {
+      assert.equal(handledGuidance, true);
+      assert.equal(request.messages.filter(m => m.name === 'background_tool_result').length, 1);
+      yield* response(request);
+    }
+  } } });
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const turn = host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'wake-r', sessionId: 'wake-s', turnId: 'wake-t', model: 'fixture',
+    messages: [{ role: 'user', content: 'wait and work' }], tools: registry.definitions() }, { signal: controller.signal });
+  await joining;
+  wake = await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: {
+    protocol: 'bush.runtime_guidance.v1', sessionId: 'wake-s', turnId: 'wake-t', messageId: 'wake-guidance',
+    content: 'do this independent step first', createdAt: new Date().toISOString(), mode: 'append_context', metadata: {},
+  } });
+  assert.equal(wake.accepted, true);
+  assert.equal((await turn).payload.status, 'completed');
+  assert.equal(rounds, 5);
+});
 
 test('cancel and turn abort stop pending requests; another turn cannot manage them', async () => {
   let cancellations = 0;

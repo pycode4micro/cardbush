@@ -48,7 +48,11 @@ async function fixture(t) {
         if(info.command.includes('fixture-sleep'))return;
         if(info.command.includes('/work/child') && info.command.includes('git ')){stream.stderr.write('fatal: not a git repository (or any of the parent directories): .git');stream.exit(128);stream.end();return;}
         // Delayed multiple writes catch implementations that confuse first output with completion.
-        if(info.command.includes("'rg'")){stream.write('file.txt:1:1:first\n');setTimeout(()=>{stream.write('file.txt:3:1:last\n');stream.exit(0);stream.end();},60);}
+        if(info.command.includes("'rg'")){
+          const files = info.command.includes('--files-with-matches');
+          stream.write(files ? 'first.txt\n' : 'file.txt:1:1:first\n');
+          if(!info.command.includes('fixture-slow-search'))setTimeout(()=>{if(stream.destroyed)return;stream.write(files ? 'last.txt\n' : 'file.txt:3:1:last\n');stream.exit(0);stream.end();},60);
+        }
         else if(info.command.includes('branch')&&info.command.includes('--show-current')){stream.write('main\n');stream.exit(0);stream.end();}
         else if(info.command.includes('--porcelain=v1')){stream.write(' M spaced file.txt\0R  new.txt\0old.txt\0');stream.exit(0);stream.end();}
         else {stream.write('remote only\n');stream.exit(0);stream.end();}
@@ -217,6 +221,35 @@ test('remote paths, observed writes, stale revisions, cross-connection rejection
   await assert.rejects(exec('read_file',{path:'ssh://other/work/file.txt'}),/另一条/);
   await assert.rejects(exec('read_file',{path:'C:\\local.txt'}),/POSIX/);
   await f.manager.remove(f.connection.id);assert.equal(f.files.get('/work/nested/new.txt').toString(),'新文件');
+});
+
+test('SSH searches share in-flight work, cap output and stop timed-out searches with truthful status', { timeout: 15000 }, async t => {
+  const f = await fixture(t); await f.trust();
+  const input = { path: '.', query: 'needle', outputMode: 'files', maxResults: 1 };
+  const results = await Promise.all([f.manager.execute(f.uri, 'search-owner', 'search_file_content', input), f.manager.execute(f.uri, 'search-owner', 'search_file_content', input)]);
+  assert.equal(results.filter(result => result.reused).length, 1);
+  assert.equal(f.commands.filter(command => command.includes("'rg'")).length, 1);
+  for (const result of results) { assert.equal(result.output, 'first.txt\n'); assert.equal(result.complete, false); assert.equal(result.limitReason, 'max_results'); }
+  assert.match(f.commands[0], /!node_modules/);
+  const timed = await f.manager.execute(f.uri, 'search-owner', 'search_file_content', { path: '.', query: 'fixture-slow-search', timeoutMs: 500 });
+  assert.equal(timed.complete, false); assert.equal(timed.timedOut, true); assert.equal(timed.limitReason, 'timeout');
+  assert.match(timed.output, /first/);
+  assert.equal(f.manager.listTerminals('search-owner').sessions.length, 0);
+  assert.equal(f.jobs.size, 0, 'time limits must stop the actual remote process group');
+});
+
+test('SSH duplicate command reservations cover simultaneous starts and clear after stop', { timeout: 15000 }, async t => {
+  const f = await fixture(t); await f.trust();
+  const input = { cwd: '/work', command: 'fixture-sleep', shell: 'posix', yieldTimeMs: 1 };
+  const starts = await Promise.allSettled([f.manager.execute(f.uri, 'same-owner', 'terminal_exec', input), f.manager.execute(f.uri, 'same-owner', 'terminal_exec', input)]);
+  const original = starts.find(result => result.status === 'fulfilled').value;
+  const rejected = starts.find(result => result.status === 'rejected').reason;
+  assert.equal(rejected.code, 'terminal_command_already_running'); assert.equal(rejected.details.terminalSessionId, original.terminalSessionId);
+  assert.equal(f.manager.listTerminals('same-owner').sessions.length, 1);
+  await f.manager.execute(f.uri, 'same-owner', 'terminal_stop', { sessionId: original.terminalSessionId });
+  const rerun = await f.manager.execute(f.uri, 'same-owner', 'terminal_exec', input);
+  assert.notEqual(original.terminalSessionId, rerun.terminalSessionId);
+  await f.manager.execute(f.uri, 'same-owner', 'terminal_stop', { sessionId: rerun.terminalSessionId });
 });
 
 test('search drains all chunks; Git status retains spaces and renamed paths; terminal ownership and stop',async t=>{

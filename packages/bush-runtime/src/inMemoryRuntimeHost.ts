@@ -191,6 +191,7 @@ import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi,
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
+import { RUNTIME_TERMINAL_CONTROL_COMMAND, runtimeTerminalControlSchema } from '@cardbush/bush-protocol';
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -227,6 +228,8 @@ import {
 } from "./runtimeSessionCoordinator.js";
 
 import { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
+import { ModelRequestAttempts } from './modelRequestAttempts.js';
+import { modelFailureAction } from './modelFailurePolicy.js';
 export { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
 
 export interface InMemoryRuntimeHostOptions {
@@ -568,7 +571,8 @@ export class InMemoryRuntimeHost {
     this.#registeredAgents = new RegisteredAgentStore(options.dataRoot ? join(runtimeDataRoot, 'registered-agents') : undefined);
     this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
       this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result),
-      (session, turn) => this.#terminalNotifications.list(session, turn));
+      (session, turn) => this.#terminalNotifications.list(session, turn),
+      (session, turn) => Boolean(this.#guidanceQueues.get(JSON.stringify([session, turn]))?.length));
     this.#backgroundTools.register();
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
@@ -598,7 +602,7 @@ export class InMemoryRuntimeHost {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
           this.#trackAgentGuidance(key, taskId, result);
         },
-        awaitAsyncResults: ({ parentSessionId, parentTurnId, taskIds, mode }) => {
+        awaitAsyncResults: ({ parentSessionId, parentTurnId, taskIds, mode, yieldTimeMs }) => {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
           const pending = (this.#pendingAgentGuidance.get(key) ?? []).filter(entry => !entry.taskId.startsWith('tool_task_'));
           const completed: JoinedSubagentResult[] = [];
@@ -609,7 +613,7 @@ export class InMemoryRuntimeHost {
             completed.push({ taskId, message: asyncResultMessage(task) }); return false;
           }) : pending.map(entry => entry.taskId);
           if (completed.length && mode !== 'all') return Promise.resolve(completed);
-          return selected.length ? this.#joinPendingAgentGuidance(key, selected, mode).then(results => [...completed, ...results]) : Promise.resolve(completed);
+          return selected.length ? this.#joinPendingAgentGuidance(key, selected, mode, yieldTimeMs).then(results => [...completed, ...results]) : Promise.resolve(completed);
         },
         permissionPolicy: subagentPermissionPolicy,
         models: options.subagentModels,
@@ -717,6 +721,7 @@ export class InMemoryRuntimeHost {
         SHUTDOWN_RUNTIME_COMMAND,
         STOP_RUNTIME_TURN_COMMAND,
         CANCEL_RUNTIME_TOOL_COMMAND,
+        RUNTIME_TERMINAL_CONTROL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         RESOLVE_FILE_MEMO_COMMAND,
         RESOLVE_SOURCE_MEMO_COMMAND,
@@ -962,6 +967,21 @@ export class InMemoryRuntimeHost {
       case RUN_MODEL_TURN_COMMAND:
         if (this.#shuttingDown) throw new Error("Runtime is shutting down.");
         return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
+      case RUNTIME_TERMINAL_CONTROL_COMMAND: {
+        const { sessionId, terminalSessionId, action } = runtimeTerminalControlSchema.parse(command.payload);
+        try {
+          const current = this.#workspaceTerminals.status(sessionId, terminalSessionId);
+          return action === 'stop' && current.state === 'running'
+            ? await this.#workspaceTerminals.stop(sessionId, terminalSessionId) : current;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'terminal_session_not_found') throw error;
+          const listed = await this.#remoteWorkspace?.request('terminals', { owner: sessionId }, signal);
+          const remote = (listed?.sessions ?? []).find((item: Record<string, unknown>) => item.terminalSessionId === terminalSessionId);
+          if (!remote) throw error;
+          if (action === 'status' || remote.state !== 'running') return remote;
+          return this.#remoteWorkspace!.request('execute', { uri: remote.uri, owner: sessionId, name: 'terminal_stop', input: { sessionId: terminalSessionId } }, signal);
+        }
+      }
       case GET_RUNTIME_USER_MESSAGE_COMMAND: {
         const { sessionId, turnId, messageId } = runtimeUserMessageIdentitySchema.parse(command.payload);
         const snapshot = this.#sessions.snapshot(sessionId);
@@ -1308,6 +1328,7 @@ export class InMemoryRuntimeHost {
             metadata: { ...guidance.metadata, guidance_mode: guidance.mode ?? 'append_context' },
           });
           this.#guidanceQueues.set(key, queue);
+          this.#backgroundTools.wakeForGuidance(guidance.sessionId, guidance.turnId);
           if (guidance.mode === 'interrupt_and_continue') modelRequestInterrupted = this.#modelRequests.interrupt(key);
           if (child?.metadata.agentRole === 'child' && typeof child.metadata.parentSessionId === 'string' && typeof child.metadata.subagentTaskId === 'string') {
             this.#notifyChildConversation(child.metadata.parentSessionId, child.metadata.subagentTaskId,
@@ -2388,6 +2409,7 @@ export class InMemoryRuntimeHost {
             cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
           retryAfterModelRecovery = true;
         };
+        const modelAttempts = new ModelRequestAttempts(this.#maxAttempts);
         for (let attempt = 1; this.#maxAttempts === null || attempt <= this.#maxAttempts; attempt += 1) {
           if (input.signal?.aborted) return await stop();
           if (hasImmediateGuidance()) { continueWithGuidance(); break; }
@@ -2461,6 +2483,7 @@ export class InMemoryRuntimeHost {
                 roundRequest,
                 {
                   signal,
+                  attempts: modelAttempts,
                   onCompatibilityDiagnostic: payload => {
                     if (!current()) return;
                     this.#eventLog.append(identity, { kind: "provider_compatibility", payload });
@@ -2589,7 +2612,8 @@ export class InMemoryRuntimeHost {
             completedProjector = projector;
             break;
           }
-          if (!compactionTransaction && isToolCallValidationFailure(result.error) && toolCallRepairAttempts < 1) {
+          const failureAction = modelFailureAction(result.error);
+          if (!compactionTransaction && failureAction === 'repair_tool_call' && toolCallRepairAttempts < 1) {
             toolCallRepairAttempts += 1;
             // Append accepted prose only. A rejected batch has no executions or
             // receipts, and must never become a partial tool exchange in history.
@@ -2615,7 +2639,7 @@ export class InMemoryRuntimeHost {
             break;
           }
           if (input.sessionCommit && Number(request.metadata.contextWindowTokens) > 0 &&
-              isContextLengthFailure(result.error) && contextOverflowRecoveries < 2) {
+              failureAction === 'compact_context' && contextOverflowRecoveries < 2) {
             // Do not repeat a rejected request. Maintenance uses its own output
             // allowance; a rejected maintenance job must first partition.
             const canRecover = !compactionTransaction || compactionTransaction.partition();
@@ -2649,8 +2673,7 @@ export class InMemoryRuntimeHost {
           }
           // Known context refusals belong exclusively to the bounded recovery
           // path above, even if an adapter marks them as transport-retryable.
-          if (!isContextLengthFailure(result.error) && !isToolCallValidationFailure(result.error) && result.error.retryable &&
-              (this.#maxAttempts === null || attempt < this.#maxAttempts)) {
+          if (modelAttempts.canRetry(result.error, attempt)) {
             const supersededEventIds = this.#eventLog
               .replay(request.sessionId, request.turnId, {
                 afterSequence: attemptStartSequence,
@@ -2681,6 +2704,7 @@ export class InMemoryRuntimeHost {
                 attempt: nextAttempt,
                 maxAttempts: this.#maxAttempts,
                 nextRetryMs,
+                ...modelAttempts.snapshot(),
                 code: result.error.code,
                 message: result.error.message,
                 status: result.error.status,
@@ -2709,6 +2733,7 @@ export class InMemoryRuntimeHost {
               message: result.error.message,
               retryable: result.error.retryable,
               attempts: attempt,
+              ...modelAttempts.snapshot(),
               round,
               ...(isToolCallValidationFailure(result.error) ? { repairAttempts: toolCallRepairAttempts } : {}),
               status: result.error.status,
@@ -3441,6 +3466,7 @@ export class InMemoryRuntimeHost {
     turnKey: string,
     taskIds: string[] = [],
     mode: 'any' | 'all' = 'any',
+    yieldTimeMs?: number,
   ): Promise<SettledAgentGuidance[]> {
     const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
     const joining = taskIds.length > 0
@@ -3451,8 +3477,9 @@ export class InMemoryRuntimeHost {
         })
       : [...pending];
     if (joining.length === 0) return [];
-    if (mode === 'all') await Promise.all(joining.map(entry => entry.promise));
-    else await Promise.race(joining.map(entry => entry.promise));
+    const [sessionId, turnId] = JSON.parse(turnKey) as [string, string];
+    await this.#backgroundTools.waitForWork(sessionId, turnId, joining.map(entry => entry.promise), mode,
+      this.#activeTurnControllers.get(turnKey)?.signal, yieldTimeMs);
     const ready = joining.filter(entry => entry.settled && entry.message);
     const joiningSet = new Set(ready);
     const remaining = (this.#pendingAgentGuidance.get(turnKey) ?? [])

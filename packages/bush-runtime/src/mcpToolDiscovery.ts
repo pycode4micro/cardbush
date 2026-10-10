@@ -3,6 +3,7 @@ import { withToolDisplayTitle } from './toolDisplay.js';
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
+import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
 import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
 import { MCP_SEARCH_CURSOR_LIMIT, MCP_SEARCH_QUERY_LIMIT, mcpSearchFingerprint, rankMcpTools, readMcpSearchCursor, writeMcpSearchCursor, type McpSearchCursor } from './mcpToolSearch.js';
 
@@ -10,7 +11,7 @@ export const MCP_DISCOVERY_PROTOCOL = 'bush.mcp_discovery.v1';
 
 /** Keep the index visible and only emit complete definitions. The native result
  * stays in the execution journal; this is its bounded model presentation. */
-export function projectMcpDiscoveryResult(text: string, maxChars?: number): string | undefined {
+export function projectMcpDiscoveryResult(text: string, maxChars = DEFAULT_TOOL_RESULT_MAX_CHARS): string | undefined {
   let result: any;
   try { result = JSON.parse(text); } catch { return undefined; }
   if (result?.protocol !== MCP_DISCOVERY_PROTOCOL || !Array.isArray(result.matches)) return undefined;
@@ -24,7 +25,20 @@ export function projectMcpDiscoveryResult(text: string, maxChars?: number): stri
         ({ name, description, ...(descriptionTruncated ? { descriptionTruncated } : {}), loaded }));
     }
     const compact = JSON.stringify(receipt);
-    return compact.length <= (maxChars ?? (result.action === 'load' ? 128_000 : 16_000)) ? compact : undefined;
+    if (compact.length <= maxChars) return compact;
+    if (result.action !== 'load' || result.matches.length < 2) return undefined;
+    // Only delivery knows the real budget, including competition from sibling
+    // calls. Keep complete schemas; deferred names never become callable.
+    const included = new Set<string>();
+    const render = () => JSON.stringify({ ...receipt,
+      matches: result.matches.filter((match: any) => included.has(match.name)),
+      deferred: [...new Set([...(result.deferred ?? []), ...result.matches
+        .filter((match: any) => !included.has(match.name)).map((match: any) => match.name)])] });
+    for (const match of result.matches) {
+      included.add(match.name);
+      if (render().length > maxChars) included.delete(match.name);
+    }
+    return included.size ? render() : undefined;
   }
   return undefined;
 }
@@ -218,20 +232,17 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
     execute: async context => {
       if (!context.turn) throw new Error('MCP discovery requires a task.');
       if (context.input.names) {
-        const matches: Record<string, unknown>[] = [], errors: Array<{ name: string; error: string }> = [], deferred: string[] = [];
-        let chars = 0;
+        const matches: Record<string, unknown>[] = [], errors: Array<{ name: string; error: string }> = [];
         for (const name of context.input.names) {
           context.signal?.throwIfAborted();
           try {
             const result = await registry.resolve('mcp_search')!.execute({ ...context, input: { ...context.input, names: undefined, query: name } }) as { matches: Record<string, unknown>[] };
-            const size = JSON.stringify(result.matches).length;
-            if (matches.length && chars + size > 96_000) { deferred.push(name); continue; }
-            matches.push(...result.matches); chars += size;
+            matches.push(...result.matches);
           } catch (error) { context.signal?.throwIfAborted(); errors.push({ name, error: error instanceof Error ? error.message : String(error) }); }
         }
         return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: context.turn.request.sessionId, action: 'load', matches,
           ...(matches.some(match => 'interface' in match) ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
-          ...(errors.length ? { errors } : {}), ...(deferred.length ? { deferred } : {}) };
+          ...(errors.length ? { errors } : {}) };
       }
       const limit = context.input.action === 'load' ? 1 : await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
       const request = context.turn.request;

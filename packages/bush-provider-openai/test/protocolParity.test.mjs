@@ -3,6 +3,7 @@ import test from 'node:test';
 import { modelRequestSchema, protocolReasoningEffort, reasoningEffortsForProtocol } from '@cardbush/bush-protocol';
 import { CacheChainTracker, InMemoryRuntimeHost, SessionStore, modelReplayMessageHash } from '@cardbush/bush-runtime';
 import { isContextLengthFailure } from '../../bush-runtime/dist/contextCompactionTransaction.js';
+import { executeBufferedModelRound } from '../../bush-runtime/dist/bufferedModelRetry.js';
 import { orderedCheckpointTool } from '../../bush-runtime/test/helpers/orderedCheckpoint.mjs';
 import { AnthropicMessagesProvider, OpenAIChatCompletionsProvider, InMemoryProviderCapabilityStore,
   toAnthropicMessagesParams, toChatCompletionsParams, toResponsesCreateParams } from '../dist/index.js';
@@ -103,7 +104,9 @@ test('only explicit unsupported cache errors retry once, retaining scope and sta
   assert.equal(bodies.length, 2);
   const { cache_control, ...withoutCache } = bodies[0];
   assert.deepEqual(cache_control, { type: 'ephemeral' }); assert.deepEqual(bodies[1], withoutCache);
-  assert.equal(diagnostics.length, 1); assert.equal(diagnostics[0].error.code, 'anthropic_prompt_cache_unsupported');
+  assert.deepEqual(diagnostics.map(event => event.action), ['retry', 'recovered']);
+  assert.equal(diagnostics[0].error.code, 'anthropic_prompt_cache_unsupported');
+  assert.equal(diagnostics[1].providerAttempts, 2); assert.equal(diagnostics[1].recoveryAttempts, 1);
   let estimate;
   await provider.estimateInputTokens(input, { onInputProjection: p => { estimate = p; } });
   assert.deepEqual(estimate, projections[1]);
@@ -112,6 +115,22 @@ test('only explicit unsupported cache errors retry once, retaining scope and sta
   await collect(provider.stream(req({ model: 'another-model' })));
   assert.deepEqual(bodies[3].cache_control, { type: 'ephemeral' }, 'Capability is scoped to model');
   assert.deepEqual(input, original);
+});
+
+test('cache negotiation stays applied across transport retries even if its capability record expires', async () => {
+  let now = 1_000;
+  const store = new InMemoryProviderCapabilityStore({ now: () => now, ttlMs: 1 }), bodies = [], retries = [];
+  const provider = new AnthropicMessagesProvider({ apiKey: 'fixture', capabilityStore: store, fetch: async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return bodies.length === 1 ? reject('cache_control: Extra inputs are not permitted')
+      : bodies.length === 2 ? reject('Temporary overload', 503, 'overloaded_error') : sse(events());
+  } });
+  const result = await executeBufferedModelRound(provider, req(), { signal: new AbortController().signal,
+    wait: async () => { now += 10_000; }, onRetry: value => retries.push(value) });
+  assert.equal(result.status, 'completed'); assert.equal(bodies.length, 3);
+  assert.deepEqual(bodies[0].cache_control, { type: 'ephemeral' });
+  assert.equal(bodies[1].cache_control, undefined); assert.deepEqual(bodies[2], bodies[1]);
+  assert.equal(retries.length, 1); assert.equal(retries[0].providerAttempts, 2); assert.equal(retries[0].recoveryAttempts, 1);
 });
 
 for (const [status, type, message, recovery] of [
@@ -136,7 +155,8 @@ for (const [status, type, message, recovery] of [
 test('Chat errors mentioning prompt length do not inherit Anthropic-specific classification', async () => {
   const provider = new OpenAIChatCompletionsProvider({ apiKey: 'fixture', fetch: async () => reject('prompt is too long') });
   const failure = (await collect(provider.stream(req()))).at(-1);
-  assert.equal(failure.code, 'provider_http_400');
+  assert.equal(failure.code, 'invalid_request_error');
+  assert.equal(isContextLengthFailure(failure), false);
 });
 
 test('cache negotiation is bounded and cancellation prevents its second request', async () => {
@@ -150,7 +170,7 @@ test('cache negotiation is bounded and cancellation prevents its second request'
       onCompatibilityDiagnostic: () => { if (cancel) controller.abort(); } }));
     assert.equal(requests, cancel ? 1 : 2);
     assert.equal(output.at(-1).kind, 'response_failed');
-    assert.equal(output.at(-1).code, cancel ? 'request_aborted' : 'provider_http_400');
+    assert.equal(output.at(-1).code, cancel ? 'request_aborted' : 'invalid_request_error');
   }
 });
 

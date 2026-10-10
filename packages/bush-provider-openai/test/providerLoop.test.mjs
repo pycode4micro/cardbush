@@ -7,6 +7,24 @@ import { createModelProvider, modelProviderCapabilityScope, InMemoryProviderCapa
 const adapters = ['openai_responses', 'openai_chat_completions', 'anthropic_messages'];
 const definition = { name: 'write_once', description: 'Record one authorized write', inputSchema: { type: 'object' } };
 
+function errorWire(adapter, step) {
+  const error = { ...step.error, type: step.error.type ?? step.error.code };
+  if (step.transport === 'http') return Response.json({ error }, { status: step.status,
+    headers: { 'x-request-id': 'failed-generation', 'retry-after': '2' } });
+  const partial = !step.partial ? [] : adapter === 'openai_responses'
+    ? [{ type: 'response.output_text.delta', output_index: 0, item_id: 'partial', delta: 'Uncommitted text' }]
+    : adapter === 'anthropic_messages' ? [
+      { type: 'message_start', message: { id: 'partial', role: 'assistant', content: [], usage: { input_tokens: 100, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Uncommitted text' } },
+    ] : [{ id: 'partial', choices: [{ index: 0, delta: { content: 'Uncommitted text' }, finish_reason: null }] }];
+  const failed = adapter === 'openai_responses'
+    ? { type: 'response.failed', response: { id: 'failed-response', status: 'failed', output: [], error } }
+    : { type: 'error', error };
+  return new Response([...partial, failed].map(frame =>
+    `${adapter === 'anthropic_messages' ? `event: ${frame.type}\n` : ''}data: ${JSON.stringify(frame)}\n\n`).join(''),
+    { headers: { 'content-type': 'text/event-stream' } });
+}
+
 // The scenarios below are identical. Only these wire fixtures differ by protocol.
 function wire(adapter, step) {
   const call = ['tool', 'invalid', 'incomplete', 'truncated'].includes(step);
@@ -70,6 +88,7 @@ function fixture(t, adapter, steps, denied = false) {
         assert.doesNotMatch(body.system ?? '', /\[tool_call_repair\]/, 'Mid-turn notices must not rewrite the system prefix');
       }
       calls.push({ url: String(url), body });
+      if (typeof step === 'object') return errorWire(adapter, step);
       if (step === 'cancel') { controller.abort(); throw controller.signal.reason; }
       if (step === 'retry') return Response.json({ error: { type: 'overloaded_error', message: 'Temporary overload' } }, { status: 503 });
       return wire(adapter, step);
@@ -99,6 +118,38 @@ function fixture(t, adapter, steps, denied = false) {
 }
 
 for (const adapter of adapters) {
+  test(`${adapter}: HTTP and streamed transient failures recover under the same Runtime policy`, async t => {
+    for (const transport of ['http', 'stream']) await t.test(transport, async t => {
+      const failure = { transport, status: 503, error: { code: 'server_error', message: 'Temporary provider failure' }, partial: true };
+      const f = fixture(t, adapter, ['tool', failure, 'answer']);
+      assert.equal((await f.run()).payload.status, 'completed');
+      assert.equal(f.executions(), 1); assert.equal(f.calls.length, 3);
+      assert.deepEqual(f.requests[2], f.requests[1]); assert.deepEqual(f.calls[2].body, f.calls[1].body);
+      assert.deepEqual(f.waits, [transport === 'http' ? 2000 : 1000]);
+      const events = f.host.events('shared-loop', 'turn-1');
+      const retry = events.find(event => event.kind === 'provider_retry');
+      assert.equal(retry.payload.code, 'server_error'); assert.equal(retry.payload.providerAttempts, 1);
+      assert.equal(retry.payload.recoveryAttempts, 0);
+      assert.equal(events.filter(event => event.kind === 'provider_compatibility').length, 0);
+      assert.doesNotMatch(JSON.stringify(f.sessions.snapshot('shared-loop').turns[0].messages), /Uncommitted text/);
+      if (transport === 'stream') assert.ok(events.some(event => event.kind === 'replay_reset'));
+    });
+  });
+
+  test(`${adapter}: permanent refusals stop after retaining earlier successful operations`, async t => {
+    for (const failure of [
+      { transport: 'http', status: 401, error: { code: 'ECONNRESET', message: 'Authentication required' } },
+      { transport: 'http', status: 429, error: { code: 'insufficient_quota', message: 'Quota exhausted' } },
+      { transport: 'stream', error: { code: 'insufficient_quota', message: 'Quota exhausted' } },
+      { transport: 'stream', error: { code: 'unknown_vendor_error', message: 'Please retry this temporary error' } },
+    ]) await t.test(`${failure.transport}:${failure.error.code}`, async t => {
+      const f = fixture(t, adapter, ['tool', failure]);
+      const result = await f.run();
+      assert.equal(result.payload.status, 'failed'); assert.equal(result.payload.reason, failure.error.code);
+      assert.equal(f.executions(), 1); assert.equal(f.calls.length, 2); assert.deepEqual(f.waits, []);
+    });
+  });
+
   test(`${adapter}: one Runtime owns tool execution, history and follow-up turns`, async t => {
     const f = fixture(t, adapter, ['tool', 'answer', 'answer']);
     assert.equal((await f.run()).payload.status, 'completed');

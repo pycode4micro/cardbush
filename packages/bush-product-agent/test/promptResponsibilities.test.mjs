@@ -36,6 +36,7 @@ test('system policy keeps cross-tool obligations without a second tool manual', 
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /successful process exit alone does not establish correctness/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /do not repeat external side effects/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /As a child Agent.*do not delegate further/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Before waiting on any background task, complete useful work/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /verified files.*exact Tool-returned reference or absolute path/);
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /mcp_search|read_archived_tool_result|edit_file|terminal_poll|completion_notification|context_pressure|solution_selection|await_subagents|resume_task_id|_display_title|run_skill|update_goal|system_prompt/);
 });
@@ -60,9 +61,12 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   assert.match(subagent.description, /existing child with task_id/);
   assert.match(subagent.description, /Continue independent parent work/);
   assert.match(subagent.description, /use await_subagents.*instead of polling/);
-  assert.match(subagent.inputSchema.properties.mode.description, /clean only when the user explicitly requests/);
+  assert.match(subagent.inputSchema.properties.mode.description, /clean uses a registered agent_id/);
+  assert.match(subagent.inputSchema.properties.mode.description, /independent conversations and employee-scoped memory/);
   assert.match(subagent.inputSchema.properties.prompt.description, /original user's communication language/);
   assert.match(tool('await_subagents').description, /without polling/);
+  assert.equal(tool('await_subagents').inputSchema.properties.yield_time_ms.default, 1000);
+  assert.equal(tool('manage_tool_calls').inputSchema.properties.yield_time_ms.default, 1000);
   assert.match(tool('update_goal').description, /parent must call this before completing the Turn; children report/);
   assert.match(tool('solution_selection').description, /If dismissed.*do not pick a default/);
   assert.equal(tool('solution_selection').inputSchema.properties.prompt.maxLength, 15);

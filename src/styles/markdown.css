@@ -504,7 +504,8 @@
   opacity: 0.45;
 }
 
-.local-file-reference {
+.local-file-reference,
+.local-file-reference-pending {
   max-width: 100%;
   display: inline-flex;
   align-items: baseline;
@@ -520,7 +521,13 @@
   color: var(--info-hover);
 }
 
-.local-file-reference svg {
+.local-file-reference-pending {
+  color: inherit;
+  cursor: default;
+}
+
+.local-file-reference svg,
+.local-file-reference-pending svg {
   flex: 0 0 auto;
   transform: translateY(1px);
 }
@@ -611,7 +618,8 @@
   color: var(--info-hover);
 }
 
-.local-file-reference span {
+.local-file-reference span,
+.local-file-reference-pending span {
   min-width: 0;
   overflow-wrap: anywhere;
 }

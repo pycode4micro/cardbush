@@ -1,4 +1,5 @@
 import {
+  RUNTIME_TERMINAL_CONTROL_COMMAND, runtimeTerminalControlSchema, runtimeTerminalStatusSchema,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND, LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND,
   runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema, type RuntimeSolutionAnswer,
   GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND,
@@ -112,6 +113,10 @@ import {
 } from './RuntimeClient';
 
 export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
+  terminalControl(input: { sessionId: string; terminalSessionId: string; action: 'status' | 'stop' }, signal?: AbortSignal) {
+    return this.command({ kind: RUNTIME_TERMINAL_CONTROL_COMMAND, payload: runtimeTerminalControlSchema.parse(input) },
+      value => runtimeTerminalStatusSchema.parse(value), signal);
+  }
   listSolutionSelections(sessionId: string, signal?: AbortSignal) {
     return this.command({ kind: LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND,
       payload: runtimeSessionIdentitySchema.parse({ sessionId }) }, input => runtimeSolutionSelectionSchema.array().parse(input), signal);

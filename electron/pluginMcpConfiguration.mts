@@ -63,6 +63,7 @@ export function pluginMcpServer(pluginId: string, name: string, root: string, de
   const env = { ...stringMap(server.env), ...hostEnv };
   const result = {
     id: `plugin_${pluginId.replaceAll('.', '_')}_${name}`,
+    ...(['auto', 'legacy', 'modern'].includes(String(server.versionMode)) ? { versionMode: server.versionMode } : {}),
     pluginId,
     transport: kind === 'stdio' ? { kind, command: expand(server.command), args: (strings(server.args) ?? []).map(expand), cwd: server.cwd ? resolve(root, expand(server.cwd)) : root, env }
       : { kind: kind === 'sse' ? 'sse' : 'streamable_http', url: expand(server.url), headers,

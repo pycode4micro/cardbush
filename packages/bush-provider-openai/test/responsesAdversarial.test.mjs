@@ -178,6 +178,7 @@ async function localEndpoint(t, framesFor, options = {}) {
   const requests = [], failures = [];
   const server = createServer(async (req, res) => {
     try {
+      req.setEncoding('utf8'); // Preserve multibyte characters split across HTTP chunks.
       let content = ''; for await (const chunk of req) content += chunk;
       const body = JSON.parse(content);
       if (req.url.endsWith('/input_tokens')) {

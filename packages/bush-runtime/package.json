@@ -6,6 +6,14 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./workspace-search": {
+      "types": "./dist/workspaceSearch.d.ts",
+      "import": "./dist/workspaceSearch.js"
+    },
+    "./web-policy": {
+      "types": "./dist/webToolPolicy.d.ts",
+      "import": "./dist/webToolPolicy.js"
+    },
     "./workspace-edit-recovery": {
       "types": "./dist/workspaceEditRecovery.d.ts",
       "import": "./dist/workspaceEditRecovery.js"

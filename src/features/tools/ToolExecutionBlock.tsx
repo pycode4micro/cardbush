@@ -26,6 +26,7 @@ import {
 } from '../../backend/api';
 import { WorkspaceRevertAvailability } from './workspaceRevertAvailability';
 import { ConversationHostContext } from '../conversationHost';
+import { TerminalTaskStatus } from './TerminalTaskStatus';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import {
   cardlingSceneFromToolExecution,
@@ -786,6 +787,9 @@ function ToolExecutionDetail({
   const childExecutions = subagentChildToolExecutions(execution);
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
   const environment = asRecord(asRecord(execution.metadata.nativeResult).executionEnvironment);
+  const terminal = asRecord(execution.metadata.nativeResult);
+  const terminalSessionId = typeof terminal.terminalSessionId === 'string' && terminal.state === 'running' ? terminal.terminalSessionId : '';
+  const sessionId = host?.sessionId ?? message.conversationId;
   const environmentLabel = environment.kind === 'local' ? (host ? language === 'zh' ? '执行位置：服务器 Agent' : 'Execution host: server Agent' : language === 'zh' ? '执行位置：本机' : 'Execution host: local')
     : environment.kind === 'ssh' ? `SSH · ${String(environment.workspaceDir || environment.connectionId)}` : '';
   const hookDecision = toolHookDecisionFromExecution(execution);
@@ -795,6 +799,7 @@ function ToolExecutionDetail({
   const dispatchPlan = planDispatchInfoFromExecution(execution);
   return (
     <div className="tool-execution-body">
+      {terminalSessionId && sessionId && <TerminalTaskStatus key={terminalSessionId} sessionId={sessionId} terminalSessionId={terminalSessionId} runtime={host?.runtime} language={language} />}
       {hasSummary && !goalUpdate && summary !== failureMessage && <pre className="tool-execution-input">{summary}</pre>}
       {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
       {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}

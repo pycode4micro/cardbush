@@ -408,6 +408,8 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("provider_retry"),
     payload: z.object({
       attempt: z.number().int().positive(),
+      providerAttempts: z.number().int().nonnegative().optional(),
+      recoveryAttempts: z.number().int().nonnegative().optional(),
       maxAttempts: z.number().int().positive().nullable(),
       nextRetryMs: z.number().int().nonnegative(),
       code: z.string().min(1),

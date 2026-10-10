@@ -44,7 +44,7 @@ test('real terminal exit is delivered once, with no model polling and a stable m
       assert.match(receipt, /"completion_notification":true/);
       taskId = JSON.parse(receipt.split('\n\n')[0]).completion_task_id;
       yield* response(request, { name: 'independent', args: {} });
-    } else if (rounds === 3) yield* response(request, { name: 'manage_tool_calls', args: { action: 'wait', task_ids: [taskId] } });
+    } else if (rounds === 3) yield* response(request, { name: 'manage_tool_calls', args: { action: 'wait', task_ids: [taskId], yield_time_ms: 30_000 } });
     else {
       const notices = request.messages.filter(m => m.name === 'background_tool_result');
       assert.equal(notices.length, 1); assert.equal(notices[0].visibility, 'internal');

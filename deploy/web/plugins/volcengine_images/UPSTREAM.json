@@ -1,0 +1,13 @@
+{
+  "source": "https://github.com/pycode4micro/cardbush-plugins/tree/main/plugins/volcengine-plugins",
+  "version": "0.7.0",
+  "files": {
+    "client.py": "0450c4ded584cca35ef6be2ae98064925a9de78d498adcf578d3f092a2f379a2",
+    "models.py": "e2ffb70a958a28022a78bb9a1e2ac7422289cc6f342ccd38d5b46efa06efbea4",
+    "config.py": "59c9b0b6b92fedd319099fae23bb42c3dadb081f3ff01d7ec64fc195e4cf3a6e",
+    "image_jobs.py": "994c4fe819fba5902128dfd7dfea0bb9d496f44666ef90cbeba9459376e4db3d",
+    "task_io.py": "79063ad7d1924fc531d70001c8783ac97ac75e6dbe1a323553754defc3563389",
+    "generation_wait.py": "a3b1cc2a02e4b4a125f2b8320fb088f5bae4456d8c9ff55db9148b2f475cac26"
+  },
+  "adaptation": "Only web_image_server.py is the restricted host adapter. The listed image engine files are unmodified."
+}

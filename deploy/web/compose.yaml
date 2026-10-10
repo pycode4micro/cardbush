@@ -1,0 +1,48 @@
+name: cardbush-web
+services:
+  web:
+    image: ${CARDBUSH_WEB_IMAGE:?Set a tested image tag}
+    container_name: cardbush-web
+    restart: unless-stopped
+    read_only: true
+    user: "1100:1100"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    pids_limit: 128
+    ports:
+      - "${CARDBUSH_WEB_BIND:-127.0.0.1:5198}:4880"
+    volumes:
+      - ./config/web.json:/run/cardbush/web.json:ro
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=64m,mode=1777"]
+    networks: [private, identity]
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+  broker:
+    image: ${CARDBUSH_WEB_IMAGE:?Set a tested image tag}
+    container_name: cardbush-web-broker
+    command: [dist-electron/webTenantBroker.mjs]
+    # The small private broker is the only Docker administrator. It accepts only
+    # hashed tenant identities, never arbitrary commands, images or bind mounts.
+    user: "0:0"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 64
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/broker.json:/run/cardbush/broker.json:ro
+    networks: [private]
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+networks:
+  private:
+    name: cardbush-web-private
+    internal: true
+  identity:
+    external: true
+    name: ${CARDBUSH_IDENTITY_NETWORK:?Set the existing identity database network}

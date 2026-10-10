@@ -19,6 +19,8 @@ export * from "./fileSubagentTaskPersistence.js";
 export * from "./fileToolExecutionPersistence.js";
 export * from "./extendedBuiltins.js";
 export * from "./modelProvider.js";
+export * from "./modelFailurePolicy.js";
+export * from "./modelRequestAttempts.js";
 export * from "./modelImageStore.js";
 export * from "./toolImageContent.js";
 export * from "./modelRound.js";

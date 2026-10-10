@@ -594,6 +594,39 @@ test("joins outstanding children explicitly through await_subagents without poll
   ));
 });
 
+test('a short child join returns pending so the parent can execute independent work before reconciliation', { timeout: 5000 }, async t => {
+  const gate = Promise.withResolvers(), registry = new ToolRegistry(); let rounds = 0, worked = false, childCalls = 0, finalRequest;
+  t.after(() => gate.resolve());
+  registry.register({ definition: { name: 'independent_step', inputSchema: { type: 'object' } },
+    manifest: { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
+    decodeInput: value => value, execute: () => { worked = true; gate.resolve(); return 'independent step done'; } });
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, provider: { async *stream(request) {
+    const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: NOW };
+    if (request.sessionId.startsWith('subagent_session_')) {
+      childCalls++; await gate.promise; assert.equal(worked, true);
+      yield { ...base, sequence: 0, kind: 'text_delta', delta: 'child reconciled' };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' }; return;
+    }
+    rounds++;
+    const call = rounds === 1 ? { name: 'subagent', args: { prompt: 'independent child' } }
+      : rounds === 2 ? { name: 'await_subagents', args: { yield_time_ms: 10 } }
+      : rounds === 3 ? { name: 'independent_step', args: {} } : undefined;
+    if (rounds === 3) {
+      const joined = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);
+      assert.equal(joined.status, 'pending'); assert.equal(joined.pending_task_ids.length, 1);
+      assert.match(joined.next_step, /Continue independent work/);
+    }
+    if (call) yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${rounds}`, nameDelta: call.name, argumentsDelta: JSON.stringify(call.args) };
+    else { finalRequest = request; yield { ...base, sequence: 0, kind: 'text_delta', delta: 'parent done' }; }
+    yield { ...base, sequence: 1, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
+  } } });
+  const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn', model: 'fixture',
+    tools: registry.definitions(), messages: [{ role: 'user', content: 'delegate and keep working' }] });
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
+  assert.equal(worked, true); assert.equal(childCalls, 1);
+  assert.equal(finalRequest.messages.filter(message => message.name === 'subagent_result').length, 1);
+});
+
 function deterministicIds() {
   return {
     createTaskId: () => "task_1",

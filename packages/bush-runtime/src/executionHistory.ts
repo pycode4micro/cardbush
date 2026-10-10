@@ -8,7 +8,7 @@ import { executionHistoryResults, normalizeHistoryText, searchExecutionSummaries
 export { searchExecutionSummaries } from './executionHistorySearch.js';
 
 export const EXECUTION_HISTORY_TOOL = 'search_execution_history';
-export const EXECUTION_HISTORY_SUMMARY_VERSION = 3;
+export const EXECUTION_HISTORY_SUMMARY_VERSION = 4;
 export interface ExecutionHistoryEntry {
   summaryVersion?: number;
   id: string;
@@ -19,6 +19,7 @@ export interface ExecutionHistoryEntry {
   tool: string;
   outcome: ToolExecutionRecord['outcome'];
   summary: string;
+  references?: string[];
 }
 export interface ExecutionHistoryPage { entries: ExecutionHistoryEntry[]; omitted: number; outdated?: number }
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -36,12 +37,42 @@ export function validHistoryEntry(value: unknown, sessionId: string): value is E
     (entry.summaryVersion === undefined || (Number.isInteger(entry.summaryVersion) && Number(entry.summaryVersion) >= 1 && Number(entry.summaryVersion) <= EXECUTION_HISTORY_SUMMARY_VERSION)) &&
     (entry.toolCallId === undefined || (typeof entry.toolCallId === 'string' && entry.toolCallId.length > 0)) &&
     ['turnId', 'recordedAt', 'tool'].every(key => typeof entry[key] === 'string' && entry[key]) &&
-    ['returned', 'failed', 'cancelled'].includes(String(entry.outcome)) && typeof entry.summary === 'string' && entry.summary.length <= 640);
+    ['returned', 'failed', 'cancelled'].includes(String(entry.outcome)) && typeof entry.summary === 'string' && entry.summary.length <= 640 &&
+    (entry.references === undefined || (Array.isArray(entry.references) && entry.references.length <= 24 &&
+      entry.references.every(value => typeof value === 'string' && value.length > 0 && value.length <= 512))));
+}
+
+/** Stable handles survive summary clipping. Never index arbitrary prose, media,
+ * credentials or signed URLs; native records remain the source of truth. */
+function executionReferences(values: unknown[]): string[] {
+  const references = new Set<string>();
+  const keys = new Set(['id', 'task_id', 'taskId', 'job_id', 'jobId', 'terminalSessionId',
+    'output_path', 'outputPath', 'file_path', 'filePath', 'path', 'filename', 'dest', 'output_directory']);
+  let remaining = 160;
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 6 || remaining-- <= 0 || references.size >= 24) return;
+    if (Array.isArray(value)) { for (const item of value.slice(0, 24)) visit(item, depth + 1); return; }
+    const object = plain(value); if (!object) return;
+    for (const key of keys) {
+      const ref = object[key];
+      if (typeof ref === 'string' && ref.trim() && ref.length <= 512 &&
+          !/^(?:https?:|data:)/i.test(ref) && !/[\r\n]/.test(ref) && references.size < 24) references.add(ref);
+    }
+    // FastMCP often wraps its structured JSON in a text content block.
+    if (object.type === 'text' && typeof object.text === 'string' && object.text.length <= 128 * 1024) {
+      try { visit(JSON.parse(object.text), depth + 1); } catch { /* Prose is not structured progress. */ }
+    }
+    for (const [key, child] of Object.entries(object).slice(0, 64)) {
+      if (['content', 'structuredContent', 'result', 'data', 'task', 'tasks', 'jobs', 'items', 'files', 'outputs', 'arguments'].includes(key)) visit(child, depth + 1);
+    }
+  };
+  for (const value of values) visit(value, 0);
+  return [...references];
 }
 
 /** Extract bounded receipts, never generated claims of semantic task completion. */
 export function summarizeExecution(record: ToolExecutionRecord): ExecutionHistoryEntry | undefined {
-  if (record.toolCall.name === EXECUTION_HISTORY_TOOL) return undefined;
+  if ([EXECUTION_HISTORY_TOOL, 'read_archived_tool_result'].includes(record.toolCall.name)) return undefined;
   const fragments: string[] = [];
   const seen = new Set<string>();
   const add = (label: string, value: unknown, size = 160) => {
@@ -100,9 +131,10 @@ export function summarizeExecution(record: ToolExecutionRecord): ExecutionHistor
       }
     }
   } else if (typeof record.result === 'string') add('output', record.result, 180);
+  const references = executionReferences([result, args]);
   return { summaryVersion: EXECUTION_HISTORY_SUMMARY_VERSION, id: hash(JSON.stringify([record.sessionId, record.turnId, record.toolCall.id])),
     sessionId: record.sessionId, turnId: record.turnId, toolCallId: record.toolCall.id, recordedAt: record.recordedAt,
-    tool: record.toolCall.name, outcome: record.outcome,
+    tool: record.toolCall.name, outcome: record.outcome, ...(references.length ? { references } : {}),
     summary: clip(fragments.join('; ') || `${record.toolCall.name}: ${record.outcome}`, 640) };
 }
 

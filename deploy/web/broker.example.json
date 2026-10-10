@@ -1,0 +1,10 @@
+{
+  "secret": "SAME_BROKER_SECRET_AS_WEB_CONFIG",
+  "image": "cardbush-web:TESTED_RELEASE_TAG",
+  "network": "cardbush-web-private",
+  "prefix": "cbweb",
+  "maxActive": 3,
+  "memoryMiB": 768,
+  "idleMinutes": 10,
+  "port": 4881
+}

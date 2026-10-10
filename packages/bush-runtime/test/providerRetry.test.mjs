@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { STOP_RUNTIME_TURN_COMMAND, modelEventSchema, runtimeEventSchema } from "@cardbush/bush-protocol";
 import { InMemoryRuntimeHost, ToolRegistry, defaultRuntimeRetryDelayMs } from "../dist/index.js";
+import { executeBufferedModelRound } from '../dist/bufferedModelRetry.js';
 
 const definition = { name: "retry_fixture", description: "Count one tool execution", inputSchema: { type: "object" } };
 const request = {
@@ -122,4 +123,24 @@ test("non-retryable failures stop even with no attempt cap, retaining diagnostic
   assert.equal(terminal.payload.details.status, 401);
   assert.deepEqual(terminal.payload.details.diagnostics, failed().diagnostics);
   assert.equal(host.events(request.sessionId, request.turnId).filter(item => item.kind === "provider_retry").length, 0);
+});
+
+test('execution and buffered rounds enforce the same policy over incorrect adapter retry flags', async t => {
+  for (const [code, status, retryable] of [
+    ['ECONNRESET', 401, true], ['incomplete_tool_call', 401, true],
+    ['server_error', 501, true], ['server_error', 505, true],
+    ['insufficient_quota', 429, true], ['usage_limit_reached', 429, false],
+    ['context_length_exceeded', 403, true],
+  ]) await t.test(`${status}: ${code}`, async t => {
+    const provider = { async *stream() { yield failed({ code, status, retryable }); } };
+    const wait = async () => assert.fail('Permanent refusals must not enter backoff');
+    const host = new InMemoryRuntimeHost({ provider, maxAttempts: 2, wait, registerDefaultWorkspaceTools: false });
+    t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+    const terminal = await host.runModelTurn(request);
+    const buffered = await executeBufferedModelRound(provider, request, { signal: new AbortController().signal, wait });
+    assert.equal(terminal.payload.status, 'failed'); assert.equal(terminal.payload.details.attempts, 1);
+    assert.equal(terminal.payload.reason, code); assert.equal(buffered.status, 'failed');
+    assert.equal(buffered.error.code, code); assert.equal(buffered.error.retryable, false);
+    assert.equal(host.events(request.sessionId, request.turnId).filter(item => item.kind === 'provider_retry').length, 0);
+  });
 });

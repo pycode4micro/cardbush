@@ -4,6 +4,39 @@ This package owns the provider-independent Agent loop. It does not render UI,
 manage product settings, or infer task semantics from text, tool names,
 languages, frameworks, or combinations of lifecycle states.
 
+## Model failure boundary
+
+`modelFailurePolicy.ts` classifies normalized failures for both the execution
+loop and buffered assistant rounds. HTTP status and structured error codes
+control the decision; arbitrary error prose cannot enable a transport retry.
+
+| Failure | Action |
+| --- | --- |
+| HTTP 408 / 409 / 429; 5xx except 501 / 505 | Retry the current model round with backoff and bounded `Retry-After` |
+| Connection interruption, timeout, missing stream terminal, recognized transient SSE error | Same transport retry path |
+| Authentication, exhausted quota, other permanent HTTP/input failures, unknown SSE error | Stop and retain the original reason |
+| Recognized context overflow | Existing bounded context-compaction recovery |
+| Invalid/incomplete tool call | Existing one-correction path before any call in that batch executes |
+
+A provider may explicitly forbid retry, for example for an account entitlement
+limit returned as HTTP 429. A `retryable: true` flag cannot override a permanent
+HTTP status or turn context/tool repair into an ordinary connection retry.
+
+`ModelRequestAttempts` belongs to one unchanged model round and is reused across
+its transport retries. It grants at most one wire-only recovery for missing
+continuation state or unsupported optional capabilities. The adapter keeps that
+recovery applied after a later transient fault; different recovery actions do
+not receive independent allowances. For a finite transport cap of N, there are
+at most N + 1 generation dispatches, rather than nested retry multiplication.
+Existing retry settings remain in force: the main loop accepts a finite cap or
+`null` for sustained retries; buffered assistant rounds stop after three attempts.
+Cancellation interrupts backoff and prevents further dispatches.
+
+Failed attempt output is superseded; previously completed tools and their
+durable results remain authoritative. Neither wire recovery nor transport retry
+dispatches tools. Retry and compatibility diagnostics record actual generation
+`providerAttempts` and `recoveryAttempts`, separately from outer retry numbering.
+
 ## Session and context boundary
 
 Product conversational features also use `ConversationJournal` for entries with
@@ -123,6 +156,17 @@ Tool results remain complete in that journal; the model sees a bounded projectio
 and can retrieve exact excerpts from a stable `tool-result://` locator through
 `read_archived_tool_result`. That reader accepts only an exact locator emitted by
 the Runtime projection; it is not a general file, Skill or knowledge reader.
+
+Archive pagination is finalized against the actual delivery budget, including
+the shared per-round budget. `next_offset` advances only past delivered text or
+whole search hits; a cropped page stays incomplete and keeps the original
+locator. MCP batch loading uses the same budget and defers entire schemas that
+do not fit, so only delivered complete definitions become callable.
+
+Execution-history search retains bounded structured task IDs and local output
+paths separately from prose summaries. Exact reference matches outrank generic
+tool-name matches. Archive-reader calls remain in the journal but are excluded
+from the search index to avoid indexing repeated retrieval of the same result.
 
 Plan and Goal state is stored separately in an append-only Coordination journal.
 The store enforces only protocol identities, monotonic revisions, stable Plan

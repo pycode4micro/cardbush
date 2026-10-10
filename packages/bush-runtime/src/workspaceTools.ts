@@ -4,16 +4,13 @@ import { TerminalSessionManager, type TerminalShell } from './terminalSessionMan
 // Preserve existing Runtime consumers while the implementations remain independent.
 export { authorizePath } from './workspaceAccessPolicy.js';
 export { TerminalSessionManager } from './terminalSessionManager.js';
-import { decodeCommandOutput as decodeProcessOutput } from "@cardbush/platform";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  lstat,
   mkdir,
-  readdir,
   writeFile,
 } from "node:fs/promises";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname } from "node:path";
 
 import type {
   ToolAdmissionContext,
@@ -26,7 +23,7 @@ import { routeWorkspaceTool } from './workspaceToolRouting.js';
 import { snapshotCommandSandbox, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
 import { terminalInputPermission } from './commandPermission.js';
 import { authorizedCommandSandbox, commandSandboxPlan, decodeAdditionalCommandPermissions, type AdditionalCommandPermissions } from './commandSandboxAdmission.js';
-import { spawnResourceManagedProcess } from "./processResourceGuard.js";
+import { searchWorkspaceContent, type WorkspaceSearchInput as SearchInput } from './workspaceSearch.js';
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTerminalResult, renderTextFields } from "./toolResultText.js";
 import { workspaceEditRecoveryError } from './workspaceEditRecovery.js';
@@ -41,13 +38,6 @@ interface EditFileInput extends PathInput {
   newText: string;
   replaceAll: boolean;
   encoding: BufferEncoding;
-}
-interface SearchInput extends PathInput {
-  query: string;
-  regex: boolean;
-  globs: string[];
-  contextBefore: number;
-  contextAfter: number;
 }
 interface TerminalInput {
   exclusiveResources: string[];
@@ -170,6 +160,7 @@ export function registerWorkspaceTools(
 ): WorkspaceObservationStore {
   const createChangeId = options.createChangeId ?? (() => `change_${randomUUID()}`);
   const terminals = options.terminals ?? new TerminalSessionManager();
+  const searches = new Map<string, Promise<Awaited<ReturnType<typeof searchWorkspaceContent>>>>();
   const commandSandbox = snapshotCommandSandbox(options.commandSandbox);
   // One immutable policy per decoded invocation, including time spent awaiting approval.
   const sandboxInvocations = new WeakMap<TerminalInput, Promise<CommandSandboxConfiguration>>();
@@ -190,7 +181,8 @@ export function registerWorkspaceTools(
         const result = await execute(context) as Record<string, unknown>;
         if (result.state === 'running' && (context.input as TerminalInput).notifyOnExit && context.turn) {
           const taskId = options.onTerminalStarted!(context, result);
-          return { ...result, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId } : {}) };
+          return { ...result, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId,
+            next_step: 'Continue independent work now. Completion arrives automatically; wait only when it blocks the next step.' } : {}) };
         }
         return result;
       };
@@ -235,7 +227,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "search_file_content",
-      description: "Search file content beneath a file or directory. Matching lines use path:line:column:text; optional context lines use path-line-text. Overlapping context is returned once.",
+      description: "Prefer this bounded search over recursive shell grep for local file content. Start with a narrow path and globs; use output_mode=files to locate files before reading relevant lines. Dependency/cache directories are pruned before traversal unless include_dependencies=true. Defaults: 100 lines/files, 64 KiB, 10 seconds. Partial results set complete=false with a limitReason; do not interpret them as no other matches. Identical in-flight searches in this turn share one execution. Matching lines use path:line:column:text; context lines use path-line-text, without duplicate overlapping context.",
       inputSchema: objectSchema({
         query: { type: "string", minLength: 1 },
         path: { type: "string", minLength: 1 },
@@ -243,6 +235,11 @@ export function registerWorkspaceTools(
         globs: { type: "array", items: { type: "string" }, default: [] },
         context_before: { type: "integer", minimum: 0, maximum: 100, default: 0 },
         context_after: { type: "integer", minimum: 0, maximum: 100, default: 0 },
+        output_mode: { type: 'string', enum: ['lines', 'files'], default: 'lines' },
+        max_results: { type: 'integer', minimum: 1, maximum: 10000, default: 100, description: 'Maximum returned lines (including context) or file paths.' },
+        max_output_bytes: { type: 'integer', minimum: 1024, maximum: 2097152, default: 65536 },
+        timeout_ms: { type: 'integer', minimum: 100, maximum: 60000, default: 10000 },
+        include_dependencies: { type: 'boolean', default: false },
       }, ["query", "path"]),
     },
     manifest: manifest("filesystem.search", "observation", false),
@@ -252,27 +249,13 @@ export function registerWorkspaceTools(
     authorize: authorizePath("read"),
     execute: async (context: ToolHandlerContext<SearchInput>) => {
       const path = await resolveToolPath(context, context.input.path);
-      const args = ["--line-number", "--column", "--no-heading", "--color", "never"];
-      if (context.input.contextBefore) args.push('--before-context', String(context.input.contextBefore));
-      if (context.input.contextAfter) args.push('--after-context', String(context.input.contextAfter));
-      if (!context.input.regex) args.push("--fixed-strings");
-      for (const glob of context.input.globs) args.push("--glob", glob);
-      args.push("--", context.input.query, path);
-      const execution = await searchFileContent(
-        path,
-        context.input,
-        args,
-        workspaceRoot(context) ?? dirname(path),
-        context.signal,
-      );
-      const complete = !execution.timedOut && (execution.exitCode === 0 || execution.exitCode === 1);
-      return {
-        matched: execution.stdout.length > 0,
-        output: execution.stdout,
-        complete,
-        exitCode: execution.exitCode,
-        ...(execution.stderr ? { warnings: execution.stderr } : {}),
-      };
+      const key = JSON.stringify([context.sessionId, context.turnId, { ...context.input, path: normalizeIdentity(path) }]);
+      const running = searches.get(key);
+      if (running) return { ...await running, reused: true };
+      const execution = searchWorkspaceContent(path, context.input, workspaceRoot(context) ?? dirname(path), context.signal);
+      searches.set(key, execution);
+      try { return await execution; }
+      finally { searches.delete(key); }
     },
   });
 
@@ -485,7 +468,7 @@ export function registerWorkspaceTools(
       name: "terminal_poll",
       description: [
         "Read new output or wait up to yield_time_ms for a state change from an existing terminal session. For completion-only waits with completion_notification=true, use manage_tool_calls instead.",
-        "Pass the returned terminalSessionId as session_id. If state=running, continue waiting on the same session instead of starting another command; empty output does not mean completion.",
+        "Pass the returned terminalSessionId as session_id. If state=running, do independent work before waiting on the same session; do not restart the command. Empty output does not mean completion.",
         "Returns only output produced since the preceding terminal result.",
       ].join(" "),
       inputSchema: objectSchema({
@@ -729,6 +712,12 @@ function decodeSearch(input: unknown): SearchInput {
     if (!Number.isInteger(value) || Number(value) < 0 || Number(value) > 100) throw new Error('Search context must be an integer between 0 and 100.');
     return Number(value);
   };
+  const budget = (name: string, fallback: number, min: number, max: number) => {
+    const value = object[name] ?? fallback;
+    if (!Number.isInteger(value) || Number(value) < min || Number(value) > max) throw new Error(`${name} must be an integer between ${min} and ${max}.`);
+    return Number(value);
+  };
+  if (object.output_mode !== undefined && !['lines', 'files'].includes(String(object.output_mode))) throw new Error('output_mode must be lines or files.');
   return {
     query: requiredString(object.query, "query", false),
     path: requiredString(object.path, "path"),
@@ -736,6 +725,11 @@ function decodeSearch(input: unknown): SearchInput {
     globs: stringArray(object.globs, "globs"),
     contextBefore: contextLines(object.context_before),
     contextAfter: contextLines(object.context_after),
+    outputMode: object.output_mode === 'files' ? 'files' : 'lines',
+    maxResults: budget('max_results', 100, 1, 10000),
+    maxOutputBytes: budget('max_output_bytes', 65536, 1024, 2097152),
+    timeoutMs: budget('timeout_ms', 10000, 100, 60000),
+    includeDependencies: booleanValue(object.include_dependencies, false),
   };
 }
 
@@ -858,178 +852,6 @@ function occurrences(value: string, search: string): number {
   return count;
 }
 
-interface ProcessResult {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
-
-async function searchFileContent(
-  path: string,
-  input: SearchInput,
-  args: string[],
-  cwd: string,
-  signal?: AbortSignal,
-): Promise<ProcessResult> {
-  const bundled = process.env.CARDBUSH_RG_PATH?.trim();
-  const executables = [...new Set([bundled, "rg"].filter((value): value is string => Boolean(value)))];
-  for (const executable of executables) {
-    try {
-      return await runProcess(executable, args, { cwd, signal });
-    } catch (error) {
-      if (!isUnavailableExecutableError(error)) throw error;
-    }
-  }
-  return searchFileContentWithNode(path, input, signal);
-}
-
-function isUnavailableExecutableError(error: unknown): boolean {
-  return ["EACCES", "EINVAL", "ENOENT", "ENOEXEC"].includes(
-    String((error as NodeJS.ErrnoException)?.code),
-  );
-}
-
-async function searchFileContentWithNode(
-  root: string,
-  input: SearchInput,
-  signal?: AbortSignal,
-): Promise<ProcessResult> {
-  const files: string[] = [];
-  const warnings: string[] = [];
-  let warningCount = 0;
-  const warn = (error: unknown) => {
-    warningCount++;
-    if (warnings.length < 32) warnings.push(error instanceof Error ? error.message : String(error));
-  };
-  const maximumFiles = 25_000;
-  const maximumOutputBytes = 2 * 1024 * 1024;
-  const visit = async (candidate: string): Promise<void> => {
-    throwIfAborted(signal);
-    let info;
-    try {
-      info = await lstat(candidate);
-    } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
-      throw error;
-    }
-    if (info.isSymbolicLink()) return;
-    if (info.isFile()) {
-      files.push(candidate);
-      if (files.length > maximumFiles) {
-        throw new Error(`Node search fallback exceeded ${maximumFiles} files; narrow path or globs.`);
-      }
-      return;
-    }
-    if (!info.isDirectory()) return;
-    let entries;
-    try {
-      entries = await readdir(candidate, { withFileTypes: true });
-    } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
-      throw error;
-    }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      await visit(resolve(candidate, entry.name));
-    }
-  };
-  await visit(root);
-
-  const rootInfo = await lstat(root);
-  const globs = input.globs.map((glob) => ({
-    excluded: glob.startsWith("!"),
-    expression: globToRegExp(glob.startsWith("!") ? glob.slice(1) : glob),
-  }));
-  const positiveGlobs = globs.filter((glob) => !glob.excluded);
-  const negativeGlobs = globs.filter((glob) => glob.excluded);
-  const regex = input.regex ? new RegExp(input.query, "g") : undefined;
-  const output: string[] = [];
-  let outputBytes = 0;
-
-  for (const file of files) {
-    throwIfAborted(signal);
-    const relativePath = (rootInfo.isFile() ? file.split(/[\\/]/).at(-1)! : relative(root, file))
-      .replaceAll("\\", "/");
-    if (positiveGlobs.length > 0 && !positiveGlobs.some((glob) => glob.expression.test(relativePath))) {
-      continue;
-    }
-    if (negativeGlobs.some((glob) => glob.expression.test(relativePath))) continue;
-    let bytes;
-    try {
-      bytes = await readFileBounded(file, signal);
-    } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM", "EBUSY", "file_resource_limit"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); continue; }
-      throw error;
-    }
-    // Match ripgrep's Unicode BOM behavior: UTF-16 padding is not binary content.
-    const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
-      : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : undefined;
-    if (!utf16 && bytes.subarray(0, 8_192).includes(0)) continue;
-    let text: string;
-    try {
-      text = utf16 ? new TextDecoder(utf16, { fatal: true }).decode(bytes) : bytes.toString("utf8").replace(/^\ufeff/, "");
-    } catch { continue; }
-    if (text.includes("\0")) continue;
-    const lines = text ? text.split(/\r\n|\r|\n/) : [];
-    if (/[\r\n]$/.test(text)) lines.pop();
-    const columns = lines.map(line => { if (regex) { regex.lastIndex = 0; return regex.exec(line)?.index ?? -1; } return line.indexOf(input.query); });
-    const selected = new Set<number>();
-    for (const [index, column] of columns.entries()) if (column >= 0) {
-      for (let i = Math.max(0, index - input.contextBefore); i <= Math.min(lines.length - 1, index + input.contextAfter); i++) selected.add(i);
-    }
-    for (let index = 0; index < lines.length; index += 1) {
-      if (!selected.has(index)) continue;
-      const line = lines[index]!;
-      const column = columns[index]!;
-      const match = column >= 0 ? `${file}:${index + 1}:${column + 1}:${line}\n` : `${file}-${index + 1}-${line}\n`;
-      outputBytes += Buffer.byteLength(match);
-      if (outputBytes > maximumOutputBytes) {
-        return {
-          exitCode: 2,
-          stdout: output.join(""),
-          stderr: [...warnings, `Search output truncated at ${maximumOutputBytes} bytes; narrow path or globs.`].join("\n"),
-          timedOut: false,
-        };
-      }
-      output.push(match);
-    }
-  }
-  return {
-    exitCode: warningCount ? 2 : output.length > 0 ? 0 : 1,
-    stdout: output.join(""),
-    stderr: warnings.join("\n") + (warningCount > warnings.length ? `\n${warningCount - warnings.length} additional file access errors.` : ""),
-    timedOut: false,
-  };
-}
-
-function globToRegExp(value: string): RegExp {
-  const normalized = value.trim().replaceAll("\\", "/");
-  let source = "^";
-  for (let index = 0; index < normalized.length; index += 1) {
-    const character = normalized[index]!;
-    if (character === "*" && normalized[index + 1] === "*") {
-      const followedBySlash = normalized[index + 2] === "/";
-      source += followedBySlash ? "(?:.*/)?" : ".*";
-      index += followedBySlash ? 2 : 1;
-    } else if (character === "*") {
-      source += "[^/]*";
-    } else if (character === "?") {
-      source += "[^/]";
-    } else {
-      source += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-    }
-  }
-  return new RegExp(`${source}$`);
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (!signal?.aborted) return;
-  if (signal.reason instanceof Error) throw signal.reason;
-  const error = new Error("Tool execution was cancelled.");
-  error.name = "AbortError";
-  throw error;
-}
 
 function availableTerminalShells(): TerminalShell[] {
   return process.platform === "win32"
@@ -1045,7 +867,7 @@ function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
     "Execute one command in the selected working directory.",
-    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. This bounds the call's wait, not the command's duration. If completion_notification=true, do independent work or call manage_tool_calls action=wait with completion_task_id to wait without polling. Otherwise use terminal_poll with the returned terminalSessionId. Never restart a running command.`,
+    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. This bounds the call's wait, not the command's duration. Use a short yield (e.g. 1000 ms) for long tasks so you can continue independent work. If completion_notification=true, continue independent work; use manage_tool_calls action=wait with completion_task_id only when its result blocks progress and no independent work remains. Results arrive automatically without polling. Otherwise use terminal_poll with the returned terminalSessionId when new output is needed. Never restart a running command. Use search_file_content for local content searches instead of recursive shell traversal.`,
     process.platform === "win32"
       ? "To delay before rechecking an external task, use shell=powershell with a sleep command, e.g. Start-Sleep -Seconds 30. Reuse an existing running wait session when available."
       : "To delay before rechecking an external task, use shell=posix with a sleep command, e.g. sleep 30. Reuse an existing running wait session when available.",
@@ -1054,70 +876,4 @@ function terminalToolDescription(): string {
     `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
     "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",
   ].join(" ");
-}
-
-async function runProcess(
-  file: string,
-  args: string[],
-  options: {
-    cwd: string;
-    timeoutMs?: number;
-    signal?: AbortSignal;
-  },
-): Promise<ProcessResult> {
-  throwIfAborted(options.signal);
-  const guarded = await spawnResourceManagedProcess({ executable: file, args, cwd: options.cwd });
-  return new Promise((resolvePromise, reject) => {
-    const child = guarded.child;
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
-    let outputLimited = false;
-    let stdoutBytes = 0, stderrBytes = 0;
-    const maximumOutputBytes = 2 * 1024 * 1024;
-    const onAbort = guarded.stop;
-    options.signal?.addEventListener("abort", onAbort, { once: true });
-    if (options.signal?.aborted) onAbort();
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      guarded.stop();
-    }, options.timeoutMs ?? 30_000);
-    const append = (chunks: Buffer[], chunk: Buffer, used: number) => {
-      const remaining = Math.max(0, maximumOutputBytes - used);
-      if (remaining) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
-      if (chunk.length > remaining && !outputLimited) { outputLimited = true; guarded.stop(); }
-      return used + Math.min(chunk.length, remaining);
-    };
-    child.stdout.on("data", (chunk: Buffer) => { stdoutBytes = append(stdoutChunks, chunk, stdoutBytes); });
-    child.stderr.on("data", (chunk: Buffer) => { stderrBytes = append(stderrChunks, chunk, stderrBytes); });
-    child.on("error", error => {
-      clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", onAbort);
-      reject(error);
-    });
-    child.on("close", async (exitCode) => {
-      clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", onAbort);
-      const report = await guarded.complete();
-      if (options.signal?.aborted) {
-        try { throwIfAborted(options.signal); } catch (error) { reject(error); }
-        return;
-      }
-      if (report?.code === "resource_spawn_failed") {
-        const code = ({ 2: "ENOENT", 3: "ENOENT", 5: "EACCES", 193: "ENOEXEC" } as Record<number, string>)[report.nativeErrorCode ?? 0];
-        if (code) { reject(codedError(code, report.message)); return; }
-      }
-      const warnings = [decodeProcessOutput(Buffer.concat(stderrChunks)),
-        outputLimited ? "Search output exceeded 2 MiB and was stopped. Narrow the path or query; these results are incomplete." : "",
-        timedOut ? "Search exceeded its 30-second execution budget; these results are incomplete." : "",
-        report?.code && !outputLimited && !timedOut ? report.message : "",
-      ].filter(Boolean).join("\n");
-      resolvePromise({
-        exitCode: outputLimited || timedOut || report?.code ? 2 : exitCode,
-        stdout: decodeProcessOutput(Buffer.concat(stdoutChunks)),
-        stderr: warnings,
-        timedOut,
-      });
-    });
-  });
 }

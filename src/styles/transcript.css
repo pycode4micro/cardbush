@@ -273,6 +273,11 @@
   background: color-mix(in srgb, var(--text) 88%, transparent);
 }
 
+.quick-context-tick.previewing::before {
+  width: 24px;
+  background: var(--text);
+}
+
 .quick-context-popovers {
   position: absolute;
   inset: 0 0 max(0px, calc(var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) - 12px));

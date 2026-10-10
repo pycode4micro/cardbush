@@ -7,12 +7,13 @@ import { openSshTunnel } from './sshTunnel.mjs';
 import { parseSshWorkspace, sshWorkspace, type SshConnection, type SshConnectionInput, type SshTestResult } from '@cardbush/bush-protocol';
 import { workspaceEditRecoveryError } from '@cardbush/bush-runtime/workspace-edit-recovery';
 import { createDisplayDiff } from '@cardbush/bush-runtime/workspace-diff';
+import { WorkspaceSearchBudget, workspaceSearchArguments, type WorkspaceSearchInput } from '@cardbush/bush-runtime/workspace-search';
 
 type Saved = Omit<SshConnection, 'hasPassword' | 'hasPassphrase' | 'status'> & { password?: string; passphrase?: string };
 type Cipher = { encrypt(value: string): string; decrypt(value: string): string };
 type Terminal = { id: string; owner: string; connectionId: string; root: string; command: string; cwd: string;
   client: Client; channel: ClientChannel; pid?: number; state: string; exitCode?: number; stdout: string; stderr: string;
-  truncated: boolean; changed: EventEmitter; startedAt: number };
+  truncated: boolean; changed: EventEmitter; startedAt: number; endedAt?: number; lastOutputAt?: number };
 const MAX_BYTES = 8 * 1024 * 1024;
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const sha = (value: Buffer) => createHash('sha256').update(value).digest('hex');
@@ -26,6 +27,8 @@ export class SshConnectionManager {
   #closing = false;
   #connected = new Set<string>();
   #terminals = new Map<string, Terminal>();
+  #runningCommands = new Map<string, string>();
+  #searches = new Map<string, Promise<ReturnType<WorkspaceSearchBudget['result']>>>();
   #observed = new Map<string, string>();
   #mutations = new Set<string>();
   #starting = 0;
@@ -173,7 +176,7 @@ export class SshConnectionManager {
   }
   listTerminals(owner: string) {
     return { sessions: [...this.#terminals.values()].filter(item => item.owner === owner).map(item => ({
-      terminalSessionId: item.id, uri: item.root, state: item.state, command: item.command, cwd: item.cwd,
+      terminalSessionId: item.id, uri: item.root, state: item.state, command: item.command, cwd: item.cwd, exitCode: item.exitCode ?? null, ...terminalTiming(item),
     })) };
   }
 
@@ -194,8 +197,8 @@ export class SshConnectionManager {
     if (name === 'terminal_exec' || name === 'search_file_content') {
       const path = this.#path(target.connectionId, target.path, input.cwd ?? input.path);
       if (name === 'terminal_exec' && input.shell !== 'posix') throw Error('SSH 远程终端请使用 shell="posix"。');
-      const command = name === 'terminal_exec' ? input.command : ['rg', '--line-number', '--column', '--no-heading', '--color', 'never', ...(input.regex ? [] : ['--fixed-strings']), ...(input.contextBefore ? ['--before-context', String(input.contextBefore)] : []), ...(input.contextAfter ? ['--after-context', String(input.contextAfter)] : []), ...(input.globs ?? []).flatMap((glob: string) => ['--glob', glob]), '--', input.query, path].map(quote).join(' ');
-      if (name === 'search_file_content') { const result = await this.#capture(uri, command, [0,1], signal); return { matched: result.stdout.length > 0, output: result.stdout, complete:true, exitCode:result.exitCode, ...(result.stderr ? {warnings:result.stderr} : {}) }; }
+      if (name === 'search_file_content') return this.#searchFileContent(uri, owner, path, input, signal);
+      const command = input.command;
       const terminal = await this.#start(target.connectionId, uri, owner, command, path, signal);
       try { return await this.#poll(terminal, input.yieldTimeMs ?? 1000, signal); }
       catch (error) { await this.#stop(terminal).catch(() => {}); throw error; }
@@ -258,9 +261,16 @@ export class SshConnectionManager {
       } finally { this.#mutations.delete(identity); }
     }, signal);
   }
-  async #start(id: string, root: string, owner: string, command: string, cwd: string, signal?: AbortSignal) {
+  async #start(id: string, root: string, owner: string, command: string, cwd: string, signal?: AbortSignal, onOutput?: (key: 'stdout' | 'stderr', chunk: string) => void) {
     for (const [key, terminal] of this.#terminals) if (this.#terminals.size > 200 && terminal.state !== 'running' && Date.now() - terminal.startedAt > 3_600_000) this.#terminals.delete(key);
     if (this.#starting + [...this.#terminals.values()].filter(item => item.state === 'running').length >= 16) throw Error('远程终端并发已达上限。');
+    const commandKey = JSON.stringify([id, owner, cwd, command]);
+    const existing = this.#runningCommands.get(commandKey);
+    if (existing) throw Object.assign(Error('相同命令仍在运行，请先处理其他独立工作，需要结果时使用现有终端，不要重复启动。'), {
+      code: 'terminal_command_already_running', details: { terminalSessionId: existing, state: this.#terminals.get(existing)?.state ?? 'starting' },
+    });
+    const terminalId = 'ssh-terminal-' + randomUUID();
+    this.#runningCommands.set(commandKey, terminalId);
     this.#starting++;
     try {
     const client = await this.#connection(id); signal?.throwIfAborted();
@@ -269,16 +279,17 @@ export class SshConnectionManager {
     // sshd may already make its child a session leader. --wait preserves the
     // command's exit status when setsid must fork (setsid(1), util-linux).
     const channel = await this.#execChannel(client, `cd ${quote(cwd)} && exec setsid --wait /bin/sh -c ${quote(script)}`, signal);
-    const terminal: Terminal = { id: 'ssh-terminal-' + randomUUID(), connectionId: id, root, owner, command, cwd, client, channel, state: 'running', stdout: '', stderr: '', truncated: false, changed: new EventEmitter(), startedAt: Date.now() };
+    const terminal: Terminal = { id: terminalId, connectionId: id, root, owner, command, cwd, client, channel, state: 'running', stdout: '', stderr: '', truncated: false, changed: new EventEmitter(), startedAt: Date.now() };
     this.#terminals.set(terminal.id, terminal); let pendingError = '';
-    const append = (key: 'stdout' | 'stderr', chunk: string) => { terminal[key] += chunk; if (Buffer.byteLength(terminal[key]) > 512 * 1024) { terminal[key] = terminal[key].slice(-128 * 1024); terminal.truncated = true; } terminal.changed.emit('data'); };
+    const append = (key: 'stdout' | 'stderr', chunk: string) => { if (chunk) terminal.lastOutputAt = Date.now(); if (onOutput) onOutput(key, chunk); else { terminal[key] += chunk; if (Buffer.byteLength(terminal[key]) > 512 * 1024) { terminal[key] = terminal[key].slice(-128 * 1024); terminal.truncated = true; } } terminal.changed.emit('data'); };
     channel.setEncoding('utf8'); channel.stderr.setEncoding('utf8');
     channel.on('data',(chunk: string) => append('stdout',chunk));
     channel.stderr.on('data',(chunk: string) => { if (terminal.pid) return append('stderr',chunk); pendingError += chunk; const match = new RegExp(marker + '(\\d+)\\r?\\n').exec(pendingError); if (match) { terminal.pid = Number(match[1]); append('stderr',pendingError.replace(match[0],'')); pendingError = ''; } else if (pendingError.length > 4096) { append('stderr',pendingError); pendingError=''; } });
-    channel.on('error',(error: Error) => { append('stderr',error.message); terminal.state='failed'; terminal.changed.emit('data'); });
-    channel.on('close',(code: number, signal?: string) => { if (pendingError) append('stderr',pendingError); if (terminal.state === 'running') terminal.state=typeof code === 'number' || signal ? 'completed' : 'disconnected'; terminal.exitCode=code; terminal.changed.emit('data'); });
+    channel.on('error',(error: Error) => { append('stderr',error.message); terminal.state='failed'; terminal.endedAt=Date.now(); terminal.changed.emit('data'); });
+    channel.on('close',(code: number, signal?: string) => { this.#runningCommands.delete(commandKey); if (pendingError) append('stderr',pendingError); if (terminal.state === 'running') terminal.state=typeof code === 'number' || signal ? 'completed' : 'disconnected'; terminal.exitCode=code; terminal.endedAt=Date.now(); terminal.changed.emit('data'); });
     return terminal;
-    } finally { this.#starting--; }
+    } catch (error) { this.#runningCommands.delete(commandKey); throw error; }
+    finally { this.#starting--; }
   }
   #execChannel(client: Client, command: string, signal?: AbortSignal): Promise<ClientChannel> {
     signal?.throwIfAborted();
@@ -312,6 +323,40 @@ export class SshConnectionManager {
     }
     if (terminal.state === 'running' || terminal.state === 'disconnected') throw Error('无法确认远程进程已停止，请重连后检查进程。');
     terminal.state='stopped'; terminal.changed.emit('data');
+  }
+  async #searchFileContent(uri: string, owner: string, path: string, input: Record<string, any>, signal?: AbortSignal) {
+    const key = JSON.stringify([uri, owner, path, input]);
+    const running = this.#searches.get(key);
+    if (running) return { ...await running, reused: true };
+    const pending = this.#runFileSearch(uri, owner, path, input, signal);
+    this.#searches.set(key, pending);
+    try { return await pending; } finally { this.#searches.delete(key); }
+  }
+  async #runFileSearch(uri: string, owner: string, path: string, input: Record<string, any>, signal?: AbortSignal) {
+    const target = parseSshWorkspace(uri)!;
+    const search: WorkspaceSearchInput = { path, query: input.query, regex: input.regex ?? false, globs: input.globs ?? [],
+      contextBefore: input.contextBefore ?? 0, contextAfter: input.contextAfter ?? 0, outputMode: input.outputMode ?? 'lines',
+      maxResults: input.maxResults ?? 100, maxOutputBytes: input.maxOutputBytes ?? 65536, timeoutMs: input.timeoutMs ?? 10000,
+      includeDependencies: input.includeDependencies ?? false };
+    const budget = new WorkspaceSearchBudget(search, signal);
+    const timer = setTimeout(() => budget.stop('timeout'), search.timeoutMs);
+    let terminal: Terminal | undefined;
+    try {
+      terminal = await this.#start(target.connectionId, uri, owner, ['rg', ...workspaceSearchArguments(path, search)].map(quote).join(' '), target.path, budget.signal,
+        (key, chunk) => { if (key === 'stdout') budget.append(Buffer.from(chunk)); else if (chunk && !budget.limit) budget.warn(chunk); });
+      while (terminal.state === 'running' && budget.check()) await this.#poll(terminal, 1000, budget.signal, true);
+      return budget.result(terminal.exitCode ?? 2);
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (!budget.limit) throw error;
+      return budget.result(2);
+    } finally {
+      clearTimeout(timer);
+      if (terminal) {
+        try { if (terminal.state === 'running') await this.#stop(terminal); }
+        finally { if (terminal.state !== 'running') this.#terminals.delete(terminal.id); }
+      }
+    }
   }
   async #capture(uri: string, command: string, accepted = [0], signal?: AbortSignal) {
     const target = parseSshWorkspace(uri)!;
@@ -377,8 +422,16 @@ export class SshConnectionManager {
       stderr: terminal.stderr,
       exitCode: terminal.exitCode ?? null,
       outputTruncated: terminal.truncated,
+      ...terminalTiming(terminal),
     };
     if (!observe) { terminal.stdout='';terminal.stderr=''; } return result;
   }
   async close() { this.#closing = true; for (const client of this.#opening.values()) client.destroy(); await Promise.allSettled([...this.#terminals.values()].map(item => this.#stop(item))); for (const pending of this.#clients.values()) (await pending.catch(() => undefined))?.end(); this.#clients.clear();this.#opening.clear();this.#connected.clear(); }
+}
+
+function terminalTiming(terminal: Terminal) {
+  const observedAt = terminal.endedAt ?? Date.now();
+  return { startedAt: new Date(terminal.startedAt).toISOString(), durationMs: observedAt - terminal.startedAt,
+    lastOutputAt: terminal.lastOutputAt ? new Date(terminal.lastOutputAt).toISOString() : null,
+    outputIdleMs: observedAt - (terminal.lastOutputAt ?? terminal.startedAt) };
 }

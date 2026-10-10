@@ -21,8 +21,8 @@ import type {
   ModelProvider,
   ModelStreamOptions,
 } from "@cardbush/bush-runtime";
-import { isToolCallValidationFailure } from "@cardbush/bush-runtime";
-import { providerFailureEvent, ProviderToolCallError } from "./providerFailure.js";
+import { isToolCallValidationFailure, ModelRequestAttempts } from "@cardbush/bush-runtime";
+import { providerFailureEvent, providerErrorPayload, ProviderToolCallError } from "./providerFailure.js";
 import type { ModelProviderConfig } from './providerConfig.js';
 import { siwcFailure, siwcFetch, siwcResponsesParams } from './siwc.js';
 import { SIWC } from '@cardbush/bush-protocol';
@@ -34,6 +34,7 @@ import { ResponseText, ResponseTextError } from "./responsesText.js";
 import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
 import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
 import { compatibleToolImageProjection, responsesCompatibilityRejection, RESPONSES_COMPATIBILITY_CAPABILITY } from "./responsesCompatibility.js";
+import { responsesContinuationMissing } from "./responsesContinuation.js";
 import { providerToolAliases, providerToolName } from "./toolNames.js";
 import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
 import { responsesInputFingerprint } from "./responsesInputFingerprint.js";
@@ -157,7 +158,7 @@ export function normalizeResponseStreamEvent(
         state.terminal = true;
         break;
       case "error":
-        append({ kind: "response_failed", code: event.code || "provider_response_error", message: event.message, retryable: false });
+        append(providerErrorPayload(event));
         state.terminal = true;
         break;
     }
@@ -215,14 +216,7 @@ function incompleteFinishReason(response: Response): string {
 }
 
 function responseFailurePayload(response: Response): ModelEventPayload {
-  const code = response.error?.code ?? "provider_response_failed";
-  return {
-    kind: "response_failed",
-    code,
-    message: response.error?.message ?? "The provider failed to generate a response.",
-    retryable: false,
-    providerRequestId: response.id,
-  };
+  return providerErrorPayload(response.error, { code: 'provider_response_failed', providerRequestId: response.id });
 }
 
 export function toResponsesCreateParams(
@@ -448,11 +442,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
     request: ModelRequest,
     options: ModelStreamOptions = {},
   ): AsyncIterable<ModelEvent> {
+    const attempts = options.attempts ?? new ModelRequestAttempts();
+    options = { ...options, attempts };
     try {
-      let projection = await this.#project(request);
-      // At most one compatibility retry after an explicit feature rejection.
+      let projection = await this.#project(attempts.hasRecovery('restart_continuation')
+        ? { ...request, providerState: { strategy: 'response_chain' } } : request,
+        attempts.hasRecovery('negotiate_capability'));
+      // The shared round budget bounds replays even across outer transport retries.
       // Buffer only response_started: a header/created event is not usable output.
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (;;) {
         options.signal?.throwIfAborted();
         const { params, request: resolvedRequest } = projection;
         const budget = requestBodyBudget(params, this.#maxRequestBodyBytes);
@@ -472,6 +470,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
         let pendingStart: ModelEvent | undefined;
         let outputExposed = false;
         try {
+          attempts.dispatch();
           const stream = await this.#client.responses.create(params, { signal: options.signal,
             headers: modelRequestHeaders(this.#config.baseURL, this.#config.defaultHeaders, request.sessionId) });
           for await (const providerEvent of stream) {
@@ -494,7 +493,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
               if (pendingStart) { yield pendingStart; pendingStart = undefined; }
               options.signal?.throwIfAborted();
               outputExposed = true;
-              if (event.kind === "response_completed" && attempt > 0) {
+              if (event.kind === "response_completed" && attempts.snapshot().recoveryAttempts > 0) {
                 this.#compatibilityDiagnostic(request, options, "generation", "recovered");
               }
               yield event;
@@ -526,6 +525,16 @@ export class OpenAIResponsesProvider implements ModelProvider {
           // protocol. Let Runtime retry the frozen request without persisting
           // a compatibility downgrade for this model and other conversations.
           if (failure.retryable) { yield failure; return; }
+          if (responsesContinuationMissing(failure, params, error instanceof OpenAI.APIError ? error.param : undefined)) {
+            const retry = attempts.recover('restart_continuation', { outputExposed, signal: options.signal });
+            this.#compatibilityDiagnostic(request, options, "generation", retry ? "retry" : "failed", failure);
+            if (!retry) { yield failure; return; }
+            // Replay the already resolved local transcript, including completed
+            // tool results. Only the stale anchor is discarded: keep schemas,
+            // cache routing and storage so the new response can anchor the next round.
+            projection = await this.#project({ ...resolvedRequest, providerState: { strategy: "response_chain" } });
+            continue;
+          }
           if (isToolCallValidationFailure(failure)) {
             // Runtime repairs the call by appending guidance. An invalid call
             // is not evidence to switch schemas and invalidate the cache prefix.
@@ -538,7 +547,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
             yield failure;
             return;
           }
-          const retry = !projection.compatibilityMode && attempt === 0 && !outputExposed;
+          const retry = !projection.compatibilityMode && attempts.recover('negotiate_capability', { outputExposed, signal: options.signal });
           this.#enableCompatibility(request);
           this.#compatibilityDiagnostic(request, options, "generation",
             retry ? "retry" : projection.compatibilityMode ? "failed" : "next_request", failure);
@@ -567,6 +576,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     source: ProviderCompatibilityDiagnostic["source"], action: ProviderCompatibilityDiagnostic["action"],
     failure?: Extract<ModelEvent, { kind: "response_failed" }>): void {
     const diagnostic: ProviderCompatibilityDiagnostic = { model: request.model, source, action,
+      ...options.attempts?.snapshot(),
       ...(failure ? { error: { code: failure.code,
         message: this.#diagnosticSecrets.reduce((text, secret) => text.split(secret).join("[redacted]"), failure.message),
         status: failure.status, providerRequestId: failure.providerRequestId, diagnostics: failure.diagnostics } } : {}) };

@@ -58,6 +58,8 @@ import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
+import { useHoverPreview } from '../../components/HoverPreview';
+import { ConversationHoverPreview } from './ConversationHoverPreview';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
   AppLanguage,
@@ -777,6 +779,9 @@ export const ChatSidebar = memo(function ChatSidebar({
   }
 
   function renderStandaloneConversation(conversation: ConversationSummary) {
+    const project = projectItems.find(item => conversationMatchesScope(conversation, {
+      mode: 'project', projectId: item.id, projectDir: item.rootPath,
+    }));
     return (
       <ConversationRow
         key={conversation.id}
@@ -787,6 +792,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         unread={unreadConversationIds.has(conversation.id)}
         pinned={pinnedConversationIds.has(conversation.id)}
         language={language}
+        projectLabel={project?.title}
         onTogglePin={() => toggleConversationPin(conversation.id)}
         onToggleRead={() =>
           setConversationUnread(conversation.id, !unreadConversationIds.has(conversation.id))
@@ -907,6 +913,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                         conversation={{ id: session.sessionId, title: String(session.metadata?.title || (language === 'zh' ? '新对话' : 'Conversation')), preview: '', updatedAt: session.updatedAt ?? '' }}
                         active={active && agentSessions?.views[agent.id] !== 'settings' && agentSessions?.selectedSessions[agent.id] === session.sessionId}
                         nested remote unread={unread} pinned={pinned} language={language} quickActionsAvailable={list?.management === true}
+                        hostLabel={agent.name} projectLabel={(list?.projects ?? []).find(project => project.id === session.metadata?.projectId)?.name}
                         onTogglePin={() => update({ pinned: !pinned })} onToggleRead={() => update({ forcedUnread: !unread, ...(!unread ? {} : { readAt: new Date().toISOString() }) })} onArchive={() => update({ archived: true })}
                         onRename={title => agentSessions!.renameSession(agent.id, session.sessionId, title)}
                         onDelete={() => void agentSessions?.deleteSession(agent.id, session.sessionId)}
@@ -1266,6 +1273,7 @@ function ProjectBlock({
           attention={attentionByConversation?.[conversation.id]}
           unread={unreadConversationIds.has(conversation.id)}
           nested
+          projectLabel={project.title}
           pinned={pinnedConversationIds.has(conversation.id)}
           language={language}
           onTogglePin={() => onToggleConversationPin(conversation.id)}
@@ -1312,6 +1320,8 @@ function ConversationRow({
   nested,
   remote = false,
   quickActionsAvailable = true,
+  projectLabel,
+  hostLabel,
   pinned,
   language,
   onTogglePin,
@@ -1332,6 +1342,8 @@ function ConversationRow({
   nested?: boolean;
   remote?: boolean;
   quickActionsAvailable?: boolean;
+  projectLabel?: string;
+  hostLabel?: string;
   pinned: boolean;
   language: AppLanguage;
   onTogglePin: () => void;
@@ -1352,6 +1364,7 @@ function ConversationRow({
   const [renameDraft, setRenameDraft] = useState(displayTitle);
   const [renamePending, setRenamePending] = useState(false);
   const [renameFailed, setRenameFailed] = useState(false);
+  const hoverPreview = useHoverPreview(editingTitle);
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
   const beginRename = useCallback(() => {
     setRenameDraft(displayTitle);
@@ -1403,20 +1416,20 @@ function ConversationRow({
     onArchive,
     onDelete,
   };
-  return (
+  return (<>
     <div
+      {...hoverPreview.triggerProps}
       className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}${quickActionsAvailable ? '' : ' without-quick-actions'}`}
-      title={running ? language === 'zh' ? '会话运行中' : 'Session running' : attention ? sessionAttentionLabel(attention, language) : undefined}
       draggable={!remote && !editingTitle}
-      onDragStart={event => { event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
+      onDragStart={event => { hoverPreview.close(); event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
       role="button"
       tabIndex={0}
-      onClick={onClick}
+      onClick={() => { hoverPreview.close(); onClick(); }}
       onDoubleClick={(event) => {
         event.preventDefault();
         beginRename();
       }}
-      onContextMenu={(event) => onContextMenu?.(event, menuOptions)}
+      onContextMenu={(event) => { hoverPreview.close(); onContextMenu?.(event, menuOptions); }}
       onKeyDown={(event) => {
         if (keyboardShortcuts.matches('extractConversation', event) && !event.nativeEvent.isComposing) {
           event.preventDefault(); event.stopPropagation(); if (!remote) extraction?.open(conversation.id); return;
@@ -1429,6 +1442,7 @@ function ConversationRow({
         }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
+          hoverPreview.dismiss();
           onClick();
         }
       }}
@@ -1504,7 +1518,6 @@ function ConversationRow({
           className="conversation-running-indicator"
           role="status"
           aria-label={language === 'zh' ? '会话运行中' : 'Session running'}
-          title={language === 'zh' ? '会话运行中' : 'Session running'}
         >
           <LoaderCircle size={14} aria-hidden="true" />
         </span>
@@ -1514,7 +1527,6 @@ function ConversationRow({
           className={`conversation-attention-indicator ${attention.kind}`}
           role="status"
           aria-label={sessionAttentionLabel(attention, language)}
-          title={sessionAttentionLabel(attention, language)}
         >
           {attention.kind === 'completed'
             ? <CircleCheck size={15} />
@@ -1560,7 +1572,8 @@ function ConversationRow({
         <Archive size={15} />
       </button>}
     </div>
-  );
+    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} />
+  </>);
 }
 
 function ScrollingConversationTitle({ title }: { title: string }) {

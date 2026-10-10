@@ -1,7 +1,7 @@
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import { useContext } from 'react';
 import { ConversationHostContext } from '../conversationHost';
-import { ArrowUpRight, Check, Copy, X } from 'lucide-react';
+import { ArrowUpRight, Bookmark, Check, Copy, X } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -16,6 +16,8 @@ import type { AppLanguage, ChatMessage } from '../../types';
 import { fetchSessionTurnMessages } from '../../backend/api';
 import { MarkdownContent } from '../chatMessages/MessageBubble';
 import { FileMemoScope } from '../chatMessages/FileMemoScope';
+import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
+import { conversationDisplayTitle } from '../../shared/conversationTitle';
 
 type SelectedTurn = {
   message: ChatMessage;
@@ -48,6 +50,7 @@ export function QuickContextRail({
     [userSignature],
   );
   const [panelView, setPanelView] = useState<'closed' | 'detail'>('closed');
+  const hoverPreview = useHoverPreview(panelView !== 'closed');
   const [selectedTurn, setSelectedTurn] = useState<SelectedTurn | null>(null);
   const [remoteTurnMessages, setRemoteTurnMessages] = useState<ChatMessage[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -182,6 +185,7 @@ export function QuickContextRail({
   }, []);
 
   useEffect(closePanel, [closePanel, sessionId]);
+  useEffect(hoverPreview.close, [hoverPreview.close, sessionId]);
   useEffect(() => () => detailRequestRef.current?.abort(), []);
 
   useEffect(() => {
@@ -220,6 +224,11 @@ export function QuickContextRail({
   const assistantReply = previewMessages
     .find((message) => message.role === 'assistant')
     ?.content.trim() ?? '';
+  const hoveredMessage = hoverPreview.anchor
+    ? railTurns.find(message => message.id === hoverPreview.anchor?.dataset.turnMessageId) : undefined;
+  const hoverReply = hoveredMessage ? quickTurnPreviewMessages(turnMessagesFromTranscript(
+    messages, messages.findIndex(message => message.id === hoveredMessage.id),
+  )).find(message => message.role === 'assistant')?.content ?? '' : '';
 
   const selectTurn = (turn: SelectedTurn) => {
     detailRequestRef.current?.abort();
@@ -316,20 +325,32 @@ export function QuickContextRail({
             );
             return (
               <button
+                {...hoverPreview.triggerProps}
                 key={message.id}
                 type="button"
-                className={`quick-context-tick${isCurrentTurn ? ' current' : ''}`}
+                data-turn-message-id={message.id}
+                className={`quick-context-tick${isCurrentTurn ? ' current' : ''}${hoveredMessage?.id === message.id ? ' previewing' : ''}`}
                 aria-current={isCurrentTurn ? 'true' : undefined}
                 aria-label={compactText(message.content, 120)}
                 aria-haspopup="dialog"
                 aria-expanded={panelView === 'detail' && selectedTurn?.message.id === message.id}
                 aria-controls={panelView === 'detail' && selectedTurn?.message.id === message.id ? panelId : undefined}
-                onClick={() => selectRailTurn(message)}
+                aria-describedby={hoveredMessage?.id === message.id ? hoverPreview.id : undefined}
+                onClick={() => { hoverPreview.close(); selectRailTurn(message); }}
               />
             );
           })}
         </span>
       </div>
+      <HoverPreview preview={hoverPreview} className="turn-hover-preview" boundarySelector=".chat-body">
+        {hoveredMessage && <>
+          <div className="hover-preview-title">
+            <strong>{compactText(conversationDisplayTitle(hoveredMessage.content), 160)}</strong>
+            <Bookmark size={14} aria-hidden="true" />
+          </div>
+          <p className="turn-hover-preview-reply">{turnHoverText(hoverReply) || (language === 'zh' ? '暂时没有回复' : 'No reply yet')}</p>
+        </>}
+      </HoverPreview>
       <div className="quick-context-popovers">
         {panelView !== 'closed' && (
           <section id={panelId} role="dialog" aria-labelledby={`${panelId}-title`} className={`quick-context-panel ${panelView}`}>
@@ -435,6 +456,14 @@ function isTurnGuidanceMessage(message: ChatMessage) {
 function compactText(value: string, limit: number) {
   const normalized = value.replace(/\s+/g, ' ').trim();
   return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+}
+
+function turnHoverText(value: string) {
+  // A bounded text excerpt avoids mounting another Markdown/media tree while
+  // skimming ticks. Full rendering and historical loading belong to the click.
+  return value.slice(0, 4000).split(/\r?\n/).map(line => conversationDisplayTitle(line)
+    .replace(/^#{1,6}\s+/, '').replace(/^>\s*/, '').replace(/^[-*]\s+/, '• ')
+    .replace(/\*\*|__|`/g, '')).filter(Boolean).join('\n').slice(0, 600);
 }
 
 function fastTextFingerprint(value: string) {

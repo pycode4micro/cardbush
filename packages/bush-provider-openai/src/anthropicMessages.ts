@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ContentBlockParam, MessageCreateParamsStreaming, MessageParam, RawMessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
-import { modelReplayMatches, withToolDisplayTitle, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
+import { modelReplayMatches, withToolDisplayTitle, ModelRequestAttempts, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
 import { providerToolName } from './toolNames.js';
@@ -137,6 +137,8 @@ export class AnthropicMessagesProvider implements ModelProvider {
     return recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes);
   }
   async *stream(request: ModelRequest, options: ModelStreamOptions = {}): AsyncIterable<ModelEvent> {
+    const attempts = options.attempts ?? new ModelRequestAttempts();
+    options = { ...options, attempts };
     const emit = eventWriter(request.requestId), blocks = new Map<number, Block>();
     const diagnostics = new AnthropicStreamDiagnostics(options.onStreamDiagnostic, options.signal);
     let started = false, finishReason: string | undefined;
@@ -215,6 +217,9 @@ export class AnthropicMessagesProvider implements ModelProvider {
           }
           for (const event of toolEvents) yield emit(event);
           yield emit({ kind: 'usage', ...usage });
+          if (attempts.snapshot().recoveryAttempts > 0) options.onCompatibilityDiagnostic?.({
+            model: request.model, source: 'generation', action: 'recovered', ...attempts.snapshot(),
+          });
           yield emit({ kind: 'response_completed', finishReason: truncated ? 'length' : finishReason === 'tool_use' ? 'tool_calls' : finishReason === 'end_turn' || finishReason === 'stop_sequence' ? 'stop' : finishReason,
             ...(truncated ? { completedToolCallIndices: [] } : {}),
             ...(replayable ? { providerReplay: { format: FORMAT, data: {
@@ -238,18 +243,20 @@ export class AnthropicMessagesProvider implements ModelProvider {
     return { scope: this.#capabilityScope, model, capability: PROMPT_CACHING_CAPABILITY };
   }
 
-  #project(request: ModelRequest): MessageCreateParamsStreaming {
+  #project(request: ModelRequest, disablePromptCache = false): MessageCreateParamsStreaming {
     return toAnthropicMessagesParams(request, this.config.anthropicThinkingMode,
-      this.#capabilityStore.read(this.#cacheIdentity(request.model)).status !== 'unsupported');
+      !disablePromptCache && this.#capabilityStore.read(this.#cacheIdentity(request.model)).status !== 'unsupported');
   }
 
   async #createStream(request: ModelRequest, options: ModelStreamOptions, diagnostics: AnthropicStreamDiagnostics) {
-    for (let attempt = 0; ; attempt++) {
+    const attempts = options.attempts ?? new ModelRequestAttempts();
+    for (;;) {
       options.signal?.throwIfAborted();
-      const params = this.#project(request);
+      const params = this.#project(request, attempts.hasRecovery('negotiate_capability'));
       recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
       diagnostics.dispatch(params);
       try {
+        attempts.dispatch();
         return await this.#client.messages.create(params, { signal: options.signal,
           headers: modelRequestHeaders(this.#baseURL, this.config.defaultHeaders, request.sessionId) });
       } catch (error) {
@@ -258,9 +265,11 @@ export class AnthropicMessagesProvider implements ModelProvider {
           /^(?:unknown|unsupported|unrecognized) (?:field|parameter|request argument(?: supplied)?)\s*:?\s*["']?cache_control\b/i.test(message);
         // This retry only removes a rejected optional field, before any output.
         // HTTP auth, overflow, unrelated validation and stream errors never use it.
-        if (attempt > 0 || !params.cache_control || !unsupportedCache || options.signal?.aborted) throw error;
+        if (!params.cache_control || !unsupportedCache ||
+            !attempts.recover('negotiate_capability', { signal: options.signal })) throw error;
         this.#capabilityStore.observe(this.#cacheIdentity(request.model), { status: 'unsupported', reason: 'cache_control_rejected' });
         options.onCompatibilityDiagnostic?.({ model: request.model, source: 'generation', action: 'retry',
+          ...attempts.snapshot(),
           error: { code: 'anthropic_prompt_cache_unsupported', status: 400,
             message: 'This endpoint rejected automatic prompt caching; retrying without cache_control.' } });
       }

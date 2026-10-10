@@ -1,5 +1,6 @@
 import type { ModelMessage } from '@cardbush/bush-protocol';
 import type { CompletedModelRound } from './modelRound.js';
+export { isContextLengthFailure } from './modelFailurePolicy.js';
 import { validateConversation } from './sessionStore.js';
 import { IncrementalCheckpoint } from './incrementalCheckpoint.js';
 import { contextCompactionCorrectionMessage, isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
@@ -441,12 +442,4 @@ export function completeContextUnits(messages: ModelMessage[]): ModelMessage[][]
     units.push(unit);
   }
   return units;
-}
-
-/** Structured context errors only. Authorization and other permanent failures
- * never become compaction retries merely because their prose mentions tokens.
- */
-export function isContextLengthFailure(error: { code: string; status?: number }): boolean {
-  return (error.status === undefined || [400, 413, 422].includes(error.status)) &&
-    ['context_length_exceeded', 'context_window_exceeded', 'max_context_length_exceeded', 'input_tokens_exceeded'].includes(error.code);
 }

@@ -1,0 +1,15 @@
+{
+  "name": "volcengine_images",
+  "version": "1.0.0",
+  "description": "兆君服饰招财：仅图片生成，复用火山插件原生异步任务",
+  "author": {
+    "name": "CardBush"
+  },
+  "skills": "./skills",
+  "mcpServers": "./mcp.json",
+  "interface": {
+    "displayName": "火山图片生成",
+    "shortDescription": "Seedream 图片生成与编辑；按账号授权，不含视频",
+    "category": "Productivity"
+  }
+}

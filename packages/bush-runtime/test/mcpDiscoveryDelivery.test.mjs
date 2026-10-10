@@ -60,7 +60,8 @@ test('exact names rank before description mentions; pagination and isolated larg
   const second = await search({ cursor: first.next_cursor, limit: 2 });
   assert.equal(new Set([...first.matches, ...second.matches].map(tool => tool.name)).size, 4);
   const isolated = await search({ action: 'load', query: 'mcp__fixture__aaa_long' });
-  const view = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(isolated)));
+  assert.equal(projectMcpDiscoveryResult(JSON.stringify(isolated)), undefined, 'oversized default loads use the archive');
+  const view = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(isolated), 128000));
   assert.deepEqual(view.matches[0], isolated.matches[0]);
   assert.ok(view.matches[0].description.length > 16_000);
   assert.equal(view.catalog, undefined);
@@ -103,15 +104,34 @@ test('a load constrained by context is archived intact and cannot make an unseen
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__fixture__aaa_long'), false);
 });
 
-test('load size limits preserve complete definitions or defer the whole result to the archive', () => {
+test('load size limits preserve whole definitions and explicitly defer omitted schemas', () => {
   for (const count of [1, 3, 10]) for (const length of [10, 15_999, 80_000, 150_000]) for (const budget of [0, 6000, 16000, 128000]) {
     const result = { protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', total: count, more: false,
       matches: Array.from({ length: count }, (_, i) => ({ name: `mcp__s__tool${i}`, server: 's', tool: `tool${i}`, revision: 'v1',
         description: '文'.repeat(length), inputSchema: { type: 'object', properties: { requiredDetail: { const: i } } } })) };
     const raw = JSON.stringify(result), rendered = projectMcpDiscoveryResult(raw, budget);
-    if (raw.length > budget) assert.equal(rendered, undefined);
-    else { assert.deepEqual(JSON.parse(rendered), result); assert.ok(rendered.length <= budget); }
+    if (rendered === undefined) { assert.ok(raw.length > budget); continue; }
+    const view = JSON.parse(rendered); assert.ok(rendered.length <= budget);
+    assert.ok(view.matches.length > 0);
+    for (const match of view.matches) assert.deepEqual(match, result.matches.find(item => item.name === match.name));
+    assert.deepEqual(new Set([...view.matches.map(item => item.name), ...(view.deferred ?? [])]), new Set(result.matches.map(item => item.name)));
   }
+});
+
+test('a batch larger than the delivery budget loads only visible whole schemas and defers the rest', async () => {
+  const { registry, request } = fixture();
+  const names = ['first', 'second', 'third'].map(name => `mcp__batch__${name}`);
+  for (const name of names) registry.register({ definition: { name, description: 'description '.repeat(750), inputSchema: { type: 'object' } },
+    manifest, decodeInput: value => value, execute: () => ({}), mcpHook: { server: 'batch', tool: name, call: async () => ({}) } });
+  request.tools = registry.definitions();
+  const loop = new RuntimeToolLoop({ registry, eventLog: new InMemoryRuntimeEventLog(), identity: { requestId: 'r', sessionId: 's', turnId: 't' } });
+  const call = { protocol: 'bush.tool_call.v1', id: 'batch-load', name: 'mcp_search', argumentsText: JSON.stringify({ action: 'load', names }) };
+  const result = await loop.execute([call], { round: 1, assistantMessageId: 'a', request, contextMessages: [] });
+  const view = JSON.parse(result.messages[0].content);
+  assert.equal(view.archived, undefined); assert.ok(result.messages[0].content.length <= 16000);
+  assert.equal(view.matches.length, 1); assert.deepEqual(view.deferred, names.slice(1));
+  synchronizeMcpDiscovery(registry, request, [{ role: 'assistant', content: '', toolCalls: [call] }, ...result.messages]);
+  for (const name of names) assert.equal(mcpToolWasDiscovered(registry, request, name), name === names[0]);
 });
 
 test('a discovery receipt requires an explicit current action', () => {
