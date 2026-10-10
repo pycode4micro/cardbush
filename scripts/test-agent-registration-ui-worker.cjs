@@ -35,16 +35,22 @@ app.whenReady().then(async () => {
     await click('.agent-definition-inspector details summary');
     assert.match(await read('document.querySelector(".agent-definition-inspector").innerText'), /PRIVATE_ROLE_PROMPT/);
     await click('.work-summary-team-registrations button');
-    await until('document.querySelectorAll(".agent-definition-nodes article").length===3');
+    await until('document.querySelectorAll(".agent-definition-nodes .md-article-section").length===3');
     assert.equal(await read('opened.entity'), 'team');
-    assert.match(await read('document.querySelector(".agent-definition-nodes").innerText'), /等待 · step-0, step-1/);
+    assert.equal(await read('document.querySelector(".md-presentation-body").dataset.mode'),'document');
+    assert.deepEqual(await read('[...document.querySelectorAll("[data-document-section=step-2] .md-section-execution button")].map(button=>button.textContent)'),['step-0','step-1']);
+    assert.equal(await read('document.querySelectorAll(".md-section-heading button,.md-section-actions button,.md-node-editor").length'),0,'Team details present a read-only article');
     for (const theme of ['dark', 'light']) {
       await read(`document.querySelector('.fixture-app').className='app theme-${theme} fixture-app'`); await frame();
       await new Promise(resolve => setTimeout(resolve, 350));
       assert.equal(await read('document.documentElement.scrollWidth<=innerWidth'), true);
       writeFileSync(resolve(`tmp/agent-registration-${theme}.png`), (await win.webContents.capturePage()).toPNG());
     }
-    await click('.agent-definition-nodes article button');
+    win.setSize(540,1000); await frame();
+    assert.equal(await read('document.documentElement.scrollWidth<=innerWidth'),true,'Team article fits a narrow inspector');
+    assert.equal(await read('getComputedStyle(document.querySelector(".md-node-list")).display'),'none');
+    await click('.agent-definition-nodes > details summary');
+    await click('.agent-definition-nodes > details button');
     await until('document.querySelector(".agent-definition-inspector dd")?.textContent === "employee-0"');
     assert.equal(await read('disposals'), 0, 'definition inspectors borrow the current host runtime');
     await read('setMode("mixed")');

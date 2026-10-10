@@ -12,9 +12,7 @@
 .agent-definition-inspector button { display: inline-flex; align-items: center; gap: 8px; padding: 7px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; }
 .agent-definition-inspector button:hover { background: var(--surface-hover); }
 .agent-definition-inspector button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.agent-definition-inspector h3, .agent-definition-inspector h4 { font-size: 13px; }
-.agent-definition-nodes article { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
-.agent-definition-nodes article > button { margin: 8px 0; max-width: 100%; }
-.agent-definition-nodes article > button > svg { flex-shrink: 0; }
-.team-inspector-graph { height: 320px; min-height: 320px; flex: none; }
-.team-inspector-graph .md-graph { min-height: 320px; flex: 1; }
+.agent-definition-inspector > h3, .agent-definition-inspector > h4, .agent-definition-nodes > h3 { font-size: 13px; }
+.team-inspector-document { display: flex; min-height: 460px; height: min(76vh, 850px); margin: 14px 0; }
+.agent-definition-inspector .md-section-heading { border: 0; padding-bottom: 0; }
+.agent-definition-inspector .md-prose p { color: var(--text); }

@@ -57,7 +57,10 @@ export function parseMarkdownGraph(source: string): MdDocument {
         if (typeof current.attributes.markdown !== 'string') throw Error(`Invalid literal Markdown: ${id}`);
         literal = current.attributes.markdown; delete current.attributes.markdown;
       }
-      if ('links' in current.attributes && (!Array.isArray(current.attributes.links) || current.attributes.links.length > 128 || current.attributes.links.some(link => typeof link !== 'string' || !identifier.test(link)))) throw Error(`Invalid node links: ${id}`);
+      for (const field of ['links', 'depends_on']) {
+        const links = current.attributes[field];
+        if (field in current.attributes && (!Array.isArray(links) || links.length > 128 || links.some(link => typeof link !== 'string' || !identifier.test(link)))) throw Error(`Invalid node ${field}: ${id}`);
+      }
       document.nodes.push(current); index = end;
       if (document.nodes.length > 128) throw Error('A document supports at most 128 nodes.');
       continue;
@@ -119,6 +122,15 @@ export function mapWikiLinks(body: string, transform: (id: string, label: string
 export function nodeLinks(node: MdNode): string[] {
   const links = new Set<string>(Array.isArray(node.attributes.links) ? node.attributes.links as string[] : []); mapWikiLinks(node.body, (id, _label, original) => { links.add(id); return original; }); return [...links];
 }
+/** References describe the document; only explicit dependencies schedule Team tasks. */
+export function nodeDependencies(node: MdNode): string[] {
+  return Array.isArray(node.attributes.depends_on) ? node.attributes.depends_on as string[] : [];
+}
+export function graphLinks(node: MdNode): string[] { return [...new Set([...nodeLinks(node), ...nodeDependencies(node)])]; }
+export function setNodeDependency(node: MdNode, target: string, enabled: boolean): MdNode {
+  const dependencies = nodeDependencies(node);
+  return { ...node, attributes: { ...node.attributes, depends_on: enabled ? [...new Set([...dependencies, target])] : dependencies.filter(id => id !== target) } };
+}
 export function setNodeLink(node: MdNode, target: string, enabled: boolean): MdNode {
   if (enabled) return nodeLinks(node).includes(target) ? node : needsLiteralMarkdown(node.body)
     ? { ...node, attributes: { ...node.attributes, links: [...(Array.isArray(node.attributes.links) ? node.attributes.links : []), target] } }
@@ -129,12 +141,17 @@ export function setNodeLink(node: MdNode, target: string, enabled: boolean): MdN
 }
 export function renameNode(document: MdDocument, before: string, after: string): MdDocument {
   if (!identifier.test(after) || document.nodes.some(node => node.id === after && node.id !== before)) throw Error('Node IDs must be unique and contain only letters, numbers, spaces, dots, underscores or hyphens.');
-  return { ...document, nodes: document.nodes.map(node => ({ ...node, id: node.id === before ? after : node.id,
-    attributes: { ...node.attributes, ...(Array.isArray(node.attributes.links) ? { links: node.attributes.links.map(id => id === before ? after : id) } : {}) },
+  return { ...document, introduction: mapWikiLinks(document.introduction, (id, label, original) => id === before ? `[[#${after}${label === id ? '' : `|${label}`}]]` : original), nodes: document.nodes.map(node => ({ ...node, id: node.id === before ? after : node.id,
+    attributes: { ...node.attributes, ...(Array.isArray(node.attributes.links) ? { links: node.attributes.links.map(id => id === before ? after : id) } : {}),
+      ...(Array.isArray(node.attributes.depends_on) ? { depends_on: node.attributes.depends_on.map(id => id === before ? after : id) } : {}) },
     body: mapWikiLinks(node.body, (id, label, original) => id === before ? `[[#${after}${label === id ? '' : `|${label}`}]]` : original) })) };
 }
 export function removeNode(document: MdDocument, id: string): MdDocument {
-  return { ...document, nodes: document.nodes.filter(node => node.id !== id).map(node => setNodeLink(node, id, false)) };
+  return { ...document, introduction: mapWikiLinks(document.introduction, (target, _label, original) => target === id ? '' : original),
+    nodes: document.nodes.filter(node => node.id !== id).map(node => {
+      const unlinked = setNodeLink(node, id, false);
+      return 'depends_on' in node.attributes ? setNodeDependency(unlinked, id, false) : unlinked;
+    }) };
 }
 export function nodeName(node: MdNode) { return typeof node.attributes.name === 'string' && node.attributes.name.trim() ? node.attributes.name : node.id; }
 export function nodePosition(node: MdNode): MdPosition | undefined {
@@ -155,7 +172,7 @@ export function layoutNodes(nodes: MdNode[], flow = false): Map<string, MdPositi
       if (levels.has(node.id)) return levels.get(node.id)!;
       if (visiting.has(node.id)) return 0;
       visiting.add(node.id);
-      const dependencies = nodeLinks(node).map(id => nodes.find(item => item.id === id)).filter((item): item is MdNode => Boolean(item));
+      const dependencies = nodeDependencies(node).map(id => nodes.find(item => item.id === id)).filter((item): item is MdNode => Boolean(item));
       const level = dependencies.length ? Math.max(...dependencies.map(depth)) + 1 : 0;
       visiting.delete(node.id); levels.set(node.id, level); return level;
     };

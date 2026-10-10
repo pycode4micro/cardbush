@@ -68,12 +68,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('teamCalls.filter(call=>call.payload.action==="get").length'), 0, 'selection does not eagerly read definitions');
   await window.webContents.insertText('为新品制作文案');
   await run('document.querySelector(".composer-team-token").click()');
-  await until('document.querySelectorAll("#team-detail .agent-definition-nodes article").length===2', 'composer token opens dedicated Team inspector');
+  await until('document.querySelectorAll("#team-detail .md-article-section").length===2', 'composer token opens dedicated Team document inspector');
   assert.equal(await run('teamTab.kind'), 'agent-definition');
   assert.equal(await run('teamTab.detail.entity'), 'team');
   assert.deepEqual(await run('teamCalls.filter(call=>call.payload.action==="get").map(call=>call.payload)'), [{action:'get',team_id:'team-0'}]);
   assert.match(await run('document.querySelector("#team-detail").innerText'), /Team · 注册流程/);
-  assert.doesNotMatch(await run('document.querySelector("#team-detail").innerText'), /PRIVATE_WORKFLOW_INSTRUCTION/);
+  assert.match(await run('document.querySelector("#team-detail .md-article").innerText'), /PRIVATE_WORKFLOW_INSTRUCTION/,'explicit inspection presents task content as part of the document');
+  assert.equal(await run('document.querySelector("#team-detail .md-presentation-body").dataset.mode'),'document');
   // Keyboard activation of the token views the workflow rather than sending it.
   await run('document.querySelector(".composer-team-token").focus()'); await key('Enter');
   assert.equal(await run('teamSends.length'), 0);
@@ -82,7 +83,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelectorAll(".message-row.user .context-reference-token").length'), 1, 'metadata badge does not duplicate the inline Team');
   await run('document.querySelector(".message-row.user .context-reference-token").click()');
   assert.equal(await run('teamOpens.at(-1).entityId'), 'team-0');
-  await run('document.querySelector("#team-detail .agent-definition-nodes button").click()');
+  await run('document.querySelector("#team-detail .agent-definition-nodes > details summary").click();document.querySelector("#team-detail .agent-definition-nodes > details button").click()');
   await until(`!!document.querySelector('#team-detail [aria-label="员工详情"]')`, 'workflow members open independent employee details');
   assert.equal(await run('teamOpens.at(-1).entity'), 'employee');
   await run('document.querySelector(".message-row.user .context-reference-token").click()');

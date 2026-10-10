@@ -43,6 +43,21 @@ function oldestMtime(files) {
   );
 }
 
+function packageBuildOutputs(packageRoot) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+  const targets = new Set();
+  const collect = (value) => {
+    if (typeof value === 'string' && /\.(?:[cm]?js)$/.test(value)) {
+      targets.add(path.join(packageRoot, value));
+    } else if (value && typeof value === 'object') {
+      Object.values(value).forEach(collect);
+    }
+  };
+  collect(manifest.exports);
+  collect(manifest.main);
+  return targets.size > 0 ? [...targets] : [path.join(packageRoot, 'dist', 'index.js')];
+}
+
 export function guiBuildState(projectRoot = path.resolve(import.meta.dirname, '..'), platform = process.platform) {
   const sourceExtension = /\.(?:ts|tsx|mts|mjs|js|jsx|css|scss|svg|png|ico|html)$/i;
   const sources = [
@@ -86,8 +101,8 @@ export function guiBuildState(projectRoot = path.resolve(import.meta.dirname, '.
     path.join(projectRoot, 'dist', 'index.html'),
     path.join(projectRoot, 'dist-electron', 'main.js'),
     path.join(projectRoot, 'dist-electron', 'preload.js'),
-    ...packageDirectories.map((entry) =>
-      path.join(packagesRoot, entry.name, 'dist', 'index.js')
+    ...packageDirectories.flatMap((entry) =>
+      packageBuildOutputs(path.join(packagesRoot, entry.name))
     ),
   ];
   const voiceSources = ['native/voice/CardBushVoiceHost.cs', 'native/voice/WindowsVoices.cs', 'scripts/build-voice-native-host.mjs'].map(file => path.join(projectRoot, file));

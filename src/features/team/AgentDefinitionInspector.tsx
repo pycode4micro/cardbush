@@ -8,8 +8,7 @@ import type { AppLanguage } from '../../types';
 import { ConversationHostContext } from '../conversationHost';
 import { openWorkSummaryInspector, type WorkSummaryInspectorDetail } from '../subagents/subagentObservabilityEvents';
 import { EmployeeIcon } from './employeePresentation';
-import { MdGraphCanvas } from '../mdPresentation/MdGraphCanvas';
-import { parseMarkdownGraph } from '../mdPresentation/markdownGraph';
+import { MdPresentation } from '../mdPresentation/MdPresentation';
 import { teamToMarkdown } from './teamMarkdown';
 import '../mdPresentation/md-presentation.css';
 import './agent-definition-inspector.css';
@@ -24,7 +23,6 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
   const host = useContext(ConversationHostContext);
   const [loaded, setLoaded] = useState<{ key: string; value?: Definition; error?: string }>();
   const [revision, refresh] = useState(0);
-  const [selectedNode, setSelectedNode] = useState('');
   const key = `${host?.id ?? 'local'}:${detail.entity}:${detail.entityId}:${revision}`;
   const current = loaded?.key === key ? loaded : undefined;
   const zh = language === 'zh', t = (cn: string, en: string) => zh ? cn : en;
@@ -69,17 +67,13 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
         </details>
         {!!employee.settings && <details><summary>{t('执行配置', 'Execution settings')}</summary><pre>{JSON.stringify(employee.settings, null, 2)}</pre></details>}
       </>}
-      {team && <div className="agent-definition-nodes"><h3>{t('成员与流程', 'Employees and workflow')}</h3>
-        <div className="md-presentation team-inspector-graph"><MdGraphCanvas document={parseMarkdownGraph(teamToMarkdown(team))} language={language} flow readOnly
-          selectedId={selectedNode} onSelect={setSelectedNode} onMove={() => {}} onConnect={() => {}} onLayout={() => {}}
-          icon={() => <EmployeeIcon size={18}/>} subtitle={node => String(node.attributes.agent_id || '')}/></div>
-        {team.nodes.filter(node => !selectedNode || !team.nodes.some(item => item.id === selectedNode) || node.id === selectedNode).map(node => <article key={node.id}>
-        <strong>{node.name || node.id}</strong>
-        <button type="button" onClick={() => (host?.openWorkSummary ?? openWorkSummaryInspector)({ kind: 'agent-definition', sessionId: detail.sessionId,
-          entity: 'employee', entityId: node.agent_id, title: node.agent_id })}><EmployeeIcon size={17} /><span>{node.agent_id}</span><ChevronRight size={14} /></button>
-        <small>{node.depends_on.length ? `${t('等待', 'After')} · ${node.depends_on.join(', ')}` : t('可并行开始', 'Can start independently')}</small>
-        <details><summary>{t('任务指令', 'Assignment')}</summary><pre>{node.prompt}</pre></details>
-      </article>)}</div>}
+      {team && <div className="agent-definition-nodes"><h3>{t('协作文档', 'Collaboration document')}</h3>
+        <div className="team-inspector-document"><MdPresentation source={teamToMarkdown(team)} onChange={() => {}} language={language} flow readOnly
+          icon={() => <EmployeeIcon size={16}/>} subtitle={node => String(node.attributes.agent_id || '')}/></div>
+        <details><summary>{t('员工详情', 'Agent details')}</summary>{[...new Set(team.nodes.map(node => node.agent_id))].map(id => <button type="button" key={id}
+          onClick={() => (host?.openWorkSummary ?? openWorkSummaryInspector)({ kind: 'agent-definition', sessionId: detail.sessionId, entity: 'employee', entityId: id, title: id })}>
+          <EmployeeIcon size={17}/><span>{id}</span><ChevronRight size={14}/></button>)}</details>
+      </div>}
     </>}
   </section>;
 }

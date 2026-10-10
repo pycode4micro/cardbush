@@ -33,7 +33,7 @@ export function parsePromptReference(href: string): PromptReference | null {
     }
     if (url.hostname === 'application' && valid(value('id')) && value('id').length <= 400 && title.length <= 200) {
       const applicationKind = value('applicationKind'), target = value('target'), id = value('id');
-      if (applicationKind === 'builtin' && ['plugins', 'automations', 'settings', 'components'].includes(target) && id === `builtin:${target}`)
+      if (applicationKind === 'builtin' && ['plugins', 'automations', 'settings', 'components', 'team', 'md-presentation'].includes(target) && id === `builtin:${target}`)
         return { kind: 'application', id, title, applicationKind, target };
       if (applicationKind === 'plugin' && valid(target) && valid(value('componentId')) && id === `plugin:${encodeURIComponent(target)}:${encodeURIComponent(value('componentId'))}`)
         return { kind: 'application', id, title, applicationKind, target, componentId: value('componentId') };

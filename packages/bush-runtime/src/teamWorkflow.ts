@@ -12,6 +12,9 @@ import { teamResultNodeIds, teamRunResult } from './teamResults.js';
 
 const definitionSchema = { type: 'object', additionalProperties: false, required: ['id', 'name', 'nodes'], properties: {
   id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, max_parallel: { type: 'integer', minimum: 1, maximum: 8 },
+  presentation: { type: 'object', additionalProperties: false, required: ['markdown'], properties: {
+    markdown: { type: 'string', maxLength: 2 * 1024 * 1024, description: 'Optional bush-it Markdown document: rationale, headings, notes and visual layout. Presentation only; execution uses nodes and depends_on.' },
+  } },
   nodes: { type: 'array', minItems: 1, maxItems: 64, items: { type: 'object', additionalProperties: false, required: ['id', 'agent_id', 'prompt'], properties: {
     id: { type: 'string' }, agent_id: { type: 'string' }, prompt: { type: 'string' }, depends_on: { type: 'array', items: { type: 'string' } },
     name: { type: 'string', description: 'Optional node label for the graph.' },
@@ -65,6 +68,11 @@ export class TeamWorkflowManager {
     if (value.action === 'save') {
       const team = teamWorkflowSchema.parse(value.definition);
       await this.resolveAgents(team);
+      // An execution-only edit must not erase the surrounding bush-it article.
+      if (!team.presentation) {
+        const presentation = (await this.definitions.get(team.id))?.definition.presentation;
+        if (presentation) team.presentation = presentation;
+      }
       return this.definitions.put(team, value.expected_revision!);
     }
     if (value.action === 'delete') { await this.definitions.remove(value.team_id!, value.expected_revision!); return { deleted: true }; }

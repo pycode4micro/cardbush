@@ -10,5 +10,5 @@ export const sectionLabels: Record<AppSection, { zh: string; en: string }> = {
   skills: { zh: '技能', en: 'Skills' },
   subagents: { zh: '子 Agent', en: 'Subagents' },
   team: { zh: 'Team', en: 'Team' },
-  'md-presentation': { zh: 'md演示', en: 'md presentation' },
+  'md-presentation': { zh: 'bush-it', en: 'bush-it' },
 };

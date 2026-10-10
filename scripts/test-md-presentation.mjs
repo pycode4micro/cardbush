@@ -14,7 +14,19 @@ function module(path, deps = {}) {
   return exports;
 }
 const graph = module('src/features/mdPresentation/markdownGraph.ts');
-const { teamToMarkdown, teamFromMarkdown } = module('src/features/team/teamMarkdown.ts', { '@cardbush/bush-protocol': protocol, '../mdPresentation/markdownGraph': graph });
+const page = module('src/features/mdPresentation/pageDocument.ts');
+test('page title and body editing preserve metadata, heading content and Team sections', () => {
+  const document = { attributes: { name: '旧标题', author: '作者', team: { id: 'one' } }, introduction: '# 旧标题\n\n## 理由\n\n解释。', nodes: [{ id: 'task', attributes: { agent_id: 'worker' }, body: '任务' }] };
+  const renamed = page.changePageTitle(document, '新标题');
+  assert.equal(renamed.introduction, '# 新标题\n\n## 理由\n\n解释。');
+  assert.deepEqual(renamed.nodes, document.nodes); assert.equal(renamed.attributes.author, '作者');
+  const edited = page.changePageBody(renamed, '直接写正文。');
+  assert.equal(edited.introduction, '# 新标题\n\n直接写正文。');
+  assert.deepEqual(page.pageTitle(edited), { title: '新标题', body: '直接写正文。' });
+  assert.equal(page.changePageTitle(edited, '').introduction, '直接写正文。');
+});
+const { teamToMarkdown, teamFromMarkdown, enableDocumentTeam } = module('src/features/team/teamMarkdown.ts', { '@cardbush/bush-protocol': protocol, '../mdPresentation/markdownGraph': graph });
+const execution = ({ presentation, ...team }) => team;
 const { MarkdownFiles } = module('electron/mdPresentationFiles.ts');
 const workflow = protocol.teamWorkflowSchema.parse({ id: 'order', name: '订单核验', description: '先核验，再汇总。', max_parallel: 2, nodes: [
   { id: 'stock', name: '库存', agent_id: 'warehouse', prompt: '## 检查\n请核对库存。\n\n````md\n## example\n```md-node\nnot a node\n```\n````', position: { x: 140, y: 200 } },
@@ -23,33 +35,34 @@ const workflow = protocol.teamWorkflowSchema.parse({ id: 'order', name: '订单�
 
 test('Team round trips Markdown, positions, assignments and DAG without a second execution format', () => {
   const text = teamToMarkdown(workflow);
-  assert.ok(text.includes('[[#stock]]'));
-  assert.deepEqual(teamFromMarkdown(text), workflow);
+  assert.ok(text.includes('depends_on:'));
+  assert.ok(text.includes('# 订单核验'));
+  assert.deepEqual(execution(teamFromMarkdown(text)), workflow);
   const document = graph.parseMarkdownGraph(text);
   assert.equal(document.nodes.length, 2);
   assert.deepEqual(graph.nodeLinks(document.nodes[0]), []);
-  assert.deepEqual(graph.nodeLinks(document.nodes[1]), ['stock']);
+  assert.deepEqual(graph.nodeDependencies(document.nodes[1]), ['stock']);
 });
 test('graph edits and Markdown edits share links; rename updates aliases but not code examples', () => {
   let document = graph.parseMarkdownGraph(teamToMarkdown(workflow));
   document.nodes[1].body += '\n文字 [[#stock|库存检查]]\n`[[#stock]]`\n\\[[#stock]]\n~~~md\n[[#absent]]\n~~~';
   document = graph.renameNode(document, 'stock', 'inventory');
-  assert.deepEqual(graph.nodeLinks(document.nodes[1]), ['inventory']);
+  assert.deepEqual(graph.nodeDependencies(document.nodes[1]), ['inventory']);
   assert.ok(document.nodes[1].body.includes('[[#inventory|库存检查]]'));
   assert.ok(document.nodes[1].body.includes('`[[#stock]]`'));
   assert.ok(document.nodes[1].body.includes('\\[[#stock]]'));
   document = graph.removeNode(document, 'inventory');
-  assert.deepEqual(graph.nodeLinks(document.nodes[0]), []);
+  assert.deepEqual(graph.nodeDependencies(document.nodes[0]), []);
   assert.throws(() => graph.renameNode(document, 'check', '../outside'));
 });
 test('Team validates cycles, missing nodes, invalid employees and visual metadata at save boundary', () => {
   const document = graph.parseMarkdownGraph(teamToMarkdown(workflow));
-  document.nodes[0] = graph.setNodeLink(document.nodes[0], 'check', true);
+  document.nodes[0] = graph.setNodeDependency(document.nodes[0], 'check', true);
   assert.throws(() => teamFromMarkdown(graph.writeMarkdownGraph(document)), /acyclic/);
-  document.nodes[0] = graph.setNodeLink(document.nodes[0], 'check', false);
-  document.nodes[1] = graph.setNodeLink(document.nodes[1], 'missing', true);
+  document.nodes[0] = graph.setNodeDependency(document.nodes[0], 'check', false);
+  document.nodes[1] = graph.setNodeDependency(document.nodes[1], 'missing', true);
   assert.throws(() => teamFromMarkdown(graph.writeMarkdownGraph(document)), /acyclic/);
-  document.nodes[1] = graph.setNodeLink(document.nodes[1], 'missing', false);
+  document.nodes[1] = graph.setNodeDependency(document.nodes[1], 'missing', false);
   document.nodes[1].attributes.agent_id = '';
   assert.throws(() => teamFromMarkdown(graph.writeMarkdownGraph(document)));
   document.nodes[1].attributes.agent_id = 'reviewer'; document.nodes[1].attributes.position = { x: Infinity, y: 0 };
@@ -69,14 +82,76 @@ test('layout is stable and handles cyclic notes independently of Team DAG valida
   assert.deepEqual(graph.layoutNodes(nodes, true), graph.layoutNodes(nodes, true));
   assert.equal(graph.layoutNodes(nodes).size, 2);
 });
+
+test('bush-it documents retain rationale, ordinary notes and metadata across Team conversion', () => {
+  const document = graph.parseMarkdownGraph(teamToMarkdown(workflow));
+  document.introduction = '# 订单核验\n\n## 为什么这样做\n\n' + '完整的背景与依据。'.repeat(800);
+  document.attributes.author = 'Document author';
+  document.nodes.unshift({ id: 'rationale', attributes: { name: '思考与备忘', tags: ['notes'] }, body: '这不是一项任务。\n\n[[#check]]' });
+  document.nodes[1].body += '\n\n参考 [[#rationale]] 和 [[#check]]。';
+  const source = graph.writeMarkdownGraph(document), team = teamFromMarkdown(source);
+  assert.equal(team.nodes.length, 2, 'ordinary sections are not executable nodes');
+  assert.deepEqual(team.nodes[0].depends_on, [], 'citations never schedule a task or create a cycle');
+  assert.equal(team.presentation.markdown, source);
+  const restored = graph.parseMarkdownGraph(teamToMarkdown(team));
+  assert.equal(restored.introduction, document.introduction);
+  assert.equal(restored.attributes.author, 'Document author');
+  assert.deepEqual(restored.nodes[0], document.nodes[0]);
+  assert.deepEqual(execution(teamFromMarkdown(teamToMarkdown(team))), execution(team));
+});
+
+test('runtime edits update execution fields while retaining the surrounding bush-it document', () => {
+  const document = graph.parseMarkdownGraph(teamToMarkdown(workflow));
+  document.introduction = '# 协作说明\n\n保留背景、理由和结论。';
+  document.nodes.push({ id: 'notes', attributes: { name: '备忘录' }, body: '保留这段普通笔记。' });
+  const team = teamFromMarkdown(graph.writeMarkdownGraph(document));
+  team.nodes[0].prompt = 'Updated task instructions';
+  team.nodes[1].depends_on = [];
+  const restored = graph.parseMarkdownGraph(teamToMarkdown(team));
+  assert.equal(restored.introduction, document.introduction);
+  assert.equal(restored.nodes[0].body, 'Updated task instructions');
+  assert.deepEqual(graph.nodeDependencies(restored.nodes[1]), []);
+  assert.deepEqual(restored.nodes[2], document.nodes[2]);
+});
+
+test('adding Team configuration preserves a plain article and requires explicit task sections', () => {
+  const source = '# 一份普通文档\n\n## 为什么\n\n只是写作，不要求节点。\n';
+  const enabled = enableDocumentTeam(source), document = graph.parseMarkdownGraph(enabled);
+  assert.equal(document.introduction, source.trim());
+  assert.equal(document.attributes.name, '一份普通文档');
+  assert.equal(document.nodes.length, 0);
+  assert.throws(() => teamFromMarkdown(enabled), /至少/);
+  assert.equal(enableDocumentTeam(enabled), enabled);
+});
+
+test('rename and removal update article references and explicit dependencies independently', () => {
+  const document = graph.parseMarkdownGraph(teamToMarkdown(workflow));
+  document.introduction = '任务见 [[#stock|库存]]。';
+  const renamed = graph.renameNode(document, 'stock', 'inventory');
+  assert.equal(renamed.introduction, '任务见 [[#inventory|库存]]。');
+  assert.deepEqual(graph.nodeDependencies(renamed.nodes[1]), ['inventory']);
+  const removed = graph.removeNode(renamed, 'inventory');
+  assert.deepEqual(graph.nodeDependencies(removed.nodes[0]), []);
+  assert.equal(removed.introduction, '任务见 。');
+});
+
+test('legacy Team files remain readable and malformed presentation source remains available for repair', () => {
+  const legacy = '---\nid: legacy\nname: Old Team\nmax_parallel: 2\n---\n\nBackground\n\n## first\n```md-node\nagent_id: warehouse\n```\n\nFirst task\n\n## second\n```md-node\nagent_id: reviewer\n```\n\nSecond task\n\n[[#first]]\n';
+  const team = teamFromMarkdown(legacy);
+  assert.deepEqual(team.nodes[1].depends_on, ['first']);
+  assert.equal(team.nodes[1].prompt, 'Second task');
+  assert.deepEqual(execution(teamFromMarkdown(teamToMarkdown(team))), execution(team));
+  team.presentation.markdown = '---\nname: unfinished';
+  assert.equal(teamToMarkdown(team), team.presentation.markdown);
+});
 test('unfinished code fences and literal md-node examples never hide or drop subsequent workflow nodes', () => {
   for (const prompt of ['任务\n```js\nconst unfinished = true;', '## sample\n```md-node\nname: Example\n```\n正文']) {
     const definition = structuredClone(workflow); definition.description = prompt; definition.nodes[0].prompt = prompt; definition.nodes[1].prompt = prompt;
     const source = teamToMarkdown(definition);
-    assert.deepEqual(teamFromMarkdown(source), definition);
+    assert.deepEqual(execution(teamFromMarkdown(source)), definition);
     const document = graph.parseMarkdownGraph(source);
     assert.equal(document.nodes.length, 2);
-    assert.deepEqual(graph.nodeLinks(document.nodes[1]), ['stock']);
+    assert.deepEqual(graph.nodeDependencies(document.nodes[1]), ['stock']);
     const linked = graph.setNodeLink({ ...document.nodes[0], body: prompt }, 'check', true);
     assert.deepEqual(graph.nodeLinks(linked), ['check']);
     assert.deepEqual(graph.nodeLinks(graph.setNodeLink(linked, 'check', false)), []);

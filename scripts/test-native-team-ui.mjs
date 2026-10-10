@@ -14,9 +14,12 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { TeamWorkspace } from '${local('src/features/team/TeamWorkspace.tsx')}';
 import { MdPresentationApp } from '${local('src/features/mdPresentation/MdPresentationApp.tsx')}';
+import { BushItSidebar } from '${local('src/features/mdPresentation/BushItSidebar.tsx')}';
+import * as pages from '${local('src/features/mdPresentation/bushItPageStore.ts')}';
 import { useTeamWorkspace } from '${local('src/features/team/teamWorkspaceStore.ts')}';
 import '${local('src/styles/theme.css')}';
-window.records = { agents: [], teams: [], runs: [] }; window.calls = [];
+import '${local('src/styles/app.css')}';
+window.pages=pages; window.records = { agents: [], teams: [], runs: [] }; window.calls = [];
 window.fileResult=null; window.fileCalls=[]; window.cardbushDesktop={markdownFile:async input=>{fileCalls.push(input);if(input.action==='save')return {path:'D:/workflow.md',text:input.text,revision:'file-v1'};return fileResult;}};
 window.command = async ({kind,payload:input}) => {
   window.calls.push({kind, input:structuredClone(input)});
@@ -33,7 +36,10 @@ window.command = async ({kind,payload:input}) => {
   if(input.action==='delete') { const index=list.findIndex(record=>record.definition.id===(input.agent_id||input.team_id)); list.splice(index,1); return {deleted:true}; }
   throw Error('Unexpected command: '+JSON.stringify(input));
 };
-function Fixture(){ window.teamState=useTeamWorkspace(); const [mode,setMode]=React.useState('team'); window.setApp= setMode; return <div className="app theme-dark" style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden'}}>{mode==='team'?<TeamWorkspace language="zh"/>:<MdPresentationApp language="zh"/>}</div>; }
+function Fixture(){ window.teamState=useTeamWorkspace(); window.pageState=pages.useBushItPages(); const [mode,setMode]=React.useState('team'); window.setApp=setMode;
+  React.useEffect(()=>{const listener=event=>setMode(event.detail.id==='builtin:md-presentation'?'md':'team');window.addEventListener('cardbush-open-application',listener);return()=>window.removeEventListener('cardbush-open-application',listener);},[]);
+  const practice=team=>window.practiced=structuredClone(team);
+  return <div className="app theme-dark" style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}>{mode==='team'?<TeamWorkspace language="zh"/>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice}/></>}</div>; }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {

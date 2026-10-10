@@ -35,8 +35,8 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
     { id: 'builtin:automations', kind: 'builtin', target: 'automations', title: zh ? '定时与自动化' : 'Automations', description: zh ? '日历、定时任务与执行结果' : 'Calendar, scheduled tasks and results', shortcut: 'openAutomations' },
     { id: 'builtin:settings', kind: 'builtin', target: 'settings', title: zh ? '设置' : 'Settings', description: zh ? '模型、连接、外观和偏好' : 'Models, connections, appearance and preferences', shortcut: 'openSettings' },
     { id: 'builtin:components', kind: 'builtin', target: 'components', title: zh ? '组件' : 'Components', description: zh ? '排列内置视图与自定义组件，调整大小和位置' : 'Arrange and resize built-in views and custom components' },
-    { id: 'builtin:team', kind: 'builtin', target: 'team', title: 'Team', description: zh ? '注册员工，以节点链接编排团队流程' : 'Reusable agents and linked workflow nodes' },
-    { id: 'builtin:md-presentation', kind: 'builtin', target: 'md-presentation', title: zh ? 'md演示' : 'md presentation', description: zh ? '编辑 Markdown，用图谱连接节点与想法' : 'Edit Markdown and connect ideas in a graph' },
+    { id: 'builtin:team', kind: 'builtin', target: 'team', title: 'Team', description: zh ? '在文档中组织员工、配置协作并实践' : 'Document, configure and practice agent collaboration' },
+    { id: 'builtin:md-presentation', kind: 'builtin', target: 'md-presentation', title: 'bush-it', description: zh ? '编写 Markdown 文档，用目录和关系图整理想法' : 'Write Markdown documents and organize ideas with outlines and graphs' },
     ...plugins.filter(plugin => plugin.installed && plugin.enabled && !plugin.removalPending).flatMap(plugin => plugin.components.filter(component => component.kind === 'app' && (
       component.app?.kind === 'url' ? Boolean(applicationLink(component.app.url)) : component.app?.kind === 'renderer' && component.app.extensionId === plugin.id
     )).map(component => ({

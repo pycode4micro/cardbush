@@ -57,18 +57,20 @@ export function FeaturePanel({
   const label = section === 'team' ? teamWorkspace.title || sectionLabels[section][language] : sectionLabels[section][language];
   return (
     <div className="feature-panel">
-      <TopBar
+      {section !== 'md-presentation' && <TopBar
         title={label}
         language={language}
         inspectorOpen={inspectorOpen}
         onToggleInspector={onToggleInspector}
-      />
+      />}
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
         <LazyFeatureContentPanel
           language={language}
           backendCapabilities={backendCapabilities}
           onOpenPluginPrompt={onOpenPluginPrompt}
           section={section}
+          inspectorOpen={inspectorOpen}
+          onToggleInspector={onToggleInspector}
           activeProjectDir={activeProjectDir}
           workflowValidationAvailable={workflowValidationAvailable}
           skills={skills}

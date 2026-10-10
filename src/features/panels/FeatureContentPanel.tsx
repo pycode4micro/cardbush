@@ -35,6 +35,8 @@ export function FeatureContentPanel({
   backendCapabilities,
   onOpenPluginPrompt,
   section,
+  inspectorOpen,
+  onToggleInspector,
   skills,
   disabledSkillNames,
   onToggleSkill,
@@ -47,6 +49,8 @@ export function FeatureContentPanel({
   backendCapabilities: BackendCapabilities;
   onOpenPluginPrompt: (prompt: string) => void;
   section: AppSection;
+  inspectorOpen?: boolean;
+  onToggleInspector?: () => void;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
   skills: SkillSummary[];
@@ -58,7 +62,10 @@ export function FeatureContentPanel({
   onOpenConversation: (conversationId: string) => void;
 }) {
   if (section === 'components') return <ComponentsApp language={language}/>;
-  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><MdPresentationApp language={language}/></Suspense>;
+  const practiceTeam = (team: { id: string; name: string }) => onOpenPluginPrompt(language === 'zh'
+    ? `请使用已保存的 Team「${team.name}」（ID: ${team.id}）实践文档中的任务。先确认本次目标和必要输入，再调用 team 运行，并根据最终结果整理结论。`
+    : `Use the saved Team "${team.name}" (ID: ${team.id}) to practice the tasks in the document. Confirm this run's goal and required input, then run team and summarize the final results.`);
+  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><MdPresentationApp language={language} onPractice={practiceTeam} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}/></Suspense>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
     onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;
@@ -81,7 +88,7 @@ export function FeatureContentPanel({
   if (section === 'team') {
     return (
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <TeamWorkspace language={language} />
+        <TeamWorkspace language={language} onPractice={practiceTeam}/>
       </Suspense>
     );
   }

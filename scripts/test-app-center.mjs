@@ -43,6 +43,7 @@ test('only explicit launchable pages enter the app center; connectors, tools and
     { id: 'invalid', installed: true, enabled: true, components: [{ ...canvas, app: { kind: 'url', url: 'javascript:alert(1)' } }] }];
   const entries = applicationCatalog('zh', plugins, normalizeAppCenterPreferences(null));
   assert.equal(entries.length, 7); assert.deepEqual(entries.slice(0, 6).map(app => app.id), ['builtin:plugins', 'builtin:automations', 'builtin:settings', 'builtin:components', 'builtin:team', 'builtin:md-presentation']);
+  assert.equal(entries[5].title, 'bush-it');
   const app = entries[6]; assert.equal(app.id, 'plugin:demo:canvas'); assert.equal(app.launch.url, canvas.app.url);
   assert.deepEqual(applicationReference(app), { kind: 'application', id: app.id, title: 'Canvas', applicationKind: 'plugin', target: 'demo', componentId: 'canvas' });
   assert.ok(entries.every(app => !('command' in app) && !('toolCallId' in app)));

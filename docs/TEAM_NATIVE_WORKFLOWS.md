@@ -64,7 +64,9 @@ Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执
 
 ## 存储和入口
 
-管理入口位于应用中心的 **Team**，不再放在 Beta 菜单。团队流程与内置 **md演示** 共用图谱渲染和 Markdown 编辑器，支持拖动节点、编辑依赖链接、导入/导出 `.md` 文件。聊天右侧详情使用同一图谱只读查看。格式和操作见 [md演示](MD_PRESENTATION.md)。
+管理入口位于应用中心的 **Team**。团队文档与内置 **bush-it** 共用文档展示和 Markdown 编辑器，默认展示完整文章，关系图仅作缩略概览或显式展开。支持导入/导出 `.md`，普通章节与执行任务可以混排，文档引用不自动成为执行依赖。聊天右侧详情也默认只读展示文档。格式和往返操作见 [bush-it](BUSH_IT.md)。
+
+可选 `presentation.markdown` 保存文章的背景、理由、标题和普通笔记；省略此字段的执行配置更新会保留原文章。展示文档时以实际 `nodes` 与 `depends_on` 为准更新配置。文章正文不会自动进入员工的任务上下文；只有明确配置的任务指令、本次输入与直接依赖结果参与执行。
 
 - `<runtime data root>/registered-agents`：带 revision 的员工定义。
 - `<runtime data root>/teams/definitions`：团队流程。

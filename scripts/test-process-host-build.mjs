@@ -186,3 +186,25 @@ test('independent plugins and ignored output from removed workspaces do not forc
   f.write('packages/active-plugin/package.json', '{"name":"active-plugin"}');
   assert.equal(guiBuildState(f.root, 'win32').current, false, 'current workspaces still require their outputs');
 });
+
+test('GUI checks declared ESM and CommonJS entry points without requiring a fictional index.js', t => {
+  const f = fixture(t);
+  f.ready(); f.build();
+  f.write('packages/active-plugin/package.json', JSON.stringify({
+    name: 'active-plugin', main: './dist-cjs/server.cjs',
+    exports: { './server': { types: './dist/server.d.ts', import: './dist/server.mjs', require: './dist-cjs/server.cjs' },
+      './sdk': './dist/sdk.mjs' },
+  }));
+  const outputs = ['dist/server.mjs', 'dist/sdk.mjs', 'dist-cjs/server.cjs'];
+  for (const name of outputs) {
+    const file = f.write(`packages/active-plugin/${name}`, 'built output');
+    const future = new Date(Date.now() + 60_000);
+    fs.utimesSync(file, future, future);
+  }
+  assert.equal(guiBuildState(f.root, 'win32').current, true);
+  assert.equal(guiBuildState(f.root, 'win32').missingOutput, undefined);
+  const missing = path.join(f.root, 'packages/active-plugin/dist/sdk.mjs');
+  fs.rmSync(missing);
+  assert.equal(guiBuildState(f.root, 'win32').current, false);
+  assert.equal(guiBuildState(f.root, 'win32').missingOutput, missing);
+});

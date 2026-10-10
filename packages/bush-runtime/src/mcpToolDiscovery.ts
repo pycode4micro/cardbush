@@ -1,4 +1,3 @@
-import { webToolAllowed } from './webToolPolicy.js';
 import { createHash } from 'node:crypto';
 import { withToolDisplayTitle } from './toolDisplay.js';
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
@@ -161,7 +160,6 @@ export function synchronizeMcpDiscovery(registry: ToolRegistry, request: ModelRe
 
 /** Add host-published optional MCP tools at a product turn's round boundary. */
 export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequest): void {
-  if (request.metadata.toolExecutionPolicy === 'web_restricted') return;
   // Only ordinary product conversations opt in. Child roles and scheduled
   // tasks retain their explicit, inherited tool scope.
   if (request.metadata.mcpCatalogUpdates !== 'additions' || !request.metadata.mcpToolDiscovery ||
@@ -180,9 +178,9 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   const saved = request.metadata.mcpModelToolSnapshot as { identity?: string; tools?: unknown[] } | undefined;
   if (saved?.identity === key(request) && Array.isArray(saved.tools)) {
     const parsed = toolDefinitionSchema.array().safeParse(saved.tools);
-    if (parsed.success) return parsed.data.filter(tool => request.metadata.toolExecutionPolicy !== 'web_restricted' || webToolAllowed(tool.name));
+    if (parsed.success) return parsed.data;
   }
-  const tools = request.tools.filter(tool => request.metadata.toolExecutionPolicy !== 'web_restricted' || webToolAllowed(tool.name)).filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
+  const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
     (!tool.name.startsWith('agent_memory_') || request.metadata.pluginAgentMemoryActive === true) &&
     (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.

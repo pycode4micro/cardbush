@@ -2505,7 +2505,7 @@ ipcMain.handle('markdown:file', async (event, input: import('./mdPresentationFil
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
         return result.canceled ? undefined : result.filePaths[0];
       }
-      const options = { title: '保存 Markdown', filters, defaultPath: `${String(name || 'md-presentation').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
+      const options = { title: '保存 Markdown', filters, defaultPath: `${String(name || 'bush-it').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
       const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
       return result.canceled ? undefined : result.filePath;
     });

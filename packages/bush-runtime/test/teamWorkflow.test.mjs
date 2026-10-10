@@ -40,6 +40,27 @@ test('Team validates dependencies before execution', () => {
   assert.throws(() => teamWorkflowSchema.parse({ ...flow, nodes: [flow.nodes[0], flow.nodes[0]] }), /Duplicate/);
 });
 
+test('bush-it presentation survives execution-only edits and persistence without becoming task instructions', async t => {
+  const requests = [];
+  const f = await setup(t, async request => { requests.push(request); return outcome(request, 'Verified task result'); });
+  const markdown = '# 协作文档\n\n## 为什么\n\nPRESENTATION_ONLY_REASON\n\n普通文档与执行配置相互独立。';
+  await f.call({ action: 'save', definition: { ...flow, presentation: { markdown } }, expected_revision: 0 });
+  assert.equal((await f.manager.configure({ action: 'get', team_id: flow.id })).definition.presentation.markdown, markdown);
+  await f.call({ action: 'save', definition: { ...flow, description: 'Updated summary' }, expected_revision: 1 });
+  const saved = await f.manager.configure({ action: 'get', team_id: flow.id });
+  assert.equal(saved.definition.presentation.markdown, markdown);
+  const reopened = new TeamWorkflowManager(f.agents, f.subagents.dispatch, { directory: join(f.root, 'teams') });
+  t.after(() => reopened.close());
+  assert.equal((await reopened.configure({ action: 'get', team_id: flow.id })).definition.presentation.markdown, markdown);
+  const run = await f.call({ action: 'run', team_id: flow.id, input: 'Check order 42' });
+  const finished = await f.call({ action: 'wait', run_id: run.run_id });
+  assert.equal(finished.status, 'completed');
+  assert.equal(requests.length, 3);
+  assert.doesNotMatch(JSON.stringify(requests), /PRESENTATION_ONLY_REASON/, 'article prose is not an instruction or inherited context');
+  await assert.rejects(f.call({ action: 'save', definition: { ...flow, presentation: { markdown: 'stale replacement' } }, expected_revision: 1 }), /Definition changed/);
+  assert.equal((await f.manager.configure({ action: 'get', team_id: flow.id })).definition.presentation.markdown, markdown);
+});
+
 test('Team completion notices deliver final outputs and deduplicate only complete wait receipts from the same result version', () => {
   const run = { id: 'run', teamId: 'flow', status: 'completed', error: '', createdAt: '2026-10-09T00:00:00Z', updatedAt: '2026-10-09T00:00:01Z',
     workflow: { nodes: [{ id: 'final', depends_on: [] }] }, nodes: [{ id: 'final', taskId: 'attempt-1', status: 'completed', error: '', output: 'PRIVATE NODE OUTPUT' }] };

@@ -1,30 +1,72 @@
-import { useEffect, useState } from 'react';
-import { FilePlus2, FolderOpen, RefreshCw, Save } from 'lucide-react';
-import { MdPresentation } from './MdPresentation';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FilePlus2, FolderOpen, PanelRightOpen, Play, RefreshCw, Save, UsersRound } from 'lucide-react';
+import { TEAM_WORKFLOW_COMMAND, type DefinitionReceipt, type TeamWorkflow } from '@cardbush/bush-protocol';
 import { useMarkdownFile } from './useMarkdownFile';
-import { writeMarkdownGraph } from './markdownGraph';
+import { parseMarkdownGraph } from './markdownGraph';
+import { takeBushItDocument, watchBushItDocument } from './bushItDocuments';
+import { bushItPageName, createBushItPage, selectBushItPage, updateBushItPage, useBushItPages, type BushItPage } from './bushItPageStore';
+import { TeamDocumentEditor } from '../team/TeamDocumentEditor';
+import { documentTeam, enableDocumentTeam, teamFromMarkdown, teamToMarkdown } from '../team/teamMarkdown';
+import { refreshTeamWorkspace, selectTeam, teamCommand, useTeamWorkspace } from '../team/teamWorkspaceStore';
 
-const draftKey = 'cardbush.md-presentation.draft';
-function initialSource() {
-  try { const draft = localStorage.getItem(draftKey); if (draft) return draft; } catch { /* Storage can be disabled. */ }
-  return writeMarkdownGraph({ attributes: { name: 'md演示' }, introduction: '用 Markdown 记录内容，用节点链接组织思路。', nodes: [
-    { id: 'start', attributes: { name: '从这里开始', position: { x: 100, y: 240 } }, body: '点击节点即可编辑内容。\n\n支持 **Markdown**、列表与代码。' },
-    { id: 'ideas', attributes: { name: '连接想法', position: { x: 430, y: 100 } }, body: '使用 [[#start]] 引用另一个节点。也可以通过节点两侧的圆点连线。' },
-    { id: 'write', attributes: { name: '编辑与保存', position: { x: 430, y: 370 } }, body: '在图谱与 Markdown 之间切换。保存为 .md 文件后，可在外部编辑，再重新载入。\n\n[[#start]]' },
-  ] });
+type BushItAppProps = { language: 'zh' | 'en'; onPractice?: (team: TeamWorkflow) => void; inspectorOpen?: boolean; onToggleInspector?: () => void };
+export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggleInspector }: BushItAppProps) {
+  const state = useBushItPages(), current = useRef(state); current.current = state;
+  useEffect(() => {
+    const receive = () => { const source = takeBushItDocument(); if (source === undefined) return;
+      const existing = current.current.pages.find(page => !page.archived && page.source === source);
+      if (existing) selectBushItPage(existing.id); else createBushItPage(source);
+    };
+    receive(); return watchBushItDocument(receive);
+  }, []);
+  const page = state.pages.find(item => item.id === state.selectedId && !item.archived);
+  return <div className="md-app bush-pages-app" aria-label="bush-it">{state.error && <p role="alert" className="md-error">{state.error}</p>}
+    {page && <BushItDocumentPage key={page.id} page={page} language={language} onPractice={onPractice} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}/>}
+  </div>;
 }
-export function MdPresentationApp({ language }: { language: 'zh' | 'en' }) {
-  const [source, setSource] = useState(initialSource), [storageError, setStorageError] = useState('');
-  const [pending, setPending] = useState<() => void>();
-  const files = useMarkdownFile(), t = (cn: string, en: string) => language === 'zh' ? cn : en;
-  useEffect(() => { try { localStorage.setItem(draftKey, source); setStorageError(''); } catch { setStorageError(t('草稿无法自动保存，请保存为 .md 文件。', 'Draft could not be stored. Save it to a .md file.')); } }, [source]);
-  const replace = (operation: () => void) => { if (source.trim() && source !== files.file?.text) setPending(() => operation); else operation(); };
-  const open = async (reload = false) => { const result = await (reload ? files.reload() : files.open()); if (result) { files.accept(result); setSource(result.text); } };
-  return <div className="md-app"><header className="md-app-header"><div><strong>md演示</strong><small title={files.file?.path}>{files.file?.path || t('本地草稿 · Markdown 与图谱同步', 'Local draft · Markdown and graph in sync')}{files.file && files.file.text !== source ? t(' · 未保存', ' · Unsaved') : ''}</small></div>
-    <button type="button" disabled={files.busy} onClick={() => replace(() => { files.clear(); setSource(writeMarkdownGraph({ attributes: { name: t('新文档', 'New document') }, introduction: '', nodes: [] })); })}><FilePlus2 size={15}/>{t('新建', 'New')}</button>
-    <button type="button" disabled={files.busy} onClick={() => replace(() => void open())}><FolderOpen size={15}/>{t('打开 .md', 'Open .md')}</button>
-    {files.file && <button type="button" disabled={files.busy} onClick={() => replace(() => void open(true))} title={t('读取外部编辑后的文件', 'Read changes from disk')}><RefreshCw size={15}/>{t('重新载入', 'Reload')}</button>}
-    <button type="button" disabled={files.busy} onClick={() => void files.save(source, 'md-presentation')}><Save size={15}/>{t('保存 .md', 'Save .md')}</button>
-    {files.file && <button type="button" disabled={files.busy} onClick={() => void files.save(source, 'md-presentation', true)}>{t('另存为', 'Save as')}</button>}
-  </header>{pending && <div className="md-replace-notice" role="alert"><span>{t('当前内容尚未保存到文件。继续替换？', 'Current edits have not been saved to a file. Replace them?')}</span><button type="button" onClick={() => { const operation = pending; setPending(undefined); operation(); }}>{t('放弃并继续', 'Discard and continue')}</button><button type="button" onClick={() => setPending(undefined)}>{t('保留编辑', 'Keep editing')}</button></div>}{(files.error || storageError) && <p role="alert" className="md-error">{files.error || storageError}</p>}<MdPresentation source={source} onChange={setSource} language={language}/></div>;
+
+function BushItDocumentPage({ page, language, onPractice, inspectorOpen, onToggleInspector }: BushItAppProps & { page: BushItPage }) {
+  const source = page.source, setSource = (value: string) => updateBushItPage(page.id, { source: value });
+  const [teamError, setTeamError] = useState(''), [teamBusy, setTeamBusy] = useState(false);
+  const [registered, setRegistered] = useState<{ id: string; revision: number; source: string }>();
+  const document = useMemo(() => { try { return parseMarkdownGraph(source); } catch { return undefined; } }, [source]);
+  const config = document && documentTeam(document), teamId = String(config?.id || '');
+  const state = useTeamWorkspace(Boolean(config)), files = useMarkdownFile(), t = (cn: string, en: string) => language === 'zh' ? cn : en;
+  useEffect(() => { if (page.file) files.accept(page.file); }, []);
+  useEffect(() => { const record = state.teams.find(item => item.definition.id === teamId);
+    if (record && registered?.id !== teamId) setRegistered({ id: teamId, revision: record.revision, source: teamToMarkdown(record.definition) });
+  }, [teamId, state.teams, registered?.id]);
+  const open = async () => { const result = await files.open(); if (result) createBushItPage(result.text, result); };
+  const reload = async () => { const result = await files.reload(); if (result) createBushItPage(result.text, result); };
+  const saveFile = async (asNew = false) => {
+    const result = await files.save(source, bushItPageName(page, language), asNew);
+    if (result) updateBushItPage(page.id, { file: result });
+  };
+  const saveTeam = async (practice: boolean) => {
+    if (teamBusy || state.loading) return; setTeamBusy(true); setTeamError('');
+    try {
+      const definition = teamFromMarkdown(source);
+      const receipt = await teamCommand<DefinitionReceipt<TeamWorkflow>>(TEAM_WORKFLOW_COMMAND, { action: 'save', definition, expected_revision: registered?.id === definition.id ? registered.revision : 0 });
+      setRegistered({ id: definition.id, revision: receipt.revision, source }); await refreshTeamWorkspace();
+      if (practice) { selectTeam(definition.id); onPractice?.(definition); }
+    } catch (caught) { setTeamError(String((caught as Error).message)); } finally { setTeamBusy(false); }
+  };
+  return <>{(files.error || teamError) && <p role="alert" className="md-error">{files.error || teamError}</p>}
+    <TeamDocumentEditor source={source} onChange={value => { setSource(value); setTeamError(''); }} language={language} teamEnabled={Boolean(config)} agents={state.agents} lockedId={registered?.id === teamId && registered.revision > 0}
+      headerActions={!inspectorOpen && onToggleInspector && <button type="button" data-inspector-toggle data-shortcut="toggleInspector" aria-label={t('展开右侧栏', 'Expand sidebar')} aria-expanded={false} aria-controls="right-inspector" onClick={onToggleInspector}><PanelRightOpen size={17}/></button>}
+      toolbar={<>
+        {config ? <><span className="md-team-save-state">{registered?.source === source ? t('已保存到 Team', 'Saved to Team') : 'Team'}</span>
+          <button type="button" disabled={teamBusy || state.loading} onClick={() => void saveTeam(false)}><Save size={14}/>{t('保存到 Team', 'Save to Team')}</button>
+          {onPractice && <button type="button" disabled={teamBusy || state.loading} onClick={() => void saveTeam(true)}><Play size={14}/>{t('实践', 'Practice')}</button>}</>
+          : <button type="button" disabled={!document} onClick={() => setSource(enableDocumentTeam(source))}><UsersRound size={15}/>{t('用 Team 实践', 'Practice with Team')}</button>}
+        <div className="bush-page-menu-group">
+          <button type="button" onClick={() => createBushItPage()}><FilePlus2 size={15}/>{t('新建页面', 'New page')}</button>
+          <button type="button" disabled={files.busy} onClick={() => void open()}><FolderOpen size={15}/>{t('打开 .md', 'Open .md')}</button>
+          <button type="button" disabled={files.busy} onClick={() => void saveFile()}><Save size={15}/>{t('保存 .md', 'Save .md')}</button>
+          {files.file && <><button type="button" disabled={files.busy} onClick={() => void saveFile(true)}>{t('另存为', 'Save as')}</button>
+            <button type="button" disabled={files.busy} onClick={() => void reload()}><RefreshCw size={15}/>{t('重新载入为新页面', 'Reload into a new page')}</button></>}
+          <small>{files.file?.path || t('页面自动保存在本机', 'Pages are stored on this device')}</small>
+        </div>
+      </>}/>
+  </>;
 }

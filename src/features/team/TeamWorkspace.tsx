@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { EmployeeIcon } from './employeePresentation';
-import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
+import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt, type TeamWorkflow } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorkspaceStore';
 import { TeamGraphWorkspace } from './TeamGraphWorkspace';
 import './team-workspace.css';
 
-export function TeamWorkspace({ language }: { language: AppLanguage }) {
+export function TeamWorkspace({ language, onPractice }: { language: AppLanguage; onPractice?: (team: TeamWorkflow) => void }) {
   const state = useTeamWorkspace();
   const zh = language === 'zh', t = (cn: string, en: string) => zh ? cn : en;
   const [tab, setTab] = useState<'agents' | 'teams' | 'runs'>('teams');
@@ -33,7 +33,7 @@ export function TeamWorkspace({ language }: { language: AppLanguage }) {
   const names = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
   return <div className="native-team-workspace">
     <nav aria-label={t('团队管理', 'Team management')}>
-      {(['agents', 'teams', 'runs'] as const).map(key => <button type="button" key={key} aria-pressed={tab === key} onClick={() => { setError(''); setTab(key); }}>{key === 'agents' ? t('员工', 'Agents') : key === 'teams' ? t('团队流程', 'Workflows') : t('运行记录', 'Runs')}</button>)}
+      {(['agents', 'teams', 'runs'] as const).map(key => <button type="button" key={key} aria-pressed={tab === key} onClick={() => { setError(''); setTab(key); }}>{key === 'agents' ? t('员工', 'Agents') : key === 'teams' ? t('团队文档', 'Team documents') : t('运行记录', 'Runs')}</button>)}
       <button type="button" aria-label={t('刷新', 'Refresh')} onClick={() => void refreshTeamWorkspace()}><RefreshCw size={16} /></button>
     </nav>
     {(error || state.error) && <p role="alert">{error || state.error}</p>}
@@ -65,7 +65,7 @@ export function TeamWorkspace({ language }: { language: AppLanguage }) {
         </div>
       </form>}
     </div>}
-    <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language}/></div>
+    <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language} onPractice={onPractice}/></div>
     {tab === 'runs' && <div className="native-team-runs">{!state.runs.length && <p>{t('还没有运行记录。', 'No runs yet.')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>
         {run.nodes.map((node, index) => <details key={node.id}><summary title={node.id}>{t('节点', 'Node')} {index + 1} · {statusLabel(node.status)}</summary><pre>{node.output || node.error}</pre></details>)}

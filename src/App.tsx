@@ -132,6 +132,7 @@ import {
 } from './features/sidebar';
 import { refreshTeamWorkspace, useTeamWorkspace } from './features/team/teamWorkspaceStore';
 import { NativeTeamSidebar } from './features/team/TeamSidebar';
+import { BushItSidebar } from './features/mdPresentation/BushItSidebar';
 import { basename, fileUrl, samePath, stripWrappingQuotes } from './shared/localPaths';
 import {
   themeAccentColor,
@@ -2183,6 +2184,9 @@ function CardbushApp() {
                   onOpenSettings={() => openSettings('profile')}
                   softVisible={sidebarPresence.visible}
                 />
+              ) : section === 'md-presentation' ? (
+                <BushItSidebar language={language} onBack={() => setSection('chat')} softVisible={sidebarPresence.visible}
+                  onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
               ) : (
                 <ChatSidebar
                   agents={agents.connections}

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FileText, Maximize2, Minus, Plus, Unlink, WandSparkles } from 'lucide-react';
-import { layoutNodes, MAX_GRAPH_COORDINATE, nodeLinks, nodeName, nodePosition, type MdDocument, type MdNode, type MdPosition } from './markdownGraph';
+import { graphLinks, layoutNodes, MAX_GRAPH_COORDINATE, nodeDependencies, nodeName, nodePosition, type MdDocument, type MdNode, type MdPosition } from './markdownGraph';
 
 const width = 184, height = 76;
 export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnect, onLayout, language, flow = false, icon, subtitle, readOnly = false }: {
@@ -15,8 +15,8 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
   const gesture = useRef<{ id: string; x: number; y: number; point: MdPosition; moved: boolean } | null>(null);
   const defaults = useMemo(() => layoutNodes(document.nodes, flow), [document.nodes, flow]);
   const positions = new Map(document.nodes.map(node => [node.id, drag?.id === node.id ? drag.point : nodePosition(node) ?? defaults.get(node.id)!]));
-  const links = document.nodes.flatMap(node => nodeLinks(node).filter(id => positions.has(id)).map(id => ({ from: id, to: node.id })));
-  const missing = document.nodes.flatMap(node => nodeLinks(node).filter(id => !positions.has(id)));
+  const links = document.nodes.flatMap(node => graphLinks(node).filter(id => positions.has(id)).map(id => ({ from: id, to: node.id, dependency: nodeDependencies(node).includes(id) })));
+  const missing = document.nodes.flatMap(node => graphLinks(node).filter(id => !positions.has(id)));
   const fit = () => {
     const rect = viewport.current?.getBoundingClientRect(); if (!rect || !positions.size) return;
     const points = [...positions.values()];
@@ -62,19 +62,19 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
       gesture.current = null; setDrag(null);
     }}
     onPointerCancel={() => { gesture.current = null; setDrag(null); }}>
-    <div className="md-graph-caption"><span>{t(flow ? '团队流程' : '链接图谱', flow ? 'Workflow' : 'Linked notes')}</span><small>{document.nodes.length} {t('节点', 'nodes')} · {links.length} {t('链接', 'links')}</small></div>
+    <div className="md-graph-caption"><span>{t(flow ? 'Team 任务关系' : '文档关系', flow ? 'Team dependencies' : 'Document links')}</span><small>{document.nodes.length} {t('章节', 'sections')} · {links.length} {t('链接', 'links')}</small></div>
     {!document.nodes.length && <div className="md-graph-empty"><FileText size={30}/><strong>{t('从一个节点开始', 'Start with a node')}</strong><p>{t('添加节点，或打开一份 Markdown。', 'Add a node or open a Markdown file.')}</p></div>}
     <div className="md-graph-stage" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }}>
       <svg className="md-graph-edges" width="1" height="1" aria-hidden="true"><defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>
-        {links.map(({ from, to }) => { const a = positions.get(from)!, b = positions.get(to)!;
+        {links.map(({ from, to, dependency }) => { const a = positions.get(from)!, b = positions.get(to)!;
           const x1 = a.x + width, y1 = a.y + height / 2, x2 = b.x, y2 = b.y + height / 2, bend = Math.max(65, Math.abs(x2 - x1) / 2);
-          return <path key={`${from}\0${to}`} data-edge={`${from}:${to}`} data-active={from === selectedId || to === selectedId} d={`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`} markerEnd={flow ? `url(#${markerId})` : undefined}/>;
+          return <path key={`${from}\0${to}`} data-edge={`${from}:${to}`} data-kind={dependency ? 'dependency' : 'reference'} data-active={from === selectedId || to === selectedId} d={`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`} markerEnd={flow && dependency ? `url(#${markerId})` : undefined} strokeDasharray={flow && !dependency ? '5 5' : undefined}/>;
         })}
       </svg>
-      {document.nodes.map(node => { const point = positions.get(node.id)!;
+      {document.nodes.map(node => { const point = positions.get(node.id)!, connectable = !readOnly && (!flow || 'agent_id' in node.attributes);
         return <div className="md-graph-node" key={node.id} data-node-id={node.id} data-selected={selectedId === node.id} data-linking={connecting === node.id}
           style={{ left: point.x, top: point.y, width, height }}>
-          {!readOnly && <button type="button" className="md-node-port md-node-in" title={t('接收链接', 'Receive link')} aria-label={`${t('连接到', 'Connect to')} ${nodeName(node)}`} onClick={() => completeLink(node.id)} />}
+          {connectable && <button type="button" className="md-node-port md-node-in" aria-label={`${t('连接到', 'Connect to')} ${nodeName(node)}`} onClick={() => completeLink(node.id)} />}
           <button type="button" className="md-node-face" aria-pressed={selectedId === node.id} onClick={event => { if (event.detail === 0) completeLink(node.id); }}
             onPointerDown={event => { if (event.button !== 0) return; event.stopPropagation();
               if (connecting) { completeLink(node.id); return; }
@@ -86,7 +86,7 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
             }}>
             <span className="md-node-icon">{icon?.(node) ?? <FileText size={19}/>}</span><span><strong>{nodeName(node)}</strong><small>{subtitle?.(node) || node.id}</small></span>
           </button>
-          {!readOnly && <button type="button" className="md-node-port md-node-out" title={t('添加链接', 'Add link')} aria-label={`${t('从此节点连线', 'Link from')} ${nodeName(node)}`} onClick={() => setConnecting(node.id)} />}
+          {connectable && <button type="button" className="md-node-port md-node-out" aria-label={`${t('从此节点连线', 'Link from')} ${nodeName(node)}`} onClick={() => setConnecting(node.id)} />}
         </div>;
       })}
     </div>

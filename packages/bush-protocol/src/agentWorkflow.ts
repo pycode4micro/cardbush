@@ -17,6 +17,8 @@ export type RegisteredAgent = z.infer<typeof registeredAgentSchema>;
 
 export const teamWorkflowSchema = z.object({
   id, name: z.string().trim().min(1).max(160), description: z.string().max(4000).default(''),
+  // bush-it retains the surrounding document independently of execution fields.
+  presentation: z.object({ markdown: z.string().max(2 * 1024 * 1024) }).strict().optional(),
   max_parallel: z.number().int().min(1).max(8).default(3),
   nodes: z.array(z.object({
     id, agent_id: id, prompt: z.string().trim().min(1).max(40000),

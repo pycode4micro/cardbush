@@ -26,6 +26,27 @@ test('live additions remain opt-in, scoped and unloaded; provider definitions st
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__added__echo'), false);
 });
 
+test('no-tools policy suppresses both fresh and saved provider definitions without changing the live scope', () => {
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const initial = registry.definitions();
+  const request = { sessionId: 's', turnId: 't', tools: [...initial], metadata: { mcpToolDiscovery: true } };
+  const before = modelToolDefinitions(registry, request);
+  assert.ok(before.length > 0);
+  const snapshot = structuredClone(request.metadata.mcpModelToolSnapshot);
+
+  request.metadata.toolExecutionPolicy = 'none';
+  assert.deepEqual(modelToolDefinitions(registry, request), []);
+  assert.deepEqual(request.metadata.mcpModelToolSnapshot, snapshot);
+  assert.deepEqual(request.tools, initial);
+  assert.deepEqual(registry.definitions(), initial);
+  assert.deepEqual(modelToolDefinitions(registry, {
+    sessionId: 's', turnId: 'fresh', tools: [...initial], metadata: { toolExecutionPolicy: 'none' },
+  }), []);
+
+  delete request.metadata.toolExecutionPolicy;
+  assert.deepEqual(modelToolDefinitions(registry, request), before);
+});
+
 test('a running product turn loads and calls a new plugin on its next round without changing provider tools', async () => {
   const registry = new ToolRegistry(); let round = 0, calls = 0, providerTools;
   registry.register({ ...tool('install_fixture'), mcpHook: undefined, execute: () => {
