@@ -5,7 +5,7 @@
   padding-left: 0;
   padding-right: 0;
   padding-bottom: 20px;
-  /* Keep the input's saved width; its backdrop extends to the reading pane edges. */
+  /* The input follows its layout track; the backdrop reaches the pane edges. */
   --composer-backdrop-outset: var(--flow-composer-left, 12px);
   --composer-backdrop-scrollbar-inset: var(--message-list-scrollbar-inset, 0px);
   background: none;

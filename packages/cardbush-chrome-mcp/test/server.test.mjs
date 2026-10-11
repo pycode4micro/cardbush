@@ -82,6 +82,28 @@ test('screenshot failure feedback is scoped, preserves native images, and resets
   assert.equal(submitted, 7, 'feedback never silently retries or hard-blocks tool calls');
 });
 
+test('hidden CardBush pages keep visibility guidance after repeated screenshot failures', async () => {
+  const connector = async (method, params) => {
+    if (method === 'tabs.list') return [{ id: 42, active: false, selected: true, visible: false, browser: 'cardbush', title: 'Background' }];
+    if (params.command === 'Runtime.evaluate') return { result: { value: { width: 1280, height: 800, deviceScaleFactor: 1 } } };
+    assert.equal(params.command, 'Page.captureScreenshot');
+    throw new ChromeConnectorError('cardbush_page_not_visible', 'Show the original tab.', { inputDispatched: false });
+  };
+  const server = createCardbushChromeServer({ connector });
+  const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'background' } } };
+  const listed = await server._registeredTools.list_pages.handler({}, context);
+  assert.equal(listed.structuredContent.pages[0].visible, false);
+  assert.equal(listed.structuredContent.selectedPageId, 42);
+  assert.match(listed.content[0].text, /CardBush; not visible/);
+  for (const format of ['png', 'jpeg']) {
+    const result = await server._registeredTools.take_screenshot.handler({ format }, context);
+    assert.equal(result.structuredContent.error.code, 'cardbush_page_not_visible');
+    assert.equal(result.structuredContent.error.details.inputDispatched, false);
+    assert.match(result.structuredContent.error.details.recovery, /Show the owning CardBush conversation/);
+    assert.doesNotMatch(result.structuredContent.error.details.recovery, /release\/reconnect/);
+  }
+});
+
 test('ships a stable MV3 extension using debugger and paired loopback WebSocket', async () => {
   const extensionPath = path.resolve(import.meta.dirname, '../../../assets/plugins/chrome/extension');
   const manifestPath = path.join(extensionPath, 'manifest.json');

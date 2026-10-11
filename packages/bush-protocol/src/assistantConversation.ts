@@ -26,6 +26,9 @@ export type AssistantProfile = z.infer<typeof assistantProfileSchema>;
 export const assistantConversationRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('read'), sessionId: z.string().min(1), after: z.number().int().nonnegative().default(0) }).strict(),
   z.object({ action: z.literal('reset'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),
+  z.object({ action: z.literal('stop'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION), generation: z.number().int().nonnegative().optional() }).strict(),
+  z.object({ action: z.literal('retry'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION),
+    parent: runtimeSessionTurnRequestSchema, profile: assistantProfileSchema, generation: z.number().int().nonnegative().optional() }).strict(),
   z.object({ action: z.literal('append'), sessionId: z.string().min(1), entry: conversationEntrySchema, generation: z.number().int().nonnegative().optional() }).strict(),
   z.object({ action: z.literal('turn'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION),
     entry: conversationEntrySchema, parent: runtimeSessionTurnRequestSchema, profile: assistantProfileSchema, generation: z.number().int().nonnegative().optional() }).strict(),

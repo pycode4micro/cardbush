@@ -1,5 +1,6 @@
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   modelEventSchema,
   modelRequestSchema,
   type ModelEvent,
@@ -74,7 +75,7 @@ export async function executeModelRound(
   input: ModelRequest,
   options: ModelRoundOptions = {},
 ): Promise<ModelRoundResult> {
-  const request = modelRequestSchema.parse(input);
+  const request = modelRequestSchema.parse({ ...input, maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS });
   const accumulator = new ToolCallAccumulator();
   let text = "";
   let reasoning = "";

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import { memorySummarySchema, normalizeIndividuation, type IndividuationSettings, type ModelRequest, type PersonalizationStatus } from '@cardbush/bush-protocol';
 import type { ModelProvider } from './modelProvider.js';
 import { executeModelRound } from './modelRound.js';
@@ -52,8 +53,8 @@ export class IndividuationMemory {
   private async run(settings:IndividuationSettings,model:MemoryModel,manual:boolean,signal:AbortSignal) {
     settings=normalizeIndividuation(settings);
     const configured=Number(model.metadata?.contextWindowTokens);
-    const context=Number.isFinite(configured)&&configured>0?Math.floor(configured):32_000;
-    const outputCeiling=model.maxOutputTokens??Math.min(12_000,Math.floor(context*.4));
+    const context=Number.isFinite(configured)&&configured>0?Math.floor(configured):DEFAULT_MAX_CONTEXT_TOKENS;
+    const outputCeiling=model.maxOutputTokens??DEFAULT_MAX_OUTPUT_TOKENS;
     const retryKey=JSON.stringify(['summary-stages-v1',model.model,model.providerBinding,model.reasoningEffort,context,outputCeiling,settings]);
     const initial=await this.store.status(settings,signal);
     for(const stage of ['events','habits'] as const) {
@@ -78,9 +79,8 @@ export class IndividuationMemory {
         const messages:ModelRequest['messages']=[{role:'developer',content:instructions+`\n${stageInstructions}\nHabits enabled: ${settings.habits}. Predictions enabled: ${settings.predictions}. Disabled output arrays MUST be empty. Aim for at most ${target} estimated tokens of retained memory text.`},
           {role:'user',content}];
         inputTokens=memoryTokens(JSON.stringify(messages))+32;
-        const reasoningReserve=model.reasoningEffort==='none'?1024:4096;
         // The configured output allowance includes reasoning, not only retained memory text.
-        maxOutputTokens=model.maxOutputTokens??Math.min(outputCeiling,Math.max(6144,Math.ceil(target*1.5)+snapshot.records.length*100+reasoningReserve));
+        maxOutputTokens=outputCeiling;
         if(inputTokens+maxOutputTokens+512>context)throw new SummaryFailure('input_limit');
         requesting=true;
         const result=await executeModelRound(this.provider,{

@@ -48,7 +48,7 @@ export class BrowserUseRouter {
   }
   bindReferences(owner: WebContents, scope: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) {
     return this.serialized(scope, async () => {
-      const pages = this.integrated.bind(owner, scope, references);
+      const pages = await this.integrated.bind(owner, scope, references);
       await this.releaseExternal(scope);
       this.save(scope, 'cardbush');
       return pages;
@@ -92,7 +92,8 @@ export class BrowserUseRouter {
     if (!scope || scope.length > 160) return Promise.reject(new ChromeConnectorError('browser_scope_missing', 'A CardBush conversation is required.'));
     return this.serialized(scope, () => this.route(method, params, options)).catch(error => {
       if (error instanceof ChromeConnectorError || error?.name === 'AbortError') throw error;
-      throw new ChromeConnectorError(String(error?.code ?? 'cardbush_browser_failed'), error instanceof Error ? error.message : String(error));
+      throw new ChromeConnectorError(String(error?.code ?? 'cardbush_browser_failed'), error instanceof Error ? error.message : String(error),
+        error?.details && typeof error.details === 'object' ? error.details : undefined);
     });
   };
   private async route(method: string, params: Params, options: Options): Promise<unknown> {

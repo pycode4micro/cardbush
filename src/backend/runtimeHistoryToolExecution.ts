@@ -34,6 +34,7 @@ export function runtimeHistoryToolExecution(
     metadata: {
       actionManifest: record.actionManifest,
       ...(activity ? { agentActivity: activity } : {}),
+      ...('terminalOutcome' in record ? { terminalOutcome: record.terminalOutcome } : {}),
       ...(record.display?.title ? { displayTitle: record.display.title } : {}),
       ...(record.display?.titles ? { displayTitles: record.display.titles } : {}),
       ...(mcpServerId ? { mcpServerId } : {}),

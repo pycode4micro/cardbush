@@ -14,7 +14,7 @@ export const realtimeContextJobSchema = z.object({
 export type RealtimeContextJob = z.infer<typeof realtimeContextJobSchema>;
 export const realtimeContextRequestSchema = z.object({
   job: realtimeContextJobSchema,
-  model: modelRequestSchema.pick({ model: true, providerBinding: true, reasoningEffort: true, metadata: true }),
+  model: modelRequestSchema.pick({ model: true, providerBinding: true, reasoningEffort: true, maxOutputTokens: true, metadata: true }),
 }).strict();
 export type RealtimeContextRequest = z.infer<typeof realtimeContextRequestSchema>;
 export const realtimeContextResultSchema = z.object({

@@ -647,6 +647,7 @@ function CardbushApp() {
     lockedIds: lockedInspectorTabs, toggleLock: toggleInspectorTabLock, ownerOfTab: inspectorTabOwner,
     disposeTabs: disposeInspectorTabs,
     openTab: openInspectorTab, activateTab: selectInspectorTab, closeTabs: removeInspectorTabs,
+    bindBrowserTabs: bindInspectorBrowserTabs, snapshot: inspectorSessionSnapshot,
   } = useInspectorTabs(inspectorWorkspaceId);
   const { outlets: conversationInspectorOutlets, register: registerConversationInspectorOutlet } = useConversationInspectorOutlets();
   const openConversationInspector = useCallback((id: string, title: string) => {
@@ -914,7 +915,8 @@ function CardbushApp() {
   };
   const conversationInspectorActions = useConversationInspectorActions({ open: openConversationInspector,
     close: id => disposeInspectorTabs(new Set([id])) });
-  useInspectorBrowserActions({ open: openInspectorTab, activate: selectInspectorTab,
+  useInspectorBrowserActions({ workspaceId: inspectorWorkspaceId, snapshot: inspectorSessionSnapshot,
+    bind: bindInspectorBrowserTabs, open: openInspectorTab, activate: selectInspectorTab,
     close: (id, workspaceId) => closeInspectorTabs(new Set([id]), workspaceId),
     workspace: (sessionId, tabId) => sessionId ? localInspectorWorkspace(sessionId) : inspectorTabOwner(tabId) ?? inspectorWorkspaceId,
     show: workspaceId => setInspectorOpen(true, workspaceId) });
@@ -955,6 +957,7 @@ function CardbushApp() {
         previous.guestWebContentsId === navigation.guestWebContentsId &&
         previous.title === navigation.title &&
         previous.faviconUrl === navigation.faviconUrl &&
+        previous.faviconRevision === navigation.faviconRevision &&
         previous.audible === navigation.audible &&
         previous.audioMuted === navigation.audioMuted &&
         previous.canGoBack === navigation.canGoBack &&
@@ -2460,7 +2463,7 @@ function CardbushApp() {
                               >
                                 {tab.kind === 'resource'
                                   ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
-                                    ? <BrowserSiteIcon url={navigation?.url || tab.detail.target} icon={navigation?.faviconUrl}/>
+                                    ? <BrowserSiteIcon url={navigation?.url || tab.detail.target} icon={navigation?.faviconUrl} icons={navigation?.faviconUrls} revision={navigation?.faviconRevision}/>
                                     : <FileText size={13} aria-hidden="true" />
                                   : tab.kind === 'review' || tab.kind === 'conversation'
                                     ? <Clipboard size={13} aria-hidden="true" />
@@ -2536,7 +2539,7 @@ function CardbushApp() {
                                   >
                                     {tab.kind === 'resource'
                                       ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
-                                        ? <BrowserSiteIcon url={navigation?.url || tab.detail.target} icon={navigation?.faviconUrl}/>
+                                        ? <BrowserSiteIcon url={navigation?.url || tab.detail.target} icon={navigation?.faviconUrl} icons={navigation?.faviconUrls} revision={navigation?.faviconRevision}/>
                                         : <FileText size={14} aria-hidden="true" />
                                       : tab.kind === 'review' || tab.kind === 'conversation'
                                         ? <Clipboard size={14} aria-hidden="true" />

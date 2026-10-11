@@ -1,5 +1,6 @@
 import {
   modelMessageSchema,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   type ModelMessage,
   type ModelRequest,
   type ProviderInputProjection,
@@ -13,7 +14,6 @@ import { runtimeInputTokenProjection, type InputTokenCalibration } from "./input
 
 export const CHECKPOINT_CONTEXT_TOOL = "checkpoint_context" as const;
 export const CONTEXT_COMPACTION_HARD_PRESSURE = 0.95;
-export const DEFAULT_CONTEXT_COMPACTION_OUTPUT_TOKENS = 16_384;
 
 const CONTEXT_MAINTENANCE_TARGET_RATIO = 0.98;
 const CONTEXT_MAINTENANCE_RESERVE_MAX_TOKENS = 2_048;
@@ -186,20 +186,23 @@ export interface ContextBudget {
 }
 
 /** One envelope for dispatch, the following checkpoint and Tool-result ingress.
- * The normal output setting is a ceiling for maintenance too, not a second
- * reservation of that entire allowance. Small context windows remain usable.
+ * Maintenance inherits the selected model's full output allowance, including
+ * reasoning. Explicit smaller allowances also apply to maintenance.
  */
 export function resolveContextBudget(contextWindowTokens: number, configuredOutputTokens?: number): ContextBudget {
   const normalOutputTokens = resolveContextOutputTokens(contextWindowTokens, configuredOutputTokens);
   const normalInputLimit = contextWindowTokens - normalOutputTokens;
-  const compactionOutputTokens = Math.min(DEFAULT_CONTEXT_COMPACTION_OUTPUT_TOKENS, normalOutputTokens);
+  const compactionOutputTokens = normalOutputTokens;
   const safetyTokens = contextMaintenanceInputReserveTokens(normalInputLimit);
   return { contextWindowTokens, normalOutputTokens, compactionOutputTokens, safetyTokens,
     normalInputLimit,
     compactionInputLimit: Math.max(0, contextWindowTokens - compactionOutputTokens - safetyTokens),
     compactionTriggerTokens: Math.max(0, Math.min(
       Math.floor(normalInputLimit * CONTEXT_COMPACTION_HARD_PRESSURE),
-      normalInputLimit - compactionOutputTokens - safetyTokens,
+      // When output occupies half the context or more, reserving it twice
+      // would trigger endless compaction even on an empty conversation. Leave
+      // a usable input floor; oversized snapshots use the existing partitioner.
+      Math.max(Math.floor(normalInputLimit * 0.5), normalInputLimit - compactionOutputTokens - safetyTokens),
     )) };
 }
 
@@ -236,10 +239,7 @@ export function resolveContextOutputTokens(
   ) {
     throw new Error("maxOutputTokens must be a positive integer when provided.");
   }
-  const resolved = configuredOutputTokens ?? Math.min(
-    8_192,
-    Math.max(1_024, Math.trunc(contextWindowTokens * 0.1)),
-  );
+  const resolved = configuredOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   if (resolved >= contextWindowTokens) {
     throw new Error(
       `Invalid model token limits: maxOutputTokens (${resolved}) must be less than contextWindowTokens (${contextWindowTokens}).`,

@@ -5,7 +5,10 @@ type Reference = { tabId: string; pageId?: string; url?: string };
 type Entry = { tabId: string; ownerId: number; guestId: number };
 type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; bindingRevision: number;
   inheritedFrom?: { parentId: string; revision: number } };
-export type BrowserTabAction = { action: 'open' | 'activate' | 'close'; tabId: string; url?: string; sessionId?: string };
+export type BrowserTabAction = { action: 'open' | 'bind' | 'activate' | 'close' | 'inspect'; tabId: string;
+  tabIds?: string[]; url?: string; sessionId?: string; requestId?: string };
+export type BrowserTabPresentation = { tabId: string; guestWebContentsId: number | null; inWorkspace: boolean; active: boolean; visible: boolean };
+export type BrowserTabActionResult = { requestId: string; pages: BrowserTabPresentation[] };
 const pageCommands = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.resolveNode', 'DOM.describeNode', 'DOM.getContentQuads',
   'DOM.getFrameOwner', 'DOM.getNodeForLocation', 'DOM.setFileInputFiles', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.releaseObject',
@@ -38,11 +41,48 @@ export class IntegratedBrowser {
   private readonly scopes = new Map<string, Scope>();
   private readonly parents = new Map<string, string>();
   private readonly attached = new Set<number>();
+  private readonly pendingActions = new Map<string, { ownerId: number; tabIds: string[]; resolve: (pages: BrowserTabPresentation[]) => void }>();
   constructor(private readonly options: {
     getContents: (id: number) => WebContents | undefined;
     defaultOwner: () => WebContents | null;
     action: (ownerId: number, action: BrowserTabAction) => void;
+    ownerVisible?: (id: number) => boolean;
+    actionTimeoutMs?: number;
   }) {}
+  /** Replies are accepted only from the requesting app window, never a guest. */
+  acknowledge(ownerId: number, result: BrowserTabActionResult): void {
+    const pending = this.pendingActions.get(result?.requestId);
+    if (!pending || pending.ownerId !== ownerId || !Array.isArray(result.pages) || result.pages.length !== pending.tabIds.length) return;
+    if (result.pages.some(page => !page || typeof page !== 'object') ||
+      pending.tabIds.some(id => result.pages.filter(page => page.tabId === id).length !== 1) || result.pages.some(page =>
+      (page.guestWebContentsId !== null && !Number.isSafeInteger(page.guestWebContentsId)) ||
+      ['inWorkspace', 'active', 'visible'].some(key => typeof page[key as keyof BrowserTabPresentation] !== 'boolean'))) return;
+    pending.resolve(result.pages);
+  }
+  private present(scope: Scope, action: BrowserTabAction, signal?: AbortSignal): Promise<BrowserTabPresentation[]> {
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const requestId = randomUUID(), tabIds = action.tabIds ?? [action.tabId];
+      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); this.pendingActions.delete(requestId); };
+      const abort = () => { cleanup(); reject(signal?.reason); };
+      const timer = setTimeout(() => { cleanup(); reject(Object.assign(new Error(
+        'CardBush did not acknowledge the tab presentation. The page may exist, but visibility is unconfirmed. Do not create a replacement tab.'),
+        { code: 'cardbush_presentation_timeout', details: { action: action.action, tabId: action.tabId, sessionId: action.sessionId } })); }, this.options.actionTimeoutMs ?? 3000);
+      this.pendingActions.set(requestId, { ownerId: scope.ownerId, tabIds, resolve: pages => { cleanup(); resolve(pages); } });
+      signal?.addEventListener('abort', abort, { once: true });
+      try { this.options.action(scope.ownerId, { ...action, requestId }); }
+      catch (error) { cleanup(); reject(error); }
+    });
+  }
+  private async inspect(scopeId: string, scope: Scope, entries: Entry[], signal?: AbortSignal) {
+    if (!entries.length) return [];
+    return this.present(scope, { action: 'inspect', tabId: entries[0].tabId, tabIds: entries.map(entry => entry.tabId), sessionId: this.actionSession(scopeId) }, signal);
+  }
+  private requirePresented(entry: Entry, presentation: BrowserTabPresentation | undefined): void {
+    if (presentation?.guestWebContentsId !== entry.guestId || !presentation.inWorkspace) throw Object.assign(new Error(
+      'The original CardBush tab was not attached to this conversation. Re-select that tab with @; do not open a replacement.'),
+      { code: 'cardbush_page_not_presented', details: { tabId: entry.tabId, expectedGuestId: entry.guestId, presentation } });
+  }
   private key(ownerId: number, tabId: string) { return JSON.stringify([ownerId, tabId]); }
   private actionSession(scopeId: string): string {
     const visited = new Set<string>();
@@ -97,7 +137,7 @@ export class IntegratedBrowser {
     this.detach(entry.guestId);
   }
   /** Explicit @ selections grant only these exact guests to the submitting conversation. */
-  bind(owner: WebContents, scopeId: string, references: Reference[]) {
+  async bind(owner: WebContents, scopeId: string, references: Reference[]) {
     if (!scopeId || scopeId.length > 160 || !Array.isArray(references) || !references.length || references.length > 32) throw new Error('Invalid CardBush browser reference scope.');
     const selected = references.map(reference => {
       const entry = this.entries.get(this.key(owner.id, reference.tabId));
@@ -111,8 +151,13 @@ export class IntegratedBrowser {
     scope.selected = selected[0].tabId;
     scope.bindingRevision++;
     this.scopes.set(scopeId, scope);
-    this.options.action(owner.id, { action: 'activate', tabId: scope.selected, sessionId: this.actionSession(scopeId) });
-    return selected.map(entry => ({ ...this.page(entry, scope), browser: 'cardbush' as const }));
+    const tabIds = [...new Set(selected.map(entry => entry.tabId))];
+    const presentations = await this.present(scope, { action: 'bind', tabId: scope.selected, tabIds, sessionId: this.actionSession(scopeId) });
+    return selected.map(entry => {
+      const presentation = presentations.find(page => page.tabId === entry.tabId);
+      this.requirePresented(entry, presentation);
+      return this.page(entry, scope, presentation);
+    });
   }
   hasScope(scopeId: string): boolean { return this.scopes.has(scopeId); }
   /** Trusted task ownership determines where pages appear, independently of browser grants. */
@@ -163,9 +208,11 @@ export class IntegratedBrowser {
     pageUrl(guest.getURL());
     return guest;
   }
-  private page(entry: Entry, scope: Scope) {
+  private page(entry: Entry, scope: Scope, presentation?: BrowserTabPresentation) {
     const guest = this.guest(entry);
-    return { id: guest.id, tabId: entry.tabId, title: guest.getTitle(), url: guest.getURL(), active: entry.tabId === scope.selected,
+    const confirmed = presentation?.guestWebContentsId === guest.id;
+    return { id: guest.id, tabId: entry.tabId, title: guest.getTitle(), url: guest.getURL(), active: confirmed && presentation.active,
+      visible: confirmed && presentation.visible && (this.options.ownerVisible?.(entry.ownerId) ?? true),
       selected: entry.tabId === scope.selected, browser: 'cardbush', targetKey: `cardbush:${guest.id}` };
   }
   private detach(id: number): void {
@@ -192,9 +239,10 @@ export class IntegratedBrowser {
         const entry = this.entries.get(this.key(scope.ownerId, tabId));
         if (entry) {
           scope.entries.set(tabId, entry); scope.selected = tabId; scope.bindingRevision++;
-          const page = this.page(entry, scope);
           this.grantCreatedPage(scopeId, entry);
-          return page;
+          const [presentation] = await this.inspect(scopeId, scope, [entry], signal);
+          this.requirePresented(entry, presentation);
+          return this.page(entry, scope, presentation);
         }
         await new Promise(resolve => setTimeout(resolve, 30));
       }
@@ -204,9 +252,9 @@ export class IntegratedBrowser {
       // A missing explicitly selected tab must not silently select a different live tab.
       const selected = scope.entries.get(scope.selected);
       if (selected) this.guest(selected);
-      return [...scope.entries.values()].flatMap(entry => {
-        try { return [this.page(entry, scope)]; } catch { return []; }
-      });
+      const entries = [...scope.entries.values()].filter(entry => { try { this.guest(entry); return true; } catch { return false; } });
+      const presentations = await this.inspect(scopeId, scope, entries, signal);
+      return entries.map(entry => this.page(entry, scope, presentations.find(page => page.tabId === entry.tabId)));
     }
     const entry = [...scope.entries.values()].find(item => item.guestId === params.tabId);
     if (!entry) unavailable('This CardBush page was not selected or created in this conversation.', 'cardbush_page_not_authorized');
@@ -214,11 +262,13 @@ export class IntegratedBrowser {
     if (method === 'tabs.activate') {
       scope.selected = entry.tabId;
       scope.bindingRevision++;
-      this.options.action(scope.ownerId, { action: 'activate', tabId: entry.tabId, sessionId: this.actionSession(scopeId) });
-      return this.page(entry, scope);
+      const [presentation] = await this.present(scope, { action: 'activate', tabId: entry.tabId, sessionId: this.actionSession(scopeId) }, signal);
+      this.requirePresented(entry, presentation);
+      return this.page(entry, scope, presentation);
     }
     if (method === 'tabs.close') {
-      this.options.action(scope.ownerId, { action: 'close', tabId: entry.tabId, sessionId: this.actionSession(scopeId) });
+      const [presentation] = await this.present(scope, { action: 'close', tabId: entry.tabId, sessionId: this.actionSession(scopeId) }, signal);
+      if (presentation?.guestWebContentsId != null) unavailable('CardBush has not closed the tab in the interface.', 'cardbush_page_close_unconfirmed');
       this.unregister(scope.ownerId, { tabId: entry.tabId, guestWebContentsId: guest.id });
       this.forgetClosedPage(entry);
       return { closed: true, pageId: guest.id };
@@ -229,12 +279,19 @@ export class IntegratedBrowser {
       else if (params.action === 'forward') { if (guest.navigationHistory.canGoForward()) guest.navigationHistory.goForward(); }
       else if (params.action === 'reload') { if (params.ignoreCache) guest.reloadIgnoringCache(); else guest.reload(); }
       else throw new Error('Unsupported navigation action.');
-      return this.page(entry, scope);
+      const [presentation] = await this.inspect(scopeId, scope, [entry], signal);
+      return this.page(entry, scope, presentation);
     }
     if (method === 'debugger.command') {
       const command = String(params.command ?? '');
       // Page-scoped CDP only: no Target/Browser commands that can reach other guests or the app.
       if (!pageCommands.has(command)) throw new Error('Unsupported CardBush page command.');
+      if (command === 'Page.captureScreenshot') {
+        const [presentation] = await this.inspect(scopeId, scope, [entry], signal);
+        if (!this.page(entry, scope, presentation).visible) throw Object.assign(new Error(
+          'The selected CardBush tab is not visible. Show its conversation and select the existing tab before taking a screenshot. Do not create a replacement or alter the website DOM.'),
+          { code: 'cardbush_page_not_visible', details: { pageId: guest.id, sessionId: this.actionSession(scopeId), inputDispatched: false } });
+      }
       if (!guest.debugger.isAttached()) {
         guest.debugger.attach('1.3'); this.attached.add(guest.id);
         guest.debugger.once('detach', () => this.attached.delete(guest.id));

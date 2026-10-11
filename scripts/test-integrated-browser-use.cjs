@@ -58,8 +58,10 @@ async function run() {
   const router=new BrowserUseRouter(integrated,{external,routesPath});
   ipcMain.handle('inspector:browser-register',(event,input)=>integrated.register(event.sender,input));
   ipcMain.handle('inspector:browser-unregister',(event,input)=>integrated.unregister(event.sender.id,input));
+  ipcMain.handle('inspector:browser-action-result',(event,input)=>integrated.acknowledge(event.sender.id,input));
   ipcMain.handle('inspector:browser-bind',(event,input)=>router.bindReferences(event.sender,input.sessionId,input.references));
   ipcMain.handle('browser:settings-read',()=>({protocol:'cardbush.browser_config.v1',revision:1,startPage:url}));
+  ipcMain.handle('browser:frequent-sites',()=>[]);
   await window.loadFile(path.join(directory,'index.html'));
   const ui=code=>window.webContents.executeJavaScript(code);
   await until(()=>ui('Boolean(window.browserFixture)'), 'React inspector did not mount');
@@ -254,10 +256,45 @@ async function run() {
     success(await call('select_page',{pageId:created.id},grandchild));
     success(await call('close_page',{pageId:created.id},grandchild));
     for(const sessionId of [parent,child,grandchild])assert.deepEqual(success(await call('list_pages',{},sessionId)).pages,[],'closing the returned guest clears all delegated views');
-    assert.deepEqual(browserActions.slice(beforeActions).map(action=>[action.action,action.sessionId]),
+    assert.deepEqual(browserActions.slice(beforeActions).filter(action=>action.action!=='inspect').map(action=>[action.action,action.sessionId]),
       [['open',parent],['activate',parent],['close',parent]],'all native actions target the root workspace even without inherited browser grants');
     assert.equal(externalCalls.length,beforeCalls+(choice==='external'?2:0),'only the explicit parent read and switch touch the external browser');
   }
-  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, native local-file uploads with Unicode paths, hidden/multiple/disabled/consumed inputs and single change events, assistant child delegation and re-binding, returned descendant pages readable/clickable by parents, first-use routing and explicit external-browser preservation, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
+  // Real first-turn transition: @ an existing blank guest, then start a conversation
+  // that already has another blank tab. Never substitute a newly created guest.
+  await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace('')); void 0`);
+  await until(()=>ui(`browserFixture.workspaceId===browserFixture.localInspectorWorkspace('')`),'Draft workspace not selected');
+  await ui(`browserFixture.open({target:'about:blank',newTab:true}); void 0`);
+  await until(()=>ui(`Boolean(browserFixture.navigation[browserFixture.activeId]?.guestWebContentsId)`),'Draft guest not ready');
+  const draftTab=await ui('browserFixture.activeId');
+  const draftGuestId=await ui(`browserFixture.navigation[${JSON.stringify(draftTab)}].guestWebContentsId`);
+  const firstTurn='first-turn-reference';
+  await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace(${JSON.stringify(firstTurn)})); void 0`);
+  await until(()=>ui(`browserFixture.workspaceId===browserFixture.localInspectorWorkspace(${JSON.stringify(firstTurn)})`),'Conversation workspace not selected');
+  await ui(`browserFixture.open({target:'about:blank',newTab:true}); void 0`);
+  await until(()=>ui(`Boolean(browserFixture.navigation[browserFixture.activeId]?.guestWebContentsId)`),'Conversation blank guest not ready');
+  await router.bindReferences(window.webContents,firstTurn,[{tabId:draftTab,pageId:String(draftGuestId)}]);
+  assert.equal(await ui('browserFixture.activeId'),draftTab,'binding selects the referenced guest instead of the unrelated blank tab');
+  const opened=success(await call('navigate_page',{url},firstTurn));
+  assert.equal(opened.id,draftGuestId,'first-turn adoption preserves the original native guest');
+  assert.equal(opened.visible,true,'navigation reports actual visibility after UI acknowledgement');
+  await until(()=>ui(`document.querySelector('.right-inspector-tab-page.active .showing-start-page')===null`),'Start page still covers the navigated guest');
+  success(await call('take_screenshot',{format:'png'},firstTurn));
+  // A hidden conversation remains controllable, but it cannot claim visual success.
+  await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace('unrelated-current')); void 0`);
+  await until(()=>ui(`browserFixture.workspaceId===browserFixture.localInspectorWorkspace('unrelated-current')`),'Unrelated workspace not selected');
+  const background=success(await call('select_page',{pageId:draftGuestId},firstTurn));
+  assert.equal(background.selected,true);assert.equal(background.active,false);assert.equal(background.visible,false);
+  assert.equal(await ui('browserFixture.workspaceId'),'local:'+JSON.stringify('unrelated-current'),'background selection does not steal the user workspace');
+  const captureStarted=Date.now();
+  const hiddenCapture=await call('take_screenshot',{format:'png'},firstTurn);
+  failure(hiddenCapture,'cardbush_page_not_visible');
+  assert.equal(hiddenCapture.structuredContent.error.details.inputDispatched,false,'host diagnostics survive the MCP route');
+  assert.ok(Date.now()-captureStarted<3000,'hidden screenshot fails before a CDP timeout');
+  await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace(${JSON.stringify(firstTurn)})); void 0`);
+  await until(()=>ui(`browserFixture.activeId===${JSON.stringify(draftTab)}`),'Original selected tab was not restored');
+  assert.equal(success(await call('list_pages',{},firstTurn)).pages[0].visible,true);
+  success(await call('take_screenshot',{format:'png'},firstTurn));
+  console.log('Passed integrated Browser Use: native guest preservation across first-turn references, confirmed visibility and hidden screenshot guards, background workspace isolation, Runtime discovery, HTTP MCP, uploads, delegation, cancellation, closed/replaced targets and external-browser isolation.');
 }
 run().then(async()=>{await client?.close();await endpoint?.close();fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(0);},async error=>{console.error(error);await client?.close().catch(()=>{});await endpoint?.close().catch(()=>{});fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(1);});

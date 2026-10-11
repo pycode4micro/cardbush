@@ -278,9 +278,9 @@ function assistantFailurePresentation(
       detail: measured + (language === 'zh' ? '输入额度是总上下文减去预留输出额度；增大最大输出会减少可用输入。已有进度已保留。' :
         'Input allowance is the total context minus reserved output. Increasing maximum output reduces room for input. Existing progress is preserved.') };
   }
-  if (reason === 'file_reference_invalid') {
-    return { reason, title: language === 'zh' ? '文件链接需要修正' : 'File links need correction',
-      detail: language === 'zh' ? '已尝试纠正交付链接，但仍无法确认对应文件。已有文件和完成的操作已保留，可以继续让助手重新提供链接。'
+  if (reason === 'reference_invalid') {
+    return { reason, title: language === 'zh' ? '回复引用需要修正' : 'Reply references need correction',
+      detail: language === 'zh' ? '已尝试纠正回复引用，但仍无法确认对应来源或文件。已有文件和完成的操作已保留，可以继续让助手重新提供链接。'
         : 'The delivery links still could not be verified after a correction attempt. Existing files and completed work are preserved. Ask the assistant to provide the links again.' };
   }
   if (reason === 'reasoning-budget-exhausted-before-action' || reason === 'model_output_limit_exceeded') {
@@ -1153,10 +1153,12 @@ function MessageBubbleView({
     (stoppedAssistantRound || (finalAssistantRound && !failedAssistantRound))
     ? completedAssistantChangeReport(message, changeSummaryMessages)
     : null;
-  const completedArtifacts = !isActiveAssistantTurn && !guidanceBoundaryRound &&
+  const hostArtifacts = !isActiveAssistantTurn && !guidanceBoundaryRound &&
+    (stoppedAssistantRound || (finalAssistantRound && !failedAssistantRound)) ? host?.turnArtifacts?.(message) : undefined;
+  const completedArtifacts = hostArtifacts?.items ?? (!isActiveAssistantTurn && !guidanceBoundaryRound &&
     (stoppedAssistantRound || (finalAssistantRound && !failedAssistantRound))
     ? completedTurnExecutions(message, changeSummaryMessages).flatMap(execution => execution.artifacts ?? [])
-    : [];
+    : []);
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const failurePresentation = assistantFailurePresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
@@ -1421,9 +1423,10 @@ function MessageBubbleView({
               {formatAssistantCompletedAt(assistantCompletedAt, language)}
             </time>
           )}
-          {(completedChangeReport || completedArtifacts.length > 0) && <AssistantTurnArtifacts
+          {(completedChangeReport || completedArtifacts.length > 0 || hostArtifacts?.load) && <AssistantTurnArtifacts
             key={`${message.conversationId ?? ''}:${message.turnId ?? message.id}`}
             message={message} report={completedChangeReport} artifacts={completedArtifacts} language={language}
+            loadArtifacts={hostArtifacts?.load}
             onRevert={readOnlyActions || !canRevertWorkspace || !completedChangeReport || completedChangeReport.revertSupported === false ? undefined : () => onRevertChangeReport({
               ...completedChangeReport, id: `${message.id}:turn-artifacts`, messageId: message.id,
               turnId: message.turnId, createdAt: message.createdAt,
@@ -1469,12 +1472,13 @@ function completedTurnExecutions(message: ChatMessage, turnMessages?: ChatMessag
   return Array.from(executions.values());
 }
 
-function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert }: {
+function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert, loadArtifacts }: {
   message: ChatMessage;
   report: ToolChangeReport | null;
   artifacts: ChatToolArtifact[];
   language: AppLanguage;
   onRevert?: () => Promise<void>;
+  loadArtifacts?: () => Promise<ChatToolArtifact[]>;
 }) {
   const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
@@ -1483,23 +1487,29 @@ function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert
   const reverted = workspaceChangeReverted(changeState.states, message.conversationId ?? '', {
     messageId: message.id, turnId: message.turnId, reverted: report?.reverted,
   });
-  const entries = new Map<string, TurnArtifactEntry>();
-  const resolve = (value: string) => remapProjectPath(resolveChangedFilePath(value, workspaceRoot), pathAliases);
-  const key = (value: string) => /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\')
-    ? value.replaceAll('\\', '/').toLowerCase() : value;
-  for (const file of report?.files ?? []) {
-    const path = resolve(file.path);
-    entries.set(key(path), { path, name: basename(file.path), additions: file.additions, deletions: file.deletions });
-  }
-  for (const artifact of artifacts) {
-    if (!artifact.path || /^data:/i.test(artifact.path)) continue;
-    const path = resolve(artifact.path);
-    if (entries.has(key(path))) continue;
-    entries.set(key(path), { path, name: artifact.name || basename(path),
-      mediaType: artifact.type === 'image' || artifact.type === 'video' || artifact.type === 'audio' ? artifact.type : undefined });
-  }
-  if (!entries.size) return null;
-  return <TurnArtifactsMenu items={[...entries.values()]} language={language} reverted={reverted}
+  const collect = (artifacts: ChatToolArtifact[]) => {
+    const entries = new Map<string, TurnArtifactEntry>();
+    const resolve = (value: string) => remapProjectPath(resolveChangedFilePath(value, workspaceRoot), pathAliases);
+    const key = (value: string) => /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\')
+      ? value.replaceAll('\\', '/').toLowerCase() : value;
+    for (const file of report?.files ?? []) {
+      const path = resolve(file.path);
+      entries.set(key(path), { path, name: basename(file.path), additions: file.additions, deletions: file.deletions });
+    }
+    for (const artifact of artifacts) {
+      if (!artifact.path || /^data:/i.test(artifact.path)) continue;
+      const path = resolve(artifact.path);
+      if (entries.has(key(path))) continue;
+      entries.set(key(path), { path, name: artifact.name || basename(path),
+        mediaType: artifact.type === 'image' || artifact.type === 'video' || artifact.type === 'audio' ? artifact.type : undefined });
+    }
+    return [...entries.values()];
+  };
+  const entries = collect(artifacts);
+  if (!entries.length && !loadArtifacts) return null;
+  return <TurnArtifactsMenu items={entries} language={language} reverted={reverted}
+    loadItems={loadArtifacts ? async () => collect([...artifacts, ...await loadArtifacts()]) : undefined}
+    onDownload={host?.downloadFile ? item => host.downloadFile!(item.path) : undefined}
     busy={changeState.busy} onRevert={onRevert}
     onContextMenu={host ? undefined : (event, item) => openFileContextMenu(event, item.path, { language })}
     onOpen={item => {

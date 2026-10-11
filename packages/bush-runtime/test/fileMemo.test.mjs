@@ -192,7 +192,7 @@ test('final delivery gets one bounded correction without replaying successful fi
   assert.equal(terminal.payload.status, 'completed'); assert.equal(calls, 2);
   assert.deepEqual(requests[1].slice(0, requests[0].length), requests[0], 'earlier prefix stays byte-equivalent');
   assert.equal(requests[1].at(-2).content, '[delivery.md](cardbush-memo:99)', 'original model text is kept');
-  assert.equal(requests[1].at(-1).name, 'file_reference_correction');
+  assert.equal(requests[1].at(-1).name, 'reference_correction');
   assert.equal(f.store.listByTool('session', 'remember_file').length, 1);
   calls = 0;
   provider.stream = async function* (request) {
@@ -201,7 +201,7 @@ test('final delivery gets one bounded correction without replaying successful fi
     yield { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: '2026-09-13T00:00:00Z', sequence: 1, kind: 'response_completed', finishReason: 'stop' };
   };
   const failed = await run('failed-delivery');
-  assert.equal(failed.payload.reason, 'file_reference_invalid'); assert.equal(calls, 2);
+  assert.equal(failed.payload.reason, 'reference_invalid'); assert.equal(calls, 2);
 });
 
 test('host-issued numbers persist across sessions and restart, preserving reservations and detecting corruption', async t => {

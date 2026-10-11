@@ -2,7 +2,7 @@ import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, X } from 'lucide-react';
 import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, resolveModelReasoningEffort, reasoningEffortsForProtocol, type ModelApiProtocol } from '@cardbush/bush-protocol';
-import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { AppLanguage, ManagedModelConfig, ReasoningLevel } from '../../types';
 import { modelReasoningLabel } from './modelReasoning';
 import { ModelProviderSelect, customProviderValue, normalizeProvider } from './ModelProviderSelect';
@@ -116,7 +116,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
               options={[{ value: 'adaptive', label: zh ? '自适应（较新模型）' : 'Adaptive (newer models)' }, { value: 'budget', label: zh ? 'Token 预算（旧模型）' : 'Token budget (older models)' }]}/>
             <small className="model-field-hint">{zh ? '选择推理强度时使用；未指定强度时遵循服务商默认。' : 'Used when a reasoning effort is selected; otherwise provider defaults apply.'}</small></label>}
           <div className="model-form-grid"><SettingsInput label={zh ? '上下文上限' : 'Context tokens'} type="number" value={context} onChange={setContext}/>
-            {!chatGpt && <SettingsInput label={zh ? '最大输出 tokens' : 'Maximum output tokens'} type="number" value={completion} placeholder={apiProtocol === 'anthropic_messages' ? '8192' : zh ? '供应商默认' : 'Provider default'} onChange={setCompletion}/>}</div>
+            {!chatGpt && <SettingsInput label={zh ? '最大输出 tokens' : 'Maximum output tokens'} type="number" value={completion} placeholder={String(DEFAULT_MAX_OUTPUT_TOKENS)} onChange={setCompletion}/>}</div>
           {!chatGpt && <><label className="settings-field"><span>{zh ? '自定义请求头（JSON）' : 'Custom headers (JSON)'}</span><textarea rows={4} value={headers} spellCheck={false} placeholder={'{\n  "x-session-id": "{{sessionId}}"\n}'} onChange={event => { setHeaders(event.currentTarget.value); changedConnection(); }}/></label>
           <p className="model-field-hint">{zh ? '可使用 {{sessionId}} 引用当前对话 ID；同一对话的后续请求保持一致。' : 'Use {{sessionId}} for the stable ID of the current conversation.'}</p></>}
         </div>}

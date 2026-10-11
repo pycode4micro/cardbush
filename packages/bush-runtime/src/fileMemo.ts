@@ -1,4 +1,5 @@
 import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
+import { memoMarkdownLinks } from './memoMarkdownLinks.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
 import { FILE_MEMO_PROTOCOL, fileMemoInputSchema, fileMemoMarkdown, fileMemoReference, fileMemoSchema, parseFileMemoReference,
   type FileMemo, type FileMemoResolution, type ToolExecutionRecord } from '@cardbush/bush-protocol';
@@ -139,17 +140,13 @@ export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecuti
 /** Check actual Markdown destinations, excluding examples in code. Does not rewrite model history. */
 export async function validateFileMemoLinks(store: ToolExecutionStore, content: string, scope: Required<Pick<FileMemoScope, 'sessionId' | 'turnId'>>, remote?: RemoteWorkspaceBridge) {
   if (!content.includes('cardbush-memo:')) return { invalid: [], links: [] };
-  const prose = content.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, match => ' '.repeat(match.length))
-    .replace(/(`+)[^`]*?\1/g, match => ' '.repeat(match.length));
-  const links = [...prose.matchAll(/\[((?:\\.|[^\]\\\r\n])*)\]\(\s*<?(cardbush-memo:[^\s<>)]*)>?\s*(?:["'][^\r\n]*?["']\s*)?\)|<((?:cardbush-memo:)[^\s<>]+)>|^\s*\[[^\]\r\n]+\]:\s*<?(cardbush-memo:[^\s<>]+)>?/gm)];
+  const links = memoMarkdownLinks(content, 'cardbush-memo');
   const invalid: Array<{ reference: string; reason: string }> = [];
   const seen = new Set<string>();
-  for (const match of links) {
-    const reference = match[2] ?? match[3] ?? match[4]!;
+  for (const { reference, label } of links) {
     if (seen.has(reference)) continue;
     seen.add(reference);
     // New deliveries must be exact; the conservative legacy repair is for already-saved messages.
-    const label = match[1]?.replace(/\\([\\\[\]])/g, '$1').trim();
     const fileName = label && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(label) ? label : undefined;
     const result = await resolveFileMemo(store, reference, { sessionId: scope.sessionId, fileName }, remote);
     if (result.status === 'unresolved' || result.status === 'unavailable') invalid.push({ reference, reason: result.status === 'unresolved' ? result.reason : 'file_unavailable' });

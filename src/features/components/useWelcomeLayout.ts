@@ -19,6 +19,16 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       referenceHeight ??= canvas.clientHeight;
       const scale = welcomeHeightScale(referenceHeight, canvas.clientHeight);
       canvas.style.setProperty('--welcome-height-scale', String(scale));
+      // Derive this from saved placements, not the reflowed element widths;
+      // otherwise entering compact mode could immediately switch it off again.
+      const compactWidgets = !editing && Boolean(layout?.items.some(item => {
+        const minimum = item.componentId === 'system-calendar' ? 264
+          : ['system-clock', 'system-digital-clock'].includes(item.componentId) ? 152 : 0;
+        return minimum > 0 && canvas.clientWidth * item.width / 100 < minimum;
+      }));
+      canvas.dataset.compactWidgets = String(compactWidgets);
+      canvas.style.setProperty('--welcome-widgets-top', '16px');
+      canvas.style.setProperty('--welcome-widgets-bottom', '16px');
       // Expose the legacy reference for editor snapshots after a resize.
       canvas.dataset.layoutViewportHeight = String(referenceHeight);
       if (!editing && layout === collection.welcomeLayout) adoptWelcomeViewport(collection, referenceHeight);
@@ -36,6 +46,13 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       slot.style.height = `${height}px`;
       slot.dataset.composerDocked = String(vertical.docked);
       canvas.style.setProperty('--welcome-composer-height', `${height}px`);
+      if (compactWidgets) {
+        // Keep the user's composer anchor; put the readable widgets in the
+        // larger free region and scroll that region on short windows only.
+        const below = canvas.clientHeight - vertical.top - height;
+        canvas.style.setProperty('--welcome-widgets-top', `${vertical.top >= below ? 16 : vertical.top + height + 16}px`);
+        canvas.style.setProperty('--welcome-widgets-bottom', `${vertical.top >= below ? canvas.clientHeight - vertical.top + 16 : 16}px`);
+      }
       const landing = canvas.querySelector<HTMLElement>('.welcome-composer-landing');
       if (landing) {
         Object.assign(landing.style, { left: `${horizontal.left}px`, top: `${vertical.bottom}px`, width: `${horizontal.width}px`, height: `${height}px` });

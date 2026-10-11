@@ -55,7 +55,8 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
     </div> : null;
   return <div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>
     {layout ? <div className="welcome-layout-canvas" style={{ minHeight: `max(${minHeight}px, calc(${Math.max(0, ...layout.items.filter(item => item.componentId !== 'system-input').map(item => item.y + item.height))}px * var(--welcome-height-scale, 1) + 20px))` }}>
-      {layout.items.map(item => view(item.componentId, item))}
+      <div className="welcome-layout-widgets">{layout.items.filter(item => item.componentId !== 'system-input').map(item => view(item.componentId, item))}</div>
+      {layout.items.filter(item => item.componentId === 'system-input').map(item => view(item.componentId, item))}
       {landing}
       {overlay}
     </div> : <>

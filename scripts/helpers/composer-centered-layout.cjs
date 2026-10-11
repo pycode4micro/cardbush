@@ -27,7 +27,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until('!!document.querySelector(".composer-dock .composer-stack")', 'centered send');
     await until('document.querySelector(".composer-dock").getAnimations().every(a=>a.playState!=="running")', 'vertical arrival'); await pause();
     const after = await run('layoutRect(".composer-dock .composer-stack")');
-    close(after.left,before.left,'same horizontal origin'); close(after.width,before.width,'same width');
+    const track = await run('layoutRect(".message-row")');
+    if (mode==='keep') {
+      close(after.left,before.left,'kept horizontal origin'); close(after.width,before.width,'kept custom width');
+    } else {
+      close(after.left,track.left,'conversation input starts at the reading edge');
+      close(after.width,track.width,'conversation input follows the reading width instead of the welcome percentage');
+    }
     if (viewportWidth===1920 && style==='simple' && mode==='bottom') fs.writeFileSync(path.join(root,'tmp','composer-maximized-conversation.png'),(await window.webContents.capturePage()).toPNG());
     if (mode==='keep') close(after.top,before.top,'keep actual input top');
     else {
@@ -107,7 +113,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const small = await run('layoutRect(".welcome-composer .composer-stack")');
   await run('document.querySelector(".send-button").click()'); await until('!!document.querySelector(".composer-dock")','small send'); await pause();
   const smallSent = await run('layoutRect(".composer-dock .composer-stack")');
-  close(smallSent.top,small.top,'small window stays put'); close(smallSent.width,small.width,'small window same width');
+  const smallTrack = await run('layoutRect(".message-row")');
+  close(smallSent.bottom,small.bottom,'small window stays docked');
+  close(smallSent.left,smallTrack.left,'small window reading edge'); close(smallSent.width,smallTrack.width,'small window reading width');
   await run('renderView(null);localStorage.removeItem(views.componentStorageKey)');
-  console.log('Centered composer passed: restored/1920px/restored, both styles and send modes, same width/axis, actual bounds, snapping, 125% drag/resize, keyboard lock, save/reopen, bottom pin and small windows.');
+  console.log('Centered composer passed: restored/1920px/restored, both styles, docked reading alignment, kept custom placements, actual bounds, snapping, 125% drag/resize, keyboard lock, save/reopen, bottom pin and small windows.');
 };

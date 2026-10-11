@@ -22,6 +22,7 @@ import {
 import {
   GOAL_CONTINUATION_PROMPT,
   DEFAULT_MAX_CONTEXT_TOKENS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   createProductAgentTurnRequest,
 } from '@cardbush/bush-product-agent';
 import type { ProductSubagentConfig } from '@cardbush/product-host';
@@ -118,7 +119,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
   ) ?? DEFAULT_MAX_CONTEXT_TOKENS;
   const configuredMaxOutputTokens = positiveInteger(
     request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
-  );
+  ) ?? DEFAULT_MAX_OUTPUT_TOKENS;
   if (
     maxContextTokens &&
     configuredMaxOutputTokens &&

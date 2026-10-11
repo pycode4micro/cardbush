@@ -81,6 +81,9 @@ export interface ToolRegistration<TInput = unknown> {
   execute: (context: ToolHandlerContext<TInput>) => unknown | Promise<unknown>;
   /** Pure presentation of a returned result; native execution/review data stays unchanged. */
   renderModelResult?: (result: unknown) => string | undefined;
+  /** Budget-aware preview of a returned text result. A zero budget returns only
+   * essential status (at most 1024 chars); the full render stays in the archive. */
+  projectModelResult?: (result: unknown, maxChars: number) => string | undefined;
   parallelSafe?: boolean;
   executionChannel?: string;
   visibleToChild?: boolean;
@@ -179,6 +182,13 @@ export class ToolRegistry {
     }
   }
 
+  projectModelResult(name: string, result: unknown, maxChars: number): string | undefined {
+    try {
+      const text = this.#registrations.get(name)?.projectModelResult?.(structuredClone(result), maxChars);
+      return typeof text === 'string' && text.length <= (maxChars === 0 ? 1024 : maxChars) ? text : undefined;
+    } catch { return undefined; }
+  }
+
   definitions(): ToolDefinition[] {
     return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration)).map(({ definition }) =>
       structuredClone(definition),
@@ -226,6 +236,7 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     authorize: candidate.authorize as AnyToolRegistration["authorize"],
     execute: candidate.execute as AnyToolRegistration["execute"],
     renderModelResult: candidate.renderModelResult,
+    projectModelResult: candidate.projectModelResult,
     parallelSafe: candidate.parallelSafe ?? false,
     executionChannel: candidate.executionChannel?.trim() || undefined,
     visibleToChild: candidate.visibleToChild ?? true,

@@ -19,6 +19,7 @@ import { InspectorTileFrame } from '${local('src/features/inspector/InspectorTil
 import { BrowserBookmarkButton } from '${local('src/features/inspector/BrowserBookmarkButton.tsx')}';
 import { RightInspectorResizer } from '${local('src/components/RightInspectorResizer.tsx')}';
 import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
+import { localInspectorWorkspace } from '${local('src/features/inspector/inspectorSessions.ts')}';
 import { useSoftPanelPresence } from '${local('src/hooks/useSoftPanelPresence.ts')}';
 import { InspectorActions } from '${local('src/features/inspector/InspectorActions.tsx')}';
 import { InspectorTabStrip } from '${local('src/features/inspector/InspectorTabStrip.tsx')}';
@@ -41,7 +42,8 @@ import '${local('src/styles/app.css')}';
 window.openedLinks=[];
 window.toolClicks=[];
 function Harness() {
-  const tabs=useInspectorTabs(), refs=React.useRef({});
+  const [workspaceId,setWorkspaceId]=React.useState('shared');
+  const tabs=useInspectorTabs(workspaceId), refs=React.useRef({});
   const [navigation,setNavigation]=React.useState({});
   const strip=useInspectorTabStrip(tabs.activeId,tabs.tabs.length);
   const [address,setAddress]=React.useState('');
@@ -49,7 +51,7 @@ function Harness() {
   const [covered,setCovered]=React.useState(false);
   const [width,setWidth]=React.useState(820);
   const [language,setLanguage]=React.useState('zh');
-  const [inspectorOpen,setInspectorOpen]=React.useState(false);
+  const inspectorOpen=tabs.open,setInspectorOpen=tabs.setOpen;
   const presence=useSoftPanelPresence(inspectorOpen,240,{keepMounted:true});
   const open=React.useCallback(detail=>{
     setInspectorOpen(true);
@@ -57,8 +59,10 @@ function Harness() {
     tabs.openTab({id:detail.newTab ? crypto.randomUUID() : detail.target,kind:'resource',detail});
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
-  window.browserFixture={...tabs,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark,importBrowserBookmarks,installWebApplication};
-  useInspectorBrowserActions({open:tabs.openTab,activate:tabs.activateTab,close:id=>tabs.closeTabs(new Set([id])),show:()=>setInspectorOpen(true)});
+  window.browserFixture={...tabs,workspaceId,setWorkspaceId,localInspectorWorkspace,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark,importBrowserBookmarks,installWebApplication};
+  useInspectorBrowserActions({workspaceId,snapshot:tabs.snapshot,bind:tabs.bindBrowserTabs,open:tabs.openTab,activate:tabs.activateTab,
+    close:(id,workspace)=>tabs.closeTabs(new Set([id]),workspace),show:workspace=>tabs.setOpen(true,workspace),
+    workspace:sessionId=>workspaceId==='shared'?'shared':localInspectorWorkspace(sessionId ?? '')});
   window.browserFixture.reference = async (sessionId,tabId) => {
     const reference=inspectorBrowserReferences(tabs.tabs,navigation).find(tab=>tab.tabId===tabId);
     if(!reference)throw Error('Reference unavailable');
@@ -78,7 +82,7 @@ function Harness() {
       {tabs.tabs.map(tab=><div className={'right-inspector-tab'+(tab.id===tabs.activeId?' active':'')} key={tab.id} data-inspector-tab-id={tab.id}>
         <button role="tab" aria-selected={tab.id===tabs.activeId} className="right-inspector-tab-select" data-tab={tab.id}
           title={(navigation[tab.id]?.title||tab.detail.title||tab.id)+'\\n'+(navigation[tab.id]?.url||tab.detail.target)} onClick={()=>tabs.activateTab(tab.id)}>
-          <BrowserSiteIcon url={navigation[tab.id]?.url||tab.detail.target} icon={navigation[tab.id]?.faviconUrl}/>
+          <BrowserSiteIcon url={navigation[tab.id]?.url||tab.detail.target} icon={navigation[tab.id]?.faviconUrl} icons={navigation[tab.id]?.faviconUrls} revision={navigation[tab.id]?.faviconRevision}/>
           <span className="right-inspector-tab-title">{navigation[tab.id]?.title||tab.detail.title||tab.id}</span>
         </button><BrowserTabAudioButton navigation={navigation[tab.id]} handle={refs.current[tab.id]} language={language} title={navigation[tab.id]?.title||tab.id}/>
         <button className="right-inspector-tab-close" aria-label="关闭标签页" onClick={()=>tabs.closeTabs(new Set([tab.id]))}>×</button></div>)}
@@ -93,7 +97,7 @@ function Harness() {
         <BrowserInstallButton language={language} navigation={active}/>
         <BrowserBookmarkButton address={active?.url||''} title={active?.title||''} language={language}/>
       </form></div>
-      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId} layout={layout} language="zh"
+      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.allTabs} activeId={tabs.activeId} layout={layout} language="zh"
         onActivate={tabs.activateTab}
         onResize={(path,ratio)=>setLayout(current=>resizePanelSplit(current,path,ratio))}
         renderFrame={tab=><InspectorTileFrame tab={tab} language={language} navigation={navigation[tab.id]} handle={refs.current[tab.id]} onSwap={(from,x,y)=>{
@@ -130,7 +134,7 @@ try {
   const require = createRequire(import.meta.url), env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
   const worker = process.argv.includes('--browser-use') ? 'scripts/test-integrated-browser-use.cjs' : 'scripts/test-inspector-browser-navigation.cjs';
-  const run = spawnSync(require('electron'), [worker, directory, ...process.argv.slice(2).filter(arg => ['--browser-ui', '--browser-chrome', '--browser-audio', '--web-apps'].includes(arg))], { env, windowsHide: true, stdio: 'inherit', timeout: 60_000 });
+  const run = spawnSync(require('electron'), [worker, directory, ...process.argv.slice(2).filter(arg => ['--browser-ui', '--browser-chrome', '--browser-audio', '--browser-favicons', '--browser-popups', '--web-apps'].includes(arg))], { env, windowsHide: true, stdio: 'inherit', timeout: 60_000 });
   assert.equal(run.status, 0, String(run.error ?? 'Browser navigation regression failed'));
 } finally {
   assert.ok(directory.startsWith(parent + sep + 'inspector-browser-'));

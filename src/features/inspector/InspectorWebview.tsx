@@ -18,7 +18,7 @@ import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import { DeferredResizePreview } from './DeferredResizePreview';
 import { BrowserPageTools, type BrowserPageToolsHandle } from '../browser/BrowserPageTools';
-import { browserIconUrl, rememberBrowserSiteIcon } from '../browser/browserSiteIcons';
+import { browserIconUrl } from '../browser/browserSiteIcons';
 import {
   normalizeInspectorBrowserAddress,
   inspectorFilePath,
@@ -31,6 +31,8 @@ export type InspectorNavigationState = {
   url: string;
   title: string;
   faviconUrl?: string;
+  faviconUrls?: readonly string[];
+  faviconRevision?: number;
   audible?: boolean;
   audioMuted?: boolean;
   canGoBack: boolean;
@@ -97,7 +99,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const languageRef = useRef(language); languageRef.current = language;
   const webviewDomReadyRef = useRef(false);
   const requestedUrlRef = useRef(source);
-  const faviconRef = useRef<{ page: string; icon: string } | null>(null);
+  const faviconRef = useRef<{ page: string; icons: string[] } | null>(null);
+  const faviconRevisionRef = useRef(0);
   const [currentUrl, setCurrentUrl] = useState(source);
   const filePath = inspectorFilePath(target);
   const media = mediaType ? inspectorMediaTarget(target, mediaType) : null;
@@ -141,7 +144,9 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         guestWebContentsId: webview.getWebContentsId?.(),
         url,
         title: /^about:blank(?:[?#]|$)/i.test(url) ? (languageRef.current === 'zh' ? '新标签页' : 'New tab') : webview.getTitle?.().trim() || '',
-        faviconUrl: faviconRef.current?.page === url ? faviconRef.current.icon : undefined,
+        faviconUrl: faviconRef.current?.page === url ? faviconRef.current.icons[0] : undefined,
+        faviconUrls: faviconRef.current?.page === url ? faviconRef.current.icons : undefined,
+        faviconRevision: faviconRevisionRef.current,
         audible: webview.isCurrentlyAudible?.() ?? false,
         audioMuted: webview.isAudioMuted?.() ?? false,
         canGoBack: webview.canGoBack?.() ?? false,
@@ -282,6 +287,9 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     armDeadline();
     const ready = () => {
       webviewDomReadyRef.current = true;
+      // Chromium need not re-announce unchanged favicon URLs on reload. Keep
+      // the previous document's page-scoped candidates and retry them here.
+      faviconRevisionRef.current++;
       setHasDocument(true);
       setPreviewError(current => current === 'timeout' ? null : current);
       // Browser zoom belongs to the site/user, and survives document navigation.
@@ -328,20 +336,26 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       publishNavigation();
     };
     const navigate = (event: Event) => {
-      const url = (event as Event & { url?: string }).url?.trim();
+      const detail = event as Event & { url?: string; isMainFrame?: boolean };
+      if (detail.isMainFrame === false) return;
+      const url = detail.url?.trim();
+      // History/hash changes keep the current document's icon metadata.
+      if (url && event.type === 'did-navigate-in-page' && faviconRef.current) faviconRef.current.page = url;
       if (url) requestedUrlRef.current = url;
       publishNavigation();
     };
     const updateTitle = () => publishNavigation();
     const updateFavicon = (event: Event) => {
-      if (!webview.isConnected || !webviewDomReadyRef.current) return;
+      if (!webview.isConnected) return;
       try {
         const page = webview.getURL?.() || '';
         const candidates = (event as Event & { favicons?: string[] }).favicons;
-        const icon = candidates?.map(browserIconUrl).find(Boolean);
-        if (!icon || !/^https?:\/\//i.test(page)) return;
-        faviconRef.current = { page, icon };
-        rememberBrowserSiteIcon(page, icon);
+        const icons = [...new Set(candidates?.map(browserIconUrl).filter(Boolean))].slice(0, 8);
+        if (!/^https?:\/\//i.test(page)) return;
+        faviconRef.current = { page, icons };
+        faviconRevisionRef.current++;
+        // Candidate URLs are not proof that an image loaded. Only the icon
+        // component's onLoad persists a working icon for bookmarks/frequent sites.
         publishNavigation();
       } catch { /* A favicon update can race with guest teardown. */ }
     };
@@ -473,7 +487,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           ref: webviewRef,
           className: 'right-inspector-webview',
           src: source,
-          // The main-process handler forwards these requests to inspector tabs and denies native popups.
+          // Main routes normal links to tabs and preserves opener-dependent popup workflows.
           allowpopups: '',
           webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
         })}

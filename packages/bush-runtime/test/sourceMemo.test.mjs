@@ -5,7 +5,7 @@ import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseSourceMemoReference, parseSourceMemoIdentity } from '@cardbush/bush-protocol';
 import { ToolRegistry, ToolExecutionStore, ToolExecutionCoordinator, FileToolExecutionPersistence, InMemoryRuntimeHost, registerFileMemoTools, resolveFileMemo } from '../dist/index.js';
-import { registerSourceMemoTools, resolveSourceMemo, resolveSourceReferences, sourceMemoReference } from '../dist/sourceMemo.js';
+import { registerSourceMemoTools, resolveSourceMemo, resolveSourceReferences, sourceMemoReference, validateSourceMemoLinks } from '../dist/sourceMemo.js';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-source-'));
@@ -35,6 +35,8 @@ test('Source uses durable memo facts without changing file links; snapshots surv
   assert.equal(memo.sources[0].target, await realpath(path));
   assert.match(memo.sources[0].excerpt, /return 1;/); assert.match(memo.sources[0].version.sha256, /^[a-f0-9]{64}$/);
   const modelResult = registry.resolve('remember_source').renderModelResult(memo);
+  assert.equal(JSON.parse(modelResult).markdown, '[1]');
+  assert.ok(!modelResult.includes('cardbush-source:'), 'the model never needs to reproduce guarded IDs');
   assert.ok(!modelResult.includes('sha256') && !modelResult.includes('excerpt'), 'host snapshots do not consume model output context');
   assert.equal((await resolveFileMemo(store, file.result.reference)).status, 'available');
   assert.equal((await resolveSourceMemo(store, file.result.reference.replace('cardbush-memo:', 'cardbush-source:'))).status, 'unresolved');
@@ -87,6 +89,64 @@ test('bare Source numbers resolve only to successful notes in the exact session 
   assert.deepEqual(await host.sendCommand({ kind: 'runtime.resolve_source_references', payload: input }), expected, 'missing evidence does not erase the saved identity');
   await assert.rejects(host.sendCommand({ kind: 'runtime.resolve_source_references', payload: { numbers: [number] } }));
   await assert.rejects(host.sendCommand({ kind: 'runtime.resolve_source_references', payload: { ...input, numbers: Array(33).fill(number) } }));
+});
+
+test('rereading a page explicitly binds only that page of earlier notes to the new turn', async t => {
+  const { run, store, registry, persistence } = await fixture(t);
+  const memos = [];
+  for (let i = 0; i < 11; i++) memos.push((await run('remember_source', { explanation: `Note ${i}` })).result);
+  const scope = { sessionId: 's', turnId: 'next', numbers: [1, 10, 11] };
+  assert.deepEqual(resolveSourceReferences(store, scope), []);
+  const read = await run('read_source_memos', {}, { turnId: 'next' });
+  const presented = JSON.parse(registry.renderModelResult('read_source_memos', read.result));
+  assert.equal(presented.memos[0].markdown, '[1]');
+  assert.equal(presented.next_offset, 10); assert.equal(presented.total, 11);
+  assert.ok(!JSON.stringify(presented).includes('cardbush-source:'));
+  const expected = [0, 9].map(i => ({ number: i + 1, reference: memos[i].reference }));
+  assert.deepEqual(resolveSourceReferences(store, scope), expected);
+  assert.deepEqual(resolveSourceReferences(new ToolExecutionStore({ persistence }), scope), expected);
+  assert.deepEqual(resolveSourceReferences(store, { ...scope, sessionId: 'unrelated' }), []);
+  assert.deepEqual(resolveSourceReferences(store, { ...scope, turnId: 'later' }), []);
+});
+
+test('Source delivery validates guarded identities without fetching evidence or changing code examples', async t => {
+  const { root, run, store } = await fixture(t), path = join(root, 'evidence.txt');
+  await writeFile(path, 'Evidence');
+  const memo = (await run('remember_source', { explanation: 'Reason.', sources: [{ target: path }] })).result;
+  const bad = memo.reference.replace(/-[a-f0-9]{16}$/, '-0000000000000000');
+  const scope = { sessionId: 's', turnId: 't' };
+  await rm(path);
+  assert.deepEqual(validateSourceMemoLinks(store, memo.markdown, scope).invalid, [], 'identity remains valid after evidence is removed');
+  assert.deepEqual(validateSourceMemoLinks(store, `\`[1](${bad})\`\n\`\`\`md\n[1](${bad})\n\`\`\``, scope).invalid, []);
+  const checked = validateSourceMemoLinks(store, `[1](${bad})\n<${bad}>\n[ref]: cardbush-source:missing`, scope);
+  assert.deepEqual(checked.invalid, [{ reference: bad, reason: 'reference_mismatch' }, { reference: 'cardbush-source:missing', reason: 'invalid_reference' }]);
+  assert.equal(checked.links[0].markdown, '[1]');
+  assert.deepEqual(validateSourceMemoLinks(store, 'Literal [999] and ordinary [website](https://example.com)', scope).invalid, []);
+});
+
+test('Source and file delivery share one correction allowance and preserve completed work', async t => {
+  const { root, run, store } = await fixture(t);
+  const memo = (await run('remember_source', { explanation: 'Saved rationale.' })).result;
+  const bad = memo.reference.replace(/-[a-f0-9]{16}$/, '-0000000000000000');
+  const requests = []; let final = 'Claim[1]';
+  const host = new InMemoryRuntimeHost({ dataRoot: join(root, 'host'), toolExecutionStore: store, provider: { async *stream(request) {
+    requests.push(structuredClone(request.messages));
+    const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+    yield { ...base, sequence: 0, kind: 'text_delta', delta: requests.length % 2 === 1 ? `Claim[1](${bad})` : final };
+    yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' };
+  } } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const execute = turnId => host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r-' + turnId,
+    sessionId: 's', turnId, model: 'fixture', messages: [{ role: 'user', content: 'Explain the result' }], tools: [] });
+  assert.equal((await execute('t')).payload.status, 'completed');
+  assert.equal(requests.length, 2); assert.equal(requests[1].at(-1).name, 'reference_correction');
+  assert.match(requests[1].at(-1).content, /reference_mismatch/);
+  assert.deepEqual(requests[1].slice(0, requests[0].length), requests[0]);
+  assert.equal(requests[1].at(-2).content, `Claim[1](${bad})`, 'original output is not silently rewritten');
+  final = '[missing file](cardbush-memo:999999)';
+  assert.equal((await execute('next')).payload.reason, 'reference_invalid');
+  assert.equal(requests.length, 4, 'different reference types cannot chain recovery loops');
+  assert.equal(store.listByTool('s', 'remember_source').length, 1);
 });
 
 test('Source display numbers restart per conversation while file references and copied full links stay unique', async t => {

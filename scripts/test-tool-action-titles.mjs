@@ -37,6 +37,28 @@ test('late or duplicated events cannot rewind state or replace a title', () => {
   assert.equal(api.toolActionTitle(row, 'zh'), '核对产品资料');
 });
 
+test('terminal outcomes remain distinct from returned lifecycle in full and compact history', () => {
+  for (const [result, outcome, zh, en] of [
+    [{ state: 'exited', exitCode: 7 }, 'failed', '执行失败', 'Command failed'],
+    [{ state: 'exited', exitCode: 0, stderr: 'warning' }, 'succeeded', '命令已结束', 'Command exited'],
+    [{ state: 'running', exitCode: null }, 'running', '已转后台', 'Sent to background'],
+    [{ state: 'stopped', exitCode: 1 }, 'stopped', '已停止', 'Stopped'],
+    [{ state: 'exited', exitCode: null, signal: 'SIGTERM' }, 'failed', '执行失败', 'Command failed'],
+    [{ state: 'disconnected', exitCode: null }, 'failed', '执行失败', 'Command failed'],
+  ]) {
+    const terminal = { ...record, toolCall: { ...record.toolCall, name: 'terminal_exec' } };
+    const full = api.runtimeHistoryToolExecution({ ...terminal, protocol: 'bush.tool.execution_record.v2', result });
+    const compact = api.runtimeHistoryToolExecution({ ...terminal, terminalOutcome: outcome });
+    for (const row of [full, compact]) {
+      assert.equal(row.state, 'completed'); assert.equal(row.success, true, 'the tool still returned normally');
+      assert.equal(api.toolActivityStatus(row, 'zh', false), zh);
+      assert.equal(api.toolActivityStatus(row, 'en', false), en);
+    }
+    const plugin = api.runtimeHistoryToolExecution({ ...record, result });
+    assert.equal(api.toolActivityStatus(plugin, 'zh', false), '已返回', 'external result fields are not interpreted as a terminal receipt');
+  }
+});
+
 test('historical enrichment from an older agent preserves an existing title', () => {
   const live = api.toolLifecycle(event(1, 'tool_running', '核对产品资料'));
   const legacy = api.runtimeHistoryToolExecution({ ...record, display: undefined });

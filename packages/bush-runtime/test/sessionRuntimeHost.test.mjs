@@ -888,6 +888,7 @@ test("bounds a parallel Tool batch before it can consume the checkpoint reserve"
     "inspect five large sources and finish",
   );
   request.tools = [ordinaryToolDefinition(), orderedCheckpointTool];
+  request.maxOutputTokens = 8_192;
   request.metadata = { contextWindowTokens: 256_000 };
 
   const terminal = await host.runSessionTurn(request);
@@ -1545,6 +1546,7 @@ test("fails before dispatch when the Provider cannot count the final input proje
     "hello",
   );
   request.metadata = { contextWindowTokens: 4_000 };
+  request.maxOutputTokens = 1_000;
 
   const terminal = await host.runSessionTurn(request);
 
@@ -1578,6 +1580,7 @@ for (const settlement of ["cooperative rejection", "late result", "late rejectio
     });
     const request = sessionRequest("request_count_cancel", "turn_count_cancel", "user_count_cancel", "hello");
     request.metadata = { contextWindowTokens: 4_000 };
+    request.maxOutputTokens = 1_000;
     const running = host.runSessionTurn(request, { signal: controller.signal });
     try {
       await counting;
@@ -1611,6 +1614,7 @@ test("an AbortError without Turn cancellation is still a Provider count failure"
   });
   const request = sessionRequest("request_count_abort_error", "turn_count_abort_error", "user_count_abort_error", "hello");
   request.metadata = { contextWindowTokens: 4_000 };
+  request.maxOutputTokens = 1_000;
   const terminal = await host.runSessionTurn(request);
   assert.equal(terminal.payload.status, "failed");
   assert.equal(terminal.payload.reason, "provider_input_token_count_failed");
@@ -1642,6 +1646,7 @@ test("dispatches with a fallback estimate when exact Provider counting is unsupp
     "hello",
   );
   request.metadata = { contextWindowTokens: 4_000 };
+  request.maxOutputTokens = 1_000;
 
   const terminal = await host.runSessionTurn(request);
 

@@ -51,6 +51,8 @@
 
 图片任务复用火山插件 `ImageJobs` 的 SQLite 回执、幂等提交、并发限制及 `generation_wait`，不新建任务引擎，不自动重试已付费或结果未知的请求。broker 同时检查会话任务和图片任务，活动任务不会因空闲回收而被停止。渲染回归：`node --test scripts/test-web-transcript.mjs`；浏览器夹具：`node scripts/fixtures/web-transcript-browser.mjs`（127.0.0.1:5210，合成账号 alice/bob，任意测试密码，控制页 `/__test`，不调用模型）。`node scripts/build-web-release.mjs` 同时记录原生渲染依赖清单，便于审计前端发布，不重建 Agent Runtime。
 
+已完成的生图回复在复制、时间旁显示“产物”，展开后逐张“下载”原图。入口复用 Electron 的 `TurnArtifactsMenu`，网页只提供下载操作。产物来自本轮助手输出及图片插件明确的成功回执，按个人生成文件路径去重；上传的参考图、视频、外部地址和其他账号文件不进入下载列表。历史消息没有正文图片链接时，点击入口按需读取当前会话的工具记录；失败可重试。下载复用账号内的原图 Blob 缓存，不再次调用生图模型。回归：`node --test scripts/test-web-artifacts.mjs scripts/test-web-transcript.mjs scripts/test-web-files-ui.mjs scripts/test-web-cache.mjs`。发布记录见 [NAS-20261011-artifacts.md](NAS-20261011-artifacts.md)。
+
 ## 发布与回退
 
 所有发布使用不可变镜像标签。更新活跃用户容器前先检查 `chat.jobs`，不要停止正在回复或排队的会话。停止空闲旧容器并重新创建时保留命名卷；broker 只使用自己标签下的容器。不要执行 `compose down -v` 或删除用户卷。

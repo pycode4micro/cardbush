@@ -3,7 +3,7 @@ import test from 'node:test';
 import path from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 import { fixtureState, fixtureTurn, conversationFixtureState, fixtureRecords, job, sessions, initialEvents, finalEvents } from './fixtures/web-transcript-data.mjs';
-const ui = await loadChatTranscript({ source: `export * from ${JSON.stringify(path.resolve('web/transcript.ts'))};` });
+const ui = await loadChatTranscript({ conditions: ['node'], globals: { TextEncoder, TextDecoder, process: { env: { NODE_ENV: 'production' } } }, source: `export * from ${JSON.stringify(path.resolve('web/transcript.ts'))};` });
 const plain = value => JSON.parse(JSON.stringify(value));
 
 test('committed native rendering folds intermediate replies and their tools beneath one final answer', () => {

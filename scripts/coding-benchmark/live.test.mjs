@@ -28,6 +28,9 @@ test('saved product configuration preserves its endpoint and headers without exp
   assert.equal(JSON.stringify(result.publicConfig).includes('fixture-header-only'), false);
   assert.equal(result.maxOutputTokens, 12800);
   assert.equal(result.publicConfig.maxOutputTokens, 12800);
+  const defaults = await configure({ config: path, model: 'test-model', reasoning: 'high', 'max-rounds': '2', 'timeout-ms': '1000', 'token-stop': '1000' });
+  assert.equal(defaults.maxOutputTokens, 128000);
+  assert.equal(defaults.publicConfig.maxContextTokens, 400000);
 });
 
 async function run(t, stream, overrides = {}) {

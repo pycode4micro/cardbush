@@ -11,6 +11,7 @@ export const emptyInspectorSessions: InspectorSessionsState = { workspaces: {}, 
 export type InspectorSessionsAction =
   | { type: 'tabs'; workspaceId: string; action: InspectorTabsAction }
   | { type: 'open-state'; workspaceId: string; update: boolean | ((open: boolean) => boolean) }
+  | { type: 'bind-browser'; workspaceId: string; ids: string[] }
   | { type: 'dispose'; ids: ReadonlySet<string> }
   | { type: 'toggle-lock'; id: string };
 
@@ -34,6 +35,26 @@ export function inspectorSession(state: InspectorSessionsState, workspaceId: str
 
 /** Resource pages have one owner. A lock shares visibility, never a second guest. */
 export function inspectorSessionsReducer(state: InspectorSessionsState, action: InspectorSessionsAction): InspectorSessionsState {
+  if (action.type === 'bind-browser') {
+    // An explicit @ reference carries the existing guest into its conversation.
+    // Move unlocked resources atomically; locked tabs remain shared by their owner.
+    const tabs = action.ids.flatMap(id => {
+      const tab = retainedInspectorTabs(state).find(tab => tab.id === id);
+      return tab?.kind === 'resource' ? [tab] : [];
+    });
+    if (!tabs.length) return state;
+    const moved = new Set(tabs.filter(tab => !state.lockedIds.has(tab.id)).map(tab => tab.id));
+    const own = state.workspaces[action.workspaceId] ?? { tabs: [], activeId: '', open: false };
+    const workspaces = Object.fromEntries(Object.entries(state.workspaces).map(([key, workspace]) => [key,
+      key === action.workspaceId ? workspace : { ...workspace, ...inspectorTabsReducer(workspace, { type: 'close', ids: moved }) }]));
+    workspaces[action.workspaceId] = { ...own, open: true, activeId: tabs[0].id,
+      tabs: [...own.tabs, ...tabs.filter(tab => moved.has(tab.id) && !own.tabs.some(existing => existing.id === tab.id))] };
+    const next = { ...state, workspaces };
+    for (const [key, workspace] of Object.entries(workspaces)) {
+      if (!inspectorSession(next, key).tabs.length) workspaces[key] = { ...workspace, open: false };
+    }
+    return next;
+  }
   if (action.type === 'toggle-lock') {
     if (!retainedInspectorTabs(state).some(tab => tab.id === action.id)) return state;
     const lockedIds = new Set(state.lockedIds);

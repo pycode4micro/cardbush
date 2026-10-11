@@ -15,10 +15,27 @@
 .welcome-layout-slot .builtin-workspace-control { flex: none; }
 .welcome-layout-surface.custom-layout { display: block; padding: 0; overflow: auto; }
 .welcome-layout-canvas { position: relative; width: 100%; height: 100%; }
+.welcome-layout-widgets { display: contents; }
 .custom-layout .welcome-layout-slot { position: absolute; }
 .custom-layout .welcome-slot-content { overflow: auto; container: welcome-hero / inline-size; }
 .custom-layout .welcome-slot-input > .welcome-slot-content { overflow: visible; }
 .custom-layout .welcome-slot-suggestions > .welcome-slot-content { display: flex; align-items: center; }
+/* Compact only the live view. Stored coordinates and editor handles retain
+   their original geometry, and widening the pane restores it immediately. */
+.welcome-layout-surface[data-compact-widgets=true] .welcome-layout-canvas { min-height: 100% !important; }
+.welcome-layout-surface[data-compact-widgets=true] .welcome-layout-widgets {
+  position: absolute; inset: var(--welcome-widgets-top) 20px var(--welcome-widgets-bottom);
+  display: flex; flex-direction: column; align-items: center; justify-content: safe center;
+  gap: 18px; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain;
+}
+.welcome-layout-surface[data-compact-widgets=true] .welcome-layout-widgets > .welcome-layout-slot {
+  position: relative; left: auto !important; top: auto !important;
+  width: 100% !important; max-width: 320px;
+}
+.welcome-layout-surface[data-compact-widgets=true] .welcome-slot-digital-clock { height: 90px !important; order: -1; }
+.welcome-layout-surface[data-compact-widgets=true] .welcome-slot-clock { height: 210px !important; order: -1; }
+.welcome-layout-surface[data-compact-widgets=true] .welcome-slot-calendar { height: 268px !important; }
+.welcome-layout-surface[data-compact-widgets=true] :is(.welcome-slot-clock, .welcome-slot-digital-clock, .welcome-slot-calendar) > .welcome-slot-content { overflow: visible; }
 .welcome-layout-editor { height: 100%; min-height: 0; position: relative; display: flex; flex-direction: column; background: var(--surface); --work-summary-content-inset: 0px; container: welcome-editor / inline-size; }
 .main-stage .welcome-layout-editor { position: absolute; inset: 0; z-index: 15; }
 .welcome-layout-editor > .topbar { flex: none; }

@@ -232,6 +232,11 @@ let browserUseRouterPromise: Promise<import('./browserUseHost.mjs', { with: { 'r
 const integratedBrowser = new IntegratedBrowser({
   getContents: id => electronWebContents.fromId(id),
   defaultOwner: () => mainWindow?.webContents ?? null,
+  ownerVisible: id => {
+    const owner = electronWebContents.fromId(id);
+    const window = owner && BrowserWindow.fromWebContents(owner);
+    return Boolean(window && !window.isDestroyed() && window.isVisible() && !window.isMinimized());
+  },
   action: (ownerId, action) => {
     const owner = electronWebContents.fromId(ownerId);
     if (!owner || owner.isDestroyed()) throw new Error('CardBush browser window is unavailable.');
@@ -910,7 +915,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   installPreviewResourceProtection(target.webContents);
-  installInspectorWindowOpen(target.webContents);
+  installInspectorWindowOpen(target.webContents, event => appendDebugLog('browser-popup', event));
   browserUi.attach(target.webContents);
   installSandboxFrameNavigationGuard(target.webContents);
   target.webContents.setWindowOpenHandler(({ url }) => {
@@ -3282,6 +3287,10 @@ const browserUi = registerBrowserUiIpc(assertMainWindowSender);
 ipcMain.handle('browser:settings-read', async event => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).read();
+});
+ipcMain.handle('inspector:browser-action-result', (event, result: import('./integratedBrowser').BrowserTabActionResult) => {
+  assertMainWindowSender(event.sender.id);
+  integratedBrowser.acknowledge(event.sender.id, result);
 });
 ipcMain.handle('inspector:browser-register', (event, input: { tabId: string; guestWebContentsId: number }) => {
   assertMainWindowSender(event.sender.id);

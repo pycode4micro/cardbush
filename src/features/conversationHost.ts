@@ -1,7 +1,7 @@
 import { createContext } from 'react';
 import type { ConversationRuntime } from '../backend/conversationRuntime';
 import type { WorkSummaryInspectorDetail } from './subagents/subagentObservabilityEvents';
-import type { CardbushAppPlugin, ChatToolExecution, PluginCommandSummary } from '../types';
+import type { CardbushAppPlugin, ChatMessage, ChatToolArtifact, ChatToolExecution, PluginCommandSummary } from '../types';
 import type { WorkspaceDirectoryPage } from '../../electron/workspaceFiles';
 import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 
@@ -18,6 +18,8 @@ export interface ConversationHost {
   uploadFiles(files: File[]): Promise<Array<{ path: string; name: string; previewUrl?: string }>>;
   pastedTextAttachments?: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
   openFile(path: string): void;
+  downloadFile?(path: string): Promise<void>;
+  turnArtifacts?(message: ChatMessage): { items: ChatToolArtifact[]; load?: () => Promise<ChatToolArtifact[]> };
   openExtract?(id: string): void;
   readFile?(path: string): Promise<{ name: string; blob: Blob }>;
   previewFile?(path: string): Promise<{ source: string; dispose(): void }>;

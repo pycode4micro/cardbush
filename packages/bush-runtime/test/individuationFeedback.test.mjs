@@ -158,7 +158,7 @@ test('the existing memory summarizer receives positive and negative events and c
     yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:0,kind:'text_delta',delta:JSON.stringify(summary([habit([a.id,b.id])]))};
     yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:1,kind:'response_completed',finishReason:'stop'};
   }});t.after(()=>memory.close());
-  const status=await memory.compact(on,{model:'fixture',metadata:{contextWindowTokens:32000}},true);
+  const status=await memory.compact(on,{model:'fixture',metadata:{contextWindowTokens:400000}},true);
   assert.equal(calls,1);assert.equal(status.habits,1);assert.equal(status.feedback,1);assert.equal(status.hits,0);
   assert.equal((await row(f.store,c.id)).state,'active','unexplained negative feedback is still available');
 });

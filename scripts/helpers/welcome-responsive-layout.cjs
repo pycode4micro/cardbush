@@ -55,6 +55,32 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('localStorage.getItem(views.componentStorageKey)'), stored, 'resizing never rewrites the saved geometry');
   fs.writeFileSync(path.join(root, 'tmp', 'welcome-layout-restored.png'), (await window.webContents.capturePage()).toPNG());
 
+  // Splitting the pane must not squeeze the monthly calendar into a tiny
+  // percentage-sized box or apply generic component-button padding to dates.
+  for (const [width, zoom] of [[375, 1], [300, 1.25]]) {
+    await run(`document.querySelector('.chat-panel').style.maxWidth='${width}px';document.querySelector('.app').style.zoom='${zoom}'`);
+    await until('document.querySelector(".welcome-layout-surface").dataset.compactWidgets==="true"', 'compact widgets'); await pause();
+    const compact = await run(`(()=>{
+      const surface=document.querySelector('.welcome-layout-surface'),calendar=surface.querySelector('.builtin-calendar'),
+        clock=surface.querySelector('.builtin-clock'),widgets=surface.querySelector('.welcome-layout-widgets'),
+        input=surface.querySelector('.welcome-slot-input'),box=calendar.getBoundingClientRect();
+      return {width:calendar.clientWidth, horizontal:calendar.scrollWidth-calendar.clientWidth, vertical:calendar.scrollHeight-calendar.clientHeight,
+        clockAbove:clock.getBoundingClientRect().bottom<=box.top, avoidsInput:widgets.getBoundingClientRect().bottom<input.getBoundingClientRect().top,
+        dayPadding:getComputedStyle(calendar.querySelector('.calendar-day-button')).padding,
+        visibleControls:[...calendar.querySelectorAll('.calendar-month-heading button')].every(b=>{const r=b.getBoundingClientRect();return r.left>=box.left&&r.right<=box.right;}),
+        scrollWidth:widgets.scrollWidth-widgets.clientWidth};
+    })()`);
+    assert.ok(compact.width >= 240, 'calendar retains a readable width');
+    assert.ok(compact.horizontal <= 1 && compact.vertical <= 1 && compact.scrollWidth <= 1, JSON.stringify(compact));
+    assert.ok(compact.clockAbove && compact.avoidsInput && compact.visibleControls, JSON.stringify(compact));
+    assert.equal(compact.dayPadding, '0px', 'date buttons do not inherit component-toolbar padding');
+    assert.equal(await run('localStorage.getItem(views.componentStorageKey)'), stored, 'narrow presentation does not overwrite the saved layout');
+    if (width === 375) fs.writeFileSync(path.join(root, 'tmp', 'welcome-layout-narrow.png'), (await window.webContents.capturePage()).toPNG());
+  }
+  await run('document.querySelector(".app").style.zoom="";document.querySelector(".chat-panel").style.maxWidth=""'); await pause();
+  await verify('restored after compact widgets');
+  assert.equal(await run('document.querySelector(".welcome-layout-surface").dataset.compactWidgets'), 'false');
+
   // Keep-mode uses the same reference after sending and after returning to the chat.
   window.setContentSize(1540, 1020); await pause();
   const before = await run('layoutRect(".welcome-composer .composer-stack")');

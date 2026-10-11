@@ -1,4 +1,4 @@
-import { Archive, LoaderCircle, Redo2, Undo2 } from 'lucide-react';
+import { Archive, Download, LoaderCircle, Redo2, Undo2 } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import type { AppLanguage } from '../../types';
 import { FileTypeIcon } from './FileTypeIcon';
@@ -12,7 +12,7 @@ export interface TurnArtifactEntry {
   mediaType?: 'image' | 'video' | 'audio';
 }
 
-export function TurnArtifactsMenu({ items, language, reverted, busy, onRevert, onOpen, onContextMenu }: {
+export function TurnArtifactsMenu({ items: initialItems, language, reverted, busy, onRevert, onOpen, onContextMenu, loadItems, onDownload }: {
   items: TurnArtifactEntry[];
   language: AppLanguage;
   reverted: boolean;
@@ -20,15 +20,32 @@ export function TurnArtifactsMenu({ items, language, reverted, busy, onRevert, o
   onRevert?: () => Promise<void>;
   onOpen: (item: TurnArtifactEntry) => void;
   onContextMenu?: (event: MouseEvent<HTMLElement>, item: TurnArtifactEntry) => void;
+  loadItems?: () => Promise<TurnArtifactEntry[]>;
+  onDownload?: (item: TurnArtifactEntry) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
+  const [loadedItems, setLoadedItems] = useState<TurnArtifactEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [retry, setRetry] = useState(0);
+  const [downloads, setDownloads] = useState<Set<string>>(() => new Set());
+  const items = loadedItems ?? initialItems;
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const label = language === 'zh' ? '本轮产物' : 'Turn artifacts';
   const actionLabel = reverted ? (language === 'zh' ? '撤销撤回' : 'Undo revert') : (language === 'zh' ? '撤回' : 'Revert');
+  useEffect(() => {
+    if (!open || !loadItems || loadedItems) return;
+    let current = true;
+    setLoading(true); setLoadError('');
+    void loadItems().then(items => { if (current) setLoadedItems(items); })
+      .catch(error => { if (current) setLoadError(error instanceof Error ? error.message : String(error)); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [open, loadItems, loadedItems, retry]);
   const close = (focus = false) => {
     menu.current?.hidePopover(); setOpen(false);
     if (focus) trigger.current?.focus({ preventScroll: true });
@@ -68,7 +85,7 @@ export function TurnArtifactsMenu({ items, language, reverted, busy, onRevert, o
       title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId}
       onClick={() => open ? close() : setOpen(true)} onKeyDown={event => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); }
-      }}><Archive size={14} /><span>{language === 'zh' ? '产物' : 'Artifacts'}</span><small>{items.length}</small></button>
+      }}><Archive size={14} /><span>{language === 'zh' ? '产物' : 'Artifacts'}</span>{items.length > 0 && <small>{items.length}</small>}</button>
     <div ref={menu} id={menuId} popover="auto" role="menu" aria-label={label} className="turn-artifacts-popover"
       onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return; }
@@ -87,6 +104,9 @@ export function TurnArtifactsMenu({ items, language, reverted, busy, onRevert, o
         }
       }}>
       {open && <>
+        {loading && <p className="turn-artifacts-notice" role="status">{language === 'zh' ? '正在读取产物…' : 'Loading artifacts…'}</p>}
+        {loadError && <div className="turn-artifacts-error" role="alert">{loadError}<button type="button" role="menuitem" onClick={() => setRetry(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
+        {!loading && !loadError && items.length === 0 && <p className="turn-artifacts-notice">{language === 'zh' ? '本轮暂无可下载产物' : 'No downloadable artifacts in this turn'}</p>}
         {onRevert && <>
           <button className={`turn-artifacts-revert${reverted ? ' is-restoring' : ''}`} type="button" role="menuitem"
             disabled={working || busy} onClick={async () => {
@@ -101,7 +121,19 @@ export function TurnArtifactsMenu({ items, language, reverted, busy, onRevert, o
           <div className="turn-artifacts-divider" role="separator" />
         </>}
         {error && <p className="turn-artifacts-error" role="alert">{error}</p>}
-        {items.map(item => <button key={item.path} className="turn-artifacts-file" type="button" role="menuitem"
+        {items.map(item => onDownload ? <div key={item.path} className="turn-artifacts-download-file" title={item.name}>
+          <FileTypeIcon path={item.path} fileName={item.name} mediaType={item.mediaType}/><span>{item.name}</span>
+          <button type="button" role="menuitem" className="turn-artifacts-download" aria-label={`${language === 'zh' ? '下载' : 'Download'} ${item.name}`}
+            disabled={downloads.has(item.path)} onClick={async () => {
+              setDownloads(previous => new Set(previous).add(item.path)); setError('');
+              try { await onDownload(item); }
+              catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+              finally { setDownloads(previous => { const next = new Set(previous); next.delete(item.path); return next; }); }
+            }}>
+            {downloads.has(item.path) ? <LoaderCircle size={14} className="spin"/> : <Download size={14}/>}
+            <span>{language === 'zh' ? '下载' : 'Download'}</span>
+          </button>
+        </div> : <button key={item.path} className="turn-artifacts-file" type="button" role="menuitem"
           title={item.path} onContextMenu={onContextMenu ? event => onContextMenu(event, item) : undefined}
           onClick={() => { close(true); onOpen(item); }}>
           <FileTypeIcon path={item.path} fileName={item.name} mediaType={item.mediaType} />

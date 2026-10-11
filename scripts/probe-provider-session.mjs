@@ -47,7 +47,7 @@ try {
       .filter(location => existsSync(location.path)),
     permissionMode: 'task_free', planEnabled: true, visionEnabled: true,
     tools: registry.definitions().filter(tool => !['request_permission', 'update_goal'].includes(tool.name)),
-    maxOutputTokens: model.maxOutputTokens || 8192, maxContextTokens: model.maxContextTokens,
+    maxOutputTokens: model.maxOutputTokens, maxContextTokens: model.maxContextTokens,
     reasoningEffort: 'high',
   });
   const messages = [...seed.prefixMessages, ...turn.messages.map(({ message }) => message.role === 'tool'

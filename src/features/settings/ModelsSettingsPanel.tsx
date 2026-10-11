@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import { ModelFormDialog } from './ModelFormDialog';
 import type { DiscoverModels } from './modelProtocols';
 import './modelConfiguration.css';
-import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { AppLanguage, ManagedModelConfig } from '../../types';
 import { ModelConfigRow } from './ModelConfigRow';
 import { collectProviderOptions } from './ModelProviderSelect';
@@ -37,7 +37,7 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
         for (const limit of [model.maxContextTokens, model.maxCompletionTokens]) {
           if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw Error(zh ? 'Token 上限请输入正整数。' : 'Token limits must be positive integers.');
         }
-        if (model.maxCompletionTokens !== undefined && model.maxCompletionTokens >= (model.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS)) {
+        if ((model.maxCompletionTokens ?? DEFAULT_MAX_OUTPUT_TOKENS) >= (model.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS)) {
           throw Error(zh ? '最大输出 tokens 必须小于上下文上限。' : 'Maximum output tokens must be below the context limit.');
         }
       }

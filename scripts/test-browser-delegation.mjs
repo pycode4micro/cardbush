@@ -11,12 +11,13 @@ const code = ts.transpileModule(readFileSync('electron/integratedBrowser.ts', 'u
 new Function('exports', 'require', code)(exports, createRequire(import.meta.url));
 const { IntegratedBrowser } = exports;
 
-function fixture() {
+function fixture({ autoAck = true, actionTimeoutMs, ownerVisible, presentation = page => page } = {}) {
   const owners = [11, 22].map(id => ({ id, isDestroyed: () => false })), guests = new Map();
+  const actions = [];
   let nextId = 100;
   function register(tabId, owner = owners[0], url = 'https://example.com/') {
     const destroyed = [];
-    const guest = { id: ++nextId, hostWebContents: owner, closed: false,
+    const guest = { id: ++nextId, tabId, hostWebContents: owner, closed: false,
       isDestroyed() { return this.closed; }, getType: () => 'webview', getURL: () => url, getTitle: () => 'Same URL',
       once(event, callback) { if (event === 'destroyed') destroyed.push(callback); },
       debugger: { isAttached: () => false },
@@ -25,14 +26,77 @@ function fixture() {
     browser.register(owner, { tabId, guestWebContentsId: guest.id });
     return { tabId, id: guest.id, guest };
   }
-  const browser = new IntegratedBrowser({ defaultOwner: () => owners[0], getContents: id => guests.get(id),
-    action(ownerId, action) { if (action.action === 'open') register(action.tabId, owners.find(owner => owner.id === ownerId), action.url); } });
+  const response = action => ({ requestId: action.requestId, pages: (action.tabIds ?? [action.tabId]).map(tabId => {
+    const guest = [...guests.values()].find(guest => guest.tabId === tabId && !guest.closed);
+    return presentation({ tabId, guestWebContentsId: action.action === 'close' ? null : guest?.id ?? null,
+      inWorkspace: Boolean(guest), active: true, visible: true });
+  }) });
+  const browser = new IntegratedBrowser({ defaultOwner: () => owners[0], getContents: id => guests.get(id), actionTimeoutMs, ownerVisible,
+    action(ownerId, action) {
+      actions.push(action);
+      if (action.action === 'open') register(action.tabId, owners.find(owner => owner.id === ownerId), action.url);
+      if (action.requestId && autoAck) browser.acknowledge(ownerId, response(action));
+    } });
   const call = (scopeId, method, params = {}) => browser.request(method, { ...params, scopeId });
   const create = scopeId => { browser.select(scopeId); return call(scopeId, 'tabs.create', { url: 'https://example.com/' }); };
   const list = scopeId => call(scopeId, 'tabs.list');
   const bind = (scopeId, page, owner = owners[0]) => browser.bind(owner, scopeId, [{ tabId: page.tabId, pageId: String(page.id) }]);
-  return { browser, owners, guests, register, call, create, list, bind };
+  return { browser, owners, guests, register, call, create, list, bind, actions, response };
 }
+
+test('tab binding waits for the owning window to acknowledge the exact referenced guest', async () => {
+  const f = fixture({ autoAck: false }), page = f.register('original');
+  let settled = false;
+  const pending = f.bind('conversation', page).then(result => { settled = true; return result; });
+  const receipt = f.response(f.actions.at(-1));
+  f.browser.acknowledge(f.owners[1].id, receipt);
+  f.browser.acknowledge(f.owners[0].id, { ...receipt, requestId: 'unrelated' });
+  f.browser.acknowledge(f.owners[0].id, { ...receipt, pages: [null] });
+  f.browser.acknowledge(f.owners[0].id, { ...receipt, pages: [{ ...receipt.pages[0], tabId: 'another-tab' }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'foreign, stale or malformed receipts cannot report success');
+  f.browser.acknowledge(f.owners[0].id, receipt);
+  assert.equal((await pending)[0].id, page.id);
+});
+
+test('missing UI acknowledgement fails without opening a replacement', async () => {
+  const f = fixture({ autoAck: false, actionTimeoutMs: 20 });
+  await assert.rejects(f.bind('conversation', f.register('original')), { code: 'cardbush_presentation_timeout' });
+  assert.deepEqual(f.actions.map(action => action.action), ['bind']);
+});
+
+test('binding rejects a replacement guest or an unattached page', async () => {
+  for (const change of [{ guestWebContentsId: 9000 }, { inWorkspace: false }]) {
+    const f = fixture({ presentation: page => ({ ...page, ...change }) });
+    await assert.rejects(f.bind('conversation', f.register('original')), { code: 'cardbush_page_not_presented' });
+  }
+});
+
+test('selected background pages and minimized windows never dispatch a screenshot', async () => {
+  for (const options of [{ presentation: page => ({ ...page, active: false, visible: false }) }, { ownerVisible: () => false }]) {
+    const f = fixture(options), page = await f.create('conversation');
+    assert.equal(page.selected, true);
+    assert.equal(page.visible, false);
+    await assert.rejects(f.call('conversation', 'debugger.command', { tabId: page.id, command: 'Page.captureScreenshot' }), error =>
+      error.code === 'cardbush_page_not_visible' && error.details.inputDispatched === false);
+  }
+});
+
+test('cancelling a presentation wait ignores a late reply and allows the next request', async () => {
+  const f = fixture({ autoAck: false }), page = f.register('original');
+  const binding = f.bind('conversation', page);
+  f.browser.acknowledge(f.owners[0].id, f.response(f.actions.at(-1)));
+  await binding;
+  const abort = new AbortController();
+  const pending = f.browser.request('tabs.activate', { scopeId: 'conversation', tabId: page.id }, abort.signal);
+  const late = f.response(f.actions.at(-1));
+  abort.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  f.browser.acknowledge(f.owners[0].id, late);
+  const next = f.list('conversation');
+  f.browser.acknowledge(f.owners[0].id, f.response(f.actions.at(-1)));
+  assert.equal((await next)[0].id, page.id);
+});
 
 test('returned pages preserve independent parent and sibling selections during continuations', async () => {
   const f = fixture(), original = await f.create('parent');
@@ -46,7 +110,7 @@ test('returned pages preserve independent parent and sibling selections during c
     assert.equal(pages.find(page => page.selected).id, selected.id);
   }
   // A new explicit parent @ reference still reaches an existing child.
-  f.bind('parent', original);
+  await f.bind('parent', original);
   f.browser.inheritScope('parent', 'child-a');
   assert.equal((await f.list('child-a')).find(page => page.selected).id, original.id);
 });
@@ -54,7 +118,7 @@ test('returned pages preserve independent parent and sibling selections during c
 test('delegation returns only pages created after the trusted relation, not prior pages or child references', async () => {
   const f = fixture(), prior = await f.create('child'), referenced = f.register('private-reference');
   f.browser.registerDelegation('parent', 'child');
-  f.bind('child', referenced);
+  await f.bind('child', referenced);
   assert.equal(f.browser.hasScope('parent'), false);
   const created = await f.create('child');
   assert.deepEqual((await f.list('parent')).map(page => page.id), [created.id]);
@@ -68,7 +132,7 @@ test('delegation returns only pages created after the trusted relation, not prio
 test('a parent bound in another window stops upward grants at that boundary', async () => {
   const f = fixture(), rootPage = await f.create('root'), otherWindow = f.register('window-two', f.owners[1]);
   f.browser.registerDelegation('root', 'parent');
-  f.bind('parent', otherWindow, f.owners[1]);
+  await f.bind('parent', otherWindow, f.owners[1]);
   f.browser.registerDelegation('parent', 'child');
   const created = await f.create('child');
   assert.deepEqual((await f.list('parent')).map(page => page.id), [otherWindow.id]);

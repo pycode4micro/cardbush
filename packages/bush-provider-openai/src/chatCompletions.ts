@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { ChatCompletionCreateParamsStreaming, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, protocolReasoningEffort, type ModelEvent, type ModelRequest } from '@cardbush/bush-protocol';
 import { modelReplayMatches, withToolDisplayTitle, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
@@ -50,7 +51,7 @@ export function toChatCompletionsParams(request: ModelRequest, baseURL?: string)
     ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     ...(request.tools.length ? { tools: request.tools.map(tool => ({ type: 'function' as const,
       function: { name: providerToolName(tool.name), description: tool.description, parameters: withToolDisplayTitle(tool).inputSchema, strict: false } })) } : {}),
-    max_completion_tokens: request.maxOutputTokens, temperature: request.temperature, top_p: request.topP,
+    max_completion_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, temperature: request.temperature, top_p: request.topP,
     ...(request.reasoningEffort ? openRouter
       ? { reasoning: { effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } }
       : { reasoning_effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } : {}) };

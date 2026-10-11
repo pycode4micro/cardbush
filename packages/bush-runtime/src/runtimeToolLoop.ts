@@ -62,6 +62,7 @@ interface ModelToolResult {
   content: string;
   format: "json" | "text" | "mcp_discovery" | "archive_read";
   appReference?: string;
+  projectPreview?: (maxChars: number) => string | undefined;
 }
 
 export class RuntimeToolLoop {
@@ -289,7 +290,10 @@ export class RuntimeToolLoop {
       }
       return text === undefined
         ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json", appReference: appReferences[ordinal] }
-        : { content: text, format: "text", appReference: appReferences[ordinal] };
+        : { content: text, format: "text", appReference: appReferences[ordinal],
+          ...(outcome?.kind === 'returned' && outcome.hookFeedback === undefined &&
+              !imageObservations[ordinal]?.length && this.#registry.resolve(name)?.projectModelResult
+            ? { projectPreview: (maxChars: number) => this.#registry.projectModelResult(name, result, maxChars) } : {}) };
     });
     const ingressBudget = Number.isInteger(input.modelContextIngressBudgetTokens) &&
         Number(input.modelContextIngressBudgetTokens) >= 0
@@ -488,9 +492,12 @@ function projectNativeToolResultBody(
   const renderReceipt = (preview: string) => result.format === "text"
     ? `${JSON.stringify({ archived: true, locator, originalChars: receipt.originalChars, format: "text" })}\n\n${preview}`
     : serializeNativeToolResult({ ...receipt, preview });
-  const receiptChars = renderReceipt("").length;
+  const minimumPreview = result.projectPreview?.(0) ?? '';
+  const receiptChars = renderReceipt(minimumPreview).length;
   if (receiptChars >= serialized.length) return serialized;
-  if (maxChars <= receiptChars) return renderReceipt("");
+  if (maxChars <= receiptChars) return renderReceipt(minimumPreview);
+  const preview = result.projectPreview?.(maxChars - renderReceipt('').length);
+  if (preview !== undefined) return renderReceipt(preview);
   let lower = 0;
   let upper = Math.min(serialized.length, maxChars - receiptChars);
   while (lower < upper) {

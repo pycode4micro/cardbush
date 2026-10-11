@@ -33,6 +33,7 @@ test('voice maintenance loads only checkpoint_context, corrects malformed output
     for(const request of seen){
       assert.equal(request.model,'configured-model');assert.deepEqual(request.tools.map(t=>t.name),['checkpoint_context']);
       assert.equal(request.metadata.runtimeMaintenance,'realtime_context_compaction');
+      assert.equal(request.maxOutputTokens,128000);
       assert.ok(request.messages.some(m=>m.role==='developer' && m.name==='context_pressure'));
       assert.ok(request.messages.some(m=>m.content.includes('frozen')||m.content.includes('historical DATA')));
       assert.ok(!request.messages.some(m=>m.role==='system' && m.content.includes('subagent')));

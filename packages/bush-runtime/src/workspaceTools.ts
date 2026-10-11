@@ -25,7 +25,7 @@ import { terminalInputPermission } from './commandPermission.js';
 import { authorizedCommandSandbox, commandSandboxPlan, decodeAdditionalCommandPermissions, type AdditionalCommandPermissions } from './commandSandboxAdmission.js';
 import { searchWorkspaceContent, type WorkspaceSearchInput as SearchInput } from './workspaceSearch.js';
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
-import { renderTerminalResult, renderTextFields } from "./toolResultText.js";
+import { renderTerminalResult, projectTerminalResult, renderTextFields } from "./toolResultText.js";
 import { workspaceEditRecoveryError } from './workspaceEditRecovery.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 
@@ -422,6 +422,7 @@ export function registerWorkspaceTools(
     manifest: manifest("terminal.execute", "process_execution", true),
     decodeInput: input => decodeTerminal(input, Boolean(options.remote)),
     renderModelResult: renderTerminalResult,
+    projectModelResult: projectTerminalResult,
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       const lexicalProjectRoots = protectedProjectRoots(context);
@@ -483,6 +484,7 @@ export function registerWorkspaceTools(
     manifest: manifest("terminal.poll", "observation", false),
     decodeInput: decodeTerminalPoll,
     renderModelResult: renderTerminalResult,
+    projectModelResult: projectTerminalResult,
     execute: (context: ToolHandlerContext<TerminalPollInput>) =>
       terminals.poll(context.sessionId, context.input, context.signal),
   });
@@ -504,6 +506,7 @@ export function registerWorkspaceTools(
     manifest: manifest("terminal.write", "process_execution", true),
     decodeInput: decodeTerminalWrite,
     renderModelResult: renderTerminalResult,
+    projectModelResult: projectTerminalResult,
     authorize: (context: ToolAdmissionContext<TerminalWriteInput>) => {
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return terminal.sandbox ? { kind: 'allow' as const }
@@ -524,6 +527,7 @@ export function registerWorkspaceTools(
     manifest: manifest("terminal.stop", "process_control", true),
     decodeInput: decodeTerminalSession,
     renderModelResult: renderTerminalResult,
+    projectModelResult: projectTerminalResult,
     authorize: (context: ToolAdmissionContext<TerminalSessionInput>) => {
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return {

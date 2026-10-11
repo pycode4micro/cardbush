@@ -3,13 +3,22 @@ import test from 'node:test';
 import { modelEventSchema, modelRequestSchema, modelRequestHeaders, modelHeadersSchema } from '@cardbush/bush-protocol';
 import { modelReplayMessageHash, InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
 import { OpenAIChatCompletionsProvider, AnthropicMessagesProvider, OpenAIResponsesProvider,
-  ModelProviderRegistry, createModelProvider, toChatCompletionsParams, toAnthropicMessagesParams } from '../dist/index.js';
+  ModelProviderRegistry, createModelProvider, toResponsesCreateParams, toChatCompletionsParams, toAnthropicMessagesParams } from '../dist/index.js';
 
 const req = (extra = {}) => modelRequestSchema.parse({ protocol: 'bush.model_request.v1', requestId: 'request-1',
   sessionId: 'conversation-A', turnId: 'turn-1', model: 'fixture', messages: [{ role: 'user', content: '你好' }],
   tools: [{ name: 'read_file', description: 'Read a file', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } }], ...extra });
 const collect = async stream => { const out = []; for await (const event of stream) { modelEventSchema.parse(event); out.push(event); }
   assert.deepEqual(out.map(e => e.sequence), out.map((_, i) => i)); return out; };
+test('all model protocols default to 128k output and preserve explicit allowances', () => {
+  for (const configured of [undefined, 2048, 200000]) {
+    const request = req({ maxOutputTokens: configured });
+    const expected = configured ?? 128000;
+    assert.equal(toResponsesCreateParams(request).max_output_tokens, expected);
+    assert.equal(toChatCompletionsParams(request).max_completion_tokens, expected);
+    assert.equal(toAnthropicMessagesParams(request).max_tokens, expected);
+  }
+});
 const sse = (events, done = false) => new Response(new ReadableStream({ start(controller) {
   const data = new TextEncoder().encode(events.map(e => `${e.type ? `event: ${e.type}\n` : ''}data: ${JSON.stringify(e)}\n\n`).join('') + (done ? 'data: [DONE]\n\n' : ''));
   // Include split UTF-8, event boundaries and JSON tokens.
@@ -277,7 +286,7 @@ test('protocol projections preserve image batches without breaking tool-result a
   assert.equal(anthropic.system, 'system\n\ndeveloper');
   assert.equal(anthropic.messages.at(-1).content.length, 2);
   assert.equal(anthropic.messages.at(-1).content[0].content[1].source.data, 'YQ==');
-  assert.equal(anthropic.max_tokens, 8192);
+  assert.equal(anthropic.max_tokens, 128000);
 });
 
 test('registry switches wire adapters and retains immutable old revisions', () => {

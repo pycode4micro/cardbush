@@ -7,6 +7,7 @@ import { personalFilePath } from './personalFiles';
 import { pendingTranscript, persistedTranscript, webAttachments, webToolExecution, type LiveTranscript } from './transcript';
 import { api, type Job, type State } from './api';
 import type { ToolExecutionRecord } from '@cardbush/bush-protocol';
+import { generatedImagePath, hasDeferredImageArtifacts, webTurnArtifacts } from './artifacts';
 
 const noAction = async () => {};
 const noScene = () => {};
@@ -23,6 +24,20 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
     return (state?.jobs ?? []).filter(job => !committed.has(job.turnId));
   }, [state]);
   const host = useMemo<ConversationHost>(() => {
+    const detailRequests = new Map<string, Promise<ReturnType<typeof webToolExecution>[]>>();
+    const toolDetails = async (sessionId: string, turnId: string) => {
+      if (sessionId !== selected || !cache.valid()) throw new Error('会话已切换。');
+      let request = detailRequests.get(turnId);
+      if (!request) {
+        request = api<ToolExecutionRecord[]>(`/sessions/${sessionId}/tools?turnId=${encodeURIComponent(turnId)}`).then(records => records.map(webToolExecution));
+        detailRequests.set(turnId, request);
+      }
+      try {
+        const records = await request;
+        if (!cache.valid()) throw new Error('账号已切换。');
+        return records;
+      } finally { if (detailRequests.get(turnId) === request) detailRequests.delete(turnId); }
+    };
     const readFile = async (source: string) => {
       const path = personalFilePath(source);
       if (!path || !cache.valid()) throw new Error('只能读取当前账号的个人文件。');
@@ -48,17 +63,29 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
       resolveFileSource: path => acquireCachedImage(cache, path),
       peekFileSource: path => peekCachedImage(cache, path),
       previewFile: path => acquireCachedImage(cache, path),
+      downloadFile: async source => {
+        const path = generatedImagePath(source);
+        if (!path || !cache.valid()) throw new Error('只能下载当前账号生成的图片。');
+        const image = await acquireCachedImage(cache, path);
+        try {
+          if (!cache.valid()) throw new Error('账号已切换。');
+          const anchor = document.createElement('a');
+          anchor.href = image.source; anchor.download = path.split('/').at(-1)!;
+          document.body.append(anchor);
+          try { anchor.click(); } finally { anchor.remove(); }
+        } finally { setTimeout(image.dispose, 30_000); }
+      },
+      turnArtifacts: message => ({ items: webTurnArtifacts(message),
+        ...(message.turnId && message.conversationId && hasDeferredImageArtifacts(message) ? {
+          load: async () => webTurnArtifacts({ ...message, toolExecutions: await toolDetails(message.conversationId!, message.turnId!) }),
+        } : {}),
+      }),
       openFile: path => { void readFile(path).then(({ name, blob }) => {
         if (!cache.valid()) return;
         const url = URL.createObjectURL(blob), anchor = document.createElement('a');
         anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       }).catch(error => onError(error instanceof Error ? error.message : '文件暂时无法读取。')); },
-      toolDetails: async (sessionId, turnId) => {
-        if (sessionId !== selected || !cache.valid()) throw new Error('会话已切换。');
-        const records = await api<ToolExecutionRecord[]>(`/sessions/${sessionId}/tools?turnId=${encodeURIComponent(turnId)}`);
-        if (!cache.valid()) throw new Error('账号已切换。');
-        return records.map(webToolExecution);
-      },
+      toolDetails,
     };
   }, [cache, selected, onError]);
   const latestAssistant = [...history].reverse().find(message => message.role === 'assistant')?.id;

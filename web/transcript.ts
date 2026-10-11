@@ -6,6 +6,7 @@ import { runtimeHistoryToolExecution } from '../src/backend/runtimeHistoryToolEx
 import { normalizeChatMessagesForDisplay, normalizeActiveTurnTranscriptForDisplay } from '../src/features/chatMessages/transcript/messageProjection';
 import { projectRenderableChatMessages } from '../src/features/chatMessages/messageRenderProjection';
 import { personalFilePath } from './personalFiles';
+import { imageReceiptArtifacts } from './artifacts';
 import type { Frame, Job, State } from './api';
 
 export type LiveSegment = { id: string; content: string; ordinal: number; sequence?: number; createdAt?: string; finalResponse?: boolean };
@@ -13,7 +14,8 @@ export type LiveTurn = { segments: Record<string, LiveSegment>; tools: Record<st
 export type LiveTranscript = Record<string, LiveTurn>;
 export function webToolExecution(record: Parameters<typeof runtimeHistoryToolExecution>[0]) {
   const execution = runtimeHistoryToolExecution(record);
-  return { ...execution, artifacts: execution.artifacts?.filter(artifact => personalFilePath(artifact.path) && !['video','audio'].includes(artifact.type)),
+  return { ...execution, artifacts: [...(execution.artifacts ?? []), ...(execution.success ? imageReceiptArtifacts(execution.name, execution.metadata.nativeResult) : [])]
+    .filter(artifact => personalFilePath(artifact.path) && !['video','audio'].includes(artifact.type)),
     metadata: { ...execution.metadata, displayTitle: execution.metadata.displayTitle || webToolTitle(execution.name) } };
 }
 const emptyTurn = (): LiveTurn => ({ segments: {}, tools: {} });

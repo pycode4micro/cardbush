@@ -4,6 +4,7 @@ import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
   agentToolActivity,
+  terminalToolOutcome,
   WORKSPACE_REVIEW_TURN_LIMIT,
   parseSourceMemoReference,
   sourceMemoSchema,
@@ -266,6 +267,7 @@ export class ToolExecutionStore {
 
 function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<object>): ToolExecutionSummary {
   const activity = agentToolActivity(record);
+  const terminalOutcome = record.outcome === 'returned' ? terminalToolOutcome(record.toolCall.name, record.result) : undefined;
   return {
     protocol: BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
     requestId: record.requestId,
@@ -281,6 +283,7 @@ function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<ob
     },
     outcome: record.outcome,
     ...(activity ? { agentActivity: activity } : {}),
+    ...(terminalOutcome ? { terminalOutcome } : {}),
     display: record.display,
     actionManifest: record.actionManifest,
     resultAvailable: Object.prototype.hasOwnProperty.call(record, "result"),

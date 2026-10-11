@@ -33,3 +33,7 @@
 .turn-artifacts-file .additions { color: var(--success); }
 .turn-artifacts-file .deletions, .turn-artifacts-error { color: var(--danger); }
 .turn-artifacts-error { padding: 5px 9px; font-size: 12px; overflow-wrap: anywhere; }
+.turn-artifacts-notice { margin: 0; padding: 8px 9px; font-size: 12px; color: var(--text-soft); }
+.turn-artifacts-download-file { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 5px; }
+.turn-artifacts-download-file > span:not(.local-file-type-icon) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.turn-artifacts .turn-artifacts-popover .turn-artifacts-download { flex: 0 0 auto; width: auto; gap: 5px; padding-inline: 7px; color: var(--info); }

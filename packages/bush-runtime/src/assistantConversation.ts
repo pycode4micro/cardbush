@@ -12,6 +12,8 @@ import { estimateContextPressure, requiresContextCompactionBeforeRound } from '.
 import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
+import { settleAtAbort } from './abortSettlement.js';
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 
 const conversationalTools: ToolDefinition[] = [assistantPageTool, ...conversationalSubagentTools];
 
@@ -19,6 +21,7 @@ const conversationalTools: ToolDefinition[] = [assistantPageTool, ...conversatio
 export class AssistantConversation {
   private busy = false;
   private pending = false;
+  private paused = false;
   private error = '';
   private retry?: BufferedModelRetryStatus;
   private stopped = false;
@@ -43,35 +46,53 @@ export class AssistantConversation {
     if (!this.deps.exists(input.sessionId)) throw Error('Conversation no longer exists.');
     if (input.action === 'read') {
       const entries = this.journal.read(input.sessionId);
+      const unanswered = entries.filter(entry => entry.visibility !== 'internal' && entry.source !== 'voice').at(-1)?.role === 'user';
+      const error = this.error || (!this.stopped && !this.configured && unanswered ? '上次回复未完成，消息已保留，可以重试。 / The previous reply did not complete. Your message is saved; retry to continue.' : '');
       return { entries: entries.slice(input.after), cursor: entries.length, generation: this.generation,
         workingTasks: this.deps.tasks(input.sessionId).filter(task => task.status === 'running').length,
-        busy: input.sessionId === PERSONAL_ASSISTANT_SESSION && this.busy, error: input.sessionId === PERSONAL_ASSISTANT_SESSION ? this.error : '',
+        busy: input.sessionId === PERSONAL_ASSISTANT_SESSION && this.busy, error: input.sessionId === PERSONAL_ASSISTANT_SESSION ? error : '',
+        canRetry: input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && Boolean(error) && entries.some(entry => entry.role === 'user' && ['text', 'voice'].includes(entry.source)),
         retry: input.sessionId === PERSONAL_ASSISTANT_SESSION ? this.retry ?? null : null };
     }
     if (this.stopped) throw Error('Assistant is shutting down.');
     if (input.action === 'reset') { this.forget(input.sessionId); return { status: 'reset', generation: this.generation }; }
     if (input.sessionId === PERSONAL_ASSISTANT_SESSION && input.generation !== undefined && input.generation !== this.generation) throw Error('Assistant context has been reset.');
     if (input.action === 'append') return this.journal.append(input.sessionId, input.entry);
+    if (input.action === 'stop') {
+      this.paused = true; this.pending = false; this.retry = undefined; this.controller?.abort();
+      this.error = this.configured?.parent.metadata.uiLanguage === 'en' ? 'Reply stopped. You can retry when ready.' : '已停止回复，可以稍后重试。';
+      return { status: this.busy ? 'stopping' : 'stopped' };
+    }
+    if (input.action === 'retry') {
+      if (this.busy) throw Error('Assistant is still running. Stop it before retrying.');
+      if (input.parent.sessionId !== input.sessionId || !this.journal.read(input.sessionId).some(entry => entry.role === 'user' && ['text', 'voice'].includes(entry.source))) throw Error('No assistant message to retry.');
+      this.configured = { parent: input.parent, profile: input.profile };
+      this.paused = false; this.pending = true; this.error = ''; void this.pump();
+      return { status: 'accepted' };
+    }
     if (input.parent.sessionId !== input.sessionId || input.entry.role !== 'user') throw Error('Invalid assistant parent.');
     this.journal.append(input.sessionId, input.entry);
     if (this.requestIds.has(input.entry.id)) return { status: 'accepted' };
     this.requestIds.add(input.entry.id);
     this.configured = { parent: input.parent, profile: input.profile };
+    this.paused = false;
     this.pending = true;
     this.error = '';
     void this.pump();
     return { status: 'accepted' };
   }
   private async pump() {
-    if (this.busy || this.stopped || !this.configured || !this.pending) return;
+    if (this.busy || this.paused || this.stopped || !this.configured || !this.pending) return;
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
     const configured = this.configured;
     const controller = this.controller = new AbortController();
-    try { await this.respond(configured, controller.signal); }
+    try { await settleAtAbort(this.respond(configured, controller.signal), controller.signal, 'Assistant reply stopped.'); }
     catch (error) { if (!this.stopped && !controller.signal.aborted) this.error = error instanceof Error ? error.message : String(error); }
     finally { if (this.controller === controller) {
-      if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent);
-      this.busy = false; this.retry = undefined; this.controller = undefined; if (this.pending && !this.stopped) void this.pump();
+      this.busy = false; this.retry = undefined; this.controller = undefined;
+      try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
+      catch (error) { this.error ||= error instanceof Error ? error.message : String(error); }
+      if (this.pending && !this.stopped) void this.pump();
     } }
   }
   private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal) {
@@ -153,7 +174,7 @@ export class AssistantConversation {
         // Use the same token/context policy as normal turns, including tools,
         // reasoning and receipts. A large context no longer hits a 20k-character cap.
         const pressure = estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages, tools,
-          maxOutputTokens: Math.min(parent.maxOutputTokens ?? 4096, 4096), metadata: { ...parent.metadata, contextWindowTokens: Number(parent.metadata.contextWindowTokens) || 32000 } }, messages);
+          maxOutputTokens: parent.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, metadata: { ...parent.metadata, contextWindowTokens: Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS } }, messages);
         const units = completeContextUnits(state.messages);
         if (!pressure || !requiresContextCompactionBeforeRound(pressure) || units.length <= 2) return messages;
         const source = units.slice(0, -2).slice(0, 60);
@@ -166,7 +187,7 @@ export class AssistantConversation {
               for (let offset = 0; offset < value.length; offset += 30000) chunks.push({ user: value.slice(offset, offset + 30000), assistant: 'Historical exchange; adjacent chunks belong to the same exchange.' });
               return chunks;
             }) },
-          model: { model: parent.model, providerBinding: parent.providerBinding, reasoningEffort: parent.reasoningEffort, metadata: parent.metadata },
+          model: { model: parent.model, providerBinding: parent.providerBinding, reasoningEffort: parent.reasoningEffort, maxOutputTokens: parent.maxOutputTokens, metadata: parent.metadata },
         }, this.deps.checkpoint(), signal, this.deps.tasks(id).map(task => ({ taskId: task.taskId, status: task.status })));
         signal.throwIfAborted();
         history.checkpoint(through, result.summary);
@@ -184,7 +205,7 @@ export class AssistantConversation {
       signal.throwIfAborted();
       const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1',
         requestId: randomUUID(), messages: await context(), tools, requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
-        metadata: { ...parent.metadata, personalAssistant: true }, maxOutputTokens: Math.min(parent.maxOutputTokens ?? 4096, 4096) };
+        metadata: { ...parent.metadata, personalAssistant: true } };
       const result = await executeBufferedModelRound(this.deps.provider, request,
         { signal, wait: this.deps.wait, onRetry: status => { this.retry = status; } });
       signal.throwIfAborted();
@@ -193,6 +214,12 @@ export class AssistantConversation {
       if (result.status !== 'completed') throw Error(result.error.retryable && retried
         ? `${parent.metadata.uiLanguage === 'en' ? 'The model request still failed after automatic retries. Please try again later.' : '模型请求自动重试后仍未恢复，请稍后再试。'} (${result.error.code})`
         : result.error.message);
+      if (!result.toolCalls.length && ['length', 'max_tokens'].includes(result.finishReason ?? '')) throw Error(parent.metadata.uiLanguage === 'en'
+        ? 'The model reached its output limit before finishing the reply. Retry with a larger model output allowance.'
+        : '模型输出达到上限，回复未完成。请提高当前模型的最大输出额度后重试。');
+      if (!result.toolCalls.length && !result.text.trim() && !published) throw Error(parent.metadata.uiLanguage === 'en'
+        ? 'The model returned no reply or action. Your message is saved; retry to continue.'
+        : '模型未返回回复或可执行动作，消息已保留，请重试。');
       const usedIds = new Set(history.read().messages.flatMap(item => item.role === 'assistant' ? item.toolCalls.map(call => call.id) : []));
       let renamed = false;
       const toolCalls = result.toolCalls.map(call => {
@@ -242,7 +269,7 @@ export class AssistantConversation {
           } else if (nativeTools.some(tool => tool.name === call.name)) {
             // Preserve registration-before-assembly order within one model batch.
             // Dispatch receipts are immediate; the child work remains independent.
-            const execution = delegationQueue.then(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }));
+            const execution = delegationQueue.then(() => { signal.throwIfAborted(); return this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }); });
             delegationQueue = execution.catch(() => undefined);
             output = await execution;
             signal.throwIfAborted();
@@ -295,7 +322,7 @@ export class AssistantConversation {
     this.pending = true; void this.pump();
   }
   forget(sessionId: string) {
-    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
+    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     this.journal.forget(sessionId);
   }
   close() { this.stopped = true; this.controller?.abort(); clearTimeout(this.timer); }

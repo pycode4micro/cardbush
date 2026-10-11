@@ -241,7 +241,7 @@ test('compaction preserves version tracking so later revocation invalidates summ
   f.send('报表导出 XLSX'); await f.idle();
   f.journal.modelHistory(id).append(Array.from({ length: 5 }, (_, n) => ({ role: 'assistant', content: `历史结果 ${n}。`.repeat(2500), toolCalls: [] })));
   const text = '现在继续说明';
-  const request = parent('compact', text); request.metadata.contextWindowTokens = 12000;
+  const request = parent('compact', text); request.metadata.contextWindowTokens = 12000; request.maxOutputTokens = 2000;
   f.assistant.command({ action: 'turn', sessionId: id, entry: input('compact', text), parent: request, profile }); await f.idle();
   assert.ok(f.requests.some(r => r.tools[0]?.name === 'checkpoint_context'));
   assert.equal(refs(f.requests.at(-1)).length, 0, 'full reference was compacted');

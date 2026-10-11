@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { GET_RUNTIME_SESSION_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND, reasoningEffortSchema } from '@cardbush/bush-protocol';
-import { createProductAgentTurnRequest, ROOT_AGENT_SYSTEM_PROMPT } from '@cardbush/bush-product-agent';
+import { createProductAgentTurnRequest, ROOT_AGENT_SYSTEM_PROMPT, DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-product-agent';
 import { InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
 import { ModelProviderRegistry } from '@cardbush/bush-provider-openai';
 import { benchmarkTools } from './suite.mjs';
@@ -32,8 +32,8 @@ export async function configure(values) {
     timeoutMs: positiveInteger(values['timeout-ms'], '--timeout-ms'),
     tokenStop: positiveInteger(values['token-stop'], '--token-stop'),
   };
-  const maxOutputTokens = positiveInteger(values['max-output-tokens'] ?? '4096', '--max-output-tokens');
-  if (maxOutputTokens >= 100_000) throw new Error('--max-output-tokens must be smaller than the benchmark context window (100000).');
+  const maxOutputTokens = positiveInteger(values['max-output-tokens'] ?? String(DEFAULT_MAX_OUTPUT_TOKENS), '--max-output-tokens');
+  if (maxOutputTokens >= DEFAULT_MAX_CONTEXT_TOKENS) throw new Error(`--max-output-tokens must be smaller than the benchmark context window (${DEFAULT_MAX_CONTEXT_TOKENS}).`);
   reasoningEffortSchema.parse(values.reasoning);
   const providers = new ModelProviderRegistry();
   const configured = providers.upsert({
@@ -59,7 +59,7 @@ export async function configure(values) {
   return {
     providers, binding: configured.binding, model: model.trim(), reasoning: values.reasoning, maxOutputTokens, ...bounds,
     publicConfig: { model: model.trim(), adapter: 'openai_responses', reasoning: values.reasoning,
-      ...bounds, maxOutputTokens, maxContextTokens: 100_000, runtimeHashes,
+      ...bounds, maxOutputTokens, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS, runtimeHashes,
       rootPromptHash: hash(ROOT_AGENT_SYSTEM_PROMPT), driverHash: hash(await readFile(new URL('./live.mjs', import.meta.url))),
       permissionMode: 'task_free', tools: [...benchmarkTools],
       tokenStopPolicy: 'Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold.',
@@ -149,7 +149,7 @@ export async function runTask(task, workspace, dataRoot, config) {
     userText: `${task.prompt}\n\n当前目录是独立评测副本。请阅读 TASK.md 并运行 npm test；可以添加回归测试，只在当前工作目录内工作。`,
     model: config.model, providerBinding: config.binding, tools: catalog.filter(entry => benchmarkTools.has(entry.definition.name)).map(entry => entry.definition),
     projectDir: workspace, workspaceDir: workspace, permissionMode: 'task_free', planEnabled: true,
-    reasoningEffort: config.reasoning, maxOutputTokens: config.maxOutputTokens ?? 4096, maxContextTokens: 100_000, interactiveRequestsEnabled: false,
+    reasoningEffort: config.reasoning, maxOutputTokens: config.maxOutputTokens, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS, interactiveRequestsEnabled: false,
   });
   const watch = (async () => {
     try {

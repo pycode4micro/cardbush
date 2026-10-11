@@ -1,6 +1,6 @@
 import { RefreshCw, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { RuntimeTerminalStatus } from '@cardbush/bush-protocol';
+import { terminalCommandOutcome, type RuntimeTerminalStatus } from '@cardbush/bush-protocol';
 import { controlTerminalTask } from '../../backend/terminalTasks';
 import type { ConversationRuntime } from '../../backend/conversationRuntime';
 import type { AppLanguage } from '../../types';
@@ -65,9 +65,10 @@ export function TerminalTaskStatus({ sessionId, terminalSessionId, runtime, lang
   const elapsed = Math.max(0, now - observedAt);
   const duration = Math.floor(((status?.durationMs ?? 0) + (finished ? 0 : elapsed)) / 1000);
   const idle = Math.floor(((status?.outputIdleMs ?? 0) + (finished ? 0 : elapsed)) / 1000);
-  const label = status?.state === 'running' ? zh ? '后台运行' : 'Running in background'
-    : status?.state === 'stopped' ? zh ? '已停止' : 'Stopped'
-    : status?.state === 'failed' || status?.state === 'disconnected' || Boolean(status?.exitCode) ? zh ? '执行失败' : 'Failed'
+  const outcome = terminalCommandOutcome(status);
+  const label = outcome === 'running' ? zh ? '后台运行' : 'Running in background'
+    : outcome === 'stopped' ? zh ? '已停止' : 'Stopped'
+    : outcome === 'failed' ? zh ? '执行失败' : 'Failed'
     : zh ? '已结束' : 'Finished';
   return <div className="terminal-task-status" ref={container} aria-live="off">
     <span>{error ? zh ? '无法读取当前终端状态' : 'Terminal status unavailable'

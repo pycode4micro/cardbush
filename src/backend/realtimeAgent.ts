@@ -32,7 +32,7 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
         if (config.sessionId!==job.sessionId) throw Error('Voice conversation changed.');
         const {runtimeRequest:parent}=await prepareRuntimeAgentRequest({...config,userInput:'Voice context maintenance'},runtime,
           {turnId:`voice_memory_${job.jobId}`,signal});
-        const model={model:parent.model,providerBinding:parent.providerBinding,reasoningEffort:parent.reasoningEffort,metadata:parent.metadata};
+        const model={model:parent.model,providerBinding:parent.providerBinding,reasoningEffort:parent.reasoningEffort,maxOutputTokens:parent.maxOutputTokens,metadata:parent.metadata};
         return await runtime.client.command({kind:REALTIME_CONTEXT_COMPACTION_COMMAND,payload:{job,model}},
           value=>realtimeContextResultSchema.parse(value),signal);
       } finally {runtime.dispose();}
@@ -43,7 +43,7 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
         const config = await configForCall();
         const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, userInput: 'Summarize a completed voice task' }, runtime,
           { turnId: `voice_summary_${crypto.randomUUID()}`, signal });
-        const model = { model: parent.model, providerBinding: parent.providerBinding, reasoningEffort: parent.reasoningEffort, metadata: parent.metadata };
+        const model = { model: parent.model, providerBinding: parent.providerBinding, reasoningEffort: parent.reasoningEffort, maxOutputTokens: parent.maxOutputTokens, metadata: parent.metadata };
         return (await runtime.client.command({ kind: REALTIME_TASK_SUMMARY_COMMAND, payload: { sessionId: config.sessionId, taskId, language, model } },
           value => realtimeTaskSummaryResultSchema.parse(value), signal)).speech;
       } finally { runtime.dispose(); }

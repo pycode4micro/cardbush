@@ -23,8 +23,9 @@ import {
 } from "../dist/index.js";
 
 test("uses one enforced output limit for pressure and Provider dispatch", () => {
-  assert.equal(resolveContextOutputTokens(256_000), 8_192);
-  assert.equal(resolveContextOutputTokens(1_000_000), 8_192);
+  assert.equal(resolveContextOutputTokens(256_000), 128_000);
+  assert.equal(resolveContextOutputTokens(1_000_000), 128_000);
+  assert.throws(() => resolveContextOutputTokens(32_000), /must be less/, 'small context models need an explicit smaller output allowance');
   assert.equal(resolveContextOutputTokens(256_000, 12_000), 12_000);
   assert.throws(() => resolveContextOutputTokens(4_000, 4_000), /must be less/);
 });

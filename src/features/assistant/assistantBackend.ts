@@ -15,6 +15,28 @@ export const assistantBackend = {
   ensure: (name: string) => createConversation({ sessionId, title: name, metadata: { personalAssistant: true } }),
   read: (after = 0) => readConversationJournal(sessionId, after),
   contextVersion: () => contextVersion,
+  async stop() {
+    const { generation } = await assistantBackend.read();
+    await conversationJournalCommand({ action: 'stop', sessionId, generation });
+  },
+  async retry(config: ChatStreamRequest) {
+    if (resetting) throw Error('正在重置上下文，请稍后重试。');
+    const version = contextVersion;
+    const { generation, entries } = await assistantBackend.read();
+    const entry = entries.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source)).at(-1);
+    if (!entry) throw Error('没有可重试的消息。');
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const profile = readAssistantProfile();
+      const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId, userInput: entry.content }, runtime,
+        { turnId: `assistant_${crypto.randomUUID()}` });
+      parent.metadata.assistantOutputMode = entry.source === 'voice' ? 'voice' : 'text';
+      if (resetting || version !== contextVersion) throw Error('上下文已重置，请重新发送。');
+      // Resume the authoritative model history and tool receipts; do not append
+      // another user message or replay an already accepted execution task.
+      await conversationJournalCommand({ action: 'retry', sessionId, parent, profile, generation });
+    } finally { runtime.dispose(); }
+  },
   reset() {
     if (resetting) return resetting;
     contextVersion++;

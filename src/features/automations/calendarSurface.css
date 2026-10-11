@@ -1,8 +1,8 @@
 .calendar-surface { height: 100%; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; color: var(--text); }
-.calendar-month-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.calendar-month-heading > div { display: flex; align-items: center; gap: 2px; }
-.calendar-month-heading strong { font-size: 12px; font-weight: 500; }
-.calendar-month-heading button { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: 6px; color: var(--text); background: transparent; font: inherit; font-size: 10px; cursor: pointer; }
+.calendar-month-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+.calendar-month-heading > div { display: flex; flex: none; align-items: center; gap: 2px; }
+.calendar-month-heading strong { font-size: 12px; font-weight: 500; white-space: nowrap; }
+.calendar-month-heading button { display: inline-flex; flex: none; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 6px; color: var(--text); background: transparent; font: inherit; font-size: 10px; white-space: nowrap; cursor: pointer; }
 .calendar-month-heading button:hover { background: var(--hover); }
 .calendar-month-grid { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 2px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .calendar-month-grid > [role=row] { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; flex: 1; min-height: 24px; }

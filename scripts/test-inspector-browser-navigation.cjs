@@ -17,7 +17,23 @@ app.whenReady().then(async () => {
   const delayedFrames = [];
   const delayedDocuments = [];
   let backgroundPageRequests = 0;
+  const faviconFixture = { requests: new Map(), recovered: false };
   const server = http.createServer((req, res) => {
+    if (process.argv.includes('--browser-favicons')) {
+      const icons = { '/icon-retry': ['/retry-icon.svg'], '/icon-reload': ['/reload-icon.svg'],
+        '/icon-candidates': ['/missing-icon.svg', '/working-icon.svg'] };
+      if (icons[req.url]) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(`<title>Favicon recovery</title>${icons[req.url].map(href => `<link rel="icon" href="${href}">`).join('')}<p>Loaded page</p>`); return;
+      }
+      if (['/favicon.ico', '/retry-icon.svg', '/reload-icon.svg', '/missing-icon.svg', '/working-icon.svg'].includes(req.url)) {
+        const count = (faviconFixture.requests.get(req.url) || 0) + 1;
+        faviconFixture.requests.set(req.url, count);
+        const loaded = req.url === '/working-icon.svg' || req.url === '/reload-icon.svg' && faviconFixture.recovered || req.url === '/retry-icon.svg' && count > 1;
+        res.writeHead(200, { 'Content-Type': loaded ? 'image/svg+xml' : 'image/png', 'Cache-Control': 'no-store' });
+        res.end(loaded ? '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#7c3aed"/></svg>' : 'unavailable image'); return;
+      }
+    }
     if (req.url === '/metadata/app.webmanifest') {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json' });
       res.end(JSON.stringify({ name: '演示网页应用', id: '/web-app', start_url: '../web-app/start', scope: '../web-app/', icons: [{ src: '../site-logo.svg', sizes: '192x192' }] })); return;
@@ -90,7 +106,9 @@ app.whenReady().then(async () => {
   installAppSessionPermissions(window);
   browserSession.setPermissionCheckHandler = setCheck;
   browserSession.setPermissionRequestHandler = setRequest;
-  installInspectorWindowOpen(window.webContents);
+  const popupEvents = [];
+  installInspectorWindowOpen(window.webContents, event => popupEvents.push(event));
+  installInspectorWindowOpen(window.webContents, event => popupEvents.push(event)); // Idempotent installation.
   const integrated = new IntegratedBrowser({ getContents: id => webContents.fromId(id), defaultOwner: () => window.webContents,
     action: (ownerId, action) => webContents.fromId(ownerId)?.send('inspector:browser-action', action) });
   const uiService = new BrowserUiService(path.join(directory, 'browser-library'), new BrowserBookmarkImporter({ chrome: path.join(directory, 'chrome'), edge: path.join(directory, 'edge') }));
@@ -98,6 +116,7 @@ app.whenReady().then(async () => {
   ui.attach(window.webContents);
   ipcMain.handle('inspector:browser-register', (event, input) => { integrated.register(event.sender, input); ui.track(event.sender, input.guestWebContentsId); });
   ipcMain.handle('inspector:browser-unregister', (event, input) => integrated.unregister(event.sender.id, input));
+  ipcMain.handle('inspector:browser-action-result', (event, input) => integrated.acknowledge(event.sender.id, input));
   const { BrowserConfigStore } = await import('@cardbush/product-host');
   const store = new BrowserConfigStore(path.join(directory, 'browser.json'));
   ipcMain.handle('browser:settings-read', () => store.read());
@@ -107,9 +126,10 @@ app.whenReady().then(async () => {
   const errors = [];
   window.webContents.on('preload-error', (_event, _file, error) => errors.push(error.message));
   window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
+  const additionalBrowserOrigins = new Set();
   window.webContents.session.webRequest.onBeforeRequest((details, done) => {
     if (details.url.startsWith('https://www.google.com/search?')) { done({redirectURL:origin+'/google-search?'+new URL(details.url).searchParams.toString()}); return; }
-    done({ cancel: /^https?:/.test(details.url) && !details.url.startsWith(origin + '/') });
+    done({ cancel: /^https?:/.test(details.url) && !details.url.startsWith(origin + '/') && ![...additionalBrowserOrigins].some(site => details.url.startsWith(site + '/')) });
   });
   const read = expression => window.webContents.executeJavaScript(expression);
   const until = async (check, label) => {
@@ -140,6 +160,14 @@ app.whenReady().then(async () => {
     const original = webContents.fromId(originalId);
     await until(() => original.executeJavaScript('!!document.querySelector("#blank")'), 'source page');
     await original.executeJavaScript('window.retainedState="search-state"');
+    if (process.argv.includes('--browser-popups')) {
+      await require('./helpers/browser-popups.cjs')({ window, original, origin, read, until, pause, additionalBrowserOrigins, popupEvents });
+      assert.deepEqual(errors, []); return;
+    }
+    if (process.argv.includes('--browser-favicons')) {
+      await require('./helpers/browser-favicons.cjs')({ original, origin, read, waitFor, activeReady, pause, faviconFixture });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.argv.includes('--browser-audio')) {
       await require('./helpers/browser-audio.cjs')({ window, original, origin, read, waitFor, activeReady, until, click, webContents });
       assert.deepEqual(errors, []); return;

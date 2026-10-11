@@ -29,7 +29,7 @@ async function fixture(t) {
   }};
 }
 const result=value=>{assert.equal(value.kind,'returned',JSON.stringify(value));return value.result;};
-const model={model:'fixture',metadata:{contextWindowTokens:32000}};
+const model={model:'fixture',metadata:{contextWindowTokens:400000}};
 const summarizeProvider=fn=>({async *stream(request){let records;try{records=JSON.parse(request.messages.at(-1).content);}catch{}const answer=await fn(request,records);
   yield event(request,0,'text_delta',{delta:typeof answer==='string'?answer:JSON.stringify(answer)});
   yield event(request,1,'response_completed',{finishReason:'stop'});}});

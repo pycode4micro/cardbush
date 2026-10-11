@@ -40,8 +40,9 @@
 .native-transcript .message-list-item.first { padding-top: 0; }
 .native-transcript .user-bubble { border-radius: 14px 14px 3px 14px; }
 .native-transcript .assistant-bubble { font-size: 14px; line-height: 1.85; }
-.native-transcript .message-actions button { width: 30px; height: 30px; border-radius: 6px; display: inline-grid; place-items: center; color: var(--text-soft); }
-.native-transcript .message-actions button:hover { background: var(--hover); color: var(--text); }
+.native-transcript .message-actions button:where(:not([role="menuitem"])) { width: 30px; height: 30px; border-radius: 6px; display: inline-grid; place-items: center; color: var(--text-soft); }
+.native-transcript .message-actions button:where(:not([role="menuitem"])):hover { background: var(--hover); color: var(--text); }
+.native-transcript .message-actions .turn-artifacts-trigger { display: inline-flex; width: auto; gap: 5px; }
 .native-transcript [hidden] { display: none !important; }
 .native-transcript .markdown-content { min-width: 0; overflow-wrap: anywhere; }
 .native-transcript .markdown-table-scroll { max-width: 100%; }

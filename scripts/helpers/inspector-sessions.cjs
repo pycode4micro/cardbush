@@ -20,7 +20,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const presence=views.useSoftPanelPresence(tabs.open,240,{keepMounted:true});
       const [navigation,setNavigation]=React.useState({});
       const update=React.useCallback((id,value)=>setNavigation(current=>({...current,[id]:value})),[]);
-      views.useInspectorBrowserActions({open:tabs.openTab,activate:tabs.activateTab,close:(id,workspaceId)=>tabs.closeTabs(new Set([id]),workspaceId),
+      views.useInspectorBrowserActions({workspaceId:scope,snapshot:tabs.snapshot,bind:tabs.bindBrowserTabs,
+        open:tabs.openTab,activate:tabs.activateTab,close:(id,workspaceId)=>tabs.closeTabs(new Set([id]),workspaceId),
         workspace:(id,tabId)=>id?views.localInspectorWorkspace(id):tabs.ownerOfTab(tabId)||scope,show:workspaceId=>tabs.setOpen(true,workspaceId)});
       const portals=views.useConversationInspectorActions({open:(id,title)=>tabs.openTab({id,title,kind:'conversation'}),close:id=>tabs.disposeTabs(new Set([id]))});
       React.useEffect(()=>{window.portalMounts=(window.portalMounts||0)+1;return()=>{window.portalCleanups=(window.portalCleanups||0)+1;};},[portals.open,portals.close]);

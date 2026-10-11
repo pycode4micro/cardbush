@@ -1,4 +1,4 @@
-import { CHECKPOINT_CONTINUATION_INSTRUCTIONS } from "@cardbush/bush-protocol";
+import { CHECKPOINT_CONTINUATION_INSTRUCTIONS, DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from "@cardbush/bush-protocol";
 import { individuationPreferenceText, normalizeIndividuation, type IndividuationSettings } from '@cardbush/bush-protocol';
 import { createTurnTimeContext } from "./timeContext.js";
 export { createTurnTimeContext } from "./timeContext.js";
@@ -56,7 +56,7 @@ Browser Use controls CardBush's integrated browser and paired Chrome/Edge. It ca
 
 ${LOCAL_DELIVERABLE_INSTRUCTIONS}
 
-Source annotations are concise Agent-authored explanations, not independent verification. Follow this turn's user Source preference; use remember_source to prewrite worthwhile notes, then place its exact Markdown marker beside the relevant final-answer prose. Preserve ordinary file, media and web references regardless of Source mode.
+Source annotations are concise Agent-authored explanations, not independent verification. Follow this turn's user Source preference; use remember_source to prewrite worthwhile notes, then place its short marker (for example [1]) beside the relevant final-answer prose. The host binds it to the saved note; do not construct Source URLs. Preserve ordinary file, media and web references regardless of Source mode.
 
 For audio and video edits, preserve the source and export to a new, non-colliding path by default, including transcoding, metadata changes and regeneration. Replace a source only when explicitly requested; first preserve a verified backup unless the user declines it. Text/code undo cannot restore overwritten binary media. Verify the export and return its path.`;
 
@@ -65,7 +65,7 @@ export const CHILD_AGENT_SYSTEM_PROMPT = ROOT_AGENT_SYSTEM_PROMPT;
 
 export const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 
-export const DEFAULT_MAX_CONTEXT_TOKENS = 400_000;
+export { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 
 export function sourcePreferenceText(enabled = true): string {
   return enabled
@@ -184,7 +184,7 @@ function createBaseProductAgentTurnRequest(
       } : {}),
     },
     tools: input.tools,
-    maxOutputTokens: input.maxOutputTokens,
+    maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     reasoningEffort: input.reasoningEffort,
     requestCapabilities: {
       vision: input.visionEnabled === true,

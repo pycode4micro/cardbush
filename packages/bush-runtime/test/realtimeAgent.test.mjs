@@ -30,6 +30,9 @@ test('spoken task summary uses the configured model and owned terminal result wi
     assert.deepEqual(await invoke(), {speech:answer});
     assert.equal(seen[0].model,'chosen-executor'); assert.deepEqual(seen[0].tools,[]);
     assert.equal(seen[0].metadata.runtimeMaintenance,'realtime_task_summary');
+    assert.equal(seen[0].maxOutputTokens,128000);
+    await invoke({...payload,model:{...payload.model,maxOutputTokens:16000}});
+    assert.equal(seen.at(-1).maxOutputTokens,16000,'spoken summary inherits explicit model limits');
     assert.equal(JSON.parse(seen[0].messages.find(m=>m.role==='user').content).result,result);
     assert.match(seen[0].messages[0].content,/untrusted task DATA/);
     assert.equal(sessions.snapshot('parent'),undefined);

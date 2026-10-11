@@ -54,6 +54,9 @@ export function AssistantView({ active, language, connections, prepare, onManage
   const pageMessages = useMemo(() => journalMessages(pageEntries, sessionId), [pageEntries]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [draft, setDraft] = useState('');
   const [runtimeError, setRuntimeError] = useState('');
+  const [canRetry, setCanRetry] = useState(false), [stopping, setStopping] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const replying = (busy || submitting) && !error && !runtimeError;
   const [retry, setRetry] = useState<ConversationJournalSnapshot['retry']>(null);
   const [settings, setSettings] = useState(false), [desktop, setDesktop] = useState(false);
   useEffect(() => { if (!active) setSettings(false); }, [active]);
@@ -95,6 +98,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
       if (reset) setEntries(result.entries);
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
       setBusy(result.busy); setAssistantWorking(result.busy || Boolean(result.workingTasks)); setRuntimeError(result.error); setRetry(result.retry);
+      setCanRetry(result.canRetry === true);
     })().finally(() => { refreshing.current = undefined; });
     return refreshing.current;
   }, []);
@@ -123,15 +127,28 @@ export function AssistantView({ active, language, connections, prepare, onManage
     await refresh(); return true;
   }, [ensure, refresh]);
   const agent = useMemo(() => assistantBackend.voice(async () => { await ensure(); return { ...await prepareRef.current(), sessionId }; }), [ensure]);
-  const [submitting, setSubmitting] = useState(false);
   // Typed messages and recording transcripts share positioning, acceptance and errors.
   const send = async (text: string) => {
     if (!text.trim() || submitting) return false;
     viewport.prepareSend();
-    setSubmitting(true); setError('');
+    setSubmitting(true); setError(''); setRuntimeError('');
     try { await submit(text); return true; }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
     finally { setSubmitting(false); }
+  };
+  const retryReply = async () => {
+    viewport.prepareSend();
+    setSubmitting(true); setError(''); setRuntimeError('');
+    try { await assistantBackend.retry(await prepareRef.current()); await refresh(); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { setSubmitting(false); }
+  };
+  const stopReply = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try { await assistantBackend.stop(); await refresh(); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { setStopping(false); }
   };
   // Both sides of the call remain available to inference and speech, independently of the page.
   const speechMessages = (items: ConversationEntry[]) => journalMessages(items.filter(entry => entry.source !== 'page' && entry.source !== 'task')
@@ -170,6 +187,14 @@ export function AssistantView({ active, language, connections, prepare, onManage
     <time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</time>
   </article></div>;
   };
+  const typingBubble = replying && <div className="message-list-item assistant-message-row assistant-activity-row" data-message-role="status">
+    <div className="assistant-typing-bubble" role="status" aria-label={zh ? '正在回复' : 'Replying'}>
+      <span aria-hidden="true"/><span aria-hidden="true"/><span aria-hidden="true"/>
+    </div>
+    {busy && <button className="assistant-stop-reply" type="button" disabled={stopping} onClick={() => void stopReply()}>
+      {zh ? '停止等待' : 'Stop waiting'}
+    </button>}
+  </div>;
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
@@ -178,6 +203,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
       onToggleWorkSummary={anchor => { summary.updateWorkSummaryLayout(anchor); summary.setWorkSummaryVisible(value => !value); }}/>
     {settings && active && <AssistantSettingsDialog language={language} onClose={() => setSettings(false)}/>}
     {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={error || runtimeError}
+      actionLabel={canRetry ? zh ? '重试回复' : 'Retry reply' : undefined} onAction={canRetry ? retryReply : undefined}
       onDismiss={() => { setError(''); setRuntimeError(''); }}/>}
     {retry && !error && !runtimeError && <ConversationConnectionNotice language={language}
       update={{ ...retry, sessionId, state: 'retrying', source: 'provider', reason: retry.code }}/>}
@@ -189,6 +215,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
       <div className="message-list-content">
         {!timeline.length && <div className="assistant-welcome"><AssistantBulb size={68}/><h2>{zh ? '随时聊聊' : 'Let’s talk'}</h2><p>{zh ? '说说想法，或把事情交给我。任务在后台进行，我们可以继续聊。' : 'Share a thought or hand over a task. We can keep talking while work continues.'}</p></div>}
         {timeline.map(renderTimelineItem)}
+        {typingBubble}
       </div></div>
       <VoiceConversation target={target} language={language} disabled={!ready} active={active}>
         <div className="assistant-composer-dock composer-dock" ref={composerDock}>
@@ -197,6 +224,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
             submitting={submitting} error={error || runtimeError}
             recovery={retry ? { ...retry, sessionId, state: 'retrying', source: 'provider' } : null} sessionId={sessionId}>
             {timeline.slice(-12).map(renderTimelineItem)}
+            {typingBubble}
           </QuickInputStatus>
           <AssistantComposer controls={composerControls} language={language} draft={draft} onDraftChange={setDraft}
             ready={ready} submitting={submitting} onSend={send} fileDropTarget={chatBody} messages={pageMessages} browserTabs={browserTabs}/>

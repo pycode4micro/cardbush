@@ -29,7 +29,9 @@ async function buildFixture(directory) {
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>({entries:fixture.entries.slice(after),cursor:fixture.entries.length,busy:fixture.busy,error:fixture.runtimeError??'',retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0}),
+          read:async(after=0)=>({entries:fixture.entries.slice(after),cursor:fixture.entries.length,busy:fixture.busy,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0}),
+          stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
+          retry:async()=>{fixture.retries=(fixture.retries??0)+1;fixture.runtimeError='';fixture.busy=true;},
           reset:async()=>{fixture.resetCount=(fixture.resetCount??0)+1;fixture.generation=(fixture.generation??0)+1;fixture.entries=[];window.dispatchEvent(new Event('cardbush:assistant-reset'));},
           send:async(text,config,spoken)=>{if(fixture.failSend)throw Error('fixture send failed');fixture.sent.push({text,spoken});const input=splitStreamAttachmentMentions(text);fixture.entries.push({id:'user-'+fixture.sent.length,role:'user',content:input.userInput,attachments:await chatAttachmentsFromOutbound(input),createdAt:new Date().toISOString(),source:'text',visibility:'conversation'});}};`;
       if (id === '\0assistant-fixture.tsx') return `
@@ -112,12 +114,22 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".assistant-view .conversation-connection-notice")?.textContent.includes("ECONNRESET")');
     assert.ok(await read('document.querySelector(".assistant-view .conversation-connection-notice").textContent.includes("第 2 次")'));
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'),2,'retry keeps the conversation visible');
+    assert.equal(await read('document.querySelectorAll(".assistant-messages .assistant-typing-bubble>span").length'),3,'working appears as a three-dot chat bubble');
+    assert.ok(await read('document.querySelector(".assistant-typing-bubble").getAttribute("aria-label").includes("正在回复")'));
     await until('Number(getComputedStyle(document.querySelector(".assistant-view .conversation-connection-notice")).opacity)>.99');
     assert.ok(await read('(()=>{const n=document.querySelector(".assistant-view .conversation-connection-notice"),r=n.getBoundingClientRect();return r.height>30&&r.top>=48&&r.bottom<innerHeight&&document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.closest(".conversation-connection-notice")===n;})()'),'retry notice is visible below the header');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(directory,'assistant-retry.png'),(await win.webContents.capturePage()).toPNG());
+    await click('.assistant-stop-reply');
+    await until('!document.querySelector(".assistant-typing-bubble")&&document.querySelector(".runtime-status-action")');
+    assert.equal(await read('fixture.stops'),1);
+    await click('.runtime-status-action');
+    await until('document.querySelector(".assistant-typing-bubble")&&!document.querySelector(".runtime-status-banner")');
+    assert.equal(await read('fixture.retries'),1);
+    assert.equal(await read('document.querySelectorAll(".assistant-message").length'),2,'retry must not duplicate the user message');
     await read('fixture.busy=false;fixture.retry=null;void 0');
     await until('!document.querySelector(".assistant-view .conversation-connection-notice")');
+    await until('!document.querySelector(".assistant-typing-bubble")');
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .composer-stack.simple")'), true);
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .assistant-actions")'), false);
     assert.equal(await read('fixture.permissionChanged'), undefined);
@@ -137,6 +149,7 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".quick-input-status")?.textContent.includes("已回复")');
     await read('fixture.busy=true;void 0');await until('document.querySelector(".quick-input-status")?.textContent.includes("正在处理")');
     await click('.quick-input-status');await until('document.querySelector(".quick-input-transcript .assistant-message")');
+    assert.equal(await read('document.querySelectorAll(".quick-input-transcript .assistant-typing-bubble>span").length'),3,'quick transcript shares the live typing bubble');
     assert.equal(await read('!!document.querySelector(".inspector-quick-input textarea")'),true,'Assistant preview opens above its quick composer');
     assert.equal(await read('fixture.busy'),true,'expanding leaves Assistant running');
     await read('fixture.busy=false;fixture.portal(false);void 0');
@@ -299,7 +312,7 @@ app.whenReady().then(async () => {
     await read('fixture.setLayout(65);void 0');await pause(150);
     for(const width of [1440,800,1120]){
       win.setSize(width,800);await until('innerWidth==='+width);await pause(200);
-      assert.ok(await read('(()=>{const body=document.querySelector(".chat-body").getBoundingClientRect(),input=document.querySelector(".composer-surface").getBoundingClientRect();return Math.abs(input.width-Math.max(280,body.width*.65))<2 && Math.abs((input.left+input.width/2)-(body.left+body.width/2))<2;})()'),'saved input width stays centered on resize: '+JSON.stringify(await read('(()=>{const body=document.querySelector(".chat-body").getBoundingClientRect(),input=document.querySelector(".composer-surface").getBoundingClientRect();return {body:body.toJSON(),input:input.toJSON(),css:document.querySelector(".chat-body").getAttribute("style")};})()')));
+      assert.ok(await read('(()=>{const row=document.querySelector(".assistant-message-row").getBoundingClientRect(),input=document.querySelector(".composer-surface").getBoundingClientRect();return Math.abs(input.width-row.width)<2 && Math.abs((input.left+input.width/2)-(row.left+row.width/2))<2;})()'),'docked input follows the conversation reading width on resize');
     }
     await read('fixture.setLayout(65,{afterSend:"keep",output:"below"});void 0');await until('document.querySelector(".assistant-view.composer-anchored")');
     await read('document.querySelector(".assistant-messages").scrollTop=0;void 0');await pause(100);

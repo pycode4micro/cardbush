@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { ContentBlockParam, MessageCreateParamsStreaming, MessageParam, RawMessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
 import { modelReplayMatches, withToolDisplayTitle, ModelRequestAttempts, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
@@ -94,7 +95,7 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
     } else if (message.role === 'user') append('user', [...textBlocks(namedMessageContent(message.name, message.content)),
       ...(message.images ?? []).map(image => imageBlock(image.url))]);
   }
-  const maxTokens = request.maxOutputTokens ?? 8192;
+  const maxTokens = request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const effort = request.reasoningEffort;
   const thinking = effort && effort !== 'none';
   if (thinking && thinkingMode === 'budget' && maxTokens <= 1024) throw new Error('Anthropic budget thinking requires an output limit greater than 1024 tokens.');

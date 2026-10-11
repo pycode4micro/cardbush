@@ -10,6 +10,7 @@ import type { InputTokenCountParams } from "openai/resources/responses/input-tok
 
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   modelRequestHeaders,
   type ModelEvent,
   type ModelMessage,
@@ -248,7 +249,7 @@ export function toResponsesCreateParams(
     ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     input: projected.input,
     tools: projected.tools,
-    max_output_tokens: request.maxOutputTokens,
+    max_output_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     temperature: request.temperature,
     top_p: request.topP,
     reasoning: request.reasoningEffort

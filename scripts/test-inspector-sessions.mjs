@@ -19,6 +19,23 @@ const resource = id => ({ id, kind: 'resource', detail: { target: 'https://examp
 const open = (state, workspaceId, id) => reduce(reduce(state, { type: 'tabs', workspaceId, action: { type: 'open', tab: resource(id) } }), { type: 'open-state', workspaceId, update: true });
 const act = (state, workspaceId, action) => reduce(state, { type: 'tabs', workspaceId, action });
 
+test('explicit browser references move original resources out of the draft and retain locked ownership', () => {
+  let state = open(open(open(emptyInspectorSessions, local(''), 'referenced'), local(''), 'unrelated'), local('other'), 'locked');
+  state = reduce(state, { type: 'toggle-lock', id: 'locked' });
+  state = open(state, local('new-conversation'), 'blank');
+  const original = retained(state).find(tab => tab.id === 'referenced');
+  state = reduce(state, { type: 'bind-browser', workspaceId: local('new-conversation'), ids: ['referenced', 'locked'] });
+  assert.equal(view(state, local('new-conversation')).activeId, 'referenced');
+  assert.equal(view(state, local('new-conversation')).open, true);
+  assert.equal(owner(state, 'referenced'), local('new-conversation'));
+  assert.equal(retained(state).find(tab => tab.id === 'referenced'), original, 'same tab object, no recreated URL');
+  assert.equal(owner(state, 'locked'), local('other'), 'locks retain their owner');
+  assert.deepEqual(state.workspaces[local('')].tabs.map(tab => tab.id), ['unrelated']);
+  assert.equal(retained(state).length, 4, 'binding creates no duplicate pages');
+  state = reduce(state, { type: 'toggle-lock', id: 'locked' });
+  assert.deepEqual(view(state, local('new-conversation')).tabs.map(tab => tab.id), ['blank', 'referenced']);
+});
+
 test('local, assistant and remote conversations keep independent tabs, selection and collapsed state', () => {
   const scopes = [local('a'), local('b'), local('personal-assistant'), remote('host-a', 'a'), remote('host-b', 'a')];
   assert.equal(new Set(scopes).size, scopes.length);
@@ -103,13 +120,18 @@ for (const parentSelected of [true, false]) test(`browser actions belong to the 
     actions.push(action);
     const workspace = local(action.sessionId);
     if (action.action === 'open') state = open(state, workspace, action.tabId);
-    else state = act(state, workspace, action.action === 'close'
+    else if (action.action !== 'inspect') state = act(state, workspace, action.action === 'close'
       ? { type: 'close', ids: new Set([action.tabId]) } : { type: 'activate', id: action.tabId });
     if (action.action === 'open') {
-      const guest = { id: ++nextId, hostWebContents: owner, isDestroyed: () => false, getType: () => 'webview', getURL: () => action.url,
+      const guest = { id: ++nextId, tabId: action.tabId, hostWebContents: owner, isDestroyed: () => false, getType: () => 'webview', getURL: () => action.url,
         getTitle: () => 'Background', once() {}, debugger: { isAttached: () => false } };
       guests.set(guest.id, guest); browser.register(owner, { tabId: action.tabId, guestWebContentsId: guest.id });
     }
+    if (action.requestId) browser.acknowledge(owner.id, { requestId: action.requestId, pages: (action.tabIds ?? [action.tabId]).map(tabId => {
+      const exists = retained(state).some(tab => tab.id === tabId);
+      return { tabId, guestWebContentsId: exists ? [...guests.values()].find(guest => guest.tabId === tabId)?.id ?? null : null,
+        inWorkspace: view(state, workspace).tabs.some(tab => tab.id === tabId), active: view(state, workspace).activeId === tabId, visible: false };
+    }) });
   } });
   if (parentSelected) browser.select('parent');
   assert.equal(browser.inheritScope('parent', 'child'), parentSelected);
@@ -128,7 +150,7 @@ for (const parentSelected of [true, false]) test(`browser actions belong to the 
   for (const scopeId of ['parent', 'child', 'grandchild']) {
     assert.deepEqual(await browser.request('tabs.list', { scopeId }), [], 'explicit close removes the shared page from all granted scopes');
   }
-  assert.deepEqual(actions.map(action => [action.action, action.sessionId]), [['open', 'parent'], ['activate', 'parent'], ['close', 'parent']]);
+  assert.deepEqual(actions.filter(action => action.action !== 'inspect').map(action => [action.action, action.sessionId]), [['open', 'parent'], ['activate', 'parent'], ['close', 'parent']]);
   assert.equal(view(state, local('parent')).tabs.length, 0);
 });
 

@@ -110,7 +110,9 @@ app.whenReady().then(async () => {
           if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
             await run('document.querySelector(".tool-execution-summary").click()');
           await until('Boolean(document.querySelector(".tool-execution-row"))');
-          assert.equal(await run('document.querySelector(".tool-execution-row-status,.tool-execution-row.failed,.tool-execution-row.diagnostic")'),null);
+          assert.equal(await run('document.querySelector(".tool-execution-row-status")?.textContent ?? null'),
+            nativeMetadata && ['nonzero', 'spawn-failure'].includes(id) ? '执行失败' : null,
+            'only known native terminal failure facts add an outcome label');
           assert.equal(await run('document.querySelector(".tool-execution-summary").textContent.includes("执行失败")'),false);
           assert.equal(await run('/\\d+\\s*(项操作|项失败|actions|tools)/i.test(document.querySelector(".tool-execution-summary").textContent)'),false);
           await run('document.querySelector(".tool-execution-row").click()'); await pause();

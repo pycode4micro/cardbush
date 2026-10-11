@@ -46,6 +46,7 @@ import {
   isToolRunningInContext,
   toolActionTitle,
   toolActivityStatus,
+  toolTerminalOutcome,
 } from './toolExecutionState';
 import { useToolActivity } from './useToolActivity';
 import {
@@ -726,6 +727,7 @@ function ToolExecutionRow({
   const detailId = useId();
   const waiting = active && (execution.state === 'awaiting_permission' || execution.state === 'awaiting_solution');
   const status = toolActivityStatus(execution, language, active);
+  const terminalOutcome = toolTerminalOutcome(execution);
   const name = isContextCompactionPresentationExecution(execution)
     ? language === 'zh' ? '上下文压缩' : 'Context compaction'
     : displayToolName(execution.name);
@@ -738,7 +740,7 @@ function ToolExecutionRow({
         title={`${name}${label !== name ? `\n${label}` : ''}`}
         onClick={() => preserveScrollPositionForToggle(rowRef.current, onToggle)}>
         <ToolLogo name={execution.name} size={14} />
-        {waiting && <span className="tool-execution-row-status">{status}</span>}
+        {(waiting || terminalOutcome === 'failed' || terminalOutcome === 'stopped') && <span className="tool-execution-row-status">{status}</span>}
         <span className="tool-execution-row-label">{label}</span>
         <ChevronDown size={13} className={expanded ? 'expanded' : ''} />
       </button>

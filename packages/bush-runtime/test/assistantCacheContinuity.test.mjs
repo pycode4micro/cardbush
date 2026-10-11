@@ -141,7 +141,7 @@ test('pressure checkpoints complete tool exchanges, retains source, and restores
     { role: 'assistant', content: '', toolCalls: [{ id: 'old-call', name: 'subagent', argumentsText: '{"prompt":"Inspect"}' }] },
     { role: 'tool', toolCallId: 'old-call', content: 'receipt-marker: Important report constraints. '.repeat(4000) },
     { role: 'assistant', content: 'Report received.', toolCalls: [] }], ['old']);
-  app.assistant.command({ action: 'turn', sessionId: id, entry: entry('new'), parent: { ...parent, metadata: { contextWindowTokens: 8000 } }, profile: assistantProfileSchema.parse({}) });
+  app.assistant.command({ action: 'turn', sessionId: id, entry: entry('new'), parent: { ...parent, maxOutputTokens: 1000, metadata: { contextWindowTokens: 8000 } }, profile: assistantProfileSchema.parse({}) });
   await until(() => !app.read().busy); assert.equal(app.read().error, '');
   const maintenance = requests.filter(r => r.tools[0]?.name === 'checkpoint_context');
   assert.ok(maintenance.some(r => JSON.stringify(r.messages).includes('old-call') && JSON.stringify(r.messages).includes('receipt-marker')));

@@ -1,7 +1,12 @@
 import type { WebContents } from 'electron';
+import { installBrowserPopupHandler, type BrowserPopupEvent } from './browserPopup';
 
-/** Route guest popups into the owning inspector instead of creating native windows. */
-export function installInspectorWindowOpen(owner: WebContents): void {
+const installed = new WeakSet<WebContents>();
+
+/** Ordinary links open in inspector tabs; popup workflows retain their opener. */
+export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (event: BrowserPopupEvent) => void): void {
+  if (installed.has(owner)) return;
+  installed.add(owner);
   owner.on('will-attach-webview', (_event, preferences, params) => {
     if (!params.src?.startsWith('cardbush-agent://')) return;
     delete preferences.preload;
@@ -34,13 +39,12 @@ export function installInspectorWindowOpen(owner: WebContents): void {
       const target = inspectorWindowTarget(url, opener);
       if (target && !owner.isDestroyed()) owner.send('inspector:open-link', { guestWebContentsId: guest.id, target });
     });
-    guest.setWindowOpenHandler(({ url }) => {
+    installBrowserPopupHandler(guest, owner, url => {
       if (!owner.isDestroyed() && !guest.isDestroyed() && guest.hostWebContents?.id === owner.id) {
         const target = inspectorWindowTarget(url, guest.getURL());
         if (target) owner.send('inspector:open-link', { guestWebContentsId: guest.id, target });
       }
-      return { action: 'deny' };
-    });
+    }, onPopupEvent);
   });
 }
 

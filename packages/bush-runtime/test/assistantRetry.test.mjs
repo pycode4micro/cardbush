@@ -13,18 +13,107 @@ const event = (request, sequence, kind, fields = {}) => ({ protocol: 'bush.model
 const failure = (request, sequence = 0, fields = {}) => event(request, sequence, 'response_failed', {
   code: 'ECONNRESET', message: 'Connection error. (ECONNRESET)', retryable: true, ...fields });
 
-function fixture(t, provider, wait) {
+function fixture(t, provider, wait, deps = {}) {
   const root = mkdtempSync(join(tmpdir(), 'assistant-retry-')), journal = new ConversationJournal(root), delegated = [];
   const assistant = new AssistantConversation(journal, { provider, wait, checkpoint: () => ({}), exists: () => true, tasks: () => [],
-    delegate: async input => { delegated.push(input); return { taskId: 'child', status: 'running' }; } });
+    delegate: async input => { delegated.push(input); return { taskId: 'child', status: 'running' }; }, ...deps });
   t.after(() => { assistant.close(); rmSync(root, { force: true, recursive: true }); });
-  const send = () => assistant.command({ action: 'turn', sessionId: id,
+  let parent;
+  const send = (options = {}) => assistant.command({ action: 'turn', sessionId: id,
     entry: { id: 'user-input', role: 'user', content: 'Inspect the files', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
-    profile: assistantProfileSchema.parse({}), parent: { protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: id,
+    profile: assistantProfileSchema.parse({}), parent: parent = { protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: id,
       turnId: 'turn', model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Inspect the files' } }],
-      tools: [], metadata: {}, permissionMode: 'task_free' } });
-  return { assistant, journal, delegated, send, read: () => assistant.command({ action: 'read', sessionId: id }) };
+      tools: [], metadata: {}, permissionMode: 'task_free', ...options } });
+  return { assistant, journal, delegated, send, retry: options => assistant.command({ action: 'retry', sessionId: id,
+    parent: { ...parent, ...options }, profile: assistantProfileSchema.parse({}) }), read: () => assistant.command({ action: 'read', sessionId: id }) };
 }
+
+test('empty and reasoning-only truncated replies fail visibly and retry preserves the original message', async t => {
+  for (const finishReason of ['stop', 'length']) {
+    const requests = [];
+    const f = fixture(t, { async *stream(request) {
+      requests.push(request);
+      if (requests.length === 1) {
+        yield event(request, 0, 'reasoning_delta', { delta: 'Private deliberation only' });
+        yield event(request, 1, 'response_completed', { finishReason });
+      } else {
+        yield event(request, 0, 'text_delta', { delta: 'Recovered reply' });
+        yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+      }
+    } });
+    f.send(); await until(() => !f.read().busy);
+    assert.equal(requests[0].maxOutputTokens, 128000);
+    assert.equal(f.read().canRetry, true);
+    assert.match(f.read().error, finishReason === 'length' ? /输出达到上限/ : /未返回回复/);
+    assert.equal(f.journal.modelHistory(id).read().messages.some(message => message.role === 'assistant'), false);
+    f.retry({ maxOutputTokens: 200000 }); await until(() => !f.read().busy);
+    assert.equal(requests[1].maxOutputTokens, 200000, 'retry uses current model settings without a hidden cap');
+    assert.equal(f.read().canRetry, false); assert.equal(f.read().error, '');
+    assert.deepEqual(f.journal.read(id).map(entry => entry.content), ['Inspect the files', 'Recovered reply']);
+  }
+});
+
+test('stopping an uncooperative provider releases busy and ignores late output after retry', async t => {
+  let release, attempts = 0;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const f = fixture(t, { async *stream(request) {
+    const first = ++attempts === 1;
+    if (first) await blocked;
+    yield event(request, 0, 'text_delta', { delta: first ? 'Must not appear' : 'Recovered reply' });
+    yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+  } });
+  t.after(release);
+  f.send(); await until(() => attempts === 1);
+  f.assistant.command({ action: 'stop', sessionId: id });
+  await until(() => !f.read().busy);
+  assert.equal(f.read().canRetry, true); assert.match(f.read().error, /已停止/);
+  f.retry(); await until(() => !f.read().busy);
+  release(); await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(f.read().error, '');
+  assert.deepEqual(f.journal.read(id).map(entry => entry.content), ['Inspect the files', 'Recovered reply']);
+});
+
+test('manual retry resumes after an accepted task receipt without dispatching it twice', async t => {
+  let rounds = 0;
+  const f = fixture(t, { async *stream(request) {
+    if (++rounds === 1) {
+      yield event(request, 0, 'tool_call_delta', { index: 0, toolCallId: 'accepted-task', nameDelta: 'subagent', argumentsDelta: '{"prompt":"Inspect files"}' });
+      yield event(request, 1, 'response_completed', { finishReason: 'tool_calls' });
+    } else if (rounds === 2) yield failure(request, 0, { code: 'invalid_api_key', status: 401, retryable: false });
+    else {
+      assert.ok(request.messages.some(message => message.role === 'tool' && message.toolCallId === 'accepted-task'));
+      yield event(request, 0, 'text_delta', { delta: 'The task was already accepted.' });
+      yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+    }
+  } });
+  f.send(); await until(() => !f.read().busy);
+  assert.equal(f.delegated.length, 1); assert.equal(f.read().canRetry, true);
+  f.retry(); await until(() => !f.read().busy);
+  assert.equal(f.delegated.length, 1); assert.equal(f.read().error, '');
+  assert.equal(f.journal.read(id).filter(entry => entry.source === 'text' && entry.role === 'user').length, 1);
+});
+
+test('an unfinished persisted message offers recovery after restarting assistant', async t => {
+  const f = fixture(t, { async *stream(request) { yield failure(request, 0, { status: 401 }); } });
+  f.send(); await until(() => !f.read().busy); f.assistant.close();
+  const restored = new AssistantConversation(f.journal, { provider: { async *stream() {} }, checkpoint: () => ({}),
+    exists: () => true, tasks: () => [], delegate: async () => ({}) });
+  t.after(() => restored.close());
+  const snapshot = restored.command({ action: 'read', sessionId: id });
+  assert.equal(snapshot.canRetry, true); assert.equal(snapshot.busy, false);
+  assert.match(snapshot.error, /上次回复未完成/);
+});
+
+test('a memory scheduling failure cannot leave assistant busy', async t => {
+  const f = fixture(t, { async *stream(request) {
+    yield event(request, 0, 'text_delta', { delta: 'Saved reply' });
+    yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+  } }, undefined, { memory: { definitions: () => [], recall: async () => undefined, changes: async () => undefined,
+    schedule: () => { throw Error('Memory schedule failed'); } } });
+  f.send(); await until(() => !f.read().busy);
+  assert.match(f.read().error, /Memory schedule failed/);
+  assert.equal(f.journal.read(id).at(-1).content, 'Saved reply');
+});
 
 test('assistant retries the same failed round without replaying earlier dispatch or page writes', async t => {
   const requests = [], waits = []; let release;

@@ -412,6 +412,7 @@ declare global {
       onInspectorGuestActivated: (callback: (detail: { guestWebContentsId: number }) => void) => () => void;
       registerInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => Promise<void>;
       unregisterInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => Promise<void>;
+      acknowledgeInspectorBrowserAction: (result: import('../../electron/integratedBrowser').BrowserTabActionResult) => Promise<void>;
       bindInspectorBrowserReferences: (sessionId: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) => Promise<Array<{ tabId: string; id: number; browser: 'cardbush'; url: string; title: string }>>;
       onInspectorBrowserAction: (callback: (detail: import('../../electron/integratedBrowser').BrowserTabAction) => void) => () => void;
       browser?: import('../../electron/browserUi').BrowserUiBridge;

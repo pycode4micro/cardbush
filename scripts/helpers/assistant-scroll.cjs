@@ -35,12 +35,19 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
     'a fitting question and result both remain visible: ' + JSON.stringify(short));
 
   await send('这份长结果请从开头展示，我会自己向下阅读。');
+  await read('fixture.busy=true;void 0');
+  await until('document.querySelector(".assistant-messages .assistant-typing-bubble")');
   await append('long-result', '## 长结果的开头\n\n' + Array.from({ length: 34 }, (_, i) => `第 ${i + 1} 段：保留完整结果，超过屏幕时从开头阅读，后续内容通过滚动查看。`).join('\n\n'));
   const long = await bounds('long-result');
   assert.ok(long.user.top >= long.list.top - 2 && long.row.top > long.list.top && long.row.top < long.input.top - 200,
     'long results start with the question and the beginning, not their final paragraphs: ' + JSON.stringify(long));
   assert.ok(long.remaining > 500 && long.row.bottom > long.input.top);
   fs.writeFileSync(path.join(directory, 'assistant-long-result.png'), (await win.webContents.capturePage()).toPNG());
+  await click('.scroll-bottom');
+  await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
+  await read('fixture.busy=false;void 0');
+  await until('!document.querySelector(".assistant-typing-bubble")');
+  assert.ok((await bounds('long-result')).remaining < 2, 'removing the typing bubble preserves explicit bottom navigation');
   await append('long-result-continuation', '## 后续补充\n\n这是同一轮新到达的短回复，应完整显示。', true);
   const continuation = await bounds('long-result-continuation');
   assert.ok(continuation.row.top >= continuation.list.top && continuation.row.bottom < continuation.input.top && continuation.remaining < 2,

@@ -1,5 +1,5 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
-import { normalizeToolDisplay } from '@cardbush/bush-protocol';
+import { normalizeToolDisplay, terminalToolOutcome, terminalCommandOutcomeSchema } from '@cardbush/bush-protocol';
 
 export function decodeToolExecutionState(value: unknown): ChatToolExecution['state'] {
   if (
@@ -83,8 +83,21 @@ export function toolActivityStatus(execution: ChatToolExecution, language: AppLa
   if (active && isToolRunning(execution)) return activeToolStatusLabel(execution, language)!;
   if (isToolRunning(execution) || execution.state === 'cancelled') return language === 'zh' ? '已中止' : 'Stopped';
   if (execution.state === 'failed') return language === 'zh' ? '失败' : 'Failed';
+  const terminal = toolTerminalOutcome(execution);
+  if (terminal === 'failed') return language === 'zh' ? '执行失败' : 'Command failed';
+  if (terminal === 'stopped') return language === 'zh' ? '已停止' : 'Stopped';
+  if (terminal === 'running') return language === 'zh' ? '已转后台' : 'Sent to background';
+  if (terminal === 'succeeded') return language === 'zh' ? '命令已结束' : 'Command exited';
   // A returned tool receipt can represent a submitted/running remote job.
   return language === 'zh' ? '已返回' : 'Returned';
+}
+
+export function toolTerminalOutcome(execution: ChatToolExecution) {
+  if (execution.state !== 'completed') return undefined;
+  const native = terminalToolOutcome(execution.name, execution.metadata.nativeResult);
+  if (native) return native;
+  const summary = terminalCommandOutcomeSchema.safeParse(execution.metadata.terminalOutcome);
+  return summary.success ? summary.data : undefined;
 }
 
 export function activeToolStatusLabel(

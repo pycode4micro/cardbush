@@ -58,7 +58,11 @@ Chat Completions 将产品的 `low / medium / high` 三档写入 OpenRouter 的 
 
 ## 高级选项
 
-可设置上下文上限、最大输出 tokens 和 JSON 格式的自定义请求头。例如：
+可设置上下文上限、最大输出 tokens 和 JSON 格式的自定义请求头。
+
+未填写最大输出时，统一使用 **128,000 tokens**，包含思考与可见输出；默认上下文为 400,000 tokens。普通会话、assistant、子代理、Team、Hook、记忆总结、上下文压缩和语音任务摘要共享该默认值，并继承所选模型显式配置的额度，不再额外压到 2,048／4,096／8,192。输出上限必须小于配置的上下文；较小窗口的模型应填写其支持的输出额度。SIWC 仍按账号协议省略不支持的输出参数，由服务端决定额度。
+
+自定义请求头例如：
 
 ```json
 {
@@ -69,7 +73,7 @@ Chat Completions 将产品的 `low / medium / high` 三档写入 OpenRouter 的 
 
 `{{sessionId}}` 在发送时替换。头名称不区分大小写，不允许重复名称、换行或覆盖 `Host` / `Content-Length` 等传输字段。留空或 `{}` 可清除自定义头。头中的凭据属于模型连接配置，不写入会话的 Provider binding 引用或输入指纹；开启配置同步时，和模型密钥一起传入已授权的 Agent。
 
-Anthropic Messages 要求 `max_tokens`，未填写输出上限时使用 8192。其高级选项另有思考参数模式：默认「自适应」将所选推理强度发送为 `thinking.type=adaptive` 和 `output_config.effort`；旧模型可选择「Token 预算」，预算至少 1024、严格小于输出上限。未指定推理强度时不发送思考覆盖参数，遵循供应商默认；选择「关闭」/ `none` 时明确发送 `thinking.type=disabled`，不把省略参数当作关闭。支持的强度仍由具体模型决定，详见 [Anthropic 思考配置](https://platform.claude.com/docs/en/build-with-claude/thinking)。
+Anthropic Messages 要求 `max_tokens`，未填写时使用上述统一默认值。其高级选项另有思考参数模式：默认「自适应」将所选推理强度发送为 `thinking.type=adaptive` 和 `output_config.effort`；旧模型可选择「Token 预算」，预算至少 1024、严格小于输出上限。未指定推理强度时不发送思考覆盖参数，遵循供应商默认；选择「关闭」/ `none` 时明确发送 `thinking.type=disabled`，不把省略参数当作关闭。支持的强度仍由具体模型决定，详见 [Anthropic 思考配置](https://platform.claude.com/docs/en/build-with-claude/thinking)。
 
 当前 Chat Completions 接入提供 `low / medium / high` 三档，输入框和实际请求共用映射。历史配置中的 `xhigh / max` 归到 `high`，`none` 归到最低可用的 `low`；未配置强度时仍不发送覆盖值。编辑协议时先展示对应映射，保存后按该协议支持的档位保存。三档是当前产品接入策略，并不表示所有 Chat Completions 模型都只有这三档。Responses 和 Messages 的可选范围保持各自原有设置。
 

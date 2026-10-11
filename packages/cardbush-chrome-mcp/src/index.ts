@@ -22,10 +22,17 @@ type BrowserPage = {
   title: string;
   url: string;
   active: boolean;
+  visible?: boolean;
   selected?: boolean;
   browser?: string;
   targetKey?: string;
 };
+
+function presentationNotice(page: Record<string, unknown>): string {
+  if (page.browser !== 'cardbush') return '';
+  return page.visible === true ? ' Page is visible in CardBush.'
+    : ' Page is not visible in the current CardBush view. Show its conversation and existing tab before visual verification; do not open a replacement.';
+}
 
 type ToolContext = {
   mcpReq: {
@@ -130,6 +137,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
         title: string(value.title),
         url: string(value.url),
         active: value.active === true,
+        ...(typeof value.visible === 'boolean' ? { visible: value.visible } : {}),
         ...(value.selected === true ? { selected: true } : {}),
         ...(typeof value.browser === 'string' ? { browser: value.browser } : {}),
         ...(typeof value.targetKey === 'string' ? { targetKey: value.targetKey } : {}),
@@ -195,7 +203,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     }
     return {
       text: listed.length > 0
-        ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.browser === 'cardbush' ? '[CardBush] ' : ''}${page.title || '(untitled)'} — ${page.url}`).join('\n')
+        ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.browser === 'cardbush' ? `[CardBush; ${page.visible ? 'visible' : 'not visible'}] ` : ''}${page.title || '(untitled)'} — ${page.url}`).join('\n')
         : 'This CardBush session has no isolated browser tabs. Use new_page, or copy an existing tab into the session group from the extension popup.',
       structured: { pages: listed, selectedPageId },
     };
@@ -203,19 +211,19 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('select_page', toolDefinition(
     'Select browser page',
-    'Select and focus a browser tab by the numeric id returned by list_pages.',
+    'Select a browser tab by the numeric id returned by list_pages. CardBush confirms presentation in its owning conversation without switching the user away from another conversation. selected is the tool target; visible confirms the page is displayed. If not visible, ask the user to show that conversation instead of opening a replacement.',
     z.object({ pageId: z.number().int().nonnegative() }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const result = record(await request('tabs.activate', { tabId: input.pageId }, context));
     selectedPageIds.set(scope.id, input.pageId);
-    return { text: `Selected browser tab ${input.pageId}: ${string(result.title)}`, structured: result };
+    return { text: `Selected browser tab ${input.pageId}: ${string(result.title)}${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open a website in the selected browser, scoped to this conversation. For web search, current news or internet research, pass a search-engine URL with the query, then read results with take_snapshot. CardBush opens a visible integrated tab; Chrome/Edge uses the session group. Omit url for a blank new tab; otherwise pass an HTTP(S) URL.',
+    'Open a website in the selected browser, scoped to this conversation. For web search, current news or internet research, pass a search-engine URL with the query, then read results with take_snapshot. CardBush opens a tab in this conversation and reports visible separately; background conversations do not take over the current view. Chrome/Edge uses the session group. Omit url for a blank new tab; otherwise pass an HTTP(S) URL.',
     z.object({ url: z.string().url().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -224,7 +232,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const result = record(await request('tabs.create', { url }, context));
     const selectedPageId = integer(result.id);
     if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);
-    return { text: `Opened browser tab ${selectedPageId ?? ''}: ${string(result.url)}`, structured: result };
+    return { text: `Opened browser tab ${selectedPageId ?? ''}: ${string(result.url)}${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('close_page', toolDefinition(
@@ -262,7 +270,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       ...(input.url ? { url: input.url } : {}),
       ignoreCache: input.ignoreCache === true,
     }, context));
-    return { text: `browser tab ${target} navigated to ${string(result.url) || input.type}.`, structured: result };
+    return { text: `browser tab ${target} navigated to ${string(result.url) || input.type}.${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('take_snapshot', toolDefinition(
@@ -442,7 +450,9 @@ export function createCardbushChromeServer(options: { connector?: typeof request
           pageId: target, consecutiveFailures: failure.attempts, cumulativeAttemptMs: failure.elapsedMs,
           failureWindowMs: Date.now() - failure.firstFailureAt,
           timings: { elapsedMs: Date.now() - startedAt, pageSelectionMs, connector },
-          ...(failure.attempts >= 2 ? { recovery: 'Repeated screenshot failures on this page. Changing PNG/JPEG quality alone does not recover a pending command. Check the reported stage; release/reconnect if the debugger is stuck, or use a different preview route. Preserve the existing artifact; do not reconstruct image Base64 in tool arguments.' } : {}),
+          ...(error instanceof ChromeConnectorError && error.code === 'cardbush_page_not_visible'
+            ? { recovery: 'Show the owning CardBush conversation and select this existing tab before taking another screenshot. Reconnecting, changing image quality or opening a replacement does not make the original page visible.' }
+            : failure.attempts >= 2 ? { recovery: 'Repeated screenshot failures on this page. Changing PNG/JPEG quality alone does not recover a pending command. Check the reported stage; release/reconnect if the debugger is stuck, or use a different preview route. Preserve the existing artifact; do not reconstruct image Base64 in tool arguments.' } : {}),
         });
     }
   }));
