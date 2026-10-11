@@ -21,6 +21,7 @@ test('keeps the established Chrome DevTools tool vocabulary', () => {
     'take_snapshot',
     'click',
     'fill',
+    'upload_file',
     'type_text',
     'press_key',
     'hover',

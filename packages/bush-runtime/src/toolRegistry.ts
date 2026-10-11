@@ -125,7 +125,9 @@ export class ToolRegistry {
     const normalizedOwner = owner.trim();
     if (!normalizedOwner) throw new Error("Tool registration owner is required.");
     const replacements = candidates.map((candidate) =>
-      normalizeRegistration({ ...candidate, registrationOwner: normalizedOwner }),
+      candidate.registrationOwner === normalizedOwner && this.#registrations.get(candidate.definition.name) === candidate
+        ? candidate as AnyToolRegistration
+        : normalizeRegistration({ ...candidate, registrationOwner: normalizedOwner }),
     );
     const names = new Set<string>();
     for (const replacement of replacements) {

@@ -28,17 +28,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
     setQueueFixture(queueFixture);
     window.queuePoint = (id, handle = true, fraction = 0.5) => {
       const row = document.querySelector('[data-queue-item-id="' + id + '"]');
-      const target = handle ? row.querySelector('.runtime-queue-prompt') : row;
+      const target = handle ? row.querySelector('.runtime-queue-drag-handle') : row;
       const r = target.getBoundingClientRect();
       return { x: Math.round(r.left + (handle ? r.width / 2 : 60)), y: Math.round(r.top + r.height * fraction) };
     };
     void 0;
   `);
-  await until("!!document.querySelector('.composer-queue-button')", 'queue shortcut appears');
-  assert.equal(await run("document.querySelector('.composer-queue-button').closest('.composer-tools') === document.querySelector('.permission-center-button').closest('.composer-tools')"), true, 'queue access shares the composer toolbar with permissions');
-  assert.equal(await run("document.querySelector('.composer-queue-button').textContent"), '3');
+  await until("document.querySelectorAll('.runtime-queue-list > .runtime-queue-item').length===3", 'guidance rows appear above the composer');
   assert.equal(await run("document.querySelectorAll('.composer-queue-row').length"), 0, 'no duplicate queue summary above input');
-  assert.equal(await run("document.querySelectorAll('.runtime-screen-queue-actions > button').length"), 3, 'collapsed actions only expose send, delete and more');
+  assert.equal(await run("document.querySelectorAll('.composer-runtime-rail').length"), 1, 'one queue view owns all items');
   const clickMenuTrigger = async selector => {
     await pause(200);
     const point = await run(`(() => {
@@ -53,18 +51,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await clickMenuTrigger(selector);
     await until("!!document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]')", 'queue overflow opens in the top layer');
   };
-  await openMenu('.runtime-screen-queue-actions .queue-actions-trigger');
+  await openMenu('.runtime-queue-actions .queue-actions-trigger');
   assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').getAttribute('aria-checked')"), 'false');
-  await clickMenuTrigger('.runtime-screen-queue-actions .queue-actions-trigger');
+  await clickMenuTrigger('.runtime-queue-actions .queue-actions-trigger');
   await until("!document.querySelector('.queue-actions-popover:popover-open')", 'clicking more again closes the menu');
-  await openMenu('.runtime-screen-queue-actions .queue-actions-trigger');
+  await openMenu('.runtime-queue-actions .queue-actions-trigger');
   await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').click()");
   await until("!!document.querySelector('.composer-runtime-rail[data-queue-locked=true]')", 'queue lock is visible');
   assert.equal(await run('queueFixture.length'), 3, 'locking retains all text and order');
-  await run("document.querySelector('.composer-queue-button').click()");
-  await until("!!document.querySelector('.composer-runtime-rail.context-visible .queue-context-panel')", 'queue shortcut opens details');
-  await until("!!document.querySelector('.composer-runtime-screen.queue.open')", 'status reel switches to queue');
-  assert.ok((await run("document.querySelector('.runtime-queue-hint').textContent")).includes('不会自动发送'));
+  assert.equal(await run("document.querySelectorAll('.runtime-queue-list > .runtime-queue-item').length"), 3, 'all guidance is visible without opening another panel');
+  assert.equal(await run("document.querySelector('.composer-queue-button, .composer-runtime-screen, .queue-context-panel')"), null, 'the queue has no disclosure button or popup');
+  assert.ok((await run("document.querySelector('.runtime-queue-lock').textContent")).includes('仅手动发送'));
   assert.equal(await run("[...document.querySelectorAll('.runtime-queue-actions')].every(node => node.querySelectorAll(':scope > button').length === 3)"), true, 'expanded rows only expose send, delete and more');
   await openMenu('[data-queue-item-id=q1] .queue-actions-trigger');
   assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').getAttribute('aria-checked')"), 'true', 'every overflow reflects the shared queue lock');
@@ -99,8 +96,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const endDrag = point => native('mouseUp', point, { button: 'left', clickCount: 1 });
   const original = await rowRect('q1');
   const neighbour = await rowRect('q2');
-  const start = await startDrag('q1', false);
-  await until("!!document.querySelector('.runtime-queue-drag-preview')", 'holding the card body lifts the full card');
+  const bodyPoint = await startDrag('q1', false);
+  await pause(240);
+  assert.equal(await run("document.querySelector('.runtime-queue-drag-preview')"), null, 'text selection does not initiate a drag');
+  endDrag(bodyPoint);
+  const start = await startDrag('q1');
+  await until("!!document.querySelector('.runtime-queue-drag-preview')", 'holding the handle lifts the row');
   const lifted = await previewRect();
   assert.ok(Math.abs(lifted.width - original.width) < 1 && Math.abs(lifted.height - original.height) < 1, 'the drag preview keeps the full card dimensions');
   assert.equal(await run("document.querySelector('.runtime-queue-drag-preview').inert"), true);
@@ -160,8 +161,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.deepEqual(await run('queueFixture.map(item => item.id)'), ['q2', 'q1', 'q3']);
   // Appended messages should not close the panel while the user is reading it.
   await run("setQueueFixture([...queueFixture, ...Array.from({ length: 9 }, (_, i) => ({ id: 'extra-' + i, text: '新增排队消息 ' + i + '。'.repeat(55), createdAt: '2026-09-11T00:00:03Z' }))])");
-  await until("document.querySelector('.composer-queue-button')?.textContent === '12'", 'live queue count');
-  assert.ok(await run("Boolean(document.querySelector('.queue-context-panel'))"), 'appending keeps the queue open');
+  await until("document.querySelectorAll('.runtime-queue-list > .runtime-queue-item').length === 12", 'live queue count');
+  assert.ok(await run("Boolean(document.querySelector('.runtime-queue-list'))"), 'appending keeps the queue open');
   await startDrag('q2');
   drop = await run("(() => { const r = document.querySelector('.runtime-queue-list').getBoundingClientRect(); return { x: Math.round(r.x + 20), y: Math.round(r.bottom - 6) }; })()");
   moveDrag(drop);
@@ -179,14 +180,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run(`document.querySelector('.chat-panel').style.width = '${width}px'`);
     await pause(220);
     const layout = await run(`(() => {
-      const panel = document.querySelector('.queue-context-panel').getBoundingClientRect();
+      const panel = document.querySelector('.composer-runtime-rail').getBoundingClientRect();
       const body = document.querySelector('.chat-body').getBoundingClientRect();
-      const icon = document.querySelector('.composer-queue-button').getBoundingClientRect();
-      const permission = document.querySelector('.permission-center-button').getBoundingClientRect();
-      const iconNode = document.querySelector('.composer-queue-button');
+      const iconNode = document.querySelector('.runtime-queue-drag-handle');
+      const icon = iconNode.getBoundingClientRect();
       const hit = document.elementFromPoint(icon.left + icon.width / 2, icon.top + icon.height / 2);
       return { inside: panel.left >= body.left && panel.right <= body.right + 1 && panel.top >= body.top,
-        iconRight: icon.left >= permission.right - 1,
+        handleInside: icon.left >= panel.left,
         iconReachable: hit === iconNode || iconNode.contains(hit),
         textFits: [...document.querySelectorAll('.runtime-queue-item')].every(row => {
           const text = row.querySelector('.runtime-queue-prompt').getBoundingClientRect();
@@ -196,7 +196,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
             && Math.abs(text.top + text.height / 2 - actions.top - actions.height / 2) < 1;
         }) };
     })()`);
-    assert.deepEqual(layout, { inside: true, iconRight: true, iconReachable: true, textFits: true }, width + 'px queue layout');
+    assert.deepEqual(layout, { inside: true, handleInside: true, iconReachable: true, textFits: true }, width + 'px queue layout');
     await openMenu('[data-queue-item-id=q1] .queue-actions-trigger');
     assert.equal(await run(`(() => {
       const menu = document.querySelector('.queue-actions-popover:popover-open');
@@ -217,14 +217,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
   native('mouseUp', guidePoint, { button: 'left', clickCount: 1 });
   await until('queueGuided.length === 1', 'guidance action still uses selected queue item');
   assert.equal(await run('queueGuided[0]'), 'q2');
-  await until("document.querySelector('[data-queue-item-id=q1] .runtime-queue-guide')?.disabled === false && document.querySelector('.composer-queue-button')?.textContent === '2'", 'guidance finishes updating the queue');
+  await until("document.querySelector('[data-queue-item-id=q1] .runtime-queue-guide')?.disabled === false && document.querySelectorAll('.runtime-queue-list > .runtime-queue-item').length === 2", 'guidance finishes updating the queue');
   await pause(250);
   await startDrag('q1');
   drop = await run("queuePoint('q3', false, 0.8)");
   moveDrag(drop);
   await until("!!document.querySelector('.runtime-queue-item.dragging')", 'session switch fixture');
   await run("updateChat({ activeConversationId: 'different-queue-session', queuedMessages: [], queuedMessageCount: 0, queuedMessagePreview: '' })");
-  await until("!document.querySelector('.composer-queue-button') && !document.querySelector('.queue-context-panel')", 'session switch clears queue controls')
+  await until("!document.querySelector('.composer-runtime-rail')", 'session switch clears queue controls')
     .catch(async error => { throw new Error(error.message + '\nRenderer failures: ' + JSON.stringify(await run('failures'))); });
   endDrag(drop);
   assert.equal(await run('queueOrders.length'), 3, 'switching sessions cancels the active drag');
@@ -237,9 +237,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until(`queueGuided.length === ${previousGuided + 1}`, 'manual shortcut sends a locked message after the loop ends');
   assert.equal(await run('queueGuided.at(-1)'), 'locked-idle');
   assert.equal(await run('chatProps.queueLocked'), true, 'manual send does not unlock the queue');
-  await openMenu('.runtime-screen-queue-actions .queue-actions-trigger');
-  assert.equal(await run("document.querySelector('.queue-actions-popover:popover-open [data-queue-action=lock]').getAttribute('aria-checked')"), 'true', 'empty queue retains its lock control');
-  await run("document.querySelector('.queue-actions-popover:popover-open').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+  assert.equal(await run("document.querySelector('.runtime-queue-lock button')?.disabled"), false, 'empty locked queue retains a direct unlock control');
   await run(`updateChat({ interactionContent: h('div', { 'data-queue-confirmation': true }, '请确认接下来如何处理') });`);
   await until("!!document.querySelector('[data-queue-confirmation]') && !!document.querySelector('.interaction-queue-lock .queue-actions-trigger')", 'confirmation keeps the emergency lock accessible');
   await openMenu('.interaction-queue-lock .queue-actions-trigger');

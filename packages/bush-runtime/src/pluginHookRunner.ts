@@ -31,6 +31,8 @@ type HookSession = { queue: BackgroundJob[]; active: Set<BackgroundJob>; ready: 
 export class PluginHookRunner {
   private readonly once = new Set<string>();
   private readonly sessions = new Map<string, HookSession>();
+  private readonly suspended = new Set<string>();
+  private readonly executing = new Map<string, Set<Promise<PluginHookResult>>>();
   constructor(private readonly dataRoot: string, private readonly options: PluginHookRunnerOptions = {}) {}
 
   openSession(sessionId: string) {
@@ -50,7 +52,10 @@ export class PluginHookRunner {
   }
   async close() { await Promise.allSettled([...this.sessions.keys()].map(id => this.closeSession(id))); }
 
-  async removePlugin(pluginId: string) {
+  resumePlugins(pluginIds: Iterable<string>) { for (const id of pluginIds) this.suspended.delete(id); }
+
+  async removePlugin(pluginId: string, drain = false) {
+    this.suspended.add(pluginId);
     const pending: Array<Promise<void> | undefined> = [];
     for (const [sessionId, session] of this.sessions) {
       for (const hook of session.hooks) if (hook.pluginId === pluginId) this.once.delete(`${sessionId}\0${hook.id}`);
@@ -61,11 +66,12 @@ export class PluginHookRunner {
         return false;
       });
       for (const job of session.active) if (job.hook.pluginId === pluginId) {
-        job.controller.abort(new Error('Plugin was uninstalled.'));
+        if (!drain) job.controller.abort(new Error('Plugin was uninstalled.'));
         pending.push(job.promise);
       }
     }
     await Promise.allSettled(pending);
+    await Promise.allSettled([...(this.executing.get(pluginId) ?? [])]);
   }
 
   async run(hooks: PluginHook[], event: PluginHookEvent, context: PluginHookContext, observe?: Observer): Promise<PluginHookResult> {
@@ -80,6 +86,7 @@ export class PluginHookRunner {
     session.hooks = hooks; session.context = context; session.observe = observe;
     const invocations: Promise<PluginHookResult>[] = [];
     for (const original of hooks) {
+      if (this.suspended.has(original.pluginId)) continue;
       const hook = original.scope?.kind === 'skill' && original.event === 'Stop' && event === 'SubagentStop' ? { ...original, event } : original;
       const scopedStop = hook.scope?.kind === 'skill' && hook.event === 'Stop' && event === 'SubagentStop';
       if ((!scopedStop && hook.event !== event) || !matches(hook, context)) continue;
@@ -115,7 +122,19 @@ export class PluginHookRunner {
     }
   }
 
-  private async execute(id: string, hook: PluginHook, context: PluginHookContext, observe?: Observer): Promise<PluginHookResult> {
+  private execute(id: string, hook: PluginHook, context: PluginHookContext, observe?: Observer): Promise<PluginHookResult> {
+    if (this.suspended.has(hook.pluginId)) return Promise.resolve({ messages: [] });
+    const calls = this.executing.get(hook.pluginId) ?? new Set<Promise<PluginHookResult>>();
+    this.executing.set(hook.pluginId, calls);
+    const work = this.executeInvocation(id, hook, context, observe).finally(() => {
+      calls.delete(work);
+      if (!calls.size) this.executing.delete(hook.pluginId);
+    });
+    calls.add(work);
+    return work;
+  }
+
+  private async executeInvocation(id: string, hook: PluginHook, context: PluginHookContext, observe?: Observer): Promise<PluginHookResult> {
     observe?.({ id, hook, phase: 'running' });
     let recordedOutput: string | undefined;
     try {

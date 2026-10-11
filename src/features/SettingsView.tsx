@@ -1713,7 +1713,7 @@ export function McpServersPanel({
 
       <section className="mcp-simple-section">
         {servers.some((server) => server.status === 'pending') && <p role="status">
-          {language === 'zh' ? '配置已保存，当前任务结束后自动生效，无需重启。' : 'Saved. Changes apply automatically after active tasks finish; no restart needed.'}
+          {language === 'zh' ? '配置已保存，相关工具调用完成后自动更新，无需停止会话。' : 'Saved. Updates apply after the affected tool calls finish; the conversation can continue.'}
         </p>}
         {servers.find((server) => server.lastError)?.lastError && <p className="settings-inline-error" role="alert">
           {language === 'zh' ? 'MCP 连接异常：' : 'MCP connection issue: '}

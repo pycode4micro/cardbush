@@ -1,8 +1,9 @@
 import type { ChatMessage } from '../types';
-import { truncateText } from '../shared/text';
+import { recordPersonalizationFeedback } from '../backend/personalization';
+import { readIndividuation } from './settings/individuation';
 
 export const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
-const ASSISTANT_FEEDBACK_EVENT = 'cardbush-assistant-feedback';
+export const ASSISTANT_FEEDBACK_EVENT = 'cardbush-assistant-feedback';
 
 const ASSISTANT_FEEDBACK_STORAGE_KEY = 'cardbush_assistant_feedback';
 
@@ -13,7 +14,7 @@ type AssistantFeedbackRecord = {
   conversationId?: string;
   turnId?: string;
   rating: AssistantFeedbackRating;
-  contentPreview: string;
+  memorySaved?: boolean;
   createdAt: string;
 };
 
@@ -38,7 +39,12 @@ export async function copyText(value: string) {
   window.dispatchEvent(new CustomEvent(COPY_FEEDBACK_EVENT));
 }
 
-export function readAssistantFeedback(messageId: string): AssistantFeedbackRating | null {
+export function assistantFeedbackKey(message:ChatMessage,connectionId=''):string {
+  const sourceId=message.messageId||message.assistantMessageId||String(message.metadata?.message_id||'')||message.id;
+  return JSON.stringify([connectionId,message.conversationId??'',message.turnId??'',sourceId]);
+}
+
+export function readAssistantFeedback(messageId: string, legacyId?:string): AssistantFeedbackRating | null {
   try {
     const raw = window.localStorage.getItem(ASSISTANT_FEEDBACK_STORAGE_KEY);
     if (!raw) {
@@ -55,7 +61,7 @@ export function readAssistantFeedback(messageId: string): AssistantFeedbackRatin
           Boolean(
             item &&
               typeof item === 'object' &&
-              (item as AssistantFeedbackRecord).messageId === messageId &&
+              ((item as AssistantFeedbackRecord).messageId === messageId || Boolean(legacyId && (item as AssistantFeedbackRecord).messageId === legacyId)) &&
               ((item as AssistantFeedbackRecord).rating === 'up' ||
                 (item as AssistantFeedbackRecord).rating === 'down'),
           ),
@@ -66,47 +72,36 @@ export function readAssistantFeedback(messageId: string): AssistantFeedbackRatin
   }
 }
 
+const pendingFeedback=new Map<string,Promise<void>>();
+
 export function recordAssistantFeedback(
   message: ChatMessage,
   rating: AssistantFeedbackRating | null,
-) {
-  const messageId = message.id.trim();
-  if (!messageId) {
-    return;
-  }
-  try {
-    const raw = window.localStorage.getItem(ASSISTANT_FEEDBACK_STORAGE_KEY);
-    const previous = raw ? JSON.parse(raw) : [];
-    const records = Array.isArray(previous)
-      ? previous.filter(
-          (item) =>
-            !(
-              item &&
-              typeof item === 'object' &&
-              (item as AssistantFeedbackRecord).messageId === messageId
-            ),
-        )
-      : [];
-    if (rating) {
-      records.push({
-        messageId,
-        conversationId: message.conversationId,
-        turnId: message.turnId,
-        rating,
-        contentPreview: truncateText(message.content.trim(), 600),
-        createdAt: new Date().toISOString(),
-      } satisfies AssistantFeedbackRecord);
+  options:{connectionId?:string;legacyId?:string;memoryAvailable?:boolean}={},
+):Promise<void> {
+  const messageId=assistantFeedbackKey(message,options.connectionId);
+  const operation=(pendingFeedback.get(messageId)??Promise.resolve()).catch(()=>{}).then(async()=>{
+    let records:AssistantFeedbackRecord[]=[];
+    try { const value=JSON.parse(window.localStorage.getItem(ASSISTANT_FEEDBACK_STORAGE_KEY)??'[]');if(Array.isArray(value))records=value; } catch { /* Legacy cache is optional. */ }
+    const previous=records.find(item=>item?.messageId===messageId||Boolean(options.legacyId&&item?.messageId===options.legacyId));
+    const settings=readIndividuation();
+    let memorySaved=false;
+    if(options.memoryAvailable!==false&&(settings.habits||previous?.memorySaved)) {
+      const result=await recordPersonalizationFeedback({sessionId:message.conversationId??'',turnId:message.turnId??'',
+        messageId:message.messageId||message.assistantMessageId||String(message.metadata?.message_id||'')||message.id,
+        // Disabling habits does not prevent explicitly withdrawing a previously recorded vote.
+        rating:settings.habits?rating:null},settings,crypto.randomUUID(),options.connectionId);
+      if(result.status!=='ok')throw new Error(result.reason??result.status);
+      memorySaved=settings.habits&&rating!==null;
     }
-    window.localStorage.setItem(
-      ASSISTANT_FEEDBACK_STORAGE_KEY,
-      JSON.stringify(records.slice(-500)),
-    );
-    window.dispatchEvent(
-      new CustomEvent(ASSISTANT_FEEDBACK_EVENT, {
-        detail: { messageId, rating },
-      }),
-    );
-  } catch {
-    // Feedback is best-effort and should never disrupt the chat UI.
-  }
+    // Read again: unrelated messages may have been rated while the host was saving.
+    try { const value=JSON.parse(window.localStorage.getItem(ASSISTANT_FEEDBACK_STORAGE_KEY)??'[]');if(Array.isArray(value))records=value; } catch { /* Keep the available cache. */ }
+    records=records.filter(item=>item?.messageId!==messageId&&item?.messageId!==options.legacyId);
+    if(rating)records.push({messageId,conversationId:message.conversationId,turnId:message.turnId,rating,memorySaved,createdAt:new Date().toISOString()});
+    try { window.localStorage.setItem(ASSISTANT_FEEDBACK_STORAGE_KEY,JSON.stringify(records.slice(-500))); } catch { /* The host receipt remains authoritative. */ }
+    window.dispatchEvent(new CustomEvent(ASSISTANT_FEEDBACK_EVENT,{detail:{messageId,rating}}));
+  });
+  pendingFeedback.set(messageId,operation);
+  void operation.finally(()=>{if(pendingFeedback.get(messageId)===operation)pendingFeedback.delete(messageId);}).catch(()=>{});
+  return operation;
 }

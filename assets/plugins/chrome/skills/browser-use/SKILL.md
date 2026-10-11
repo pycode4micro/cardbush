@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签或已配对的 Chrome、Edge。尊重 @ 标签页的真实身份，支持网页读取、点击、表单和截图；外部浏览器另支持跟踪下载。
+description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签或已配对的 Chrome、Edge。尊重 @ 标签页的真实身份，支持网页读取、点击、表单、本地文件上传和截图；外部浏览器另支持跟踪下载，原生窗口与特殊控件可衔接 Computer Use。
 ---
 
 # Browser Use
@@ -30,7 +30,15 @@ description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签�
 - `click` 会检查面积、可见性、禁用状态和实际命中目标，并在鼠标移入后复查。零面积控件仅可经明确关联的可见 label 点击，不绕过遮挡强行执行 JavaScript click。回执 `input_dispatched` 表示输入已发出，`outcomeVerified:false` 表示尚未确认提交、跳转等结果；按任务观察相关状态后再继续。失败若提示点击可能已生效，先观察，不能盲目重试或自动换成 Enter。
 - 截图使用 `take_screenshot`，图片提取使用 `export_image`；结果自动附图并保存，无需通过下载来查看图片。
 - 文件下载使用 `download_file`，保留 taskId 后用 `download_status` 查询或 `cancel_download` 取消。pending 不代表失败，不重复提交同一下载。
+- 本地图片、视频、文档上传使用 `upload_file`：传宿主上的绝对路径数组 `filePaths`，以及文件输入框的 `uid` 或页面观察得到的唯一 `selector`（二选一）。隐藏的 `input[type=file]` 也支持；看不到 uid 时可用 `evaluate_script` 查明控件的 id/name/accept/multiple，再选择具体控件，不能盲选多个控件中的第一个。多文件需控件支持 `multiple`。无需先点击以打开系统文件窗口，也无需启动本地 HTTP 服务、传 Base64 或注入 DataTransfer。
+- 上传回执只表示文件已交给控件，网站可能随即开始上传。检查文件名、预览及上传进度/成功状态；保存、发布按用户任务继续执行。页面清空或移除 input 不代表上传失败；断线或状态不明时先观察，不重复选文件。
 - 完成浏览器工作后调用 `release_browser`；它只释放本会话组的控制，不关闭用户浏览器。
+
+## 鼠标键盘衔接
+
+- 需要操作系统文件窗口、裁剪/拖动/画布、浏览器原生菜单，或网页接口已明确无法操作目标时，可以直接发现 `computer_use` 并读取 Windows Control 技能，不必反复尝试页面脚本。普通 DOM 点击、输入和文件选择仍优先使用对应 Browser Use 工具。
+- 保持同一个已授权标签、浏览器和账号。先观察窗口列表，再观察确切 HWND；依据最新截图或可访问控件操作鼠标键盘，不能复用页面截图坐标当作窗口坐标。选择文件时在真实文件名栏输入绝对路径并确认，随后核对页面预览。若桌面上无法识别该标签，先说明缺少的目标信息。
+- 完成这一步后调用 Computer Use 的 `finish`，回到原 Browser Use 标签重新观察。不要通过切换工具绕过权限拒绝、用户停止或用户接管，也不要因回执不明确而重复上传/发布。
 
 ## 连接设置
 

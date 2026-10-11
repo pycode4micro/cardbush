@@ -24,9 +24,12 @@ available when optional app plugins are disabled. Server dependencies and add-on
 inside other applications remain owned by their respective installers; registering
 a standalone MCP connection does not require a CardBush plugin package.
 
-Configuration updates made during active turns return `pending`. Runtime applies
-them after active turns finish; subsequent tool discovery reports the connection
-health and real tool names. Saving a configuration or testing a separate MCP
+Configuration updates hot reload during active turns. `pending` describes
+connection setup, resource admission, or `waiting_for_calls` on the affected
+local service. Local processes release their ports after their own calls finish;
+remote replacements retain the old transport until its dispatched calls settle.
+The next model round reconciles added, changed and removed tools and receives one
+bounded catalog notice; changed schemas require a fresh discovery load. Saving a configuration or testing a separate MCP
 client does not establish that CardBush has connected to the server.
 
 The Runtime must never hard-code a `computer_use` handler or a private

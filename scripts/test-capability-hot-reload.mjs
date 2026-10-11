@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { watchCapabilityCatalog } from '../dist-electron/capabilityCatalogWatcher.js';
 import { loadEnabledProductPluginMcpServers, loadProductPluginCatalog } from '../dist-electron/productPlugins.js';
@@ -18,8 +18,8 @@ await mkdir(config);
 const configPath = join(config, 'apps.json');
 const roots = [{ path: plugins, source: 'user' }];
 const registry = new ToolRegistry();
-let idle = true;
-const manager = new McpClientManager({ registry, canApply: () => idle });
+const manager = new McpClientManager({ registry });
+const callGate = join(root, 'call.release'), callStarted = join(root, 'call.started');
 let revision = 0;
 let changes = 0;
 let listedSkills = [];
@@ -54,6 +54,7 @@ try {
   const source = (withMusic = false) => `
     import { McpServer } from '@modelcontextprotocol/server';
     import { serveStdio } from '@modelcontextprotocol/server/stdio';
+    import { existsSync, writeFileSync } from 'node:fs';
     await serveStdio(() => {
       const server = new McpServer({ name: 'hot-reload-fixture', version: '1.0.0' });
       server.registerTool('echo', { description: 'Echo fixture', inputSchema: {} }, async () => ({
@@ -62,6 +63,11 @@ try {
       server.registerTool('identity', { description: 'Process identity fixture', inputSchema: {} }, async () => ({
         content: [{ type: 'text', text: String(process.pid) }],
       }));
+      server.registerTool('hold', { description: 'Hold a dispatched call', inputSchema: {} }, async () => {
+        writeFileSync(${JSON.stringify(callStarted)}, String(process.pid));
+        while (!existsSync(${JSON.stringify(callGate)})) await new Promise(resolve => setTimeout(resolve, 10));
+        return { content: [{ type: 'text', text: process.env.FIXTURE_VALUE || 'first' }] };
+      });
       ${withMusic ? "server.registerTool('music', { description: 'New music fixture', inputSchema: {} }, async () => ({ content: [{ type: 'text', text: 'music' }] }));" : ''}
       return server;
     });
@@ -82,13 +88,22 @@ try {
     toolCall: { id: 'echo', name }, input: {}, capabilityIds: [] });
   assert.equal((await execute()).content[0].text, 'first');
 
-  idle = false;
+  const hold = async () => {
+    await rm(callGate, { force: true }); await rm(callStarted, { force: true });
+    const result = registry.resolve('mcp__plugin_live_echo__hold').execute({ requestId: 'fixture', sessionId: 'fixture', turnId: 'fixture',
+      toolCall: { id: 'hold', name: 'hold' }, input: {}, capabilityIds: [] });
+    await until(async () => access(callStarted).then(() => true, () => false), 'held call dispatched');
+    return { result };
+  };
+  const activeConfigCall = await hold();
   mcpConfig.mcpServers.echo.env.FIXTURE_VALUE = 'second';
   await writeFile(join(plugin, '.mcp.json.tmp'), JSON.stringify(mcpConfig));
   await rename(join(plugin, '.mcp.json.tmp'), join(plugin, '.mcp.json'));
   await until(() => manager.snapshot()?.applicationState === 'pending', 'atomic config replacement queued');
-  assert.equal((await execute()).content[0].text, 'first', 'in-flight turn keeps old connection');
-  idle = true;
+  assert.equal(manager.snapshot().applicationPhase, 'waiting_for_calls');
+  assert.equal((await execute()).content[0].text, 'first', 'a dispatched call retains the old process');
+  await writeFile(callGate, 'release');
+  assert.equal((await activeConfigCall.result).content[0].text, 'first');
   await until(() => manager.snapshot()?.applicationState === 'applied', 'queued update applied automatically');
   assert.equal((await execute()).content[0].text, 'second');
 
@@ -117,13 +132,14 @@ try {
   const beforeCodePid = await identity();
   const beforeCodeConfig = (await loadEnabledProductPluginMcpServers(roots, configPath)).find(server => server.pluginId === 'live');
   assert.match(beforeCodeConfig.implementationFingerprint, /^[a-f0-9]{64}$/);
-  idle = false;
+  const activeCodeCall = await hold();
   await writeFile(join(plugin, 'server.mjs'), source(true));
   await until(() => manager.snapshot()?.applicationState === 'pending', 'source-only edit queued with identical launch arguments');
-  assert.equal(await identity(), beforeCodePid, 'active turns retain the old process');
+  assert.equal(await identity(), beforeCodePid, 'only the affected in-flight call retains the old process');
   assert.equal(registry.resolve('mcp__plugin_live_echo__music'), undefined);
-  idle = true;
-  await until(() => registry.resolve('mcp__plugin_live_echo__music') && manager.snapshot()?.applicationState === 'applied', 'new tool published after idle');
+  assert.equal(await identity('steady'), steadyPid, 'unrelated calls continue during replacement');
+  await writeFile(callGate, 'release'); await activeCodeCall.result;
+  await until(() => registry.resolve('mcp__plugin_live_echo__music') && manager.snapshot()?.applicationState === 'applied', 'new tool published after the call, within the same turn');
   const afterCodePid = await identity();
   assert.notEqual(afterCodePid, beforeCodePid);
   assert.equal(await identity('steady'), steadyPid, 'another plugin is not restarted');
@@ -144,12 +160,11 @@ try {
   await until(async () => { if (changes <= beforeDocs) return false; await updates; return true; }, 'presentation and same-content edits observed');
   assert.equal(await identity(), afterVersionPid, 'docs, icons, cache writes and same-content touches do not reconnect');
   assert.equal(await identity('steady'), steadyPid);
-  idle = false;
+  const activeRemoval = await hold();
   await store.write({ serviceEnabled: true, plugins: [{ id: 'live', installed: false, enabled: false, config: {} }] });
-  await until(() => manager.snapshot()?.applicationState === 'pending', 'uninstall waits for the active turn boundary');
-  assert.equal((await execute()).content[0].text, 'second', 'an active turn keeps its published tool until uninstall applies');
-  idle = true;
   await until(() => !registry.resolve(name), 'uninstalled plugin tool leaves discovery without restarting the host');
+  await writeFile(callGate, 'release');
+  assert.equal((await activeRemoval.result).content[0].text, 'second', 'removal allows already dispatched calls to complete');
   assert.equal((await store.read()).plugins[0].installed, false, 'uninstall is distinct from disabling an installed plugin');
   await store.write({ serviceEnabled: true, plugins: [{ id: 'live', installed: true, enabled: true, config: {} }] });
   await until(() => registry.resolve(name), 'retained package reconnects after reinstall');
@@ -167,9 +182,10 @@ try {
   await writeFile(join(skills, 'live-skill', 'SKILL.md'), '---\nname: stopped\n---');
   await new Promise(resolve => setTimeout(resolve, 400));
   assert.equal(changes, stoppedAt, 'watcher disposed without late notifications');
-  console.log('Capability hot reload passed: source/version updates, new tool discovery after idle, stable unrelated processes, ignored presentation/cache edits, missing roots, Skill add/delete, atomic edits, enable/disable, uninstall/reinstall, malformed config recovery and watcher cleanup.');
+  console.log('Capability hot reload passed: updates within an active turn, in-flight call draining, source/version updates, stable unrelated processes, ignored presentation/cache edits, missing roots, Skill add/delete, atomic edits, enable/disable, uninstall/reinstall, malformed config recovery and watcher cleanup.');
 } finally {
   dispose();
+  await writeFile(callGate, 'release');
   await updates;
   await manager.close();
   assert.ok(resolve(root).startsWith(tmp + sep));

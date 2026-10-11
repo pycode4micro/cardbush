@@ -200,6 +200,7 @@ import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { CopyToastHost } from './components/CopyToastHost';
 import { readInitialThemePreference, resolveTheme, systemPrefersDark } from './features/appearance/themePreferences';
 import { useInspectorWorkspace } from './features/inspector/useInspectorWorkspace';
+import { InspectorCoverControls } from './features/inspector/InspectorCoverControls';
 import { FeaturePanel, FeaturePanelLoading } from './features/panels/FeaturePanel';
 import { normalizeAppSettings, persistAppSettings } from './features/settings/appSettingsStore';
 import { useAppSettings } from './features/settings/useAppSettings';
@@ -2846,16 +2847,12 @@ function CardbushApp() {
               </div>
             </aside>
           ) : null}
-          {inspectorControlsVisible && <div className="inspector-cover-controls" inert={(compactLayout || inspectorCover) && !sidebarCollapsed ? true : undefined}>
-            {quickInputOpen && <div className="inspector-quick-input" ref={setQuickInputTarget}
-              aria-label={language === 'zh' ? '快速输入' : 'Quick input'} />}
-            <div className="inspector-cover-capsule">
-              <button type="button" onClick={leaveInspectorCover}><ArrowLeft size={15}/>{language === 'zh' ? '返回' : 'Back'}</button>
-              <button type="button" aria-expanded={quickInputOpen} onClick={() => { if (!quickInputOpen && section !== 'agents' && section !== 'assistant') setSection('chat'); setQuickInputOpen(open => !open); }}>
-                {language === 'zh' ? '输入' : 'Input'}
-              </button>
-            </div>
-          </div>}
+          {inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
+            inert={(compactLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
+            onBack={leaveInspectorCover} onToggleInput={() => {
+              if (!quickInputOpen && section !== 'agents' && section !== 'assistant') setSection('chat');
+              setQuickInputOpen(open => !open);
+            }} />}
       </main>
       {addPageOpen && <InspectorPageDialog language={language} onClose={() => setAddPageOpen(false)} onOpen={url => openInspectorTarget({ target: url, newTab: true })}/>}
       {savingInspectorLayout && <InspectorLayoutDialog language={language} snapshot={savingInspectorLayout.snapshot} onClose={() => setSavingInspectorLayout(null)}/>}

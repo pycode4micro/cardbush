@@ -334,9 +334,7 @@ async function executeRuntimeCommand(
       const updatePluginId = command.kind === 'runtime.prepare_plugin_update'
         ? String((command.payload as { updatePluginId?: unknown }).updatePluginId ?? '') : undefined;
       const suspendedPluginId = updatePluginId ?? uninstallPluginId;
-      if (suspendedPluginId !== undefined && (!suspendedPluginId || host.hasActiveTurns() || host.isExtensionBusy(suspendedPluginId))) {
-        throw new Error(updatePluginId !== undefined ? '插件仍在使用中，请在当前任务结束后重试更新。' : '插件仍在使用中，请在当前任务结束后重试卸载。');
-      }
+      if (suspendedPluginId !== undefined && !suspendedPluginId) throw new Error('Plugin identity is required.');
       const removedServers = uninstallPluginId ? effectiveMcp?.servers.filter(server => server.pluginId === uninstallPluginId) ?? [] : [];
       // A late UI read must not overwrite a newer saved configuration.
       if (source.snapshotId === effectiveMcp?.snapshotId && source.revision < sourceMcpRevision) {
@@ -354,7 +352,12 @@ async function executeRuntimeCommand(
       if (suspendedPluginId && combined.servers.some(server => server.pluginId === suspendedPluginId)) {
         throw new Error('Plugin is still enabled. Refresh before replacing or uninstalling it.');
       }
-      if (suspendedPluginId) await host.preparePluginUninstall(suspendedPluginId);
+      await optionalRuntimePlugins.refresh();
+      if (suspendedPluginId) {
+        await host.preparePluginUninstall(suspendedPluginId, signal);
+        await mcp.waitForPluginScopes(suspendedPluginId, signal);
+      }
+      if (!suspendedPluginId) await host.refreshPluginHooks();
       if (hostNetworkAvailable) {
         const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
         combined.servers = combined.servers.map(server => ({
@@ -929,7 +932,6 @@ mcp = new McpClientManager({
     onAuthenticationRequired: async (input, signal) => (await mcpHost.request<{ action: string }>('authentication', input, signal)).action === 'accept',
   } : {}),
   registry: toolRegistry,
-  canApply: () => !host.hasActiveTurns(),
   onServiceStateChange: (state) => {
     process.stderr.write(`${JSON.stringify({
       code: 'runtime_mcp_service_state',

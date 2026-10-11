@@ -49,8 +49,6 @@ app.whenReady().then(async () => {
     await until(`document.querySelector('[aria-label="Source"]').getAttribute('aria-checked')==='false'`);
     await read(`document.querySelector('[role="switch"][aria-label="Source"]').click();document.querySelector('button[title="添加"]').click()`);
     await type('请先检查宽度'); await send();
-    await until(`!!document.querySelector('.composer-queue-button')`);
-    await read(`document.querySelector('.composer-queue-button').click()`);
     await until(`!!document.querySelector('.runtime-queue-guide')`);
     assert.equal(await read(`window.calls.filter(item=>item.kind==='send').length`),0,'running input is queued, not a second turn');
     const guide=await read(`document.querySelector('button.runtime-queue-guide')?.outerHTML`);

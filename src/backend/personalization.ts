@@ -1,5 +1,5 @@
 import { PERSONALIZATION_COMMAND, personalizationStatusSchema, memoryListSchema, memoryHistorySchema, memoryMutationSchema,
-  type IndividuationSettings, type MemoryChange, type MemoryList, type MemoryHistory, type MemoryMutation, type PersonalizationStatus } from '@cardbush/bush-protocol';
+  type IndividuationSettings, type MemoryChange, type MemoryList, type MemoryHistory, type MemoryMutation, type PersonalizationStatus, type AssistantFeedbackInput } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 
 async function command(input:unknown,connectionId='') {
@@ -10,6 +10,9 @@ async function command(input:unknown,connectionId='') {
 }
 export async function personalizationCommand(input:{action:'status'|'summarize';settings:IndividuationSettings;modelId?:string},connectionId='') {
   return personalizationStatusSchema.parse(await command(input,connectionId));
+}
+export async function recordPersonalizationFeedback(feedback:AssistantFeedbackInput,settings:IndividuationSettings,operationId:string,connectionId='') {
+  return memoryMutationSchema.parse(await command({action:'feedback',feedback,settings,operationId},connectionId));
 }
 export type MemoryManagementClient={
   list(settings:IndividuationSettings,connection:string,cursor?:number,includeInactive?:boolean):Promise<MemoryList>;

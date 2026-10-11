@@ -78,10 +78,8 @@ import {
 } from '../pre_test/runtimeStreamPreTestActivation';
 import {
   Composer,
-  ComposerRuntimeRail,
   quickPayloadText,
   type QuickLoadPayload,
-  type ComposerRuntimeRailHandle,
 } from '../composer';
 import { summarizeChangeReports, type ConversationChangeReport } from '../tools';
 import { recentReviewTurns } from '../sidebar/reviewModel';
@@ -492,7 +490,6 @@ export function ChatPanel({
     bodyRef: chatBodyRef, dockRef: composerDockRef, scrollerRef: listScrollerRef,
     scope: JSON.stringify([host?.id ?? 'local', activeConversationId]), welcome: showWelcome, loading, embedded, interaction: hasInteraction,
   });
-  const runtimeRailRef = useRef<ComposerRuntimeRailHandle>(null);
   const scrollBottomButtonRef = useRef<HTMLButtonElement>(null);
   const scrollMotion = useMemo(() => createChatScrollMotion(), []);
   const atBottomRef = useRef(true);
@@ -2757,6 +2754,7 @@ export function ChatPanel({
               onGuideQueuedMessage(queuedId, 'interrupt_and_continue')
             }
             onRemoveQueuedMessage={onRemoveQueuedMessage}
+            onReorderQueuedMessage={onReorderQueuedMessage}
             onSend={handleComposerSend}
             onCancel={onCancel}
             workspaceControl={host ? composerAccessory ?? null : undefined}
@@ -2773,6 +2771,16 @@ export function ChatPanel({
             onWheelCapture={handleListWheelCapture}
             onPointerDownCapture={handleListPointerDownCapture}
             onTouchStartCapture={() => markUserDetachedFromBottom('touch')}
+            onClickCapture={(event) => {
+              if (event.target instanceof Element && event.target.closest('.user-message-toggle')) {
+                markUserDetachedFromBottom('user-message-disclosure');
+              }
+            }}
+            onFocusCapture={(event) => {
+              if (event.target instanceof Element && event.target.closest('.user-message-disclosure')) {
+                markUserDetachedFromBottom('user-message-reading');
+              }
+            }}
             onScrollCapture={handleListScrollCapture}
           >
             <MessageFileReferenceScope
@@ -2847,25 +2855,6 @@ export function ChatPanel({
               '--shadow-accent': shadowAccentColor,
             } as CSSProperties}
           >
-            {(queuedMessageCount > 0 || queueLocked) && (
-              <ComposerRuntimeRail
-                key={`runtime:${activeConversationId}`}
-                ref={runtimeRailRef}
-                language={language}
-                queuedMessageCount={queuedMessageCount}
-                queuedMessagePreview={queuedMessagePreview}
-                queuedMessages={queuedMessages}
-                queueLocked={queueLocked}
-                queueLockPending={queueLockPending}
-                onToggleQueueLock={onToggleQueueLock}
-                onEditQueuedMessage={editQueuedMessage}
-                onGuideQueuedMessage={(queuedId) =>
-                  onGuideQueuedMessage(queuedId, 'interrupt_and_continue')
-                }
-                onRemoveQueuedMessage={onRemoveQueuedMessage}
-                onReorderQueuedMessage={onReorderQueuedMessage}
-              />
-            )}
             {composerAccessory}
             <Composer
               key={activeConversationId || 'active-session'}
@@ -2881,13 +2870,15 @@ export function ChatPanel({
               guidanceDeliveryMode={guidanceDeliveryMode}
               cancelEnabled={cancelEnabled ?? Boolean(activeTurnId)}
               queuedMessageCount={queuedMessageCount}
-              onShowQueue={() => runtimeRailRef.current?.showQueue()}
-              queuedMessagePreview=""
+              queuedMessagePreview={queuedMessagePreview}
               queuedMessages={queuedMessages}
               queueLocked={queueLocked}
               queueLockPending={queueLockPending}
               onToggleQueueLock={onToggleQueueLock}
               onGuideQueuedMessage={(queuedId) => onGuideQueuedMessage(queuedId, 'interrupt_and_continue')}
+              onEditQueuedMessage={editQueuedMessage}
+              onRemoveQueuedMessage={onRemoveQueuedMessage}
+              onReorderQueuedMessage={onReorderQueuedMessage}
               selectedModel={selectedModel}
               availableModels={availableModels}
               teamAvailable={teamAvailable}

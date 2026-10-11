@@ -1,8 +1,10 @@
 import { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { projectMcpResult } from './modelResult.js';
+import { mcpInputDecoder } from './inputValidation.js';
 export { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { createHash } from "node:crypto";
 import { StringDecoder } from 'node:string_decoder';
+import { isDeepStrictEqual } from 'node:util';
 import { McpInteractiveCalls, ScopedMcpClient, type McpElicitationHandler } from './elicitation.js';
 import { McpOAuthCoordinator, McpAuthenticationRequired, McpOAuthConfigurationRequired, credentialKey } from './oauth.js';
 import { mcpHeaderFetch } from './headerHelper.js';
@@ -23,6 +25,7 @@ import {
   type OAuthClientProvider,
   type Tool as McpTool,
   type Transport,
+  type ClientOptions,
 } from "@modelcontextprotocol/client";
 import { ManagedStdioClientTransport, McpProcessError } from './managedStdio.js';
 import { isResourceAdmissionError } from '@cardbush/bush-runtime/processes';
@@ -59,6 +62,9 @@ interface ConnectedServer {
   pendingClient?: Client;
   pendingTransport?: Transport;
   retired: boolean;
+  draining?: boolean;
+  activeUses?: number;
+  retirement?: Promise<void>;
   tools: Array<{
     remote: McpTool;
     runtimeName: string;
@@ -84,8 +90,9 @@ export interface McpClientManagerOptions {
   onElicitation?: McpElicitationHandler;
   onAuthenticationRequired?: (request: { serverId: string; sessionId: string; turnId: string; toolCallId: string }, signal: AbortSignal) => Promise<boolean>;
   registry: ToolRegistry;
+  /** Optional embedding-host publication barrier; desktop updates use per-connection call lifetimes. */
   canApply?: () => boolean;
-  createClient?: (server: McpServerSnapshot) => Client;
+  createClient?: (server: McpServerSnapshot, options?: Pick<ClientOptions, 'listChanged'>) => Client;
   createTransport?: (server: McpServerSnapshot) => Transport;
   wait?: (milliseconds: number) => Promise<void>;
   closeTimeoutMs?: number;
@@ -135,6 +142,7 @@ export class McpClientManager {
   readonly #observers = new Set<() => void>();
   readonly #transitions = new Map<string, Promise<unknown>>();
   readonly #forks = new Set<McpClientManager>();
+  readonly #pendingCatalogs = new WeakMap<Client, McpTool[]>();
   #parent?: McpClientManager;
   #closePromise?: Promise<void>;
   #pumpScheduled = false;
@@ -156,7 +164,7 @@ export class McpClientManager {
       this.#updates.set(id, { config: update.config, controller: new AbortController(), state: 'failed', error: 'OpenAI account changed; reconnect this application.' });
     }
     await Promise.all(this.#connections.filter(item => item.config.transport.kind !== 'stdio' && item.config.transport.auth === 'openai').map(async connection => {
-      connection.health = 'auth_required'; connection.lastError = 'OpenAI account changed; reconnect after current tasks finish.';
+      connection.health = 'auth_required'; connection.lastError = 'OpenAI account changed; reconnect this application.';
       connection.authorizationAbort?.abort();
       this.#publishServiceState(connection, 'cardbush_supervisor');
       await closeConnection(connection.client, connection.transport, this.#closeTimeoutMs);
@@ -188,7 +196,14 @@ export class McpClientManager {
     this.#registry = options.registry;
     this.#canApply = options.canApply ?? (() => true);
     this.#createClient = server => {
-      const client = options.createClient?.(server) ?? createClient(server, this.#interactive);
+      const listChanged: ClientOptions['listChanged'] = { tools: { onChanged: (error, tools) => {
+        if (error) {
+          this.#onServerStderr?.({ serverId: server.id, message: `Tool catalog refresh failed: ${errorMessage(error)}` });
+          return;
+        }
+        if (tools) this.#receiveToolCatalog(client, tools);
+      } } };
+      const client = options.createClient?.(server, { listChanged }) ?? createClient(server, this.#interactive, listChanged);
       if (server.transport.kind !== 'stdio' && server.transport.auth === 'openai') scopeOpenAiClient(client, server.transport.openaiAppId!);
       return client;
     };
@@ -221,7 +236,8 @@ export class McpClientManager {
     const ids = [...desired.servers.map(s => s.id), ...removed.map(c => c.config.id)];
     const pendingServerIds = [...this.#updates].filter(([, update]) => update.state !== 'failed' || this.#applicationError).map(([id]) => id).concat(removed.map(c => c.config.id));
     const connecting = [...this.#updates.values()].some(update => update.state === 'connecting' ||
-      (update.state === 'queued' && (!this.#replacement(update) || this.#canApply())));
+      (update.state === 'queued' && (!this.#replacement(update) || this.#canApply() && !this.#replacement(update)?.activeUses)));
+    const waitingForCalls = [...this.#updates.values()].some(update => Boolean(this.#replacement(update)?.activeUses));
     const waitingForResources = [...this.#updates.values()].some(update => update.state === 'waiting_for_resources');
     return structuredClone({
       protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
@@ -229,7 +245,7 @@ export class McpClientManager {
       revision: this.#snapshot?.snapshotId === desired.snapshotId ? this.#snapshot.revision : desired.revision,
       applicationState: this.#pending ? (this.#applicationError ? 'failed' : 'pending') : 'applied',
       ...(this.#pending ? { pendingRevision: desired.revision, pendingServerIds,
-        ...(!this.#applicationError ? { applicationPhase: connecting ? 'connecting' : waitingForResources ? 'waiting_for_resources' : 'waiting_for_idle' } : {}),
+        ...(!this.#applicationError ? { applicationPhase: connecting ? 'connecting' : waitingForResources ? 'waiting_for_resources' : waitingForCalls ? 'waiting_for_calls' : 'waiting_for_idle' } : {}),
       } : {}),
       ...(this.#applicationError ? { applicationError: this.#applicationError } : {}),
       servers: ids.map(id => {
@@ -241,7 +257,7 @@ export class McpClientManager {
           negotiatedProtocolVersion: current?.client.getNegotiatedProtocolVersion() ?? undefined,
           health: update?.state === 'failed' ? 'unavailable' : update?.connection?.health ?? current?.health ?? 'unavailable',
           restartAttempts: current?.restartAttempts ?? 0,
-          ...(update ? { updateState: update.state } : current?.waitingForResources ? { updateState: 'waiting_for_resources' }
+          ...(update ? { updateState: update.state === 'queued' && this.#replacement(update)?.activeUses ? 'waiting_for_calls' : update.state } : current?.waitingForResources ? { updateState: 'waiting_for_resources' }
             : removed.some(c => c.config.id === id) ? { updateState: 'waiting_for_catalog' } : {}),
           ...(lastError ? { lastError } : {}),
           ...(current?.lastFailure ? { lastFailure: current.lastFailure } : {}),
@@ -279,13 +295,19 @@ export class McpClientManager {
     }
     for (const config of snapshot.servers) {
       if (this.#updates.has(config.id)) continue;
-      const current = this.#connections.find(c => c.config.id === config.id && !c.retired);
+      const current = this.#connections.find(c => c.config.id === config.id && !c.retired && !c.draining);
       if (!reconnect.has(config.id) && current && JSON.stringify(current.config) === JSON.stringify(config)) continue;
       this.#updates.set(config.id, { config, controller: new AbortController(), state: 'queued' });
     }
     // Required changes retain the existing transaction guarantee. Ordinary optional services publish independently.
     this.#atomicUpdate = [...this.#updates.values()].some(update => update.config.required) ||
       this.#connections.some(c => c.config.required && !snapshot.servers.some(s => s.id === c.config.id));
+    // Sign-in has not dispatched an operation yet. Do not retain an obsolete
+    // authorization dialog (and subsequently send a call on that generation).
+    for (const connection of this.#connections) if (this.#updates.has(connection.config.id) ||
+      !snapshot.servers.some(server => server.id === connection.config.id)) {
+      connection.authorizationAbort?.abort(new Error('MCP configuration changed during sign-in.'));
+    }
     this.#queuePump();
     this.#notifyObservers();
     return this.snapshot()!;
@@ -316,6 +338,7 @@ export class McpClientManager {
     const observers = [...this.#observers];
     this.#observers.clear();
     observers.forEach(resolve => resolve());
+    if (this.#parent) this.#parent.#notifyObservers();
   }
 
   #queuePump(): void {
@@ -332,9 +355,11 @@ export class McpClientManager {
         if (this.#running.size >= this.#maxConcurrentConnections) break;
         if (update.state !== 'queued' && update.state !== 'waiting_for_resources') continue;
         if (update.retryAt && update.retryAt > Date.now()) { this.#schedulePublication(update.retryAt - Date.now()); continue; }
-        // A locally owned service may hold a fixed port. Replace it only after
-        // active turns finish, and never start it alongside the previous tree.
-        if (this.#replacement(update) && !this.#canApply()) { this.#schedulePublication(); continue; }
+        // Local services may own a fixed port. Drain this service's calls,
+        // independently of other services and of the containing conversation.
+        const old = this.#replacement(update);
+        if (old && !this.#canApply()) { this.#schedulePublication(); continue; }
+        if (old?.activeUses) continue; // Releasing the last call wakes the pump.
         update.state = 'connecting';
         const work = this.#connectUpdate(update).then(connection => {
           if (this.#closed || this.#updates.get(update.config.id) !== update) {
@@ -381,7 +406,7 @@ export class McpClientManager {
         }
         update.controller.signal.throwIfAborted();
         const old = this.#replacement(update);
-        if (old && !this.#canApply()) throw Object.assign(new Error('Waiting for active tasks to finish.'), { code: 'mcp_waiting_for_idle' });
+        if (old && !this.#canApply()) throw Object.assign(new Error('MCP catalog publication is paused.'), { code: 'mcp_waiting_for_idle' });
         if (old) { old.health = 'restarting'; await this.#retireConnections([old]); }
         update.controller.signal.throwIfAborted();
         return await this.#connect(update.config, update.controller.signal, transport);
@@ -401,8 +426,8 @@ export class McpClientManager {
     const idle = this.#canApply();
     if (!idle && this.#atomicUpdate) { this.#schedulePublication(); return; }
     if (this.#atomicUpdate && [...this.#updates.values()].some(update => !update.connection && update.state !== 'failed')) return;
-    // Adding optional tools cannot invalidate an in-flight call. Replacements
-    // and removals still wait for idle and retain the existing connections.
+    // Replacements publish atomically. Retired generations retain their
+    // transports until their already dispatched calls finish.
     const additions = [...this.#updates.values()].flatMap(update => update.connection &&
       !this.#connections.some(connection => connection.config.id === update.config.id) ? [update.connection] : []);
     const next = idle ? desired.servers.flatMap(server => {
@@ -413,7 +438,18 @@ export class McpClientManager {
     }) : [...this.#connections, ...additions];
     try {
       if (next.length !== this.#connections.length || next.some((connection, index) => connection !== this.#connections[index])) {
-        this.#registry.replaceOwned('runtime_mcp', next.flatMap(connection => connection.tools.map(tool => this.#registration(connection, tool))));
+        for (const connection of next) {
+          // A notification can arrive after discovery but before this connection is published.
+          const pending = this.#pendingCatalogs.get(connection.client);
+          if (pending && !this.#connections.includes(connection)) {
+            connection.tools = connectionTools(connection.config, pending);
+            this.#pendingCatalogs.delete(connection.client);
+          }
+        }
+        this.#registry.replaceOwned('runtime_mcp', next.flatMap(connection => connection.tools.map(tool => {
+          const current = this.#connections.includes(connection) && this.#registry.resolve(tool.runtimeName);
+          return current ? current as ToolRegistration<Record<string, unknown>> : this.#registration(connection, tool);
+        })));
       }
     } catch (error) { this.#failUpdate(error); return; }
     const previous = this.#connections;
@@ -471,6 +507,27 @@ export class McpClientManager {
     return fork;
   }
 
+  /** Isolated Agent scopes pin their package for the subtask lifetime. Physical
+   * file replacement waits only for scopes belonging to that package. */
+  async waitForPluginScopes(pluginId: string, signal?: AbortSignal): Promise<void> {
+    const owns = (manager: McpClientManager): boolean => {
+      const snapshot = manager.#pending ?? manager.#snapshot;
+      return !snapshot || snapshot.servers.some(server => server.pluginId === pluginId) || [...manager.#forks].some(owns);
+    };
+    while ([...this.#forks].some(owns)) {
+      signal?.throwIfAborted();
+      let wake!: () => void;
+      try {
+        await new Promise<void>(resolve => {
+          wake = resolve;
+          this.#observers.add(wake);
+          signal?.addEventListener('abort', wake, { once: true });
+        });
+      } finally { this.#observers.delete(wake); signal?.removeEventListener('abort', wake); }
+    }
+    signal?.throwIfAborted();
+  }
+
   /** Agent startup may require authentication before a server can disclose any tools. */
   async prepareAgentScope(request: import('@cardbush/bush-protocol').RuntimeSessionTurnRequest, signal?: AbortSignal): Promise<void> {
     const reconnect: string[] = [];
@@ -504,10 +561,11 @@ export class McpClientManager {
     this.#pending = undefined;
     this.#registry.removeOwned("runtime_mcp");
     await Promise.allSettled([...this.#forks].map(fork => fork.close()));
+    // Shutdown cancels transports even when an operation is still draining.
+    await this.#retireConnections([...current, ...this.#drainingConnections], true);
     await Promise.all(this.#running);
     await this.#drainCleanup();
-    await this.#retireConnections(current);
-    if (this.#parent) this.#parent.#forks.delete(this);
+    if (this.#parent) { this.#parent.#forks.delete(this); this.#parent.#notifyObservers(); }
   }
 
   async #connect(config: McpServerSnapshot, signal?: AbortSignal, preparedTransport?: Transport): Promise<ConnectedServer> {
@@ -533,23 +591,8 @@ export class McpClientManager {
         stepSignal => listToolCatalog(client, config.startupTimeoutMs, stepSignal));
       signal?.throwIfAborted();
       if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai' && !listed.tools.length) throw new McpOAuthConfigurationRequired('This application is not available in the signed-in OpenAI account. Connect it in ChatGPT Apps, then reconnect.');
-      const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
-      const tools = listed.tools
-        .filter((tool) => (!exposed || exposed.has(tool.name)) && !config.disabledTools?.includes(tool.name) && config.toolPolicies[tool.name]?.enabled !== false)
-        .map((remote) => {
-          const policy = config.toolPolicies[remote.name] ?? config.defaultToolPolicy;
-          return {
-            remote,
-            runtimeName: runtimeToolName(config.id, remote.name),
-            policy,
-            manifest: explicitActionManifest(
-              config.id,
-              remote.name,
-              policy,
-            ),
-          };
-        });
-      assertUnique(tools.map((tool) => tool.runtimeName), `MCP server ${config.id}`);
+      const tools = connectionTools(config, this.#pendingCatalogs.get(client) ?? listed.tools);
+      this.#pendingCatalogs.delete(client);
       const connection: ConnectedServer = {
         config,
         client,
@@ -574,11 +617,49 @@ export class McpClientManager {
     }
   }
 
+  #receiveToolCatalog(client: Client, tools: McpTool[]): void {
+    if (this.#closed) return;
+    this.#pendingCatalogs.set(client, tools);
+    const connection = this.#connections.find(item => item.client === client && !item.retired && !item.draining && item.health === 'ready');
+    if (!connection) return;
+    try {
+      this.#replaceToolCatalog(connection, tools);
+      this.#pendingCatalogs.delete(client);
+      this.#publishServiceState(connection, 'cardbush_supervisor');
+    } catch (error) {
+      this.#onServerStderr?.({ serverId: connection.config.id, message: `Tool catalog refresh failed: ${errorMessage(error)}` });
+    }
+  }
+
+  /** Catalog changes are atomic. Unchanged registrations retain their live admission identity. */
+  #replaceToolCatalog(connection: ConnectedServer, tools: McpTool[]): void {
+    const next = connectionTools(connection.config, tools);
+    if (this.#connections.includes(connection)) {
+      const previous = new Map(connection.tools.map(tool => [tool.runtimeName, tool]));
+      this.#registry.replaceOwned('runtime_mcp', this.#connections.flatMap(item => {
+        return (item === connection ? next : item.tools).map(tool => {
+          const current = this.#registry.resolve(tool.runtimeName);
+          const unchanged = item !== connection || isDeepStrictEqual(previous.get(tool.runtimeName), tool);
+          return current && unchanged ? current as ToolRegistration<Record<string, unknown>> : this.#registration(item, tool);
+        });
+      }));
+    }
+    connection.tools = next;
+  }
+
   #registration(
     connection: ConnectedServer,
     tool: ConnectedServer["tools"][number],
   ): ToolRegistration<Record<string, unknown>> {
     const resource = `mcp://${connection.config.id}/tools/${encodeURIComponent(tool.remote.name)}`;
+    const decodeInput = mcpInputDecoder(tool.runtimeName, tool.remote.inputSchema);
+    const use = <T>(operation: () => Promise<T>): Promise<T> => {
+      if (!isDeepStrictEqual(connection.tools.find(item => item.runtimeName === tool.runtimeName), tool)) {
+        return Promise.reject(codedMcpError('tool_definition_changed', 'This MCP tool changed before dispatch. Load its current definition before calling again.',
+          { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'mcp_search', action: 'load', query: tool.runtimeName } }));
+      }
+      return this.#useConnection(connection, operation);
+    };
     const meta = tool.remote._meta ?? {};
     const ui = meta.ui as { resourceUri?: string; visibility?: string[] } | undefined;
     const resourceUri = ui?.resourceUri ?? meta['openai/outputTemplate'];
@@ -590,14 +671,15 @@ export class McpClientManager {
         readOnly: tool.remote.annotations?.readOnlyHint === true,
         modelVisible: !ui?.visibility || ui.visibility.includes('model'),
         appCallable: ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true,
-        call: async (input, options) => {
+        call: async (input, options) => use(async () => {
+          const validated = decodeInput(input);
           if (connection.retired || connection.health !== 'ready') throw new Error(`MCP service ${connection.config.id} is not connected.`);
           try { return await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
-            Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: input,
+            Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: validated,
             _meta: mcpRequestMetadata({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } }, connection.config.id, tool.remote) },
           { signal, timeout: 2_147_483_647, toolDefinition: tool.remote })); }
           catch (error) { this.#recordAuthenticationFailure(connection, error); throw error; }
-        },
+        }),
       },
       definition: {
         name: tool.runtimeName,
@@ -606,13 +688,13 @@ export class McpClientManager {
       },
       ...(typeof resourceUri === 'string' && resourceUri.startsWith('ui://') ? { mcpApp: {
         resourceUri,
-        get connectionIdentity() { return !connection.retired && connection.health === 'ready' ? connection.client : undefined; },
+        get connectionIdentity() { return !connection.retired && !connection.draining && connection.health === 'ready' ? connection.client : undefined; },
         title: tool.remote.title ?? tool.remote.annotations?.title,
         serverTitle: connection.client.getServerVersion()?.title ?? connection.client.getServerVersion()?.name,
-        readResource: async (uri: string, signal?: AbortSignal) => {
+        readResource: async (uri: string, signal?: AbortSignal) => use(async () => {
           if (connection.retired || connection.health !== 'ready') throw new Error('MCP UI service is no longer connected.');
           return connection.client.readResource({ uri }, { signal, timeout: 30_000 });
-        },
+        }),
       } } : {}),
       // UI-only metadata remains in native execution records, never in model context.
       renderModelResult: projectMcpResult,
@@ -620,7 +702,7 @@ export class McpClientManager {
       parallelSafe: tool.policy.parallelSafe,
       executionChannel: `mcp:${connection.config.id}`,
       visibleToChild: tool.policy.visibleToChild,
-      decodeInput: jsonObject,
+      decodeInput,
       authorize: () => {
         if (tool.policy.permission === "allow") {
           return { kind: "allow" as const };
@@ -638,7 +720,7 @@ export class McpClientManager {
           },
         };
       },
-      execute: async (context) => {
+      execute: async (context) => use(async () => {
         if (connection.retired) throw codedMcpError('mcp_service_unavailable', `MCP service ${connection.config.id} has been disconnected.`, { serverId: connection.config.id });
         if (connection.health === 'configuration_required') throw new McpOAuthConfigurationRequired(connection.lastError);
         if (connection.health !== "ready" && connection.health !== 'auth_required') {
@@ -683,6 +765,7 @@ export class McpClientManager {
             candidate = await invoke();
           }
         } catch (error) {
+          if ((error as { code?: string })?.code === 'tool_definition_changed') throw error;
           const authentication = this.#recordAuthenticationFailure(connection, error);
           if (authentication) throw authentication.error;
           if (context.signal?.aborted || isAbortError(error)) {
@@ -715,7 +798,7 @@ export class McpClientManager {
           );
         }
         return candidate;
-      },
+      }),
     };
   }
 
@@ -748,6 +831,11 @@ export class McpClientManager {
   }
 
   async #authenticate(connection: ConnectedServer, context: Pick<ToolHandlerContext<Record<string, unknown>>, 'sessionId' | 'turnId' | 'toolCall' | 'signal'>) {
+    if (connection.retired || connection.draining || this.#updates.has(connection.config.id) ||
+      this.#pending && !this.#pending.servers.some(server => server.id === connection.config.id)) {
+      throw codedMcpError('tool_definition_changed', 'MCP configuration changed before sign-in. Load the current tool definition before calling again.',
+        { serverId: connection.config.id, inputDispatched: false });
+    }
     // Reauthentication changes the shared account and requires fresh app-scoped sessions.
     // The account settings own that transition; never resume an old session after login.
     if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') throw new OpenAiAuthError();
@@ -793,7 +881,7 @@ export class McpClientManager {
       this.#publishServiceState(connection, 'cardbush_supervisor');
     }
     if (
-      connection.retired ||
+      connection.retired || connection.draining ||
       connection.client !== failedClient ||
       connection.health !== "ready"
     ) return;
@@ -865,15 +953,9 @@ export class McpClientManager {
         attachMcpResultFallback(client, transport);
         const listed = await withConnectionDeadline(connection.config, 'tool discovery', recovery.signal,
           stepSignal => listToolCatalog(client, connection.config.startupTimeoutMs, stepSignal));
-        const byName = new Map(listed.tools.map((remote) => [remote.name, remote]));
-        const missing = connection.tools.filter((tool) => !byName.has(tool.remote.name));
-        if (missing.length > 0) {
-          if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') {
-            throw new McpOAuthConfigurationRequired('OpenAI application tools changed or access was removed. Refresh the application connection.');
-          }
-          throw new Error(
-            `Restarted MCP service omitted configured tools: ${missing.map((tool) => tool.remote.name).join(", ")}`,
-          );
+        const freshTools = this.#pendingCatalogs.get(client) ?? listed.tools;
+        if (!freshTools.length && connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') {
+          throw new McpOAuthConfigurationRequired('OpenAI application tools changed or access was removed. Refresh the application connection.');
         }
         if (connection.retired) {
           connection.pendingClient = undefined;
@@ -886,9 +968,8 @@ export class McpClientManager {
         this.#watchClientLifecycle(connection, client);
         connection.pendingClient = undefined;
         connection.pendingTransport = undefined;
-        connection.tools.forEach((tool) => {
-          tool.remote = byName.get(tool.remote.name)!;
-        });
+        this.#replaceToolCatalog(connection, freshTools);
+        this.#pendingCatalogs.delete(client);
         connection.health = "ready";
         connection.readySince = Date.now();
         connection.lastError = undefined;
@@ -925,25 +1006,44 @@ export class McpClientManager {
     }
   }
 
-  async #retireConnections(connections: ConnectedServer[]): Promise<void> {
-    connections.forEach((connection) => {
-      connection.retired = true;
+  readonly #drainingConnections = new Set<ConnectedServer>();
+
+  async #useConnection<T>(connection: ConnectedServer, operation: () => Promise<T>): Promise<T> {
+    if (connection.draining || connection.retired) throw codedMcpError('tool_definition_changed',
+      `MCP service ${connection.config.id} is updating. This call was not dispatched; load the current tool definition before calling again.`,
+      { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'mcp_search', action: 'load' } });
+    connection.activeUses = (connection.activeUses ?? 0) + 1;
+    try { return await operation(); }
+    finally {
+      connection.activeUses = (connection.activeUses ?? 1) - 1;
+      this.#notifyObservers();
+      this.#queuePump();
+    }
+  }
+
+  async #retireConnections(connections: ConnectedServer[], force = false): Promise<void> {
+    await Promise.allSettled(connections.map(connection => {
+      if (connection.retired && connection.retirement) return connection.retirement;
+      connection.draining = true;
+      this.#drainingConnections.add(connection);
       connection.recoveryAbort?.abort();
-      connection.authorizationAbort?.abort();
-    });
-    await Promise.allSettled(
-      connections.flatMap((connection) => [
-        closeConnection(connection.client, connection.transport, this.#closeTimeoutMs),
-        ...(connection.pendingClient && connection.pendingTransport
-          ? [closeConnection(
-              connection.pendingClient,
-              connection.pendingTransport,
-              this.#closeTimeoutMs,
-            )]
-          : []),
-      ]),
-    );
-    await Promise.allSettled(connections.map(connection => connection.restartPromise));
+      if (force) {
+        connection.retired = true;
+        connection.authorizationAbort?.abort();
+        this.#notifyObservers();
+      }
+      return connection.retirement ??= (async () => {
+        while (connection.activeUses && !connection.retired) await new Promise<void>(resolve => this.#observers.add(resolve));
+        connection.retired = true;
+        connection.authorizationAbort?.abort();
+        await Promise.allSettled([
+          closeConnection(connection.client, connection.transport, this.#closeTimeoutMs),
+          ...(connection.pendingClient && connection.pendingTransport
+            ? [closeConnection(connection.pendingClient, connection.pendingTransport, this.#closeTimeoutMs)] : []),
+        ]);
+        await connection.restartPromise?.catch(() => undefined);
+      })().finally(() => this.#drainingConnections.delete(connection));
+    }));
   }
 
   #publishServiceState(
@@ -1013,11 +1113,24 @@ function explicitActionManifest(
   };
 }
 
-function createClient(server: McpServerSnapshot, calls: McpInteractiveCalls): Client {
+function connectionTools(config: McpServerSnapshot, catalog: McpTool[]): ConnectedServer['tools'] {
+  const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
+  const tools = catalog.filter(tool => (!exposed || exposed.has(tool.name)) && !config.disabledTools?.includes(tool.name) && config.toolPolicies[tool.name]?.enabled !== false)
+    .map(remote => {
+      const policy = config.toolPolicies[remote.name] ?? config.defaultToolPolicy;
+      return { remote, runtimeName: runtimeToolName(config.id, remote.name), policy,
+        manifest: explicitActionManifest(config.id, remote.name, policy) };
+    });
+  assertUnique(tools.map(tool => tool.runtimeName), `MCP server ${config.id}`);
+  return tools;
+}
+
+function createClient(server: McpServerSnapshot, calls: McpInteractiveCalls, listChanged?: ClientOptions['listChanged']): Client {
   return new ScopedMcpClient(
     { name: "cardbush-runtime", version: "0.1.0" },
     {
       capabilities: { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app', 'text/html+skybridge'] } } },
+      listChanged,
       versionNegotiation: {
         mode: server.versionMode === "modern"
           ? { pin: "2026-07-28" }

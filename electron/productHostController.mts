@@ -219,7 +219,7 @@ export class ElectronProductHostController {
         suspended = true;
         const state = mcpSnapshotResultSchema.parse(await this.refreshMcp(undefined, pluginId));
         if (state.applicationState !== 'applied' || state.applicationError) {
-          throw new Error(state.applicationError || '插件服务尚未停止，请在当前任务结束后重试更新。');
+          throw new Error(state.applicationError || '插件调用尚未完成，请稍后重试更新。');
         }
         return replace();
       });
@@ -234,7 +234,7 @@ export class ElectronProductHostController {
     return withProductPluginLifecycle(() => this.#apps.uninstall(pluginId, async (plugin, commit, otherPlugins) => {
       const state = mcpSnapshotResultSchema.parse(await this.refreshMcp(plugin.id));
       if (state.applicationState !== 'applied' || state.applicationError) {
-        throw new Error(state.applicationError || '插件仍在使用中，请在当前任务结束后重试卸载。');
+        throw new Error(state.applicationError || '插件调用尚未完成，请稍后重试卸载。');
       }
       await this.#pluginConnections.clearPluginCredentials(plugin, otherPlugins);
       return removeProductPlugin(plugin, this.#userPluginRoot, [

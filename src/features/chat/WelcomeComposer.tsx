@@ -63,6 +63,7 @@ export function WelcomeComposer({
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
+  onReorderQueuedMessage,
   onSend,
   onCancel,
   workspaceControl,
@@ -110,6 +111,7 @@ export function WelcomeComposer({
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage: (queuedId: string) => void;
+  onReorderQueuedMessage: (queuedId: string, targetId: string) => void;
   onSend: (text: string, options?: { immediate?: boolean }) => Promise<void | boolean>;
   onCancel: () => Promise<void>;
   workspaceControl?: ReactNode;
@@ -176,6 +178,7 @@ export function WelcomeComposer({
       onEditQueuedMessage={onEditQueuedMessage}
       onGuideQueuedMessage={onGuideQueuedMessage}
       onRemoveQueuedMessage={onRemoveQueuedMessage}
+      onReorderQueuedMessage={onReorderQueuedMessage}
       onSend={onSend}
       onCancel={onCancel}
     />

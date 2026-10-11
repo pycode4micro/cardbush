@@ -5,23 +5,23 @@ type Point = { x: number; y: number };
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 
 // Runs in the target node's own frame. Only an explicit HTML label relationship may
-// substitute for a control with no area; never click an arbitrary ancestor instead.
+// substitute for a hidden/zero-area control; never click an arbitrary ancestor instead.
 const chooseTarget = `function(click) {
   const source = this.nodeType === 3 ? this.parentElement : this;
   const parent = node => node.parentElement || node.getRootNode()?.host;
-  const usable = element => {
+  const usable = (element, visible = true) => {
     if (!element?.isConnected || !element.getClientRects) return false;
     for (let node = element; node; node = parent(node)) {
       const style = getComputedStyle(node);
-      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) === 0 || node.inert) return false;
+      if (node.inert || visible && (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) === 0)) return false;
       if (click && (node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true')) return false;
     }
     return true;
   };
-  if (!usable(source)) throw new Error('The requested element is detached, hidden, inert, or disabled.');
+  if (!usable(source, false)) throw new Error('The requested element is detached, inert, or disabled.');
   const hasArea = element => Array.from(element.getClientRects()).some(rect => rect.width >= 1 && rect.height >= 1);
   let target = source;
-  if (!hasArea(target)) {
+  if (!usable(target) || !hasArea(target)) {
     target = Array.from(source.labels || []).find(label => label.control === source && usable(label) && hasArea(label));
     if (!target) throw new Error('The requested element has no clickable area or visible associated label.');
   }
@@ -32,16 +32,16 @@ const chooseTarget = `function(click) {
 const checkTarget = `function(source, hit, click) {
   source = source.nodeType === 3 ? source.parentElement : source;
   const parent = node => node.parentElement || node.getRootNode()?.host;
-  const usable = element => {
+  const usable = (element, visible = true) => {
     if (!element?.isConnected || !element.getClientRects) return false;
     for (let node = element; node; node = parent(node)) {
       const style = getComputedStyle(node);
-      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) === 0 || node.inert) return false;
+      if (node.inert || visible && (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) === 0)) return false;
       if (click && (node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true')) return false;
     }
     return true;
   };
-  if (!usable(source) || !usable(this)) return false;
+  if (!usable(source, this === source) || !usable(this)) return false;
   if (this !== source && !(this.localName === 'label' && this.control === source)) return false;
   if (!Array.from(this.getClientRects()).some(rect => rect.width >= 1 && rect.height >= 1)) return false;
   for (let node = hit; node; node = parent(node)) if (node === this) return {target: this === source ? 'element' : 'associated_label'};
@@ -206,6 +206,9 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     throw new ChromeConnectorError(normalized.code, `${normalized.message}${attemptedPresses ? ' A click may have taken effect; observe before retrying.' : ' No click was sent.'}`, {
       ...normalized.details, uid, mouseMoved, attemptedPresses, completedClicks, ...(hitTest ? { hitTest } : {}),
       inputDispatched: attemptedPresses ? 'possibly' : false, outcomeVerified: false,
+      recovery: attemptedPresses
+        ? 'Observe the page before retrying: input may already have taken effect.'
+        : 'Take a fresh snapshot and select the visible enabled control or its associated label. For custom controls or native dialogs, use Computer Use in the same authorized browser window; observe before acting.',
     });
   } finally {
     await Promise.all([...handles].map(objectId => command('Runtime.releaseObject', { objectId }).catch(() => {})));

@@ -22,7 +22,19 @@ async function run() {
     res.end(`<title>Same URL browser fixture</title><style>body{margin:24px}button,input{padding:15px}</style>
       <button id="video" onclick="window.clicks++;this.textContent='Video opened'">Play first video</button><input aria-label="Search text" />
       ${Array.from({length:30},(_,i)=>`<p>Snapshot row ${i}</p>`).join('')}
-      <script>window.clicks=0;</script>`);
+      <label>Upload avatar <input id="avatar" type="file" accept=".txt" /></label>
+      <input id="documents" type="file" multiple hidden />
+      <fieldset disabled><input id="locked" type="file" /></fieldset>
+      <input id="schedule" type="radio" hidden /><label for="schedule">Schedule publishing</label>
+      <input id="ai-disclosure" type="checkbox" style="opacity:0" /><label for="ai-disclosure">AI disclosure</label>
+      <fieldset disabled><input id="disabled-choice" type="checkbox" hidden /></fieldset><label for="disabled-choice">Disabled choice</label>
+      <div inert><input id="inert-choice" type="checkbox" hidden /></div><label for="inert-choice">Inert choice</label>
+      <script>window.clicks=0;window.uploadEvents=[];window.uploaded=[];
+      document.addEventListener('input',e=>{if(e.target.type==='file')uploadEvents.push('input')});
+      document.addEventListener('change',async e=>{if(e.target.type==='file'){
+        uploadEvents.push('change');const files=Array.from(e.target.files);
+        uploaded=await Promise.all(files.map(async f=>({name:f.name,text:await f.text()})));
+      }});</script>`);
   });
   await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));
   const url=`http://127.0.0.1:${fixture.address().port}/`, scope='conversation-a', otherScope='conversation-b';
@@ -66,6 +78,7 @@ async function run() {
   const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('CARDBUSH_')&&!['NODE_OPTIONS','ELECTRON_RUN_AS_NODE'].includes(key)));
   let routedLocally=0;
   const runtime=new RuntimeUtilityProcessController({modulePath:path.resolve('dist-electron/runtimeHostWorker.mjs'),
+    onStderr:text=>console.error('[runtime-fixture]',text),
     onMcpHostRequest:async(operation,payload)=>{
       if(operation==='network.configuration')return {default:{mode:'manual',httpProxy:'http://unreachable.invalid:8080',httpsProxy:'',noProxy:''},plugins:{}};
       if(operation==='network.route'){assert.equal(payload.mode,'none','desktop Browser Use must bypass plugin proxies');routedLocally++;return '';}
@@ -90,6 +103,7 @@ async function run() {
     const catalog=await command('runtime.get_tool_catalog');
     assert.equal(catalog.ok,true,JSON.stringify(catalog));
     assert.ok(catalog.result.some(tool=>tool.name==='mcp__browser_use__click'));
+    assert.ok(catalog.result.some(tool=>tool.name==='mcp__browser_use__upload_file'),'native uploads are exposed through the real Runtime catalog');
     const select=catalog.result.find(tool=>tool.name==='mcp__browser_use__select_browser');
     assert.ok(select);assert.match(JSON.stringify(select.inputSchema),/cardbush/);
     assert.ok(routedLocally>0,'HTTP MCP discovery used the desktop network route');
@@ -115,6 +129,44 @@ async function run() {
   const uid=snapshot.content[0].text.match(/uid=(cb_\d+) role=button/)?.[1];assert.ok(uid,snapshot.content[0].text);
   success(await call('click',{uid}));
   await until(()=>guest.executeJavaScript('window.clicks===1'),'Real click did not reach the referenced inspector');
+  const uploadPaths=[path.join(directory,'头像 example.txt'),path.join(directory,'second.txt')];
+  require('node:fs').writeFileSync(uploadPaths[0],'avatar fixture');
+  require('node:fs').writeFileSync(uploadPaths[1],'document fixture');
+  const uploadSnapshot=await call('take_snapshot',{query:'Upload avatar'});success(uploadSnapshot);
+  const uploadUid=uploadSnapshot.content[0].text.match(/uid=(cb_\d+) role=button/)?.[1];
+  assert.ok(uploadUid,uploadSnapshot.content[0].text);
+  const upload=success(await call('upload_file',{uid:uploadUid,filePaths:[uploadPaths[0]]}));
+  assert.equal(upload.fileSelectionVerified,true);assert.equal(upload.outcomeVerified,false);
+  await until(()=>guest.executeJavaScript('uploaded.length===1'),'native file content is readable by the target page');
+  assert.deepEqual(await guest.executeJavaScript('uploaded'),[{name:'头像 example.txt',text:'avatar fixture'}]);
+  assert.deepEqual(await guest.executeJavaScript('uploadEvents'),['input','change'],'native events fire only once');
+  failure(await call('upload_file',{selector:'#avatar',filePaths:uploadPaths}),'upload_multiple_not_allowed');
+  failure(await call('upload_file',{selector:'input[type=file]',filePaths:[uploadPaths[0]]}),'upload_target_missing');
+  failure(await call('upload_file',{selector:'#locked',filePaths:[uploadPaths[0]]}),'upload_target_invalid');
+  assert.deepEqual(await guest.executeJavaScript('uploadEvents'),['input','change'],'invalid target never receives files');
+  success(await call('upload_file',{selector:'#documents',filePaths:uploadPaths}));
+  await until(()=>guest.executeJavaScript('uploaded.length===2'),'hidden multiple file input accepts both files');
+  assert.deepEqual(await guest.executeJavaScript('uploaded.map(f=>f.text)'),['avatar fixture','document fixture']);
+  async function nodeUid(selector) {
+    const root=await guest.debugger.sendCommand('DOM.getDocument');
+    const selected=await guest.debugger.sendCommand('DOM.querySelector',{nodeId:root.root.nodeId,selector});
+    return 'cb_'+(await guest.debugger.sendCommand('DOM.describeNode',{nodeId:selected.nodeId})).node.backendNodeId;
+  }
+  for (const id of ['schedule','ai-disclosure']) {
+    const receipt=success(await call('click',{uid:await nodeUid('#'+id)}));
+    assert.equal(receipt.target,'associated_label');
+    assert.equal(await guest.executeJavaScript(`document.getElementById(${JSON.stringify(id)}).checked`),true,'the real label click changes the hidden control');
+  }
+  for (const id of ['disabled-choice','inert-choice']) {
+    const rejected=await call('click',{uid:await nodeUid('#'+id)});
+    failure(rejected,'element_not_actionable');
+    assert.equal(rejected.structuredContent.error.details.inputDispatched,false);
+    assert.match(rejected.structuredContent.error.details.recovery,/Computer Use/);
+    assert.equal(await guest.executeJavaScript(`document.getElementById(${JSON.stringify(id)}).checked`),false);
+  }
+  await guest.executeJavaScript('document.querySelector("#documents").onchange=e=>{e.target.value=""};void 0');
+  const consumed=success(await call('upload_file',{selector:'#documents',filePaths:[uploadPaths[0]]}));
+  assert.equal(consumed.fileSelectionVerified,false,'a page that consumes/reset files is not reported as safe to retry');
   const screenshot=await call('take_screenshot',{format:'png'});success(screenshot);
   assert.ok(screenshot.content.some(item=>item.type==='image'&&item.data.length>100));
   assert.equal(externalCalls.length,externalBefore,'@ binding must not issue any further Chrome operation');
@@ -206,6 +258,6 @@ async function run() {
       [['open',parent],['activate',parent],['close',parent]],'all native actions target the root workspace even without inherited browser grants');
     assert.equal(externalCalls.length,beforeCalls+(choice==='external'?2:0),'only the explicit parent read and switch touch the external browser');
   }
-  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, assistant child delegation and re-binding, returned descendant pages readable/clickable by parents, first-use routing and explicit external-browser preservation, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
+  console.log('Passed integrated Browser Use: Runtime utility process discovery, actual @ -> same visible webview, native local-file uploads with Unicode paths, hidden/multiple/disabled/consumed inputs and single change events, assistant child delegation and re-binding, returned descendant pages readable/clickable by parents, first-use routing and explicit external-browser preservation, HTTP MCP snapshot pagination/click/screenshot/navigation, create/reselect/release, cancellation and timeout recovery, same-URL Chrome isolation, scope isolation, closed/replaced/restarted targets, explicit switching, and endpoint authentication.');
 }
 run().then(async()=>{await client?.close();await endpoint?.close();fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(0);},async error=>{console.error(error);await client?.close().catch(()=>{});await endpoint?.close().catch(()=>{});fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(1);});

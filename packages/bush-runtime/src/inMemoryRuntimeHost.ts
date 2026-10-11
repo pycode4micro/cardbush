@@ -17,7 +17,7 @@ import { hasPendingUserSummary, registerIndividuationTools } from './individuati
 import { recallIndividuation, changedIndividuation } from './individuationContext.js';
 import { AssistantMemory } from './assistantMemory.js';
 import { IndividuationMemory } from './individuationMemory.js';
-import { PERSONALIZATION_COMMAND, normalizeIndividuation, individuationSettingsSchema, modelRequestSchema as memoryModelSchema } from '@cardbush/bush-protocol';
+import { PERSONALIZATION_COMMAND, normalizeIndividuation, individuationSettingsSchema, assistantFeedbackInputSchema, modelRequestSchema as memoryModelSchema } from '@cardbush/bush-protocol';
 import { RESOLVE_SOURCE_MEMO_COMMAND, RESOLVE_SOURCE_REFERENCES_COMMAND, sourceReferencesRequestSchema } from "@cardbush/bush-protocol";
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { canonicalStoragePath } from '@cardbush/platform';
@@ -356,8 +356,9 @@ export class InMemoryRuntimeHost {
   readonly #backgroundTools: BackgroundToolCalls;
   readonly #terminalNotifications: TerminalCompletionNotifications;
   readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
-  readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean }>();
+  readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean; uses: number; retired?: boolean }>();
   readonly #activeExtensionCommands = new Map<string, number>();
+  readonly #extensionIdle = new Set<() => void>();
   readonly #workspaceObservations: WorkspaceObservationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
@@ -800,7 +801,6 @@ export class InMemoryRuntimeHost {
       if (!extension.commands || typeof extension.commands !== 'object') throw new Error('Invalid Runtime extension commands.');
       const prior = this.#extensions.get(extension.id);
       if (prior && !options.replace) throw new Error(`Duplicate Runtime extension ${extension.id}.`);
-      if (prior && this.isExtensionBusy(extension.id)) throw new Error('Runtime extension update is pending until active work finishes.');
       const commands = new Set(this.#capabilities.supportedCommands);
       for (const { extension: installed } of this.#extensions.values()) if (installed.id !== extension.id) {
         Object.keys(installed.commands).forEach(command => commands.add(command));
@@ -809,10 +809,17 @@ export class InMemoryRuntimeHost {
         if (!command.trim() || commands.has(command) || typeof handler !== 'function') throw new Error(`Runtime extension command conflicts with an existing command: ${command}`);
       }
       const owner = runtimeExtensionOwner(extension.id);
-      this.#toolRegistry.replaceOwned(owner, staged.catalog().map(entry => staged.resolve(entry.definition.name)!));
-      this.#extensions.set(extension.id, { extension, enabled: options.enabled === true });
+      const entry = { extension, enabled: options.enabled === true, uses: 0 };
+      this.#toolRegistry.replaceOwned(owner, staged.catalog().map(item => {
+        const registration = staged.resolve(item.definition.name)!;
+        return { ...registration,
+          execute: context => this.#useExtension(entry, () => registration.execute(context)),
+          ...(registration.authorize ? { authorize: context => this.#useExtension(entry, () => registration.authorize!(context)) } : {}),
+        };
+      }));
+      this.#extensions.set(extension.id, entry);
       this.#toolRegistry.setOwnerEnabled(owner, options.enabled === true);
-      try { prior?.extension.dispose?.(); } catch (error) { console.warn('Previous extension cleanup failed', error); }
+      if (prior) this.#retireExtension(prior);
       return extension.id;
     } catch (error) {
       try { extension?.dispose?.(); } catch { /* preserve admission error */ }
@@ -824,10 +831,33 @@ export class InMemoryRuntimeHost {
     const entry = this.#extensions.get(id);
     if (!entry) return;
     this.setExtensionEnabled(id, false);
-    if (this.isExtensionBusy(id)) return;
     this.#toolRegistry.removeOwned(runtimeExtensionOwner(id));
     this.#extensions.delete(id);
-    try { entry.extension.dispose?.(); } catch (error) { console.warn('Extension cleanup failed', error); }
+    this.#retireExtension(entry);
+  }
+
+  #retireExtension(entry: { extension: RuntimeExtension; uses: number; retired?: boolean }): void {
+    entry.retired = true;
+    if (!entry.uses) {
+      try { entry.extension.dispose?.(); } catch (error) { console.warn('Extension cleanup failed', error); }
+    }
+  }
+
+  async #useExtension<T>(entry: { extension: RuntimeExtension; uses: number; retired?: boolean }, operation: () => T | Promise<T>): Promise<T> {
+    if (entry.retired) throw Object.assign(new Error('Plugin was updated before this call started. Use the current tool definition.'),
+      { code: 'tool_definition_changed', details: { inputDispatched: false } });
+    const id = entry.extension.id;
+    entry.uses++;
+    this.#activeExtensionCommands.set(id, (this.#activeExtensionCommands.get(id) ?? 0) + 1);
+    try { return await operation(); }
+    finally {
+      entry.uses--;
+      const remaining = (this.#activeExtensionCommands.get(id) ?? 1) - 1;
+      if (remaining) this.#activeExtensionCommands.set(id, remaining);
+      else this.#activeExtensionCommands.delete(id);
+      if (entry.retired && !entry.uses) this.#retireExtension(entry);
+      const waiters = [...this.#extensionIdle]; this.#extensionIdle.clear(); waiters.forEach(resolve => resolve());
+    }
   }
 
   capabilities(): RuntimeCapabilities {
@@ -851,15 +881,25 @@ export class InMemoryRuntimeHost {
   }
 
   isExtensionBusy(id: string): boolean {
-    return this.hasActiveTurns() || (this.#activeExtensionCommands.get(id) ?? 0) > 0;
+    return (this.#activeExtensionCommands.get(id) ?? 0) > 0;
   }
 
   hasActiveTurns(): boolean {
     return this.#activeTurns.size > 0 || this.#teams.hasActiveRuns();
   }
-  async preparePluginUninstall(pluginId: string): Promise<void> {
-    if (this.isExtensionBusy(pluginId)) throw new Error('插件仍在使用中，请在当前任务结束后重试卸载。');
-    await this.#pluginHooks.removePlugin(pluginId);
+  async preparePluginUninstall(pluginId: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    this.removeExtension(pluginId);
+    while (this.isExtensionBusy(pluginId)) {
+      let wake!: () => void;
+      try { await settleAtAbort(new Promise<void>(resolve => { wake = resolve; this.#extensionIdle.add(resolve); }), signal, 'Plugin update cancelled.'); }
+      finally { this.#extensionIdle.delete(wake); }
+    }
+    await settleAtAbort(this.#pluginHooks.removePlugin(pluginId, true), signal, 'Plugin update cancelled.');
+  }
+  async refreshPluginHooks(): Promise<void> {
+    const plugins = await this.#loadPluginExtensions?.();
+    this.#pluginHooks.resumePlugins(new Set(plugins?.hooks.map(hook => hook.pluginId) ?? []));
   }
   hasActiveSession(sessionId: string): boolean {
     if (this.#teams.hasActiveRuns(sessionId)) return true;
@@ -907,17 +947,12 @@ export class InMemoryRuntimeHost {
       signal?.throwIfAborted();
     }
     signal?.throwIfAborted();
-    for (const { extension, enabled } of this.#extensions.values()) {
+    for (const entry of this.#extensions.values()) {
+      const { extension, enabled } = entry;
       const handler = Object.hasOwn(extension.commands, command.kind) ? extension.commands[command.kind] : undefined;
       if (handler) {
         if (!enabled) throw new Error(`Runtime extension ${extension.id} is not enabled.`);
-        this.#activeExtensionCommands.set(extension.id, (this.#activeExtensionCommands.get(extension.id) ?? 0) + 1);
-        try { return await handler(command.payload, signal); }
-        finally {
-          const remaining = (this.#activeExtensionCommands.get(extension.id) ?? 1) - 1;
-          if (remaining > 0) this.#activeExtensionCommands.set(extension.id, remaining);
-          else this.#activeExtensionCommands.delete(extension.id);
-        }
+        return this.#useExtension(entry, () => handler(command.payload, signal));
       }
     }
     switch (command.kind) {
@@ -940,8 +975,22 @@ export class InMemoryRuntimeHost {
       case TEAM_WORKFLOW_COMMAND:
         return this.#teams.configure(command.payload);
       case PERSONALIZATION_COMMAND: {
-        const payload = command.payload as { action?: unknown; settings?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string };
+        const payload = command.payload as { action?: unknown; settings?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string;feedback?:unknown };
         const settings = individuationSettingsSchema.parse(payload.settings ?? {});
+        if(payload.action==='feedback') {
+          const input=assistantFeedbackInputSchema.parse(payload.feedback);
+          if(!payload.operationId?.trim()||payload.operationId.length>120)throw new Error('A stable feedback operation ID is required.');
+          if(!input.rating||!settings.habits)return this.#memory.store.feedback(input,settings,payload.operationId,undefined,signal);
+          const snapshot=this.#sessions.snapshot(input.sessionId);
+          const turn=snapshot?.turns.find(turn=>turn.turnId===input.turnId);
+          const index=turn?.messages.findIndex(item=>item.messageId===input.messageId)??-1;
+          const reply=turn?.messages[index]?.message;
+          if(!turn||index<0||reply?.role!=='assistant'||!reply.content.trim()||snapshot?.supersededMessageIds.includes(input.messageId))
+            throw new Error('The rated reply is unavailable. Refresh the conversation before rating it.');
+          const user=turn.messages.slice(0,index).filter(item=>item.message.role==='user'&&item.message.visibility!=='internal'&&item.message.name!=='subagent_result')
+            .map(item=>item.message.content).at(-1)??'';
+          return this.#memory.store.feedback(input,settings,payload.operationId,{user,assistant:reply.content},signal);
+        }
         if (payload.action === 'status') return this.#memory.status(settings, signal);
         if (payload.action === 'list') return this.#memory.store.list(settings,payload.cursor,payload.includeInactive,signal);
         if (payload.action === 'history') return this.#memory.store.history(settings,payload.cursor,signal);
@@ -1796,7 +1845,11 @@ export class InMemoryRuntimeHost {
         if (streamOpen) this.#eventLog.append(identity, cancelled ? { kind: 'tool_cancelled', payload: { ...payload, reason: 'plugin_hook_cancelled' } } : error ? { kind: 'tool_failed', payload: { ...payload, error } } : { kind: 'tool_returned', payload });
       }
     };
-    const runHook = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => request.metadata.pluginHookEvaluation ? { messages: [] } as import('./pluginExtensions.js').PluginHookResult : this.#pluginHooks.run(await this.#pluginHookScopes.select(pluginExtensions.hooks, request), event, { ...context, request }, observeHook);
+    const runHook = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
+      if (request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
+      const current = await this.#loadPluginExtensions?.() ?? pluginExtensions;
+      return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request), event, { ...context, request }, observeHook);
+    };
     const toolLoop = new RuntimeToolLoop({
       eventLog: this.#eventLog,
       identity,
@@ -2134,7 +2187,11 @@ export class InMemoryRuntimeHost {
         }
       }
       while (true) {
-        synchronizeMcpCatalog(this.#toolRegistry, request);
+        const catalogUpdate = synchronizeMcpCatalog(this.#toolRegistry, request);
+        if (catalogUpdate) {
+          messages.push(catalogUpdate);
+          generatedMessages.push({ messageId: `plugin_catalog_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message: catalogUpdate });
+        }
         // Also drain at entry: guidance can arrive during preflight/retry recovery,
         // before there is a model request to interrupt. Maintenance is atomic.
         if (!compactionTransaction && !activeContextCompaction) {

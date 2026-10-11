@@ -4,7 +4,7 @@ import type { MemoryRecord } from '@cardbush/bush-protocol';
 import type { MemoryRow } from './individuationStore.js';
 import { memoryTerms } from './individuationText.js';
 
-export const memoryMetadata = (row:MemoryRow):{related?:string[];user?:string;session?:string;turn?:string;sources?:string[]} => JSON.parse(row.metadata);
+export const memoryMetadata = (row:MemoryRow):{related?:string[];user?:string;session?:string;turn?:string;sources?:string[];feedbackInvalidated?:boolean;feedback?:{rating:'up'|'down';messageId:string}} => JSON.parse(row.metadata);
 export const activeMemory = (row:MemoryRow,now:number) => row.state==='active' && (row.expires===null || row.expires>now);
 export function memoryView(row:MemoryRow,now:number,text=row.text):MemoryRecord {
   const meta=memoryMetadata(row);
@@ -12,7 +12,8 @@ export function memoryView(row:MemoryRow,now:number,text=row.text):MemoryRecord 
     origin:row.origin,applies_when:row.applies_when,created_at:row.created,age_days:Math.max(0,Math.floor((now-row.created)/86400000)),
     expires_at:row.expires,last_confirmed_at:row.confirmed,last_rejected_at:row.rejected,
     source:meta.session?{session_id:meta.session,turn_id:meta.turn??''}:null,replaced_by:JSON.parse(row.replaced_by),
-    source_ids:meta.sources??[],content_cleared:row.text==='',truncated:text!==row.text,hits:row.hits,misses:row.misses};
+    source_ids:meta.sources??[],content_cleared:row.text==='',truncated:text!==row.text,hits:row.hits,misses:row.misses,
+    ...(meta.feedback?{feedback:meta.feedback}:{})};
 }
 export function initializeMemoryJournal(db:DatabaseSync) {
   const columns=new Set(db.prepare('PRAGMA table_info(memory_records)').all().map(r=>r.name));

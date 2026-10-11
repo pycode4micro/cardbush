@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
@@ -31,6 +31,11 @@ if (process.argv[2] === 'child') {
       server.registerTool('echo', { inputSchema: fromJsonSchema({ type: 'object', properties: { value: { type: 'string' } } }) },
         async input => ({ content: [{ type: 'text', text: JSON.stringify({ ...identity, value: input.value }) }] }));
       server.registerTool('crash', { inputSchema: fromJsonSchema({ type: 'object' }) }, async () => process.exit(1));
+      server.registerTool('hold', { inputSchema: fromJsonSchema({ type: 'object', properties: { releaseFile: { type: 'string' }, startedFile: { type: 'string' } }, required: ['releaseFile', 'startedFile'] }) }, async input => {
+        writeFileSync(input.startedFile, String(process.pid));
+        while (!existsSync(input.releaseFile)) await new Promise(resolve => setTimeout(resolve, 10));
+        return { content: [{ type: 'text', text: JSON.stringify(identity) }] };
+      });
       if (process.env.FIXTURE_CRASH_MS) setTimeout(() => process.exit(1), Number(process.env.FIXTURE_CRASH_MS));
       return server;
     });

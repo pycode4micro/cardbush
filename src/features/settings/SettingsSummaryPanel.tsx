@@ -73,7 +73,7 @@ export function SettingsSummaryPanel({language,settings,onSettingsChange,modelId
   return <div className="settings-stack summary-settings">
     <SettingsCard title="summary_for_user" subtitle={zh?'按需记录简洁的用户偏好与后续需求，在当前运行环境跨对话使用。工具调用由 Agent 自行决定。':'Keep concise preferences and possible follow-ups across conversations on this host. The agent decides when to use the tool.'}>
       <SettingsSwitch title={zh?'记住并参考用户习惯':'Remember and use habits'} checked={memory.habits} onChange={habits=>update({habits})}
-        subtitle={zh?'按下方选项提供相关内容或数量提示，Agent 可用 check_habit 补查；关闭后暂停读取与写入。':'Use the recall mode below for relevant excerpts or candidate counts; check_habit can search further. Turning off pauses reads and writes.'}/>
+        subtitle={zh?'点赞、点踩会连同对应提问和回复摘要记为反馈事件，重复且明确的反馈可整理为习惯。关闭后暂停记忆读取与新增，评价仅保存在界面。':'Thumbs-up/down records the request and reply excerpt as feedback events. Repeated, clear signals can become habits. Turning off pauses memory reads and new records; ratings stay in the UI.'}/>
       <SettingsSwitch title={zh?'预测下一步行为':'Predict next actions'} checked={memory.predictions} onChange={predictions=>update({predictions})}
         subtitle={zh?'用后续用户输入复盘预测。已验证的重复需求可归纳为习惯；预测不等于执行授权。':'Review predictions against later user input. Repeated verified needs can become habits; predictions do not authorize actions.'}/>
       <SettingsSelect name="memory-recall-mode" title={zh?'记忆提示方式':'Memory recall mode'} value={memory.recallMode} onChange={value=>update({recallMode:value==='hint'?'hint':'context'})}
@@ -99,10 +99,10 @@ export function SettingsSummaryPanel({language,settings,onSettingsChange,modelId
           <progress aria-label={zh?'事件整理进度':'Event consolidation progress'} max={memory.eventTokenThreshold} value={Math.min(status.eventTokens,memory.eventTokenThreshold)}/>
           <span>{zh?'习惯':'Habits'} · {status.habitTokens.toLocaleString()} / {memory.habitTokenThreshold.toLocaleString()} tokens</span>
           <progress aria-label={zh?'习惯压缩进度':'Habit compaction progress'} max={memory.habitTokenThreshold} value={Math.min(status.habitTokens,memory.habitTokenThreshold)}/>
-          <span>{zh?`${status.habits} 条习惯 · ${status.predictions} 条预测 · ${status.notes} 条待整理笔记`:`${status.habits} habits · ${status.predictions} predictions · ${status.notes} notes`}</span>
+          <span>{zh?`${status.habits} 条习惯 · ${status.predictions} 条预测 · ${status.notes} 条待整理笔记 · ${status.feedback??0} 条反馈事件`:`${status.habits} habits · ${status.predictions} predictions · ${status.notes} notes · ${status.feedback??0} feedback events`}</span>
           <span>{zh?`累计验证：${status.hits} 次命中 · ${status.misses} 次否定`:`Reviewed: ${status.hits} hits · ${status.misses} rejected`}</span>
           <span>{zh?`${status.inactiveRecords??0} 条失效记录 · ${status.historyChanges??0} 次历史变更`:`${status.inactiveRecords??0} inactive records · ${status.historyChanges??0} history changes`}</span>
-          {status.records>status.habits+status.predictions+status.notes&&<small>{zh?`另有 ${status.records-status.habits-status.predictions-status.notes} 条验证材料，计入 Token 总量。`:`Includes ${status.records-status.habits-status.predictions-status.notes} evidence records in the token total.`}</small>}
+          {status.records>status.habits+status.predictions+status.notes+(status.feedback??0)&&<small>{zh?`另有 ${status.records-status.habits-status.predictions-status.notes-(status.feedback??0)} 条验证材料，计入 Token 总量。`:`Includes ${status.records-status.habits-status.predictions-status.notes-(status.feedback??0)} evidence records in the token total.`}</small>}
           {status.lastSummaryAt&&<small>{zh?'最近完成：':'Last completed: '}{new Date(status.lastSummaryAt).toLocaleString(language==='zh'?'zh-CN':'en-US')}</small>}
           {status.lastError&&!status.running&&!busy&&<details className="summary-memory-error"><summary>{summaryFailureLabel(status.lastError,zh)}</summary><small>{zh?'已完成的阶段已保存；其余原记录保留，可手动重试。':'Finished stages were saved; remaining original records were kept. You can retry.'}</small><pre>{status.lastError}</pre></details>}</>:<span>{zh?'读取记忆状态…':'Reading memory status…'}</span>}
       </div>

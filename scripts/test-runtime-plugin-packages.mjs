@@ -113,16 +113,16 @@ test('a broken updated plugin is disabled, leaves core usable and can recover wi
   assert.equal(f.registry.definitions().filter(tool => tool.name === 'fixture_read').length, 1);
 });
 
-test('updating an in-use plugin defers replacement and does not block the core or admit old code to new turns', async () => {
+test('an active conversation does not postpone loading a changed native plugin', async () => {
   const f = await fixture(); await f.state.refresh();
   const file = join(f.installed, 'fixture-runtime/dist/runtime.mjs');
   const old = f.registry.resolve('fixture_read');
   const hasActiveTurns = f.host.hasActiveTurns.bind(f.host);
   f.host.hasActiveTurns = () => true;
   await writeFile(file, await readFile(file, 'utf8') + '\n// changed during a turn\n');
-  assert.match(await f.state.refresh(), /update pending/);
-  assert.equal(f.registry.resolve('fixture_read'), old);
-  assert.equal(f.registry.definitions().some(tool => tool.name === 'fixture_read'), false);
+  assert.equal(await f.state.refresh(), undefined);
+  assert.notEqual(f.registry.resolve('fixture_read'), old);
+  assert.equal(f.registry.definitions().some(tool => tool.name === 'fixture_read'), true);
   f.host.hasActiveTurns = hasActiveTurns;
   assert.equal(await f.state.refresh(), undefined);
   assert.notEqual(f.registry.resolve('fixture_read'), old);
@@ -178,8 +178,24 @@ test('configuration command in progress finishes safely while removal disables n
   const saving = host.sendCommand({ kind: 'plugin.busy.save', payload: {} });
   assert.equal(host.isExtensionBusy('busy'), true);
   host.removeExtension('busy');
-  await assert.rejects(host.sendCommand({ kind: 'plugin.busy.save', payload: {} }), /not enabled/);
+  await assert.rejects(host.sendCommand({ kind: 'plugin.busy.save', payload: {} }), /not enabled|unsupported/i);
   finish('saved'); assert.equal(await saving, 'saved');
   host.removeExtension('busy');
   assert.equal(host.isExtensionCommand('plugin.busy.save'), false);
+});
+
+test('an update arriving during native plugin loading is reconciled before refresh resolves', async () => {
+  const host = new InMemoryRuntimeHost({ registerDefaultWorkspaceTools: false });
+  const pkg = version => ({ id: 'latest', hash: String(version), source: `export const apiVersion=1; export default ()=>({id:'latest',features:[],commands:{'latest.version':()=>${version}}})` });
+  let release, loading = 0, current = pkg(1);
+  const state = new RuntimePluginState({ host, dataRoot: root, reportError: () => {}, loadEnabled: async () => {
+    const captured = current;
+    if (++loading === 1) await new Promise(resolve => { release = resolve; });
+    return [captured];
+  } });
+  const first = state.refresh();
+  current = pkg(2); const second = state.refresh(); release();
+  await Promise.all([first, second]);
+  assert.equal(await host.sendCommand({ kind: 'latest.version', payload: {} }), 2);
+  assert.equal(loading, 2);
 });

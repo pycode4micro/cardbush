@@ -62,13 +62,22 @@ export const memoryChangeSchema = z.object({
 }).strict().refine(value => (value.action === 'supersede') === Boolean(value.replacement), 'Only supersede requires replacement.');
 export type MemoryChange = z.infer<typeof memoryChangeSchema>;
 
+export const assistantFeedbackInputSchema = z.object({
+  sessionId:z.string().trim().min(1).max(300),
+  turnId:z.string().trim().min(1).max(300),
+  messageId:z.string().trim().min(1).max(300),
+  rating:z.enum(['up','down']).nullable(),
+}).strict();
+export type AssistantFeedbackInput = z.infer<typeof assistantFeedbackInputSchema>;
+
 export const memoryRecordSchema = z.object({
-  id:z.string(),kind:z.enum(['habit','prediction','note','evidence']),text:z.string(),revision:z.number(),
+  id:z.string(),kind:z.enum(['habit','prediction','note','evidence','feedback']),text:z.string(),revision:z.number(),
   state:z.enum(['active','expired','retracted','disputed','superseded','consolidated']),origin:z.enum(['agent','user','summary']),
   applies_when:z.string(),created_at:z.number(),age_days:z.number(),expires_at:z.number().nullable(),
   last_confirmed_at:z.number().nullable(),last_rejected_at:z.number().nullable(),
   source:z.object({session_id:z.string(),turn_id:z.string()}).nullable(),
   replaced_by:z.array(z.string()),source_ids:z.array(z.string()),content_cleared:z.boolean(),truncated:z.boolean(),hits:z.number(),misses:z.number(),
+  feedback:z.object({rating:z.enum(['up','down']),messageId:z.string()}).optional(),
 });
 export type MemoryRecord = z.infer<typeof memoryRecordSchema>;
 export const memoryListSchema=z.object({records:z.array(memoryRecordSchema),next_cursor:z.number().nullable()});
@@ -92,7 +101,7 @@ export type MemoryHistory = z.infer<typeof memoryHistorySchema>;
 
 export const PERSONALIZATION_COMMAND = 'runtime.personalization' as const;
 export const personalizationCommandSchema = z.object({
-  action: z.enum(['status', 'summarize', 'list', 'history', 'change', 'undo', 'purge_history']),
+  action: z.enum(['status', 'summarize', 'list', 'history', 'change', 'undo', 'purge_history', 'feedback']),
   settings: individuationSettingsSchema.default(() => normalizeIndividuation(undefined)),
   modelId: z.string().trim().min(1).max(300).optional(),
   cursor:z.number().int().nonnegative().optional(),
@@ -100,11 +109,13 @@ export const personalizationCommandSchema = z.object({
   change:memoryChangeSchema.optional(),
   changeId:z.string().max(120).optional(),
   operationId:z.string().min(1).max(120).optional(),
+  feedback:assistantFeedbackInputSchema.optional(),
 }).strict();
 export const personalizationStatusSchema = z.object({
   estimatedTokens: z.number().nonnegative(), records: z.number().nonnegative(),
   eventTokens: z.number().nonnegative(), habitTokens: z.number().nonnegative(),
   habits: z.number().nonnegative(), predictions: z.number().nonnegative(), notes: z.number().nonnegative(),
+  feedback: z.number().nonnegative().default(0),
   hits: z.number().nonnegative(), misses: z.number().nonnegative(),
   running: z.boolean(), lastSummaryAt: z.number().nullable(), lastError: z.string().nullable(),
   inactiveRecords:z.number().nonnegative().default(0),historyChanges:z.number().nonnegative().default(0),

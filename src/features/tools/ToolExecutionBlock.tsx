@@ -784,6 +784,8 @@ function ToolExecutionDetail({
   const failureMessage = typeof error.message === 'string' ? error.message : '';
   const goalUpdate = goalToolUpdateFromExecution(execution);
   const output = execution.output;
+  const showSummary = hasSummary && !goalUpdate && summary !== failureMessage;
+  const showOutput = Boolean(output.trim()) && !goalUpdate;
   const childExecutions = subagentChildToolExecutions(execution);
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
   const environment = asRecord(asRecord(execution.metadata.nativeResult).executionEnvironment);
@@ -800,7 +802,32 @@ function ToolExecutionDetail({
   return (
     <div className="tool-execution-body">
       {terminalSessionId && sessionId && <TerminalTaskStatus key={terminalSessionId} sessionId={sessionId} terminalSessionId={terminalSessionId} runtime={host?.runtime} language={language} />}
-      {hasSummary && !goalUpdate && summary !== failureMessage && <pre className="tool-execution-input">{summary}</pre>}
+      {(showSummary || showOutput) && (
+        <div className="tool-execution-detail-toolbar">
+          {showSummary && <pre className="tool-execution-input">{summary}</pre>}
+          {showOutput && <div className="tool-output-actions">
+            <button
+              className="tool-output-toggle"
+              type="button"
+              title={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
+              aria-label={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
+              aria-pressed={outputWrapped}
+              onClick={() => setOutputWrapped(value => !value)}
+            >
+              <WrapText size={14} />
+            </button>
+            <button
+              className="tool-output-toggle"
+              type="button"
+              title={language === 'zh' ? '复制输出' : 'Copy output'}
+              aria-label={language === 'zh' ? '复制输出' : 'Copy output'}
+              onClick={() => void copyText(output).catch(() => undefined)}
+            >
+              <Clipboard size={14} />
+            </button>
+          </div>}
+        </div>
+      )}
       {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
       {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
@@ -840,33 +867,11 @@ function ToolExecutionDetail({
         artifacts={execution.artifacts}
         language={language}
       />}
-      {output.trim() && !goalUpdate && (
-        <div className="tool-execution-output-panel">
-          <div className="tool-output-actions">
-            <button
-              className="tool-output-toggle"
-              type="button"
-              title={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
-              aria-label={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
-              aria-pressed={outputWrapped}
-              onClick={() => setOutputWrapped(value => !value)}
-            >
-              <WrapText size={14} />
-            </button>
-            <button
-              className="tool-output-toggle"
-              type="button"
-              title={language === 'zh' ? '复制输出' : 'Copy output'}
-              aria-label={language === 'zh' ? '复制输出' : 'Copy output'}
-              onClick={() => void copyText(output).catch(() => undefined)}
-            >
-              <Clipboard size={14} />
-            </button>
-          </div>
-          <pre className={`tool-execution-output ${outputWrapped ? 'wrapped' : ''}`} tabIndex={0}>
-            {output}
-          </pre>
-        </div>
+      {showOutput && (
+        <pre className={`tool-execution-output ${outputWrapped ? 'wrapped' : ''}`} tabIndex={0}
+          aria-label={language === 'zh' ? '工具输出' : 'Tool output'}>
+          {output}
+        </pre>
       )}
     </div>
   );

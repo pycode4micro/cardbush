@@ -47,6 +47,45 @@ test('no-tools policy suppresses both fresh and saved provider definitions witho
   assert.deepEqual(modelToolDefinitions(registry, request), before);
 });
 
+test('round boundaries reconcile additions, changes and removals with one bounded model notice', () => {
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  registry.replaceOwned('runtime_mcp', [tool('old'), tool('edit'), tool('steady')]);
+  const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } };
+  assert.equal(synchronizeMcpCatalog(registry, request), undefined);
+  const provider = modelToolDefinitions(registry, request);
+  registry.replaceOwned('runtime_mcp', [tool('added'), tool('edit', { definition: { name: 'edit', description: 'new parameters', inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } }), tool('steady')]);
+  const message = synchronizeMcpCatalog(registry, request);
+  const update = JSON.parse(message.content);
+  assert.deepEqual(update.added, ['added']); assert.deepEqual(update.updated, ['edit']); assert.deepEqual(update.removed, ['old']);
+  assert.equal(message.visibility, 'internal');
+  assert.deepEqual(request.tools.find(tool => tool.name === 'edit').inputSchema.required, ['path']);
+  assert.ok(!request.tools.some(tool => tool.name === 'old'));
+  assert.deepEqual(modelToolDefinitions(registry, request), provider, 'MCP provider gateway remains stable');
+  assert.equal(synchronizeMcpCatalog(registry, request), undefined, 'unchanged catalog produces no repeated guidance');
+  const resumed = structuredClone(request);
+  registry.replaceOwned('runtime_mcp', [tool('steady')]);
+  assert.deepEqual(JSON.parse(synchronizeMcpCatalog(registry, resumed).content).removed, ['added', 'edit'], 'checkpoint resumes retain the previous catalog identity');
+});
+
+test('native extension definitions refresh without expanding a child tool scope', () => {
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  registry.replaceOwned('extension:fixture', [{ ...tool('native'), mcpHook: undefined }]);
+  const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } };
+  synchronizeMcpCatalog(registry, request);
+  assert.ok(modelToolDefinitions(registry, request).some(tool => tool.name === 'native'));
+  const child = structuredClone(request); child.metadata.agentRole = 'child';
+  registry.replaceOwned('extension:fixture', [{ ...tool('native', { definition: { name: 'native', description: 'new version', inputSchema: { type: 'object' } } }), mcpHook: undefined }, { ...tool('replacement'), mcpHook: undefined }]);
+  synchronizeMcpCatalog(registry, request); synchronizeMcpCatalog(registry, child);
+  assert.ok(modelToolDefinitions(registry, request).some(tool => tool.name === 'replacement'));
+  assert.equal(child.tools.find(tool => tool.name === 'native').description, 'new version');
+  assert.ok(!child.tools.some(tool => tool.name === 'replacement'));
+  assert.equal(modelToolDefinitions(registry, child).find(tool => tool.name === 'native').description, 'new version');
+  registry.replaceOwned('extension:fixture', []);
+  synchronizeMcpCatalog(registry, request); synchronizeMcpCatalog(registry, child);
+  assert.ok(!modelToolDefinitions(registry, request).some(tool => tool.name === 'native'));
+  assert.ok(!child.tools.some(tool => tool.name === 'native'));
+});
+
 test('a running product turn loads and calls a new plugin on its next round without changing provider tools', async () => {
   const registry = new ToolRegistry(); let round = 0, calls = 0, providerTools;
   registry.register({ ...tool('install_fixture'), mcpHook: undefined, execute: () => {
@@ -56,6 +95,9 @@ test('a running product turn loads and calls a new plugin on its next round with
   const host = new InMemoryRuntimeHost({ toolRegistry: registry, provider: { async *stream(request) {
     providerTools ??= request.tools;
     assert.deepEqual(request.tools, providerTools);
+    const notices = request.messages.filter(message => message.name === 'mcp_catalog_update');
+    assert.equal(notices.length, round === 0 ? 0 : 1, 'the next round sees exactly one capability update');
+    if (notices.length) assert.deepEqual(JSON.parse(notices[0].content).added, ['mcp__added__echo']);
     const operations = [ ['install_fixture', {}], ['mcp_search', { action: 'load', query: 'mcp__added__echo' }],
       ['mcp_call', { name: 'mcp__added__echo', arguments: {} }] ];
     const operation = operations[round++];

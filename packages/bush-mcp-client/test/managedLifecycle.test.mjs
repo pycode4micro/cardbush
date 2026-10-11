@@ -85,6 +85,27 @@ test('a server ignoring EOF is force-closed, including its service, before close
   await gone(old.pid); await gone(old.childPid);
 });
 
+test('hot update drains a real call and transfers its fixed port without waiting for a turn', { timeout: 25_000 }, async t => {
+  const registry = new ToolRegistry(), f = await setup(t, { registry });
+  ready(await f.manager.apply(snapshot([f.server])));
+  const [old] = await f.records();
+  const releaseFile = join(f.receipts, '..', 'release'), startedFile = join(f.receipts, '..', 'started');
+  const call = registry.resolve('mcp__fixture__hold').execute({ requestId: 'r', sessionId: 's', turnId: 'active',
+    toolCall: { id: 'held', name: 'mcp__fixture__hold' }, input: { releaseFile, startedFile }, capabilityIds: [] });
+  // On failure, shutdown cancels the transport; never leave a detached fixture behind.
+  void call.catch(() => undefined);
+  await until(() => readFile(startedFile, 'utf8').then(value => value === String(old.pid), () => false), 'old process accepted the call');
+  const changed = { ...f.server, transport: { ...f.server.transport, env: { ...f.server.transport.env, FIXTURE_PORT: String(old.port) } } };
+  f.manager.submit(snapshot([changed], 2));
+  await until(() => f.manager.snapshot().applicationPhase === 'waiting_for_calls', 'wait only for the affected call');
+  await delay(100); assert.equal((await f.records()).length, 1, 'cannot spawn a competing fixed-port process');
+  await writeFile(releaseFile, 'done');
+  assert.equal(JSON.parse((await call).content[0].text).pid, old.pid, 'original call returns from its original process');
+  await until(() => f.manager.snapshot().applicationState === 'applied', 'replacement publishes in the same turn');
+  const records = await f.records(); assert.equal(records.length, 2); assert.equal(records[1].port, old.port);
+  await gone(old.pid); await gone(old.childPid);
+});
+
 test('cancelling startup releases descendants and prevents a superseded late startup', { timeout: 25_000 }, async t => {
   const f = await setup(t, {}, { FIXTURE_NO_HANDSHAKE: '1' });
   f.manager.submit(snapshot([f.server]));

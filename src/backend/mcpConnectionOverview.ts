@@ -15,6 +15,7 @@ export function mcpConnectionState(
   if (!snapshot || snapshot.snapshotId !== 'cardbush-product-mcp') return enabled ? 'unknown' : 'disabled';
   if (revision !== undefined && snapshot.configurationRevision !== revision) return enabled ? 'unknown' : 'disabled';
   const server = snapshot.servers.find(item => item.id === id);
+  if (server?.updateState === 'waiting_for_calls') return 'pending';
   if (enabled && server?.updateState === 'waiting_for_resources') return 'waiting_for_resources';
   if (server?.updateState === 'queued' || server?.updateState === 'connecting') return 'restarting';
   if (server?.updateState === 'failed') return 'unavailable';

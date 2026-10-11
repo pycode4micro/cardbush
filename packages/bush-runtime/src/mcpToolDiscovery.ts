@@ -172,18 +172,54 @@ export function synchronizeMcpDiscovery(registry: ToolRegistry, request: ModelRe
   remember(registry, request, loaded);
 }
 
-/** Add host-published optional MCP tools at a product turn's round boundary. */
-export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequest): void {
-  // Only ordinary product conversations opt in. Child roles and scheduled
-  // tasks retain their explicit, inherited tool scope.
-  if (request.metadata.mcpCatalogUpdates !== 'additions' || !request.metadata.mcpToolDiscovery ||
-    request.metadata.agentRole === 'child' || request.metadata.pluginAgentId || request.metadata.automationRunId) return;
-  const known = new Set(request.tools.map(tool => tool.name));
-  for (const definition of registry.definitions()) {
+type CatalogState = { identity: string; tools: Record<string, string>; extensions: string[] };
+function catalogState(value: unknown, identity: string): CatalogState | undefined {
+  const state = value as Partial<CatalogState> | undefined;
+  if (state?.identity !== identity || !state.tools || typeof state.tools !== 'object' || Array.isArray(state.tools) ||
+    Object.values(state.tools).some(revision => typeof revision !== 'string') ||
+    !Array.isArray(state.extensions) || state.extensions.some(name => typeof name !== 'string')) return;
+  return state as CatalogState;
+}
+
+/** Synchronize optional plugin capabilities only between model requests. */
+export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequest): ModelMessage | undefined {
+  if (!request.metadata.mcpToolDiscovery || request.metadata.toolExecutionPolicy === 'none') return;
+  // Only ordinary product conversations admit newly installed tools. Scoped
+  // agents can refresh/revoke existing definitions without gaining capabilities.
+  const allowAdditions = request.metadata.mcpCatalogUpdates === 'additions' &&
+    request.metadata.agentRole !== 'child' && !request.metadata.pluginAgentId && !request.metadata.automationRunId;
+  const visible = new Set(request.tools.map(tool => tool.name));
+  const current = registry.definitions().filter(definition => {
+    if (!allowAdditions && !visible.has(definition.name)) return false;
     const registration = registry.resolve(definition.name)!;
-    if (!known.has(definition.name) && registration.registrationOwner === 'runtime_mcp' &&
-      registration.mcpHook && registration.mcpHook.modelVisible !== false) request.tools.push(definition);
-  }
+    return registration.registrationOwner?.startsWith('extension:') || registration.registrationOwner === 'runtime_mcp' &&
+      registration.mcpHook && registration.mcpHook.modelVisible !== false;
+  });
+  const versions = (tools: ToolDefinition[]) => Object.fromEntries(tools.map(tool => [tool.name,
+    createHash('sha256').update(canonical(tool)).digest('hex')]));
+  const currentNames = new Set(current.map(tool => tool.name));
+  const prior = catalogState(request.metadata.mcpLiveCatalogSnapshot, key(request)) ?? {
+    identity: key(request), tools: versions(request.tools.filter(tool => currentNames.has(tool.name))), extensions: [],
+  };
+  const next: CatalogState = { identity: key(request), tools: versions(current), extensions: current.filter(tool =>
+    registry.resolve(tool.name)?.registrationOwner?.startsWith('extension:')).map(tool => tool.name) };
+  const added = current.filter(tool => !Object.hasOwn(prior.tools, tool.name)).map(tool => tool.name);
+  const updated = current.filter(tool => Object.hasOwn(prior.tools, tool.name) && prior.tools[tool.name] !== next.tools[tool.name]).map(tool => tool.name);
+  const removed = Object.keys(prior.tools).filter(name => !currentNames.has(name));
+  const retained = request.tools.filter(tool => !Object.hasOwn(prior.tools, tool.name) && !currentNames.has(tool.name));
+  request.tools = [...retained, ...current];
+  request.metadata.mcpLiveCatalogSnapshot = next;
+  // MCP stays behind the stable discovery gateway. Native extension definitions
+  // need their provider projection refreshed when that portion actually changes.
+  const extensionNames = new Set([...prior.extensions, ...next.extensions]);
+  if ([...added, ...updated, ...removed].some(name => extensionNames.has(name))) delete request.metadata.mcpModelToolSnapshot;
+  if (!added.length && !updated.length && !removed.length) return;
+  return { role: 'user', name: 'mcp_catalog_update', visibility: 'internal', content: JSON.stringify({
+    protocol: 'bush.plugin_catalog_update.v1',
+    added: added.slice(0, 32), updated: updated.slice(0, 32), removed: removed.slice(0, 32),
+    counts: { added: added.length, updated: updated.length, removed: removed.length },
+    message: 'Plugin capabilities changed during this conversation. Use the current catalog. For new or changed MCP tools, load their current schemas with mcp_search before calling; unchanged visible schemas remain valid. Removed tools are unavailable. Already dispatched operations are not replayed by this update.',
+  }) };
 }
 
 /** Freeze only the provider projection. Execution always checks the authoritative live scope. */
@@ -296,7 +332,9 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
     manifest: { ...manifest, operation: 'mcp.invoke' }, delegatesToolExecution: true,
     decodeInput: input => {
       const value = input as Record<string, unknown>;
-      if (!value || typeof value.name !== 'string' || !value.arguments || typeof value.arguments !== 'object' || Array.isArray(value.arguments)) throw new Error('MCP call requires a tool name and argument object.');
+      if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.name !== 'string' || !value.name.trim() || !value.arguments || typeof value.arguments !== 'object' || Array.isArray(value.arguments)) throw new Error('MCP call requires {name: "exact tool name", arguments: {tool fields}}. No tool was executed.');
+      const unknown = Object.keys(value).filter(key => key !== 'name' && key !== 'arguments');
+      if (unknown.length) throw new Error(`Unknown mcp_call fields: ${unknown.join(', ')}. Put the selected tool's fields inside arguments. No tool was executed.`);
       return { name: value.name, arguments: value.arguments as Record<string, unknown> };
     },
     execute: async context => {

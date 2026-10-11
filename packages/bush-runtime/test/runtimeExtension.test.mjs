@@ -53,3 +53,83 @@ test('extension composition rejects duplicate IDs and collisions with core or ot
     [{ create: factory('one', 'fixture.first') }, { create: factory('one', 'fixture.second') }],
   ]) assert.throws(() => new InMemoryRuntimeHost({ registerDefaultWorkspaceTools: false, extensions }), /conflicts|Duplicate|empty/);
 });
+
+test('extension generations publish immediately and dispose only after their own commands and tools finish', async () => {
+  const registry = new ToolRegistry(), disposed = [];
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false });
+  let releaseTool, releaseCommand;
+  const toolGate = new Promise(resolve => { releaseTool = resolve; });
+  const commandGate = new Promise(resolve => { releaseCommand = resolve; });
+  const factory = version => api => {
+    api.tools.register({ definition: { name: 'generation_echo', description: `v${version}`, inputSchema: { type: 'object' } },
+      manifest: { effect_kind: 'observation', operation: 'echo', risk: 'low', owner: 'fixture', dispatch_scope: 'parent_session', mutating: false },
+      decodeInput: input => input, execute: () => version === 1 ? toolGate : version });
+    return { id: 'generations', features: [], commands: { 'generations.read': () => version === 1 ? commandGate : version }, dispose: () => disposed.push(version) };
+  };
+  host.installExtension(factory(1), { enabled: true });
+  const old = registry.resolve('generation_echo');
+  const tool = old.execute({ input: {} });
+  const command = host.sendCommand({ kind: 'generations.read', payload: {} });
+  assert.equal(host.isExtensionBusy('generations'), true);
+  host.installExtension(factory(2), { enabled: true, replace: true });
+  assert.deepEqual(disposed, []);
+  assert.equal(await registry.resolve('generation_echo').execute({ input: {} }), 2);
+  assert.equal(await host.sendCommand({ kind: 'generations.read', payload: {} }), 2);
+  await assert.rejects(old.execute({ input: {} }), { code: 'tool_definition_changed' });
+  releaseTool(1); assert.equal(await tool, 1); assert.deepEqual(disposed, []);
+  releaseCommand(1); assert.equal(await command, 1); assert.deepEqual(disposed, [1]);
+  assert.equal(host.isExtensionBusy('generations'), false);
+  host.removeExtension('generations');
+  assert.deepEqual(disposed, [1, 2]); assert.equal(registry.resolve('generation_echo'), undefined);
+});
+
+test('a pending approval cannot execute an extension generation that was replaced', async () => {
+  const registry = new ToolRegistry(), host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false });
+  let approve, requested = false, calls = 0;
+  const factory = api => {
+    api.tools.register({ definition: { name: 'approve_echo', description: 'fixture', inputSchema: { type: 'object' } },
+      manifest: { effect_kind: 'observation', operation: 'echo', risk: 'low', owner: 'fixture', dispatch_scope: 'parent_session', mutating: false },
+      decodeInput: input => input, authorize: () => ({ kind: 'ask', request: { reason: 'fixture', actions: [], targets: [], capabilityIds: [] } }),
+      execute: () => { calls++; return {}; } });
+    return { id: 'approval', features: [], commands: {} };
+  };
+  host.installExtension(factory, { enabled: true });
+  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => { requested = true; return new Promise(resolve => { approve = resolve; }); } } });
+  const call = coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'c', name: 'approve_echo', argumentsText: '{}' },
+    { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal: 0 });
+  while (!requested) await new Promise(resolve => setImmediate(resolve));
+  host.installExtension(factory, { enabled: true, replace: true });
+  approve({ decision: 'allow_once', grantedCapabilityIds: [] });
+  const result = await call;
+  assert.equal(result.kind, 'failed'); assert.equal(result.error.code, 'tool_definition_changed'); assert.equal(calls, 0);
+});
+
+test('a model request using an obsolete extension schema cannot execute the new generation', async () => {
+  const registry = new ToolRegistry(), host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false });
+  let calls = 0;
+  const factory = description => api => {
+    api.tools.register({ definition: { name: 'changed', description, inputSchema: { type: 'object' } },
+      manifest: { effect_kind: 'observation', operation: 'echo', risk: 'low', owner: 'fixture', dispatch_scope: 'parent_session', mutating: false },
+      decodeInput: input => input, execute: () => { calls++; return {}; } });
+    return { id: 'changed', features: [], commands: {} };
+  };
+  host.installExtension(factory('first'), { enabled: true });
+  const request = { requestId: 'r', sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: {} };
+  host.installExtension(factory('second'), { enabled: true, replace: true });
+  const coordinator = new ToolExecutionCoordinator({ registry });
+  const result = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'c', name: 'changed', argumentsText: '{}' },
+    { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal: 0 }, undefined, { request, contextMessages: [] });
+  assert.equal(result.kind, 'failed'); assert.equal(result.error.code, 'tool_definition_changed'); assert.equal(calls, 0);
+});
+
+test('cancelling a package replacement does not cancel an already dispatched extension command', async () => {
+  const host = new InMemoryRuntimeHost({ registerDefaultWorkspaceTools: false }); let release, disposed = false;
+  host.installExtension(() => ({ id: 'slow', features: [], commands: { 'slow.run': () => new Promise(resolve => { release = resolve; }) }, dispose: () => { disposed = true; } }), { enabled: true });
+  const call = host.sendCommand({ kind: 'slow.run', payload: {} });
+  const controller = new AbortController();
+  const preparing = host.preparePluginUninstall('slow', controller.signal);
+  controller.abort(new Error('fixture cancelled'));
+  await assert.rejects(preparing, /fixture cancelled|Plugin update cancelled/);
+  assert.equal(disposed, false);
+  release('old result'); assert.equal(await call, 'old result'); assert.equal(disposed, true);
+});

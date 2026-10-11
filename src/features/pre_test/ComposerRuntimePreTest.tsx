@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 
 import type { ExperimentalGoal } from '../../backend/api';
 import type { AppLanguage, PendingInteraction, TaskPlanSnapshot } from '../../types';
@@ -8,9 +8,7 @@ import {
 } from '../chat/ShadowTemporaryChat';
 import {
   Composer,
-  ComposerRuntimeRail,
   type ThinkingNotice,
-  type ComposerRuntimeRailHandle,
 } from '../composer';
 import { TurnRuntimeDetails } from '../chat/TurnRuntimeDetails';
 import { AssistantThinkingDetail } from '../chatMessages/AssistantThinkingProcessLine';
@@ -122,7 +120,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
     { id: 'pre-test-queue-2', text: '核对第二条排队消息的顺序。', createdAt: '2026-01-01T00:00:01.000Z' },
     { id: 'pre-test-queue-3', text: '完成后运行队列回归测试。', createdAt: '2026-01-01T00:00:02.000Z' },
   ]);
-  const runtimeRailRef = useRef<ComposerRuntimeRailHandle>(null);
   const showProcessing = fixture === 'processing' || fixture === 'combined';
   const showThinking = fixture === 'thinking' || fixture === 'combined';
   const showChanges = fixture === 'changes' || fixture === 'combined';
@@ -203,11 +200,26 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 changeSummary={showChanges ? changeSummaryFixture : null}
                 onOpenChangeReview={() => undefined}
               />
-              <ComposerRuntimeRail
-                ref={runtimeRailRef}
+              {shadowOpen && (
+                <ShadowTemporaryChat
+                  language={language}
+                  agentName="Shadow Agent"
+                  entries={shadowEntries}
+                  busy={false}
+                  open={shadowOpen}
+                  accentColor="#73d7cf"
+                  onClose={() => setShadowOpen(false)}
+                />
+              )}
+              <Composer
+                compact
                 language={language}
+                draft={shadowOpen ? shadowDraft : draft}
+                onDraftChange={shadowOpen ? setShadowDraft : setDraft}
+                sending={!shadowOpen}
+                goalAvailable
                 queuedMessageCount={showQueue ? queuedMessages.length : 0}
-                queuedMessagePreview={showQueue ? queuedMessages[0]?.text ?? '' : ''}
+                queuedMessagePreview={queuedMessages[0]?.text ?? ''}
                 queuedMessages={showQueue ? queuedMessages : []}
                 onEditQueuedMessage={(item) => {
                   setDraft(item.text);
@@ -228,29 +240,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                     () => 'pre-test',
                   ));
                 }}
-              />
-              {shadowOpen && (
-                <ShadowTemporaryChat
-                  language={language}
-                  agentName="Shadow Agent"
-                  entries={shadowEntries}
-                  busy={false}
-                  open={shadowOpen}
-                  accentColor="#73d7cf"
-                  onClose={() => setShadowOpen(false)}
-                />
-              )}
-              <Composer
-                compact
-                language={language}
-                draft={shadowOpen ? shadowDraft : draft}
-                onDraftChange={shadowOpen ? setShadowDraft : setDraft}
-                sending={!shadowOpen}
-                goalAvailable
-                queuedMessageCount={showQueue ? queuedMessages.length : 0}
-                onShowQueue={() => runtimeRailRef.current?.showQueue()}
-                queuedMessagePreview=""
-                queuedMessages={[]}
                 selectedModel="pre-test-glm"
                 availableModels={[{
                   id: 'pre-test-glm',

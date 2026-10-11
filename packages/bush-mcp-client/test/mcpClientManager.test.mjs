@@ -839,7 +839,7 @@ test('MCP App identities survive unrelated catalog updates and change with live 
   const initial = snapshot(); await manager.apply(initial);
   const original = registry.resolve('mcp__server__echo_tool'); assert.equal(original.mcpApp.connectionIdentity, first);
   await manager.apply({ ...initial, revision: initial.revision + 1, servers: [...initial.servers, { ...initial.servers[0], id: 'other' }] });
-  const current = registry.resolve('mcp__server__echo_tool'); assert.notEqual(current, original); assert.equal(current.mcpApp.connectionIdentity, first);
+  const current = registry.resolve('mcp__server__echo_tool'); assert.equal(current, original); assert.equal(current.mcpApp.connectionIdentity, first);
   first.onclose(); await waitFor(() => manager.snapshot().servers.find(server => server.id === 'server').health === 'ready');
   assert.equal(current.mcpApp.connectionIdentity, recovered);
   await manager.close(); assert.equal(current.mcpApp.connectionIdentity, undefined);

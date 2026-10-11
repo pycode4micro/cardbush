@@ -8,7 +8,7 @@ type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; b
 export type BrowserTabAction = { action: 'open' | 'activate' | 'close'; tabId: string; url?: string; sessionId?: string };
 const pageCommands = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.resolveNode', 'DOM.describeNode', 'DOM.getContentQuads',
-  'DOM.getFrameOwner', 'DOM.getNodeForLocation', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.releaseObject',
+  'DOM.getFrameOwner', 'DOM.getNodeForLocation', 'DOM.setFileInputFiles', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.releaseObject',
   'Page.getFrameTree', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Input.insertText', 'Input.dispatchKeyEvent',
   'Input.dispatchMouseEvent', 'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride',
 ]);

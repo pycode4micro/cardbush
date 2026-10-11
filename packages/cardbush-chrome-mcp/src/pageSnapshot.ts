@@ -10,7 +10,7 @@ export const snapshotSchema = z.object({
   fullText: z.boolean().optional(),
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().max(200).optional(),
-}).superRefine((input, ctx) => {
+}).strict().superRefine((input, ctx) => {
   if (input.cursor && (input.rootUid || input.query || input.roles || input.fullText !== undefined)) ctx.addIssue({ code: 'custom', message: 'A cursor continues its original query. Pass only cursor and optional limit.' });
   if (input.fullText && !input.rootUid) ctx.addIssue({ code: 'custom', message: 'fullText requires rootUid to read long fields in a focused subtree.' });
 });

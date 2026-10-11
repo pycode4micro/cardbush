@@ -207,6 +207,7 @@ export function registerComputerUsePlugin(
     title: 'Computer use',
     description: [
       "Observe and interact with the user's current desktop through visible application UI.",
+      'Also use for browser system file dialogs, crop/canvas/drag controls and interactions Browser Use cannot operate. Prefer Browser Use upload_file for ordinary local file selection. Preserve the authorized browser/profile/tab, observe its exact window, and verify the page after input; do not switch tools to bypass a permission refusal or user stop.',
       "Input shares the user's mouse and keyboard, yields while the user is active, and restores the pointer after mouse actions by default.",
       'Call observe once to discover windows, then observe an exact hwnd to receive a one-use state_id and a screenshot directly as an image. Set include_text=true to also receive accessibility elements.',
       'Discovery also returns connected displays with physical bounds and scale. Request screenshot with an exact display_id for a single-screen overview. display_id is valid only for the current connected layout. Window/input coordinates remain physical window pixels; do not multiply them by Windows display scale. After a display layout or DPI change, observe again.',

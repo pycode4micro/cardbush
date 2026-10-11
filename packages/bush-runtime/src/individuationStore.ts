@@ -3,13 +3,14 @@ import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { MAX_MEMORY_NOTE_TOKENS, type IndividuationSettings, type PersonalizationStatus, type SummaryForUserInput,
-  type MemoryNote, type CheckHabitInput, type MemoryRead, type MemoryChange } from '@cardbush/bush-protocol';
+  type MemoryNote, type CheckHabitInput, type MemoryRead, type MemoryChange, type AssistantFeedbackInput } from '@cardbush/bush-protocol';
+import { feedbackRecordId, writeAssistantFeedback } from './individuationFeedback.js';
 import { boundedMemoryText, memoryHash, memoryTerms, memoryTokens } from './individuationText.js';
 import { activeMemory, memoryView, memoryMetadata as metadata, initializeMemoryJournal, getMemoryRow,
   memoryHistoryFull, recordMemoryChange, canUndoMemoryChange, undoMemoryChange, type MemoryJournalRow } from './individuationJournal.js';
 
 export type MemoryOwner = { sessionId: string; turnId: string; operationId?:string };
-export type MemoryRow = { seq: number; id: string; kind: 'habit'|'prediction'|'note'|'evidence'; text: string;
+export type MemoryRow = { seq: number; id: string; kind: 'habit'|'prediction'|'note'|'evidence'|'feedback'; text: string;
   scope: number; tokens: number; revision: number; created: number; updated: number; observations: number;
   hits: number; misses: number; metadata: string; state:'active'|'retracted'|'disputed'|'superseded'|'consolidated';
   origin:'agent'|'user'|'summary';applies_when:string;expires:number|null;confirmed:number|null;rejected:number|null;replaced_by:string };
@@ -21,7 +22,7 @@ export class MemorySummaryValidationError extends Error {
   constructor(readonly reason:'history_full'|'unsupported_sources'|'unsupported_promotion'|'invalid_review'|'insufficient_reduction'|'disabled_category'|'note_too_long'|'condition_lost'|'expired_output'|'retired_source',message:string) { super(message); }
 }
 const mask = (settings: IndividuationSettings) => (settings.habits ? 1 : 0) | (settings.predictions ? 2 : 0);
-const emptyStatus = (): PersonalizationStatus => ({ estimatedTokens:0,eventTokens:0,habitTokens:0,records:0,habits:0,predictions:0,notes:0,hits:0,misses:0,running:false,lastSummaryAt:null,lastError:null,inactiveRecords:0,historyChanges:0 });
+const emptyStatus = (): PersonalizationStatus => ({ estimatedTokens:0,eventTokens:0,habitTokens:0,records:0,habits:0,predictions:0,notes:0,feedback:0,hits:0,misses:0,running:false,lastSummaryAt:null,lastError:null,inactiveRecords:0,historyChanges:0 });
 const isForecast = (row: MemoryRow) => row.kind==='prediction' || row.kind==='note' && (row.scope & 2)!==0;
 const noteId = (kind:string,note:MemoryNote) => `${kind}_${memoryHash(JSON.stringify([note.text,note.applies_when??'',note.expires_at??'']))}`;
 const stageFingerprint = (stage:MemoryStage,retryKey:string,rows:MemoryRow[]) => createHash('sha256').update(JSON.stringify([stage,retryKey,rows.map(row=>[row.id,row.revision])])).digest('hex');
@@ -119,6 +120,17 @@ export class IndividuationStore {
       }
       if(changed.length)recordMemoryChange(db,before.filter(row=>changed.includes(row.id)),changed,'agent','Record memory',now);
       return {saved:writes.some(entry=>entry.status==='created'||entry.status==='deduplicated'),writes};
+    }),signal);
+  }
+  async feedback(input:AssistantFeedbackInput,settings:IndividuationSettings,operationId:string,
+    context?:{user:string;assistant:string},signal?:AbortSignal) {
+    signal?.throwIfAborted();
+    if(input.rating&&!settings.habits)return {status:'disabled'};
+    if(!input.rating&&!existsSync(this.path))return {status:'ok'};
+    const owner={sessionId:input.sessionId,turnId:input.turnId,operationId};
+    return this.transaction((db,now)=>this.withReceipt(db,owner,input,now,()=>{
+      if(input.rating&&this.full(db,settings)&&!getMemoryRow(db,feedbackRecordId(input)))return {status:'rejected',reason:'summary_required'};
+      return writeAssistantFeedback(db,now,input,context);
     }),signal);
   }
   private withReceipt<T>(db:DatabaseSync,owner:MemoryOwner,input:unknown,now:number,run:()=>T):T {
@@ -233,6 +245,12 @@ export class IndividuationStore {
       if((old.scope&mask(settings))!==old.scope)return {status:'disabled'};
       if(old.revision!==input.revision)return {status:'conflict',reason:'Read the current revision before editing.'};
       if(!activeMemory(old,now))return {status:'rejected',reason:'Record is inactive; undo its change in settings.'};
+      if(old.kind==='feedback') {
+        if(actor!=='user'||input.action!=='retract')return {status:'rejected',reason:'Reply ratings can only be changed using the feedback controls.'};
+        const source=metadata(old);
+        if(!source.session||!source.turn||!source.feedback)return {status:'rejected',reason:'The original feedback identity is unavailable.'};
+        return writeAssistantFeedback(db,now,{sessionId:source.session,turnId:source.turn,messageId:source.feedback.messageId,rating:null},undefined);
+      }
       if(actor==='agent'&&old.origin==='user')return {status:'rejected',reason:'User-confirmed records can only be changed in settings.'};
       const userCorrection=Boolean(input.user_quote&&user.includes(input.user_quote));
       if(actor==='agent'&&(input.action==='confirm'||input.action!=='dispute'&&!userCorrection))return {status:'rejected',reason:'An exact quote from the current user correction is required; otherwise mark disputed.'};
@@ -345,7 +363,7 @@ export class IndividuationStore {
     const count=(kind:string)=>Number(records.find(row=>row.kind===kind)?.count??0);
     return {estimatedTokens:records.reduce((n,r)=>n+Number(r.tokens),0),records:records.reduce((n,r)=>n+Number(r.count),0),
       habitTokens:Number(records.find(row=>row.kind==='habit')?.tokens??0),eventTokens:records.filter(row=>row.kind!=='habit').reduce((n,r)=>n+Number(r.tokens),0),
-      habits:count('habit'),predictions:count('prediction'),notes:count('note'),hits:Number(state.hits),misses:Number(state.misses),
+      habits:count('habit'),predictions:count('prediction'),notes:count('note'),feedback:count('feedback'),hits:Number(state.hits),misses:Number(state.misses),
       running:Boolean(state.lease && Number(state.lease_until)>now),lastSummaryAt:state.last_summary as number|null,lastError:state.last_error as string|null,
       inactiveRecords:Number(db.prepare("SELECT COUNT(*) count FROM memory_records WHERE kind!='evidence' AND (state!='active' OR expires<=?) AND (scope & ?)=scope").get(now,mask(settings))!.count),
       historyChanges:Number(db.prepare('SELECT COUNT(*) count FROM memory_changes').get()!.count)};
@@ -415,7 +433,10 @@ export class IndividuationStore {
           db.exec(`UPDATE memory_state SET ${review.outcome==='hit'?'hits':'misses'}=${review.outcome==='hit'?'hits':'misses'}+1 WHERE id=1`);
         }
       }
+      const summarizedSources=new Set([...summary.habits,...summary.predictions].flatMap(item=>item.sources));
       for(const row of snapshot.records) {
+        // A single unexplained rating stays an event; absence from a summary is not a reason to erase it.
+        if(row.kind==='feedback'&&!summarizedSources.has(row.id))continue;
         db.prepare("UPDATE memory_records SET state='consolidated',hits=hits+?,misses=misses+?,updated=?,revision=revision+1 WHERE id=?")
           .run(hits.get(row.id)??0,misses.get(row.id)??0,now,row.id);
       }
@@ -426,7 +447,12 @@ export class IndividuationStore {
         // Shared sources may have already been merged; do not multiply their old counts.
         const inheritedHits=Math.max(0,...sourceRows.map(row=>row.hits))+newOutcomes('hit');
         const inheritedMisses=Math.max(0,...sourceRows.map(row=>row.misses))+newOutcomes('miss');
-        if(snapshot.stage==='events'&&kind==='habit'&&inheritedHits<2)
+        const feedbackSources=sourceRows.filter(row=>row.kind==='feedback');
+        const feedbackTurns=new Set(feedbackSources.map(row=>JSON.stringify([metadata(row).session,metadata(row).turn])));
+        const feedbackOnly=feedbackSources.length===sourceRows.length;
+        if(feedbackSources.length&&(!feedbackOnly||kind!=='habit'||feedbackTurns.size<2))
+          throw new MemorySummaryValidationError('unsupported_promotion','A feedback habit needs distinct rated turns; ratings do not validate forecasts.');
+        if(snapshot.stage==='events'&&kind==='habit'&&inheritedHits<2&&!(feedbackOnly&&feedbackTurns.size>=2))
           throw new MemorySummaryValidationError('unsupported_promotion','Promoting a forecast requires repeated verified user evidence.');
         if(memoryTokens(item.text+' '+(item.applies_when??''))>MAX_MEMORY_NOTE_TOKENS)throw new MemorySummaryValidationError('note_too_long','Consolidated memory is too long.');
         if(sourceRows.some(row=>row.applies_when)&&!item.applies_when)throw new MemorySummaryValidationError('condition_lost','Summary dropped an explicit applicability condition.');
@@ -436,15 +462,27 @@ export class IndividuationStore {
         const expires=expiryLimits.length?Math.min(...expiryLimits):null;
         if(expires!==null&&expires<=now)throw new MemorySummaryValidationError('expired_output','Summary returned an expired record.');
         const id=noteId(kind,item.expires_at?{...item,expires_at:new Date(expires!).toISOString()}:item),previous=getMemoryRow(db,id);
-        if(previous&&!activeMemory(previous,now)&&!originals.has(id))throw new MemorySummaryValidationError('retired_source','Summary attempted to resurrect a retired record.');
+        // Changed ratings can establish the same preference again using fresh, independent evidence.
+        // Explicitly retracted or disputed memories without this marker remain protected.
+        const renewedFeedback=Boolean(feedbackOnly&&previous?.origin==='summary'&&
+          ['disputed','consolidated'].includes(previous.state)&&metadata(previous).feedbackInvalidated);
+        if(previous&&!activeMemory(previous,now)&&!originals.has(id)&&!renewedFeedback)throw new MemorySummaryValidationError('retired_source','Summary attempted to resurrect a retired record.');
+        if(renewedFeedback)for(const row of db.prepare("SELECT * FROM memory_records WHERE replaced_by!='[]'").all() as MemoryRow[]) {
+          const replacements=JSON.parse(row.replaced_by) as string[];
+          if(item.sources.includes(row.id)||!replacements.includes(id))continue;
+          if(!historyBefore.has(row.id))historyBefore.set(row.id,row);
+          affected.add(row.id);
+          db.prepare('UPDATE memory_records SET replaced_by=?,updated=?,revision=revision+1 WHERE id=?')
+            .run(JSON.stringify(replacements.filter(replacement=>replacement!==id)),now,row.id);
+        }
         for(const source of sourceRows)if(source.id!==id && getMemoryRow(db,source.id)?.state==='consolidated') {
           const replaced=new Set(JSON.parse(getMemoryRow(db,source.id)!.replaced_by) as string[]);replaced.add(id);
           db.prepare('UPDATE memory_records SET replaced_by=? WHERE id=?').run(JSON.stringify([...replaced]),source.id);
         }
         if(previous?.origin==='user')continue;
         if(previous&&!historyBefore.has(id))historyBefore.set(id,previous);
-        const lineage=[...new Set([...item.sources.filter(source=>source!==id),...(previous?metadata(previous).sources??[]:[])])].slice(0,100);
-        const meta={...(previous?metadata(previous):{}),sources:lineage};
+        const lineage=[...new Set([...item.sources.filter(source=>source!==id),...(previous&&!renewedFeedback?metadata(previous).sources??[]:[])])].slice(0,100);
+        const meta={...(previous&&!renewedFeedback?metadata(previous):{}),sources:lineage};
         const saved=this.insert(db,kind,item.text,kind==='habit'?1:2,{sessionId:'memory-summary',turnId:snapshot.lease},now,meta,id);
         affected.add(id);
         const firstSeen=Math.min(...sourceRows.map(row=>row.created),previous?.created??now);

@@ -4,6 +4,7 @@ import type { RuntimeExtensionFactory } from '@cardbush/bush-runtime';
 /** Installed bundle bytes are the identity. Unchanged packages retain their live state. */
 export class RuntimePluginState {
   #pending?: Promise<string | undefined>;
+  #refreshAgain = false;
   #loaded = new Map<string, string>();
   #reportedError?: string;
   constructor(readonly options: {
@@ -12,16 +13,18 @@ export class RuntimePluginState {
       installExtension: (create: RuntimeExtensionFactory, options: { id: string; enabled: boolean; dataDirectory: string; replace: boolean }) => string;
       setExtensionEnabled: (id: string, enabled: boolean) => void;
       removeExtension: (id: string) => void;
-      hasActiveTurns: () => boolean;
-      isExtensionBusy: (id: string) => boolean;
     };
     loadEnabled: () => Promise<Array<{ id: string; hash: string; source: string }>>;
     reportError: (message: string) => void;
   }) {}
 
   refresh(): Promise<string | undefined> {
-    if (this.#pending) return this.#pending;
-    this.#pending = this.#refresh().finally(() => { this.#pending = undefined; });
+    if (this.#pending) { this.#refreshAgain = true; return this.#pending; }
+    this.#pending = (async () => {
+      let result: string | undefined;
+      do { this.#refreshAgain = false; result = await this.#refresh(); } while (this.#refreshAgain);
+      return result;
+    })().finally(() => { this.#pending = undefined; });
     return this.#pending;
   }
 
@@ -32,16 +35,11 @@ export class RuntimePluginState {
       const enabled = new Set(packages.map(pkg => pkg.id));
       for (const id of this.#loaded.keys()) if (!enabled.has(id)) {
         this.options.host.removeExtension(id);
-        if (!this.options.host.isExtensionBusy(id)) this.#loaded.delete(id);
+        this.#loaded.delete(id);
       }
       for (const pkg of packages) {
         try {
           if (this.#loaded.get(pkg.id) === pkg.hash) { this.options.host.setExtensionEnabled(pkg.id, true); continue; }
-          if (this.#loaded.has(pkg.id) && this.options.host.isExtensionBusy(pkg.id)) {
-            this.options.host.setExtensionEnabled(pkg.id, false);
-            errors.push(`${pkg.id}: update pending until active turns finish`);
-            continue;
-          }
           // Give stack traces a bounded, recognizable identity instead of embedding the entire bundle.
           const source = `${pkg.source}\n//# sourceURL=cardbush-plugin://${encodeURIComponent(pkg.id)}/runtime-${pkg.hash}.mjs\n`;
           const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);

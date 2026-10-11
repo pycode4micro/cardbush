@@ -1169,7 +1169,7 @@
 
 .tool-execution-row-label {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1191,8 +1191,8 @@
 }
 
 .tool-execution-row-content {
-  margin: 2px 0 8px 20px;
-  padding: 8px 10px;
+  margin: 2px 0 6px 20px;
+  padding: 6px 8px;
   color: var(--text-soft);
   background: color-mix(in srgb, var(--text) 4%, transparent);
   border-radius: 6px;
@@ -1224,10 +1224,13 @@
 }
 
 .tool-execution-detail .tool-execution-input {
-  margin: 0 0 6px;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
   padding: 0;
-  max-height: 120px;
+  max-height: 90px;
   overflow: auto;
+  overscroll-behavior: contain;
   color: var(--text-mid);
   background: transparent;
   border: 0;
@@ -1750,13 +1753,24 @@
   white-space: nowrap;
 }
 
-.tool-execution-output {
+.tool-execution-detail-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 4px;
+}
+
+/* Keep Markdown's generic pre styling from adding a second surface or hiding
+   vertical overflow when this detail is rendered inside a message bubble. */
+.tool-execution-detail .tool-execution-output {
   width: 100%;
   max-width: 100%;
-  max-height: 360px;
+  max-height: min(320px, 45dvh);
   margin: 0;
   padding: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   color: var(--text-soft);
   background: transparent;
   border: 0;
@@ -1768,6 +1782,7 @@
   word-break: normal;
   overflow-wrap: normal;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
 .tool-execution-output.wrapped {
@@ -1778,11 +1793,11 @@
 
 .tool-output-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
   gap: 4px;
   align-items: center;
   justify-content: flex-end;
-  margin-bottom: 4px;
+  margin-left: auto;
 }
 
 .tool-output-toggle {

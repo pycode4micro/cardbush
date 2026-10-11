@@ -22,6 +22,14 @@ function fixture() {
   return { registry, request, search };
 }
 
+test('mcp_call rejects misplaced tool fields instead of silently dropping them', () => {
+  const { registry } = fixture();
+  const decode = registry.resolve('mcp_call').decodeInput;
+  assert.throws(() => decode({ name: 'mcp__seedream__generate', arguments: {}, query: 'lost' }), /Put the selected tool's fields inside arguments/);
+  for (const input of [null, [], { name: '', arguments: {} }, { name: 'tool', arguments: 'string' }]) assert.throws(() => decode(input), /No tool was executed/);
+  assert.deepEqual(decode({ name: 'tool', arguments: { nested: { value: 1 } } }), { name: 'tool', arguments: { nested: { value: 1 } } });
+});
+
 test('search keeps long descriptions compact and only an explicitly loaded schema becomes callable', async () => {
   const { registry, request, search } = fixture();
   const result = await search({ query: 'image generator', limit: 10 });

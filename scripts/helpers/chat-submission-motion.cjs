@@ -196,11 +196,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
           const reply=list.querySelector('[data-message-id=submit-reply]').getBoundingClientRect();
           const composer=document.querySelector('.composer-surface').getBoundingClientRect();
           return {top:user.top-bounds.top,bottom:user.bottom,replyBottom:reply.bottom,composerTop:composer.top,
+            collapsed:list.querySelector('[data-message-id=submit-user] .user-message-toggle')?.getAttribute('aria-expanded') === 'false',
             spacer:list.querySelector('.assistant-response-spacer').getBoundingClientRect().height,available:composer.top-bounds.top};
         })()`);
         assert.ok(position.replyBottom <= position.composerTop + 2, name+' reply remains above the composer: '+JSON.stringify(position));
         if (name === 'narrow') assert.ok(position.top > 80, 'short requests retain context in a narrow window');
-        else assert.equal(position.spacer,0,'a long request uses the available height without an empty response stage');
+        else assert.equal(position.collapsed,true,'a long request starts folded, with its reply visible above the composer');
         console.log(name+' submission geometry:', position);
       }
     } finally {

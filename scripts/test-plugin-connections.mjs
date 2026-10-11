@@ -19,6 +19,7 @@ assert.equal(mcpConnectionState('new-plugin', true, scopedPending, 2), 'restarti
 assert.equal(mcpConnectionState('blender', true, { ...scopedPending, applicationState: 'failed' }, 2), 'connected', 'failed additions preserve unaffected connections');
 for (const [updateState, health, expected] of [
   ['queued', 'unavailable', 'restarting'], ['connecting', 'ready', 'restarting'],
+  ['waiting_for_calls', 'ready', 'pending'],
   ['waiting_for_catalog', 'ready', 'pending'], ['waiting_for_catalog', 'auth_required', 'auth_required'],
   ['failed', 'ready', 'unavailable'],
 ]) {

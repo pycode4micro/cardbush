@@ -71,6 +71,7 @@ import {
 } from './markdownFormat';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { MessageImageGallery } from './MessageImageGallery';
+import { UserMessageDisclosure } from './UserMessageDisclosure';
 import { MessageContentImage, MessageImageGalleryFrame, useImageGalleryFallback } from './MessageImageGalleryFrame';
 import { remarkImageGroups } from './remarkImageGroups';
 import { remarkStreamingTables } from './streamingTables';
@@ -107,6 +108,8 @@ import {
   copyText,
   readAssistantFeedback,
   recordAssistantFeedback,
+  assistantFeedbackKey,
+  ASSISTANT_FEEDBACK_EVENT,
   type AssistantFeedbackRating,
 } from '../messageFeedback';
 import { codeLanguageForFence, codeLanguageLabel } from '../../shared/codeLanguages';
@@ -721,6 +724,7 @@ function MessageBubbleView({
 }) {
   const host = useContext(ConversationHostContext);
   const feedbackId = host ? `${host.id}:${message.id}` : message.id;
+  const feedbackStorageId = assistantFeedbackKey(message, host?.environmentId);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const keyboardShortcuts = useKeyboardShortcuts();
   const [presentToolOutputs] = useState(createToolOutputProjector);
@@ -797,7 +801,9 @@ function MessageBubbleView({
   const [editText, setEditText] = useState(text);
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [assistantFeedback, setAssistantFeedback] =
-    useState<AssistantFeedbackRating | null>(() => host?.messageFeedbackAvailable === false ? null : readAssistantFeedback(feedbackId));
+    useState<AssistantFeedbackRating | null>(() => host?.messageFeedbackAvailable === false ? null : readAssistantFeedback(feedbackStorageId, feedbackId));
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const feedbackOperationRef = useRef<object | null>(null);
   const [feedbackPulse, setFeedbackPulse] =
     useState<AssistantFeedbackRating | null>(null);
   const feedbackPulseFrameRef = useRef<number | null>(null);
@@ -818,10 +824,25 @@ function MessageBubbleView({
   useEffect(() => {
     setEditing(false);
     setSubmittingEdit(false);
-    setAssistantFeedback(host?.messageFeedbackAvailable === false ? null : readAssistantFeedback(feedbackId));
+    setAssistantFeedback(host?.messageFeedbackAvailable === false ? null : readAssistantFeedback(feedbackStorageId, feedbackId));
+    feedbackOperationRef.current = null;
+    setFeedbackPending(false);
     setFeedbackPulse(null);
     setEditText(splitMessageMedia(message.content).text);
-  }, [message.id, feedbackId]);
+  }, [message.id, feedbackId, feedbackStorageId]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (!feedbackOperationRef.current && host?.messageFeedbackAvailable !== false)
+        setAssistantFeedback(readAssistantFeedback(feedbackStorageId, feedbackId));
+    };
+    window.addEventListener(ASSISTANT_FEEDBACK_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(ASSISTANT_FEEDBACK_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [feedbackStorageId, feedbackId, host?.messageFeedbackAvailable]);
 
   useEffect(() => {
     if (!editing) {
@@ -871,12 +892,26 @@ function MessageBubbleView({
     }
   }
 
-  function toggleAssistantFeedback(rating: AssistantFeedbackRating) {
-    if (host?.messageFeedbackAvailable === false) return;
+  async function toggleAssistantFeedback(rating: AssistantFeedbackRating) {
+    if (host?.messageFeedbackAvailable === false || feedbackOperationRef.current) return;
+    const operation = {};
+    feedbackOperationRef.current = operation;
+    setFeedbackPending(true);
     const nextRating = assistantFeedback === rating ? null : rating;
     playAssistantFeedbackPulse(rating);
     setAssistantFeedback(nextRating);
-    recordAssistantFeedback(host ? { ...message, id: feedbackId, conversationId: host.id } : message, nextRating);
+    try {
+      await recordAssistantFeedback(message, nextRating, { legacyId: feedbackId,
+        connectionId: host?.environmentId, memoryAvailable: !host || Boolean(host.environmentId) });
+    } catch (error) {
+      if (feedbackOperationRef.current === operation) setAssistantFeedback(readAssistantFeedback(feedbackStorageId, feedbackId));
+      void showUiError(language === 'zh' ? '评价未保存，请重试' : 'Feedback was not saved. Please retry.', error instanceof Error ? error.message : String(error));
+    } finally {
+      if (feedbackOperationRef.current === operation) {
+        feedbackOperationRef.current = null;
+        setFeedbackPending(false);
+      }
+    }
   }
 
   function playAssistantFeedbackPulse(rating: AssistantFeedbackRating) {
@@ -992,7 +1027,9 @@ function MessageBubbleView({
             </div>
           )}
           {(goalCommand?.content ?? text) && (
-            <MarkdownContent content={goalCommand?.content ?? text} language={language} />
+            <UserMessageDisclosure key={feedbackId} language={language}>
+              <MarkdownContent content={goalCommand?.content ?? text} language={language} />
+            </UserMessageDisclosure>
           )}
           <AutomationReminderCard value={message.metadata?.automationReminder} language={language}/>
           {messageDelivery === 'failed' && (
@@ -1344,9 +1381,10 @@ function MessageBubbleView({
               }`}
               type="button"
               hidden={host?.messageFeedbackAvailable === false}
+              disabled={feedbackPending}
               aria-pressed={assistantFeedback === 'up'}
               title={language === 'zh' ? '有帮助' : 'Helpful'}
-              onClick={() => toggleAssistantFeedback('up')}
+              onClick={() => void toggleAssistantFeedback('up')}
             >
               <ThumbsUp size={14} />
             </button>
@@ -1356,9 +1394,10 @@ function MessageBubbleView({
               }`}
               type="button"
               hidden={host?.messageFeedbackAvailable === false}
+              disabled={feedbackPending}
               aria-pressed={assistantFeedback === 'down'}
               title={language === 'zh' ? '不理想' : 'Needs improvement'}
-              onClick={() => toggleAssistantFeedback('down')}
+              onClick={() => void toggleAssistantFeedback('down')}
             >
               <ThumbsDown size={14} />
             </button>

@@ -1,7 +1,7 @@
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import { useContext } from 'react';
 import { ConversationHostContext } from '../conversationHost';
-import { ArrowUpRight, Bookmark, Check, Copy, X } from 'lucide-react';
+import { ArrowUpRight, Check, Copy, X } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -346,7 +346,6 @@ export function QuickContextRail({
         {hoveredMessage && <>
           <div className="hover-preview-title">
             <strong>{compactText(conversationDisplayTitle(hoveredMessage.content), 160)}</strong>
-            <Bookmark size={14} aria-hidden="true" />
           </div>
           <p className="turn-hover-preview-reply">{turnHoverText(hoverReply) || (language === 'zh' ? '暂时没有回复' : 'No reply yet')}</p>
         </>}

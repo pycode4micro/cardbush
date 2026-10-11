@@ -162,7 +162,14 @@ test('MCP negotiation publishes the paging schema and transports text, cursor an
     const schema = catalog.tools.find(tool => tool.name === 'take_snapshot').inputSchema;
     assert.ok(schema.properties.cursor);
     assert.ok(schema.properties.fullText);
+    assert.equal(schema.additionalProperties, false);
     const _meta = { cardbush_session_id: 'protocol-fixture' };
+    for (const input of [{ name: 'take_snapshot', arguments: { query: 'row', limit: 1 } }, { qurey: 'row' }]) {
+      const rejected = await client.callTool({ name: 'take_snapshot', arguments: input, _meta });
+      assert.equal(rejected.isError, true, JSON.stringify(rejected));
+      assert.match(rejected.content[0].text, /[Uu]nrecognized|[Uu]nknown/);
+    }
+    assert.equal(f.reads(), 0, 'bad arguments cannot trigger an unfiltered page read');
     const first = await client.callTool({ name: 'take_snapshot', arguments: { limit: 1 }, _meta });
     assert.equal(first.isError, undefined, JSON.stringify(first));
     assert.equal(JSON.stringify(first).split('Transport row one').length - 1, 1);

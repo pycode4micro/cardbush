@@ -125,7 +125,7 @@ module.exports = async ({run,until,pause,window,root}) => {
     window.webContents.sendInputEvent({type:'mouseMove',button:'left',x:4,y:expand.y});
     window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:4,y:expand.y});
     await until('coverWorkspace.inspectorCover','continuing the same drag enters full cover');
-    await run('document.querySelector("#cover-back").click()');await readable();await pause(300);
+    await run('document.querySelector(".inspector-cover-back").click()');await readable();await pause(300);
 
     await run('coverWorkspace.setInspectorWidth(innerWidth)');
     await until('coverWorkspace.conversationCovered','explicit pane expansion hides chat');
@@ -135,7 +135,7 @@ module.exports = async ({run,until,pause,window,root}) => {
       assert.equal(await run('getComputedStyle(document.querySelector(".right-inspector-resizer")).display'),'none','no dead second divider');
       assert.equal(await run('getComputedStyle(document.querySelector(".right-inspector")).borderLeftWidth'),'0px');
     }
-    await run('document.querySelector("#cover-back").click()');await readable();await pause(300);
+    await run('document.querySelector(".inspector-cover-back").click()');await readable();await pause(300);
     assert.notEqual(await run('getComputedStyle(document.querySelector(".right-inspector-resizer")).display'),'none','Back restores the real divider');
     assert.equal(await run('document.querySelector("webview").getWebContentsId()'),guestId,'window transitions preserve the same browser');
     assert.equal(await guest.executeJavaScript('window.layoutDraft'),'unsent browser state');

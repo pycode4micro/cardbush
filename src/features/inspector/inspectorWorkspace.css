@@ -57,13 +57,13 @@ body.right-inspector-resizing .desktop-shell.inspector-conversation-covered > .r
   transition: flex-basis var(--panel-motion-duration) var(--panel-motion-ease);
 }
 .desktop-shell { position: relative; }
-.inspector-cover-controls { position: absolute; z-index: 40; bottom: 16px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px; align-items: center; pointer-events: none; }
-.inspector-conversation-covered .inspector-cover-controls { left: calc(var(--layout-sidebar-space) + (100% - var(--layout-sidebar-space)) / 2); width: min(680px, calc(100% - var(--layout-sidebar-space) - 32px)); }
+.inspector-cover-controls { position: absolute; z-index: 40; inset: 0; pointer-events: none; }
 /* With no conversation pane there is no second divider to resize. The sidebar
    keeps its own boundary; Back restores the conversation and its divider. */
 .inspector-conversation-covered > .right-inspector .right-inspector-resizer { display: none; }
 body.right-inspector-resizing .inspector-conversation-covered > .right-inspector .right-inspector-resizer { display: block; }
 .inspector-cover-capsule {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
   display: inline-flex; width: max-content; max-width: 100%; gap: 2px; padding: 4px;
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
@@ -75,9 +75,19 @@ body.right-inspector-resizing .inspector-conversation-covered > .right-inspector
 .inspector-cover-capsule button + button::before { content: ''; position: absolute; left: -2px; top: 25%; height: 50%; width: 1px; background: color-mix(in srgb, var(--text) 14%, transparent); }
 .inspector-cover-capsule button:hover, .inspector-cover-capsule button[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .inspector-cover-capsule button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.inspector-quick-input { width: 100%; display: flex; flex-direction: column; gap: 0; pointer-events: auto; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-strong); box-shadow: 0 8px 28px var(--shadow); }
-.inspector-quick-input .composer-stack { margin: 0; max-width: none; width: 100%; }
-.quick-input-conversation { order: -1; min-width: 0; border-bottom: 1px solid var(--border); }
+.inspector-cover-capsule .inspector-cover-drag { padding: 7px; color: var(--text-soft); cursor: grab; touch-action: none; }
+body.inspector-cover-dragging, body.inspector-cover-dragging * { cursor: grabbing !important; user-select: none !important; }
+body.inspector-cover-dragging :is(webview, iframe) { pointer-events: none !important; }
+.inspector-quick-input {
+  position: absolute; left: var(--quick-input-left, 16px); top: var(--quick-input-top, auto); bottom: var(--quick-input-bottom, 70px);
+  width: var(--quick-input-width, calc(100% - 32px)); max-height: var(--quick-input-max-height, calc(100% - 86px)); min-height: 0;
+  display: flex; flex-direction: column; gap: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  pointer-events: auto; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-strong); box-shadow: 0 8px 28px var(--shadow);
+}
+.inspector-quick-input .composer-stack { flex: none; margin: 0; max-width: none; width: 100%; }
+.inspector-quick-input .composer-runtime-rail { width: 100%; margin: 0; padding: 4px 6px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+.quick-input-conversation { order: -1; flex: 0 1 auto; display: flex; flex-direction: column; min-height: 32px; min-width: 0; border-bottom: 1px solid var(--border); }
+.quick-input-conversation > .quick-input-status { flex: none; }
 .quick-input-status { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 7px 12px; border: 0; border-radius: 17px 17px 0 0; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; line-height: 16px; text-align: left; cursor: pointer; }
 .quick-input-status:hover { color: var(--text); background: var(--surface-raised); }
 .quick-input-status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

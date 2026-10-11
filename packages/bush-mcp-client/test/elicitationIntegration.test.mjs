@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { InMemoryTransport } from '@modelcontextprotocol/client';
@@ -79,9 +81,14 @@ async function setup(versionMode, onElicitation) {
   else {
     const handler = createMcpHandler(buildServer);
     httpServer = createServer(async (request, response) => {
+      const abort = new AbortController();
+      response.on('close', () => abort.abort());
       const chunks=[]; for await (const chunk of request) chunks.push(chunk);
-      const result=await handler.fetch(new Request(endpoint, {method:request.method,headers:request.headers,...(chunks.length?{body:Buffer.concat(chunks)}:{})}));
-      response.writeHead(result.status,Object.fromEntries(result.headers)).end(await result.text());
+      const result=await handler.fetch(new Request(endpoint, {method:request.method,headers:request.headers,signal:abort.signal,...(chunks.length?{body:Buffer.concat(chunks)}:{})}));
+      response.writeHead(result.status,Object.fromEntries(result.headers));
+      response.flushHeaders();
+      if(result.body) await pipeline(Readable.fromWeb(result.body),response).catch(()=>{});
+      else response.end();
     });
     await new Promise(resolve => httpServer.listen(0,'127.0.0.1',resolve));
     endpoint='http://127.0.0.1:'+httpServer.address().port+'/mcp';

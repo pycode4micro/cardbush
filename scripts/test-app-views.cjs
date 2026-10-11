@@ -90,6 +90,8 @@ async function buildViews() {
       'src/features/composer/ComposerPortalContext.ts', 'src/features/inspector/InspectorTabPages.tsx',
       'src/features/inspector/InspectorTileFrame.tsx', 'src/features/inspector/panelLayout.ts',
       'src/components/CompactSidebarBackdrop.tsx',
+      'src/features/inspector/InspectorCoverControls.tsx',
+      'src/features/chatMessages/ImagePreviewDialog.tsx',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components' ? [
       'src/shared/dialogEvents.ts',
@@ -136,6 +138,9 @@ async function buildViews() {
       'src/hooks/useCompactSidebar.ts', 'src/components/CompactSidebarBackdrop.tsx', 'src/features/SettingsView.tsx',
     ] : []),
     'src/features/chatMessages/MessageBubble.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback' ? [
+      'src/features/messageFeedback.ts', 'src/features/settings/individuation.ts', 'src/features/conversationHost.ts',
+    ] : []),
     'src/features/appearance/useVisualThemeContext.ts',
     'src/features/chatMessages/FileMemoReference.tsx',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'agent-file-preview' ? [
@@ -182,12 +187,13 @@ async function buildViews() {
       name: 'app-view-test-entry',
       enforce: 'pre',
       resolveId: (value, importer) => {
+        if (process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0assistant-feedback-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'team-composer' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0team-composer-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0loop-preview-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'shadow-state' && value === './backend/api' && importer?.endsWith('ShadowWindow.tsx')) return '\0shadow-view-api';
         return value.endsWith('__app_view_test__.ts') ? entryId : undefined;
       },
-      load: value => value === '\0team-composer-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.teamFixtureClient};}` : value === '\0loop-preview-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.loopFixtureClient};}` : value === '\0shadow-view-api'
+      load: value => value === '\0assistant-feedback-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.feedbackFixtureClient};}` : value === '\0team-composer-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.teamFixtureClient};}` : value === '\0loop-preview-runtime' ? `export function createDesktopRuntimeSession(){return {dispose(){},client:window.loopFixtureClient};}` : value === '\0shadow-view-api'
         ? ['closeShadowConversation', 'createShadowConversation', 'fetchSessionMessages', 'streamShadowConversationMessage', 'updateShadowConversationMode']
           .map(name => `export const ${name} = (...args) => window.shadowFixture.${name}(...args);`).join('\n')
         : value === entryId ? exports : undefined,
@@ -317,6 +323,10 @@ app.whenReady().then(async () => {
       };
       if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback') {
+      await require('./helpers/assistant-feedback.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no feedback renderer errors'); assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components') {
       await require('./helpers/html-components-ui.cjs')({ run, until, pause, window, root });
       await require('./helpers/builtin-components-ui.cjs')({ run, until, pause, window, root });
@@ -448,7 +458,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -640,6 +650,14 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'user-message-disclosure') {
+      await require('./helpers/user-message-disclosure.cjs')({ run, until, pause, window, root });
+      if (process.env.CARDBUSH_APP_VIEWS_CASE) {
+        assert.deepEqual(await run('failures'), [], 'no user message disclosure renderer errors');
+        assert.deepEqual(errors, []);
+        return;
+      }
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-cover') {
       await require('./helpers/inspector-cover.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no cover/composer renderer errors'); assert.deepEqual(errors, []); return;

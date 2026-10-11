@@ -15,7 +15,7 @@ app.whenReady().then(async () => {
     const url = window.webContents.getURL(); let navigations=0;
     window.webContents.on('will-navigate',()=>navigations++);
     await until('Boolean(document.querySelector(".tool-execution-summary"))');
-    for (const theme of ['theme-dark']) {
+    for (const theme of ['theme-dark', 'theme-bright']) {
       await run(`theme=${JSON.stringify(theme)};renderFixture();`); await pause();
       if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
         await run('document.querySelector(".tool-execution-summary").click()');
@@ -23,6 +23,11 @@ app.whenReady().then(async () => {
       assert.equal(await run('document.querySelectorAll(".tool-execution-output,.tool-output-actions").length'),0);
       assert.equal(await run('requests.length'),0,'opening a package cannot fetch hidden native results');
       assert.ok(await run('[...document.querySelectorAll(".tool-execution-row")].every(row=>row.offsetHeight<=32)'));
+      assert.ok(await run(`[...document.querySelectorAll('.tool-execution-row')].every(row => {
+        const label = row.querySelector('.tool-execution-row-label').getBoundingClientRect();
+        const arrow = row.querySelector(':scope > svg:last-child').getBoundingClientRect();
+        return arrow.left >= label.right && arrow.left - label.right <= 8;
+      })`), 'detail arrows stay next to the labels, like the package entry');
       assert.ok(await run('document.documentElement.scrollWidth<=innerWidth'));
       await pause(); writeFileSync(resolve('tmp/tool-rows-'+theme+'.png'),(await window.webContents.capturePage()).toPNG());
       await run('document.querySelector("[data-execution-id=shell] .tool-execution-row").click()');
@@ -32,10 +37,34 @@ app.whenReady().then(async () => {
       await run('document.querySelector("[data-execution-id=search] .tool-execution-row").click()'); await pause();
       assert.equal(await run('document.querySelectorAll(".tool-execution-row-content").length'),1);
       assert.ok(await run('document.querySelector(".tool-execution-output").textContent===executions[1].output'),'complete output, including Unicode and line endings, survives disclosure');
+      const layout = await run(`(() => {
+        const output = document.querySelector('.tool-execution-output'), style = getComputedStyle(output);
+        const input = document.querySelector('.tool-execution-input').getBoundingClientRect();
+        const actions = document.querySelector('.tool-output-actions').getBoundingClientRect();
+        const box = output.getBoundingClientRect();
+        return {overflowY:style.overflowY, background:style.backgroundColor,
+          scrollable:output.scrollHeight > output.clientHeight, wide:output.scrollWidth > output.clientWidth,
+          height:box.height, inputTop:input.top, actionsTop:actions.top, actionsBottom:actions.bottom, outputTop:box.top};
+      })()`);
+      assert.equal(layout.overflowY, 'auto', 'message Markdown styles must not disable output scrolling');
+      assert.equal(layout.background, 'rgba(0, 0, 0, 0)', 'output shares the detail surface');
+      assert.ok(layout.scrollable && layout.wide && layout.height <= 320, 'long output is bounded and can scroll on both axes');
+      assert.ok(Math.abs(layout.inputTop-layout.actionsTop) <= 1 && layout.outputTop-layout.actionsBottom <= 5,
+        'summary and buttons share one compact toolbar above the output');
+      await run(`window.outputBox=document.querySelector('.tool-execution-output').getBoundingClientRect();
+        window.outerScrollTop=document.querySelector('.message-list').scrollTop;`);
+      const outputPoint = await run('({x:Math.round(outputBox.left+40),y:Math.round(outputBox.top+40)})');
+      window.webContents.sendInputEvent({type:'mouseMove',...outputPoint});
+      window.webContents.sendInputEvent({type:'mouseWheel',...outputPoint,deltaY:-120,deltaX:0});
+      await until('document.querySelector(".tool-execution-output").scrollTop > 0');
+      assert.equal(await run('document.querySelector(".message-list").scrollTop'),await run('outerScrollTop'),'reading output does not scroll the conversation');
+      await run('document.querySelector(".tool-execution-output").scrollTop=0');
+      await pause(); writeFileSync(resolve('tmp/tool-rows-output-'+theme+'.png'),(await window.webContents.capturePage()).toPNG());
       await run('document.querySelector("[aria-label=复制输出]").click()'); await pause();
       assert.ok(await run('copied.at(-1)===executions[1].output'));
       await run('document.querySelector("[aria-label=换行]").click()'); await pause();
       assert.ok(await run('document.querySelector(".tool-execution-output").classList.contains("wrapped")'));
+      assert.ok(await run('document.querySelector(".tool-execution-output").scrollWidth<=document.querySelector(".tool-execution-output").clientWidth+1'), 'wrapping removes horizontal overflow');
       await run('active=false; executions=executions.map(e=>e.id==="running"?{...e,state:"cancelled"}:e);renderFixture();'); await pause();
       assert.equal(await run('document.querySelectorAll(".tool-execution-row-content").length'),1,'completion cannot collapse the detail the user opened');
       await run('document.querySelector("[data-execution-id=search] .tool-execution-row").click()'); await pause();
@@ -172,6 +201,8 @@ app.whenReady().then(async () => {
     assert.ok(await run('document.querySelector(".tool-execution-summary").getBoundingClientRect().width<=220'));
     assert.equal(await run('document.querySelector(".tool-execution-summary").getBoundingClientRect().height'),await run('titleHeight'));
     assert.ok(await run('[...document.querySelectorAll(".tool-execution-summary svg")].every(svg=>svg.getBoundingClientRect().width>=15)'));
+    await run('document.querySelector(".tool-execution-row").click()'); await pause();
+    assert.ok(await run('document.querySelector(".tool-execution-row-content").scrollWidth<=document.querySelector(".tool-execution-row-content").clientWidth'), 'narrow details keep the toolbar and output within the row');
     assert.equal(window.webContents.getURL(),url); assert.equal(navigations,0);
     console.log('Tool rows UI passed: both themes, compact rows, one detail, exact output/copy, wrap, completion, lazy hydration, retry, late results, zero navigation.');
   } finally { window.destroy(); }

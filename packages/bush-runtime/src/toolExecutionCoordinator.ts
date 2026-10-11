@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 
 import { mcpSchemaRequiredError, mcpToolWasDiscovered } from './mcpToolDiscovery.js';
 import {
@@ -122,6 +123,10 @@ export class ToolExecutionCoordinator {
         `Tool ${toolCall.name} is not registered in this Runtime host.`,
       );
     }
+    if (turn && registration.registrationOwner?.startsWith('extension:') &&
+      !isDeepStrictEqual(turn.request.tools.find(tool => tool.name === toolCall.name), registration.definition)) {
+      return failedResult('tool_definition_changed', 'The plugin definition changed after the model request started. This call was not dispatched; use the current definition on the next round.', undefined, { inputDispatched: false });
+    }
 
     const childDenial = childAgentToolDenial(turn?.request, registration);
     if (childDenial) return failedResult(childDenial.code, childDenial.message, undefined,
@@ -165,10 +170,10 @@ export class ToolExecutionCoordinator {
     } catch (error) {
       if (signal?.aborted || isAbortError(error)) return cancelledResult('plugin_hook_cancelled');
       return failedResult(
-        "tool_arguments_schema_invalid",
+        errorCode(error, "tool_arguments_schema_invalid"),
         errorMessage(error),
         undefined,
-        {},
+        errorDetails(error),
         "protocol",
       );
     }
@@ -298,8 +303,8 @@ export class ToolExecutionCoordinator {
     if (signal?.aborted) {
       return cancelledResult("turn_cancelled", actionManifest);
     }
-    if (registration.mcpHook && this.#registry.resolve(toolCall.name) !== registration) {
-      return failedResult('tool_definition_changed', 'The MCP connection changed while awaiting execution. Discover the current tool and try again.', actionManifest);
+    if ((registration.mcpHook || registration.registrationOwner?.startsWith('extension:')) && this.#registry.resolve(toolCall.name) !== registration) {
+      return failedResult('tool_definition_changed', 'The plugin changed while awaiting execution. This call was not dispatched. Use the current tool definition before calling again.', actionManifest, { inputDispatched: false });
     }
     // Ordinary delegation belongs to the caller's receipt. Only explicitly
     // recorded (for example background) calls have an independent lifecycle.

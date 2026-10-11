@@ -934,6 +934,54 @@
   word-break: break-word;
 }
 
+.user-message-disclosure {
+  --user-message-preview-lines: 6;
+  min-width: 0;
+  font-size: calc(13.25px * var(--ui-font-scale, 1));
+  line-height: 1.75;
+}
+
+.user-message-viewport {
+  /* Bound the first paint too, before lazy Markdown and height measurement. */
+  max-height: calc(var(--user-message-preview-lines) * 1lh);
+  overflow: clip;
+}
+
+.user-message-viewport.expanded {
+  max-height: none;
+}
+
+.user-message-viewport.overflowing:not(.expanded) {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+}
+
+.user-message-body {
+  display: flow-root;
+}
+
+.user-message-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.user-message-toggle:hover,
+.user-message-toggle:focus-visible {
+  color: var(--text);
+}
+
+.user-message-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
 .message-delivery-status {
   width: fit-content;
   display: inline-flex;

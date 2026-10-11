@@ -101,15 +101,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!layoutThinking.querySelector('small')", 'reasoning can be enabled again');
   await run(`updateChat({ queuedMessages: [{ id: 'layout-q', text: '随后检查窄屏布局', createdAt: '2026-09-28T05:00:06Z' }],
     queuedMessageCount: 1, queuedMessagePreview: '随后检查窄屏布局' });`);
-  await until("!!document.querySelector('.composer-runtime-screen.queue')", 'rail is exclusively queue');
-  const composerTop = () => run("document.querySelector('.composer-dock').getBoundingClientRect().top");
-  const top = await composerTop();
-  await run("document.querySelector('.composer-runtime-screen.queue').click()");
-  await until("!!document.querySelector('.queue-context-panel')", 'queue expands');
-  await pause(220);
-  assert.ok(Math.abs(await composerTop() - top) < 1, 'expanding queue leaves input position unchanged');
+  await until("!!document.querySelector('.runtime-queue-item')", 'guidance appears directly above the input');
+  assert.equal(await run("document.querySelector('.composer-runtime-screen, .queue-context-panel')"), null, 'no queue disclosure is needed');
   assert.equal(await run("getComputedStyle(document.querySelector('.runtime-queue-list')).scrollbarGutter"), 'stable');
-  await run("document.querySelector('.queue-context-panel header button').click()");
   await run(`window.completedLayoutPlan = { ...layoutPlan, nodes: layoutPlan.nodes.map(node => ({ ...node, status: 'completed' })) };
     updateChat({ messages: [layoutUser, { ...layoutAssistant, taskPlan: completedLayoutPlan }] });`);
   await until("!document.querySelector('.runtime-plan-detail')", 'all completed steps hide the live board before the turn finishes');

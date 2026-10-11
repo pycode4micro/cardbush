@@ -19,148 +19,20 @@
 }
 
 .composer-runtime-rail {
-  width: min(calc(100% - 56px), calc(var(--chat-track-width) - 56px));
-  min-height: 15px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  pointer-events: auto;
   position: relative;
-  z-index: 2;
-}
-
-.composer-runtime-screen {
-  position: relative;
-  width: 100%;
+  width: calc(100% - 24px);
   min-width: 0;
-  min-height: 32px;
-  padding: 0 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  margin: 0 auto -8px;
+  padding: 4px 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
   border-bottom: 0;
-  border-radius: 18px 18px 0 0;
-  display: block;
-  overflow: hidden;
-  background: color-mix(
-    in srgb,
-    var(--surface-strong) 86%,
-    transparent
-  );
-  box-shadow: 0 -5px 18px color-mix(in srgb, var(--shadow) 18%, transparent);
-  backdrop-filter: blur(16px) saturate(1.06);
-  -webkit-backdrop-filter: blur(16px) saturate(1.06);
-  color: var(--text-soft);
-  text-align: left;
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity 140ms var(--ease-standard),
-    transform 180ms var(--ease-standard),
-    background-color 160ms var(--ease-standard),
-    border-color 160ms var(--ease-standard);
-}
-
-.composer-runtime-screen.has-queue-actions {
-  padding-right: 84px;
-}
-
-.runtime-screen-queue-actions {
-  position: absolute;
-  right: 8px;
-  bottom: 5px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 2px;
+  border-radius: 16px 16px 0 0;
+  background: var(--surface-strong);
   pointer-events: auto;
 }
 
-.runtime-screen-queue-actions > button {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-mid);
-  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
-}
-
-.runtime-screen-queue-actions > button:hover:not(:disabled),
-.runtime-screen-queue-actions > button:focus-visible {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  background: color-mix(in srgb, var(--accent) 13%, var(--surface-strong));
-}
-
-.runtime-screen-queue-actions > button:disabled {
-  opacity: 0.48;
-}
-
-.runtime-screen-queue-guide .lucide-loader-circle,
 .runtime-queue-guide .lucide-loader-circle {
   animation: cardbush-spin 900ms linear infinite;
-}
-
-.composer-runtime-rail.expanded {
-  z-index: 4;
-}
-
-.composer-runtime-rail.expanded .runtime-context-panel {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 100%;
-  margin: 0;
-  border-radius: 12px 12px 0 0;
-  border-color: color-mix(in srgb, var(--border) 72%, transparent);
-  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
-  box-shadow: 0 14px 34px color-mix(in srgb, var(--shadow) 70%, transparent);
-  opacity: 0;
-  transform: translateY(6px) scale(0.992);
-  transform-origin: bottom center;
-  transition:
-    opacity 150ms var(--ease-standard),
-    transform 180ms var(--ease-enter),
-    box-shadow 180ms var(--ease-standard);
-  will-change: opacity, transform;
-}
-
-.composer-runtime-rail.context-visible .runtime-context-panel {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.composer-runtime-rail.context-exiting .runtime-context-panel {
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(5px) scale(0.994);
-  transition-timing-function: var(--ease-exit);
-}
-
-.composer-runtime-rail.context-visible .composer-runtime-screen {
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(3px);
-}
-
-.composer-runtime-rail.context-visible .runtime-screen-queue-actions {
-  pointer-events: none;
-  opacity: 0;
-}
-
-.composer-runtime-screen:hover,
-.composer-runtime-screen.open {
-  border-color: color-mix(in srgb, var(--border) 82%, transparent);
-  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
-}
-
-.runtime-screen-viewport {
-  min-width: 0;
-  height: 30px;
-  display: block;
-  overflow: hidden;
 }
 
 .tool-image-artifacts {
@@ -584,101 +456,77 @@
   display: none;
 }
 
-.runtime-queue-detail {
-  min-height: 0;
-  padding: 0 8px 8px;
+.runtime-queue-lock {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.queue-context-panel {
-  display: flex;
-  flex-direction: column;
-  max-height: min(420px, max(100px, calc(var(--composer-content-top, 60vh) - 12px)));
-}
-
-.queue-context-panel > header {
-  flex: 0 0 36px;
-}
-
-.runtime-queue-hint {
-  flex: 0 0 auto;
-  padding: 8px 4px;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 9px;
   color: var(--text-soft);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  line-height: 1.5;
 }
-
-.runtime-queue-detail p {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--text-soft);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.5;
+.runtime-queue-lock > span { flex: 1; }
+.runtime-queue-lock > button {
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-mid);
+  font: inherit;
 }
+.runtime-queue-lock > button:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+.runtime-queue-placeholder { margin: 4px 12px; color: var(--text-soft); font-size: 12px; }
 
 .runtime-queue-list {
   position: relative;
   min-height: 0;
+  max-height: min(176px, 24dvh);
   overflow-y: auto;
   scrollbar-gutter: stable;
   overscroll-behavior-y: contain;
   overflow-anchor: none;
-  padding: 3px;
   scrollbar-width: thin;
-  scrollbar-color:
-    color-mix(in srgb, var(--text) 16%, transparent)
-    transparent;
+  scrollbar-color: color-mix(in srgb, var(--text) 16%, transparent) transparent;
 }
-
-.runtime-queue-list::-webkit-scrollbar {
-  width: 5px;
-}
-
-.runtime-queue-list::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text) 16%, transparent);
-}
+.runtime-queue-list::-webkit-scrollbar { width: 5px; }
+.runtime-queue-list::-webkit-scrollbar-thumb { border-radius: 999px; background: color-mix(in srgb, var(--text) 16%, transparent); }
 
 .runtime-queue-item {
   position: relative;
   container: queued-message / inline-size;
-  padding: 6px 8px;
-  margin-bottom: 6px;
+  min-height: 34px;
+  padding: 2px 3px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  gap: 4px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--text) 3%, transparent);
   transform: translateY(var(--queue-reorder-offset, 0px));
 }
-
-.runtime-queue-item:last-child {
-  margin-bottom: 0;
-}
-
 .runtime-queue-item.dragging {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
   border-style: dashed;
 }
-
-.runtime-queue-item.dragging > * {
-  visibility: hidden;
-}
-
-.runtime-queue-item[data-reorderable="true"] {
+.runtime-queue-item.dragging > * { visibility: hidden; }
+.runtime-queue-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-soft);
   cursor: grab;
+  touch-action: none;
 }
-
-.runtime-queue-list.is-reordering .runtime-queue-item {
-  transition: transform 140ms ease;
-  will-change: transform;
-}
-
+.runtime-queue-drag-handle:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.runtime-queue-drag-handle:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.runtime-queue-drag-handle:disabled { cursor: default; opacity: 0.35; }
+.runtime-queue-list.is-reordering .runtime-queue-item { transition: transform 140ms ease; will-change: transform; }
 .runtime-queue-drag-preview {
   position: fixed;
   z-index: 10000;
@@ -690,18 +538,11 @@
   box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
   will-change: transform;
 }
-
-body.queue-reordering * {
-  cursor: grabbing !important;
-  user-select: none !important;
-}
-
+body.queue-reordering * { cursor: grabbing !important; user-select: none !important; }
+body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  :where(html:not([data-motion-preference="off"])) .runtime-queue-list.is-reordering .runtime-queue-item {
-    transition: none;
-  }
+  :where(html:not([data-motion-preference="off"])) .runtime-queue-list.is-reordering .runtime-queue-item { transition: none; }
 }
-
 .runtime-queue-item > .runtime-queue-prompt {
   min-width: 0;
   margin: 0;
@@ -714,48 +555,30 @@ body.queue-reordering * {
   text-overflow: ellipsis;
   user-select: text;
 }
-
-.runtime-queue-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
+.runtime-queue-actions { display: flex; align-items: center; gap: 2px; }
 .runtime-queue-actions > button {
-  min-width: 58px;
+  min-width: 28px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
-  border-radius: 7px;
+  border: 0;
+  border-radius: 6px;
   color: var(--text-soft);
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  background: transparent;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
-
-.runtime-queue-actions > button:hover:not(:disabled) {
+.runtime-queue-actions > button:hover:not(:disabled), .runtime-queue-actions > button:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
-
-.runtime-queue-actions > button:disabled {
-  opacity: 0.45;
-}
-
-@container queued-message (max-width: 480px) {
-  .runtime-queue-actions > button {
-    min-width: 28px;
-    width: 28px;
-    padding: 0;
-  }
-
-  .runtime-queue-actions > button > span {
-    display: none;
-  }
+.runtime-queue-actions > button:disabled { opacity: 0.45; }
+@container queued-message (max-width: 360px) {
+  .runtime-queue-actions > button { width: 28px; padding: 0; }
+  .runtime-queue-actions > button > span { display: none; }
 }
 
 .change-context-panel {

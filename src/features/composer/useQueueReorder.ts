@@ -132,13 +132,11 @@ export function useQueueReorder(
 
   function onPointerDown(id: string, event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0 || !event.isPrimary || !onReorder || disabled || items.length < 2) return;
-    const target = event.target as HTMLElement;
-    if (target.closest('button, a, input, textarea, select')) return;
-    // Touch scrolls the queue; the overflow menu also exposes Move up/down.
-    if (event.pointerType === 'touch') return;
+    const row = event.currentTarget.closest<HTMLElement>('[data-queue-item-id]');
+    if (!row) return;
     finish();
     event.preventDefault();
-    const row = event.currentTarget;
+    event.currentTarget.focus({ preventScroll: true });
     row.setPointerCapture(event.pointerId);
     const cancel = () => finish();
     const onKeyDown = (keyEvent: KeyboardEvent) => {

@@ -49,7 +49,7 @@ export function MemoryRecordsPanel({settings,connection,zh,refresh,onChanged,api
     finally {lock.current=false;if(version===generation.current)setBusy(false);}
   }
   const date=(value:number|null)=>value===null?(zh?'未确认':'Not confirmed'):new Date(value).toLocaleString(zh?'zh-CN':'en-US');
-  const label=(row:MemoryRecord)=>row.kind==='habit'?(zh?'习惯':'Habit'):row.kind==='prediction'?(zh?'预测':'Prediction'):(zh?'待整理笔记':'Unclassified note');
+  const label=(row:MemoryRecord)=>row.kind==='habit'?(zh?'习惯':'Habit'):row.kind==='prediction'?(zh?'预测':'Prediction'):row.kind==='feedback'?(zh?'回复反馈事件':'Reply feedback'):(zh?'待整理笔记':'Unclassified note');
   function edit(row:MemoryRecord) {
     setEditing(row);setText(row.text);setCondition(row.applies_when);setKind(row.kind==='prediction'?'prediction':'habit');
     setExpiry(row.expires_at===null?'':new Date(row.expires_at-new Date(row.expires_at).getTimezoneOffset()*60000).toISOString().slice(0,16));
@@ -75,8 +75,8 @@ export function MemoryRecordsPanel({settings,connection,zh,refresh,onChanged,api
         {row.source_ids.length>0&&<small>{zh?'整理来源：':'Consolidated from: '}{row.source_ids.join(', ')}</small>}
         {row.replaced_by.length>0&&<small>{zh?'替代条目：':'Replacements: '}{row.replaced_by.join(', ')}</small>}
         <div className="memory-record-actions">{row.state==='active'&&<>
-          {row.origin!=='user'&&<button className="secondary-button" disabled={busy} onClick={()=>change(row,'confirm')}>{zh?'确认并固定':'Confirm and pin'}</button>}
-          <button className="secondary-button" disabled={busy} onClick={()=>edit(row)}>{zh?'修正':'Correct'}</button>
+          {row.origin!=='user'&&row.kind!=='feedback'&&<button className="secondary-button" disabled={busy} onClick={()=>change(row,'confirm')}>{zh?'确认并固定':'Confirm and pin'}</button>}
+          {row.kind!=='feedback'&&<button className="secondary-button" disabled={busy} onClick={()=>edit(row)}>{zh?'修正':'Correct'}</button>}
           <button className="secondary-button" disabled={busy} onClick={()=>change(row,'retract')}>{zh?'撤销此条':'Retract'}</button>
         </>}</div>
       </article>)}{!busy&&!records.length&&<p>{zh?'暂无可显示的记忆。':'No records to display.'}</p>}</div>:

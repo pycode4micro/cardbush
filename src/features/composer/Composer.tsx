@@ -32,7 +32,7 @@ import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
 import { normalizePermissionMode, permissionModeOptions } from '../../shared/permissionModes';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
-import { QueueActionsMenu } from './QueueActionsMenu';
+import { ComposerRuntimeRail } from './ComposerRuntimeRail';
 import {
   ArrowRight,
   ArrowUp,
@@ -43,8 +43,6 @@ import {
   ChevronDown,
   ChevronLeft,
   Circle,
-  Clock3,
-  CornerDownLeft,
   Edit3,
   File as FileIcon,
   FileArchive,
@@ -54,7 +52,6 @@ import {
   FolderOpen,
   Globe,
   ListChecks,
-  ListOrdered,
   LoaderCircle,
   Lock,
   MessageSquare,
@@ -68,7 +65,6 @@ import {
   SlidersHorizontal,
   Square,
   Target,
-  Trash2,
   Unlock,
   UsersRound,
   X,
@@ -341,7 +337,7 @@ export function Composer({
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
-  onShowQueue,
+  onReorderQueuedMessage,
   onConfigureModels,
   onCreateConversation,
   onToggleSkill,
@@ -395,7 +391,7 @@ export function Composer({
   onEditQueuedMessage?: (item: ComposerQueuedMessage) => void;
   onGuideQueuedMessage?: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage?: (queuedId: string) => void;
-  onShowQueue?: () => void;
+  onReorderQueuedMessage?: (id: string, targetId: string) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
@@ -1198,28 +1194,16 @@ export function Composer({
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
   const firstQueuedMessage = queuedMessages[0] ?? null;
-  const queuePreview =
-    queuedMessagePreview.trim() || firstQueuedMessage?.text.trim() || '';
-  const queueLabel =
-    queuedMessageCount > 0
-      ? language === 'zh'
-        ? `排队 ${queuedMessageCount}`
-        : `${queuedMessageCount} queued`
-      : '';
-  const queueHint =
-    queueLocked ? language === 'zh' ? '已锁定，仅手动发送' : 'Locked · send manually'
-      : language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply';
-  const queueTitle = queuedMessagePreview.trim()
-    ? `${queueLabel} · ${queueHint}\n${queuePreview}`
-    : `${queueLabel} · ${queueHint}`;
-  const guideFirstQueuedMessage = async () => {
-    if (!firstQueuedMessage || !onGuideQueuedMessage) {
-      return;
-    }
-    setGuidingQueuedId(firstQueuedMessage.id);
+  const guideQueuedMessage = async (id: string) => {
+    if (!runtimeReady || stopping || immediatePendingRef.current || !onGuideQueuedMessage || (sending && !cancelEnabled)) return;
+    immediatePendingRef.current = true;
+    setGuidingQueuedId(id);
     try {
-      await onGuideQueuedMessage(firstQueuedMessage.id);
+      await onGuideQueuedMessage(id);
+    } catch (error) {
+      showUiError(language === 'zh' ? '引导发送失败' : 'Unable to send guidance', error instanceof Error ? error.message : String(error));
     } finally {
+      immediatePendingRef.current = false;
       setGuidingQueuedId('');
     }
   };
@@ -1228,10 +1212,10 @@ export function Composer({
     if (!runtimeReady || stopping || immediatePendingRef.current || (sending && !cancelEnabled)) return;
     const useQueue = fromQueue || !hasContent;
     if (useQueue && (!firstQueuedMessage || !onGuideQueuedMessage)) return;
+    if (useQueue) return guideQueuedMessage(firstQueuedMessage!.id);
     immediatePendingRef.current = true;
     try {
-      if (useQueue) await guideFirstQueuedMessage();
-      else await submit(true);
+      await submit(true);
     } catch (error) {
       showUiError(language === 'zh' ? '引导发送失败' : 'Unable to send guidance', error instanceof Error ? error.message : String(error));
     } finally { immediatePendingRef.current = false; }
@@ -1248,7 +1232,7 @@ export function Composer({
       if (!composerStackRef.current?.contains(target) && target.closest('input, textarea, [contenteditable="true"], [role="textbox"]')) return;
       event.preventDefault();
       event.stopPropagation();
-      void immediateHandlerRef.current(Boolean(target.closest('.queue-context-panel, .runtime-screen-queue-actions, .composer-queue-row')));
+      void immediateHandlerRef.current(Boolean(target.closest('.composer-runtime-rail')));
     };
     window.addEventListener('keydown', handleImmediate);
     return () => window.removeEventListener('keydown', handleImmediate);
@@ -1272,7 +1256,7 @@ export function Composer({
           selectedIndex={commandIndex}
           onSelect={(item) => applyCommand(item)}
         />;
-        return portalCommands ? <ComposerCommandPortal anchor={composerStackRef}>{palette}</ComposerCommandPortal> : palette;
+        return portalCommands || portalTarget ? <ComposerCommandPortal anchor={composerStackRef}>{palette}</ComposerCommandPortal> : palette;
       })()}
       {activeMenu &&
         (() => {
@@ -1334,47 +1318,12 @@ export function Composer({
           onClose={() => setPreviewImage(null)}
         />
       )}
-      {(queueLabel || queueLocked) && !onShowQueue && (
-        <div className="composer-secondary-row composer-queue-row" title={queueTitle}>
-          <div className="composer-queue-summary">
-            <Clock3 size={13} />
-            <span>{queueLocked ? language === 'zh' ? '已锁定' : 'Locked' : queueLabel}</span>
-            <small>{queuePreview || queueHint}</small>
-          </div>
-          <div className="composer-queue-actions">
-            {firstQueuedMessage && <>
-              <button
-                type="button"
-                aria-label={language === 'zh' ? '发送排队引导' : 'Send queued message'}
-                title={[language === 'zh' ? '发送' : 'Send', keyboardShortcuts.label('guideNow')].filter(Boolean).join(' · ')}
-                aria-keyshortcuts={keyboardShortcuts.aria('guideNow')}
-                disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
-                onClick={() => void guideFirstQueuedMessage()}
-              >
-                {guidingQueuedId === firstQueuedMessage.id ? (
-                  <LoaderCircle size={12} />
-                ) : (
-                  <CornerDownLeft size={12} />
-                )}
-                <span>{language === 'zh' ? '发送' : 'Send'}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={language === 'zh' ? '删除排队消息' : 'Delete queued message'}
-                title={language === 'zh' ? '删除' : 'Delete'}
-                disabled={!onRemoveQueuedMessage}
-                onClick={() => onRemoveQueuedMessage?.(firstQueuedMessage.id)}
-              >
-                <Trash2 size={12} />
-                <span>{language === 'zh' ? '删除' : 'Delete'}</span>
-              </button>
-            </>}
-            <QueueActionsMenu language={language} locked={queueLocked} lockPending={queueLockPending}
-              onToggleLock={onToggleQueueLock} busy={Boolean(guidingQueuedId)}
-              onEdit={firstQueuedMessage && onEditQueuedMessage ? () => onEditQueuedMessage(firstQueuedMessage) : undefined} />
-          </div>
-        </div>
-      )}
+      <ComposerRuntimeRail language={language} queuedMessageCount={queuedMessageCount}
+        queuedMessagePreview={queuedMessagePreview} queuedMessages={queuedMessages}
+        queueLocked={queueLocked} queueLockPending={queueLockPending} onToggleQueueLock={onToggleQueueLock}
+        guidingQueuedId={guidingQueuedId} onGuideQueuedMessage={runtimeReady && !stopping && onGuideQueuedMessage ? guideQueuedMessage : undefined}
+        onEditQueuedMessage={onEditQueuedMessage} onRemoveQueuedMessage={onRemoveQueuedMessage}
+        onReorderQueuedMessage={onReorderQueuedMessage} />
       <div
         ref={composerSurfaceRef}
         style={voiceComposer.style}
@@ -1648,15 +1597,6 @@ export function Composer({
               <ChevronDown size={13} />
             </button>
             <ExtractionBulbs onInsert={insertExtraction} />
-            {queuedMessageCount > 0 && onShowQueue && (
-              <button className="composer-queue-button" type="button"
-                title={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}
-                aria-label={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}
-                onClick={() => { setActiveMenu(null); onShowQueue(); }}>
-                <ListOrdered size={15} aria-hidden="true" />
-                <span>{queuedMessageCount}</span>
-              </button>
-            )}
           </div>
           <div className="composer-actions">
             <button

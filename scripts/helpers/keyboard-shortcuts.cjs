@@ -62,7 +62,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.deepEqual(await run('keyboardEvents'), [], 'IME confirmation must not send guidance');
     await run(`shortcutKey('[data-composer-input]', 'U', { ctrlKey: true, shiftKey: true })`);
     await until("keyboardEvents.length === 1 && chatProps.draft === ''", 'draft becomes guidance');
-    assert.deepEqual(await run('keyboardEvents[0]'), { kind: 'guide', text: '直接引导草稿', turnId: 'turn-a', mode: 'append_context' });
+    assert.deepEqual(await run('keyboardEvents[0]'), { kind: 'guide', text: '直接引导草稿', turnId: 'turn-a', mode: 'interrupt_and_continue' });
     await run(`updateChat({ queuedMessages: [{ id: 'q1', text: '队列一' }, { id: 'q2', text: '队列二' }], queuedMessageCount: 2 });`);
     await pause(40);
     await run(`shortcutKey('[data-composer-input]', 'U', { ctrlKey: true, shiftKey: true, repeat: true });
@@ -73,14 +73,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run(`updateChat({ queuedMessages: [chatProps.queuedMessages[1], chatProps.queuedMessages[0]] });`); await pause(30);
     await run(`shortcutKey('[data-composer-input]', 'U', { ctrlKey: true, shiftKey: true })`);
     await until("keyboardEvents.length === 2", 'first current queue item sent');
-    assert.deepEqual(await run('keyboardEvents[1]'), { kind: 'queue', id: 'q2', mode: 'append_context' });
+    assert.deepEqual(await run('keyboardEvents[1]'), { kind: 'queue', id: 'q2', mode: 'interrupt_and_continue' });
     assert.deepEqual(await run('chatProps.queuedMessages.map(item => item.id)'), ['q1']);
 
-    await run(`updateChat({ draft: '保留的草稿' }); document.querySelector('.composer-queue-button').click();`);
+    await run(`updateChat({ draft: '保留的草稿' });`);
     await until("!!document.querySelector('.runtime-queue-drag-handle')", 'queue view');
     await run(`shortcutKey('.runtime-queue-guide', 'U', { ctrlKey: true, shiftKey: true })`);
     await until("keyboardEvents.length === 3", 'queue focused guidance');
-    assert.deepEqual(await run('keyboardEvents[2]'), { kind: 'queue', id: 'q1', mode: 'append_context' });
+    assert.deepEqual(await run('keyboardEvents[2]'), { kind: 'queue', id: 'q1', mode: 'interrupt_and_continue' });
     assert.equal(await run('chatProps.draft'), '保留的草稿', 'queue focused shortcut must preserve the composer draft');
     await run(`shortcutKey('[data-composer-input]', 'Enter')`);
     await until('keyboardEvents.length === 4', 'ordinary enter delivery');
@@ -109,7 +109,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return', modifiers: ['control'] });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return', modifiers: ['control'] });
     await until('keyboardEvents.length === 6', 'native Ctrl Enter sends immediate guidance');
-    assert.deepEqual(await run('keyboardEvents[5]'), { kind: 'guide', text: '默认快捷键引导', turnId: 'turn-a', mode: 'append_context' });
+    assert.deepEqual(await run('keyboardEvents[5]'), { kind: 'guide', text: '默认快捷键引导', turnId: 'turn-a', mode: 'interrupt_and_continue' });
     await run('finishKeyboardGuide()'); await pause(30);
     await run("updateChat({ draft: '保留换行' })"); await pause(30);
     await run("document.querySelector('[data-composer-input]').focus()");
@@ -127,9 +127,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
       onOpenFiles: () => {}, onOpenBrowser: () => {}, onOpenShadow: () => {} }));`);
     await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+Shift+P'", 'menu hint follows settings');
     assert.equal(await run("document.querySelector('[data-inspector-action=files]').getAttribute('aria-keyshortcuts')"), 'Control+Shift+P');
-    await run(`localStorage.setItem(views.keyboardShortcutsStorageKey, JSON.stringify({openFiles:{key:'l',ctrl:true,shift:true}}));
+    await run(`localStorage.setItem(views.keyboardShortcutsStorageKey, JSON.stringify({openFiles:{key:'o',ctrl:true,shift:true}}));
       dispatchEvent(new StorageEvent('storage', { key: views.keyboardShortcutsStorageKey }));`);
-    await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+Shift+L'", 'cross-window preference changes');
+    await until("document.querySelector('[data-inspector-action=files] kbd')?.textContent === 'Ctrl+Shift+O'", 'cross-window preference changes');
     console.log('Keyboard UI passed: record/conflict/reset/disable, persistent live bindings, IME/repeat guards, draft and first-queue guidance, retained queue/draft, idle fallback and synchronized menu hints.');
   } finally {
     await run('views.saveKeyboardShortcuts({}); updateChat(keyboardSavedChat)');

@@ -227,7 +227,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const cancelling = busy === `${id}:cancel`;
       const status = modified ? (zh ? '有未保存修改' : 'Unsaved changes') : !enabled ? (zh ? '已停用' : 'Disabled')
         : resourceWaiting ? (actual?.health === 'ready' ? (zh ? '已连接，等待资源后更新' : 'Connected; update waiting for resources') : (zh ? '等待可用资源' : 'Waiting for resources'))
-        : pending ? (actual?.updateState === 'waiting_for_catalog' ? (zh ? '等待工具生效' : 'Awaiting tool activation') : (zh ? '等待任务结束后生效' : 'Pending until tasks finish'))
+        : pending ? (actual?.updateState === 'waiting_for_calls' ? (zh ? '等待当前工具调用完成' : 'Waiting for current tool calls') : (zh ? '正在同步工具目录' : 'Synchronizing tools'))
         : needsAccount ? (zh ? '登录账户后连接' : 'Sign in above to connect') : ready ? (zh ? '已连接' : 'Connected')
           : busy === `${id}:reconnect` || connectionState === 'restarting' ? (zh ? '连接中…' : 'Connecting…')
             : connectionState === 'unavailable' ? (zh ? '连接失败' : 'Connection failed') : connectionState === 'auth_required' ? (zh ? '需要登录' : 'Sign-in required') : connectionState === 'configuration_required' ? (hosted ? (zh ? '尚未连接' : 'Not connected') : (zh ? '需要配置' : 'Configuration required'))
@@ -262,8 +262,8 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
         {waitingForAuthorization && !resourceWaiting && <p role="status" className="plugin-mcp-hint">{zh ? '请在浏览器完成授权，返回后会自动检查连接。' : 'Finish authorization in your browser. We’ll check the connection when you return.'}</p>}
         {resourceWaiting && <p role="status" className="plugin-mcp-hint">{zh ? '资源可用后会自动连接。' : 'Connects automatically when resources are available.'}</p>}
         {pending && <p className="plugin-mcp-hint">{!enabled
-          ? (zh ? '已保存停用设置；正在运行的任务仍可能使用旧连接，任务结束后会移除。' : 'Disabling is saved. Running tasks may still use the previous connection until they finish.')
-          : (zh ? '连接配置正在等待运行中的任务结束，可先取消不需要的连接。状态会自动更新。' : 'Connection settings are waiting for running tasks to finish. You can cancel unwanted connections; status updates automatically.')}</p>}
+          ? (zh ? '停用设置已保存，正在完成此连接中已发出的调用。' : 'Disabling is saved. Already dispatched calls on this connection are finishing.')
+          : (zh ? '正在更新此连接，已发出的调用完成后自动切换，无需停止会话。' : 'Updating this connection after its dispatched calls finish. The conversation can continue.')}</p>}
         {!ready && enabled && required && <p className="plugin-mcp-hint">{zh ? '取消后将停用此连接，依赖它的功能将不可用。' : 'Cancelling disables this connection and features that depend on it.'}</p>}
         <details className="plugin-mcp-advanced" open={advancedOpen.has(id)} onToggle={event => toggleAdvanced(id, event.currentTarget.open)}><summary>{zh ? '高级设置' : 'Advanced settings'}</summary>
         <div className="plugin-mcp-options">

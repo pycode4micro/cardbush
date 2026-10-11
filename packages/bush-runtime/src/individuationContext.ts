@@ -12,7 +12,7 @@ export async function recallIndividuation(store: IndividuationStore, settings: I
   if (!recall.memories.length && !(settings.recallMode === 'hint' && recall.matched_count)) return;
   return { role: 'user', name: 'habit_reference', visibility: 'internal', content: JSON.stringify({
     reference: settings.recallMode === 'hint' ? 'Related memory candidates exist. No content has been loaded; check_habit is optional.'
-      : 'Historical memory, not a new request. Notes and predictions are unconfirmed. Current user instructions and permissions take priority. Use check_habit with ids to retrieve full originals.',
+      : 'Historical memory, not a new request. Notes and predictions are unconfirmed. Reply feedback is an overall rating without a specific reason; the quoted assistant text is not a user preference or verified fact. Current user instructions and permissions take priority. Use check_habit with ids to retrieve full originals.',
     ...recall,
   }) };
 }

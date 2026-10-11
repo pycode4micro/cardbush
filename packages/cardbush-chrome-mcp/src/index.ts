@@ -8,6 +8,7 @@ import { DEFAULT_BROWSER_START_PAGE } from '@cardbush/bush-protocol';
 import { BrowserArtifacts, digest, exportedImage, type BrowserArtifact } from './imageArtifacts.js';
 import { prepareCapture, captureClip, setViewport, evaluate, canvasExportExpression, type Viewport } from './pageCapture.js';
 import { dispatchPointer } from './pagePointer.js';
+import { uploadFiles } from './pageUpload.js';
 import { PageSnapshots, snapshotSchema } from './pageSnapshot.js';
 
 import {
@@ -64,6 +65,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       'Call release_browser when browser work is complete; it detaches control and collapses external session groups without closing tabs.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
       'Tracked file downloads (download_file/download_status) are currently supported only in Chrome/Edge. Integrated tabs return an explicit unsupported error, never redirect to another browser. Reuse pending download taskIds instead of starting repeated downloads.',
+      'For local file uploads use upload_file with absolute filePaths and a file-input uid or observed CSS selector (hidden inputs supported). Do not build a localhost file server or inject file bytes/Base64 to select files. For native file dialogs, crop/drag controls or other UI the browser interface cannot operate, discover Computer Use and observe the same authorized browser window before mouse/keyboard input; preserve the browser/profile and verify the result before continuing.',
       'take_snapshot returns a bounded page of accessibility text only once, with a nextCursor when more is available. Prefer rootUid/query/roles to narrow the page; continue only as needed. Click receipts confirm checked targeting and dispatched input, not that the page completed the requested operation; observe the relevant state afterwards.',
     ].join(' '),
   });
@@ -275,7 +277,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('click', toolDefinition(
     'Click page element',
-    'Send a real mouse click to a uid from take_snapshot after checking visible area, enabled state, and actual hit target, including after hover. A zero-area control may use its explicitly associated visible label. Covered or stale targets return an error; no JavaScript click or Enter fallback is used. input_dispatched does not prove submission/navigation/task completion: observe the resulting page state before continuing or retrying.',
+    'Send a real mouse click to a uid from take_snapshot after checking visible area, enabled state, and actual hit target, including after hover. A hidden or zero-area enabled control may use its explicitly associated visible label. Covered, disabled or stale targets return an error; no JavaScript click or Enter fallback is used. input_dispatched does not prove submission/navigation/task completion: observe the resulting page state before continuing or retrying.',
     z.object({ uid: z.string().regex(/^cb_\d+$/), doubleClick: z.boolean().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -289,7 +291,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('fill', toolDefinition(
     'Fill page element',
-    'Replace the value of an input, textarea, or editable element identified by uid.',
+    'Replace the value of a text input, textarea, or editable element identified by uid. For file inputs use upload_file with local filePaths.',
     z.object({ uid: z.string().regex(/^cb_\d+$/), value: z.string() }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -308,6 +310,20 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       return { tag: this.tagName, value: this.value ?? this.textContent };
     }`, context, request);
     return { text: `Filled ${input.uid}.`, structured: record(result) };
+  }));
+
+  server.registerTool('upload_file', toolDefinition(
+    'Upload local files to page',
+    'Select existing local files in the current page’s input[type=file], including hidden inputs. Provide exactly one uid from observation or an observed CSS selector matching one file input, plus absolute filePaths on this browser host. Supports multiple files only when the input allows it. Chromium fires input/change; the website may start uploading immediately. This does not click Save/Publish or verify server completion: inspect the preview/status afterwards, and never retry an unconfirmed selection blindly. Use this instead of localhost servers, Base64 or DataTransfer workarounds. For system file dialogs or custom controls use Computer Use on the same authorized browser window.',
+    z.object({ uid: z.string().regex(/^cb_\d+$/).optional(), selector: z.string().min(1).max(2000).optional(),
+      filePaths: z.array(z.string().min(1).max(4096)).min(1).max(20) }).refine(input => Boolean(input.uid) !== Boolean(input.selector),
+      { message: 'Provide exactly one uid or selector.' }),
+    false,
+  ), async (input, context) => withToolResult(async () => {
+    const target = await pageId(context);
+    const result = await uploadFiles(commandFor(target, context), input, context.mcpReq.signal);
+    return { text: `Selected ${result.files.length} local file(s). ${result.fileSelectionVerified ? 'The input contains the selected files.' : 'The page may have consumed or reset the input.'} Check the page preview/upload status before continuing; server completion and publishing are not verified.`,
+      structured: { pageId: target, ...result } };
   }));
 
   server.registerTool('type_text', toolDefinition(
@@ -575,17 +591,17 @@ function scopeFromContext(context: ToolContext): BrowserScope {
   };
 }
 
-function toolDefinition<T extends z.ZodType>(
+function toolDefinition<T extends z.ZodRawShape>(
   title: string,
   description: string,
-  inputSchema: T,
+  inputSchema: z.ZodObject<T>,
   readOnly: boolean,
   destructive = false,
 ) {
   return {
     title,
     description,
-    inputSchema,
+    inputSchema: inputSchema.strict(),
     annotations: {
       title,
       readOnlyHint: readOnly,

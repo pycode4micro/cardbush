@@ -1,18 +1,19 @@
 ---
 name: windows-control
-description: Control or inspect native Windows desktop applications through the guarded Computer Use capability when no dedicated app, file, shell, or browser interface can complete the task. Use for native window focus, screenshots, clicks, typing, shortcuts, scrolling, and dragging; not for browser-page automation or terminal work. 当任务必须直接操作 Windows 原生桌面应用且专用接口无法完成时使用；不用于网页自动化或终端任务。
+description: Control or inspect visible Windows applications through Computer Use when a dedicated interface cannot complete the interaction. Use for native windows, browser file dialogs, crop/canvas/drag controls, screenshots, clicks, typing and shortcuts. Prefer Browser Use for ordinary webpage DOM actions and file uploads. 支持原生窗口、浏览器文件选择窗口及需要鼠标键盘的特殊网页交互；普通网页和文件上传优先 Browser Use。
 ---
 
 # Windows Control
 
-Use `computer_use` only for visible native Windows UI as the final fallback. It shares the user's interactive desktop, so keep each interaction short, observable, and easy to stop. CardBush yields when it detects user activity and normally restores the pointer after mouse actions; this is cooperative control, not a separate Windows session.
+Use `computer_use` for visible Windows UI, including a browser's native dialogs or page controls that need mouse/keyboard interaction beyond Browser Use. It shares the user's interactive desktop, so keep each interaction short, observable, and easy to stop. CardBush yields when it detects user activity and normally restores the pointer after mouse actions; this is cooperative control, not a separate Windows session.
 
 ## Route Before Acting
 
 - Prefer a dedicated app connector or API when one can complete the request.
 - Prefer filesystem and terminal tools for files, scripts, processes, and command-line workflows.
 - Prefer Chrome or browser tools for webpage content and browser-tab automation.
-- Use this Skill when the remaining work genuinely requires a native desktop window.
+- For local browser uploads prefer Browser Use `upload_file` with explicit paths. Use this Skill for an already-open system file chooser, a custom crop/canvas/drag interaction, or a control the browser interface cannot operate; do not repeatedly try scripts or set up local file servers first.
+- Keep the same authorized browser, profile and tab when handing off from Browser Use. Observe its exact window, act on fresh window evidence, then call `finish` and take a fresh Browser Use snapshot to verify the result. Page-relative coordinates are not window-relative coordinates. A denied permission or user stop cannot be bypassed by switching tools.
 - For native mouse/keyboard input and desktop clipboard preparation, discover
   `computer_use` first. File preparation may use normal file/terminal tools;
   do not replace desktop control with ad-hoc terminal key/mouse scripts when
