@@ -5,6 +5,7 @@ import type { WebContents } from 'electron';
 import { createCardbushChromeServer, createBrowserUseState, ChromeConnectorError, requestChromeConnector } from '@cardbush/chrome-mcp';
 import { startDesktopMcpServer } from './desktopMcpServer.mjs';
 import type { IntegratedBrowser } from './integratedBrowser.js';
+import { parseBrowserTabReference, type BrowserTabOpenResult } from '@cardbush/bush-protocol';
 
 type Params = Record<string, unknown>;
 type Options = NonNullable<Parameters<typeof requestChromeConnector>[2]>;
@@ -45,6 +46,25 @@ export class BrowserUseRouter {
     this.queues.set(scope, pending);
     void pending.finally(() => { if (this.queues.get(scope) === pending) this.queues.delete(scope); }).catch(() => {});
     return pending;
+  }
+  /** UI navigation bypasses the agent's binding and command queue. */
+  async openReference(href: string, reopen = false, ownerId?: number): Promise<BrowserTabOpenResult> {
+    const reference = parseBrowserTabReference(href);
+    if (!reference) return { status: 'unavailable', message: 'Invalid browser tab reference.' };
+    if (reference.connectionId === 'cardbush') {
+      if (ownerId === undefined || !reference.targetKey || reopen) return { status: 'unavailable' };
+      return { status: this.integrated.matchesReference(ownerId, reference.tabId, reference.targetKey) ? 'opened' : 'missing' };
+    }
+    try {
+      await this.options.external(reopen ? 'tabs.reopen' : 'tabs.reveal', {
+        scopeId: 'browser-reference', connectionId: reference.connectionId, tabId: Number(reference.tabId),
+        expectedTargetKey: reference.targetKey, ...(reopen ? { url: reference.url } : {}),
+      }, { timeoutMs: 8000 });
+      return { status: 'opened' };
+    } catch (error) {
+      return { status: (error as { code?: string }).code === 'browser_tab_missing' ? 'missing' : 'unavailable',
+        message: error instanceof Error ? error.message : String(error) };
+    }
   }
   bindReferences(owner: WebContents, scope: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) {
     return this.serialized(scope, async () => {
@@ -141,7 +161,7 @@ export class BrowserUseRouter {
     const result = await this.options.external(method, params, options);
     if (!route) this.save(scope, 'external');
     return method === 'tabs.list' && Array.isArray(result)
-      ? result.map(page => ({ ...page, browser: 'external', targetKey: `external:${page.id}` })) : result;
+      ? result.map(page => ({ ...page, browser: page.browser ?? 'external', targetKey: page.targetKey ?? `external:${page.id}` })) : result;
   }
 }
 

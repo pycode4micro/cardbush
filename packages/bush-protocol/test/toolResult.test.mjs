@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { returnedToolError, toolExecutionError } from '../dist/index.js';
+
+test('only declared MCP errors and native terminal outcomes carry result failure', () => {
+  const result = { isError: true, content: [{ type: 'text', text: 'original detail' }],
+    structuredContent: { error: { code: 'page_missing', message: 'Select a tab', details: { large: 'x'.repeat(10_000) } } } };
+  const before = structuredClone(result);
+  for (const name of ['mcp__browser__click', 'mcp_call']) {
+    const native = name === 'mcp_call' ? { mcp: { name: 'mcp__browser__click' }, result } : result;
+    const error = returnedToolError(name, native);
+    assert.equal(error.code, 'page_missing');
+    assert.equal(error.message, 'Select a tab');
+    assert.ok(JSON.stringify(error).length < 400);
+    assert.deepEqual(toolExecutionError({ toolCall: { name }, outcome: 'returned', result: native }), error);
+  }
+  assert.equal(returnedToolError('registered-mcp', result, true).code, 'page_missing');
+  for (const name of ['read_json', 'evaluate_script', 'business_tool']) assert.equal(returnedToolError(name, result), undefined);
+  for (const native of [{ isError: false, structuredContent: { error: 'business data' } },
+    { content: [{ type: 'text', text: '{"isError":true,"error":"example"}' }] },
+    { structuredContent: { isError: true } }]) assert.equal(returnedToolError('mcp__demo__read', native), undefined);
+  assert.deepEqual(result, before);
+});
+
+test('terminal failures are distinct from running, stopped and business JSON', () => {
+  for (const name of ['terminal_exec', 'terminal_poll', 'terminal_write', 'terminal_stop', 'terminal_completion']) {
+    assert.equal(returnedToolError(name, { state: 'exited', exitCode: 2 }).code, 'terminal_command_failed');
+    for (const result of [{ state: 'running', exitCode: null }, { state: 'stopped', exitCode: 1 }, { state: 'exited', exitCode: 0 }]) {
+      assert.equal(returnedToolError(name, result), undefined);
+    }
+  }
+  assert.equal(returnedToolError('mcp__demo__read', { structuredContent: { state: 'exited', exitCode: 2 } }), undefined);
+});
+
+test('unstructured declared errors stay bounded and explicit persisted classification survives summaries', () => {
+  const resultError = returnedToolError('mcp__demo__read', { isError: true, content: [{ type: 'image', data: 'large' }, { type: 'text', text: 'x'.repeat(50_000) }] });
+  assert.equal(resultError.message.length, 2048);
+  assert.equal(resultError.code, 'mcp_tool_error');
+  assert.deepEqual(toolExecutionError({ toolCall: { name: 'custom_name' }, outcome: 'returned', resultError }), resultError);
+});

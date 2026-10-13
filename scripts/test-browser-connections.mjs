@@ -36,6 +36,22 @@ function fixture(t) {
     requestChromeConnector(method, { ...params, scopeId, scopeTitle: scopeId }, { configPath: broker.configPath, timeoutMs: 2500 }) };
 }
 
+test('clicking a reference targets its exact browser without changing the agent binding', async t => {
+  const f = fixture(t), broker = await f.create();
+  const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
+  await f.call(broker, 'agent', 'browser.select', { connectionId: edge.id });
+  const clicked = await f.call(broker, 'agent', 'tabs.reveal', { connectionId: chrome.id, tabId: 42, expectedTargetKey: 'issued-key' });
+  assert.equal(clicked.browser, 'chrome');
+  assert.equal((await f.call(broker, 'agent', 'browser.list')).selectedConnectionId, edge.id);
+  assert.equal((await f.call(broker, 'agent')).browser, 'edge');
+  assert.equal(chrome.calls.filter(call => call.method === 'tabs.reveal').length, 1);
+  chrome.socket.destroy();
+  await until(() => !broker.status().connections.find(connection => connection.id === chrome.id)?.connected);
+  await assert.rejects(f.call(broker, 'agent', 'tabs.reveal', { connectionId: chrome.id, tabId: 42 }), error => error.code === 'browser_unavailable');
+  assert.equal(edge.calls.some(call => call.method === 'tabs.reveal'), false, 'offline citations do not fall through to a live browser');
+  await assert.rejects(f.call(broker, 'agent', 'tabs.reveal', { tabId: 42 }), /exact browser/);
+});
+
 test('Chrome and Edge coexist; defaults, session bindings and restart never cross-route matching tab ids', async t => {
   const f = fixture(t), broker = await f.create();
   const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');

@@ -68,23 +68,38 @@ window.showResourceRegression=(remote=false)=>{
 window.showInvalidImageDialog=()=>root.render(<div className="app theme-dark"><ImagePreviewDialog image={{src:regressionReference,path:regressionReference,name:'Invalid image'}} language="en" onClose={()=>{}}/></div>);
 const shorthandReference='cardbush-source:21-57a1734f57d1ab1a';
 const shorthandMemo={...memo,reference:shorthandReference,markdown:'[21]('+shorthandReference+')'};
+const shorthandReferences={10:'cardbush-source:v2:10:510-aaaaaaaaaaaaaaaa',11:'cardbush-source:v2:11:511-bbbbbbbbbbbbbbbb',21:shorthandReference};
 window.shorthandLookups=[];
 const shorthandRuntime={client:{command:async(command,decode)=>{
   window.shorthandLookups.push(command);
   if(command.kind==='runtime.resolve_source_references')return decode(command.payload.sessionId==='short-session'&&command.payload.turnId==='short-turn'
-    ? command.payload.numbers.filter(number=>number===21).map(number=>({number,reference:shorthandReference})):[]);
-  if(command.kind==='runtime.resolve_source_memo')return decode({status:'resolved',memo:shorthandMemo,evidenceStatus:['changed','link','unavailable']});
+    ? command.payload.numbers.filter(number=>shorthandReferences[number]).map(number=>({number,reference:shorthandReferences[number]})):[]);
+  if(command.kind==='runtime.resolve_source_memo'){
+    const reference=command.payload.reference,number=Object.keys(shorthandReferences).find(number=>shorthandReferences[number]===reference);
+    return decode(reference===shorthandReference?{status:'resolved',memo:shorthandMemo,evidenceStatus:['changed','link','unavailable']}:
+      {status:'resolved',memo:{...memo,reference,markdown:'['+number+']('+reference+')',explanation:'连续引用 '+number+' 的依据',sources:[]},evidenceStatus:[]});
+  }
   throw Error('Unexpected shorthand request '+command.kind);
 }},dispose(){}};
 const shorthandHost={...host,id:'shorthand-host',runtime:shorthandRuntime};
 const shorthandContent='**插件到位了。**\\n\\n- 已确认工具契约。[21]\\n- 服务等待激活。[21]\\n- 未知编号。[99]\\n\\n查看 https://example.org/path，再看说明。\\n\\n代码：'+String.fromCharCode(96)+'[21]'+String.fromCharCode(96)+'；数组 arr[21]。\\n\\n转义：'+String.fromCharCode(92)+'[21]\\n\\n[网页标签 [21]](https://example.org/keep)\\n\\n'+String.fromCharCode(96).repeat(3)+'text\\n[21]\\n'+String.fromCharCode(96).repeat(3);
-window.showShorthand=(remote=false,sessionId='short-session',turnId='short-turn',allowed=true)=>{
+window.showShorthand=(remote=false,sessionId='short-session',turnId='short-turn',allowed=true,content=shorthandContent)=>{
   window.cardbushDesktop={runtime:{command:async request=>({protocol:request.protocol,type:'command_response',operationId:request.operationId,ok:true,
     result:await shorthandRuntime.client.command(request.command,value=>value)}),onStreamFrame:()=>()=>{},cancelOperation:async()=>{},stopStream:async()=>{}}};
   root.render(<div className="app theme-dark" style={{padding:30}}><ConversationHostContext.Provider value={remote?shorthandHost:null}>
-    <FileMemoScope sessionId={sessionId} turnId={turnId} sourceReferences={allowed}><MarkdownContent content={shorthandContent} language="zh"/></FileMemoScope>
+    <FileMemoScope sessionId={sessionId} turnId={turnId} sourceReferences={allowed}><MarkdownContent content={content} language="zh"/></FileMemoScope>
   </ConversationHostContext.Provider></div>);
 };
+const adjacentContent=[
+  '双引用：资金流向已核对。[10][11]',
+  '| 说明 | 依据 |\\n| --- | --- |\\n| 板块对比 | [11][10] |',
+  '缺少依据：[10][99][11]',
+  '三引用：[10][11][10]',
+  '代码：'+String.fromCharCode(96)+'[10][11]'+String.fromCharCode(96)+'；数组 arr[10][11]；嵌套 [[10][11]]。',
+  '转义：'+String.fromCharCode(92)+'[10][11]',
+  '[10](https://example.org/ordinary) · [10][web]\\n\\n[web]: https://example.org/reference',
+].join('\\n\\n');
+window.showAdjacentShorthand=remote=>window.showShorthand(remote,'short-session','short-turn',true,adjacentContent);
 const scopedReferences={a:'cardbush-source:v2:1:401-1111111111111111',b:'cardbush-source:v2:1:402-2222222222222222'};
 const scopedMemos=Object.fromEntries(Object.entries(scopedReferences).map(([session,reference])=>[reference,{...memo,reference,markdown:'[1]('+reference+')',explanation:'会话 '+session+' 的独立备注',sources:[]}]));
 window.scopedLookups=[];

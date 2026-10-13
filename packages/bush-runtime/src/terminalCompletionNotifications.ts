@@ -32,7 +32,7 @@ export class TerminalCompletionNotifications {
           ? await this.waitRemote(context.sessionId, sessionId, environment.workspaceDir!, controller.signal)
           : await this.terminals.waitForCompletion(context.sessionId, sessionId, controller.signal);
         controller.signal.throwIfAborted();
-        job.status = result.state === 'running' ? 'timeout' : 'completed';
+        job.status = result.state === 'running' ? 'timeout' : result.exitCode === 0 ? 'completed' : 'failed';
         const rendered = renderTerminalResult(result) ?? JSON.stringify(result);
         // Separate immutable journal entry gives long logs a normal archive locator.
         this.store.record({ protocol: 'bush.tool_call.v1', id, name: 'terminal_completion', argumentsText: JSON.stringify({ session_id: sessionId }) },

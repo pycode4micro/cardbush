@@ -637,6 +637,7 @@ const desktopApi = {
   } satisfies import('./browserUi').BrowserUiBridge,
   readBrowserConfiguration: () => ipcRenderer.invoke('browser:settings-read') as Promise<BrowserConfiguration>,
   registerInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => ipcRenderer.invoke('inspector:browser-register', input) as Promise<void>,
+  openBrowserTabReference: (href: string, reopen = false) => ipcRenderer.invoke('browser:open-tab-reference', { href, reopen }) as Promise<import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).BrowserTabOpenResult>,
   unregisterInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => ipcRenderer.invoke('inspector:browser-unregister', input) as Promise<void>,
   acknowledgeInspectorBrowserAction: (result: import('./integratedBrowser').BrowserTabActionResult) => ipcRenderer.invoke('inspector:browser-action-result', result) as Promise<void>,
   bindInspectorBrowserReferences: (sessionId: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) =>

@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { DEFAULT_BROWSER_START_PAGE } from '@cardbush/bush-protocol';
+import { DEFAULT_BROWSER_START_PAGE, browserPageReference, browserPageLink } from '@cardbush/bush-protocol';
 import { BrowserArtifacts, digest, exportedImage, type BrowserArtifact } from './imageArtifacts.js';
 import { prepareCapture, captureClip, setViewport, evaluate, canvasExportExpression, type Viewport } from './pageCapture.js';
 import { dispatchPointer } from './pagePointer.js';
@@ -26,6 +26,9 @@ type BrowserPage = {
   selected?: boolean;
   browser?: string;
   targetKey?: string;
+  tabId?: string;
+  connectionId?: string;
+  reference?: string;
 };
 
 function presentationNotice(page: Record<string, unknown>): string {
@@ -69,6 +72,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
       'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, controllable tabs are those explicitly referenced by the user, created in this conversation, or newly created by its verified local descendant tasks. Selecting a browser does not grant unrelated tabs. Use select_browser with connectionId cardbush to create integrated tabs.',
       'Use new_page to create a tab in the selected browser. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
+      'When directing the user to an opened page, copy its returned reference URL into a Markdown link. Clicking this tab reference reveals the existing tab without reopening or navigating it. Do not invent references or substitute a website URL for a tab reference.',
       'Call release_browser when browser work is complete; it detaches control and collapses external session groups without closing tabs.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
       'Tracked file downloads (download_file/download_status) are currently supported only in Chrome/Edge. Integrated tabs return an explicit unsupported error, never redirect to another browser. Reuse pending download taskIds instead of starting repeated downloads.',
@@ -126,9 +130,12 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       structured: { ...details, width: saved.width, height: saved.height, bytes: saved.artifact.size, path: saved.artifact.path, artifacts: [saved.artifact] } };
   };
 
-  const pages = async (context: ToolContext): Promise<BrowserPage[]> => {
+  const pages = async (context: ToolContext) => {
+    const scope = scopeFromContext(context);
     const result = await request('tabs.list', {}, context);
-    return Array.isArray(result) ? result.flatMap((item) => {
+    const snapshot = record(result);
+    const items = Array.isArray(result) ? result : Array.isArray(snapshot.pages) ? snapshot.pages : [];
+    const listed: BrowserPage[] = items.flatMap((item) => {
       const value = record(item);
       const id = integer(value.id);
       if (id != null && typeof value.targetKey === 'string') targetKeys.set(JSON.stringify([scopeFromContext(context).id, id]), value.targetKey);
@@ -141,28 +148,34 @@ export function createCardbushChromeServer(options: { connector?: typeof request
         ...(value.selected === true ? { selected: true } : {}),
         ...(typeof value.browser === 'string' ? { browser: value.browser } : {}),
         ...(typeof value.targetKey === 'string' ? { targetKey: value.targetKey } : {}),
+        ...(typeof value.tabId === 'string' ? { tabId: value.tabId } : {}),
+        ...(typeof value.connectionId === 'string' ? { connectionId: value.connectionId } : {}),
+        ...(browserPageReference(value) ? { reference: browserPageReference(value) } : {}),
       }];
-    }) : [];
+    });
+    const explicit = listed.find(page => page.selected)?.id;
+    const previous = integer(snapshot.selectedPageId) ?? selectedPageIds.get(scope.id);
+    const missing = snapshot.selectionState === 'missing' ||
+      (explicit == null && previous != null && !listed.some(page => page.id === previous));
+    const selectedPageId = explicit ?? (missing ? previous : snapshot.selectionState === 'none' ? undefined
+      : previous ?? listed.find(page => page.active)?.id ?? listed[0]?.id);
+    const selectionState = explicit != null ? 'selected' : missing ? 'missing' : selectedPageId == null ? 'none' : 'selected';
+    if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);
+    return { listed, selectedPageId, selectionState };
   };
 
   const pageId = async (context: ToolContext): Promise<number> => {
-    const scope = scopeFromContext(context);
-    const listed = await pages(context);
-    const selectedPageId = selectedPageIds.get(scope.id);
-    const explicit = listed.find(page => page.selected);
-    if (explicit) { selectedPageIds.set(scope.id, explicit.id); return explicit.id; }
-    if (selectedPageId != null && listed.some((page) => page.id === selectedPageId)) {
-      return selectedPageId;
-    }
-    const selected = listed.find((page) => page.active) ?? listed[0];
-    if (!selected) {
+    const { selectedPageId, selectionState } = await pages(context);
+    if (selectionState !== 'selected' || selectedPageId == null) {
       throw new ChromeConnectorError(
         'browser_page_missing',
-        'This CardBush session has no isolated browser tabs. Open one with new_page or copy an existing tab from the extension popup.',
+        selectionState === 'missing'
+          ? 'The selected browser tab is no longer available. Use list_pages, then explicitly select_page or new_page; no other tab has been selected automatically.'
+          : 'No browser tab is selected. Use list_pages and select_page, or open one with new_page.',
+        { selectionState, ...(selectedPageId != null ? { unavailablePageId: selectedPageId } : {}) },
       );
     }
-    selectedPageIds.set(scope.id, selected.id);
-    return selected.id;
+    return selectedPageId;
   };
 
   server.registerTool('list_browsers', toolDefinition(
@@ -193,19 +206,14 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     z.object({}),
     true,
   ), async (_input, context) => withToolResult(async () => {
-    const scope = scopeFromContext(context);
-    const listed = await pages(context);
-    let selectedPageId = listed.find(page => page.selected)?.id ?? selectedPageIds.get(scope.id);
-    if (selectedPageId == null || !listed.some((page) => page.id === selectedPageId)) {
-      selectedPageId = listed.find((page) => page.active)?.id ?? listed[0]?.id;
-      if (selectedPageId == null) selectedPageIds.delete(scope.id);
-      else selectedPageIds.set(scope.id, selectedPageId);
-    }
+    const { listed, selectedPageId, selectionState } = await pages(context);
+    const notice = selectionState === 'missing' ? 'The selected tab is unavailable. Choose a listed page with select_page, or open one with new_page.\n' : '';
     return {
-      text: listed.length > 0
-        ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.browser === 'cardbush' ? `[CardBush; ${page.visible ? 'visible' : 'not visible'}] ` : ''}${page.title || '(untitled)'} — ${page.url}`).join('\n')
-        : 'This CardBush session has no isolated browser tabs. Use new_page, or copy an existing tab into the session group from the extension popup.',
-      structured: { pages: listed, selectedPageId },
+      text: notice + (listed.length > 0
+        ? listed.map((page) => `${page.id === selectedPageId ? '*' : ' '} [${page.id}] ${page.browser === 'cardbush' ? `[CardBush; ${page.visible ? 'visible' : 'not visible'}] ` : ''}${browserPageLink({ ...page })}`).join('\n')
+        : 'This CardBush session has no isolated browser tabs. Use new_page, or copy an existing tab into the session group from the extension popup.'),
+      structured: { pages: listed, selectedPageId: selectionState === 'selected' ? selectedPageId : null, selectionState,
+        ...(selectionState === 'missing' && selectedPageId != null ? { unavailablePageId: selectedPageId } : {}) },
     };
   }));
 
@@ -217,8 +225,9 @@ export function createCardbushChromeServer(options: { connector?: typeof request
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const result = record(await request('tabs.activate', { tabId: input.pageId }, context));
+    result.reference = browserPageReference(result);
     selectedPageIds.set(scope.id, input.pageId);
-    return { text: `Selected browser tab ${input.pageId}: ${string(result.title)}${presentationNotice(result)}`, structured: result };
+    return { text: `Selected browser tab ${input.pageId}: ${browserPageLink(result)}${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('new_page', toolDefinition(
@@ -230,9 +239,10 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const scope = scopeFromContext(context);
     const url = input.url ?? DEFAULT_BROWSER_START_PAGE;
     const result = record(await request('tabs.create', { url }, context));
+    result.reference = browserPageReference(result);
     const selectedPageId = integer(result.id);
     if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);
-    return { text: `Opened browser tab ${selectedPageId ?? ''}: ${string(result.url)}${presentationNotice(result)}`, structured: result };
+    return { text: `Opened browser tab ${selectedPageId ?? ''}: ${browserPageLink(result)}${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('close_page', toolDefinition(
@@ -242,10 +252,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     false,
     true,
   ), async (input, context) => withToolResult(async () => {
-    const scope = scopeFromContext(context);
     const target = input.pageId ?? await pageId(context);
     const result = record(await request('tabs.close', { tabId: target }, context));
-    if (selectedPageIds.get(scope.id) === target) selectedPageIds.delete(scope.id);
     return { text: `Closed browser tab ${target}.`, structured: result };
   }));
 
@@ -270,7 +278,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       ...(input.url ? { url: input.url } : {}),
       ignoreCache: input.ignoreCache === true,
     }, context));
-    return { text: `browser tab ${target} navigated to ${string(result.url) || input.type}.${presentationNotice(result)}`, structured: result };
+    result.reference = browserPageReference(result);
+    return { text: `browser tab ${target}: ${browserPageLink(result)}.${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('take_snapshot', toolDefinition(
@@ -390,9 +399,9 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     viewportSchema, false,
   ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
-    await setViewport(commandFor(target, context), input);
+    const viewport = await setViewport(commandFor(target, context), input);
     requestedViewports.set(viewportKey(context, target), input);
-    return { text: `Page viewport set to ${input.width} × ${input.height}.`, structured: { pageId: target, ...input } };
+    return { text: `Page CSS viewport set to ${viewport.width} × ${viewport.height}.`, structured: { pageId: target, ...viewport, requested: input } };
   }));
 
   server.registerTool('take_screenshot', toolDefinition(
@@ -413,7 +422,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       pageSelectionMs = Date.now() - startedAt;
       const command = commandFor(target, context);
       const viewport = await prepareCapture(command, input.viewport ?? requestedViewports.get(viewportKey(context, target)), input.autoViewport !== false);
-      const clip = await captureClip(command, input.fullPage, input.selector, viewport.deviceScaleFactor);
+      const region = await captureClip(command, input.fullPage, input.selector, viewport.deviceScaleFactor);
+      const clip = region?.cssClip;
       const result = record(await request('debugger.command', {
         tabId: target,
         command: 'Page.captureScreenshot',
@@ -421,7 +431,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
           format: input.format,
           captureBeyondViewport: !!clip,
           fromSurface: true,
-          ...(clip ? { clip } : {}),
+          ...(region ? { clip: region.deviceClip } : {}),
           ...(input.format === 'jpeg' && input.quality ? { quality: input.quality } : {}),
         },
       }, context, undefined, value => { connector = value; }));
@@ -471,8 +481,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     else if (await evaluate(command, `document.querySelector(${JSON.stringify(input.selector)}) instanceof HTMLCanvasElement`)) {
       image = exportedImage(await evaluate(command, canvasExportExpression(input.selector!, input.format, input.quality)));
     } else {
-      const clip = await captureClip(command, false, input.selector, viewport.deviceScaleFactor);
-      const result = record(await command('Page.captureScreenshot', { format: input.format, clip, captureBeyondViewport: true, fromSurface: true,
+      const region = await captureClip(command, false, input.selector, viewport.deviceScaleFactor);
+      const result = record(await command('Page.captureScreenshot', { format: input.format, clip: region?.deviceClip, captureBeyondViewport: true, fromSurface: true,
         ...(input.format === 'jpeg' && input.quality ? { quality: input.quality } : {}) }));
       image = { data: string(result.data), mimeType: `image/${input.format}` };
     }
@@ -506,7 +516,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       try { image = exportedImage(value); } catch (error) { if (input.resultType === 'image') throw error; }
       if (image) return imageResult(context, image, { pageId: target });
     }
-    return { text: JSON.stringify(value, null, 2) ?? 'undefined', structured: { pageId: target, value } };
+    const structured = { pageId: target, value };
+    return { text: JSON.stringify(structured, null, 2), structured };
   }));
 
   const downloadResult = async (context: ToolContext, result: Record<string, unknown>) => {
@@ -577,9 +588,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     z.object({}),
     false,
   ), async (_input, context) => withToolResult(async () => {
-    const scope = scopeFromContext(context);
     const result = record(await request('debugger.detachScope', {}, context));
-    selectedPageIds.delete(scope.id);
     return { text: 'Released this CardBush session\'s browser tabs.', structured: result };
   }));
 
@@ -720,6 +729,7 @@ function string(value: unknown): string {
 }
 
 function integer(value: unknown): number | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string' || typeof value === 'string' && !value.trim()) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }

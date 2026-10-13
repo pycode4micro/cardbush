@@ -39,9 +39,10 @@
   },
   "dependencies": {
     "@cardbush/bush-protocol": "^0.1.0",
+    "@cardbush/platform": "0.1.0",
     "js-yaml": "4.3.2",
-    "sharp": "0.35.5",
-    "@cardbush/platform": "0.1.0"
+    "quickjs-emscripten": "0.32.0",
+    "sharp": "0.35.5"
   },
   "license": "Apache-2.0"
 }

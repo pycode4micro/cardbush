@@ -505,7 +505,7 @@ export function ShadowWindow({
           </ImageGalleryProvider>
         </div>
         <button
-          className={`scroll-bottom shadow-window-scroll-bottom${scrollBottomVisible ? '' : ' hidden'}`}
+          className={`scroll-bottom shadow-window-scroll-bottom${busy ? ' loop-running' : ''}${scrollBottomVisible ? '' : ' hidden'}`}
           type="button"
           aria-label={language === 'zh' ? '回到底部' : 'Scroll to bottom'}
           aria-hidden={!scrollBottomVisible}

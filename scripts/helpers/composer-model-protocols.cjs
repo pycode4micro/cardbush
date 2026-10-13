@@ -23,6 +23,14 @@ module.exports = async ({ run, until, window, root }) => {
       assert.equal(await run('document.querySelector(".model-select").title'), 'Model: Chat fixture');
       await run('document.querySelector(".model-select").click()');
       await until('!!document.querySelector(".model-reasoning-primary-options button")', `${surface} reasoning menu`);
+      assert.equal(await run('document.querySelector(".model-context-total").textContent'), 'Total context window400k');
+      assert.match(await run('document.querySelector(".model-context-section .model-picker-inline-label").textContent'), /Conversation context windowPending \/ 142k/);
+      if (surface !== 'welcome') {
+        await run(`updateChat({ contextWindowUsage: { usedTokens: 145045, maxTokens: 141952, totalTokens: 400000 } });`);
+        await until('document.querySelector(".model-context-section strong")?.textContent.includes("102%")', 'occupancy is relative to the calculated conversation window');
+        assert.match(await run('document.querySelector(".model-context-section strong").textContent'), /145k \/ 142k/);
+        await run('updateChat({ contextWindowUsage: undefined });');
+      }
       assert.deepEqual(await run('[...document.querySelectorAll(".model-reasoning-options button")].map(button => button.textContent)'), ['Low', 'Medium', 'High']);
       assert.equal(await run('document.querySelector(".model-reasoning-primary-options button.active")?.textContent'), 'High');
       await run('document.querySelector(".model-reasoning-default").click()');

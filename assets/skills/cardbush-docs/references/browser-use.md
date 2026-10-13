@@ -1,5 +1,7 @@
 # Browser Use（Windows 11）
 
+Browser Use 的打开、导航、选中和列表结果会返回可直接用于 Markdown 的 `reference`。点击它按标签身份定位 CardBush 或对应 Chrome / Edge 配置中的现有页面，页面已导航也不会回退到旧网址。点击仅改变显示，不切换 Agent 的操作目标或浏览器绑定；已关闭标签显示状态和独立的重新打开按钮。
+
 设置入口：应用中心 → 设置 → 浏览器 → Browser Use。
 
 本机 Browser Use 同时支持 CardBush 内置浏览器与外部 Chrome / Edge。在输入框通过 `@ → CardBush 浏览器` 选择标签页，会把当前会话绑定到那个真实的内置页面；相同网址的 Chrome / Edge 标签不是同一目标。内置页面无需扩展、配对或开启外部连接器。Agent 可通过 `list_browsers` 选择 `connectionId: cardbush`，再使用 `new_page` 创建内置标签。快照、点击、输入、导航和截图使用同一组 Browser Use 工具。

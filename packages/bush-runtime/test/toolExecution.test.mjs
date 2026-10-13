@@ -450,6 +450,7 @@ test("stores native tool output and Runtime-owned workspace changes separately",
     },
     outcome: "returned",
     display: record.display,
+    execution: { dispatch: 'returned', effects: 'recorded', result: 'known', recovery: 'none' },
     actionManifest: record.actionManifest,
     resultAvailable: true,
     workspaceChanges: [{

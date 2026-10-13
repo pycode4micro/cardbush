@@ -429,9 +429,8 @@ function RuntimeContextCompactionDetail({
     (!active && isToolRunning(execution));
   const duration = formatDuration(execution.durationMs);
   const attempt = finiteMetadataNumber(metadata.attempt);
-  const triggerRatio = finiteMetadataNumber(metadata.triggerRatio);
   const estimatedInputTokens = finiteMetadataNumber(metadata.estimatedInputTokens);
-  const usableInputTokens = finiteMetadataNumber(metadata.usableInputTokens);
+  const conversationTokens = finiteMetadataNumber(metadata.compactionTriggerTokens);
   const precedingTurnCount = finiteMetadataNumber(
     metadata.summarizedTurnCount ?? metadata.precedingTurnCount,
   );
@@ -456,12 +455,15 @@ function RuntimeContextCompactionDetail({
       : cancelled
         ? language === 'zh' ? '已中止' : 'Stopped'
         : language === 'zh' ? '完成' : 'Done';
-  const pressure = triggerRatio != null
-    ? `${(triggerRatio * 100).toFixed(1)}%`
+  const pressure = estimatedInputTokens != null && conversationTokens != null && conversationTokens > 0
+    ? `${(estimatedInputTokens / conversationTokens * 100).toFixed(1)}%`
     : '';
-  const tokenUsage = estimatedInputTokens != null && usableInputTokens != null
-    ? `${formatTokenCount(estimatedInputTokens)} / ${formatTokenCount(usableInputTokens)}`
+  const tokenUsage = estimatedInputTokens != null && conversationTokens != null
+    ? `${formatTokenCount(estimatedInputTokens)} / ${formatTokenCount(conversationTokens)}`
     : '';
+  const exactUsage = estimatedInputTokens != null && conversationTokens != null
+    ? `${estimatedInputTokens.toLocaleString()} / ${conversationTokens.toLocaleString()} tokens`
+    : undefined;
   const failureMessage = typeof metadata.message === 'string'
     ? metadata.message.trim()
     : '';
@@ -485,13 +487,13 @@ function RuntimeContextCompactionDetail({
             : 'Converting completed context into resumable facts.'}
       </p>
       {(pressure || tokenUsage) && (
-        <p className="runtime-context-compaction-metrics">
+        <p className="runtime-context-compaction-metrics" title={exactUsage}>
           {[
+            tokenUsage
+              ? language === 'zh' ? `对话上下文 ${tokenUsage}` : `Conversation context ${tokenUsage}`
+              : '',
             pressure
               ? language === 'zh' ? `触发占用 ${pressure}` : `Triggered at ${pressure}`
-              : '',
-            tokenUsage
-              ? language === 'zh' ? `输入 ${tokenUsage}` : `Input ${tokenUsage}`
               : '',
           ].filter(Boolean).join(' · ')}
         </p>

@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistration } from './toolRegistry.js';
 import type { RemoteWorkspaceBridge, TerminalSessionManager } from './workspaceTools.js';
 import { protectedPosixTerminalDeletion } from './terminalCommandSafety.js';
+import { resolveToolPath, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { sandboxError } from './executionSandbox.js';
 import { commandPermission, terminalInputPermission } from './commandPermission.js';
 
@@ -29,6 +30,14 @@ function chosenRemote<T>(context: Context<T>): string | undefined {
   if (selected === 'local') return;
   const root = !selected || selected === 'workspace' ? defaultRoot(context) : selected;
   return parseSshWorkspace(root) ? root : undefined;
+}
+
+export async function workspaceFileResources<T>(context: Context<T>, mutating: boolean) {
+  const remote = parseSshWorkspace(chosenRemote(context));
+  // Remote aliases/symlinks are resolved by that host. Serialize writes within
+  // the connection until it can provide canonical resource keys, never guess.
+  const key = remote ? `remote-files:${remote.connectionId}` : `file:${normalizeIdentity(await resolveToolPath(localContext(context), String((context.input as RoutedInput).path), mutating))}`;
+  return [{ key, mode: mutating ? 'write' as const : 'read' as const }];
 }
 
 /** A local override cannot inherit a remote path as a local cwd or permission root. */

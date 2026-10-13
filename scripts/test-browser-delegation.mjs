@@ -39,7 +39,7 @@ function fixture({ autoAck = true, actionTimeoutMs, ownerVisible, presentation =
     } });
   const call = (scopeId, method, params = {}) => browser.request(method, { ...params, scopeId });
   const create = scopeId => { browser.select(scopeId); return call(scopeId, 'tabs.create', { url: 'https://example.com/' }); };
-  const list = scopeId => call(scopeId, 'tabs.list');
+  const list = async scopeId => (await call(scopeId, 'tabs.list')).pages;
   const bind = (scopeId, page, owner = owners[0]) => browser.bind(owner, scopeId, [{ tabId: page.tabId, pageId: String(page.id) }]);
   return { browser, owners, guests, register, call, create, list, bind, actions, response };
 }
@@ -149,7 +149,9 @@ test('closing a returned page clears grants while keeping other selected pages',
   await f.call('parent', 'tabs.close', { tabId: created.id });
   for (const scope of ['parent', 'child', 'grandchild']) {
     assert.deepEqual((await f.list(scope)).map(page => page.id), [original.id]);
-    await assert.rejects(f.call(scope, 'tabs.activate', { tabId: created.id }), { code: 'cardbush_page_not_authorized' });
+    await assert.rejects(f.call(scope, 'tabs.activate', { tabId: created.id }), {
+      code: scope === 'grandchild' ? 'cardbush_page_unavailable' : 'cardbush_page_not_authorized',
+    });
   }
   assert.equal((await f.list('parent')).find(page => page.selected).id, original.id);
 });
@@ -161,7 +163,11 @@ test('UI closure and replacement never retarget returned grants to a new guest a
   f.guests.get(created.id).destroy();
   const replacement = f.register(created.tabId);
   for (const scope of ['parent', 'child']) {
-    await assert.rejects(f.list(scope), { code: 'cardbush_page_unavailable' });
+    const snapshot = await f.call(scope, 'tabs.list');
+    assert.deepEqual(snapshot.pages, []);
+    assert.equal(snapshot.selectedPageId, created.id);
+    assert.equal(snapshot.selectionState, 'missing');
+    await assert.rejects(f.call(scope, 'tabs.activate', { tabId: created.id }), { code: 'cardbush_page_unavailable' });
     await assert.rejects(f.call(scope, 'tabs.activate', { tabId: replacement.id }), { code: 'cardbush_page_not_authorized' });
   }
 });

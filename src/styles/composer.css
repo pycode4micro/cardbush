@@ -261,6 +261,10 @@
 .composer-team-token:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .composer-context-token > span, .context-reference-token > span { overflow: hidden; text-overflow: ellipsis; }
 .composer-context-token svg, .context-reference-token svg, .composer-plugin-token svg { flex-shrink: 0; }
+.browser-tab-reference { display: inline; }
+.browser-tab-reference-status { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: 6px; font-size: 12px; color: var(--muted); }
+.browser-tab-reference-status button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.browser-tab-reference-status button:disabled { opacity: 0.5; cursor: default; }
 .composer-context-token button { padding: 0 2px; border: 0; background: transparent; color: var(--text-soft); font: inherit; line-height: 1; cursor: pointer; }
 .composer-context-token button:hover { color: var(--text); }
 
@@ -771,6 +775,24 @@
 .composer-surface > textarea::placeholder {
   color: var(--text-soft);
 }
+
+.composer-stack .composer-tools > .composer-prediction-accept {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+.composer-prediction-accept:hover,
+.composer-prediction-accept:focus-visible { color: var(--text); background: var(--hover); }
+.composer-stack.simple .composer-surface.has-next-step > textarea { min-height: 2lh; }
+.composer-stack.simple .composer-surface.has-next-step .composer-tools > .composer-prediction-accept { display: inline-flex; }
 
 .composer-footer {
   height: 36px;
@@ -1998,6 +2020,10 @@
   background: color-mix(in srgb, var(--text) 9%, transparent);
   border-radius: 999px;
 }
+
+.model-context-section .model-picker-inline-label { flex-wrap: wrap; gap: 6px 12px; }
+.model-context-section .model-picker-inline-label strong { white-space: normal; }
+.model-context-total { display: flex; justify-content: space-between; gap: 12px; color: var(--text-soft); font-size: calc(10px * var(--ui-font-scale, 1)); }
 
 .model-context-progress > span {
   position: absolute;

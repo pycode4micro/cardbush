@@ -84,6 +84,10 @@ const contextCompactionExecutions = contextCompactionPresentationExecutions([
       triggerRatio: 0.961,
       estimatedInputTokens: 238_100,
       usableInputTokens: 247_808,
+      compactionTriggerTokens: 235_417,
+      normalOutputTokens: 8_192,
+      compactionOutputTokens: 8_192,
+      safetyTokens: 2_048,
       measurement: 'provider',
       precedingTurnCount: 3,
       activeTurnIncluded: true,
@@ -117,6 +121,8 @@ assert.equal(
   'assistant-before-compaction',
 );
 assert.equal(contextCompactionExecutions[0].metadata.summarizedTurnCount, 3);
+assert.equal(contextCompactionExecutions[0].metadata.compactionTriggerTokens, 235_417, 'compaction history preserves the actual conversation budget');
+assert.equal(contextCompactionExecutions[0].metadata.normalOutputTokens, 8_192);
 assert.equal('summary' in contextCompactionExecutions[0].metadata, false);
 
 const retriedContextCompaction = contextCompactionPresentationExecutions([

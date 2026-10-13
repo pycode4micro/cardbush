@@ -25,6 +25,7 @@ import {
   useState,
 } from 'react';
 import { type ExperimentalGoal } from '../../backend/api';
+import { contextWindowMetrics } from '../../backend/contextWindowUsage';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import {
   normalizeChatMessagesForDisplay,
@@ -236,6 +237,7 @@ export function ChatPanel({
   welcomeEnabled = true,
   workSummaryAvailable = true,
   embedded = false,
+  progressive = false,
 }: {
   browserTabs?: import('../../shared/promptReferences').BrowserPromptReference[];
   language: AppLanguage;
@@ -350,6 +352,7 @@ export function ChatPanel({
   welcomeEnabled?: boolean;
   workSummaryAvailable?: boolean;
   embedded?: boolean;
+  progressive?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const quickInputTarget = useContext(ComposerPortalContext);
@@ -2619,17 +2622,23 @@ export function ChatPanel({
         sending, stopping, activeTurnId, language, waiting: hasInteraction,
         send: (text, options) => handleComposerSend(text, { ...options, acknowledge: true }) }}>
     <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
-    {!embedded && <QuickInputStatus language={language} messages={renderMessages} sending={sending} stopping={stopping}
+    {(!embedded || progressive) && <QuickInputStatus language={language} messages={renderMessages} sending={sending} stopping={stopping}
+      previewLatest={progressive}
       submitting={submissionPending} waiting={hasInteraction} error={error || refreshError} recovery={connectionRecovery} queued={queuedMessageCount}
+      errorContent={progressive && (error || refreshError) ? <RuntimeStatusBanner language={language} tone="error" message={error || refreshError}
+        actionLabel={language === 'zh' ? '重试' : 'Retry'} onAction={async () => { await refreshBackendWithFeedback({ silent: false }); onClearError(); }}
+        onDismiss={() => { setRefreshError(''); onClearError(); }}/> : undefined}
       sessionId={activeConversationId} interaction={interactionContent ?? (pendingInteraction && <InteractionCard
         key={pendingInteraction.id} language={language} interaction={pendingInteraction} onReply={onReplyInteraction} onCancel={onCancelInteraction}/>)}>
       <MessageFileReferenceScope workspaceRoot={activeProjectDir} pathAliases={projectPathAliases}>
+        {progressive && notice && <RuntimeStatusBanner language={language} tone="notice" message={notice} onDismiss={onClearNotice}/>}
         {renderMessages.slice(-12).map((message, index) => renderMessage(message, index, true))}
         {connectionRecovery && connectionRecovery.state !== 'recovered' && <ConversationConnectionNotice language={language} update={connectionRecovery}/>}
         {transcriptFooter}
       </MessageFileReferenceScope>
     </QuickInputStatus>}
     <div
+      hidden={progressive}
       className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${composerAnchored ? ' composer-anchored' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
       data-composer-after-send={composerFlow.afterSend}
       data-conversation-output={composerFlow.output}
@@ -2901,14 +2910,8 @@ export function ChatPanel({
               shadowAvailable={shadowCanActivate}
               shadowAgentName={language === 'zh' ? '新窗口' : 'New window'}
               onToggleShadow={shadowCanActivate ? openShadowPopup : undefined}
-              contextWindow={{
-                usedTokens: contextWindowUsage?.usedTokens,
-                maxTokens: contextWindowUsage
-                  ? contextWindowUsage.maxTokens
-                  : contextWindowMaxTokens,
-                remainingTokens: contextWindowUsage?.remainingTokens,
-                measuredAt: contextWindowUsage?.measuredAt,
-              }}
+              contextWindow={contextWindowUsage ?? (contextWindowMaxTokens != null
+                ? contextWindowMetrics(undefined, contextWindowMaxTokens, selectedModelConfig?.maxCompletionTokens) : undefined)}
               skills={skills}
               disabledSkillNames={disabledSkillNames}
               onToggleSkill={onToggleSkill}
@@ -2919,7 +2922,7 @@ export function ChatPanel({
           </div>
         )}
         </div>
-        <ScrollBottomButton ref={setScrollBottomRef} language={language} visible={scrollBottomVisible} onClick={scrollToBottom}/>
+        <ScrollBottomButton ref={setScrollBottomRef} language={language} visible={scrollBottomVisible} running={sending} onClick={scrollToBottom}/>
       </div>
     </div>
     </ComposerReferenceContext.Provider>

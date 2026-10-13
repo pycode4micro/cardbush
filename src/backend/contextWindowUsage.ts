@@ -1,12 +1,17 @@
+import { resolveContextBudget } from '@cardbush/bush-protocol';
+
 export interface PersistedTurnUsage {
   model?: string;
   contextWindowTokens?: number;
+  maxOutputTokens?: number;
   inputTokens?: number;
   lastRequestInputTokens?: number;
 }
 
 export interface ContextWindowMetrics {
   usedTokens?: number;
+  totalTokens?: number;
+  /** Conversation budget at which Runtime compacts, not the total window. */
   maxTokens?: number;
   remainingTokens?: number;
   usageRatio?: number;
@@ -19,16 +24,23 @@ export interface ContextWindowMetrics {
 export function contextWindowMetrics(
   usage: PersistedTurnUsage | undefined,
   configuredMaxTokens?: number,
+  configuredMaxOutputTokens?: number,
 ): ContextWindowMetrics {
   const usedTokens = nonnegativeInteger(usage?.lastRequestInputTokens);
-  const maxTokens = positiveInteger(usage?.contextWindowTokens ?? configuredMaxTokens);
+  const totalTokens = positiveInteger(usage?.contextWindowTokens ?? configuredMaxTokens);
+  let maxTokens: number | undefined;
+  if (totalTokens !== undefined) {
+    try { maxTokens = resolveContextBudget(totalTokens, usage?.maxOutputTokens ?? configuredMaxOutputTokens).compactionTriggerTokens; }
+    catch { /* Invalid or incomplete model limits must not masquerade as a usable conversation window. */ }
+  }
   return {
     ...(usedTokens !== undefined ? { usedTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(usedTokens !== undefined && maxTokens !== undefined
       ? {
           remainingTokens: Math.max(0, maxTokens - usedTokens),
-          usageRatio: usedTokens / maxTokens,
+          ...(maxTokens > 0 ? { usageRatio: usedTokens / maxTokens } : {}),
         }
       : {}),
   };

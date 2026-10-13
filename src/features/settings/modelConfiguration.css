@@ -23,6 +23,19 @@
 .model-config-dialog .model-advanced-disclosure svg { transition: transform 180ms ease; }
 .model-config-dialog .model-advanced-disclosure[aria-expanded="true"] svg { transform: rotate(180deg); }
 .model-config-dialog .model-advanced-fields { display: grid; gap: 15px; padding-top: 4px; }
+.model-context-window { min-width: 0; padding: 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 4%, var(--surface)); font-size: 12px; }
+.model-context-window-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.model-context-window-heading > span { display: inline-flex; align-items: center; gap: 5px; }
+.model-context-window-heading output { font-weight: 600; font-variant-numeric: tabular-nums; }
+.model-context-help-button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; color: var(--text-soft); background: transparent; }
+.model-context-help-button:hover, .model-context-help-button[aria-expanded="true"] { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.model-context-help-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.model-context-window p { margin: 6px 0 0; color: var(--text-soft); font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
+.model-context-window-help { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.model-context-window-help dl { display: grid; gap: 7px; margin: 12px 0; font-size: 11px; }
+.model-context-window-help dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.model-context-window-help dd { margin: 0; font-variant-numeric: tabular-nums; }
+.model-context-window-help dl > div:last-child { padding-top: 7px; border-top: 1px solid var(--border); font-weight: 600; }
 .model-dialog-footer { display: flex; flex-shrink: 0; justify-content: flex-end; gap: 10px; padding: 16px 26px; border-top: 1px solid var(--border); }
 .model-dialog-footer button { min-height: 36px; min-width: 80px; }
 .model-settings-stack .model-row.model-row-compact { display: flex; align-items: center; gap: 14px; padding: 16px 14px; }

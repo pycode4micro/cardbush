@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalAwaitInput, conversationalReadInput, conversationalSubagentTools,
+  savedNextStepPrediction, type ConversationEntry,
   individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
 import { executeBufferedModelRound, type BufferedModelRetryStatus } from './bufferedModelRetry.js';
 import type { ModelProvider } from './modelProvider.js';
@@ -48,7 +49,10 @@ export class AssistantConversation {
       const entries = this.journal.read(input.sessionId);
       const unanswered = entries.filter(entry => entry.visibility !== 'internal' && entry.source !== 'voice').at(-1)?.role === 'user';
       const error = this.error || (!this.stopped && !this.configured && unanswered ? '上次回复未完成，消息已保留，可以重试。 / The previous reply did not complete. Your message is saved; retry to continue.' : '');
+      const nextStepPrediction = input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && !error
+        ? this.nextStepPrediction(input.sessionId, entries) : undefined;
       return { entries: entries.slice(input.after), cursor: entries.length, generation: this.generation,
+        ...(nextStepPrediction ? { nextStepPrediction } : {}),
         workingTasks: this.deps.tasks(input.sessionId).filter(task => task.status === 'running').length,
         busy: input.sessionId === PERSONAL_ASSISTANT_SESSION && this.busy, error: input.sessionId === PERSONAL_ASSISTANT_SESSION ? error : '',
         canRetry: input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && Boolean(error) && entries.some(entry => entry.role === 'user' && ['text', 'voice'].includes(entry.source)),
@@ -94,6 +98,28 @@ export class AssistantConversation {
       catch (error) { this.error ||= error instanceof Error ? error.message : String(error); }
       if (this.pending && !this.stopped) void this.pump();
     } }
+  }
+  private nextStepPrediction(sessionId: string, entries: ConversationEntry[]) {
+    const latest = entries.filter(entry => entry.visibility !== 'internal').at(-1);
+    if (!latest || latest.role !== 'assistant' || latest.source === 'voice') return;
+    const history = this.journal.modelHistory(sessionId).read();
+    if (!history.entryIds.has(latest.id)) return;
+    const results = new Map<string, unknown>();
+    for (let index = history.messages.length - 1; index >= 0; index--) {
+      const message = history.messages[index];
+      if (message.role === 'user') {
+        if (message.visibility === 'internal' && ['memory_state_updates', 'individuation_preference'].includes(message.name ?? '')) continue;
+        return;
+      }
+      if (message.role === 'tool') {
+        try { results.set(message.toolCallId, JSON.parse(message.content)); } catch { /* Not a summary receipt. */ }
+      }
+      if (message.role !== 'assistant') continue;
+      const call = [...message.toolCalls].reverse().find(tool => tool.name === 'summary_for_user');
+      if (!call) continue;
+      const prediction = savedNextStepPrediction(call, results.get(call.id), latest.createdAt);
+      return prediction && prediction.expiresAt > Date.now() ? { ...prediction, id: `${latest.id}:${prediction.id}` } : undefined;
+    }
   }
   private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal) {
     const id = PERSONAL_ASSISTANT_SESSION;

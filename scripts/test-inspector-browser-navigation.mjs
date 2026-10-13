@@ -34,6 +34,8 @@ import { ConversationHostContext } from '${local('src/features/conversationHost.
 import { toggleBrowserBookmark, importBrowserBookmarks } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
 import { newBrowserTab } from '${local('src/features/browser/browserStartPage.ts')}';
 import { useInspectorBrowserActions } from '${local('src/features/inspector/useInspectorBrowserActions.ts')}';
+import { useBrowserTabReferences } from '${local('src/features/browser/useBrowserTabReferences.ts')}';
+import { MarkdownContent } from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import { inspectorBrowserReferences } from '${local('src/features/composer/ComposerReferenceContext.ts')}';
 import { promptReferenceMarkdown } from '${local('src/shared/promptReferences.ts')}';
 import { bindLocalBrowserReferences, resolvePromptReferenceContext } from '${local('src/backend/promptReferenceContext.ts')}';
@@ -51,6 +53,7 @@ function Harness() {
   const [covered,setCovered]=React.useState(false);
   const [width,setWidth]=React.useState(820);
   const [language,setLanguage]=React.useState('zh');
+  const [citation,setCitation]=React.useState('');
   const inspectorOpen=tabs.open,setInspectorOpen=tabs.setOpen;
   const presence=useSoftPanelPresence(inspectorOpen,240,{keepMounted:true});
   const open=React.useCallback(detail=>{
@@ -59,7 +62,10 @@ function Harness() {
     tabs.openTab({id:detail.newTab ? crypto.randomUUID() : detail.target,kind:'resource',detail});
   },[tabs.openTab]);
   const update=React.useCallback((id,state)=>setNavigation(current=>({...current,[id]:state})),[]);
-  window.browserFixture={...tabs,workspaceId,setWorkspaceId,localInspectorWorkspace,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark,importBrowserBookmarks,installWebApplication};
+  useBrowserTabReferences({tabs:tabs.allTabs,workspaceId,ownerOfTab:tabs.ownerOfTab,visible:id=>tabs.tabs.some(tab=>tab.id===id),
+    select:tabs.activateTab,show:workspace=>tabs.setOpen(true,workspace),navigate:async workspace=>{setWorkspaceId(workspace);return true;}});
+  React.useEffect(()=>{const receive=event=>open(event.detail);window.addEventListener('cardbush:open-inspector',receive);return()=>window.removeEventListener('cardbush:open-inspector',receive)},[open]);
+  window.browserFixture={...tabs,workspaceId,setWorkspaceId,localInspectorWorkspace,open,navigation,layout,setLayout,addPanel,resizePanelSplit,swapPanels,setCovered,setWidth,setLanguage,setInspectorOpen,toggleBrowserBookmark,importBrowserBookmarks,installWebApplication,setCitation};
   useInspectorBrowserActions({workspaceId,snapshot:tabs.snapshot,bind:tabs.bindBrowserTabs,open:tabs.openTab,activate:tabs.activateTab,
     close:(id,workspace)=>tabs.closeTabs(new Set([id]),workspace),show:workspace=>tabs.setOpen(true,workspace),
     workspace:sessionId=>workspaceId==='shared'?'shared':localInspectorWorkspace(sessionId ?? '')});
@@ -73,7 +79,8 @@ function Harness() {
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
     <ConversationHostContext.Provider value={{id:'browser-fixture',plugins:[],pluginCommands:[]}}><AppCenterProvider language={language} onNavigate={app=>open({target:app.target,title:app.title})}>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
-    <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/></div><AppCenterDock language={language}/></section>
+    <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/>
+      {citation && <MarkdownContent content={citation} language="zh"/>}</div><AppCenterDock language={language}/></section>
     {presence.mounted && <aside className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
       inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
     <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>

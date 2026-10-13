@@ -1,6 +1,25 @@
 import type { ToolRegistry } from "./toolRegistry.js";
 import { SOLUTION_SELECTION_TOOL, solutionSelectionInputSchema, type SolutionSelectionInput } from '@cardbush/bush-protocol';
 import type { RuntimeSolutionBroker } from './runtimeSolutionBroker.js';
+import type { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
+
+export function registerAsyncInteraction(registry: ToolRegistry, solutions: RuntimeSolutionBroker, jobs: RuntimeAsyncJobs) {
+  registry.register<SolutionSelectionInput>({
+    definition: { name: 'request_user_input_async', description: 'Ask one necessary, self-contained question and immediately continue independent work. Provide 1–3 concise suggested answers; the UI also permits free text. Returns a task_id; the actual answer arrives separately. Do not start steps that depend on the answer, infer approval from elapsed time, repeat a dismissed question, or use this for permissions or progress updates.', inputSchema: {
+      type: 'object', additionalProperties: false, required: ['prompt', 'options'], properties: {
+        prompt: { type: 'string', minLength: 1, maxLength: 500 }, options: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 120 } },
+      },
+    } },
+    manifest: interactionManifest('solution.request_async'), nestedCallable: false, visibleToChild: false,
+    decodeInput: value => solutionSelectionInputSchema.parse(value),
+    authorize: context => context.turn?.request.requestCapabilities.interactiveRequests === true && context.turn.request.metadata.agentRole !== 'child'
+      ? { kind: 'allow' } : { kind: 'deny', code: 'solution_selection_unavailable', message: 'A user-facing parent session is required.' },
+    execute: context => {
+      if (solutions.list(context.sessionId).length) throw new Error('A question is already pending. Continue independent work and wait for its actual answer.');
+      return jobs.start(context, 'question', signal => solutions.start({ requestId: context.requestId, sessionId: context.sessionId, turnId: context.turnId }, context.toolCall.id, context.input, signal).result);
+    },
+  });
+}
 
 export const REQUEST_PERMISSION_TOOL = "request_permission" as const;
 
@@ -96,9 +115,9 @@ export function registerInteractionTools(
         name: SOLUTION_SELECTION_TOOL,
         description: 'Solution Selection — a last resort for one consequential ambiguity that remains after inspecting context and available tools, where guessing risks a materially wrong outcome. Offer concrete solutions, not teaching, surveys, progress updates, routine preferences, permission requests or reconfirmation of authorized work. Wait for the actual reply before dependent work. If dismissed, report the unresolved dependency; do not pick a default or repeat the request.',
         inputSchema: { type: 'object', additionalProperties: false, required: ['prompt', 'options'], properties: {
-          prompt: { type: 'string', minLength: 1, maxLength: 15, description: 'One short, concrete unresolved decision, in the user’s language.' },
+          prompt: { type: 'string', minLength: 1, maxLength: 500, description: 'One concrete unresolved decision, with enough context to answer.' },
           options: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true,
-            items: { type: 'string', minLength: 1, maxLength: 15 }, description: '1–3 concrete solution strings. No IDs or metadata. 推荐/Recommended may be included within the length limit. Omit Other; the UI already allows free-text replies.' },
+            items: { type: 'string', minLength: 1, maxLength: 120 }, description: '1–3 concrete solution strings. Omit Other; the UI already allows free-text replies.' },
         } },
       },
       manifest: interactionManifest('solution.select'),

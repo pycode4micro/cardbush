@@ -17,11 +17,12 @@ test('accepts only 1–3 distinct brief plain text solutions, without recommenda
   assert.deepEqual(solutionSelectionInputSchema.parse(input), input);
   for (const candidate of [ { ...input, options: [] }, { ...input, options: ['一', '二', '三', '四'] },
     { ...input, options: [{ label: '保留', recommended: true }] }, { ...input, recommended: 0 },
-    { ...input, prompt: '字'.repeat(16) }, { ...input, options: ['字'.repeat(16)] },
+    { ...input, prompt: '字'.repeat(501) }, { ...input, options: ['字'.repeat(121)] },
     { ...input, options: ['保留', '保留'] }, { ...input, prompt: '一\n二' } ]) {
     assert.equal(solutionSelectionInputSchema.safeParse(candidate).success, false);
   }
   assert.equal(solutionSelectionInputSchema.safeParse({ prompt: '🧩'.repeat(15), options: ['保留'] }).success, true);
+  assert.equal(solutionSelectionInputSchema.safeParse({ prompt: '🧩'.repeat(500), options: ['字'.repeat(120)] }).success, true);
   assert.equal(runtimeSolutionAnswerSchema.safeParse({ selectionId: 'id', sessionId: 'a', turnId: 'a', kind: 'text', text: '  ' }).success, false);
   assert.ok(DEFAULT_CHILD_AGENT_DISABLED_TOOLS.includes('solution_selection'));
 });

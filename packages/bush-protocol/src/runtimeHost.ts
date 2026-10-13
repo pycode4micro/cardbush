@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema, providerInputObservationSchema } from "./cacheChain.js";
-import { toolDisplaySchema, toolErrorKindSchema } from "./tool.js";
+import { toolDisplaySchema, toolErrorKindSchema, runtimeToolErrorSchema } from "./tool.js";
 import { modelEventSchema, modelFailureDiagnosticsSchema, providerCompatibilityDiagnosticSchema, providerStreamDiagnosticSchema } from "./model.js";
 import { runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema } from './solutionSelection.js';
 
@@ -257,7 +257,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("tool_returned"),
-    payload: toolIdentitySchema,
+    payload: toolIdentitySchema.extend({ resultError: runtimeToolErrorSchema.optional() }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("tool_failed"),
@@ -322,6 +322,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       providerInputSequence: z.number().int().positive().optional(),
       model: z.string().min(1),
       contextWindowTokens: z.number().int().positive().optional(),
+      maxOutputTokens: z.number().int().positive().optional(),
       inputTokens: z.number().int().nonnegative(),
       outputTokens: z.number().int().nonnegative().optional(),
       cachedInputTokens: z.number().int().nonnegative().optional(),

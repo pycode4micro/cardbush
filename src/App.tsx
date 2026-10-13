@@ -17,6 +17,8 @@ import { InspectorTabStrip } from './features/inspector/InspectorTabStrip';
 import { InspectorTabLock } from './features/inspector/InspectorTabLock';
 import { BrowserTabAudioButton } from './features/browser/BrowserTabAudioButton';
 import { BrowserSiteIcon } from './features/browser/BrowserSiteIcon';
+import { useBrowserTabReferences } from './features/browser/useBrowserTabReferences';
+import { openBrowserTabReference } from './features/browser/browserTabReferences';
 import { EmployeeIcon, isEmployeeTask } from './features/team/employeePresentation';
 import { newBrowserTab } from './features/browser/browserStartPage';
 import { BrowserMenu } from './features/browser/BrowserMenu';
@@ -40,7 +42,7 @@ import {
   Clock3,
   ExternalLink,
   FileText,
-  Globe2,
+  Globe,
   Menu,
   PanelRightClose,
   RefreshCw,
@@ -80,6 +82,8 @@ import { useCompactSidebar } from './hooks/useCompactSidebar';
 import { CompactSidebarBackdrop } from './components/CompactSidebarBackdrop';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { ConversationInspectorContext, ConversationInspectorOutlet, useConversationInspectorActions, useConversationInspectorOutlets } from './features/inspector/ConversationInspector';
+import { useCreationSessionId } from './features/mdPresentation/bushItPageStore';
+import type { CreationInspectorContext } from './features/mdPresentation/CreationConversation';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { agentInspectorWorkspace, localInspectorWorkspace } from './features/inspector/inspectorSessions';
 import { ComposerReferenceContext, inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
@@ -638,8 +642,12 @@ function CardbushApp() {
   );
   const workspaceChangeState = useMemo(() => ({ states: revertedChangeStates, busy: Boolean(revertingChangeId) }),
     [revertedChangeStates, revertingChangeId]);
+  const creationSessionId = useCreationSessionId();
+  const [creationInspector, setCreationInspector] = useState<CreationInspectorContext | null>(null);
+  const activeCreationInspector = section === 'md-presentation' && creationInspector?.sessionId === creationSessionId ? creationInspector : null;
   const inspectorWorkspaceId = section === 'assistant' ? localInspectorWorkspace('personal-assistant')
     : section === 'agents' ? agentInspectorWorkspace(agents.selectedId, agents.selectedSessions[agents.selectedId] ?? '')
+    : section === 'md-presentation' ? localInspectorWorkspace(creationSessionId || 'creation')
     : localInspectorWorkspace(chat.activeConversationId);
   const {
     tabs: inspectorTabs, activeTab: activeInspectorTab,
@@ -667,8 +675,24 @@ function CardbushApp() {
     Record<string, InspectorNavigationState>
   >({});
   const composerBrowserTabs = useMemo(() => inspectorBrowserReferences(inspectorTabs, inspectorNavigationByTarget), [inspectorTabs, inspectorNavigationByTarget]);
-  const composerBrowserTabsRef = useRef(composerBrowserTabs);
-  composerBrowserTabsRef.current = composerBrowserTabs;
+  useBrowserTabReferences({
+    tabs: retainedInspectorTabs, workspaceId: inspectorWorkspaceId, ownerOfTab: inspectorTabOwner,
+    visible: id => inspectorTabs.some(tab => tab.id === id), select: selectInspectorTab,
+    show: workspace => { setInspectorOpen(true, workspace); setInspectorTabsMenuOpen(false); setInspectorTabContextMenu(null); },
+    navigate: async workspace => {
+      if (workspace.startsWith('local:')) {
+        const sessionId: string = JSON.parse(workspace.slice(6));
+        if (sessionId === 'personal-assistant') { setSection('assistant'); return true; }
+        if (!await chat.openStoredConversation(sessionId)) return false;
+        setSection('chat'); return true;
+      }
+      if (workspace.startsWith('agent:')) {
+        const [connectionId, sessionId] = JSON.parse(workspace.slice(6));
+        agents.select(connectionId, sessionId); setSection('agents'); return true;
+      }
+      return false;
+    },
+  });
   const inspectorTabContextTarget = inspectorTabContextMenu
     ? inspectorTabs.find((tab) => tab.id === inspectorTabContextMenu.tabId) ?? null
     : null;
@@ -705,12 +729,10 @@ function CardbushApp() {
   const openInspectorTarget = useCallback((detail: InspectorOpenDetail, workspaceId = inspectorWorkspaceId) => {
     const target = stripWrappingQuotes(detail.target.trim());
     if (!target) return;
-    const sourceTab = detail.sourceTabId ? composerBrowserTabsRef.current.find(tab => tab.tabId === detail.sourceTabId && tab.url === target) : undefined;
-    if (sourceTab) {
-      selectInspectorTab(sourceTab.tabId, workspaceId);
-      setInspectorOpen(true, workspaceId);
-      setInspectorTabsMenuOpen(false);
-      setInspectorTabContextMenu(null);
+    if (detail.sourceTabId) {
+      void openBrowserTabReference({ connectionId: 'cardbush', tabId: detail.sourceTabId, url: target, title: detail.title || target })
+        .then(result => { if (result.status !== 'opened') void showUiError(language === 'zh' ? '标签不可用' : 'Tab unavailable',
+          result.status === 'missing' ? language === 'zh' ? '原标签已关闭，请通过原网址明确重新打开。' : 'The original tab is closed. Reopen its website explicitly.' : result.message || 'Browser tab unavailable.'); });
       return;
     }
     const normalizedDetail: InspectorOpenDetail = {
@@ -728,7 +750,7 @@ function CardbushApp() {
     setInspectorOpen(true, workspaceId);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
-  }, [openInspectorTab, selectInspectorTab, setInspectorOpen, inspectorWorkspaceId]);
+  }, [openInspectorTab, setInspectorOpen, inspectorWorkspaceId, language]);
   const openNewBrowserInspectorTab = useCallback(() => {
     focusNewBrowserTab.current = true;
     openInspectorTarget(newBrowserTab(language));
@@ -849,12 +871,14 @@ function CardbushApp() {
       byId.set(conversation.id, conversation);
     }
     if (chat.activeConversation) byId.set(chat.activeConversation.id, chat.activeConversation);
+    if (creationInspector) byId.set(creationInspector.sessionId, creationInspector.conversation);
     return byId;
   }, [
     changeReportsByConversation,
     chat.activeConversation,
     chat.conversations,
     chat.preparedConversations,
+    creationInspector,
     language,
   ]);
   const closeInspector = useCallback(() => {
@@ -1001,23 +1025,31 @@ function CardbushApp() {
     });
     return () => cancelAnimationFrame(frame);
   }, [activeInspectorTabIdentity, inspectorLayout]);
+  const inspectorConversationId = section === 'md-presentation' ? creationSessionId : chat.activeConversationId;
+  const inspectorConversation = activeCreationInspector?.conversation ?? chat.activeConversation;
+  const inspectorMessages = activeCreationInspector?.messages ?? chat.activeMessages;
+  const inspectorBusy = activeCreationInspector?.busy ?? chat.sending;
+  const inspectorSelectedModel = activeCreationInspector?.selectedModel ?? chat.selectedModel;
+  const inspectorTurnId = activeCreationInspector?.activeTurnId ?? chat.activeTurnId;
+  const inspectorReasoningLevel = activeCreationInspector?.reasoningLevel ?? chat.reasoningLevel;
+  const inspectorProjectDir = activeCreationInspector?.root ?? activeProjectDir;
   const selectedInspectorModelConfig = useMemo(
     () => appSettings.managedModelConfigs.find(
-      (config) => config.id === chat.selectedModel,
+      (config) => config.id === inspectorSelectedModel,
     ),
-    [appSettings.managedModelConfigs, chat.selectedModel],
+    [appSettings.managedModelConfigs, inspectorSelectedModel],
   );
   const inspectorShadowAvailable =
-    section === 'chat' &&
+    (section === 'chat' || Boolean(activeCreationInspector)) &&
     backendCapabilities.shadowConversationActivation &&
-    !chat.sending &&
-    Boolean(chat.activeConversationId) &&
+    !inspectorBusy &&
+    Boolean(inspectorConversationId) &&
     Boolean(selectedInspectorModelConfig) &&
-    chat.activeMessages.some((message) => message.role === 'user');
+    inspectorMessages.some((message) => message.role === 'user');
   const inspectorShadowUnavailableReason = inspectorShadowAvailable ? ''
     : !backendCapabilities.shadowConversationActivation
       ? language === 'zh' ? '当前运行环境不支持 Shadow 对话' : 'Shadow chat is unavailable in this runtime'
-      : chat.sending
+      : inspectorBusy
         ? language === 'zh' ? '当前任务结束后可创建 Shadow 对话' : 'Shadow chat is available after the current task finishes'
         : !selectedInspectorModelConfig
           ? language === 'zh' ? '请先选择可用模型' : 'Select an available model first'
@@ -1031,24 +1063,24 @@ function CardbushApp() {
     if (
       !inspectorShadowAvailable ||
       !selectedInspectorModelConfig ||
-      !chat.activeConversationId
+      !inspectorConversationId
     ) return;
     const id = `shadow:${crypto.randomUUID()}`;
-    const title = chat.activeConversation?.title?.trim() || (
+    const title = inspectorConversation?.title?.trim() || (
       language === 'zh' ? '当前会话' : 'Current conversation'
     );
     const context: ShadowConversationContext = {
       windowId: id,
-      sessionId: chat.activeConversationId,
-      sourceTurnId: chat.activeTurnId,
+      sessionId: inspectorConversationId,
+      sourceTurnId: inspectorTurnId,
       title,
       language,
       theme,
       accentColor: shadowAccentColor,
       themeVariables: importedThemeVariables,
       modelConfig: selectedInspectorModelConfig,
-      reasoningLevel: chat.reasoningLevel,
-      projectDir: activeProjectDir ?? '',
+      reasoningLevel: inspectorReasoningLevel,
+      projectDir: inspectorProjectDir ?? '',
       initialMode: 'readonly',
     };
     openInspectorTab({
@@ -1061,11 +1093,11 @@ function CardbushApp() {
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [
-    activeProjectDir,
-    chat.activeConversation?.title,
-    chat.activeConversationId,
-    chat.activeTurnId,
-    chat.reasoningLevel,
+    inspectorProjectDir,
+    inspectorConversation?.title,
+    inspectorConversationId,
+    inspectorTurnId,
+    inspectorReasoningLevel,
     inspectorShadowAvailable,
     importedThemeVariables,
     language,
@@ -1075,7 +1107,7 @@ function CardbushApp() {
     openInspectorTab,
     setInspectorOpen,
   ]);
-  const inspectorReviewAvailable = section === 'chat' && Boolean(chat.activeConversation) && Boolean(
+  const inspectorReviewAvailable = section === 'md-presentation' ? Boolean(creationSessionId) : section === 'chat' && Boolean(chat.activeConversation) && Boolean(
     activeConversationProjectDir || changeReportsByConversation[chat.activeConversationId]?.length,
   );
   const inspectorActionProps = {
@@ -1083,10 +1115,10 @@ function CardbushApp() {
     filesAvailable: Boolean(window.cardbushDesktop?.pickAttachments),
     shadowUnavailableReason: inspectorShadowUnavailableReason,
     onOpenReview: inspectorReviewAvailable
-      ? () => openChangeReviewInspector(chat.activeConversationId)
+      ? () => openChangeReviewInspector(inspectorConversationId)
       : undefined,
-    onOpenHistory: section === 'chat' && chat.activeConversationId
-      ? () => openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId })
+    onOpenHistory: (section === 'chat' || section === 'md-presentation') && inspectorConversationId
+      ? () => openWorkSummaryTab({ kind: 'turn-history', sessionId: inspectorConversationId })
       : undefined,
     onOpenFiles: () => { void openInspectorFiles(); },
     onOpenShadow: openShadowInspectorTab,
@@ -1995,6 +2027,7 @@ function CardbushApp() {
     if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab); return; }
     const workspaceId = page.section === 'assistant' ? localInspectorWorkspace('personal-assistant')
       : page.section === 'agents' ? agentInspectorWorkspace(page.agentId, page.sessionId)
+      : page.section === 'md-presentation' ? localInspectorWorkspace(creationSessionId || 'creation')
       : localInspectorWorkspace(page.section === 'chat' ? page.conversationId : chat.activeConversationId);
     if (workspaceId === inspectorWorkspaceId) revealConversation();
     setSettingsOpen(false); setSection(page.section);
@@ -2054,7 +2087,7 @@ function CardbushApp() {
     reloadBrowser: !settingsOpen && inspectorOpen && displayedInspectorTarget && activeInspectorNavigation &&
       inspectorWebviewRefs.current.has(activeInspectorTabIdentity)
       ? () => inspectorWebviewRefs.current.get(activeInspectorTabIdentity)?.reload() : undefined,
-    openReview: inspectorReviewAvailable ? () => { setSettingsOpen(false); openChangeReviewInspector(chat.activeConversationId); } : undefined,
+    openReview: inspectorReviewAvailable ? () => { setSettingsOpen(false); openChangeReviewInspector(inspectorConversationId); } : undefined,
     openHistory: section === 'chat' && chat.activeConversationId
       ? () => { setSettingsOpen(false); openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId }); } : undefined,
     openShadow: inspectorShadowAvailable ? () => { setSettingsOpen(false); openShadowInspectorTab(); } : undefined,
@@ -2383,6 +2416,9 @@ function CardbushApp() {
               </ComposerPortalContext.Provider>
             ) : (
               <FeaturePanel
+                creationChatOptions={{ theme, disabledSkillNames, onToggleSkill: toggleSkillEnabled, onConfigureModels: () => openSettings('models'), browserTabs: composerBrowserTabs,
+                  composerPortalTarget: section === 'md-presentation' && quickInputOpen ? quickInputTarget : null,
+                  onOpenChangeReview: (sessionId, path) => openChangeReviewInspector(sessionId, path), onInspectorContext: setCreationInspector }}
                 language={language}
                 backendCapabilities={backendCapabilities}
                 onOpenPluginPrompt={openPluginPrompt}
@@ -2699,7 +2735,7 @@ function CardbushApp() {
                           ?.navigate(inspectorAddressDraft);
                       }}
                     >
-                      <Globe2 size={13} aria-hidden="true" />
+                      <Globe size={13} aria-hidden="true" />
                       <input
                         ref={inspectorAddressRef}
                         value={inspectorAddressDraft}
@@ -2740,11 +2776,12 @@ function CardbushApp() {
                         if (to && to !== from) setInspectorLayout(tree => tree ? swapPanels(tree, from, to) : tree);
                       }}/>}>
                     {(tab, active) => {
+                      const writingReview = tab.kind === 'review' && creationInspector?.sessionId === tab.conversationId ? creationInspector : null;
                       const displayedReviewConversation = tab.kind === 'review'
                         ? reviewConversationsById.get(tab.conversationId)
                         : null;
                       const displayedReviewReports = tab.kind === 'review'
-                        ? changeReportsByConversation[tab.conversationId] ?? []
+                        ? writingReview?.reports ?? changeReportsByConversation[tab.conversationId] ?? []
                         : [];
                       return (
                         <>
@@ -2776,7 +2813,7 @@ function CardbushApp() {
                           ) : tab.kind === 'history' || tab.kind === 'subagent' || tab.kind === 'agent-definition' ? (
                             <WorkSummaryInspector
                               detail={tab.detail}
-                              messages={chat.messagesByConversation[tab.detail.sessionId] ?? []}
+                              messages={(creationInspector?.sessionId === tab.detail.sessionId ? creationInspector.messages : chat.messagesByConversation[tab.detail.sessionId]) ?? []}
                               language={language}
                               active={active && inspectorPresence.visible}
                               conversationOptions={{ theme, thinkingVisible: appSettings.thinking.visible, guidanceDeliveryMode: appSettings.guidance.deliveryMode,
@@ -2790,10 +2827,10 @@ function CardbushApp() {
                                 sessionId={displayedReviewConversation.id}
                                 projectDir={conversationProjectRoot(displayedReviewConversation)}
                                 language={language}
-                                busy={chat.processingConversationIds.has(displayedReviewConversation.id)}
+                                busy={writingReview?.busy ?? chat.processingConversationIds.has(displayedReviewConversation.id)}
                                 gitAvailable={backendCapabilities.git}
                                 revisionKey={displayedReviewConversation.updatedAt}
-                                onChanged={refreshBackendAndActiveSession}
+                                onChanged={writingReview?.refresh ?? refreshBackendAndActiveSession}
                               />}
                               language={language}
                               conversation={displayedReviewConversation}
@@ -2807,6 +2844,11 @@ function CardbushApp() {
                               }}
                               onComposeReviewComments={comments => {
                                 const sessionId = displayedReviewConversation.id;
+                                if (writingReview) {
+                                  writingReview.appendDraft(appendReviewCommentsToDraft('', comments, language));
+                                  revealConversation();
+                                  return;
+                                }
                                 setDraftsByConversation(current => ({ ...current,
                                   [sessionId]: appendReviewCommentsToDraft(current[sessionId] ?? '', comments, language),
                                 }));
@@ -2815,7 +2857,7 @@ function CardbushApp() {
                                 setSettingsOpen(false);
                                 setConversationPromptFocus(value => value + 1);
                               }}
-                              turns={recentReviewTurns(chat.messagesByConversation[displayedReviewConversation.id] ?? [])}
+                              turns={recentReviewTurns(writingReview?.messages ?? chat.messagesByConversation[displayedReviewConversation.id] ?? [])}
                               initialFilePath={tab.initialFilePath}
                               selectionRequestId={tab.selectionRequestId}
                               notice={changeReviewNotice}
@@ -2826,13 +2868,13 @@ function CardbushApp() {
                                   .map((report) => report.id),
                               )}
                               onClose={() => closeInspectorTab(tab.id)}
-                              onRevert={(report) => revertChangeReport(
+                              onRevert={writingReview?.revert ?? ((report) => revertChangeReport(
                                 displayedReviewConversation.id,
                                 report,
-                              )}
-                              revertAvailable={!chat.processingConversationIds.has(
+                              ))}
+                              revertAvailable={!(writingReview?.busy ?? chat.processingConversationIds.has(
                                 displayedReviewConversation.id,
-                              )}
+                              ))}
                             />
                           ) : null}
                         </>
@@ -2853,7 +2895,7 @@ function CardbushApp() {
           {inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
             inert={(compactLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
             onBack={leaveInspectorCover} onToggleInput={() => {
-              if (!quickInputOpen && section !== 'agents' && section !== 'assistant') setSection('chat');
+              if (!quickInputOpen && section !== 'agents' && section !== 'assistant' && section !== 'md-presentation') setSection('chat');
               setQuickInputOpen(open => !open);
             }} />}
       </main>

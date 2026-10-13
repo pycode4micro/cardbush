@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { resolve, win32 } from 'node:path';
-import type { ToolExecutionRecord } from '@cardbush/bush-protocol';
+import { toolExecutionError, type ToolExecutionRecord } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { SessionMetadataEntry } from './sessionStore.js';
@@ -8,7 +8,7 @@ import { executionHistoryResults, normalizeHistoryText, searchExecutionSummaries
 export { searchExecutionSummaries } from './executionHistorySearch.js';
 
 export const EXECUTION_HISTORY_TOOL = 'search_execution_history';
-export const EXECUTION_HISTORY_SUMMARY_VERSION = 4;
+export const EXECUTION_HISTORY_SUMMARY_VERSION = 5;
 export interface ExecutionHistoryEntry {
   summaryVersion?: number;
   id: string;
@@ -82,7 +82,8 @@ export function summarizeExecution(record: ToolExecutionRecord): ExecutionHistor
     if (text && !seen.has(fragment)) { seen.add(fragment); fragments.push(fragment); }
   };
   const result = plain(record.result);
-  if (record.error) { add('error', record.error.code, 80); add('message', record.error.message, 180); }
+  const error = toolExecutionError(record);
+  if (error) { add('error', error.code, 80); add('message', error.message, 180); }
   for (const fields of [result, plain(result?.structuredContent)]) {
     if (fields) for (const key of ['ok', 'success', 'isError', 'exitCode', 'exit_code', 'status']) add(key, fields[key], 60);
   }
@@ -134,7 +135,7 @@ export function summarizeExecution(record: ToolExecutionRecord): ExecutionHistor
   const references = executionReferences([result, args]);
   return { summaryVersion: EXECUTION_HISTORY_SUMMARY_VERSION, id: hash(JSON.stringify([record.sessionId, record.turnId, record.toolCall.id])),
     sessionId: record.sessionId, turnId: record.turnId, toolCallId: record.toolCall.id, recordedAt: record.recordedAt,
-    tool: record.toolCall.name, outcome: record.outcome, ...(references.length ? { references } : {}),
+    tool: record.toolCall.name, outcome: record.outcome === 'returned' && error ? 'failed' : record.outcome, ...(references.length ? { references } : {}),
     summary: clip(fragments.join('; ') || `${record.toolCall.name}: ${record.outcome}`, 640) };
 }
 

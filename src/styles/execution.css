@@ -1912,13 +1912,34 @@
   transition: opacity 150ms ease, background-color 120ms ease;
   transform: translateX(-50%);
   z-index: 6;
+  isolation: isolate;
 }
 
 .scroll-bottom svg {
+  position: relative;
+  z-index: 1;
   display: block;
   pointer-events: none;
   transform: none;
 }
+
+.scroll-bottom.loop-running::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(#6fa7e9, #abd8fc 27%, #fff 49%, #9acbfa 68%, #6fa7e9);
+  opacity: 0.2;
+  animation: scroll-bottom-loop 3.2s linear infinite;
+}
+
+@keyframes scroll-bottom-loop {
+  to { transform: rotate(1turn); }
+}
+
+.scroll-bottom.loop-running.hidden::before { animation-play-state: paused; }
+:where(html[data-motion-preference="on"]) .scroll-bottom.loop-running::before { animation: none; }
 
 .scroll-bottom:hover,
 .scroll-bottom:focus-visible {
@@ -1938,4 +1959,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   :where(html:not([data-motion-preference="off"])) .scroll-bottom { transition: none; }
+  :where(html:not([data-motion-preference="off"])) .scroll-bottom.loop-running::before { animation: none; }
 }

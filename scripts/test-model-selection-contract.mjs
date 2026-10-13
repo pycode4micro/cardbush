@@ -54,7 +54,7 @@ const settingsSource = readSourceFile(
 );
 assert.match(settingsSource, /selected=\{config\.defaultModelId === model\.id\}/);
 assert.match(settingsSource, /onSelect\(model\.id\)/);
-assert.match(settingsSource, /最大输出 tokens 必须小于上下文上限/);
+assert.match(settingsSource, /最大输出 tokens 必须小于总体上下文窗口/);
 assert.match(settingsSource, /model.maxCompletionTokens/);
 
 const apiSource = readSourceFile(

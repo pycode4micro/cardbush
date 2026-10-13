@@ -205,6 +205,24 @@ app.whenReady().then(async () => {
     assert.ok(await run('[...document.querySelectorAll(".tool-execution-summary svg")].every(svg=>svg.getBoundingClientRect().width>=15)'));
     await run('document.querySelector(".tool-execution-row").click()'); await pause();
     assert.ok(await run('document.querySelector(".tool-execution-row-content").scrollWidth<=document.querySelector(".tool-execution-row-content").clientWidth'), 'narrow details keep the toolbar and output within the row');
+    for (const language of ['zh', 'en']) {
+      await run(`language=${JSON.stringify(language)};messageId='context-budget-'+language;active=false;
+        document.querySelector('.message-list').style.width='100%';
+        executions=[{...executions[0],id:messageId,name:'runtime_context_compaction',state:'completed',output:'',
+          metadata:{runtimeMaintenance:'context_compaction',estimatedInputTokens:145045,usableInputTokens:272000,
+            compactionTriggerTokens:141952,triggerRatio:0.5332536764705882,summarizedTurnCount:1,activeTurnCheckpointed:true}}];renderFixture();`);
+      await pause();
+      await until('Boolean(document.querySelector(".tool-execution-summary"))');
+      if (await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
+        await run('document.querySelector(".tool-execution-summary").click()');
+      await until('Boolean(document.querySelector(".runtime-context-compaction-metrics"))');
+      const metrics = await run('document.querySelector(".runtime-context-compaction-metrics").textContent');
+      assert.match(metrics, /145k \/ 142k/);
+      assert.match(metrics, /102\.2%/);
+      assert.doesNotMatch(metrics, /272k|53\.3%/);
+      assert.equal(await run('document.querySelector(".runtime-context-compaction-metrics").title'), '145,045 / 141,952 tokens');
+      await pause(); writeFileSync(resolve('tmp/context-compaction-window-'+language+'.png'), (await window.webContents.capturePage()).toPNG());
+    }
     assert.equal(window.webContents.getURL(),url); assert.equal(navigations,0);
     console.log('Tool rows UI passed: both themes, compact rows, one detail, exact output/copy, wrap, completion, lazy hydration, retry, late results, zero navigation.');
   } finally { window.destroy(); }

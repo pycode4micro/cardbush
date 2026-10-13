@@ -411,6 +411,7 @@ declare global {
       onInspectorOpenLink: (callback: (detail: { guestWebContentsId: number; target: string }) => void) => () => void;
       onInspectorGuestActivated: (callback: (detail: { guestWebContentsId: number }) => void) => () => void;
       registerInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => Promise<void>;
+      openBrowserTabReference: (href: string, reopen?: boolean) => Promise<import('@cardbush/bush-protocol').BrowserTabOpenResult>;
       unregisterInspectorBrowser: (input: { tabId: string; guestWebContentsId: number }) => Promise<void>;
       acknowledgeInspectorBrowserAction: (result: import('../../electron/integratedBrowser').BrowserTabActionResult) => Promise<void>;
       bindInspectorBrowserReferences: (sessionId: string, references: Array<{ tabId: string; pageId?: string; url?: string }>) => Promise<Array<{ tabId: string; id: number; browser: 'cardbush'; url: string; title: string }>>;

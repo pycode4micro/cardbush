@@ -5,6 +5,9 @@ import {
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
   agentToolActivity,
   terminalToolOutcome,
+  toolExecutionError,
+  returnedToolError,
+  savedNextStepPrediction,
   WORKSPACE_REVIEW_TURN_LIMIT,
   parseSourceMemoReference,
   sourceMemoSchema,
@@ -71,6 +74,7 @@ export class ToolExecutionStore {
     outcome: ToolExecutionOutcome,
     modelText?: string,
   ): ToolExecutionRecord {
+    const resultError = outcome.kind === 'returned' ? outcome.resultError ?? returnedToolError(toolCall.name, outcome.result) : undefined;
     const candidate = structuredClone(toolExecutionRecordSchema.parse({
       protocol: BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
       requestId: identity.requestId,
@@ -82,8 +86,10 @@ export class ToolExecutionStore {
       toolCall,
       display: identity.display,
       outcome: outcome.kind,
+      execution: outcome.execution,
       actionManifest: outcome.actionManifest,
       ...(outcome.kind === "returned" ? { result: outcome.result } : {}),
+      ...(resultError ? { resultError } : {}),
       ...(outcome.kind === "returned" && modelText !== undefined ? { modelText } : {}),
       workspaceChanges: outcome.workspaceChanges,
       ...(outcome.kind === "returned" ? {} : { error: outcome.error }),
@@ -267,7 +273,9 @@ export class ToolExecutionStore {
 
 function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<object>): ToolExecutionSummary {
   const activity = agentToolActivity(record);
+  const nextStepPrediction = record.outcome === 'returned' ? savedNextStepPrediction(record.toolCall, record.result, record.recordedAt) : undefined;
   const terminalOutcome = record.outcome === 'returned' ? terminalToolOutcome(record.toolCall.name, record.result) : undefined;
+  const resultError = record.outcome === 'returned' ? toolExecutionError(record) : undefined;
   return {
     protocol: BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
     requestId: record.requestId,
@@ -282,11 +290,14 @@ function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<ob
       name: record.toolCall.name,
     },
     outcome: record.outcome,
+    execution: record.execution,
     ...(activity ? { agentActivity: activity } : {}),
+    ...(nextStepPrediction ? { nextStepPrediction } : {}),
     ...(terminalOutcome ? { terminalOutcome } : {}),
     display: record.display,
     actionManifest: record.actionManifest,
     resultAvailable: Object.prototype.hasOwnProperty.call(record, "result"),
+    ...(resultError ? { resultError } : {}),
     workspaceChanges: record.workspaceChanges.map(change => {
       const { metadata, ...summary } = change;
       return { ...summary, detailAvailable: Object.keys(metadata).length > 0 || deferred?.has(change) === true };

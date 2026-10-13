@@ -314,6 +314,76 @@ test("stores product-owned Session metadata with optimistic revisions", () => {
   }), /does not match/);
 });
 
+for (const standalone of [false, true]) {
+  test(`fork preserves turn supersessions exactly once${standalone ? ' alongside standalone supersessions' : ''}`, () => {
+    const journals = new Map();
+    const persistence = {
+      load: id => structuredClone(journals.get(id) ?? []),
+      append: event => journals.set(event.sessionId, [...(journals.get(event.sessionId) ?? []), structuredClone(event)]),
+      remove: id => journals.delete(id),
+    };
+    const store = new SessionStore({ persistence });
+    const messages = content => [
+      { role: 'user', name: 'turn_runtime_context', visibility: 'internal', content },
+      { role: 'user', content: 'Continue' },
+      { role: 'assistant', content: `Reply: ${content}`, toolCalls: [] },
+    ];
+    store.commitTurn('source', turn('first', 1, messages('old context')));
+    const second = turn('second', 2, messages('updated context'));
+    second.supersession = { messageIds: ['first_message_0'], reason: 'Updated turn context' };
+    store.commitTurn('source', second);
+    const third = turn('third', 3, messages('current context'));
+    third.supersession = { messageIds: ['second_message_0'], reason: 'Updated turn context' };
+    store.commitTurn('source', third);
+    if (standalone) store.supersedeMessages({ sessionId: 'source', messageIds: ['first_message_2'], reason: 'Reply replaced' });
+    const original = store.snapshot('source');
+    const originalJournal = structuredClone(journals.get('source'));
+
+    store.ensureSession('fork');
+    const fork = store.fork('source', 'fork');
+    assert.deepEqual(fork.turns, original.turns);
+    assert.deepEqual(fork.supersededMessageIds, original.supersededMessageIds);
+    assert.deepEqual(assembleContext({ session: fork }).messages, assembleContext({ session: original }).messages);
+    assert.deepEqual(journals.get('fork').filter(event => event.kind === 'messages_superseded')
+      .flatMap(event => event.payload.messageIds), standalone ? ['first_message_2'] : []);
+    assert.throws(() => store.supersedeMessages({ sessionId: 'fork', messageIds: ['first_message_0'], reason: 'Duplicate' }), /already superseded/);
+
+    const reloaded = new SessionStore({ persistence });
+    assert.deepEqual(reloaded.snapshot('fork'), fork);
+    reloaded.ensureSession('nested-fork');
+    const nested = reloaded.fork('fork', 'nested-fork');
+    assert.deepEqual(nested.supersededMessageIds, original.supersededMessageIds);
+    reloaded.commitTurn('nested-fork', turn('fourth', 4, [{ role: 'user', content: 'Independent branch' }]));
+    assert.deepEqual(reloaded.snapshot('fork'), fork);
+    assert.deepEqual(reloaded.snapshot('source'), original);
+    assert.deepEqual(journals.get('source'), originalJournal);
+  });
+}
+
+test('a failed fork projection removes its partial journal without requiring a valid snapshot', () => {
+  const journals = new Map();
+  const persistence = {
+    load: id => structuredClone(journals.get(id) ?? []),
+    append: event => journals.set(event.sessionId, [...(journals.get(event.sessionId) ?? []), structuredClone(event)]),
+    remove: id => journals.delete(id),
+  };
+  let nextId = 0;
+  let duplicateId;
+  const store = new SessionStore({ persistence, createEventId: () => duplicateId ?? `event_${++nextId}` });
+  store.commitTurn('source', turn('first', 1, [{ role: 'user', content: 'Original history' }]));
+  store.ensureSession('fork');
+  const original = store.snapshot('source');
+  duplicateId = journals.get('fork')[0].eventId;
+
+  assert.throws(() => store.fork('source', 'fork'), /Duplicate Session event/);
+  assert.equal(journals.has('fork'), false, 'the failed fork must not remain on disk');
+  assert.equal(store.snapshot('fork'), undefined, 'the failed fork must not remain cached');
+  assert.deepEqual(store.snapshot('source'), original);
+  duplicateId = undefined;
+  store.ensureSession('fork');
+  assert.equal(store.fork('source', 'fork').turns.length, 1);
+});
+
 function deterministicStore() {
   let id = 0;
   return new SessionStore({

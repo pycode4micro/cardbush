@@ -157,7 +157,10 @@ import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
-import { registerInteractionTools } from "./interactionTools.js";
+import { registerInteractionTools, registerAsyncInteraction } from "./interactionTools.js";
+import { RuntimeTaskTools } from './taskTools.js';
+import { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
+import { registerToolScript } from './toolScript.js';
 import { RuntimeSolutionBroker } from './runtimeSolutionBroker.js';
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import type { AutomationScheduler } from './automationScheduler.js';
@@ -169,6 +172,7 @@ import { registerPluginCommandTools, parsePluginCommandInvocation } from './plug
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
+import { registerBuiltinToolDisclosure } from './builtinToolDisclosure.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import { omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
 import type { SearchResultLimitProvider } from './searchResultLimit.js';
@@ -354,6 +358,7 @@ export class InMemoryRuntimeHost {
   readonly #registeredAgents: RegisteredAgentStore;
   readonly #teams: TeamWorkflowManager;
   readonly #backgroundTools: BackgroundToolCalls;
+  readonly #asyncJobs: RuntimeAsyncJobs;
   readonly #terminalNotifications: TerminalCompletionNotifications;
   readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
   readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean; uses: number; retired?: boolean }>();
@@ -439,7 +444,11 @@ export class InMemoryRuntimeHost {
       return {
         before: context => run('PreToolUse', { toolName: context.toolCall.name, input: context.input, signal: context.signal }),
         permission: context => run('PermissionRequest', { toolName: context.toolCall.name, input: context.input, signal: context.signal }),
-        after: context => run(context.outcome.kind === 'returned' ? 'PostToolUse' : 'PostToolUseFailure', { toolName: context.toolCall.name, input: context.input, output: context.outcome.kind === 'returned' ? context.outcome.result : context.outcome.error, signal: context.signal }),
+        after: context => {
+          const error = context.outcome.kind === 'returned' ? context.outcome.resultError : context.outcome.error;
+          return run(error ? 'PostToolUseFailure' : 'PostToolUse', { toolName: context.toolCall.name, input: context.input,
+            ...(context.outcome.kind === 'returned' ? { output: context.outcome.result } : {}), ...(error ? { error: error.message } : {}), signal: context.signal });
+        },
       };
     });
     registerMcpAppStatusTool(this.#toolRegistry, this.#mcpApps);
@@ -573,7 +582,7 @@ export class InMemoryRuntimeHost {
     this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
       this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result),
       (session, turn) => this.#terminalNotifications.list(session, turn),
-      (session, turn) => Boolean(this.#guidanceQueues.get(JSON.stringify([session, turn]))?.length));
+      (session, turn) => Boolean(this.#guidanceQueues.get(JSON.stringify([session, turn]))?.length), this.#toolExecutions);
     this.#backgroundTools.register();
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
@@ -625,6 +634,7 @@ export class InMemoryRuntimeHost {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
     }, { directory: options.dataRoot ? join(runtimeDataRoot, 'teams') : undefined,
+      waitForWork: (context, promise, duration) => this.#backgroundTools.waitForWork(context.sessionId, context.turnId, [promise], 'all', context.signal, duration),
       onResult: (run, promise) => {
         // Do not join an independent Team at the parent's terminal barrier.
         // Publish only a settled result to a still-active parent; idle parents can
@@ -637,6 +647,54 @@ export class InMemoryRuntimeHost {
         }).catch(error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))));
       } });
     this.#teams.register(this.#toolRegistry);
+    registerBuiltinToolDisclosure(this.#toolRegistry);
+    this.#asyncJobs = new RuntimeAsyncJobs(this.#toolExecutions, (session, turn, id, result) =>
+      this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
+    registerAsyncInteraction(this.#toolRegistry, this.#solutions, this.#asyncJobs);
+    registerToolScript(this.#toolRegistry, this.#asyncJobs);
+    const taskTools = new RuntimeTaskTools((context, promises, mode, signal, duration) =>
+      this.#backgroundTools.waitForWork(context.sessionId, context.turnId, promises, mode, signal, duration));
+    taskTools.addSource(this.#asyncJobs.source);
+    taskTools.addSource(context => this.#teams.taskHandles(context.sessionId));
+    taskTools.addSource(context => this.#subagentTasks.list(context.sessionId).filter(task => task.origin !== 'team').map(task => ({
+      task_id: task.taskId, kind: 'subagent' as const, status: task.status, revision: String(task.revision), summary: task.agentName ?? task.prompt.slice(0, 160),
+      result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
+      wait: (signal: AbortSignal) => this.#subagentTasks.waitForCompletion(context.sessionId, task.taskId, signal),
+      ...(task.background ? { stop: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>) => ctx.invokeTool('manage_plugin_agents', { action: 'stop', task_ids: [task.taskId] }, { record: true }) }
+        : !task.remote ? { stop: async () => this.sendCommand({ kind: STOP_RUNTIME_TURN_COMMAND, payload: { sessionId: task.childSessionId, turnId: task.childTurnId } }) } : {}),
+    })));
+    taskTools.addSource(context => this.#backgroundTools.list(context.sessionId, context.turnId).filter(job => !job.name.startsWith('terminal:')).map(job => ({
+      task_id: job.id, kind: 'mcp' as const,
+      status: job.status, revision: `${job.status}:${job.attempts}`, summary: job.name,
+      wait: () => job.promise,
+      stop: async () => { job.controller.abort(); return { stop_requested: true }; },
+      readResult: async () => job.status === 'running' ? undefined : { message: (await job.promise).content },
+    })));
+    const terminalHandles = (context: import('./toolRegistry.js').ToolHandlerContext<unknown>, terminals: Array<Record<string, unknown>>, local: boolean) =>
+      terminals.map(terminal => {
+        const id = String(terminal.terminalSessionId);
+        const status = local ? this.#workspaceTerminals.status(context.sessionId, id) : terminal;
+        const notification = this.#terminalNotifications.list(context.sessionId, context.turnId).find(job => job.name === `terminal:${id}`);
+        return { task_id: id, ...(notification ? { aliases: [notification.id], cancelObservation: () => notification.controller.abort() } : {}),
+          kind: 'terminal' as const, status: status.state === 'running' ? 'running' : status.exitCode === 0 ? 'completed' : status.exitCode == null ? String(status.state ?? 'unknown') : 'failed',
+          revision: `${status.state}:${status.exitCode}:${notification?.status ?? ''}`, summary: String(terminal.command ?? id).slice(0, 160),
+          result: { terminal_session_id: id, state: String(status.state ?? 'unknown'), ...(status.exitCode !== undefined ? { exit_code: status.exitCode } : {}),
+            ...(notification ? { observation_status: notification.status, ...(notification.status === 'completed' || notification.status === 'failed' ? { completion_reference: `tool-result://${[context.sessionId, context.turnId, notification.id].map(encodeURIComponent).join('/')}` } : {}) } : {}) },
+          wait: async (signal: AbortSignal) => {
+            if (local) return this.#workspaceTerminals.waitForCompletion(context.sessionId, id, signal);
+            do {
+              signal.throwIfAborted();
+              const result = await options.remoteWorkspace!.request('execute', { uri: terminal.uri, owner: context.sessionId, name: 'terminal_observe', input: { sessionId: id, yieldTimeMs: 1000 } }, signal);
+              if (result.state !== 'running') return result;
+            } while (true);
+          },
+          stop: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>) => ctx.invokeTool('terminal_stop', { session_id: id }, { record: true }),
+        };
+      });
+    taskTools.addSource(context => terminalHandles(context, this.#workspaceTerminals.list(context.sessionId), true));
+    if (options.remoteWorkspace) taskTools.addSource(async context => terminalHandles(context,
+      (await options.remoteWorkspace!.request('terminals', { owner: context.sessionId }, context.signal)).sessions, false));
+    taskTools.register(this.#toolRegistry);
     this.#extensionApi = {
       subagentTasks: this.#subagentTasks,
       hasActiveTurns: () => this.hasActiveTurns(),
@@ -1908,6 +1966,7 @@ export class InMemoryRuntimeHost {
       Number(request.metadata.contextWindowTokens) > 0
         ? { contextWindowTokens: Number(request.metadata.contextWindowTokens) }
         : {}),
+      maxOutputTokens: request.maxOutputTokens,
     };
     let inputTokenUsage: InputTokenUsage | undefined = structuredClone(
       input.sessionCommit?.usage.lastRequestInputBasis ? input.sessionCommit.usage : previousCommittedUsage,
@@ -2206,7 +2265,7 @@ export class InMemoryRuntimeHost {
           } catch(error){input.signal?.throwIfAborted();this.#onRecoveryError?.(error instanceof Error?error:new Error(String(error)));}
         }
         round += 1;
-        const backgroundStop = this.#backgroundTools.stopReason(request.sessionId, request.turnId);
+        const backgroundStop = this.#backgroundTools.stopReason(request.sessionId, request.turnId) ?? this.#asyncJobs.stopReason(request.sessionId, request.turnId);
         if (backgroundStop) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: backgroundStop } });
         if (!compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           const context = await this.#mcpApps.context(request.sessionId);
@@ -2575,6 +2634,7 @@ export class InMemoryRuntimeHost {
               mergeUsage(usage, observedUsage);
               if (observedUsage.inputTokens !== undefined) this.#eventLog.append(identity, {
                 kind: 'model_request_usage', payload: { round, attempt, model: request.model,
+                  contextWindowTokens: usage.contextWindowTokens, maxOutputTokens: roundRequest.maxOutputTokens,
                   ...(providerInputSequence !== undefined ? { providerInputSequence } : {}),
                   inputTokens: observedUsage.inputTokens,
                   ...(observedUsage.outputTokens !== undefined ? { outputTokens: observedUsage.outputTokens } : {}),
@@ -2634,6 +2694,7 @@ export class InMemoryRuntimeHost {
                 ...(usage.contextWindowTokens !== undefined
                   ? { contextWindowTokens: usage.contextWindowTokens }
                   : {}),
+                maxOutputTokens: roundRequest.maxOutputTokens,
                 inputTokens: result.usage.inputTokens,
                 ...(result.usage.outputTokens !== undefined
                   ? { outputTokens: result.usage.outputTokens }
@@ -3295,6 +3356,7 @@ export class InMemoryRuntimeHost {
       });
     } finally {
       this.#backgroundTools.endTurn(request.sessionId, request.turnId);
+      this.#asyncJobs.endTurn(request.sessionId, request.turnId);
       this.#terminalNotifications.endTurn(request.sessionId, request.turnId);
       clearMcpDiscovery(this.#toolRegistry, request);
       this.#guidanceQueues.delete(turnKey);

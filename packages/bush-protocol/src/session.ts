@@ -51,6 +51,7 @@ export const sessionTurnStatusSchema = z.enum([
 export const sessionUsageSchema = z.object({
   model: z.string().min(1).optional(),
   contextWindowTokens: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   cachedInputTokens: z.number().int().nonnegative().optional(),

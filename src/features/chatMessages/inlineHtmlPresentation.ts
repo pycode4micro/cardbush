@@ -1,3 +1,5 @@
+import { connectInlineHtmlScrolling } from './inlineHtmlScrolling';
+
 type PreviewGuest = HTMLElement & { executeJavaScript(code: string): Promise<unknown> };
 export type InlineHtmlLayout = { height: number; blocks: Array<{ top: number; bottom: number }> };
 
@@ -24,9 +26,13 @@ const installPresentation = `(() => {
     // Absolutely positioned body children (including clipped live regions) can
     // overflow the root without contributing to body.scrollHeight. Measuring
     // their document-space bounds also lets the preview shrink after removal.
-    const childBottom = [...body.children].reduce((bottom, child) =>
-      getComputedStyle(child).position === 'fixed' ? bottom
-        : Math.max(bottom, child.getBoundingClientRect().bottom + scrollY), 0);
+    const childBottom = [...body.children].reduce((bottom, child) => {
+      const childStyle = getComputedStyle(child);
+      // A last child's collapsed margin can extend the document past the body.
+      // Include it or an otherwise full-height embed gains a tiny inner scroll.
+      return childStyle.position === 'fixed' ? bottom : Math.max(bottom,
+        child.getBoundingClientRect().bottom + scrollY + (parseFloat(childStyle.marginBottom) || 0));
+    }, 0);
     const bodyHeight = Math.max(body.scrollHeight, body.getBoundingClientRect().height)
       + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
     const height = Math.max(120, Math.ceil(Math.max(bodyHeight, childBottom)));
@@ -82,6 +88,7 @@ export function connectInlineHtmlPresentation(
   let disposed = false;
   let previousTheme = '';
   let started = false;
+  let disconnectScrolling: (() => void) | undefined;
   let published = false;
   let pendingLayout: InlineHtmlLayout | undefined;
   let layoutTimer = 0, layoutDeadline = 0;
@@ -159,6 +166,8 @@ export function connectInlineHtmlPresentation(
       if (optedIn !== true) { onMode(false); onReady(); return; }
       await guest.executeJavaScript(themeScript() + ';' + installPresentation);
       if (disposed) return;
+      diagnostic?.('presentation-installed', { version: 3 });
+      disconnectScrolling = connectInlineHtmlScrolling(guest, host, diagnostic);
       started = true;
       updateTheme();
       let previous = '';
@@ -179,6 +188,7 @@ export function connectInlineHtmlPresentation(
   })();
   return () => {
     disposed = true;
+    disconnectScrolling?.();
     window.clearTimeout(layoutTimer); window.clearTimeout(layoutDeadline);
     themeObserver.disconnect();
     // Removing the webview disposes its observers and pending read with it.

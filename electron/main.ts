@@ -2510,7 +2510,7 @@ ipcMain.handle('markdown:file', async (event, input: import('./mdPresentationFil
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
         return result.canceled ? undefined : result.filePaths[0];
       }
-      const options = { title: '保存 Markdown', filters, defaultPath: `${String(name || 'bush-it').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
+      const options = { title: '保存 Markdown', filters, defaultPath: `${String(name || '创作').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
       const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
       return result.canceled ? undefined : result.filePath;
     });
@@ -3291,6 +3291,11 @@ ipcMain.handle('browser:settings-read', async event => {
 ipcMain.handle('inspector:browser-action-result', (event, result: import('./integratedBrowser').BrowserTabActionResult) => {
   assertMainWindowSender(event.sender.id);
   integratedBrowser.acknowledge(event.sender.id, result);
+});
+ipcMain.handle('browser:open-tab-reference', async (event, input: { href: string; reopen?: boolean }) => {
+  assertMainWindowSender(event.sender.id);
+  if (typeof input?.href !== 'string' || input.href.length > 16000) throw new Error('Invalid browser tab reference.');
+  return (await browserUseRouter()).openReference(input.href, input.reopen === true, event.sender.id);
 });
 ipcMain.handle('inspector:browser-register', (event, input: { tabId: string; guestWebContentsId: number }) => {
   assertMainWindowSender(event.sender.id);

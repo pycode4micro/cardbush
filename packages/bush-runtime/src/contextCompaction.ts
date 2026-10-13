@@ -1,6 +1,9 @@
 import {
   modelMessageSchema,
-  DEFAULT_MAX_OUTPUT_TOKENS,
+  contextMaintenanceInputReserveTokens,
+  resolveContextBudget,
+  resolveContextOutputTokens,
+  type ContextBudget,
   type ModelMessage,
   type ModelRequest,
   type ProviderInputProjection,
@@ -13,11 +16,9 @@ import type { ContextTurnSource } from "./contextAssembler.js";
 import { runtimeInputTokenProjection, type InputTokenCalibration } from "./inputTokenBasis.js";
 
 export const CHECKPOINT_CONTEXT_TOOL = "checkpoint_context" as const;
-export const CONTEXT_COMPACTION_HARD_PRESSURE = 0.95;
+export { CONTEXT_COMPACTION_HARD_PRESSURE, contextMaintenanceInputReserveTokens, resolveContextBudget, resolveContextOutputTokens, type ContextBudget } from '@cardbush/bush-protocol';
 
 const CONTEXT_MAINTENANCE_TARGET_RATIO = 0.98;
-const CONTEXT_MAINTENANCE_RESERVE_MAX_TOKENS = 2_048;
-const CONTEXT_MAINTENANCE_RESERVE_MIN_TOKENS = 128;
 const CONTEXT_MAINTENANCE_TOOL_RESULT_MIN_CHARS = 4_096;
 const CONTEXT_MAINTENANCE_TOOL_RESULT_HEAD_CHARS = 1_024;
 const CONTEXT_MAINTENANCE_TOOL_RESULT_TAIL_CHARS = 512;
@@ -175,37 +176,6 @@ export interface ContextPressure {
   requestBody?: { bytes: number; maxBytes: number };
 }
 
-export interface ContextBudget {
-  contextWindowTokens: number;
-  normalOutputTokens: number;
-  compactionOutputTokens: number;
-  safetyTokens: number;
-  normalInputLimit: number;
-  compactionInputLimit: number;
-  compactionTriggerTokens: number;
-}
-
-/** One envelope for dispatch, the following checkpoint and Tool-result ingress.
- * Maintenance inherits the selected model's full output allowance, including
- * reasoning. Explicit smaller allowances also apply to maintenance.
- */
-export function resolveContextBudget(contextWindowTokens: number, configuredOutputTokens?: number): ContextBudget {
-  const normalOutputTokens = resolveContextOutputTokens(contextWindowTokens, configuredOutputTokens);
-  const normalInputLimit = contextWindowTokens - normalOutputTokens;
-  const compactionOutputTokens = normalOutputTokens;
-  const safetyTokens = contextMaintenanceInputReserveTokens(normalInputLimit);
-  return { contextWindowTokens, normalOutputTokens, compactionOutputTokens, safetyTokens,
-    normalInputLimit,
-    compactionInputLimit: Math.max(0, contextWindowTokens - compactionOutputTokens - safetyTokens),
-    compactionTriggerTokens: Math.max(0, Math.min(
-      Math.floor(normalInputLimit * CONTEXT_COMPACTION_HARD_PRESSURE),
-      // When output occupies half the context or more, reserving it twice
-      // would trigger endless compaction even on an empty conversation. Leave
-      // a usable input floor; oversized snapshots use the existing partitioner.
-      Math.max(Math.floor(normalInputLimit * 0.5), normalInputLimit - compactionOutputTokens - safetyTokens),
-    )) };
-}
-
 export function contextBudgetForPressure(pressure: ContextPressure): ContextBudget {
   return resolveContextBudget(pressure.usableInputTokens + pressure.reservedOutputTokens, pressure.reservedOutputTokens);
 }
@@ -224,38 +194,6 @@ export interface ContextCompactionMaintenanceProjection {
   messages: ModelMessage[];
   removedChars: number;
   compactedToolResults: number;
-}
-
-export function resolveContextOutputTokens(
-  contextWindowTokens: number,
-  configuredOutputTokens?: number,
-): number {
-  if (!Number.isInteger(contextWindowTokens) || contextWindowTokens <= 0) {
-    throw new Error("contextWindowTokens must be a positive integer.");
-  }
-  if (
-    configuredOutputTokens !== undefined &&
-    (!Number.isInteger(configuredOutputTokens) || configuredOutputTokens <= 0)
-  ) {
-    throw new Error("maxOutputTokens must be a positive integer when provided.");
-  }
-  const resolved = configuredOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
-  if (resolved >= contextWindowTokens) {
-    throw new Error(
-      `Invalid model token limits: maxOutputTokens (${resolved}) must be less than contextWindowTokens (${contextWindowTokens}).`,
-    );
-  }
-  return resolved;
-}
-
-export function contextMaintenanceInputReserveTokens(usableInputTokens: number): number {
-  return Math.min(
-    CONTEXT_MAINTENANCE_RESERVE_MAX_TOKENS,
-    Math.max(
-      CONTEXT_MAINTENANCE_RESERVE_MIN_TOKENS,
-      Math.trunc(usableInputTokens * 0.01),
-    ),
-  );
 }
 
 /** The 95% ceiling and the maintenance reserve are calculated in one place. */

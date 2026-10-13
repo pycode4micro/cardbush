@@ -58,10 +58,14 @@ test('public MSIX summaries contain redacted identities and no exact artifact ha
 
 test('application examples and test fixtures use generic profile names', () => {
   const allowed = /^(?:fixture|test|tester|user|username|public|default|example|\.{3})$/i;
+  // Match rooted profile paths, not an API's nested /users/:id segment.
+  const profileNames = source => [...source.matchAll(/(?<![\w./\\-])(?:[A-Z]:)?[\\/]+Users[\\/]+([\w.-]+)/gi)].map(match => match[1]);
+  assert.deepEqual(profileNames(String.raw`C:\Users\fixture\file.txt D:/Users/fixture/file.txt /Users/fixture/file.txt`), ['fixture', 'fixture', 'fixture']);
+  assert.deepEqual(profileNames('/admin/users/admin /admin/plugins/images/users/usr_alice /api/users/member'), []);
   const failures = [];
   for (const path of paths.filter(path => /^(?:scripts|src)\//.test(path) && /\.(?:[cm]?js|tsx?)$/.test(path))) {
-    for (const match of text(path).matchAll(/(?:[A-Z]:)?[\\/]+Users[\\/]+([\w.-]+)/gi)) {
-      if (!allowed.test(match[1])) failures.push(path);
+    for (const name of profileNames(text(path))) {
+      if (!allowed.test(name)) failures.push(path);
     }
   }
   assert.deepEqual([...new Set(failures)], []);

@@ -59,6 +59,23 @@ async function fixture(execute, extra = {}) {
   return { registry, jobs, run, completions, controller, request };
 }
 
+test('declared MCP failure ends renewal, reports failed and delivers its native result once', async t => {
+  let attempts = 0;
+  const native = { isError: true, content: [{ type: 'text', text: 'Page closed' }], structuredContent: { status: 'timeout' } };
+  const f = await fixture(() => { attempts++; return structuredClone(native); });
+  t.after(() => f.jobs.endTurn('s', 't'));
+  await f.run('start_mcp_tool', { name: remoteName, arguments: {}, repeat_while: { path: ['structuredContent', 'status'], equals: 'timeout' } });
+  const delivered = await f.completions[0].promise;
+  const listed = await f.run('manage_tool_calls', { action: 'list' });
+  assert.equal(listed.result.tasks[0].status, 'failed');
+  assert.equal(listed.result.tasks[0].attempts, 1);
+  assert.equal(attempts, 1);
+  assert.equal(f.completions.length, 1);
+  assert.match(delivered.content, /"status":"failed"/);
+  assert.match(delivered.content, /"isError":true/);
+  assert.match(delivered.content, /Page closed/);
+});
+
 test('a bounded wait yields to independent work without cancelling or duplicating the background call', async t => {
   let release, calls = 0, signal;
   const f = await fixture(context => { calls++; signal = context.signal; return new Promise(resolve => { release = resolve; }); });

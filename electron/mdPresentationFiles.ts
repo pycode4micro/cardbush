@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { open, rename, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { open, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export type MarkdownFile = { path: string; text: string; revision: string };
-export type MarkdownFileRequest = { action: 'open' | 'reload' | 'save'; path?: string; text?: string; revision?: string; name?: string };
+export type MarkdownFileRequest = { action: 'open' | 'reload' | 'save' | 'create'; rootPath?: string; path?: string; text?: string; revision?: string; name?: string };
 const limit = 2 * 1024 * 1024;
 const revision = (text: string | Uint8Array) => createHash('sha256').update(text).digest('hex');
 
-/** Access is scoped to files explicitly selected in this application session. */
+/** Files selected through a dialog, or Markdown files inside the selected project. */
 export class MarkdownFiles {
   private readonly granted = new Set<string>();
   private pending: Promise<unknown> = Promise.resolve();
@@ -28,13 +28,35 @@ export class MarkdownFiles {
       return { path, text, revision: revision(buffer.subarray(0, length)) };
     } finally { await file.close(); }
   }
+  private async projectPath(root: string, value: string, creating: boolean) {
+    if (!isAbsolute(root)) throw Error('请选择项目文件夹。');
+    const path = this.path(isAbsolute(value) ? value : resolve(root, value));
+    const inside = (parent: string, child: string) => { const part = relative(parent, child); return part !== '..' && !part.startsWith(`..\\`) && !part.startsWith('../') && !isAbsolute(part); };
+    if (!inside(resolve(root), path)) throw Error('文件必须位于当前项目内。');
+    const actualRoot = await realpath(root);
+    const actualPath = await realpath(creating ? dirname(path) : path);
+    if (!inside(actualRoot, actualPath)) throw Error('文件链接指向当前项目之外。');
+    return path;
+  }
   command(input: MarkdownFileRequest): Promise<MarkdownFile | null> {
     const task = this.pending.then(() => this.execute(input)); this.pending = task.catch(() => {}); return task;
   }
   private async execute(input: MarkdownFileRequest): Promise<MarkdownFile | null> {
-    if (!input || !['open', 'save', 'reload'].includes(input.action)) throw Error('Unknown Markdown file action.');
+    if (!input || !['open', 'save', 'reload', 'create'].includes(input.action)) throw Error('Unknown Markdown file action.');
+    if (input.rootPath && input.path) {
+      input = { ...input, path: await this.projectPath(input.rootPath, input.path, input.action === 'create') };
+      this.granted.add(input.path!);
+    }
+    if (input.action === 'create') {
+      if (!input.rootPath || !input.path) throw Error('请选择项目文件夹。');
+      const text = input.text ?? '';
+      if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > limit) throw Error('Markdown 文件不能超过 2 MB。');
+      await writeFile(input.path, text, { flag: 'wx', mode: 0o600 });
+      return { path: input.path, text, revision: revision(text) };
+    }
     if (input.action === 'open') {
-      const chosen = await this.choose('open'); if (!chosen) return null;
+      if (input.path && !this.granted.has(this.path(input.path))) throw Error('请先选择要编辑的 Markdown 文件。');
+      const chosen = input.path || await this.choose('open'); if (!chosen) return null;
       const path = this.path(chosen), result = await this.read(path); this.granted.add(path); return result;
     }
     if (input.path && !this.granted.has(this.path(input.path))) throw Error('请先选择要编辑的 Markdown 文件。');

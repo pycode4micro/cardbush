@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { mcpSchemaRequiredError, mcpToolWasDiscovered } from './mcpToolDiscovery.js';
 import {
   BUSH_ACTION_MANIFEST_PROTOCOL,
+  returnedToolError,
   type ActionManifest,
   type RuntimePermissionAnswer,
   type ToolCall,
@@ -11,6 +12,7 @@ import {
   type ToolErrorKind,
   type RuntimeToolError,
   type WorkspaceChange,
+  type ToolExecutionFacts,
 } from "@cardbush/bush-protocol";
 
 import type { PermissionResolver, ToolPermissionRequest, ToolRegistry } from "./toolRegistry.js";
@@ -22,6 +24,7 @@ import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { webToolDenial } from './webToolPolicy.js';
+import { toolResourceScheduler } from './toolResourceScheduler.js';
 
 export interface ToolExecutionHooks {
   before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
@@ -44,10 +47,11 @@ export interface ToolExecutionObserver {
   completed?: (toolCall: ToolCall, identity: ToolExecutionIdentity, outcome: ToolExecutionOutcome) => void;
 }
 
-export type ToolExecutionOutcome = { hookMessages?: string[]; hookFeedback?: string; hookStopTurn?: string; rejectToolResult?: boolean } & (
+export type ToolExecutionOutcome = { execution?: ToolExecutionFacts; hookMessages?: string[]; hookFeedback?: string; hookStopTurn?: string; rejectToolResult?: boolean } & (
   | {
       kind: "returned";
       result: unknown;
+      resultError?: RuntimeToolError;
       workspaceChanges: WorkspaceChange[];
       actionManifest?: ActionManifest;
     }
@@ -90,11 +94,32 @@ export class ToolExecutionCoordinator {
   }
 
   async execute(
+    toolCall: ToolCall, identity: ToolExecutionIdentity, signal?: AbortSignal,
+    turn?: ToolHandlerContext['turn'], parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
+  ): Promise<ToolExecutionOutcome> {
+    const trace = { dispatched: false, nestedEffects: 'none' as ToolExecutionFacts['effects'], nestedUncertain: false, denied: false };
+    const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace);
+    const error = outcome.kind === 'returned' ? outcome.resultError : outcome.error;
+    const mutating = outcome.actionManifest?.mutating ?? this.#registry.resolve(toolCall.name)?.manifest.mutating ?? true;
+    const execution: ToolExecutionFacts = {
+      dispatch: outcome.kind === 'returned' ? 'returned' : trace.dispatched ? 'started' : 'not_started',
+      effects: outcome.workspaceChanges.length ? 'recorded' : trace.nestedEffects !== 'none' ? trace.nestedEffects : trace.dispatched && mutating ? 'possible' : 'none',
+      result: trace.nestedUncertain ? 'unknown' : outcome.kind === 'returned' || !trace.dispatched ? 'known' : 'unknown',
+      recovery: !error ? 'none' : trace.denied || error.kind === 'permission' || outcome.kind === 'cancelled' ? 'do_not_retry'
+        : trace.nestedEffects !== 'none' || trace.dispatched && mutating ? 'inspect_existing'
+        : trace.dispatched && retryableObservation(error) ? 'retry' : 'correct_input',
+    };
+    if (error) error.details = { ...error.details, execution };
+    return { ...outcome, execution };
+  }
+
+  private async executeAttempt(
     toolCall: ToolCall,
     identity: ToolExecutionIdentity,
     signal?: AbortSignal,
     turn?: ToolHandlerContext["turn"],
     parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
+    trace = { dispatched: false, nestedEffects: 'none' as ToolExecutionFacts['effects'], nestedUncertain: false, denied: false },
   ): Promise<ToolExecutionOutcome> {
     if (turn?.request.metadata.toolExecutionPolicy === 'none') {
       return failedResult('tools_disabled', 'All tools are disabled by this service.', undefined, {}, 'permission');
@@ -309,15 +334,21 @@ export class ToolExecutionCoordinator {
     // Ordinary delegation belongs to the caller's receipt. Only explicitly
     // recorded (for example background) calls have an independent lifecycle.
     const lifecycle = parentLifecycle ?? { toolCall, identity };
-    this.#observer.running?.(lifecycle.toolCall, lifecycle.identity, toolCall);
     let nativeResult: unknown;
+    let releaseResources: (() => void) | undefined;
     const nestedHookMessages: string[] = [], nestedHookFeedback: string[] = [];
     let nestedHookStopTurn: string | undefined;
     const workspaceChanges: WorkspaceChange[] = [];
     try {
       let nestedOrdinal = 0;
-      nativeResult = await settleAtAbort(
-        Promise.resolve(registration.execute({
+      if (registration.resources) {
+        const resources = await registration.resources({ ...identity, toolCall, input, actionManifest, signal, turn });
+        releaseResources = await toolResourceScheduler(this.#registry).acquire(resources, signal);
+      }
+      signal?.throwIfAborted();
+      this.#observer.running?.(lifecycle.toolCall, lifecycle.identity, toolCall);
+      trace.dispatched = true;
+      const execution = Promise.resolve(registration.execute({
           requestId: identity.requestId,
           sessionId: identity.sessionId,
           turnId: identity.turnId,
@@ -328,6 +359,8 @@ export class ToolExecutionCoordinator {
           signal,
           turn,
           invokeTool: async (name, input, nestedOptions) => {
+            if (this.#registry.resolve(name)?.nestedCallable === false) throw Object.assign(new Error(`Tool ${name} must be called directly, not nested.`), { code: 'nested_tool_disallowed' });
+            if (nestedOrdinal >= 128 || toolCall.id.split(':child:').length > 8) throw Object.assign(new Error('Nested tool call limit exceeded.'), { code: 'nested_tool_limit' });
             if (nestedHookStopTurn) throw Object.assign(new Error(nestedHookStopTurn), { code: 'plugin_hook_blocked' });
             const nestedCall: ToolCall = {
               protocol: BUSH_TOOL_CALL_PROTOCOL,
@@ -342,12 +375,16 @@ export class ToolExecutionCoordinator {
             const nested = await this.execute(nestedCall, nestedIdentity,
               nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal, turn,
               nestedOptions?.record ? undefined : lifecycle);
+            if (nested.execution?.effects === 'recorded' || trace.nestedEffects === 'none' && nested.execution?.effects === 'possible') trace.nestedEffects = nested.execution.effects;
+            trace.nestedUncertain ||= nested.execution?.result === 'unknown';
+            trace.denied ||= nested.kind !== 'returned' && nested.error.kind === 'permission';
             if (nestedOptions?.record) this.#observer.completed?.(nestedCall, nestedIdentity, nested);
             nestedOptions?.onHooks?.(nested.hookMessages ?? [], nested.hookStopTurn);
             nestedHookMessages.push(...(nested.hookMessages ?? []));
             nestedHookStopTurn ??= nested.hookStopTurn;
             if (nestedOptions?.onHooks && nested.hookStopTurn) throw Object.assign(new Error(nested.hookStopTurn), { code: 'plugin_hook_stopped' });
             if (nested.kind === "returned") {
+              if (!nestedOptions?.record) workspaceChanges.push(...nested.workspaceChanges);
               if (nested.rejectToolResult) throw Object.assign(new Error(nested.hookFeedback), { code: 'plugin_hook_result_blocked' });
               if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);
               return nested.result;
@@ -359,13 +396,20 @@ export class ToolExecutionCoordinator {
             });
           },
           recordWorkspaceChange: (change) => workspaceChanges.push(change),
-        })),
+        }));
+      // Cancelling the observer cannot prove that an executor stopped. Keep its
+      // resource lease until the actual handler settles, even if it ignores abort.
+      const release = releaseResources;
+      releaseResources = undefined;
+      void execution.then(() => release?.(), () => release?.());
+      nativeResult = await settleAtAbort(
+        execution,
         signal,
         "Tool execution was cancelled.",
       );
     } catch (error) {
       if (isAbortError(error)) {
-        return cancelledResult("tool_execution_cancelled", actionManifest);
+        return { ...cancelledResult("tool_execution_cancelled", actionManifest), workspaceChanges };
       }
       const failed = failedResult(
         errorCode(error, "tool_execution_exception"),
@@ -383,7 +427,10 @@ export class ToolExecutionCoordinator {
           failed.hookStopTurn = post.stopTurn ?? nestedHookStopTurn;
         } catch (postError) { failed.hookMessages = [...hookResult.messages, ...nestedHookMessages, `Plugin hook failed after tool failure: ${errorMessage(postError)}`]; }
       }
+      failed.workspaceChanges = workspaceChanges;
       return failed;
+    } finally {
+      releaseResources?.();
     }
 
     let stableResult: unknown;
@@ -403,9 +450,11 @@ export class ToolExecutionCoordinator {
       );
     }
 
+    const resultError = returnedToolError(toolCall.name, stableResult, Boolean(registration.mcpHook));
     const outcome: ToolExecutionOutcome = {
       kind: "returned",
       result: stableResult,
+      ...(resultError ? { resultError } : {}),
       workspaceChanges: stableWorkspaceChanges,
       actionManifest,
       hookStopTurn: nestedHookStopTurn,
@@ -518,7 +567,18 @@ function errorDetails(error: unknown): Record<string, unknown> {
       // Ignore hostile accessors on thrown values.
     }
   }
+  for (const key of ['status', 'retryable'] as const) {
+    try { const value = Reflect.get(error, key); if (key === 'status' ? typeof value === 'number' && Number.isInteger(value) : typeof value === 'boolean') details[key] = value; } catch { /* Hostile accessors are not evidence. */ }
+  }
   return details;
+}
+
+function retryableObservation(error: RuntimeToolError): boolean {
+  if (error.details.retryable === false) return false;
+  const status = error.details.status;
+  if (typeof status === 'number') return [408, 429].includes(status) || status >= 500 && status <= 599 && ![501, 505].includes(status);
+  return error.kind === 'transport' || error.details.retryable === true ||
+    ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH'].includes(error.code);
 }
 
 function errorMessage(error: unknown): string {

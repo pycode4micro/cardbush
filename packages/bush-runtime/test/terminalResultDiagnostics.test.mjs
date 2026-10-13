@@ -53,7 +53,9 @@ test('large terminal receipts keep exit status and diagnostic tails within singl
       if (budget !== 0) { assert.match(text, /DIAGNOSTIC_END/); assert.match(text, /STDOUT_END/); }
       assert.ok(text.isWellFormed(), 'Unicode excerpts never split surrogate pairs');
     }
-    assert.equal(store.get('s', 't', 'call-0').modelText, registry.renderModelResult('terminal_exec', original));
+    const [recovery, ...nativeText] = store.get('s', 't', 'call-0').modelText.split('\n\n');
+    assert.equal(JSON.parse(recovery).runtimeError.details.execution.recovery, 'inspect_existing');
+    assert.equal(nativeText.join('\n\n'), registry.renderModelResult('terminal_exec', original));
     assert.deepEqual(store.get('s', 't', 'call-0').result, original);
     const summary = store.listTurnSummaries('s', 't')[0];
     assert.equal(summary.outcome, 'returned'); assert.equal(summary.terminalOutcome, 'failed');

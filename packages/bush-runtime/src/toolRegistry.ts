@@ -51,6 +51,10 @@ export interface ToolHandlerContext<TInput = unknown>
 }
 
 export interface ToolRegistration<TInput = unknown> {
+  /** Independent from mutation and parallel safety. Dispatchers cannot recursively nest. */
+  nestedCallable?: boolean;
+  /** Canonical resources touched by this invocation. Admission still runs before locking. */
+  resources?: (context: ToolAdmissionContext<TInput>) => ToolResource[] | Promise<ToolResource[]>;
   /** Private registrations are absent from host catalogs and usable only by this session. */
   sessionScope?: string;
   /** A dispatcher leaves lifecycle Hooks to the selected tool. */
@@ -99,6 +103,7 @@ export interface PermissionResolver {
 }
 
 type AnyToolRegistration = ToolRegistration<unknown>;
+export type ToolResource = { key: string; mode: 'read' | 'write' };
 
 export class ToolRegistry {
   readonly #registrations = new Map<string, AnyToolRegistration>();
@@ -245,5 +250,7 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     mcpApp: candidate.mcpApp,
     sessionScope: candidate.sessionScope,
     delegatesToolExecution: candidate.delegatesToolExecution,
+    nestedCallable: candidate.nestedCallable ?? true,
+    resources: candidate.resources as AnyToolRegistration['resources'],
   };
 }

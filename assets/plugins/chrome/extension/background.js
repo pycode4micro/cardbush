@@ -41,6 +41,9 @@ const sessionGrants = new Map();
 const scopeLeases = new Map();
 const pendingAuthorizations = new Map();
 const managedScopes = new Map();
+const tabReferenceKeys = new Map();
+let tabReferenceKeysDirty = false;
+const TAB_REFERENCE_KEYS = 'cardbushTabReferenceKeys';
 const controlIdleTimers = new Map();
 const groupCreations = new Map();
 const managedScopesReady = restoreManagedState();
@@ -61,6 +64,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void managedScopesReady.then(async () => {
+    if (tabReferenceKeys.delete(tabId)) { tabReferenceKeysDirty = true; await persistTabReferenceKeys(); }
+  });
   viewportTabs.delete(tabId);
   interruptScreenshot(tabId);
   attachedTabs.delete(tabId);
@@ -279,6 +285,7 @@ async function handleNativeRequest(message) {
   try {
     progress('extension_received');
     response.result = await dispatch(String(message.method || ''), message.params || {}, progress);
+    await persistTabReferenceKeys();
   } catch (error) {
     response.error = normalizedError(error);
   }
@@ -289,6 +296,23 @@ async function handleNativeRequest(message) {
 
 async function dispatch(method, params, progress = () => {}) {
   await managedScopesReady;
+  // User clicks only reveal a tab. They do not switch control scopes, renew
+  // permissions, navigate a live page or attach a debugger.
+  if (method === 'tabs.reveal' || method === 'tabs.reopen') {
+    let tab;
+    if (method === 'tabs.reveal') {
+      const id = requiredTabId(params.tabId);
+      if (!params.expectedTargetKey || tabReferenceKeys.get(id) !== params.expectedTargetKey) throw Object.assign(new Error('The referenced tab was closed or belongs to an earlier browser session.'), { code: 'browser_tab_missing' });
+      try { tab = await chrome.tabs.get(id); }
+      catch { throw Object.assign(new Error('The referenced tab is closed.'), { code: 'browser_tab_missing' }); }
+      if (tab.groupId >= 0) await chrome.tabGroups.update(tab.groupId, { collapsed: false });
+      tab = await chrome.tabs.update(id, { active: true });
+    } else tab = await chrome.tabs.create({ url: safeNavigationUrl(params.url), active: true });
+    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    const result = publicTab(tab);
+    await persistTabReferenceKeys();
+    return result;
+  }
   const scope = requiredScope(params);
   await activateScope(scope);
   progress('scope_ready');
@@ -771,7 +795,12 @@ async function restoreManagedState() {
       SESSION_GRANTS_STORAGE_KEY,
       SCOPE_LEASES_STORAGE_KEY,
       PENDING_AUTHORIZATIONS_STORAGE_KEY,
+      TAB_REFERENCE_KEYS,
     ]);
+    for (const entry of Array.isArray(stored[TAB_REFERENCE_KEYS]) ? stored[TAB_REFERENCE_KEYS] : []) {
+      if (Array.isArray(entry) && Number.isSafeInteger(entry[0]) && entry[0] >= 0 &&
+        typeof entry[1] === 'string' && /^external:[a-f0-9-]{36}:\d+$/.test(entry[1]) && entry[1].endsWith(`:${entry[0]}`)) tabReferenceKeys.set(entry[0], entry[1]);
+    }
     const scopes = Array.isArray(stored[MANAGED_SCOPES_STORAGE_KEY])
       ? stored[MANAGED_SCOPES_STORAGE_KEY]
       : [];
@@ -1114,6 +1143,10 @@ async function connectorState(scope) {
 }
 
 function publicTab(tab) {
+  if (Number.isSafeInteger(tab.id) && !tabReferenceKeys.has(tab.id)) {
+    tabReferenceKeys.set(tab.id, `external:${crypto.randomUUID()}:${tab.id}`);
+    tabReferenceKeysDirty = true;
+  }
   return {
     id: tab.id,
     windowId: tab.windowId,
@@ -1122,7 +1155,15 @@ function publicTab(tab) {
     title: tab.title || '',
     url: tab.url || '',
     status: tab.status || '',
+    targetKey: tabReferenceKeys.get(tab.id),
   };
+}
+
+async function persistTabReferenceKeys() {
+  if (!tabReferenceKeysDirty) return;
+  tabReferenceKeysDirty = false;
+  try { await chrome.storage.session.set({ [TAB_REFERENCE_KEYS]: [...tabReferenceKeys] }); }
+  catch { tabReferenceKeysDirty = true; /* An unpersisted key expires safely when this worker restarts. */ }
 }
 
 function originForTab(tab) {

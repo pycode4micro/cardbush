@@ -14,6 +14,7 @@ import {
   registerContextCompactionTool,
 } from "../dist/contextCompaction.js";
 import { ToolRegistry } from "../dist/toolRegistry.js";
+import { resolveContextBudget } from '@cardbush/bush-protocol';
 
 import {
   contextToolIngressTokenBudget,
@@ -28,6 +29,16 @@ test("uses one enforced output limit for pressure and Provider dispatch", () => 
   assert.throws(() => resolveContextOutputTokens(32_000), /must be less/, 'small context models need an explicit smaller output allowance');
   assert.equal(resolveContextOutputTokens(256_000, 12_000), 12_000);
   assert.throws(() => resolveContextOutputTokens(4_000, 4_000), /must be less/);
+});
+
+test('the displayed conversation window is the actual automatic compaction boundary', () => {
+  const budget = resolveContextBudget(400_000, 128_000);
+  assert.equal(budget.compactionTriggerTokens, 141_952);
+  for (const input of [141_951, 141_952, 145_045]) {
+    assert.equal(requiresContextCompactionBeforeRound(pressure({ estimatedPromptTokens: input,
+      reservedOutputTokens: budget.normalOutputTokens, usableInputTokens: budget.normalInputLimit,
+      ratio: input / budget.normalInputLimit })), input >= 141_952);
+  }
 });
 
 test("reserves the next checkpoint before a response can cross the hard boundary", () => {

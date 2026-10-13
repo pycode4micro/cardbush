@@ -154,9 +154,12 @@ export class SessionStore {
     if (!source || !target) throw new Error('Fork source or destination does not exist.');
     if (target.turns.length || target.metadata?.forkSourceSessionId) throw new Error('Fork destination must be empty.');
     const rebase = (text: string) => text.replaceAll(`tool-result://${encodeURIComponent(sourceSessionId)}/`, `tool-result://${encodeURIComponent(sessionId)}/`);
+    const standaloneSuperseded = new Set(source.supersededMessageIds);
     try {
       for (const sourceTurn of source.turns) {
         const turn = structuredClone(sourceTurn);
+        // Turn-level supersessions are replayed with the committed Turn itself.
+        turn.supersession?.messageIds.forEach(id => standaloneSuperseded.delete(id));
         delete turn.cacheChainState;
         delete turn.usage.lastRequestInputBasis;
         if (turn.contextSummary) turn.contextSummary = rebase(turn.contextSummary);
@@ -171,13 +174,15 @@ export class SessionStore {
         }
         this.#append(sessionId, { kind: 'turn_committed', payload: turn });
       }
-      if (source.supersededMessageIds.length) this.#append(sessionId, { kind: 'messages_superseded',
-        payload: { messageIds: [...source.supersededMessageIds], reason: 'Preserved fork history' } });
+      if (standaloneSuperseded.size) this.#append(sessionId, { kind: 'messages_superseded',
+        payload: { messageIds: [...standaloneSuperseded], reason: 'Preserved fork history' } });
       const current = this.snapshot(sessionId)!;
       return this.updateMetadata({ sessionId, expectedRevision: current.revision,
         metadata: { ...target.metadata, forkSourceSessionId: sourceSessionId, forkSourceRevision: source.revision } });
     } catch (error) {
-      this.deleteSession(sessionId);
+      // A failed projection must not prevent removing the partially copied fork.
+      this.#persistence?.remove?.(sessionId);
+      this.#events.delete(sessionId);
       throw error;
     }
   }

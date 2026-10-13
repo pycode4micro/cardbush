@@ -56,5 +56,14 @@ test('a valid ASAR without production dependencies cannot pass the packaging gat
     await writeFile(join(source, 'node_modules', name, 'package.json'), JSON.stringify({ name }));
   }
   await createPackage(source, archive);
+  assert.throws(() => verifyPackagedDependencies(archive), /quickjs-emscripten/);
+  await mkdir(join(source, 'node_modules', 'quickjs-emscripten'));
+  await writeFile(join(source, 'node_modules', 'quickjs-emscripten', 'package.json'), JSON.stringify({ name: 'quickjs-emscripten' }));
+  await createPackage(source, archive);
+  assert.throws(() => verifyPackagedDependencies(archive), /including WASM runtime/);
+  const wasmDirectory = join(source, 'node_modules', '@jitl', 'quickjs-wasmfile-release-sync', 'dist');
+  await mkdir(wasmDirectory, { recursive: true });
+  await writeFile(join(wasmDirectory, 'emscripten-module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+  await createPackage(source, archive);
   assert.equal(verifyPackagedDependencies(archive).verified, 1);
 });

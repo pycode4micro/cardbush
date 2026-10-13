@@ -27,7 +27,7 @@ type Peer = {
   status?: Partial<ChromeConnectorStatus>;
 };
 
-type Pending = { client: Peer; extension: Peer; id: string; scopeId: string; switchTo?: string };
+type Pending = { client: Peer; extension: Peer; id: string; scopeId: string; method: string; switchTo?: string };
 
 export interface ChromeConnectorStatus {
   protocol: typeof chromeConnectorProtocol;
@@ -341,10 +341,12 @@ export class ChromeConnectorBroker {
           this.#reply(peer, id, { connections: this.status().connections, defaultConnectionId: this.#webSocket.defaultConnectionId,
             selectedConnectionId: this.#scopeBindings.get(scopeId) ?? null }); return;
         }
-        if ([...this.#pending.values()].some(pending => pending.scopeId === scopeId && pending.switchTo)) {
+        const referenceAction = message.method === 'tabs.reveal' || message.method === 'tabs.reopen';
+        if (referenceAction && !/^[a-f0-9]{32}$/.test(string(params.connectionId))) throw new Error('A tab reference requires its exact browser connection.');
+        if (!referenceAction && [...this.#pending.values()].some(pending => pending.scopeId === scopeId && pending.switchTo)) {
           this.#reply(peer, id, undefined, 'browser_session_busy', 'Wait for the browser switch to finish.'); return;
         }
-        let connectionId = this.#scopeBindings.get(scopeId);
+        let connectionId = referenceAction ? string(params.connectionId) : this.#scopeBindings.get(scopeId);
         let switchTo: string | undefined;
         if (message.method === 'browser.select') {
           const target = string(params.connectionId);
@@ -384,7 +386,7 @@ export class ChromeConnectorBroker {
         const key = `${peer.id}:${id}`;
         if (this.#pending.size >= 256) throw new Error('Too many in-flight browser requests.');
         if (this.#pending.has(key)) throw new Error('Duplicate in-flight browser request.');
-        this.#pending.set(key, { client: peer, extension, id, scopeId, switchTo });
+        this.#pending.set(key, { client: peer, extension, id, scopeId, method: string(message.method), switchTo });
         writeLine(extension.socket, request);
         writeLine(peer.socket, { type: 'progress', id, stage: 'broker_forwarded' });
       } catch (error) { this.#reply(peer, id, undefined, 'browser_routing_failed', error instanceof Error ? error.message : String(error)); }
@@ -403,6 +405,11 @@ export class ChromeConnectorBroker {
             this.#bind(pending.scopeId, pending.switchTo);
             message = { ...message, result: { connectionId: pending.switchTo } };
           } catch (error) { this.#reply(pending.client, pending.id, undefined, 'browser_switch_failed', String(error)); return; }
+        }
+        if (!message.error && ['tabs.list', 'tabs.create', 'tabs.activate', 'tabs.navigate', 'tabs.reveal', 'tabs.reopen'].includes(pending.method)) {
+          const decorate = (page: unknown) => page && typeof page === 'object' && Number.isSafeInteger((page as Record<string, unknown>).id)
+            ? { ...page, connectionId: peer.connection!.id, browser: peer.connection!.browser } : page;
+          message = { ...message, result: Array.isArray(message.result) ? message.result.map(decorate) : decorate(message.result) };
         }
       }
       writeLine(pending.client.socket, message);

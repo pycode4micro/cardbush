@@ -145,7 +145,7 @@ export class RuntimeTurnProjection {
         upsertTool(this.#tools, event.payload, 'running');
         break;
       case 'tool_returned':
-        completeTool(this.#tools, event.payload, 'completed');
+        completeTool(this.#tools, event.payload, event.payload.resultError ? 'failed' : 'completed');
         break;
       case 'tool_failed':
         completeTool(this.#tools, event.payload, 'failed');
@@ -325,9 +325,10 @@ function completeTool(
   >['payload'],
   phase: Extract<RuntimeToolPhase, 'completed' | 'failed'>,
 ) {
+  const error = 'error' in payload ? payload.error : payload.resultError;
   upsertTool(tools, payload, phase, {
-    error: 'error' in payload
-      ? { ...payload.error, details: { ...payload.error.details } }
+    error: error
+      ? { ...error, details: { ...error.details } }
       : undefined,
   });
 }

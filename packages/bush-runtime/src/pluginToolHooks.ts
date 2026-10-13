@@ -24,8 +24,9 @@ export class PluginTerminalHooks {
             this.commands.delete(key); name = 'terminal_exec'; input = command.input; toolCallId = command.toolCallId;
           }
         }
-        return run(context.outcome.kind === 'returned' ? 'PostToolUse' : 'PostToolUseFailure', { signal: context.signal, toolName: name, toolCallId, input,
-          ...(context.outcome.kind === 'returned' ? { output: context.outcome.result } : { error: context.outcome.error.message }) });
+        const error = context.outcome.kind === 'returned' ? context.outcome.resultError : context.outcome.error;
+        return run(error ? 'PostToolUseFailure' : 'PostToolUse', { signal: context.signal, toolName: name, toolCallId, input,
+          ...(context.outcome.kind === 'returned' ? { output: context.outcome.result } : {}), ...(error ? { error: error.message } : {}) });
       },
     };
   }

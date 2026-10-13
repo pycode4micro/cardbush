@@ -2,26 +2,37 @@ import { useSyncExternalStore } from 'react';
 import { parseMarkdownGraph } from './markdownGraph';
 import { pageTitle } from './pageDocument';
 
-export type BushItPage = { id: string; source: string; updatedAt: number; archived?: boolean; file?: { path: string; revision: string; text: string } };
-type Pages = { pages: BushItPage[]; selectedId: string; error: string };
+export type BushItPage = { id: string; source: string; updatedAt: number; archived?: boolean; projectDir?: string; conversationRoot?: string; temporary?: boolean; draftNumber?: number; unloaded?: boolean; file?: { path: string; revision: string; text: string }; externalFile?: BushItPage['file'] };
+type Pages = { pages: BushItPage[]; selectedId: string; error: string; projectDir: string; projects: string[]; sessions: Record<string, string> };
+const emptyProjects = () => ({ projectDir: '', projects: [] as string[], sessions: {} as Record<string, string> });
 const key = 'cardbush.bush-it.pages.v1', listeners = new Set<() => void>();
 const names = new WeakMap<BushItPage, string>();
 let snapshot: Pages | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+export const isCreationDraftDirectory = (path: string) => /(?:^|[\\/])task-workspaces[\\/][a-z0-9-]+[\\/]*$/i.test(path);
 function initial(): Pages {
   try {
     const saved = JSON.parse(localStorage.getItem(key) || 'null');
     if (saved && Array.isArray(saved.pages) && saved.pages.every((page: BushItPage) => typeof page.id === 'string' && typeof page.source === 'string' && typeof page.updatedAt === 'number')) {
-      return { pages: saved.pages, selectedId: saved.pages.find((page: BushItPage) => page.id === saved.selectedId && !page.archived)?.id || saved.pages.find((page: BushItPage) => !page.archived)?.id || '', error: '' };
+      const pages = saved.pages.map((page: BushItPage) => page.projectDir && isCreationDraftDirectory(page.projectDir)
+        ? { ...page, projectDir: '', conversationRoot: page.conversationRoot || page.projectDir, temporary: true } : page);
+      const projectDir = typeof saved.projectDir === 'string' && !isCreationDraftDirectory(saved.projectDir) ? saved.projectDir : '';
+      return { ...emptyProjects(), projectDir, projects: Array.isArray(saved.projects) ? saved.projects.filter((item: unknown) => typeof item === 'string' && !isCreationDraftDirectory(item)) : [], sessions: saved.sessions && typeof saved.sessions === 'object' ? saved.sessions : {}, pages, selectedId: pages.find((page: BushItPage) => page.id === saved.selectedId && !page.archived)?.id || pages.find((page: BushItPage) => !page.archived && (page.projectDir || '') === projectDir)?.id || '', error: '' };
     }
     const source = localStorage.getItem('cardbush.bush-it.draft') ?? localStorage.getItem('cardbush.md-presentation.draft') ?? '';
-    const page = { id: crypto.randomUUID(), source, updatedAt: Date.now() }; return { pages: [page], selectedId: page.id, error: '' };
-  } catch { const page = { id: crypto.randomUUID(), source: '', updatedAt: Date.now() }; return { pages: [page], selectedId: page.id, error: '' }; }
+    const page = { id: crypto.randomUUID(), source, updatedAt: Date.now() }; return { ...emptyProjects(), pages: [page], selectedId: page.id, error: '' };
+  } catch { const page = { id: crypto.randomUUID(), source: '', updatedAt: Date.now() }; return { ...emptyProjects(), pages: [page], selectedId: page.id, error: '' }; }
 }
 const read = () => snapshot ??= initial();
+export const getBushItPages = read;
 function notify() { listeners.forEach(listener => listener()); }
 export function flushBushItPages() {
   clearTimeout(timer); timer = undefined;
-  try { const { pages, selectedId } = read(); localStorage.setItem(key, JSON.stringify({ pages, selectedId })); if (snapshot!.error) { snapshot = { ...snapshot!, error: '' }; notify(); } }
+  try { const { error: _error, ...saved } = read();
+    // Clean files already live on disk. Keep only their references across restarts;
+    // duplicating every project's contents quickly exhausts localStorage.
+    const pages = saved.pages.map(page => page.file && !page.externalFile && page.source === page.file.text
+      ? { ...page, source: '', file: { ...page.file, text: '' }, unloaded: true } : page);
+    localStorage.setItem(key, JSON.stringify({ ...saved, pages })); if (snapshot!.error) { snapshot = { ...snapshot!, error: '' }; notify(); } }
   catch { snapshot = { ...read(), error: '页面无法自动保存，请将当前内容保存为 .md 文件。 / Could not store pages. Save your document as a .md file.' }; notify(); }
 }
 function publish(change: Partial<Pages>) { snapshot = { ...read(), ...change }; notify(); clearTimeout(timer); timer = setTimeout(flushBushItPages, 180); }
@@ -33,19 +44,31 @@ export function bushItPageName(page: BushItPage, language: 'zh' | 'en') {
     catch { title = page.source.match(/^# (.+)$/m)?.[1] || ''; }
     names.set(page, title);
   }
-  return title || (language === 'zh' ? '无标题页' : 'Untitled page');
+  return title || (!page.temporary && page.file?.path.split(/[\\/]/).pop()) || (page.draftNumber ? `${language === 'zh' ? '未命名' : 'Untitled'} ${page.draftNumber}` : language === 'zh' ? '无标题页' : 'Untitled page');
 }
-export function createBushItPage(source = '', file?: BushItPage['file']) {
-  const state = read(), page = { id: crypto.randomUUID(), source, updatedAt: Date.now(), ...(file ? { file } : {}) };
-  publish({ pages: [...state.pages, page], selectedId: page.id }); return page.id;
+export function createBushItPage(source = '', file?: BushItPage['file'], projectDir = '') {
+  const state = read(), page = { id: crypto.randomUUID(), source, updatedAt: Date.now(), ...(file ? { file } : { temporary: true, draftNumber: Math.max(0, ...state.pages.map(page => page.draftNumber ?? 0)) + 1 }), ...(projectDir ? { projectDir } : {}) };
+  publish({ pages: [...state.pages, page], selectedId: page.id, projectDir }); return page.id;
 }
-export function updateBushItPage(id: string, patch: Partial<Pick<BushItPage, 'source' | 'file'>>) {
+export function updateBushItPage(id: string, patch: Partial<Pick<BushItPage, 'source' | 'file' | 'projectDir' | 'conversationRoot' | 'externalFile' | 'unloaded' | 'temporary'>>) {
   publish({ pages: read().pages.map(page => page.id === id ? { ...page, ...patch, updatedAt: Date.now() } : page) });
 }
-export function selectBushItPage(id: string) { if (read().pages.some(page => page.id === id && !page.archived)) publish({ selectedId: id }); }
+export function selectBushItPage(id: string) { const page = read().pages.find(page => page.id === id && !page.archived); if (page) publish({ selectedId: id, projectDir: page.projectDir || '' }); }
+export function selectCreationProject(projectDir: string) {
+  const state = read(); publish({ projectDir, projects: projectDir ? [...new Set([...state.projects, projectDir])] : state.projects,
+    selectedId: state.pages.find(page => !page.archived && (page.projectDir || '') === projectDir)?.id || '' });
+}
+export function setCreationSession(root: string, sessionId: string) { publish({ sessions: { ...read().sessions, [root]: sessionId } }); }
 export function archiveBushItPage(id: string, archived = true) {
   const state = read(), pages = state.pages.map(page => page.id === id ? { ...page, archived } : page);
   publish({ pages, selectedId: archived && state.selectedId === id ? pages.find(page => !page.archived)?.id || '' : state.selectedId });
   if (!read().selectedId) createBushItPage();
 }
 export function useBushItPages() { return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, read); }
+export function useCreationSessionId() {
+  return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => {
+    const state = read(), page = state.pages.find(page => page.id === state.selectedId && !page.archived);
+    const root = state.projectDir || page?.conversationRoot || page?.file?.path.replace(/[\\/][^\\/]+$/, '') || '';
+    return state.sessions[root] || '';
+  });
+}

@@ -143,6 +143,28 @@ app.whenReady().then(async()=>{
       await read(`window.showShorthand(${remote},'short-session','short-turn',false)`);await pause();
       assert.equal(await read(`document.querySelectorAll('.source-memo-marker').length`),0,'user text is not enriched with inferred Source links');
     }
+    for(const remote of [false,true]) {
+      await read(`window.showAdjacentShorthand(${remote})`);
+      await until(`document.querySelectorAll('.source-memo-marker').length===9`);
+      assert.deepEqual(await read(`Array.from(document.querySelectorAll('.source-memo-marker'),e=>e.textContent)`),
+        ['10','11','11','10','10','11','10','11','10'],'adjacent sources retain their individual order and identities');
+      assert.equal(await read(`document.querySelectorAll('table .source-memo-marker').length`),2,'table cells support adjacent citations');
+      assert.match(await read('document.body.innerText'),/\[99\]/,'an unresolved source stays literal between resolved sources');
+      assert.match(await read('document.body.innerText'),/arr\[10\]\[11\]/);
+      assert.match(await read('document.body.innerText'),/\[\[10\]\[11\]\]/);
+      assert.equal(await read(`Array.from(document.querySelectorAll('p')).find(p=>p.textContent.startsWith('转义：')).textContent`),'转义：[10][11]');
+      assert.equal(await read(`document.querySelectorAll('code .source-memo-marker, a .source-memo-marker').length`),0);
+      for(const [index,number] of [[0,10],[1,11]]) {
+        await read(`document.querySelectorAll('.source-memo-marker')[${index}].click()`);
+        await until(`document.querySelector('.source-memo-card')?.textContent.includes('连续引用 ${number} 的依据')`);
+        assert.match(await read(`document.querySelector('.source-memo-heading').textContent`),new RegExp('Source '+number));
+        await read(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await pause();
+      }
+      await read(`window.showShorthand(${remote},'short-session','short-turn',true,'引用式链接：[10][11]\\n\\n[11]: https://example.org/defined\\n\\n单独引用：[21]')`);
+      await until(`document.querySelectorAll('.source-memo-marker').length===1`);
+      assert.equal(await read(`document.querySelector('a[href="https://example.org/defined"]').textContent`),'10','defined Markdown reference links keep their own semantics');
+      assert.equal(await read(`document.querySelector('.source-memo-marker').textContent`),'21');
+    }
     for(const session of ['a','b','a']) {
       await read(`window.showScoped('${session}')`);
       await until(`document.querySelectorAll('.source-memo-marker').length===2`);

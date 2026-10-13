@@ -215,6 +215,7 @@ function registerParallel(registry: ToolRegistry) {
           tool_calls: {
             type: "array",
             minItems: 2,
+            maxItems: 32,
             items: {
               type: "object",
               additionalProperties: false,
@@ -230,11 +231,13 @@ function registerParallel(registry: ToolRegistry) {
       },
     },
     manifest: manifest("tools.parallel", false, "session"),
+    delegatesToolExecution: true,
+    nestedCallable: false,
     parallelSafe: false,
     decodeInput: (value) => {
       const input = object(value);
-      if (!Array.isArray(input.tool_calls) || input.tool_calls.length < 2) {
-        throw new Error("tool_calls requires at least two calls.");
+      if (!Array.isArray(input.tool_calls) || input.tool_calls.length < 2 || input.tool_calls.length > 32) {
+        throw new Error("tool_calls requires 2–32 calls.");
       }
       return {
         calls: input.tool_calls.map((item) => {
@@ -251,14 +254,14 @@ function registerParallel(registry: ToolRegistry) {
       const catalog = new Map(registry.catalog().map((item) => [item.definition.name, item]));
       const disallowed = context.input.calls.filter((call) => {
         const entry = catalog.get(call.name);
-        return call.name === "parallel_tools" || !entry?.parallelSafe;
+        return !entry?.parallelSafe || entry.manifest.mutating || entry.manifest.effect_kind === 'interaction' || registry.resolve(call.name)?.nestedCallable === false;
       });
       if (disallowed.length) {
         throw new Error(`parallel_tools only accepts read-only parallel-safe tools: ${disallowed.map((item) => item.name).join(", ")}`);
       }
       const results = await Promise.all(context.input.calls.map(async (call) => {
         try {
-          const child = await context.invokeTool(call.name, call.arguments);
+          const child = await context.invokeTool(call.name, call.arguments, { record: true });
           return { name: call.name, returned: true, result: child };
         } catch (error) {
           return { name: call.name, success: false, error: { code: "child_exception", message: error instanceof Error ? error.message : String(error) } };

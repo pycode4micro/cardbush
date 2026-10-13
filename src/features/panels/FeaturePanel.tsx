@@ -5,6 +5,7 @@ import { useTeamWorkspace } from '../team/teamWorkspaceStore';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { type AppLanguage, type AppSection, type BackendCapabilities, type SkillDetail, type SkillSummary } from '../../types';
 import { sectionLabels } from '../appSections';
+import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
 
 const LazyFeatureContentPanel = recoverableLazy('feature-panel', async () => {
   const module = await import('./index');
@@ -36,6 +37,7 @@ export function FeaturePanel({
   onLoadSkillDetail,
   onCreateAutomation,
   onOpenConversation,
+  creationChatOptions,
 }: {
   language: AppLanguage;
   backendCapabilities: BackendCapabilities;
@@ -52,6 +54,7 @@ export function FeaturePanel({
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
+  creationChatOptions?: CreationChatOptions;
 }) {
   const teamWorkspace = useTeamWorkspace(section === 'team');
   const label = section === 'team' ? teamWorkspace.title || sectionLabels[section][language] : sectionLabels[section][language];
@@ -65,6 +68,7 @@ export function FeaturePanel({
       />}
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
         <LazyFeatureContentPanel
+          creationChatOptions={creationChatOptions}
           language={language}
           backendCapabilities={backendCapabilities}
           onOpenPluginPrompt={onOpenPluginPrompt}

@@ -1,5 +1,5 @@
 import type { ComponentProps, RefObject } from 'react';
-import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, type NextStepPrediction } from '@cardbush/bush-protocol';
 import { Composer } from '../composer';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { ComposerPresentationContext } from '../composer/ComposerPresentationContext';
@@ -13,13 +13,15 @@ export type AssistantComposerControls = Pick<ComposerProps,
   'subagentPermissionRouting' | 'onSubagentPermissionRoutingChange' | 'reasoningLevel' |
   'reasoningLevelAvailable' | 'reasoningLevels' | 'onReasoningLevelChange' | 'skills' | 'disabledSkillNames' | 'onToggleSkill'>;
 
-export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs }: {
+export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs, nextStepPrediction, predictionPending }: {
   controls: AssistantComposerControls; language: 'zh' | 'en'; draft: string; onDraftChange(value: string): void;
   ready: boolean; submitting: boolean; onSend(text: string): Promise<boolean>; messages: ChatMessage[];
   fileDropTarget: RefObject<HTMLElement | null>;
   browserTabs: BrowserPromptReference[];
+  nextStepPrediction?: NextStepPrediction;
+  predictionPending?: boolean;
 }) {
-  return <ComposerReferenceContext.Provider value={{ sessionId: PERSONAL_ASSISTANT_SESSION, browserTabs, messages }}>
+  return <ComposerReferenceContext.Provider value={{ sessionId: PERSONAL_ASSISTANT_SESSION, browserTabs, messages, nextStepPrediction, predictionPending }}>
     <ComposerPresentationContext.Provider value={{ style: 'simple', preservePermissions: true }}>
       <Composer {...controls} compact language={language} draft={draft} onDraftChange={onDraftChange}
         fileDropTarget={fileDropTarget} inputReadOnly={!ready} submissionPending={submitting}

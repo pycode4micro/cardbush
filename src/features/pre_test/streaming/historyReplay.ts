@@ -1,4 +1,6 @@
 import type { RuntimeEvent, SessionSnapshot, ToolExecutionRecord } from '@cardbush/bush-protocol';
+import { toolExecutionError } from '@cardbush/bush-protocol';
+import { toolLifecycle } from '../../../backend/runtimeTranscriptEvents';
 import type { ChatMessage, ChatToolExecution } from '../../../types';
 import { projectRuntimeTurnMessages } from '../../../backend/runtimeSessionMessageProjection';
 import { toolArtifactsFromPayload } from '../../../backend/toolArtifacts';
@@ -116,23 +118,14 @@ export function historyReplay(events: RuntimeEvent[], records: ToolExecutionReco
 }
 
 function historyTool(event: ToolEvent, record?: ToolExecutionRecord): ChatToolExecution {
-  const state: ChatToolExecution['state'] = event.kind === 'tool_returned' ? 'completed'
-    : event.kind === 'tool_failed' ? 'failed' : event.kind === 'tool_cancelled' ? 'cancelled'
-      : event.kind === 'tool_running' ? 'running' : 'queued';
-  const base: ChatToolExecution = {
-    id: event.payload.toolCallId, name: event.payload.toolName, state,
-    summary: event.payload.display?.summary || event.payload.display?.title || event.payload.toolName,
-    output: '', success: event.kind === 'tool_returned', durationMs: 0, createdAt: event.createdAt,
-    contentOffset: 0, sequence: event.sequence, turnId: event.turnId,
-    assistantMessageId: event.payload.assistantMessageId,
-    metadata: { ...('error' in event.payload ? { error: event.payload.error } : {}) },
-  };
+  const base = toolLifecycle(event);
   if (!record) return base;
   const returned = record.outcome === 'returned';
+  const error = toolExecutionError(record);
   const artifacts = returned ? toolArtifactsFromPayload({ result: record.result }) : [];
-  return { ...base, state: record.outcome === 'returned' ? 'completed' : record.outcome, success: returned,
+  return { ...base, state: record.outcome === 'returned' ? error ? 'failed' : 'completed' : record.outcome, success: returned && !error,
     output: returned ? typeof record.result === 'string' ? record.result : JSON.stringify(record.result, null, 2) ?? 'null' : '',
     ...(artifacts.length ? { artifacts } : {}),
     metadata: { actionManifest: record.actionManifest, nativeResult: record.result,
-      workspaceChanges: record.workspaceChanges, error: record.error } };
+      workspaceChanges: record.workspaceChanges, error } };
 }

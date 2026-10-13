@@ -1,4 +1,4 @@
-import { Globe2 } from 'lucide-react';
+import { Globe } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { browserIconUrl, browserSiteIcon, defaultBrowserSiteIcon, rememberBrowserSiteIcon, subscribeBrowserSiteIcons } from './browserSiteIcons';
 import './browserSiteIcon.css';
@@ -27,6 +27,6 @@ export function BrowserSiteIcon({ url, icon, icons = [], revision = 0, size = 16
       decoding="async" loading="lazy" referrerPolicy="no-referrer" onLoad={() => rememberBrowserSiteIcon(url, source)} onError={() => setFailed(current => ({
         key, urls: [...(current.key === key ? current.urls : []), source],
         retried: current.key === key && current.retried,
-      }))}/> : <Globe2 size={size}/>}
+      }))}/> : <Globe size={size}/>}
   </span>;
 }

@@ -10,6 +10,7 @@ export function verifyPackagedDependencies(archive) {
     .filter(name => !files.has(`node_modules/${name}/package.json`));
   // sharp is a required transitive native dependency used by Computer Use.
   if (!files.has('node_modules/sharp/package.json')) missing.push('sharp');
+  if (!files.has('node_modules/quickjs-emscripten/package.json') || ![...files].some(file => file.includes('@jitl/quickjs-wasmfile-release-sync/') && file.endsWith('.wasm'))) missing.push('quickjs-emscripten (including WASM runtime)');
   if (missing.length) throw Error('Packaged application is missing production dependencies: ' + missing.join(', '));
   return { verified: Object.keys(manifest.dependencies ?? {}).length };
 }

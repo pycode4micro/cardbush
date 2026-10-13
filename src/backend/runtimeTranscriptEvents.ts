@@ -36,13 +36,14 @@ export function toolLifecycle(
     kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled';
   }>,
 ): ChatToolExecution {
+  const error = event.kind === 'tool_returned' ? event.payload.resultError : event.kind === 'tool_failed' ? event.payload.error : undefined;
   return {
     id: event.payload.toolCallId,
     name: event.payload.toolName,
-    state: toolLifecycleState(event.kind),
+    state: error ? 'failed' : toolLifecycleState(event.kind),
     summary: event.payload.display?.summary || event.payload.display?.title || event.payload.toolName,
     output: '',
-    success: event.kind === 'tool_returned',
+    success: event.kind === 'tool_returned' && !error,
     durationMs: 0,
     createdAt: event.createdAt,
     contentOffset: 0,
@@ -53,7 +54,7 @@ export function toolLifecycle(
       lifecycleSequence: event.sequence,
       ...(event.payload.display?.title ? { displayTitle: event.payload.display.title } : {}),
       ...(event.payload.display?.titles ? { displayTitles: event.payload.display.titles } : {}),
-      ...('error' in event.payload ? { error: event.payload.error } : {}),
+      ...(error ? { error } : {}),
     },
   };
 }

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import { modelRequestSchema, type ModelRequest, type RuntimePermissionAnswer } from '@cardbush/bush-protocol';
+import { modelRequestSchema, returnedToolError, type ModelRequest, type RuntimePermissionAnswer } from '@cardbush/bush-protocol';
 import { ToolRegistry, type ToolPermissionRequest } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import { ToolExecutionCoordinator, type RuntimeCapabilityStore, type ToolExecutionHooks } from './toolExecutionCoordinator.js';
@@ -30,7 +30,7 @@ function sameConnection(binding: Binding, current: Registration | undefined) {
 function interfaceError(code: string, message: string) { return Object.assign(new Error(message), { code }); }
 function declaredResultError(result: unknown) {
   const value = object(result);
-  if (value.isError !== true) return undefined;
+  if (!returnedToolError('mcp_app', result, true)) return undefined;
   const text = (Array.isArray(value.content) ? value.content : []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
   return { text: text.slice(0, 16_000), truncated: text.length > 16_000 };
 }

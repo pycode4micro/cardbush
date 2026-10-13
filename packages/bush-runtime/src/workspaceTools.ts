@@ -1,4 +1,5 @@
 import { createDisplayDiff } from './workspaceDiff.js';
+import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
 import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { TerminalSessionManager, type TerminalShell } from './terminalSessionManager.js';
 // Preserve existing Runtime consumers while the implementations remain independent.
@@ -8,6 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   writeFile,
+  unlink,
 } from "node:fs/promises";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -19,7 +21,7 @@ import type {
   ToolRegistry,
 } from "./toolRegistry.js";
 import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
-import { routeWorkspaceTool } from './workspaceToolRouting.js';
+import { routeWorkspaceTool, workspaceFileResources } from './workspaceToolRouting.js';
 import { snapshotCommandSandbox, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
 import { terminalInputPermission } from './commandPermission.js';
 import { authorizedCommandSandbox, commandSandboxPlan, decodeAdditionalCommandPermissions, type AdditionalCommandPermissions } from './commandSandboxAdmission.js';
@@ -175,13 +177,21 @@ export function registerWorkspaceTools(
   function registerIfMissing<T>(targetRegistry: ToolRegistry, registration: ToolRegistration<T>) {
     if (targetRegistry.resolve(registration.definition.name)) return;
     const routed = routeWorkspaceTool(registration, terminals, options.remote, commandSandbox.mode === 'required');
+    if (['read_file', 'write_file', 'edit_file'].includes(registration.definition.name)) {
+      routed.parallelSafe = true;
+      routed.resources = context => workspaceFileResources(context, registration.manifest.mutating);
+    }
+    if (['terminal_poll', 'terminal_write'].includes(registration.definition.name)) {
+      routed.parallelSafe = true;
+      routed.resources = context => [{ key: `terminal-output:${context.sessionId}:${(context.input as TerminalSessionInput).sessionId}`, mode: 'write' }];
+    }
     if (registration.definition.name === 'terminal_exec' && options.onTerminalStarted) {
       const execute = routed.execute;
       routed.execute = async context => {
         const result = await execute(context) as Record<string, unknown>;
         if (result.state === 'running' && (context.input as TerminalInput).notifyOnExit && context.turn) {
           const taskId = options.onTerminalStarted!(context, result);
-          return { ...result, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId,
+          return { ...result, task_id: result.terminalSessionId, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId,
             next_step: 'Continue independent work now. Completion arrives automatically; wait only when it blocks the next step.' } : {}) };
         }
         return result;
@@ -189,6 +199,85 @@ export function registerWorkspaceTools(
     }
     targetRegistry.register(routed);
   }
+
+  if (!registry.resolve('apply_patch')) registry.register<{ files: FilePatch[] }>({
+    definition: { name: 'apply_patch', description: 'Apply related UTF-8 file changes as one preflighted local-workspace batch. Use *** Begin Patch, *** Add/Update/Delete File: path, optional *** Move to: path, @@ hunks with space/context, -/removed and +/added lines, then *** End Patch. Existing files must first be read at their current revision; contexts must match uniquely. Every path is authorized and every change keeps review/undo evidence. Validation failure writes nothing; I/O failure attempts rollback and reports any surviving changes. SSH workspaces use their existing read_file/write_file/edit_file tools.', inputSchema: objectSchema({ patch: { type: 'string', minLength: 1, maxLength: 2097152 } }, ['patch']) },
+    manifest: manifest('filesystem.patch', 'filesystem_change', true), parallelSafe: true,
+    decodeInput: value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => key !== 'patch') || typeof (value as { patch?: unknown }).patch !== 'string') throw new Error('Provide a patch string.');
+      return { files: parseWorkspacePatch((value as { patch: string }).patch) };
+    },
+    authorize: async context => {
+      if ([context.turn?.request.metadata.workspaceDir, context.turn?.request.metadata.projectDir, context.turn?.request.metadata.sessionWorkspaceDir].some(root => typeof root === 'string' && root.startsWith('ssh:'))) throw new Error('Multi-file patch currently requires a local workspace; use the SSH file tools.');
+      const requests = [];
+      for (const file of context.input.files) for (const path of [file.path, ...(file.moveTo ? [file.moveTo] : [])]) {
+        const admission = await authorizePath('write')({ ...context, input: { path } });
+        if (admission.kind === 'ask') requests.push(admission.request);
+      }
+      return requests.length ? { kind: 'ask' as const, request: { reason: 'Apply the related file changes.', actions: ['write'],
+        targets: requests.flatMap(request => request.targets), capabilityIds: requests.flatMap(request => request.capabilityIds) } } : { kind: 'allow' as const };
+    },
+    resources: async context => Promise.all(context.input.files.flatMap(file => [file.path, ...(file.moveTo ? [file.moveTo] : [])]).map(async path =>
+      ({ key: `file:${normalizeIdentity(await resolveToolPath(context, path, true))}`, mode: 'write' as const }))),
+    execute: async context => {
+      const releases: Array<() => void> = [], changes: Array<{ path: string; before?: Buffer; after?: Buffer; versioned: boolean }> = [], applied: typeof changes = [];
+      const identities = new Set<string>();
+      const stage = async (path: string, before: Buffer | undefined, after: Buffer | undefined) => {
+        const identity = normalizeIdentity(path);
+        if (identities.has(identity)) throw new Error('Each path may appear only once in a patch, including move targets.');
+        identities.add(identity); releases.push(observations.acquireMutation(path));
+        assertObservedIfExisting(context, observations, path, before);
+        changes.push({ path, before, after, versioned: await options.ownsFileVersion?.(context.sessionId, path) ?? false });
+        if (changes.reduce((size, change) => size + (change.before?.length ?? 0) + (change.after?.length ?? 0), 0) > 32 * 1024 * 1024) throw new Error('Patch staging exceeds 32 MiB. Split this into smaller related batches.');
+      };
+      const same = (a?: Buffer, b?: Buffer) => a === undefined ? b === undefined : b !== undefined && a.equals(b);
+      const write = async (path: string, bytes?: Buffer, create = false) => {
+        if (bytes === undefined) await unlink(path);
+        else { await mkdir(dirname(path), { recursive: true }); await writeFile(path, bytes, create ? { flag: 'wx' } : undefined); }
+      };
+      const receipt = (change: typeof changes[number]) => {
+        if (change.after) observations.record(context.sessionId, change.path, digest(change.after), workspaceRoot(context));
+        return changeResult(context, change.path, change.before, change.after, !change.after ? 'deleted' : change.before ? 'modified' : 'added', 'utf8', createChangeId(), change.versioned);
+      };
+      try {
+        // Validate all content, paths and revisions before the first filesystem mutation.
+        for (const file of context.input.files) {
+          context.signal?.throwIfAborted();
+          const path = await resolveToolPath(context, file.path, true), before = await optionalBytes(path);
+          if (file.kind === 'add' ? before !== undefined : before === undefined) throw new Error(`Patch ${file.kind} target ${file.path} has an unexpected existence state.`);
+          if (before?.includes(0)) throw new Error('apply_patch requires UTF-8 text without NUL bytes. Use an encoding-aware file tool for this file.');
+          const content = before ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(before) : '';
+          const after = file.kind === 'delete' ? undefined : Buffer.from(applyFilePatch(file, content), 'utf8');
+          if (after) assertInProcessFileSize(after.length);
+          if (file.moveTo) {
+            const target = await resolveToolPath(context, file.moveTo, true);
+            if (await optionalBytes(target)) throw new Error('Move target already exists.');
+            await stage(path, before, undefined); await stage(target, undefined, after);
+          } else await stage(path, before, after);
+        }
+        for (const change of changes) {
+          context.signal?.throwIfAborted();
+          if (!same(await optionalBytes(change.path), change.before)) throw new Error(`File changed during patch preflight: ${change.path}`);
+          // Include the in-progress write: a failed write may have partially modified a file.
+          applied.push(change); await write(change.path, change.after, change.before === undefined);
+        }
+        return { applied: true, files: changes.map(receipt) };
+      } catch (error) {
+        const remaining: string[] = [];
+        for (const change of applied.reverse()) {
+          try {
+            const current = await optionalBytes(change.path);
+            if (same(current, change.before)) continue;
+            if (!same(current, change.after)) { remaining.push(change.path); continue; }
+            await write(change.path, change.before, current === undefined);
+          } catch { remaining.push(change.path); }
+        }
+        // Keep evidence for any partial write or externally changed path; never overwrite it blindly.
+        for (const path of remaining) { const change = changes.find(item => item.path === path)!; receipt({ ...change, after: await optionalBytes(path) }); }
+        throw Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}${remaining.length ? ' Some paths could not be rolled back; inspect recorded changes before retrying.' : applied.length ? ' All applied changes were rolled back.' : ' No files were changed.'}`), { code: remaining.length ? 'patch_partial_failure' : 'patch_not_applied', details: { remaining_paths: remaining, rolled_back: applied.length > 0 && !remaining.length } });
+      } finally { releases.reverse().forEach(release => release()); }
+    },
+  });
 
   registerIfMissing(registry, {
     definition: {
@@ -627,14 +716,14 @@ function changeResult(
   context: ToolHandlerContext<unknown>,
   path: string,
   before: Buffer | undefined,
-  after: Buffer,
-  status: "added" | "modified",
+  after: Buffer | undefined,
+  status: "added" | "modified" | "deleted",
   encoding: BufferEncoding,
   changeId: string,
   versioned: boolean,
 ): Record<string, unknown> {
   const beforeText = before?.toString(encoding) ?? "";
-  const afterText = after.toString(encoding);
+  const afterText = after?.toString(encoding) ?? '';
   const diff = createDisplayDiff(beforeText, afterText);
   const change = {
       change_id: changeId,
@@ -643,7 +732,7 @@ function changeResult(
       additions: diff.additions,
       deletions: diff.deletions,
       ...(before ? { before_hash: digest(before) } : {}),
-      after_hash: digest(after),
+      ...(after ? { after_hash: digest(after) } : {}),
       metadata: {
         ...(before && !versioned ? { beforeContentBase64: before.toString("base64") } : {}),
         workspaceVersioned: versioned,
@@ -654,7 +743,7 @@ function changeResult(
   return {
     path,
     status,
-    sha256: change.after_hash,
+    ...(change.after_hash ? { sha256: change.after_hash } : {}),
     change_id: change.change_id,
     additions: change.additions,
     deletions: change.deletions,

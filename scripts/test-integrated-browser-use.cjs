@@ -60,10 +60,11 @@ async function run() {
   ipcMain.handle('inspector:browser-unregister',(event,input)=>integrated.unregister(event.sender.id,input));
   ipcMain.handle('inspector:browser-action-result',(event,input)=>integrated.acknowledge(event.sender.id,input));
   ipcMain.handle('inspector:browser-bind',(event,input)=>router.bindReferences(event.sender,input.sessionId,input.references));
+  ipcMain.handle('browser:open-tab-reference',(event,input)=>router.openReference(input.href,input.reopen,event.sender.id));
   ipcMain.handle('browser:settings-read',()=>({protocol:'cardbush.browser_config.v1',revision:1,startPage:url}));
   ipcMain.handle('browser:frequent-sites',()=>[]);
   await window.loadFile(path.join(directory,'index.html'));
-  const ui=code=>window.webContents.executeJavaScript(code);
+  const ui=code=>window.webContents.executeJavaScript(code).catch(error=>{console.error('Browser fixture evaluation failed:',code.slice(0,300));throw error;});
   await until(()=>ui('Boolean(window.browserFixture)'), 'React inspector did not mount');
   await ui(`browserFixture.open({target:${JSON.stringify(url)}})`);
   await until(()=>ui(`Boolean(browserFixture.navigation[${JSON.stringify(url)}]?.guestWebContentsId)`),'Inspector guest not ready');
@@ -199,11 +200,20 @@ async function run() {
   // Closing the selected page in the UI cannot choose another live CardBush tab or Chrome.
   await ui(`browserFixture.closeTabs(new Set([${JSON.stringify(url)}]))`);
   await until(()=>guest.isDestroyed(),'Selected guest did not close');
-  failure(await call('list_pages'),'cardbush_page_unavailable');
-  failure(await call('list_pages',{},assistantChild),'cardbush_page_unavailable');
+  const available=success(await call('list_pages'));
+  assert.equal(available.selectionState,'missing');
+  assert.equal(available.selectedPageId,null);
+  assert.equal(available.unavailablePageId,pageId);
+  assert.ok(available.pages.some(page=>page.id===newTab.id),'remaining authorized tabs are available for explicit selection');
+  failure(await call('evaluate_script',{expression:'document.title'}),'browser_page_missing');
+  assert.equal(success(await call('list_pages',{},assistantChild)).selectionState,'missing');
+  failure(await call('take_snapshot',{},assistantChild),'browser_page_missing');
   await router.inheritScope('personal-assistant',assistantChild);
   await router.inheritScope('personal-assistant','child-after-close');
-  failure(await call('list_pages',{},'child-after-close'),'cardbush_page_unavailable');
+  assert.equal(success(await call('list_pages',{},'child-after-close')).selectionState,'missing');
+  failure(await call('evaluate_script',{expression:'document.title'},'child-after-close'),'browser_page_missing');
+  success(await call('select_page',{pageId:newTab.id}));
+  assert.equal(success(await call('list_pages')).selectedPageId,newTab.id,'explicit selection recovers within the existing grants');
   assert.equal(externalCalls.length,externalBefore,'closed targets never fall back to Chrome');
   // An old @ with the same inspector identity cannot retarget a newly created guest.
   await ui(`browserFixture.open({target:${JSON.stringify(url)}})`);
@@ -280,6 +290,39 @@ async function run() {
   assert.equal(opened.visible,true,'navigation reports actual visibility after UI acknowledgement');
   await until(()=>ui(`document.querySelector('.right-inspector-tab-page.active .showing-start-page')===null`),'Start page still covers the navigated guest');
   success(await call('take_screenshot',{format:'png'},firstTurn));
+  // A Markdown citation reveals the original guest across workspaces, even
+  // after navigation and with another tab on the same URL. It never controls it.
+  const cited = success(await call('new_page',{url},firstTurn));
+  assert.ok(cited.reference?.startsWith('cardbush-browser://tab?'));
+  const citedGuest = webContents.fromId(cited.id);
+  success(await call('navigate_page',{type:'url',url:url+'changed'},firstTurn));
+  await citedGuest.executeJavaScript('window.referenceProof=123;document.querySelector("input").value="keep typed content";window.scrollTo(0,240)');
+  const other = success(await call('new_page',{url},firstTurn));
+  const beforeCount = await ui('browserFixture.allTabs.length');
+  const originalScroll = await citedGuest.executeJavaScript('window.scrollY');
+  await ui(`browserFixture.setWorkspaceId('reference-reader');browserFixture.setCitation(${JSON.stringify(`[AA 榜单](${cited.reference})`)});void 0`);
+  await until(()=>ui('!!document.querySelector(".browser-tab-reference a")'),'Markdown tab reference did not render');
+  await ui('document.querySelector(".browser-tab-reference a").click()');
+  await until(()=>ui(`browserFixture.activeId===${JSON.stringify(cited.tabId)} && browserFixture.snapshot(browserFixture.workspaceId).open`),'Citation did not reveal the original retained tab');
+  assert.equal(await ui('browserFixture.allTabs.length'),beforeCount,'citation did not create another guest');
+  assert.equal(citedGuest.getURL(),url+'changed','old citation never navigates back to its stored URL');
+  assert.deepEqual(await citedGuest.executeJavaScript('[window.referenceProof,document.querySelector("input").value,window.scrollY]'),[123,'keep typed content',originalScroll]);
+  assert.equal(success(await call('list_pages',{},firstTurn)).selectedPageId,other.id,'UI navigation does not change the agent target');
+  await ui(`browserFixture.closeTabs(new Set([${JSON.stringify(cited.tabId)}]));void 0`);
+  await until(()=>citedGuest.isDestroyed(),'Citation fixture guest did not close');
+  await ui('document.querySelector(".browser-tab-reference a").click()');
+  await until(()=>ui('document.querySelector(".browser-tab-reference-status")?.textContent.includes("标签已关闭")'),'Closed reference did not show its state');
+  assert.equal(await ui('browserFixture.allTabs.length'),beforeCount-1,'closed reference never automatically reopens');
+  await ui(`browserFixture.openTab({id:${JSON.stringify(cited.tabId)},kind:'resource',detail:{target:${JSON.stringify(url)}}});void 0`);
+  await until(()=>ui(`browserFixture.navigation[${JSON.stringify(cited.tabId)}]?.guestWebContentsId > ${cited.id}`),'Replacement guest was not registered');
+  await ui(`browserFixture.activateTab(${JSON.stringify(other.tabId)});void 0`);
+  assert.equal((await router.openReference(cited.reference,false,window.webContents.id)).status,'missing','old citation rejects a replacement guest with the same tab ID');
+  await ui('document.querySelector(".browser-tab-reference a").click()');
+  await until(()=>ui('document.querySelector(".browser-tab-reference a")?.getAttribute("aria-busy")==="false"'),'Reference validation did not complete');
+  assert.equal(await ui('browserFixture.activeId'),other.tabId,'an expired identity cannot activate its replacement');
+  await ui('document.querySelector(".browser-tab-reference-status button").click()');
+  await until(()=>ui(`browserFixture.allTabs.length===${beforeCount+1}`),'Explicit Reopen did not create a tab');
+  console.log('Tab references passed: real Markdown clicks, same-URL tab identity, cross-workspace reveal, preserved URL/form/scroll/guest, unchanged agent target and explicit-only reopening.');
   // A hidden conversation remains controllable, but it cannot claim visual success.
   await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace('unrelated-current')); void 0`);
   await until(()=>ui(`browserFixture.workspaceId===browserFixture.localInspectorWorkspace('unrelated-current')`),'Unrelated workspace not selected');

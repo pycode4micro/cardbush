@@ -124,6 +124,11 @@ async function buildViews() {
       'src/features/settings/SettingsSummaryPanel.tsx', 'src/features/settings/useAppSettings.ts',
       'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
     ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-prediction' ? [
+      'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',
+      'src/features/composer/ComposerPresentationContext.ts', 'src/features/settings/individuation.ts',
+      'src/features/assistant/AssistantComposer.tsx',
+    ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning' ? [
       'src/hooks/useCardbushChat.ts', 'src/features/settings/conversationModel.ts',
       'src/features/assistant/useAssistantModel.ts',
@@ -224,7 +229,7 @@ app.whenReady().then(async () => {
     } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'html-diagnostics', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'html-diagnostics', 'html-wheel', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
@@ -376,8 +381,14 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-wheel') {
+      await require('./helpers/html-preview-wheel.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no HTML wheel renderer errors');
+      assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-diagnostics') {
       await require('./helpers/html-preview-diagnostics.cjs')({ run, until, pause, window, root });
+      await require('./helpers/html-preview-regions.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no HTML diagnostic renderer errors');
       assert.deepEqual(errors, []); return;
     }
@@ -810,6 +821,10 @@ app.whenReady().then(async () => {
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-input') {
       await require('./helpers/composer-input.cjs')({ run, until, pause, window, root });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-prediction') {
+      await require('./helpers/composer-prediction.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no prediction renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-input') {
       assert.deepEqual(await run('failures'), [], 'no composer input renderer errors');

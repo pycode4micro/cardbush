@@ -54,6 +54,28 @@ app.on('window-all-closed', () => {});
     await call('resize_page', { width: 360, height: 640 });
     const mobile = await call('take_screenshot', { format: 'png', autoViewport: true });
     assert.equal(mobile.structuredContent.width, 360); assert.equal(mobile.structuredContent.height, 640);
+    for (const zoom of [0.75, 0.9066985845565796, 1.25, 2]) {
+      page.setZoomFactor(zoom);
+      for (const deviceScaleFactor of [1, 2]) {
+        const requested = { width: 473, height: 800, deviceScaleFactor };
+        const resized = (await call('resize_page', requested)).structuredContent;
+        const actual = await page.executeJavaScript('({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})');
+        assert.deepEqual({ width: resized.width, height: resized.height, deviceScaleFactor: resized.deviceScaleFactor }, actual);
+        assert.ok(Math.abs(actual.width - requested.width) <= 1 && Math.abs(actual.height - requested.height) <= 1);
+        const captured = (await call('take_screenshot', { format: 'png' })).structuredContent;
+        assert.deepEqual(captured.viewport, { ...actual, adjusted: false });
+        assert.ok(Math.abs(captured.width - requested.width * deviceScaleFactor) <= 2);
+        assert.ok(Math.abs(captured.height - requested.height * deviceScaleFactor) <= 2);
+        assert.ok(Math.abs(page.getZoomFactor() - zoom) < 0.00001, 'capture preserves user zoom');
+        if (deviceScaleFactor === 1) {
+          const region = (await call('take_screenshot', { format: 'png', selector: '#chart' })).structuredContent;
+          assert.ok(Math.abs(region.height - 240) <= 1, 'selector crop keeps CSS dimensions under zoom');
+          const full = (await call('take_screenshot', { format: 'png', fullPage: true })).structuredContent;
+          assert.ok(Math.abs(full.height - full.clip.height) <= 1, 'full-page crop keeps CSS dimensions under zoom');
+        }
+      }
+    }
+    page.setZoomFactor(1);
     await call('resize_page', { width: 69, height: 640 });
     assert.equal((await call('take_screenshot', { format: 'png' })).structuredContent.width, 69, 'explicit narrow tests are respected');
     const chart = await call('take_screenshot', { format: 'png', selector: '#chart', viewport: { width: 900, height: 640 } });
@@ -86,7 +108,7 @@ app.on('window-all-closed', () => {});
     assert.ok(commands.includes('Page.getLayoutMetrics'));
     await fs.mkdir(path.resolve('tmp'), { recursive: true });
     await fs.copyFile(chart.structuredContent.path, path.resolve('tmp/chrome-capture-chart.png'));
-    console.log('Real CDP: 69px viewport recovery, full-page bounds, explicit mobile viewport, chart crop, canvas export, automatic image return and mcp_call vision delivery passed.');
+    console.log('Real CDP: fractional zoom and DPR, resize readback, viewport recovery, full-page bounds, chart crop, canvas export and mcp_call vision delivery passed.');
   } catch (error) { console.error('Capture fixture failed:', error); throw error; }
   finally {
     window?.destroy();

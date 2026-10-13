@@ -5,11 +5,11 @@ export const LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND = 'runtime.list_solution_s
 export const ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND = 'runtime.answer_solution_selection' as const;
 
 // Count Unicode characters rather than UTF-16 units; never truncate a decision.
-const briefText = z.string().trim().min(1).refine(value => Array.from(value).length <= 15,
-  'Use at most 15 characters.').refine(value => !/[\r\n]/u.test(value), 'Use one line of plain text.');
+const briefText = (limit: number) => z.string().trim().min(1).refine(value => Array.from(value).length <= limit,
+  `Use at most ${limit} characters.`).refine(value => !/[\r\n]/u.test(value), 'Use one line of plain text.');
 export const solutionSelectionInputSchema = z.object({
-  prompt: briefText,
-  options: z.array(briefText).min(1).max(3).refine(options => new Set(options).size === options.length,
+  prompt: briefText(500),
+  options: z.array(briefText(120)).min(1).max(3).refine(options => new Set(options).size === options.length,
     'Offer distinct solutions.'),
 }).strict();
 
@@ -19,6 +19,7 @@ export const runtimeSolutionSelectionSchema = z.object({
   turnId: z.string().min(1),
   toolCallId: z.string().min(1),
   createdAt: z.string().min(1),
+  blocking: z.boolean().optional(),
   ...solutionSelectionInputSchema.shape,
 });
 const answerIdentity = z.object({

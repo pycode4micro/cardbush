@@ -21,6 +21,17 @@ export class SubagentTaskStore {
   readonly #createEventId: () => string;
   readonly #now: () => string;
   readonly #events = new Map<string, SubagentEvent[]>();
+  readonly #listeners = new Set<() => void>();
+
+  waitForCompletion(parentSessionId: string, taskId: string, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { this.#listeners.delete(check); signal.removeEventListener('abort', abort); };
+      const abort = () => { cleanup(); reject(signal.reason ?? new DOMException('Wait stopped', 'AbortError')); };
+      const check = () => { if (this.get(parentSessionId, taskId)?.status !== 'running') { cleanup(); resolve(); } };
+      if (signal.aborted) { abort(); return; }
+      this.#listeners.add(check); signal.addEventListener('abort', abort, { once: true }); check();
+    });
+  }
 
   constructor(options: {
     persistence?: SubagentTaskPersistence;
@@ -148,6 +159,7 @@ export class SubagentTaskStore {
     });
     this.#persistence?.append(event);
     events.push(event);
+    for (const listener of this.#listeners) listener();
   }
 }
 

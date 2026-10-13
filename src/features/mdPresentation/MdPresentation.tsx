@@ -1,11 +1,12 @@
 import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Braces, Check, ChevronDown, FileText, ImagePlus, Network, PanelLeft, Plus, Search, Settings2 } from 'lucide-react';
+import { Braces, Check, ChevronDown, FileText, ImagePlus, Network, PanelLeft, Plus, Search, Settings2 } from 'lucide-react';
 import { MdGraphCanvas } from './MdGraphCanvas';
 import { MdGraphOverview } from './MdGraphOverview';
 import { MarkdownDocument, markdownOutline } from './MarkdownDocument';
 import { MdSectionEditor } from './MdSectionEditor';
 import { PageEditor, type PageEditorHandle } from './PageEditor';
 import { PageMenu } from './PageMenu';
+import { MarkdownSourceEditor, type MarkdownSelection } from './MarkdownSourceEditor';
 import { changePageBody, changePageTitle, pageTitle } from './pageDocument';
 import { MAX_MARKDOWN_LENGTH, nodeDependencies, nodeName, parseMarkdownGraph, setNodeDependency, setNodeLink, writeMarkdownGraph, type MdDocument, type MdNode } from './markdownGraph';
 import './md-presentation.css';
@@ -17,15 +18,17 @@ export type MdPresentationProps = {
   nodeFields?: (node: MdNode, change: (patch: Partial<MdNode>) => void) => ReactNode;
   documentFields?: (document: MdDocument, change: (attributes: MdDocument['attributes']) => void) => ReactNode;
   newNodeAttributes?: Record<string, unknown>; toolbar?: ReactNode; headerActions?: ReactNode; maxNodes?: number;
+  onSourceSelection?: (selection: MarkdownSelection) => void;
 };
 
 /** The editable page is primary. Configuration, source and graphs are secondary views. */
-export function MdPresentation({ source, onChange, language, flow, readOnly, icon, subtitle, nodeFields, documentFields, newNodeAttributes, toolbar, headerActions, maxNodes = 128 }: MdPresentationProps) {
+export function MdPresentation({ source, onChange, language, flow, readOnly, icon, subtitle, nodeFields, documentFields, newNodeAttributes, toolbar, headerActions, onSourceSelection, maxNodes = 128 }: MdPresentationProps) {
   const t = (cn: string, en: string) => language === 'zh' ? cn : en;
   const parsed = useMemo(() => { try { return { document: parseMarkdownGraph(source), error: '' }; }
     catch (error) { return { document: null, error: String((error as Error).message) }; } }, [source]);
   const [mode, setMode] = useState<'document' | 'graph' | 'markdown'>('document'), [outlineOpen, setOutlineOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
+  const [sourcePreview, setSourcePreview] = useState(true);
   const [selectedId, setSelectedId] = useState(''), [editingId, setEditingId] = useState<string>(), [query, setQuery] = useState('');
   const editors = useRef(new Map<string, PageEditorHandle>()), activeEditorId = useRef(''), workspace = useRef<HTMLElement>(null), prefix = useId().replaceAll(':', ''), sections = useRef(new Map<string, HTMLElement>());
   const document = parsed.document, activeMode = document ? mode : 'markdown', selected = document?.nodes.find(node => node.id === selectedId);
@@ -55,7 +58,7 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
       onActive={() => { activeEditorId.current = id; }} onSection={() => add()} onTask={flow ? () => add(true) : undefined}/>;
   const configuration = (node?: MdNode) => <div className="bush-page-configuration"><div><strong>{t(node ? '章节配置' : '页面配置', node ? 'Section configuration' : 'Page configuration')}</strong>
     <button type="button" aria-label={t('完成编辑', 'Finish editing')} onClick={() => setEditingId(undefined)}><Check size={14}/>{t('完成', 'Done')}</button></div>{readOnly ? <pre>{JSON.stringify(document?.attributes, null, 2)}</pre> : editor(node)}</div>;
-  return <section ref={workspace} className="md-presentation bush-page" aria-label="bush-it" data-outline={outlineOpen}>
+  return <section ref={workspace} className="md-presentation bush-page" aria-label={t('创作', 'Create')} data-outline={outlineOpen}>
     <div className="md-presentation-toolbar bush-page-toolbar">
       <div className="bush-page-tools"><PageMenu label={t('页面菜单', 'Page menu')} trigger={<><FileText size={16}/><span>{title}</span><ChevronDown size={13}/></>}>
         <div className="bush-page-menu-group" aria-label={t('视图', 'Views')}>
@@ -73,7 +76,10 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
         {!readOnly && activeMode === 'document' && <div className="bush-insert-tools"><button type="button" aria-label={t('插入图片', 'Insert image')} onMouseDown={event => event.preventDefault()} onClick={() => activeEditor()?.image()}><ImagePlus size={17}/></button>
           <button type="button" aria-label={t('插入内容', 'Insert content')} disabled={!document} onMouseDown={event => event.preventDefault()} onClick={event => activeEditor()?.insertMenu(event.currentTarget)}><Plus size={18}/></button></div>}
       </div>
-      {activeMode !== 'document' && document && <button type="button" className="bush-back-to-document" onClick={() => navigate(activeMode === 'graph' ? selectedId : '')}><ArrowLeft size={15}/>{t('返回文档', 'Back to document')}</button>}
+      <div className="md-view-switch creation-view-switch" aria-label={t('编辑视图', 'Editor view')}>
+        <button type="button" disabled={!document} aria-pressed={activeMode === 'document'} onClick={() => setMode('document')}>{t('文档', 'Document')}</button>
+        <button type="button" aria-pressed={activeMode === 'markdown'} onClick={() => setMode('markdown')}>Markdown</button>
+      </div>
       {headerActions && <div className="bush-page-header-actions">{headerActions}</div>}
     </div>
     {parsed.error && <p className="md-error" role="alert">{parsed.error}</p>}
@@ -87,7 +93,13 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
         }); }}>{item.label}</button>)}
         {document?.nodes.filter(node => `${nodeName(node)} ${node.body}`.toLowerCase().includes(query.toLowerCase())).map(node => <button type="button" key={node.id} data-outline-node={node.id} aria-pressed={selectedId === node.id} onClick={() => { if (activeMode === 'graph') { activeEditorId.current = node.id; setSelectedId(node.id); closeCompactOutline(); } else navigate(node.id); }}>{icon?.(node) ?? <FileText size={14}/>}<span>{nodeName(node)}</span></button>)}
       </aside>
-      {activeMode === 'markdown' ? <div className="md-source-panel"><label htmlFor={`${prefix}-source`}>{t('Markdown 源码', 'Markdown source')}</label><textarea id={`${prefix}-source`} className="md-source" aria-label={t('Markdown 源码', 'Markdown source')} readOnly={readOnly} spellCheck={false} value={source} onChange={event => onChange(event.target.value)}/></div>
+      {activeMode === 'markdown' ? <div className="creation-markdown-panel">
+        <div className="creation-preview-toggle"><button type="button" aria-pressed={sourcePreview} onClick={() => setSourcePreview(value => !value)}>{t('实时预览', 'Live preview')}</button></div>
+        <div className="creation-markdown-panes" data-preview={sourcePreview}>
+          <MarkdownSourceEditor source={source} onChange={onChange} onSelection={onSourceSelection} readOnly={readOnly} language={language}/>
+          {sourcePreview && <div className="creation-source-preview md-prose" aria-label={t('Markdown 预览', 'Markdown preview')}><MarkdownDocument source={source} scope={`${prefix}-preview`} onNavigate={navigate}/></div>}
+        </div>
+      </div>
         : document && activeMode === 'document' ? <div className="md-article-scroll"><article className="md-article bush-page-article">
           <section className="md-article-introduction" ref={element => { if (element) sections.current.set('', element); else sections.current.delete(''); }}>
             {readOnly ? <h1>{title}</h1> : <textarea className="bush-page-title" rows={1} spellCheck={false} aria-label={t('页面标题', 'Page title')} placeholder={t('无标题页', 'Untitled page')} value={article.title}

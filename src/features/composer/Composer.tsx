@@ -17,7 +17,8 @@ import './composerPresentation.css';
 import { ComposerCommandPortal } from './ComposerCommandPortal';
 import { useSshConnections } from '../ssh/SshConnectionsPanel';
 import { pickWorkspace } from '../ssh/WorkspaceLocationPicker';
-import { parseSshWorkspace, protocolReasoningEffort, reasoningEffortsForProtocol } from '@cardbush/bush-protocol';
+import { DEFAULT_MAX_CONTEXT_TOKENS, parseSshWorkspace, protocolReasoningEffort, reasoningEffortsForProtocol } from '@cardbush/bush-protocol';
+import { contextWindowMetrics } from '../../backend/contextWindowUsage';
 import { modelProtocolInfo } from '../settings/modelProtocols';
 import { pluginReference } from '../plugins/pluginPrompts';
 import { PluginGlyph } from '../plugins/PluginGlyph';
@@ -27,6 +28,7 @@ import { promptReferenceMarkdown, selectedTeamReference, withTeamReference, type
 import { openPromptReference } from './PromptReferenceLink';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import { useComposerMultiline } from './useComposerMultiline';
+import { useNextStepPrediction } from './useNextStepPrediction';
 import { pastedTextSummary } from './pastedText';
 import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
@@ -43,6 +45,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Circle,
+  CornerDownLeft,
   Edit3,
   File as FileIcon,
   FileArchive,
@@ -143,6 +146,7 @@ type ComposerMenu =
 
 export type ContextWindowUsage = {
   usedTokens?: number;
+  totalTokens?: number;
   maxTokens?: number;
   remainingTokens?: number;
   measuredAt?: string;
@@ -446,6 +450,8 @@ export function Composer({
   const applications = useApplications(language);
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
   const referenceContext = useContext(ComposerReferenceContext);
+  const memory = useIndividuation();
+  const predictionHintId = useId();
   const source = useConversationSource(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
   const conversationStyle = useConversationStyle(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
   const styleAvailable = host?.conversationStyleAvailable !== false;
@@ -515,6 +521,17 @@ export function Composer({
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
     fileAttachments.length > 0;
+  const predictionAvailable = memory.predictions && !presentation?.preview && runtimeReady && !sending && !stopping &&
+    !referenceContext.predictionPending && !submissionPending && !inputReadOnly && !hasContent && draft.length === 0 &&
+    attachmentUploads === 0 && queuedMessageCount === 0 && !commandState && !voiceComposer.visible;
+  const nextStep = useNextStepPrediction(referenceContext.messages, referenceContext.sessionId, host?.id, predictionAvailable, referenceContext.nextStepPrediction);
+  const prediction = nextStep.prediction;
+  function acceptPrediction() {
+    if (!prediction) return;
+    nextStep.dismiss(prediction.id);
+    onDraftChange(prediction.text);
+    focusComposer(prediction.text.length);
+  }
   const sendButtonLabel = !runtimeReady
     ? runtimeStartupFailed
       ? language === 'zh' ? 'Runtime 启动失败，点击重试' : 'Runtime failed to start. Click to retry'
@@ -593,13 +610,6 @@ export function Composer({
       }
       return;
     }
-    if (sending && !hasContent) {
-      if (!cancelReady) {
-        return;
-      }
-      await onCancel();
-      return;
-    }
     if (!hasContent) {
       return;
     }
@@ -643,6 +653,13 @@ export function Composer({
     setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
     setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
     await onSend(value, immediate ? { immediate: true } : undefined);
+  }
+
+  // Keyboard submission must never inherit the empty button's stop action.
+  async function stopGeneration() {
+    if (!runtimeReady || !sending || hasContent || !cancelEnabled || !cancelReady || stopping ||
+      submissionPending || currentAttachmentUploads() > 0) return;
+    await onCancel();
   }
 
   function toggleMenu(menu: Exclude<ComposerMenu, null>, event?: React.MouseEvent<HTMLElement>) {
@@ -1265,7 +1282,7 @@ export function Composer({
               menu={activeMenu}
               simpleModels={simple}
               language={language}
-              contextWindow={contextWindow}
+              contextWindow={contextWindow ?? contextWindowMetrics(undefined, selectedModelConfig?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, selectedModelConfig?.maxCompletionTokens)}
               skills={skills}
               disabledSkillNames={disabledSkillNames}
               selectedModel={selectedModel}
@@ -1327,7 +1344,7 @@ export function Composer({
       <div
         ref={composerSurfaceRef}
         style={voiceComposer.style}
-        className={`composer-surface${multilineInput ? ' is-multiline' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
+        className={`composer-surface${multilineInput || prediction ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
         onPointerDown={(event) => {
           if (event.button !== 0 || voiceComposer.visible) return;
           const target = event.target;
@@ -1460,6 +1477,7 @@ export function Composer({
           skills={skills}
           language={language}
           autoFocus={autoFocus && !presentation?.preview}
+          ariaDescribedBy={prediction ? predictionHintId : undefined}
           value={composerInputValue}
           onChange={(next, caret) => {
             if (goalDraft) {
@@ -1477,6 +1495,12 @@ export function Composer({
           }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (prediction && event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!event.repeat) acceptPrediction();
+              return;
+            }
             if (event.repeat) {
               const gesture = { key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey };
               if (keyboardShortcuts.matches('guideNow', gesture) || keyboardShortcuts.matches('sendMessage', gesture) ||
@@ -1539,6 +1563,7 @@ export function Composer({
               ? runtimeStartupFailed
                 ? language === 'zh' ? 'Runtime 启动失败，点击发送按钮重试' : 'Runtime failed to start. Use Send to retry'
                 : language === 'zh' ? 'CardBush Runtime 正在准备…' : 'CardBush Runtime is preparing...'
+            : prediction ? prediction.text
             : simple ? "let's talk"
             : shadowActive
               ? language === 'zh'
@@ -1562,6 +1587,9 @@ export function Composer({
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
             />
+            {prediction && <button type="button" id={predictionHintId} className="composer-prediction-accept"
+              aria-label={language === 'zh' ? '填入下一步预测，可编辑后发送' : 'Insert next-step prediction to edit before sending'}
+              onClick={acceptPrediction}><CornerDownLeft size={13}/>{language === 'zh' ? '回车填入' : 'Enter to insert'}</button>}
             {shadowAvailable && onToggleShadow && (
               <ToolChip
                 icon={<ShadowCloneIcon size={15} />}
@@ -1628,7 +1656,7 @@ export function Composer({
               title={[sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (language === 'zh' ? ' 立即引导' : ' Send guidance now') : ''].filter(Boolean).join(' · ')}
               aria-label={sendButtonLabel}
               aria-keyshortcuts={hasContent ? keyboardShortcuts.aria('sendMessage') : undefined}
-              onClick={() => void submit()}
+              onClick={() => void (runtimeReady && sending && !hasContent ? stopGeneration() : submit())}
             >
               {!runtimeReady ? (
                 runtimeStartupFailed
@@ -2402,19 +2430,23 @@ function ContextWindowMeter({
   return (
     <div className={`model-context-section ${overflowTokens > 0 ? 'is-overflow' : ''}`}>
       <div className="model-picker-inline-label">
-        <span>{language === 'zh' ? '上下文占用' : 'Context usage'}</span>
+        <span>{language === 'zh' ? '对话上下文窗口' : 'Conversation context window'}</span>
         <strong>{valueLabel}</strong>
       </div>
       <div
         className="model-context-progress"
         role="progressbar"
-        aria-label={language === 'zh' ? '上下文窗口占用' : 'Context window usage'}
+        aria-label={language === 'zh' ? '对话上下文窗口占用' : 'Conversation context window usage'}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={usedTokens != null && maxTokens != null ? progressPercentage : undefined}
       >
         <span style={{ width: `${progressPercentage}%` }} />
       </div>
+      {usage?.totalTokens != null && <div className="model-context-total">
+        <span>{language === 'zh' ? '总体上下文窗口' : 'Total context window'}</span>
+        <span>{compactTokenCount(usage.totalTokens)}</span>
+      </div>}
     </div>
   );
 }

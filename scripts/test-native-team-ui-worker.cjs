@@ -24,8 +24,8 @@ app.whenReady().then(async () => {
       await read('document.querySelector("[aria-label=插入内容]").click()'); await frame();
       text = text === '添加任务' ? 'Team 任务' : '可引用章节';
     }
-    if (!(await read(`[...document.querySelectorAll('button')].some(button=>button.textContent.trim()===${JSON.stringify(text)})`))) await action('页面菜单');
-    await read(`[...document.querySelectorAll('button')].find(button=>button.textContent.trim()===${JSON.stringify(text)}).click()`); await frame();
+    if (!(await read(`[...document.querySelectorAll('button')].some(button=>button.textContent.replace(/Ctrl\\+N/g,'').trim()===${JSON.stringify(text)})`))) await action('页面菜单');
+    await read(`[...document.querySelectorAll('button')].find(button=>button.textContent.replace(/Ctrl\\+N/g,'').trim()===${JSON.stringify(text)}).click()`); await frame();
   };
   const action = async label => {
     if (!(await read(`!!document.querySelector('[aria-label="${label}"]')`))) { assert.notEqual(label,'页面菜单','page menu is available'); await action('页面菜单'); }
@@ -141,9 +141,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('getComputedStyle(document.querySelector(".md-node-list")).display'),'none');
     writeFileSync(resolve('tmp/bush-it-team-narrow.png'),(await win.webContents.capturePage()).toPNG());
 
-    await click('在 bush-it 中编辑'); await until('!!document.querySelector(".md-app")');
+    await click('在创作中编辑'); await until('!!document.querySelector(".md-app")');
     await until('document.querySelector(".md-article").textContent.includes("保留这段理由")');
-    assert.equal(await read('document.querySelector(".md-app").getAttribute("aria-label")'),'bush-it');
+    assert.equal(await read('document.querySelector(".creation-app").getAttribute("aria-label")'),'创作');
     assert.equal(await read('document.querySelectorAll(".md-article-section").length'),3);
     await click('实践'); await until('!!window.practiced');
     assert.equal(await read('window.practiced.id'),'order-review');
@@ -154,11 +154,11 @@ app.whenReady().then(async () => {
     await click('保存到 Team'); await until('records.teams[0].definition.presentation.markdown.includes("往返同步的理由")');
     await read('setApp("team")'); await until('document.querySelector(".md-article")?.textContent.includes("往返同步的理由")');
     await action('编辑章节 库存核验'); await fill('任务内容','未保存的 Team 编辑','.md-node-editor');
-    await click('在 bush-it 中编辑'); await until('!!document.querySelector(".md-app")');
+    await click('在创作中编辑'); await until('!!document.querySelector(".md-app")');
     await read('setApp("team")'); await until('!!document.querySelector(".team-graph-workspace")');
     assert.ok(await read('document.querySelector(".md-article").textContent.includes("未保存的 Team 编辑")'),'cancelled handoffs retain the unfinished Team draft');
     assert.notEqual(await read('records.teams[0].definition.nodes[0].prompt'),'未保存的 Team 编辑');
-    await click('在 bush-it 中编辑'); await until('!!document.querySelector(".md-app")');
+    await click('在创作中编辑'); await until('!!document.querySelector(".md-app")');
     await click('Markdown'); await read('window.sourceElement=document.querySelector(".md-source")');
     const plain = '# 普通文档\n\n## 为什么\n\n先解释理由，再决定是否执行。\n\n| 内容 | 作用 |\n| --- | --- |\n| 文档 | 说明与思考 |\n';
     await source(plain);
@@ -180,7 +180,7 @@ app.whenReady().then(async () => {
     await click('新建页面'); await until('!!document.querySelector(".bush-page-title")');
     assert.equal(await read('document.querySelectorAll(".md-node-editor").length'),0,'a new page is immediately editable without forms');
     assert.equal(await read('document.querySelector(".bush-page-title").placeholder'),'无标题页');
-    assert.equal(await read('document.querySelectorAll(".bush-page-toolbar button").length'),3,'writing starts with only the page menu and two insertion tools');
+    assert.equal(await read('document.querySelectorAll(".bush-page-toolbar button").length'),6,'document toolbar keeps editing controls while conversation and inspector actions move to the topbar');
     assert.equal(await read('document.querySelectorAll(".md-graph-overview,.md-document-properties,.bush-page-menu").length'),0);
     for (const theme of ['dark','light']) {
       await read(`document.querySelector('.app').className='app theme-${theme}'`); await frame(); await new Promise(resolve => setTimeout(resolve, 350));
@@ -317,8 +317,119 @@ app.whenReady().then(async () => {
     await read('document.querySelector(".bush-it-sidebar").classList.replace("soft-panel-hidden","soft-panel-visible")'); await frame();
     await until('document.querySelector(".bush-sidebar-back").getBoundingClientRect().left>=11.9');
     writeFileSync(resolve('tmp/bush-it-bugs-fixed.png'),(await win.webContents.capturePage()).toPNG());
+    // Exercise the project editor with actual DOM input, polling and its send boundary.
+    await read(`
+      window.projectFiles={
+        'D:/writing/first.md':{path:'D:/writing/first.md',text:'# 第一篇\\n\\n原段落\\n\\n[第二篇](notes/second.md)',revision:'r1'},
+        'D:/writing/notes/second.md':{path:'D:/writing/notes/second.md',text:'# 第二篇\\n\\n项目资料',revision:'r2'}
+      }; window.fileRevision=2;
+      cardbushDesktop.pickProjectDirectory=async()=> 'D:/writing';
+      cardbushDesktop.readWorkspaceDirectory=async({directoryPath,rootPath})=>({entries: directoryPath.endsWith('/notes')
+        ? [{name:'second.md',path:rootPath+'/notes/second.md',kind:'file'}]
+        : [{name:'notes',path:rootPath+'/notes',kind:'folder'},...Object.keys(projectFiles).filter(path=>path.slice(rootPath.length+1).indexOf('/')<0).map(path=>({name:path.split('/').pop(),path,kind:'file'}))]});
+      cardbushDesktop.markdownFile=async input=>{
+        fileCalls.push(input);const path=/^[A-Z]:/i.test(input.path||'')?input.path:input.rootPath+'/'+input.path;
+        const old=projectFiles[path];
+        if(input.action==='open'||input.action==='reload'){if(!old)throw Error('Missing file');return {...old};}
+        if(input.action==='create'&&old)throw Error('Exists');
+        if(input.action==='save'&&old?.revision!==input.revision)throw Error('File changed');
+        const file={path,text:input.text||'',revision:'r'+(++fileRevision)};projectFiles[path]=file;return {...file};
+      };
+      void 0;
+    `);
+    await click('打开文件夹'); await until('!!document.querySelector(".creation-file-tree")');
+    await click('first.md'); await until('document.querySelector(".bush-page-title")?.value==="第一篇"');
+    await click('Markdown'); await until('!!document.querySelector(".creation-source-input")');
+    assert.equal(await read('document.querySelector(".creation-line-numbers").textContent'), '1\n2\n3\n4\n5');
+    await source('# 第一篇\n\n本地修改\n\n[第二篇](notes/second.md)');
+    await until('projectFiles["D:/writing/first.md"].text.includes("本地修改")');
+    assert.ok(await read('document.querySelector(".creation-source-preview").textContent.includes("本地修改")'));
+    await read('document.querySelector(".creation-source-preview a").click()');
+    await until('document.querySelector(".bush-page-title")?.value==="第二篇"');
+    assert.equal(await read('document.querySelectorAll(".creation-file-tabs button").length'), 2);
+    await read('document.querySelector(".creation-file-tabs button").click()'); await frame();
+    await click('Markdown');
+    await read('(()=>{const el=document.querySelector(".md-source");el.focus();el.setSelectionRange(el.value.indexOf("本地修改"),el.value.indexOf("本地修改")+4);el.dispatchEvent(new Event("select",{bubbles:true}));})()'); await frame();
+    await action('创作对话'); await until('!!window.creationChatProps');
+    assert.ok(await read('!!document.querySelector(".creation-app > .topbar [data-inspector-toggle]")'), 'inspector toggle stays in the application header');
+    assert.equal(await read('!!document.querySelector(".bush-page-toolbar [data-inspector-toggle]")'), false);
+    await action('展开右侧栏'); assert.equal(await read('window.inspectorOpened'), true);
+    assert.equal(await read('creationSessionInput.projectDir'), 'D:/writing');
+    assert.equal(await read('creationSessionInput.metadata.creation_workspace'), true);
+    const request = await read('creationChatProps.beforeSend("改写选中段落")');
+    assert.ok(request.includes('D:/writing/first.md')); assert.ok(request.includes('3–3'), request + '; ' + await read('JSON.stringify({label:creationChatProps.contextLabel,status:document.querySelector(".creation-source-heading output").textContent,start:document.querySelector(".md-source").selectionStart,source:document.querySelector(".md-source").value})')); assert.ok(!request.includes('本地修改'));
+    await until('!!document.querySelector(".creation-conversation [data-composer-input]")');
+    await read('(()=>{const el=document.querySelector(".creation-conversation [data-composer-input]");el.focus();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(el,"请改写第三行");el.dispatchEvent(new Event("input",{bubbles:true}));})()'); await frame();
+    await key('Enter'); await until('!!window.creationSubmitted');
+    assert.ok(await read('creationSubmitted.includes("D:/writing/first.md")&&creationSubmitted.includes("3–3")'));
+    await until('document.querySelector(".creation-conversation").textContent.includes("已更新文档")');
+    await until('window.creationInspector?.messages.length===2');
+    assert.equal(await read('creationInspector.sessionId'), await read('creationSessionInput.sessionId'), 'the shared inspector follows the document conversation');
+    assert.equal(await read('creationInspector.root'), 'D:/writing');
+    assert.equal(await read('document.querySelector(".creation-quick-input .quick-input-conversation").dataset.expanded'), 'false');
+    await action('展开最新回复'); await until('!document.querySelector(".creation-quick-input .quick-input-transcript").hidden');
+    assert.ok(await read('document.querySelector(".creation-quick-input .quick-input-transcript").textContent.includes("已更新文档")'));
+    await read('document.querySelector(".creation-quick-input .quick-input-status").click()'); await frame();
+    await read('projectFiles["D:/writing/first.md"]={...projectFiles["D:/writing/first.md"],text:"# 第一篇\\n\\nAgent 已改写",revision:"agent-edit"}');
+    await until('document.querySelector(".md-source")?.value.includes("Agent 已改写")');
+    assert.ok(await read('document.querySelector(".creation-source-preview").textContent.includes("Agent 已改写")'));
+    await source('# 第一篇\n\n待保留的人工草稿');
+    await read('projectFiles["D:/writing/first.md"]={...projectFiles["D:/writing/first.md"],text:"# 第一篇\\n\\nAgent 的新版本",revision:"agent-conflict"}');
+    await until('!!document.querySelector(".creation-conflict")');
+    assert.ok(await read('document.querySelector(".md-source").value.includes("待保留的人工草稿")'));
+    assert.ok(await read('projectFiles["D:/writing/first.md"].text.includes("Agent 的新版本")'));
+    await click('保留草稿并载入新版本'); await frame();
+    assert.ok(await read('pageState.pages.some(page=>!page.file&&page.source.includes("待保留的人工草稿"))'));
+    assert.ok(await read('document.querySelector(".md-source").value.includes("Agent 的新版本")'));
+    win.setSize(1500,1000); await frame();
+    assert.ok(await read('document.querySelector(".creation-editor").getBoundingClientRect().width>500'));
+    writeFileSync(resolve('tmp/creation-project.png'),(await win.webContents.capturePage()).toPNG());
+    win.setSize(800,800); await frame();
+    assert.notEqual(await read('getComputedStyle(document.querySelector(".creation-editor")).display'), 'none', 'compact conversation does not replace the document on narrow screens');
+    assert.ok(await read('(()=>{const editor=document.querySelector(".creation-editor").getBoundingClientRect();const chat=document.querySelector(".creation-conversation").getBoundingClientRect();return chat.top>=editor.bottom-1&&editor.height>100&&chat.right<=innerWidth;})()'), 'progressive conversation sits below the visible editor');
+    await action('收起创作对话'); await frame();
+    assert.notEqual(await read('getComputedStyle(document.querySelector(".creation-editor")).display'), 'none');
+    assert.ok(await read('document.querySelector(".bush-page-toolbar").scrollWidth<=document.querySelector(".bush-page-toolbar").clientWidth+1'));
+    await action('新建 Markdown');
+    await read('(()=>{const el=document.querySelector("[aria-label=新文件名]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(el,"third.md");el.dispatchEvent(new Event("input",{bubbles:true}));})()'); await frame();
+    await click('创建'); await until('!!projectFiles["D:/writing/third.md"]');
+    assert.equal(await read('creationChatProps.sessionId'), await read('creationSessionInput.sessionId'), 'files in one project share the conversation');
+    await read('pages.flushBushItPages()');
+    assert.equal(await read('JSON.parse(localStorage.getItem("cardbush.bush-it.pages.v1")).projectDir'), 'D:/writing');
+    // A temporary document needs neither a filename nor a directory, including from a project.
+    const callsBeforeDraft=await read('fileCalls.length');
+    await key('n',['control']); await until('pageState.projectDir==="" && pageState.pages.find(page=>page.id===pageState.selectedId)?.temporary');
+    assert.equal(await read('fileCalls.length'), callsBeforeDraft, 'new temporary documents do not open a file dialog or create files');
+    assert.equal(await read('pageState.pages.find(page=>page.id===pageState.selectedId).file'), undefined);
+    await click('Markdown'); await source('# 随手记\n\n先写完再保存。');
+    await read(`window.taskRoot='C:/Users/test/AppData/Roaming/cardbush/task-workspaces/temporary-test';cardbushDesktop.ensureTaskWorkspace=async()=>taskRoot;void 0;`);
+    await action('创作对话'); await until('!!pageState.sessions[taskRoot]');
+    assert.equal(await read('pageState.projectDir'), '', 'starting the Agent preserves the draft workspace');
+    assert.equal(await read('pageState.projects.includes(taskRoot)'), false, 'generated workspace IDs never become visible spaces');
+    assert.ok(await read('pageState.pages.find(page=>page.id===pageState.selectedId).temporary'));
+    assert.equal(await read('document.querySelector(".creation-file-tabs [aria-current=page]").textContent'), '随手记 •');
+    assert.ok(await read('document.querySelector(".creation-save-status").textContent.includes("临时文档")'));
+    assert.ok(await read('creationChatProps.beforeSend("继续编辑")').then(text=>text.includes('document-') && !text.includes('先写完再保存。')));
+    // The same composer can move to a covered inspector and return without losing its draft.
+    await read(`(()=>{const el=document.createElement('div');el.id='inspector-fixture';el.className='inspector-quick-input';document.querySelector('.app').appendChild(el);setCreationPortal(el);})()`);
+    await until('!!document.querySelector("#inspector-fixture [data-composer-input]")');
+    assert.equal(await read('getComputedStyle(document.querySelector(".creation-conversation")).display'), 'none');
+    await read('creationInspector.appendDraft("继续润色这篇文档")'); await frame();
+    assert.equal(await read('document.querySelector("#inspector-fixture [data-composer-input]").value'), '继续润色这篇文档');
+    await read('setCreationPortal(null)'); await until('!!document.querySelector(".creation-quick-input [data-composer-input]")');
+    assert.equal(await read('document.querySelector(".creation-quick-input [data-composer-input]").value'), '继续润色这篇文档');
+    await read('document.querySelector("#inspector-fixture").remove()');
+    // Ctrl+S still prompts for Save As when an Agent backing file already exists.
+    await read(`window.projectMarkdown=cardbushDesktop.markdownFile;cardbushDesktop.markdownFile=async input=>{if(input.action==='save'&&!input.path){window.saveAsRequest=input;const file={path:'D:/writing/saved-draft.md',text:input.text,revision:'saved-draft'};projectFiles[file.path]=file;return file;}return projectMarkdown(input);};void 0;`);
+    await key('s',['control']); await until('!!window.saveAsRequest && !pageState.pages.find(page=>page.id===pageState.selectedId).temporary');
+    assert.equal(await read('saveAsRequest.name'), '随手记');
+    assert.equal(await read('projectFiles["D:/writing/saved-draft.md"].text'), '# 随手记\n\n先写完再保存。');
+    assert.ok(await read('document.querySelector(".creation-save-status").textContent.includes("D:/writing/saved-draft.md")'));
+    assert.equal(await read('creationChatProps.sessionId'), await read('pageState.sessions[taskRoot]'), 'Save As retains the draft conversation rather than switching to an existing destination-project conversation');
+    assert.equal(await read('document.querySelector(".creation-quick-input [data-composer-input]").value'), '继续润色这篇文档');
+    assert.ok(await read('creationChatProps.beforeSend("修改保存后的文件")').then(text=>text.includes('D:/writing/saved-draft.md')));
     assert.deepEqual(errors,[]);
-    console.log('Native Team/bush-it UI passed: document/Team round trips, IME, persistence, native pointer/keyboard focus, insertion targets, image preservation, popup dismissal/positioning, responsive outlines/graphs and sidebar motion with full app styles.');
+    console.log('Native Team/Create UI passed: document/Team round trips, IME, project files, line selections, live preview, relative links, progressive conversation, shared inspector context, temporary documents, Save As, external edits/conflicts, responsive layouts and sidebar motion.');
     clearTimeout(deadline); win.destroy(); app.exit(0);
-  } catch (error) { console.error(error); clearTimeout(deadline); win.destroy(); app.exit(1); }
+  } catch (error) { console.error(error); if (errors.length) console.error(errors.join('\n')); clearTimeout(deadline); win.destroy(); app.exit(1); }
 });

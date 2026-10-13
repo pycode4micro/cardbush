@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
 const SCOPE_A = { scopeId: 'session-a', scopeTitle: 'Login check' };
 const SCOPE_B = { scopeId: 'session-b', scopeTitle: 'Billing check' };
@@ -138,6 +139,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
     createConnectorPort: () => nativePort,
     chrome,
     URL,
+    crypto: webcrypto,
     setTimeout: (callback, ms) => {
       if (ms !== 25_000) return setTimeout(callback, ms);
       const timer = { callback };
@@ -448,6 +450,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
     createConnectorPort: () => nativePort,
     chrome,
     URL,
+    crypto: webcrypto,
     setTimeout,
     clearTimeout,
     structuredClone,

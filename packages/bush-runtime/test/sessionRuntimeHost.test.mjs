@@ -545,6 +545,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
   assert.equal(snapshot.turns[1].usage.inputTokens, 200);
   assert.equal(snapshot.turns[1].usage.model, "model");
   assert.equal(snapshot.turns[1].usage.contextWindowTokens, 4000);
+  assert.equal(snapshot.turns[1].usage.maxOutputTokens, 1000);
   assert.equal(snapshot.turns[1].usage.lastRequestInputTokens, 110);
   assert.equal(snapshot.turns[1].usage.lastRequestCachedInputTokens, 80);
   assert.deepEqual(
@@ -557,6 +558,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
         attempt: 1,
         model: "model",
         contextWindowTokens: 4000,
+        maxOutputTokens: 1000,
         inputTokens: 90,
         outputTokens: 8,
         cachedInputTokens: 50,
@@ -569,6 +571,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
         attempt: 1,
         model: "model",
         contextWindowTokens: 4000,
+        maxOutputTokens: 1000,
         inputTokens: 110,
         outputTokens: 5,
         cachedInputTokens: 80,

@@ -151,6 +151,7 @@ export interface RuntimeContextWindowUsage {
   turnId: string;
   model: string;
   usedTokens?: number;
+  totalTokens?: number;
   maxTokens?: number;
   remainingTokens?: number;
   usageRatio?: number;

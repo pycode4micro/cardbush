@@ -9,11 +9,12 @@ import { assertParentAgent } from './childAgentPolicy.js';
 import { settleAtAbort } from './abortSettlement.js';
 import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, type CatalogQuery } from './catalogPage.js';
 import { teamResultNodeIds, teamRunResult } from './teamResults.js';
+import type { RuntimeTaskHandle } from './taskTools.js';
 
 const definitionSchema = { type: 'object', additionalProperties: false, required: ['id', 'name', 'nodes'], properties: {
   id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, max_parallel: { type: 'integer', minimum: 1, maximum: 8 },
   presentation: { type: 'object', additionalProperties: false, required: ['markdown'], properties: {
-    markdown: { type: 'string', maxLength: 2 * 1024 * 1024, description: 'Optional bush-it Markdown document: rationale, headings, notes and visual layout. Presentation only; execution uses nodes and depends_on.' },
+    markdown: { type: 'string', maxLength: 2 * 1024 * 1024, description: 'Optional Create Markdown document: rationale, headings, notes and visual layout. Presentation only; execution uses nodes and depends_on.' },
   } },
   nodes: { type: 'array', minItems: 1, maxItems: 64, items: { type: 'object', additionalProperties: false, required: ['id', 'agent_id', 'prompt'], properties: {
     id: { type: 'string' }, agent_id: { type: 'string' }, prompt: { type: 'string' }, depends_on: { type: 'array', items: { type: 'string' } },
@@ -26,6 +27,7 @@ interface TeamInput extends CatalogQuery {
   team_id?: string; run_id?: string; definition?: unknown; expected_revision?: number; input?: string;
   section?: 'teams' | 'runs';
   node_ids?: string[];
+  yield_time_ms?: number;
 }
 type Context = ToolHandlerContext<TeamInput>;
 type Dispatch = SubagentDispatcher['dispatch'];
@@ -38,7 +40,8 @@ export class TeamWorkflowManager {
   private writes: Promise<unknown> = Promise.resolve();
   private closed = false;
   constructor(private readonly agents: RegisteredAgentStore, private readonly dispatch: Dispatch,
-    private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void } = {}) {
+    private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void;
+      waitForWork?: (context: ToolHandlerContext<unknown>, promise: Promise<unknown>, duration: number) => Promise<unknown> } = {}) {
     this.definitions = new DefinitionStore(value => teamWorkflowSchema.parse(value), options.directory && join(options.directory, 'definitions'));
     this.runs = new DefinitionStore(value => teamRunSchema.parse(value), options.directory && join(options.directory, 'runs'));
   }
@@ -49,6 +52,7 @@ export class TeamWorkflowManager {
           action: { type: 'string', enum: ['list', 'get', 'save', 'delete', 'run', 'status', 'wait', 'stop', 'resume'] },
           definition: definitionSchema, expected_revision: { type: 'integer', minimum: 0 },
           team_id: { type: 'string' }, run_id: { type: 'string' }, input: { type: 'string', description: 'Explicit task input for this run. Parent conversation history is not copied.' },
+          yield_time_ms: { type: 'integer', minimum: 0, maximum: 30000, default: 1000, description: 'wait only: bounded observation, never cancels the Team. Use 0 for current results; continue independent work before waiting.' },
           node_ids: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string' }, description: 'wait only. Omit for final node outputs; provide IDs from status to read selected node outputs in full.' },
           section: { type: 'string', enum: ['teams', 'runs'], default: 'teams', description: 'list only.' }, ...catalogPageProperties,
         } } },
@@ -94,6 +98,14 @@ export class TeamWorkflowManager {
   async listRuns(parentSessionId?: string) {
     const records = await this.runs.list();
     return Promise.all(records.filter(record => !parentSessionId || record.definition.parentSessionId === parentSessionId).map(record => this.settleInterrupted(record.definition)));
+  }
+  async taskHandles(parentSessionId: string): Promise<RuntimeTaskHandle[]> {
+    return (await this.listRuns(parentSessionId)).map(run => ({ task_id: run.id, kind: 'team', status: run.status,
+      revision: run.updatedAt + ':' + run.status, summary: run.teamId,
+      readResult: async () => { const current = await this.readRun(run.id, parentSessionId); return this.result(current, teamResultNodeIds(current)); },
+      wait: async signal => { const pending = this.active.get(run.id)?.promise; if (pending) await settleAtAbort(pending, signal, 'Stopped waiting; Team continues.'); },
+      stop: context => context.invokeTool('team', { action: 'stop', run_id: run.id }, { record: true }),
+    }));
   }
   private async settleInterrupted(run: TeamRun) {
     if (run.status === 'running' && !this.active.has(run.id)) {
@@ -151,15 +163,29 @@ export class TeamWorkflowManager {
         status: 'running', input: input.input!, createdAt: now, updatedAt: now, workflow: team.definition, agents: await this.resolveAgents(team.definition),
         nodes: team.definition.nodes.map(node => ({ id: node.id, status: 'pending', output: '', error: '' })), error: '' };
       await this.launch(run, context);
-      return { run_id: run.id, status: 'running', team_id: run.teamId, instructions: 'Team runs independently. Use team wait when its results are needed; team status/resume refer to this run_id.' };
+      return { task_id: run.id, run_id: run.id, status: 'running', team_id: run.teamId, instructions: 'Continue independent work. Use tasks with this task_id when results are needed; team status/resume still accept run_id.' };
     }
     const run = await this.readRun(input.run_id!, context.sessionId);
     if (input.action === 'status') return this.result(run);
-    if (input.action === 'stop') { const active = this.active.get(run.id); active?.controller.abort(); if (active) await active.promise; return this.result(await this.readRun(run.id, context.sessionId)); }
+    if (input.action === 'stop') {
+      const active = this.active.get(run.id); active?.controller.abort();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { if (active) await settleAtAbort(Promise.race([active.promise, new Promise(resolve => { timer = setTimeout(resolve, 1000); })]), context.signal, 'Stop requested; stopped waiting for acknowledgement.'); }
+      finally { clearTimeout(timer); }
+      return { ...this.result(await this.readRun(run.id, context.sessionId)), ...(active ? { stop_requested: true } : {}) };
+    }
     if (input.action === 'wait') {
       if (input.node_ids?.some(id => !run.nodes.some(node => node.id === id))) throw new Error('Unknown Team node ID. Use status to inspect this run\'s nodes.');
       const pending = this.active.get(run.id)?.promise;
-      if (pending) await settleAtAbort(pending, context.signal, 'Team wait cancelled; the Team continues independently.');
+      const duration = input.yield_time_ms ?? 1000;
+      if (pending && duration) {
+        if (this.options.waitForWork) await this.options.waitForWork(context, pending, duration);
+        else {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try { await settleAtAbort(Promise.race([pending, new Promise(resolve => { timer = setTimeout(resolve, duration); })]), context.signal, 'Team wait cancelled; the Team continues independently.'); }
+          finally { clearTimeout(timer); }
+        }
+      }
       const settled = await this.readRun(run.id, context.sessionId);
       return this.result(settled, input.node_ids ?? teamResultNodeIds(settled));
     }
@@ -244,7 +270,7 @@ export function decodeTeamInput(value: unknown): TeamInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Team input must be an object.');
   const input = value as Record<string, unknown>;
   const fields: Record<TeamInput['action'], string[]> = { list: ['section', 'query', 'offset', 'limit'], get: ['team_id'], save: ['definition', 'expected_revision'], delete: ['team_id', 'expected_revision'],
-    run: ['team_id', 'input'], status: ['run_id'], wait: ['run_id', 'node_ids'], stop: ['run_id'], resume: ['run_id'] };
+    run: ['team_id', 'input'], status: ['run_id'], wait: ['run_id', 'node_ids', 'yield_time_ms'], stop: ['run_id'], resume: ['run_id'] };
   const action = String(input.action) as TeamInput['action'];
   if (!Object.hasOwn(fields, action) || Object.keys(input).some(key => key !== 'action' && !fields[action].includes(key))) throw new Error('Invalid Team action or arguments.');
   if (action === 'list') {
@@ -252,7 +278,9 @@ export function decodeTeamInput(value: unknown): TeamInput {
     return { action, section: input.section as TeamInput['section'], ...decodeCatalogQuery(input) };
   }
   for (const key of fields[action]) {
-    if (key === 'node_ids') {
+    if (key === 'yield_time_ms') {
+      if (input[key] !== undefined && (!Number.isInteger(input[key]) || Number(input[key]) < 0 || Number(input[key]) > 30000)) throw new Error('yield_time_ms must be between 0 and 30000.');
+    } else if (key === 'node_ids') {
       const ids = input[key];
       if (ids !== undefined && (!Array.isArray(ids) || ids.length === 0 || ids.length > 64 ||
           ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length)) throw new Error('node_ids must contain 1–64 unique node IDs.');

@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import * as protocol from '@cardbush/bush-protocol';
 
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -50,6 +51,7 @@ const contextModule = { exports: {} };
 vm.runInNewContext(transpiled.outputText, {
   module: contextModule,
   exports: contextModule.exports,
+  require: name => { assert.equal(name, '@cardbush/bush-protocol'); return protocol; },
   Number,
   Math,
 });
@@ -61,9 +63,10 @@ assert.deepEqual(
   }, 256_000)),
   {
     usedTokens: 98_300,
-    maxTokens: 256_000,
-    remainingTokens: 157_700,
-    usageRatio: 98_300 / 256_000,
+    totalTokens: 256_000,
+    maxTokens: 64_000,
+    remainingTokens: 0,
+    usageRatio: 98_300 / 64_000,
   },
   'a multi-request Turn must display only its latest request, not cumulative billable input',
 );
@@ -76,15 +79,22 @@ assert.deepEqual(
   structuredClone(contextWindowMetrics({
     lastRequestInputTokens: 352_729,
     contextWindowTokens: 400_000,
-  }, 256_000)),
+    maxOutputTokens: 32_000,
+  }, 256_000, 128_000)),
   {
     usedTokens: 352_729,
-    maxTokens: 400_000,
-    remainingTokens: 47_271,
-    usageRatio: 352_729 / 400_000,
+    totalTokens: 400_000,
+    maxTokens: 333_952,
+    remainingTokens: 0,
+    usageRatio: 352_729 / 333_952,
   },
   'persisted request usage must stay bound to the model window used for that request',
 );
+assert.deepEqual(structuredClone(contextWindowMetrics({ lastRequestInputTokens: 145_045, contextWindowTokens: 400_000, maxOutputTokens: 128_000 })), {
+  usedTokens: 145_045, totalTokens: 400_000, maxTokens: 141_952, remainingTokens: 0, usageRatio: 145_045 / 141_952,
+}, 'live and historical occupancy use the compaction budget, not total context or hard input capacity');
+assert.deepEqual(structuredClone(contextWindowMetrics(undefined, 500_000, 128_000)), { totalTokens: 500_000, maxTokens: 241_952 }, 'empty conversations still show their calculated budget');
+assert.equal(contextWindowMetrics(undefined, 32_000).maxTokens, undefined, 'invalid configuration must not advertise a usable conversation window');
 assert.match(runtimeChat, /contextWindowMetrics\(\s*committed\?\.usage/);
 assert.match(runtimeChat, /case 'model_request_usage'/);
 assert.match(runtimeChat, /lastRequestInputTokens: event\.payload\.inputTokens/);

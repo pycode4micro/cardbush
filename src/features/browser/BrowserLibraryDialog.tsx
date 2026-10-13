@@ -1,6 +1,6 @@
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
-import { Download, FolderOpen, Globe2, Pause, Play, Trash2, X } from 'lucide-react';
+import { Download, FolderOpen, Globe, Pause, Play, Trash2, X } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import type { BrowserProfile } from '../../../electron/browserImport';
 import type { BrowserDownload, BrowserVisit } from '../../../electron/browserLibrary';
@@ -104,7 +104,7 @@ export function BrowserLibraryDialog({ kind, language, guestId, url = '', onClos
           <BrowserSiteIcon url={item.url}/><button className="browser-library-link" type="button" disabled={!onNavigate} onClick={() => open(item.url)}><strong>{item.title}</strong><small>{item.folder && `${item.folder} · `}{item.url}</small></button>
           <button type="button" disabled={busy} aria-label={`${zh ? '删除收藏' : 'Remove bookmark'} ${item.title}`} onClick={() => void run(() => toggleBrowserBookmark(item.url, item.title))}><Trash2 size={15}/></button>
         </div>) : rows.map(item => 'title' in item ? <div key={item.id} className="browser-library-row">
-          <Globe2 size={16}/><button className="browser-library-link" type="button" disabled={!onNavigate} onClick={() => open(item.url)}><strong>{item.title}</strong><small>{new Date(item.visitedAt).toLocaleString()} · {item.url}</small></button>
+          <Globe size={16}/><button className="browser-library-link" type="button" disabled={!onNavigate} onClick={() => open(item.url)}><strong>{item.title}</strong><small>{new Date(item.visitedAt).toLocaleString()} · {item.url}</small></button>
           <button type="button" disabled={busy} aria-label={zh ? '删除此记录' : 'Remove visit'} onClick={() => void run(() => window.cardbushDesktop?.browser?.removeVisit(item.id))}><Trash2 size={15}/></button>
         </div> : <div key={item.id} className="browser-library-row">
           <Download size={17}/><div className="browser-download-info"><strong>{item.name}</strong><small>{({ progressing: item.paused ? (zh ? '已暂停' : 'Paused') : (zh ? '下载中' : 'Downloading'), completed: zh ? '已完成' : 'Completed', interrupted: zh ? '已中断' : 'Interrupted', cancelled: zh ? '已取消' : 'Cancelled' })[item.state]} · {bytes(item.received)}{item.total > 0 ? ` / ${bytes(item.total)}` : ''}</small>

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentToolActivitySchema } from './agentToolActivity.js';
 import { terminalCommandOutcomeSchema } from './terminalControl.js';
+import { nextStepPredictionSchema } from './nextStepPrediction.js';
 
 export const BUSH_TOOL_CALL_PROTOCOL = "bush.tool_call.v1" as const;
 export const BUSH_ACTION_MANIFEST_PROTOCOL =
@@ -161,6 +162,14 @@ export const runtimeToolErrorSchema = z.object({
 
 export type RuntimeToolError = z.infer<typeof runtimeToolErrorSchema>;
 
+export const toolExecutionFactsSchema = z.object({
+  dispatch: z.enum(['not_started', 'started', 'returned']),
+  effects: z.enum(['none', 'possible', 'recorded']),
+  result: z.enum(['known', 'unknown']),
+  recovery: z.enum(['none', 'retry', 'correct_input', 'inspect_existing', 'do_not_retry']),
+});
+export type ToolExecutionFacts = z.infer<typeof toolExecutionFactsSchema>;
+
 export const toolDisplaySchema = z.object({
   title: z.string().min(1),
   titles: z.object({ zh: z.string().min(1).optional(), en: z.string().min(1).optional() }).optional(),
@@ -169,6 +178,7 @@ export const toolDisplaySchema = z.object({
 export type ToolDisplay = z.infer<typeof toolDisplaySchema>;
 
 export const toolExecutionRecordSchema = z.object({
+  execution: toolExecutionFactsSchema.optional(),
   protocol: z.literal(BUSH_TOOL_EXECUTION_RECORD_PROTOCOL),
   requestId: z.string().min(1),
   sessionId: z.string().min(1),
@@ -181,6 +191,8 @@ export const toolExecutionRecordSchema = z.object({
   outcome: z.enum(["returned", "failed", "cancelled"]),
   actionManifest: actionManifestSchema.optional(),
   result: z.unknown().optional(),
+  // Semantic failure declared by a returned tool, separate from transport errors.
+  resultError: runtimeToolErrorSchema.optional(),
   // Frozen, tool-owned presentation for model input and stable archive offsets.
   // Native result remains authoritative for execution, review and consumers.
   modelText: z.string().optional(),
@@ -209,6 +221,9 @@ export const toolExecutionRecordSchema = z.object({
       message: "A failed or cancelled Tool execution cannot contain a returned-result presentation.",
     });
   }
+  if (record.outcome !== "returned" && record.resultError) {
+    context.addIssue({ code: "custom", path: ["resultError"], message: "Only returned Tool executions can contain a result error." });
+  }
   if (record.outcome === "returned" && record.error) {
     context.addIssue({
       code: "custom",
@@ -231,6 +246,7 @@ export const toolExecutionRecordSchema = z.object({
  * identity only when the user opens execution details.
  */
 export const toolExecutionSummarySchema = z.object({
+  execution: toolExecutionFactsSchema.optional(),
   protocol: z.literal(BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL),
   requestId: z.string().min(1),
   sessionId: z.string().min(1),
@@ -240,11 +256,13 @@ export const toolExecutionSummarySchema = z.object({
   recordedAt: z.string().min(1),
   toolCall: toolCallSchema.pick({ protocol: true, id: true, name: true }),
   agentActivity: agentToolActivitySchema.optional(),
+  nextStepPrediction: nextStepPredictionSchema.optional(),
   terminalOutcome: terminalCommandOutcomeSchema.optional(),
   display: toolDisplaySchema.optional(),
   outcome: z.enum(["returned", "failed", "cancelled"]),
   actionManifest: actionManifestSchema.optional(),
   resultAvailable: z.boolean(),
+  resultError: runtimeToolErrorSchema.optional(),
   workspaceChanges: z.array(workspaceChangeSummarySchema).default([]),
   error: runtimeToolErrorSchema.optional(),
 });

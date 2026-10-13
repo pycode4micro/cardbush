@@ -8,6 +8,7 @@ export const DEFAULT_CHILD_AGENT_DISABLED_TOOLS = [
   "team_delegate",
   "request_permission",
   "solution_selection",
+  "request_user_input_async",
   "update_goal",
   "schedule_task",
 ] as const;

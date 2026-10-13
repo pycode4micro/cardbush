@@ -69,7 +69,7 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   assert.equal(tool('manage_tool_calls').inputSchema.properties.yield_time_ms.default, 1000);
   assert.match(tool('update_goal').description, /parent must call this before completing the Turn; children report/);
   assert.match(tool('solution_selection').description, /If dismissed.*do not pick a default/);
-  assert.equal(tool('solution_selection').inputSchema.properties.prompt.maxLength, 15);
+  assert.equal(tool('solution_selection').inputSchema.properties.prompt.maxLength, 500);
   assert.match(tool('edit_file').description, /After a match failure.*read_file.*instead of repeating/);
   assert.match(tool('terminal_exec').description, /completion_notification=true.*manage_tool_calls.*completion_task_id/);
   assert.match(tool('terminal_exec').inputSchema.properties.notify_on_exit.description, /Set false for persistent servers/);

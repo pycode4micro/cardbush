@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -10,7 +10,7 @@ import * as protocol from '@cardbush/bush-protocol';
 const require = createRequire(import.meta.url);
 function module(path, deps = {}) {
   const exports = {};
-  new Function('exports', 'require', ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, id => deps[id] ?? require(id));
+  new Function('exports', 'require', ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)(exports, id => deps[id] ?? require(id));
   return exports;
 }
 const graph = module('src/features/mdPresentation/markdownGraph.ts');
@@ -205,4 +205,156 @@ test('UTF-8 BOM files save without false conflicts; externally enlarged files re
     await writeFile(path, 'x'.repeat(2 * 1024 * 1024 + 1));
     await assert.rejects(files.command({ action: 'save', path, revision: current.revision, text: '# Too late' }), /2 MB/);
   } finally { assert.ok(directory.startsWith(join(tmpdir(), 'cardbush-md-test-'))); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('project Markdown survives service restart, creates nested files and confines links to its root', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cardbush-md-test-'));
+  try {
+    const rootPath = join(directory, 'project'), outside = join(directory, 'outside');
+    await mkdir(join(rootPath, 'chapters'), { recursive: true }); await mkdir(outside);
+    await writeFile(join(outside, 'private.md'), '# Outside');
+    const files = new MarkdownFiles(async () => { throw Error('Project operations must not open a file dialog'); });
+    const created = await files.command({ action: 'create', rootPath, path: 'chapters/one.md', text: '# One' });
+    await assert.rejects(files.command({ action: 'create', rootPath, path: 'chapters/one.md', text: 'overwrite' }), /EEXIST/);
+    const restarted = new MarkdownFiles(async () => undefined);
+    const opened = await restarted.command({ action: 'open', rootPath, path: created.path });
+    assert.equal(opened.text, '# One');
+    await restarted.command({ action: 'save', rootPath, path: opened.path, revision: opened.revision, text: '# Edited' });
+    assert.equal(await readFile(created.path, 'utf8'), '# Edited');
+    await assert.rejects(files.command({ action: 'open', rootPath, path: '../outside/private.md' }), /当前项目/);
+    await assert.rejects(files.command({ action: 'create', rootPath, path: '../outside/new.md' }), /当前项目/);
+    await assert.rejects(files.command({ action: 'create', rootPath, path: 'program.js' }), /Markdown/);
+    await symlink(outside, join(rootPath, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(files.command({ action: 'open', rootPath, path: 'escape/private.md' }), /项目之外/);
+    await assert.rejects(files.command({ action: 'create', rootPath, path: 'escape/new.md' }), /项目之外/);
+    assert.equal(await readFile(join(outside, 'private.md'), 'utf8'), '# Outside');
+  } finally { assert.ok(directory.startsWith(join(tmpdir(), 'cardbush-md-test-'))); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('Create synchronizes clean buffers, preserves manual conflicts, and ignores reads superseded by saves', async () => {
+  const storage = new Map();
+  const oldStorage = globalThis.localStorage, oldWindow = globalThis.window;
+  globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  let disk = { path: 'D:/writing/one.md', text: '# Original', revision: 'one' }, deferred;
+  globalThis.window = { addEventListener() {}, cardbushDesktop: { markdownFile: async input => {
+    if (input.action === 'reload') { if (deferred) return await deferred; return { ...disk }; }
+    if (input.revision !== disk.revision) throw Error('External modification');
+    disk = { path: input.path, text: input.text, revision: 'saved' }; return { ...disk };
+  } } };
+  const pages = module('src/features/mdPresentation/bushItPageStore.ts', { './markdownGraph': graph, './pageDocument': page });
+  const files = module('src/features/mdPresentation/creationFiles.ts', { './bushItPageStore': pages });
+  const current = id => pages.getBushItPages().pages.find(page => page.id === id);
+  try {
+    pages.selectCreationProject('D:/writing');
+    const id = files.acceptCreationFile(disk, 'D:/writing');
+    disk = { ...disk, text: '# Agent edit', revision: 'two' }; await files.refreshCreationFile(id);
+    assert.equal(current(id).source, '# Agent edit');
+    pages.updateBushItPage(id, { source: '# Manual draft' });
+    disk = { ...disk, text: '# Another agent edit', revision: 'three' }; await files.refreshCreationFile(id);
+    assert.equal(current(id).source, '# Manual draft'); assert.equal(current(id).externalFile.text, disk.text);
+    await assert.rejects(files.saveCreationFile(id), /版本冲突/);
+    assert.equal(disk.text, '# Another agent edit');
+    pages.selectCreationProject('D:/other'); pages.selectCreationProject('D:/writing');
+    assert.equal(current(id).source, '# Manual draft');
+    pages.updateBushItPage(id, { source: disk.text }); await files.refreshCreationFile(id);
+    assert.equal(current(id).externalFile, undefined);
+    const oldDisk = { ...disk }; let release;
+    deferred = new Promise(resolve => { release = resolve; });
+    const reading = files.refreshCreationFile(id);
+    pages.updateBushItPage(id, { source: '# Saved locally' }); await files.saveCreationFile(id);
+    release(oldDisk); await reading; deferred = undefined;
+    assert.equal(current(id).source, '# Saved locally'); assert.equal(current(id).file.revision, 'saved');
+    pages.setCreationSession('D:/writing', 'local-writing'); pages.flushBushItPages();
+    assert.equal(JSON.parse(storage.get('cardbush.bush-it.pages.v1')).sessions['D:/writing'], 'local-writing');
+    assert.equal(JSON.parse(storage.get('cardbush.bush-it.pages.v1')).pages.find(page => page.id === id).source, '', 'clean project contents are not duplicated in localStorage');
+    const restored = module('src/features/mdPresentation/bushItPageStore.ts', { './markdownGraph': graph, './pageDocument': page });
+    const restoredFiles = module('src/features/mdPresentation/creationFiles.ts', { './bushItPageStore': restored });
+    assert.equal(restored.getBushItPages().pages.find(page => page.id === id).unloaded, true);
+    await assert.rejects(restoredFiles.saveCreationFile(id), /加载/);
+    await restoredFiles.refreshCreationFile(id);
+    assert.equal(restored.getBushItPages().pages.find(page => page.id === id).source, '# Saved locally');
+    restored.flushBushItPages();
+  } finally { pages.flushBushItPages(); globalThis.localStorage = oldStorage; globalThis.window = oldWindow; }
+});
+
+test('project links resolve relative Markdown paths including spaces and Chinese filenames', () => {
+  const files = module('src/features/mdPresentation/creationFiles.ts', { './bushItPageStore': {} });
+  assert.equal(files.linkedMarkdownPath('D:\\writing\\一.md', 'notes/second.md'), 'D:/writing/notes/second.md');
+  assert.equal(files.linkedMarkdownPath('/work/my project/notes/one.md', '../第二章.md#引用'), '/work/my project/第二章.md');
+  assert.equal(files.linkedMarkdownPath('D:/writing/one.md', 'https://example.com/doc.md'), undefined);
+  assert.equal(files.linkedMarkdownPath('D:/writing/one.md', '#section'), undefined);
+  assert.equal(files.linkedMarkdownPath('D:/writing/one.md', 'photo.png'), undefined);
+});
+
+test('an autosave finishing after Save As cannot switch the document back to its old backing file', async () => {
+  const oldStorage = globalThis.localStorage, oldWindow = globalThis.window;
+  globalThis.localStorage = { getItem: () => null, setItem() {} };
+  let completeSave;
+  globalThis.window = { addEventListener() {}, cardbushDesktop: { markdownFile: input => new Promise(resolve => { completeSave = () => resolve({ path: input.path, text: input.text, revision: 'old-save-finished' }); }) } };
+  const pages = module('src/features/mdPresentation/bushItPageStore.ts', { './markdownGraph': graph, './pageDocument': page });
+  const files = module('src/features/mdPresentation/creationFiles.ts', { './bushItPageStore': pages });
+  try {
+    const id = pages.createBushItPage('# Draft');
+    pages.updateBushItPage(id, { file: { path: 'D:/workspace/backing.md', text: '# Before', revision: 'before' } });
+    const saving = files.saveCreationFile(id);
+    await new Promise(resolve => setImmediate(resolve));
+    const savedAs = { path: 'D:/writing/published.md', text: '# Draft', revision: 'saved-as' };
+    pages.updateBushItPage(id, { file: savedAs, temporary: false });
+    completeSave(); await saving;
+    assert.deepEqual(pages.getBushItPages().pages.find(item => item.id === id).file, savedAs);
+    assert.equal(pages.getBushItPages().pages.find(item => item.id === id).source, '# Draft');
+  } finally { pages.flushBushItPages(); globalThis.localStorage = oldStorage; globalThis.window = oldWindow; }
+});
+
+test('temporary documents retain content and AI backing files without exposing generated directories as projects', () => {
+  const storage = new Map(), oldStorage = globalThis.localStorage, oldWindow = globalThis.window;
+  const key = 'cardbush.bush-it.pages.v1', directory = 'C:/Users/user/AppData/Roaming/cardbush/task-workspaces/932dbc3f61acb9127def8c';
+  storage.set(key, JSON.stringify({ projectDir: directory, projects: [directory, 'D:/writing'], sessions: { [directory]: 'local-draft' }, selectedId: 'old-draft',
+    pages: [{ id: 'old-draft', source: '# Existing draft', updatedAt: 1, projectDir: directory, file: { path: directory + '/document-123.md', text: '# Existing draft', revision: 'old' } }] }));
+  globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  globalThis.window = { addEventListener() {} };
+  const deps = { './markdownGraph': graph, './pageDocument': page };
+  const pages = module('src/features/mdPresentation/bushItPageStore.ts', deps);
+  try {
+    const migrated = pages.getBushItPages();
+    assert.equal(migrated.projectDir, '');
+    assert.deepEqual(migrated.projects, ['D:/writing']);
+    assert.equal(migrated.pages[0].temporary, true);
+    assert.equal(migrated.pages[0].source, '# Existing draft');
+    assert.equal(migrated.sessions[directory], 'local-draft');
+    const first = pages.createBushItPage('# Unnamed draft'), second = pages.createBushItPage();
+    assert.notEqual(pages.getBushItPages().pages.find(item => item.id === first).draftNumber, pages.getBushItPages().pages.find(item => item.id === second).draftNumber);
+    assert.ok(pages.getBushItPages().pages.filter(item => [first, second].includes(item.id)).every(item => item.temporary && !item.file));
+    pages.flushBushItPages();
+    const restored = module('src/features/mdPresentation/bushItPageStore.ts', deps);
+    assert.equal(restored.getBushItPages().pages.find(item => item.id === first).source, '# Unnamed draft');
+    assert.equal(restored.getBushItPages().selectedId, second);
+  } finally { pages.flushBushItPages(); globalThis.localStorage = oldStorage; globalThis.window = oldWindow; }
+});
+
+test('creation reads only its own session even when another session journal is corrupt', async () => {
+  const reads = [], original = { sessionId: 'writing', turns: [] };
+  let disposed = 0;
+  const { creationConversationBackend } = module('src/features/mdPresentation/creationConversationBackend.ts', {
+    '../../backend/conversationBackend': { localConversationBackend: { fetchConversations: async () => { throw Error('Unrelated fork was superseded more than once'); } } },
+    '../../backend/conversationRuntime': { conversationRuntime: () => ({ client: { getSession: async id => { reads.push(id); return original; } }, dispose() { disposed++; } }) },
+    '../../backend/api': { runtimeConversation: snapshot => ({ id: snapshot.sessionId, title: 'Document conversation' }) },
+  });
+  const backend = creationConversationBackend('writing');
+  assert.deepEqual(await backend.fetchConversations(), [{ id: 'writing', title: 'Document conversation' }]);
+  assert.deepEqual(reads, ['writing']);
+  assert.equal(disposed, 1);
+});
+
+test('source line references handle CRLF, trailing selections and edits without sending the full document', () => {
+  const { markdownSelection } = module('src/features/mdPresentation/MarkdownSourceEditor.tsx');
+  const { creationRequest } = module('src/features/mdPresentation/creationConversationContext.ts');
+  const source = '# Title\r\n\r\nParagraph\r\nNext';
+  const selection = markdownSelection(source, 11, source.indexOf('Next'));
+  assert.equal(selection.startLine, 3); assert.equal(selection.endLine, 3);
+  const page = { source, file: { path: 'D:/writing/one.md', text: source, revision: 'r1' } };
+  const request = creationRequest('修改这一段', page, selection, 'zh');
+  assert.ok(request.includes('3–3')); assert.ok(request.includes('D:/writing/one.md'));
+  assert.ok(!request.includes('Paragraph')); assert.ok(!request.includes('# Title'));
+  assert.ok(!creationRequest('修改', { ...page, source: '# Changed' }, selection, 'zh').includes('L3–3'));
 });

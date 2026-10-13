@@ -31,11 +31,12 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   readOnly?: boolean;
   richReferences?: boolean | 'applications';
   ariaLabel?: string;
+  ariaDescribedBy?: string;
   placeholder: string;
   onChange(value: string, caret: number): void;
   onSelectionChange(caret: number): void;
   onKeyDown(event: KeyboardEvent<HTMLElement>): void;
-}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
+}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, ariaDescribedBy, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
   const host = useContext(ConversationHostContext);
   const { sessionId } = useContext(ComposerReferenceContext);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -190,6 +191,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     }
   };
   return rich ? <div ref={editor} className="composer-prompt-editor" data-composer-input
+    aria-describedby={ariaDescribedBy}
     role="textbox" aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')} aria-multiline="true" aria-readonly={readOnly}
     contentEditable={!readOnly} suppressContentEditableWarning data-placeholder={placeholder}
     onBlur={() => { composing.current = false; }}
@@ -229,6 +231,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       event.preventDefault(); document.execCommand('insertText', false, event.dataTransfer.getData('text/plain'));
     }}
   /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
+    aria-describedby={ariaDescribedBy}
     aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onChange={event => { lastCaret.current = event.currentTarget.selectionStart; onChange(event.target.value, lastCaret.current); }}

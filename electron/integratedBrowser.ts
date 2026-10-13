@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { WebContents } from 'electron';
 
 type Reference = { tabId: string; pageId?: string; url?: string };
-type Entry = { tabId: string; ownerId: number; guestId: number };
+type Entry = { tabId: string; ownerId: number; guestId: number; targetKey: string };
 type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; bindingRevision: number;
   inheritedFrom?: { parentId: string; revision: number } };
 export type BrowserTabAction = { action: 'open' | 'bind' | 'activate' | 'close' | 'inspect'; tabId: string;
@@ -111,8 +111,10 @@ export class IntegratedBrowser {
   private forgetClosedPage(entry: Entry): void {
     for (const scope of this.scopes.values()) {
       if (scope.entries.get(entry.tabId) !== entry) continue;
-      scope.entries.delete(entry.tabId);
-      if (scope.selected === entry.tabId) { scope.selected = ''; scope.bindingRevision++; }
+      // Keep the selected guest as a tombstone. A later list or inherited scope
+      // must not turn closing this tab into permission to target another one.
+      if (scope.selected === entry.tabId) scope.bindingRevision++;
+      else scope.entries.delete(entry.tabId);
     }
   }
   register(owner: WebContents, input: { tabId: string; guestWebContentsId: number }): void {
@@ -123,7 +125,7 @@ export class IntegratedBrowser {
     const key = this.key(owner.id, input.tabId);
     const previous = this.entries.get(key);
     if (previous?.guestId === guest.id) return;
-    const entry = { tabId: input.tabId, ownerId: owner.id, guestId: guest.id };
+    const entry = { tabId: input.tabId, ownerId: owner.id, guestId: guest.id, targetKey: `cardbush:${randomUUID()}` };
     this.entries.set(key, entry);
     guest.once('destroyed', () => {
       if (this.entries.get(key) === entry) this.entries.delete(key);
@@ -135,6 +137,11 @@ export class IntegratedBrowser {
     if (entry?.guestId !== input.guestWebContentsId) return;
     this.entries.delete(key);
     this.detach(entry.guestId);
+  }
+  matchesReference(ownerId: number, tabId: string, targetKey: string): boolean {
+    const entry = this.entries.get(this.key(ownerId, tabId));
+    if (!entry || entry.targetKey !== targetKey) return false;
+    try { this.guest(entry); return true; } catch { return false; }
   }
   /** Explicit @ selections grant only these exact guests to the submitting conversation. */
   async bind(owner: WebContents, scopeId: string, references: Reference[]) {
@@ -213,7 +220,7 @@ export class IntegratedBrowser {
     const confirmed = presentation?.guestWebContentsId === guest.id;
     return { id: guest.id, tabId: entry.tabId, title: guest.getTitle(), url: guest.getURL(), active: confirmed && presentation.active,
       visible: confirmed && presentation.visible && (this.options.ownerVisible?.(entry.ownerId) ?? true),
-      selected: entry.tabId === scope.selected, browser: 'cardbush', targetKey: `cardbush:${guest.id}` };
+      selected: entry.tabId === scope.selected, browser: 'cardbush', targetKey: entry.targetKey };
   }
   private detach(id: number): void {
     if (!this.attached.delete(id)) return;
@@ -249,12 +256,20 @@ export class IntegratedBrowser {
       unavailable('CardBush requested a new tab but it has not become ready. It may still open; do not automatically replay this request.', 'cardbush_page_open_timeout');
     }
     if (method === 'tabs.list') {
-      // A missing explicitly selected tab must not silently select a different live tab.
-      const selected = scope.entries.get(scope.selected);
-      if (selected) this.guest(selected);
+      // Listing is discovery, not target admission: stale selection must not
+      // hide the remaining authorized tabs needed for explicit recovery.
       const entries = [...scope.entries.values()].filter(entry => { try { this.guest(entry); return true; } catch { return false; } });
       const presentations = await this.inspect(scopeId, scope, entries, signal);
-      return entries.map(entry => this.page(entry, scope, presentations.find(page => page.tabId === entry.tabId)));
+      const pages = entries.flatMap(entry => {
+        // The user may close a tab while the renderer confirms presentation.
+        try { return [this.page(entry, scope, presentations.find(page => page.tabId === entry.tabId))]; }
+        catch { return []; }
+      });
+      return {
+        pages,
+        selectedPageId: scope.entries.get(scope.selected)?.guestId ?? null,
+        selectionState: !scope.selected ? 'none' : pages.some(page => page.selected) ? 'selected' : 'missing',
+      };
     }
     const entry = [...scope.entries.values()].find(item => item.guestId === params.tabId);
     if (!entry) unavailable('This CardBush page was not selected or created in this conversation.', 'cardbush_page_not_authorized');

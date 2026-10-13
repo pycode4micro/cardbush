@@ -38,7 +38,7 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
           if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw Error(zh ? 'Token 上限请输入正整数。' : 'Token limits must be positive integers.');
         }
         if ((model.maxCompletionTokens ?? DEFAULT_MAX_OUTPUT_TOKENS) >= (model.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS)) {
-          throw Error(zh ? '最大输出 tokens 必须小于上下文上限。' : 'Maximum output tokens must be below the context limit.');
+          throw Error(zh ? '最大输出 tokens 必须小于总体上下文窗口。' : 'Maximum output tokens must be below the total context window.');
         }
       }
       setConfig(await onSave(next));

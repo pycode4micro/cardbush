@@ -39,7 +39,10 @@ window.command = async ({kind,payload:input}) => {
 function Fixture(){ window.teamState=useTeamWorkspace(); window.pageState=pages.useBushItPages(); const [mode,setMode]=React.useState('team'); window.setApp=setMode;
   React.useEffect(()=>{const listener=event=>setMode(event.detail.id==='builtin:md-presentation'?'md':'team');window.addEventListener('cardbush-open-application',listener);return()=>window.removeEventListener('cardbush-open-application',listener);},[]);
   const practice=team=>window.practiced=structuredClone(team);
-  return <div className="app theme-dark" style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}>{mode==='team'?<TeamWorkspace language="zh"/>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice}/></>}</div>; }
+  const [portal,setPortal]=React.useState(null);window.setCreationPortal=setPortal;
+  const [inspector,setInspector]=React.useState(null);
+  const inspectorContext=React.useCallback(value=>{window.creationInspector=value;setInspector(value);},[]);
+  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}>{mode==='team'?<TeamWorkspace language="zh"/>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice} onToggleInspector={()=>window.inspectorOpened=true} onInspectorContext={inspectorContext} composerPortalTarget={portal}/></>}</div>; }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {
@@ -48,10 +51,30 @@ try {
     resolveId(id, importer) {
       if (id.endsWith('__native_team_fixture__.tsx')) return '\0native-team-fixture.tsx';
       if (id.includes('ElectronRuntimeSession') && importer?.endsWith('teamWorkspaceStore.ts')) return '\0native-team-transport';
+      if (id === '../../backend/api' && importer?.endsWith('MdPresentationApp.tsx')) return '\0creation-api';
+      if (id === '../../backend/api' && importer?.endsWith('CreationConversation.tsx')) return '\0creation-chat-api';
+      if (id === '../../hooks/useCardbushChat' && importer?.endsWith('CreationConversation.tsx')) return '\0creation-chat-hook';
+      // The shared ChatPanel/runtime has its own tests. Keep file-to-conversation
+      // integration deterministic without calling a paid provider here.
+      if (id === './CreationConversation' && importer?.endsWith('MdPresentationApp.tsx')) return '\0creation-chat';
     },
     load(id) {
       if (id === '\0native-team-fixture.tsx') return source;
       if (id === '\0native-team-transport') return 'export const createDesktopRuntimeSession=()=>({client:{command:async(input,decode)=>decode(await window.command(input))},dispose(){}});';
+      if (id === '\0creation-api') return 'export async function createConversation(input){ window.creationSessionInput=input; return {id:input.sessionId}; }';
+      if (id === '\0creation-chat') return `import React from 'react'; import {CreationConversation as View} from '${local('src/features/mdPresentation/CreationConversation.tsx')}'; export function CreationConversation(props){window.creationChatProps=props;return React.createElement(View,props);}`;
+      if (id === '\0creation-chat-api') return `export async function fetchModelConfigs(){return {models:[{id:'test-model',provider:'test',apiKey:'',baseUrl:'https://example.invalid/v1',modelName:'Test model',apiProtocol:'openai-responses',maxContextTokens:400000,maxCompletionTokens:128000}],defaultModelId:'test-model'};}export async function saveModelReasoning(){}`;
+      if (id === '\0creation-chat-hook') return `import {useMemo,useState} from 'react'; const noop=()=>{},asyncNoop=async()=>{};
+        export function useCardbushChat(models,available,options){const [messages,setMessages]=useState([]);const conversation=useMemo(()=>({id:options.activeConversationId,title:'创作',preview:'',updatedAt:''}),[options.activeConversationId]);return {
+          activeMessages:messages,activeTurnId:'',loading:false,messagesLoading:false,sending:false,stopping:false,skills:[],activeConversation:conversation,
+          selectedModel:'test-model',setSelectedModel:noop,permissionMode:'task_free',subagentPermissionRouting:'inherit',referencePlanMode:'off',reasoningLevel:'default',
+          queuedMessageCount:0,queuedMessages:[],queuedMessagePreview:'',pendingInteraction:null,activeGoal:null,goalAvailable:false,
+          error:null,notice:null,clearError:noop,clearNotice:noop,refreshActiveSession:asyncNoop,setPermissionMode:noop,setSubagentPermissionRouting:noop,setReferencePlanMode:noop,setReasoningLevel:noop,
+          cancelSending:noop,retryFailedUserMessage:asyncNoop,regenerateAssistantMessage:asyncNoop,editUserMessageAndRegenerate:asyncNoop,
+          sendTurnGuidance:asyncNoop,retryTurnGuidance:asyncNoop,sendQueuedMessageAsGuidance:asyncNoop,removeQueuedMessage:noop,reorderQueuedMessage:noop,
+          replyToInteraction:asyncNoop,cancelPendingInteraction:noop,cancelActiveGoal:noop,toggleQueueLock:noop,
+          sendMessage:async(text,...args)=>{window.creationSubmitted=text;args[5]?.();setMessages([{id:'writing-user',role:'user',content:text,createdAt:new Date().toISOString(),conversationId:options.activeConversationId},{id:'writing-reply',role:'assistant',content:'已更新文档，可以在左侧继续编辑。',status:'completed',createdAt:new Date().toISOString(),conversationId:options.activeConversationId}]);}
+        };}`;
     },
   }], build: { outDir: directory, emptyOutDir: true, minify: false, lib: { entry: resolve('__native_team_fixture__.tsx'), formats: ['iife'], name: 'NativeTeamFixture' } } });
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(item => item.output);

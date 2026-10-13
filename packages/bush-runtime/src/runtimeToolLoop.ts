@@ -245,6 +245,12 @@ export class RuntimeToolLoop {
         renderedResults[ordinal] = outcome.kind === "returned"
           ? outcome.hookFeedback ?? this.#registry.renderModelResult(toolCall.name, outcome.result) : undefined;
         if (renderedResults[ordinal] !== undefined) renderedResults[ordinal] = omitToolImageDataFromText(renderedResults[ordinal]!);
+        if (outcome.kind === 'returned' && outcome.resultError && outcome.hookFeedback === undefined) {
+          // Keep recovery facts at the front of budgeted output; the native
+          // response remains unchanged in its execution record.
+          renderedResults[ordinal] = recoveryReceipt(outcome) + '\n\n' +
+            (renderedResults[ordinal] ?? serializeNativeToolResult(modelFacingNativeToolResult(outcome.result, toolCall.name)));
+        }
         const receipts = imageObservations[ordinal]!.flatMap(observation => observation.receipt ? [observation.receipt] : []);
         if (receipts.length && outcome.kind === 'returned') {
           renderedResults[ordinal] = (renderedResults[ordinal] ?? JSON.stringify(omitToolImageData(outcome.result))) +
@@ -293,7 +299,11 @@ export class RuntimeToolLoop {
         : { content: text, format: "text", appReference: appReferences[ordinal],
           ...(outcome?.kind === 'returned' && outcome.hookFeedback === undefined &&
               !imageObservations[ordinal]?.length && this.#registry.resolve(name)?.projectModelResult
-            ? { projectPreview: (maxChars: number) => this.#registry.projectModelResult(name, result, maxChars) } : {}) };
+            ? { projectPreview: (maxChars: number) => {
+                const prefix = outcome.resultError ? recoveryReceipt(outcome) + '\n\n' : '';
+                const preview = this.#registry.projectModelResult(name, result, Math.max(0, maxChars - prefix.length));
+                return preview === undefined ? undefined : prefix + preview;
+              } } : {}) };
     });
     const ingressBudget = Number.isInteger(input.modelContextIngressBudgetTokens) &&
         Number(input.modelContextIngressBudgetTokens) >= 0
@@ -439,7 +449,7 @@ export class RuntimeToolLoop {
     if (outcome.kind === "returned") {
       return this.#eventLog.append(this.#identity, {
         kind: "tool_returned",
-        payload,
+        payload: { ...payload, ...(outcome.resultError ? { resultError: outcome.resultError } : {}) },
       });
     }
     return this.#eventLog.append(this.#identity, {
@@ -506,6 +516,11 @@ function projectNativeToolResultBody(
     else upper = middle - 1;
   }
   return renderReceipt(serialized.slice(0, lower));
+}
+
+function recoveryReceipt(outcome: ToolExecutionOutcome) {
+  const error = outcome.kind === 'returned' ? outcome.resultError : outcome.error;
+  return JSON.stringify({ runtimeError: { kind: error?.kind, code: error?.code, message: error?.message.slice(0, 500), details: { execution: outcome.execution } } });
 }
 
 function projectNativeToolResults(
@@ -704,18 +719,12 @@ async function executeByChannel<TInput, TOutput>(
   });
   const output: TOutput[] = new Array(values.length);
   await Promise.all([...channels.values()].map(async (entries) => {
-    if (entries.every(({ value }) => parallelSafe(value))) {
-      const results = await Promise.all(
-        entries.map(({ value, index }) => execute(value, index)),
-      );
-      entries.forEach(({ index }, resultIndex) => {
-        output[index] = results[resultIndex]!;
-      });
-      return;
-    }
+    let batch: Promise<void>[] = [];
     for (const { value, index } of entries) {
-      output[index] = await execute(value, index);
+      if (parallelSafe(value)) batch.push(execute(value, index).then(result => { output[index] = result; }));
+      else { await Promise.all(batch); batch = []; output[index] = await execute(value, index); }
     }
+    await Promise.all(batch);
   }));
   return output;
 }

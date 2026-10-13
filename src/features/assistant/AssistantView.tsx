@@ -56,6 +56,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
   const [runtimeError, setRuntimeError] = useState('');
   const [canRetry, setCanRetry] = useState(false), [stopping, setStopping] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [nextStepPrediction, setNextStepPrediction] = useState<ConversationJournalSnapshot['nextStepPrediction']>();
   const replying = (busy || submitting) && !error && !runtimeError;
   const [retry, setRetry] = useState<ConversationJournalSnapshot['retry']>(null);
   const [settings, setSettings] = useState(false), [desktop, setDesktop] = useState(false);
@@ -98,6 +99,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
       if (reset) setEntries(result.entries);
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
       setBusy(result.busy); setAssistantWorking(result.busy || Boolean(result.workingTasks)); setRuntimeError(result.error); setRetry(result.retry);
+      setNextStepPrediction(current => JSON.stringify(current) === JSON.stringify(result.nextStepPrediction) ? current : result.nextStepPrediction);
       setCanRetry(result.canRetry === true);
     })().finally(() => { refreshing.current = undefined; });
     return refreshing.current;
@@ -227,11 +229,12 @@ export function AssistantView({ active, language, connections, prepare, onManage
             {typingBubble}
           </QuickInputStatus>
           <AssistantComposer controls={composerControls} language={language} draft={draft} onDraftChange={setDraft}
+            nextStepPrediction={nextStepPrediction} predictionPending={busy || submitting || Boolean(error || runtimeError)}
             ready={ready} submitting={submitting} onSend={send} fileDropTarget={chatBody} messages={pageMessages} browserTabs={browserTabs}/>
           </ComposerPortalContext.Provider>
         </div>
       </VoiceConversation>
-      </div><ScrollBottomButton language={language} visible={viewport.scrollBottomVisible} onClick={viewport.scrollToBottom}/>
+      </div><ScrollBottomButton language={language} visible={viewport.scrollBottomVisible} running={busy} onClick={viewport.scrollToBottom}/>
     </div>{desktop && host && <aside className="assistant-desktop"><button className="assistant-desktop-close" type="button" onClick={() => setDesktop(false)} aria-label={zh ? '关闭云端电脑' : 'Close remote computer'}><X size={18}/></button><AgentDesktopView call={remoteCall} active={active} name={host.name} language={language}/></aside>}</div>
   </section>;
 }
