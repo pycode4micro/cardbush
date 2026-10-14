@@ -5,6 +5,10 @@ import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { QuickInputStatus } from '../composer/QuickInputStatus';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
+import { ComposerPresentationContext } from '../composer/ComposerPresentationContext';
+import { createPortal } from 'react-dom';
+import { useConversationComposerMount } from './useConversationComposerMount';
+import { composerLayoutBox } from './composerLayoutBox';
 import { QueueActionsMenu } from '../composer/QueueActionsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ExtractionSelector } from './ConversationExtraction';
@@ -358,6 +362,8 @@ export function ChatPanel({
 }) {
   const host = useContext(ConversationHostContext);
   const quickInputTarget = useContext(ComposerPortalContext);
+  const composerPresentation = useContext(ComposerPresentationContext);
+  const composerMount = useConversationComposerMount(activeConversationId, host?.id);
   const runtimeSessionId = host?.sessionId ?? activeConversationId;
   const [draftContext, setDraftContext] = useConversationViewState<PromptContext[]>(
     conversationViewKey(host?.id, runtimeSessionId, 'draft-prompt-context'), () => [], value => value.length > 0);
@@ -494,7 +500,7 @@ export function ChatPanel({
     return () => window.removeEventListener('keydown', toggle);
   }, [keyboardShortcuts, onToggleQueueLock, queueLockPending]);
   const composerDockRef = useRef<HTMLDivElement>(null);
-  const { anchored: composerAnchored, flow: composerFlow, capture: captureComposerPosition } = useConversationComposerLayout({
+  const { anchored: composerAnchored, flow: composerFlow, capture: captureComposerPosition, inputStyle, customWelcome } = useConversationComposerLayout({
     bodyRef: chatBodyRef, dockRef: composerDockRef, scrollerRef: listScrollerRef,
     scope: JSON.stringify([host?.id ?? 'local', activeConversationId]), welcome: showWelcome, loading, embedded, interaction: hasInteraction,
   });
@@ -1696,33 +1702,32 @@ export function ChatPanel({
     let lastMeasurement = '';
     let measurementFrame: number | null = null;
     const updateHeight = () => {
-      const dockRect = dock.getBoundingClientRect();
+      if (!chatBody) return;
+      const dockRect = composerLayoutBox(dock, chatBody);
       const firstVisibleElement = dock.firstElementChild;
       const visibleTop = firstVisibleElement instanceof HTMLElement
-        ? firstVisibleElement.getBoundingClientRect().top
+        ? composerLayoutBox(firstVisibleElement, chatBody).top
         : dockRect.top;
       const nextDockHeight = Math.ceil(dockRect.height);
-      const nextBottomInset = composerAnchored && !hasInteraction ? 0 : Math.ceil(Math.max(0, dockRect.bottom - visibleTop));
+      const nextBottomInset = composerAnchored && !hasInteraction ? 0 : Math.ceil(Math.max(0, dockRect.top + dockRect.height - visibleTop));
       if (chatBody) {
-        const chatBodyRect = chatBody.getBoundingClientRect();
         chatBody.style.setProperty(
           '--composer-content-top',
-          `${Math.max(0, visibleTop - chatBodyRect.top)}px`,
+          `${Math.max(0, visibleTop)}px`,
         );
       }
       const composerSurface = dock.querySelector<HTMLElement>(
         '.composer-surface, .interaction-card, .composer-stack',
       );
       if (chatBody && composerSurface) {
-        const chatBodyRect = chatBody.getBoundingClientRect();
-        const surfaceRect = composerSurface.getBoundingClientRect();
+        const surfaceRect = composerLayoutBox(composerSurface, chatBody);
         chatBody.style.setProperty(
           '--composer-surface-top',
-          `${Math.max(0, surfaceRect.top - chatBodyRect.top)}px`,
+          `${Math.max(0, surfaceRect.top)}px`,
         );
         chatBody.style.setProperty(
           '--composer-surface-center-x',
-          `${surfaceRect.left + surfaceRect.width / 2 - chatBodyRect.left}px`,
+          `${surfaceRect.left + surfaceRect.width / 2}px`,
         );
       }
       const scroller = listScrollerRef.current;
@@ -2455,43 +2460,46 @@ export function ChatPanel({
   const handleComposerSend = useCallback(
     async (text: string, options?: { immediate?: boolean; acknowledge?: boolean }) => {
       const prompt: UserPromptInput = draftContext.length && !options?.acknowledge ? { text, context: draftContext } : text;
-      captureComposerPosition(!sending);
-      if (
-        guidanceAvailable && sending &&
-        (options?.immediate || guidanceDeliveryMode === 'immediate') &&
-        activeTurnId
-      ) {
-        const guidanceAnchor: ChatMessage = {
-          ...(activeAssistantForRender?.message ?? {
-            id: `active-turn-${activeTurnId}`,
-            role: 'assistant',
-            content: '',
-            createdAt: new Date().toISOString(),
-          }),
-          conversationId: runtimeSessionId,
-          turnId: activeTurnId,
-        };
-        return await onGuideMessage(
-          guidanceAnchor,
-          prompt,
-          'interrupt_and_continue',
-        );
-      }
-      if (!sending) {
-        finishConversationScrollRestoration();
-        pendingSubmittedUserEntryUntilRef.current = Date.now() + 2000;
-        const shouldFollowSubmission =
-          !composerAnchored && (!showScrollBottomRef.current || !userDetachedFromBottomRef.current);
-        pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
-        releaseAssistantStageReservation();
-        if (shouldFollowSubmission) {
-          programmaticScrollUntilRef.current = Date.now() + 1200;
-          autoFollowStreamRef.current = true;
-          userDetachedFromBottomRef.current = false;
-          setScrollBottomVisible(false);
+      const finishSubmission = composerMount.beginSubmission();
+      try {
+        captureComposerPosition(!sending);
+        if (
+          guidanceAvailable && sending &&
+          (options?.immediate || guidanceDeliveryMode === 'immediate') &&
+          activeTurnId
+        ) {
+          const guidanceAnchor: ChatMessage = {
+            ...(activeAssistantForRender?.message ?? {
+              id: `active-turn-${activeTurnId}`,
+              role: 'assistant',
+              content: '',
+              createdAt: new Date().toISOString(),
+            }),
+            conversationId: runtimeSessionId,
+            turnId: activeTurnId,
+          };
+          return await onGuideMessage(
+            guidanceAnchor,
+            prompt,
+            'interrupt_and_continue',
+          );
         }
-      }
-      return await (options?.acknowledge && onVoiceSend ? onVoiceSend(text) : onSend(prompt));
+        if (!sending) {
+          finishConversationScrollRestoration();
+          pendingSubmittedUserEntryUntilRef.current = Date.now() + 2000;
+          const shouldFollowSubmission =
+            !composerAnchored && (!showScrollBottomRef.current || !userDetachedFromBottomRef.current);
+          pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
+          releaseAssistantStageReservation();
+          if (shouldFollowSubmission) {
+            programmaticScrollUntilRef.current = Date.now() + 1200;
+            autoFollowStreamRef.current = true;
+            userDetachedFromBottomRef.current = false;
+            setScrollBottomVisible(false);
+          }
+        }
+        return await (options?.acknowledge && onVoiceSend ? onVoiceSend(text) : onSend(prompt));
+      } finally { finishSubmission(); }
     },
     [
       activeAssistantForRender,
@@ -2510,6 +2518,7 @@ export function ChatPanel({
       setScrollBottomVisible,
       composerAnchored,
       captureComposerPosition,
+      composerMount.beginSubmission,
     ],
   );
 
@@ -2560,6 +2569,7 @@ export function ChatPanel({
         readOnlyActions={readOnlyActions}
         guidanceAvailable={guidanceAvailable}
         changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
+        liveChangeSummary={activeAssistantForRender?.message.id === message.id ? currentTurnChangeSummary : undefined}
         language={language}
         sending={sending}
         activeTurnId={activeTurnId}
@@ -2594,8 +2604,6 @@ export function ChatPanel({
           goalCancelling={goalCancelling}
           goalWaiting={goalWaiting}
           onCancelGoal={onCancelGoal}
-          changeSummary={activeAssistantForRender?.message.id === message.id ? currentTurnChangeSummary : undefined}
-          onOpenChangeReview={() => onOpenChangeReview(undefined, message.turnId)}
         />
       )}
     </div>
@@ -2701,6 +2709,64 @@ export function ChatPanel({
         style={chatBodyStyle}
         onWheelCapture={handleChatBodyWheelCapture}
       >
+        {!loading && (showWelcome || !hasInteraction) && createPortal(
+          <ComposerPresentationContext.Provider value={showWelcome && !composerPresentation ? { style: inputStyle } : composerPresentation}>
+            <Composer
+              key={composerMount.key}
+              portalCommands={showWelcome && customWelcome}
+              fileDropTarget={chatBodyRef}
+              compact
+              language={language}
+              draft={draft}
+              onDraftChange={onDraftChange}
+              sending={sending}
+              submissionPending={submissionPending}
+              inputReadOnly={inputReadOnly}
+              stopping={stopping}
+              guidanceDeliveryMode={guidanceDeliveryMode}
+              cancelEnabled={cancelEnabled ?? Boolean(activeTurnId)}
+              queuedMessageCount={queuedMessageCount}
+              queuedMessagePreview={queuedMessagePreview}
+              queuedMessages={queuedMessages}
+              queueLocked={queueLocked}
+              queueLockPending={queueLockPending}
+              onToggleQueueLock={onToggleQueueLock}
+              onGuideQueuedMessage={(queuedId) => onGuideQueuedMessage(queuedId, 'interrupt_and_continue')}
+              onEditQueuedMessage={editQueuedMessage}
+              onRemoveQueuedMessage={onRemoveQueuedMessage}
+              onReorderQueuedMessage={onReorderQueuedMessage}
+              selectedModel={selectedModel}
+              availableModels={availableModels}
+              teamAvailable={teamAvailable}
+              goalAvailable={goalAvailable}
+              referencePlanAvailable={referencePlanAvailable}
+              referencePlanMode={referencePlanMode}
+              permissionMode={permissionMode}
+              subagentPermissionRouting={subagentPermissionRouting}
+              reasoningLevelAvailable={reasoningLevelAvailable}
+              reasoningLevel={reasoningLevel}
+              reasoningLevels={reasoningLevels}
+              onModelChange={onModelChange}
+              onReferencePlanModeChange={onReferencePlanModeChange}
+              onPermissionModeChange={onPermissionModeChange}
+              onSubagentPermissionRoutingChange={onSubagentPermissionRoutingChange}
+              onReasoningLevelChange={onReasoningLevelChange}
+              onSend={handleComposerSend}
+              onCancel={onCancel}
+              shadowActive={false}
+              shadowAvailable={!showWelcome && shadowCanActivate}
+              shadowAgentName={language === 'zh' ? '新窗口' : 'New window'}
+              onToggleShadow={shadowCanActivate ? openShadowPopup : undefined}
+              contextWindow={contextWindowUsage ?? (contextWindowMaxTokens != null
+                ? contextWindowMetrics(undefined, contextWindowMaxTokens, selectedModelConfig?.maxCompletionTokens) : undefined)}
+              skills={skills}
+              disabledSkillNames={disabledSkillNames}
+              onToggleSkill={onToggleSkill}
+              onQuickLoad={applyQuickLoad}
+              onConfigureModels={onConfigureModels}
+              onCreateConversation={onCreateConversation}
+            />
+          </ComposerPresentationContext.Provider>, composerMount.container)}
         {!loading && workSummaryPresence.mounted && (
           <ConversationWorkSummary
             language={language}
@@ -2728,6 +2794,7 @@ export function ChatPanel({
         ) : showWelcome ? (
           <WelcomeComposer
             key={activeConversationId || 'new-session'}
+            composer={<div ref={composerMount.attach} />}
             fileDropTarget={chatBodyRef}
             language={language}
             draft={draft}
@@ -2874,60 +2941,7 @@ export function ChatPanel({
             } as CSSProperties}
           >
             {composerAccessory}
-            <Composer
-              key={activeConversationId || 'active-session'}
-              fileDropTarget={chatBodyRef}
-              compact
-              language={language}
-              draft={draft}
-              onDraftChange={onDraftChange}
-              sending={sending}
-              submissionPending={submissionPending}
-              inputReadOnly={inputReadOnly}
-              stopping={stopping}
-              guidanceDeliveryMode={guidanceDeliveryMode}
-              cancelEnabled={cancelEnabled ?? Boolean(activeTurnId)}
-              queuedMessageCount={queuedMessageCount}
-              queuedMessagePreview={queuedMessagePreview}
-              queuedMessages={queuedMessages}
-              queueLocked={queueLocked}
-              queueLockPending={queueLockPending}
-              onToggleQueueLock={onToggleQueueLock}
-              onGuideQueuedMessage={(queuedId) => onGuideQueuedMessage(queuedId, 'interrupt_and_continue')}
-              onEditQueuedMessage={editQueuedMessage}
-              onRemoveQueuedMessage={onRemoveQueuedMessage}
-              onReorderQueuedMessage={onReorderQueuedMessage}
-              selectedModel={selectedModel}
-              availableModels={availableModels}
-              teamAvailable={teamAvailable}
-              goalAvailable={goalAvailable}
-              referencePlanAvailable={referencePlanAvailable}
-              referencePlanMode={referencePlanMode}
-              permissionMode={permissionMode}
-              subagentPermissionRouting={subagentPermissionRouting}
-              reasoningLevelAvailable={reasoningLevelAvailable}
-              reasoningLevel={reasoningLevel}
-              reasoningLevels={reasoningLevels}
-              onModelChange={onModelChange}
-              onReferencePlanModeChange={onReferencePlanModeChange}
-              onPermissionModeChange={onPermissionModeChange}
-              onSubagentPermissionRoutingChange={onSubagentPermissionRoutingChange}
-              onReasoningLevelChange={onReasoningLevelChange}
-              onSend={handleComposerSend}
-              onCancel={onCancel}
-              shadowActive={false}
-              shadowAvailable={shadowCanActivate}
-              shadowAgentName={language === 'zh' ? '新窗口' : 'New window'}
-              onToggleShadow={shadowCanActivate ? openShadowPopup : undefined}
-              contextWindow={contextWindowUsage ?? (contextWindowMaxTokens != null
-                ? contextWindowMetrics(undefined, contextWindowMaxTokens, selectedModelConfig?.maxCompletionTokens) : undefined)}
-              skills={skills}
-              disabledSkillNames={disabledSkillNames}
-              onToggleSkill={onToggleSkill}
-              onQuickLoad={applyQuickLoad}
-              onConfigureModels={onConfigureModels}
-              onCreateConversation={onCreateConversation}
-            />
+            <div ref={composerMount.attach} />
           </div>
         )}
         </div>

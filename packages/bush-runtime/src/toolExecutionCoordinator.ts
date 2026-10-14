@@ -25,6 +25,15 @@ import { childAgentToolDenial } from './childAgentPolicy.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { webToolDenial } from './webToolPolicy.js';
 import { toolResourceScheduler } from './toolResourceScheduler.js';
+import { toolFailureFacts } from './toolFailureFacts.js';
+
+interface ExecutionTrace {
+  dispatched: boolean;
+  nestedEffects: ToolExecutionFacts['effects'];
+  nestedUncertain: boolean;
+  denied: boolean;
+  failureFacts?: ReturnType<typeof toolFailureFacts>;
+}
 
 export interface ToolExecutionHooks {
   before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
@@ -97,16 +106,20 @@ export class ToolExecutionCoordinator {
     toolCall: ToolCall, identity: ToolExecutionIdentity, signal?: AbortSignal,
     turn?: ToolHandlerContext['turn'], parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
   ): Promise<ToolExecutionOutcome> {
-    const trace = { dispatched: false, nestedEffects: 'none' as ToolExecutionFacts['effects'], nestedUncertain: false, denied: false };
+    const trace: ExecutionTrace = { dispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false };
     const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace);
     const error = outcome.kind === 'returned' ? outcome.resultError : outcome.error;
     const mutating = outcome.actionManifest?.mutating ?? this.#registry.resolve(toolCall.name)?.manifest.mutating ?? true;
+    const effects = outcome.workspaceChanges.length ? 'recorded' : trace.nestedEffects !== 'none' ? trace.nestedEffects
+      : trace.failureFacts?.effects ?? (trace.dispatched && mutating ? 'possible' : 'none');
+    const result = trace.nestedUncertain ? 'unknown'
+      : trace.failureFacts?.result ?? (outcome.kind === 'returned' || !trace.dispatched ? 'known' : 'unknown');
     const execution: ToolExecutionFacts = {
       dispatch: outcome.kind === 'returned' ? 'returned' : trace.dispatched ? 'started' : 'not_started',
-      effects: outcome.workspaceChanges.length ? 'recorded' : trace.nestedEffects !== 'none' ? trace.nestedEffects : trace.dispatched && mutating ? 'possible' : 'none',
-      result: trace.nestedUncertain ? 'unknown' : outcome.kind === 'returned' || !trace.dispatched ? 'known' : 'unknown',
+      effects,
+      result,
       recovery: !error ? 'none' : trace.denied || error.kind === 'permission' || outcome.kind === 'cancelled' ? 'do_not_retry'
-        : trace.nestedEffects !== 'none' || trace.dispatched && mutating ? 'inspect_existing'
+        : effects !== 'none' || trace.dispatched && mutating && result === 'unknown' ? 'inspect_existing'
         : trace.dispatched && retryableObservation(error) ? 'retry' : 'correct_input',
     };
     if (error) error.details = { ...error.details, execution };
@@ -119,7 +132,7 @@ export class ToolExecutionCoordinator {
     signal?: AbortSignal,
     turn?: ToolHandlerContext["turn"],
     parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
-    trace = { dispatched: false, nestedEffects: 'none' as ToolExecutionFacts['effects'], nestedUncertain: false, denied: false },
+    trace: ExecutionTrace = { dispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false },
   ): Promise<ToolExecutionOutcome> {
     if (turn?.request.metadata.toolExecutionPolicy === 'none') {
       return failedResult('tools_disabled', 'All tools are disabled by this service.', undefined, {}, 'permission');
@@ -411,6 +424,7 @@ export class ToolExecutionCoordinator {
       if (isAbortError(error)) {
         return { ...cancelledResult("tool_execution_cancelled", actionManifest), workspaceChanges };
       }
+      trace.failureFacts = toolFailureFacts(error);
       const failed = failedResult(
         errorCode(error, "tool_execution_exception"),
         errorMessage(error),

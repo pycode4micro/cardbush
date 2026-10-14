@@ -355,7 +355,7 @@ export function ImagePreviewDialog({
             if (viewRef.current.zoom === 1) fitToWindow();
             else applyZoom(1, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
           }}
-          onContextMenu={host ? undefined : event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
+          onContextMenu={host ? undefined : event => openFileContextMenu(event, image.path ?? '', { language })}
         >
           {gallery.images.length > 1 && <div className="image-preview-navigation"
             onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>

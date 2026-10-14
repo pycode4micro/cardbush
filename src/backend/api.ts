@@ -1325,6 +1325,7 @@ export async function fetchSessionMessages(
               status: latest.status,
               stopped: latest.status === 'stopped',
               stopReason: latest.reason,
+              ...(latest.planWaiting ? { stopDetails: { planWaiting: latest.planWaiting } } : {}),
               stopScenario: latest.reason,
               errorMessage: latest.status === 'failed' ? latest.reason : '',
               finalDecision: latest.status,

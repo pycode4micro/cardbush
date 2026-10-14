@@ -37,6 +37,25 @@ export const cacheChainStateSchema = z.object({
 
 export type CacheChainState = z.infer<typeof cacheChainStateSchema>;
 
+// Diagnostics for the definitions actually sent to the model. Character counts
+// are exact for Runtime JSON; estimates are not provider/billing token counts.
+const toolDefinitionUsageSchema = z.object({
+  count: z.number().int().nonnegative(),
+  chars: z.number().int().nonnegative(),
+  descriptionChars: z.number().int().nonnegative(),
+  schemaChars: z.number().int().nonnegative(),
+  estimatedTokens: z.number().int().nonnegative(),
+  estimateMethod: z.literal('runtime-tool-json-chars-v1'),
+  builtinCount: z.number().int().nonnegative(),
+  builtinChars: z.number().int().nonnegative(),
+  largest: z.array(z.object({
+    name: z.string().min(1),
+    chars: z.number().int().nonnegative(),
+    descriptionChars: z.number().int().nonnegative(),
+    schemaChars: z.number().int().nonnegative(),
+  })).max(5),
+});
+
 export const cacheChainObservationPayloadSchema = z.object({
   requestOrdinal: z.number().int().positive(),
   messageCount: z.number().int().nonnegative(),
@@ -49,6 +68,7 @@ export const cacheChainObservationPayloadSchema = z.object({
   messageBreakIndex: z.number().int().nonnegative().optional(),
   stableInputDigest: z.string().min(1),
   sharedPrefixDigest: z.string().min(1),
+  toolDefinitions: toolDefinitionUsageSchema.optional(),
 });
 
 export type CacheChainObservationPayload = z.infer<

@@ -11,7 +11,7 @@ import {
   type ThinkingNotice,
 } from '../composer';
 import { TurnRuntimeDetails } from '../chat/TurnRuntimeDetails';
-import { AssistantThinkingDetail } from '../chatMessages/AssistantThinkingProcessLine';
+import { AssistantThinkingDetail, TurnChangeReviewButton } from '../chatMessages/AssistantThinkingProcessLine';
 import { reorderScopedQueue } from '../composer/queueOrdering';
 import { PermissionRequestCard } from '../interactions/PermissionRequestCard';
 import type { ConversationChangeSummary } from '../tools';
@@ -182,7 +182,9 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
             </div>
           ) : (
             <>
-              {showThinking && <AssistantThinkingDetail language={language} model="" notice={thinkingFixture} />}
+              {(showThinking || showChanges) && <AssistantThinkingDetail language={language} model=""
+                notice={showThinking ? thinkingFixture : undefined}
+                accessory={showChanges && <TurnChangeReviewButton language={language} summary={changeSummaryFixture} />} />}
               <TurnRuntimeDetails
                 language={language}
                 running={fixture !== 'queue'}
@@ -197,8 +199,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                     reason: '仍需验证第二轮工具返回后的文本是否保留。',
                   },
                 ] : []}
-                changeSummary={showChanges ? changeSummaryFixture : null}
-                onOpenChangeReview={() => undefined}
               />
               {shadowOpen && (
                 <ShadowTemporaryChat

@@ -32,7 +32,7 @@ export function PluginWorkspace({ capabilities, ...props }: Props) {
   return <div className="feature-content plugin-workspace-scroll" data-plugin-scroll-container>
     <PluginManagementPanel {...props} initialTab="plugins" onNotify={setNotice} requestedPlugin={requestedPlugin}
       renderMcp={serverId => <Suspense fallback={<p role="status">{props.language === 'zh' ? '正在加载 MCP 设置…' : 'Loading MCP settings…'}</p>}>
-        <McpEditor initialServerId={serverId} language={props.language} capabilities={capabilities} onNotify={setNotice} />
+        <McpEditor initialServerId={serverId} initialCreate={!serverId} language={props.language} capabilities={capabilities} onNotify={setNotice} />
       </Suspense>} />
     {notice && <div className="settings-toast" role="status">{notice}</div>}
   </div>;

@@ -177,6 +177,7 @@ export function projectRuntimeSessionMessage(
       metadata.status = turn.status;
       metadata.stopped = turn.status === 'stopped';
       metadata.stop_reason = turn.reason;
+      if (turn.planWaiting) metadata.stop_details = { planWaiting: turn.planWaiting };
       metadata.stop_scenario = turn.reason;
     }
   } else if (message.message.role === 'tool') {

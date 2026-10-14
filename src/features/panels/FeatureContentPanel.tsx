@@ -91,7 +91,7 @@ export function FeatureContentPanel({
   if (section === 'team') {
     return (
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <TeamWorkspace language={language} onPractice={practiceTeam}/>
+        <TeamWorkspace language={language} chatOptions={creationChatOptions} onOpenConversation={onOpenConversation}/>
       </Suspense>
     );
   }

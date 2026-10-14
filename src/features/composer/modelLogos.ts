@@ -2,6 +2,7 @@ import anthropicLogo from '../../assets/model-logos/anthropic.svg';
 import azureLogo from '../../assets/model-logos/azure.svg';
 import claudeLogo from '../../assets/model-logos/claude.svg';
 import deepseekLogo from '../../assets/model-logos/deepseek.svg';
+import doubaoLogo from '../../assets/model-logos/doubao.svg';
 import geminiLogo from '../../assets/model-logos/gemini.svg';
 import googleLogo from '../../assets/model-logos/google.svg';
 import huggingfaceLogo from '../../assets/model-logos/huggingface.svg';
@@ -36,6 +37,12 @@ const modelLogoRules: Array<{
     label: 'DeepSeek',
     src: deepseekLogo,
     patterns: [/deepseek/i],
+  },
+  {
+    id: 'doubao',
+    label: 'Doubao',
+    src: doubaoLogo,
+    patterns: [/doubao/i, /豆包/],
   },
   {
     id: 'openai',

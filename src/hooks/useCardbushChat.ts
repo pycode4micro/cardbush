@@ -72,7 +72,9 @@ import {
   isCardbushForeground,
   persistSessionAttentionState,
   readSessionAttentionState,
+  sessionAttentionNeedsNotification,
 } from '../features/sessionAttention';
+import { taskPlanWaitingLabel, turnPlanWaiting } from '../features/taskPlanWaiting';
 import { notifyAttentionSound } from '../features/notificationSound';
 import {
   samePath,
@@ -187,6 +189,9 @@ export function useCardbushChat(
     // A remote host owns its selected session; selection is immediate and does
     // not wait for a metadata mutation or restart this controller.
     activeConversationId?: string;
+    // Embedded editors may reserve an ID without creating a runtime session.
+    // The normal first-send persistence path owns the draft from then on.
+    initialPreparedConversation?: ConversationSummary;
     viewActive?: boolean;
     language?: AppLanguage;
     disabledSkillNames?: Set<string>;
@@ -222,7 +227,7 @@ export function useCardbushChat(
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [preparedConversationsById, setPreparedConversationsById] = useState<
     Record<string, ConversationSummary>
-  >({});
+  >(() => requestContext.initialPreparedConversation ? { [requestContext.initialPreparedConversation.id]: requestContext.initialPreparedConversation } : {});
   const [localActiveConversationId, setActiveConversationId] = useState('');
   const activeConversationId = requestContext.activeConversationId ?? localActiveConversationId;
   const viewActiveRef = useRef(true);
@@ -231,7 +236,7 @@ export function useCardbushChat(
   const conversationListRevisionRef = useRef(0);
   const [messagesByConversation, setMessagesByConversation] = useState<
     Record<string, ChatMessage[]>
-  >({});
+  >(() => requestContext.initialPreparedConversation ? { [requestContext.initialPreparedConversation.id]: [] } : {});
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [messageHistoryLoadingIds, setMessageHistoryLoadingIds] = useState<Set<string>>(
@@ -446,22 +451,32 @@ export function useCardbushChat(
     body: string,
     turnId = '',
     notificationId?: string,
+    waitingKind: SessionAttentionState['waitingKind'] = 'user',
   ) => {
     const normalized = sessionId.trim();
     if (!normalized) return;
-    notifyAttentionSound({ sessionId: normalized, scope: backend.scope, kind, turnId, notificationId });
+    const waiting = kind === 'waiting' ? waitingKind : undefined;
+    const existing = attentionByConversationRef.current[normalized];
+    const normalizedTurnId = turnId.trim();
+    // A still-open question is stronger evidence than a plan's passive wait or completion.
+    if (existing?.kind === 'waiting' && existing.waitingKind === 'user' && existing.interactionId
+      && existing.turnId === normalizedTurnId
+      && (kind === 'completed' || (kind === 'waiting' && waiting !== 'user'))) return;
+    const notify = sessionAttentionNeedsNotification({ kind, waitingKind: waiting });
+    if (notify) notifyAttentionSound({ sessionId: normalized, scope: backend.scope, kind, turnId, notificationId });
     if (
       kind === 'completed' &&
       viewActiveRef.current &&
       activeConversationIdRef.current === normalized &&
       isCardbushForeground()
     ) {
+      if (existing?.kind === 'waiting' && existing.turnId === normalizedTurnId) {
+        clearSessionAttention(normalized, 'waiting');
+      }
       clearSessionAttention(normalized, 'completed');
       return;
     }
-    const existing = attentionByConversationRef.current[normalized];
-    const normalizedTurnId = turnId.trim();
-    if (existing?.kind === kind && normalizedTurnId && existing.turnId === normalizedTurnId) {
+    if (existing?.kind === kind && existing.waitingKind === waiting && normalizedTurnId && existing.turnId === normalizedTurnId && existing.body === body.trim()) {
       return;
     }
     const conversation = conversationsRef.current.find((item) => item.id === normalized);
@@ -469,9 +484,11 @@ export function useCardbushChat(
     const attention: SessionAttentionState = {
       sessionId: normalized,
       kind,
+      ...(kind === 'waiting' ? { waitingKind: waiting } : {}),
+      ...(kind === 'waiting' && notificationId ? { interactionId: notificationId } : {}),
       title,
       body: body.trim() || (kind === 'waiting'
-        ? localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.')
+        ? taskPlanWaitingLabel(waiting, languageRef.current)
         : kind === 'error'
           ? localize('任务遇到问题，点击查看详情。', 'The task needs attention. Click to view details.')
           : localize('任务已完成，点击查看结果。', 'Task complete. Click to view the result.')),
@@ -484,14 +501,14 @@ export function useCardbushChat(
     };
     attentionByConversationRef.current = next;
     setAttentionByConversation(next);
-    if (!backend.scope) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
+    if (!backend.scope && notify) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
   }, [clearSessionAttention, localize]);
 
   useEffect(() => {
     if (backend.scope) return;
     persistSessionAttentionState(attentionByConversation);
     void window.cardbushDesktop
-      ?.setSessionAttentionCount?.(Object.keys(attentionByConversation).length)
+      ?.setSessionAttentionCount?.(Object.values(attentionByConversation).filter(sessionAttentionNeedsNotification).length)
       .catch(() => undefined);
   }, [attentionByConversation]);
 
@@ -736,7 +753,7 @@ export function useCardbushChat(
           const validIds = new Set(loadedConversations.map((item) => item.id));
           return Object.fromEntries(
             Object.entries(current).filter(([conversationId]) =>
-              validIds.has(conversationId) || current[conversationId] !== messagesAtStart[conversationId],
+              validIds.has(conversationId) || !!preparedConversationsRef.current[conversationId] || current[conversationId] !== messagesAtStart[conversationId],
             ),
           );
         });
@@ -864,6 +881,7 @@ export function useCardbushChat(
     setMessagesByConversation(current => trimConversationCache(current, transcriptVisitsRef.current, protectedIds));
   }, [activeConversationId, transcriptCount, runningByConversation]);
   const loadSessionHistory = useCallback((sessionId: string) => {
+    if (preparedConversationsRef.current[sessionId]) return Promise.resolve(null);
     const pending = historyRequestsRef.current.get(sessionId);
     if (pending && isHistoryReadCurrent(pending.read)) return pending.promise;
     const read = beginHistoryRead(sessionId);
@@ -1007,8 +1025,15 @@ export function useCardbushChat(
     }
     if (terminal.status !== 'completed' && terminal.status !== 'awaiting_user_action') return;
     const goal = knownGoal === undefined ? await refreshGoal(sessionId) : knownGoal;
+    const planWaiting = turnPlanWaiting(terminal);
+    if (planWaiting) {
+      markSessionAttention(sessionId, 'waiting', truncateText(
+        planWaiting.reason || taskPlanWaitingLabel(planWaiting.kind, languageRef.current), 180),
+      terminal.turnId, undefined, planWaiting.kind);
+      return;
+    }
     if (goal?.status === 'active') return;
-    if (goal?.status === 'blocked' || terminal.stopReason === 'task_plan_waiting') {
+    if (goal?.status === 'blocked') {
       markSessionAttention(sessionId, 'waiting', truncateText(
         goal?.statusReason || goal?.objective ||
         localize('任务需要你的确认。', 'The task needs your input.'), 180), terminal.turnId);
@@ -1575,6 +1600,18 @@ export function useCardbushChat(
     loadSessionHistory,
     beginHistoryLoading,
   ]);
+
+  // Editor and ordinary chat views share a session. Returning to either view
+  // must refresh history even when that transcript was previously cached.
+  const editorConversation = activeConversation?.metadata?.creation_workspace === true || activeConversation?.metadata?.team_workspace === true;
+  useEffect(() => {
+    if (!editorConversation || backend.watchSession || requestContext.viewActive === false || requestContext.runtimeReady === false) return;
+    const sessionId = activeConversationId;
+    if (!sessionId || controllersRef.current[sessionId]) return;
+    let alive = true;
+    void loadSessionHistory(sessionId).catch(caught => { if (alive) setError(errorMessage(caught)); });
+    return () => { alive = false; };
+  }, [editorConversation, backend, activeConversationId, requestContext.viewActive, requestContext.runtimeReady, loadSessionHistory]);
 
   // Reattach to work owned by the host, using the same stream handlers as local
   // background turns. Closing this view never cancels a service-owned job.

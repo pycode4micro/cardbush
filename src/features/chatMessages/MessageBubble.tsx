@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleAlert,
   ChevronDown,
+  ChevronUp,
   Clipboard,
   Clock3,
   Edit3,
@@ -35,6 +36,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -64,6 +66,7 @@ import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
 import { WorkspaceChangeStateContext, workspaceChangeReverted } from '../tools/WorkspaceChangeStateContext';
 import { AssistantThinkingProcessLine, AssistantThinkingScope } from './AssistantThinkingProcessLine';
+import { taskPlanWaitingLabel } from '../taskPlanWaiting';
 import {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
@@ -122,6 +125,7 @@ import {
   ToolExecutionBlock,
   toolExecutionFinishedAt,
   type ConversationChangeReport,
+  type ConversationChangeSummary,
 } from '../tools';
 import {
   toolChangeReportFromExecutions,
@@ -454,7 +458,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           {...props}
           src={resolvedSource}
           alt={alt ?? ''}
-          onContextMenu={event => openFileContextMenu(event, resolvedPath, { image: true, language })}
+          onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })}
           role="button"
           tabIndex={0}
           onClick={event => setImagePreview({ src: event.currentTarget.src, path: resolvedPath || src,
@@ -686,6 +690,7 @@ function reactNodeText(node: ReactNode): string {
 function MessageBubbleView({
   message,
   changeSummaryMessages,
+  liveChangeSummary,
   language,
   sending,
   activeTurnId,
@@ -703,6 +708,7 @@ function MessageBubbleView({
 }: {
   message: ChatMessage;
   changeSummaryMessages?: ChatMessage[];
+  liveChangeSummary?: ConversationChangeSummary | null;
   language: AppLanguage;
   sending: boolean;
   activeTurnId: string;
@@ -1341,6 +1347,9 @@ function MessageBubbleView({
             </AssistantCompletedDisclosure>
           )}
           {showFinalAnswer && finalAnswerBody}
+          {showFinalAnswer && isActiveAssistantTurn && liveChangeSummary &&
+            <AssistantThinkingProcessLine language={language} model={selectedModel}
+              statusLabel={language === 'zh' ? '生成中' : 'Generating'} />}
           {timeoutPresentation && (
             <div
               className="assistant-timeout-notice"
@@ -1562,7 +1571,7 @@ function TaskPlanBlock({
             ) : (
               <Clock3 size={14} />
             )}
-            <span>{item.step}{item.status === 'waiting' && <small> — {language === 'zh' ? '等待：' : 'Waiting: '}{item.waitingFor}</small>}</span>
+            <span>{item.step}{item.status === 'waiting' && <small> — {taskPlanWaitingLabel(item.waitingKind, language)}{language === 'zh' ? '：' : ': '}{item.waitingFor}</small>}</span>
           </li>
         ))}
       </ol>
@@ -1989,6 +1998,7 @@ function AssistantCompletedDisclosure({
   children: ReactNode;
 }) {
   const disclosureId = assistantMessageDisclosureId(message);
+  const contentId = useId();
   const [expanded, setExpanded] = useState(() =>
     defaultToolExecutionExpanded(
       false,
@@ -1996,6 +2006,8 @@ function AssistantCompletedDisclosure({
     ),
   );
   const blockRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const summaryRef = useRef<HTMLButtonElement>(null);
   const label = assistantProgressLabel({
     message,
     executions,
@@ -2021,22 +2033,49 @@ function AssistantCompletedDisclosure({
     });
   }, [disclosureId, expanded]);
 
+  const collapseFromEnd = useCallback(() => {
+    // Anchor the boundary below the removed process, so the answer stays in
+    // view even when the top disclosure button is far above the viewport.
+    preserveScrollPositionForToggle(endRef.current, () => {
+      writeToolExecutionDisclosure(browserStorage(), disclosureId, false);
+      setExpanded(false);
+    });
+    summaryRef.current?.focus({ preventScroll: true });
+  }, [disclosureId]);
+
   return (
     <div
       ref={blockRef}
       className={`assistant-completed-disclosure ${expanded ? 'expanded' : ''}`}
     >
       <button
+        ref={summaryRef}
         type="button"
         className="assistant-completed-summary"
         aria-expanded={expanded}
+        aria-controls={contentId}
         onClick={toggleExpanded}
       >
         <span>{label}</span>
         <i className="assistant-run-divider" />
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
-      {expanded && <div className="assistant-completed-content">{children}</div>}
+      {expanded && (
+        <div id={contentId} className="assistant-completed-content">
+          {children}
+          <div className="assistant-completed-footer">
+            <i className="assistant-run-divider" aria-hidden="true" />
+            <button type="button" className="assistant-completed-collapse" onClick={collapseFromEnd}
+              aria-expanded={true} aria-controls={contentId}
+              aria-label={language === 'zh' ? '收起执行过程' : 'Collapse process'}>
+              <ChevronUp size={12} aria-hidden="true" />
+              {language === 'zh' ? '收起' : 'Collapse'}
+            </button>
+            <i className="assistant-run-divider" aria-hidden="true" />
+          </div>
+        </div>
+      )}
+      <div ref={endRef} aria-hidden="true" />
     </div>
   );
 }
@@ -2913,6 +2952,7 @@ function sameMessageBubbleProps(
 ) {
   if (
     previous.message !== next.message ||
+    previous.liveChangeSummary !== next.liveChangeSummary ||
     previous.language !== next.language ||
     previous.sending !== next.sending ||
     previous.activeConversationId !== next.activeConversationId ||
@@ -2956,10 +2996,10 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubbleVie
   const activeTurnId = props.activeTurnId || props.message.turnId || '';
   const enabled = props.thinkingVisible === true;
   const running = isActiveMessageBubble(props);
-  const plan = props.message.taskPlan ?? [...(props.message.loopHistory ?? [])].reverse().find(message => message.taskPlan)?.taskPlan;
-  const hasPlan = Boolean(plan?.nodes.some(node => node.status !== 'completed'));
-  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running, hasPlan }),
-    [activeConversationId, activeTurnId, enabled, running, hasPlan]);
+  const changeSummary = running ? props.liveChangeSummary : undefined;
+  const onOpenChangeReview = props.onOpenChangeReview;
+  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running, changeSummary, onOpenChangeReview }),
+    [activeConversationId, activeTurnId, enabled, running, changeSummary, onOpenChangeReview]);
   return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId} sourceReferences={props.message.role === 'assistant'}>
     <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
       <AssistantThinkingScope.Provider value={thinkingScope}>

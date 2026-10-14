@@ -3,6 +3,8 @@ import type {
   ReasoningEffort,
   RuntimePermissionRequest,
   SubagentTask,
+  TaskPlan,
+  TaskPlanWaiting,
 } from '@cardbush/bush-protocol';
 import type { ConversationStylePreferences } from './features/settings/conversationStyle';
 
@@ -364,6 +366,8 @@ export type SessionAttentionKind = 'completed' | 'waiting' | 'error';
 export interface SessionAttentionState {
   sessionId: string;
   kind: SessionAttentionKind;
+  waitingKind?: TaskPlanWaiting['kind'];
+  interactionId?: string;
   title: string;
   body: string;
   turnId?: string;
@@ -527,12 +531,7 @@ export interface ChatToolExecution {
   metadata: Record<string, unknown>;
 }
 
-interface TaskPlanNode {
-  id?: string;
-  step: string;
-  status: TaskPlanStatus;
-  waitingFor?: string;
-}
+type TaskPlanNode = TaskPlan['nodes'][number];
 
 export interface TaskPlanSnapshot {
   protocol: 'bush.task_plan.v1';

@@ -13,7 +13,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
       summary: '检查布局', output: 'layout verification passed', durationMs: 250,
       createdAt: '2026-09-28T05:00:02Z', metadata: { displayTitle: '检查布局' } };
     window.layoutPlan = { protocol: 'bush.task_plan.v1', planId: 'layout-plan', active: true,
-      nodes: [{ step: '整理会话布局', status: 'completed' }, { step: '验证队列位置', status: 'in_progress' }] };
+      nodes: [{ step: '整理会话布局', status: 'completed' }, { step: '验证队列位置', status: 'in_progress' },
+        { step: '确认方案', status: 'waiting', waitingKind: 'user', waitingFor: '确认生成设置' },
+        { step: '接收结果', status: 'waiting', waitingKind: 'background', waitingFor: '生成任务完成' },
+        { step: '审查结果', status: 'waiting', waitingKind: 'dependency', waitingFor: '收到结果后审查' }] };
     window.layoutHistory = { id: 'layout-history', conversationId: 'layout-session', turnId: 'layout-turn',
       role: 'assistant', status: 'completed', content: '检查当前布局。', createdAt: '2026-09-28T05:00:01Z',
       toolExecutions: [layoutTool], taskPlan: layoutPlan };
@@ -32,10 +35,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
       onCancelGoal: async () => { goalCancelled++; }, onOpenChangeReview: (...args) => turnReviews.push(args) });
   `);
   await until("!!document.querySelector('.message-list .runtime-plan-detail')", 'live plan belongs to the current turn');
+  assert.deepEqual(await run("[...document.querySelectorAll('.runtime-plan-detail li.waiting small')].map(el => el.textContent)"),
+    [' — 等待用户确认：确认生成设置', ' — 等待后台任务：生成任务完成', ' — 等待前置步骤：收到结果后审查'], 'live plan shows the exact wait category');
   assert.equal(await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).animationName"), 'cardbush-spin', 'live plan spinner no longer requires the removed processing panel');
   assert.equal(await run("getComputedStyle(document.querySelector('.runtime-plan-detail .completed > svg')).animationName"), 'none', 'completed steps do not rotate');
-  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).backgroundImage"), 'none', 'plan is the only animated activity indicator');
-  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-model.fallback svg')).animationName"), 'none', 'the fallback thinking icon also stays still while a plan is visible');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'thinking-mask-sweep', 'thinking text animates alongside the live plan');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-model.fallback svg')).animationName"), 'cardbush-spin', 'the fallback thinking icon rotates alongside the live plan');
   const planRotation = await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).transform");
   await pause(130);
   assert.notEqual(await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).transform"), planRotation, 'plan circle visibly rotates over time');
@@ -45,7 +50,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.querySelector('.runtime-goal-cancel').click(); document.querySelector('.turn-change-review').click()");
   assert.equal(await run('goalCancelled'), 1);
   assert.equal((await run('turnReviews'))[0][1], 'layout-turn', 'review targets this turn');
-  await run(`window.layoutThinking = document.querySelector('.assistant-active-transcript > .turn-thinking-detail');
+  await run(`window.layoutThinking = document.querySelector('.assistant-active-transcript > .assistant-activity-line > .turn-thinking-detail');
     window.sendLayoutThinking = (delta, overrides = {}) => window.dispatchEvent(new CustomEvent('cardbush:thinking', { detail: {
       sessionId: 'layout-session', turnId: 'layout-turn', generationId: 'layout-thinking', phase: 'delta',
       delta, createdAt: '2026-09-28T05:00:05Z', ...overrides } })); null;`);
@@ -55,7 +60,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!layoutThinking.querySelector('small')", 'thinking preview replaces the existing transcript placeholder');
   assert.equal(await run("document.querySelectorAll('.message-list .turn-thinking-detail').length"), 1, 'one thinking entry only');
   assert.equal(await run("document.querySelector('.turn-runtime-details .turn-thinking-detail')"), null, 'progress area has no duplicate thinking entry');
-  assert.equal(await run("layoutThinking === document.querySelector('.assistant-active-transcript > .turn-thinking-detail')"), true, 'reasoning reuses the original tail slot');
+  assert.equal(await run("layoutThinking === document.querySelector('.assistant-active-transcript > .assistant-activity-line > .turn-thinking-detail')"), true, 'reasoning reuses the original tail slot');
   assert.ok(Math.abs(await run("layoutThinking.getBoundingClientRect().height") - thinkingHeight) < 1, 'collapsed preview keeps the same height');
   assert.equal(await run("document.querySelector('.composer-dock .turn-thinking-detail')"), null);
   await run("layoutThinking.querySelector('summary').click()");
@@ -74,14 +79,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const details = document.querySelector('.turn-runtime-details');
       const row = details.parentElement.querySelector('.message-row.assistant').getBoundingClientRect();
       const progress = details.getBoundingClientRect();
-      const review = details.querySelector('.turn-change-review').getBoundingClientRect();
+      const review = document.querySelector('.turn-change-review').getBoundingClientRect();
+      const status = layoutThinking.querySelector('summary').getBoundingClientRect();
       return { left: progress.left - row.left, right: progress.right - row.right,
-        reviewLeft: review.left - row.left, reviewRight: review.right - row.right };
+        reviewLeft: review.left - row.left, reviewRight: review.right - row.right,
+        reviewGap: review.left - status.right, reviewTop: review.top - status.top };
     })()`);
     assert.ok(Math.abs(alignment.left) < 1 && Math.abs(alignment.right) < 1,
       `${width}px progress shares the message reading track: ${JSON.stringify(alignment)}`);
-    assert.ok(Math.abs(alignment.reviewLeft) < 1 && alignment.reviewRight <= 1,
-      `${width}px changed-files entry stays aligned inside the conversation`);
+    assert.ok(alignment.reviewLeft >= 0 && alignment.reviewRight <= 1 &&
+      alignment.reviewGap >= 0 && alignment.reviewGap <= 10 && Math.abs(alignment.reviewTop) < 1,
+      `${width}px changed-files capsule stays beside the activity inside the conversation: ${JSON.stringify(alignment)}`);
   }
   await run("document.querySelector('.chat-panel').style.width = ''; document.querySelector('.chat-panel').style.removeProperty('--chat-track-width')");
   await pause(150);
@@ -107,14 +115,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run(`window.completedLayoutPlan = { ...layoutPlan, nodes: layoutPlan.nodes.map(node => ({ ...node, status: 'completed' })) };
     updateChat({ messages: [layoutUser, { ...layoutAssistant, taskPlan: completedLayoutPlan }] });`);
   await until("!document.querySelector('.runtime-plan-detail')", 'all completed steps hide the live board before the turn finishes');
-  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'thinking-mask-sweep', 'finishing the plan restores the thinking mask while work continues');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'thinking-mask-sweep', 'finishing the plan preserves the thinking animation while work continues');
   assert.ok(await run("!!document.querySelector('.runtime-goal-detail') && !!document.querySelector('.turn-change-review')"),
     'plan completion preserves the goal and changed-files entry');
   await run("updateChat({ activeGoal: null, changeReports: [] })");
   await until("!document.querySelector('.turn-runtime-details')", 'a completed plan alone leaves no empty progress container');
   await run("updateChat({ messages: [layoutUser, layoutAssistant] })");
   await until("!!document.querySelector('.runtime-plan-detail')", 'new unfinished work restores the plan board');
-  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'none', 'restoring the plan stops the thinking mask immediately');
+  assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'thinking-mask-sweep', 'restoring the plan preserves the thinking animation');
   await run(`layoutAssistant = { ...layoutAssistant, status: 'completed', content: '会话布局已优化。',
     taskPlan: undefined, loopHistory: [{ ...layoutHistory, taskPlan: { ...completedLayoutPlan, active: false } }],
     metadata: { cardbush_turn_started_at: '2026-09-28T05:00:00Z',
@@ -138,6 +146,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('.assistant-completed-summary').textContent === '已处理 1m 24s'",
     'completed duration is frozen across rerenders');
   assert.equal(await run("document.querySelector('.assistant-loop-history')"), null, 'collapsed history mounts no tool detail');
+  assert.equal(await run("document.querySelector('.assistant-completed-collapse')"), null, 'collapsed history has no redundant bottom control');
   assert.equal(await run("document.querySelector('.assistant-final-answer').textContent"), '会话布局已优化。');
   assert.equal(await run("Boolean(document.querySelector('.assistant-completed-summary').compareDocumentPosition(document.querySelector('.assistant-final-answer')) & Node.DOCUMENT_POSITION_FOLLOWING)"), true);
   await run("document.querySelector('.assistant-completed-summary').click()");
@@ -151,6 +160,50 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("document.querySelector('.assistant-completed-summary').getAttribute('aria-expanded')"), 'true', 'unrelated updates keep history open');
   fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
   fs.writeFileSync(path.join(root, 'tmp', 'turn-layout-history.png'), (await window.webContents.capturePage()).toPNG());
+  await run(String.raw`window.longLayoutAssistant = { ...layoutAssistant,
+    content: Array.from({ length: 18 }, (_, i) => '最终答复段落 ' + (i + 1)).join('\n\n'),
+    loopHistory: [{ ...layoutHistory, content: Array.from({ length: 36 }, (_, i) => '执行过程 ' + (i + 1)).join('\n\n') }] };
+    updateChat({ messages: [layoutUser, longLayoutAssistant] });`);
+  await until("document.querySelector('.assistant-completed-content')?.textContent.includes('执行过程 36')", 'long expanded process renders');
+  await pause(400);
+  await run(`window.collapseAnswer = document.querySelector('.assistant-final-answer');
+    window.collapseScroller = document.querySelector('.message-list');
+    collapseScroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -250, bubbles: true, cancelable: true }));
+    collapseScroller.scrollTop += collapseAnswer.getBoundingClientRect().top - collapseScroller.getBoundingClientRect().top - 160;`);
+  await pause(180);
+  const collapseLayout = await run(`(() => {
+    const footer = document.querySelector('.assistant-completed-footer');
+    const button = footer.querySelector('button');
+    const f = footer.getBoundingClientRect(), b = button.getBoundingClientRect();
+    return { centered: Math.abs((f.left + f.right) / 2 - (b.left + b.right) / 2),
+      text: button.textContent, lineClickable: document.elementFromPoint(f.left + 8, b.top + b.height / 2)?.closest('button') != null,
+      topOffscreen: document.querySelector('.assistant-completed-summary').getBoundingClientRect().bottom < collapseScroller.getBoundingClientRect().top,
+      answerTop: collapseAnswer.getBoundingClientRect().top,
+      controlsContent: document.getElementById(button.getAttribute('aria-controls')) === document.querySelector('.assistant-completed-content') };
+  })()`);
+  assert.ok(collapseLayout.centered < 1, 'collapse control is centered on the divider');
+  assert.equal(collapseLayout.text, '收起');
+  assert.equal(collapseLayout.lineClickable, false, 'divider lines do not enlarge the clickable area');
+  assert.equal(collapseLayout.topOffscreen, true, 'bottom collapse works without returning to the top control');
+  assert.equal(collapseLayout.controlsContent, true);
+  await run("document.querySelector('.app').classList.replace('theme-dark', 'theme-bright')");
+  await pause(80);
+  fs.writeFileSync(path.join(root, 'tmp', 'process-collapse-bright.png'), (await window.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.assistant-completed-collapse').focus({ preventScroll: true }); document.querySelector('.assistant-completed-collapse').click(); window.collapseImmediateTop = collapseAnswer.getBoundingClientRect().top");
+  await until("!document.querySelector('.assistant-completed-content')", 'bottom control collapses the process');
+  await pause(180);
+  assert.equal(await run("document.querySelector('.assistant-final-answer') === collapseAnswer"), true, 'collapsing preserves the mounted final answer and media');
+  const collapsedAnswerTops = await run("[collapseImmediateTop, collapseAnswer.getBoundingClientRect().top]");
+  assert.ok(collapsedAnswerTops.every(top => Math.abs(top - collapseLayout.answerTop) < 2),
+    'collapsing from the bottom keeps the answer stable at commit and later frames: ' + JSON.stringify({ before: collapseLayout.answerTop, after: collapsedAnswerTops }));
+  assert.equal(await run("document.activeElement === document.querySelector('.assistant-completed-summary')"), true,
+    'focus returns to the surviving disclosure control without scrolling');
+  await run("document.querySelector('.assistant-completed-summary').click()");
+  await until("!!document.querySelector('.assistant-completed-collapse')", 'top control reopens the process');
+  await run(`document.querySelector('.app').classList.replace('theme-bright', 'theme-dark');
+    document.activeElement.blur();
+    updateChat({ messages: [layoutUser, layoutAssistant] });`);
+  await until("document.querySelector('.assistant-final-answer').textContent === '会话布局已优化。'", 'restore the completed reply');
   await run(`window.nextLayoutUser = { ...layoutUser, id: 'layout-next-user', turnId: 'layout-next', content: '继续检查' };
     window.nextLayoutAssistant = { id: 'layout-next-assistant', conversationId: 'layout-session', turnId: 'layout-next',
       role: 'assistant', status: 'streaming', content: '正在检查。' };
@@ -191,5 +244,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("updateChat({ activeConversationId: 'layout-other', messages: [], activeGoal: null })");
   await until("!document.querySelector('.turn-runtime-details') && !document.querySelector('.composer-runtime-rail')", 'switching sessions clears live state');
   await run("if (layoutMotionPreference === undefined) delete document.documentElement.dataset.motionPreference; else document.documentElement.dataset.motionPreference=layoutMotionPreference;updateChat(layoutOriginal);");
-  console.log('Turn layout passed: live plan rotation, exclusive theme-aware thinking masks, inline history, archived plans, live reasoning, goal cancellation, scoped review, queue-only rail and stable input position.');
+  console.log('Turn layout passed: concurrent plan and thinking animations, theme-aware thinking masks, inline history, archived plans, live reasoning, goal cancellation, scoped review, queue-only rail and stable input position.');
 };

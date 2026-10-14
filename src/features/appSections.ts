@@ -9,6 +9,6 @@ export const sectionLabels: Record<AppSection, { zh: string; en: string }> = {
   automations: { zh: '定时与自动化', en: 'Automations' },
   skills: { zh: '技能', en: 'Skills' },
   subagents: { zh: '子 Agent', en: 'Subagents' },
-  team: { zh: 'Team', en: 'Team' },
+  team: { zh: '协作流程', en: 'Workflows' },
   'md-presentation': { zh: '创作', en: 'Create' },
 };

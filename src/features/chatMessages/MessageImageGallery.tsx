@@ -75,7 +75,7 @@ function MessageGalleryImageButton({ image, language, onPreview }: {
   return <button
     className={`message-image-preview${unavailable ? ' is-failed' : ''}`}
     type="button" aria-label={name}
-    onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { image: true, language })}
+    onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { language })}
     onClick={event => {
       const element = event.currentTarget.querySelector('img');
       if (!unavailable && src) onPreview({ src, name, path: pathValue,

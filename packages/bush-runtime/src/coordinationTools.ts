@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   BUSH_TASK_PLAN_PROTOCOL,
+  taskPlanWaitingKindSchema,
   type TaskPlan,
 } from "@cardbush/bush-protocol";
 
@@ -14,7 +15,7 @@ export const UPDATE_GOAL_TOOL = "update_goal" as const;
 interface TaskPlanToolInput {
   action: 'get' | 'replace' | 'patch';
   expectedRevision?: number;
-  updates?: Array<{ id: string; step?: string; status?: TaskPlan['nodes'][number]['status']; waitingFor?: string | null }>;
+  updates?: Array<{ id: string; step?: string; status?: TaskPlan['nodes'][number]['status']; waitingFor?: string | null; waitingKind?: TaskPlan['nodes'][number]['waitingKind'] | null }>;
   appendNodes?: TaskPlan['nodes'];
   removeIds?: string[];
   nodes: TaskPlan["nodes"];
@@ -43,7 +44,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision. action=patch requires expected_revision and changes supplied updates (by node ID), append_nodes, remove_ids or plan fields; action=replace (default) submits the whole plan. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); waiting=external dependency with waitingFor; completed=finished. Keep active true while unfinished. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
+          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision. action=patch requires expected_revision and changes supplied updates (by node ID), append_nodes, remove_ids or plan fields; action=replace (default) submits the whole plan. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); completed=finished. For waiting, set waitingFor to the concrete reason and waitingKind: user=needs user confirmation/input, background=awaits an already-started task, dependency=awaits a prerequisite step. Only user waits request the user's attention. Keep active true while unfinished. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -53,9 +54,11 @@ export function registerCoordinationTools(
             updates: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['id'], properties: {
               id: { type: 'string', minLength: 1 }, step: { type: 'string', minLength: 1 },
               status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: ['string', 'null'] },
+              waitingKind: { enum: [...taskPlanWaitingKindSchema.options, null] },
             } } },
             append_nodes: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['step', 'status'], properties: {
               step: { type: 'string', minLength: 1 }, status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: 'string' },
+              waitingKind: { enum: taskPlanWaitingKindSchema.options },
             } } },
             remove_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1 } },
             nodes: {
@@ -71,6 +74,7 @@ export function registerCoordinationTools(
                   step: { type: "string" },
                   status: { enum: ["pending", "in_progress", "waiting", "completed"] },
                   waitingFor: { type: "string", minLength: 1, description: "Required for waiting: the concrete external dependency or user action needed to continue." },
+                  waitingKind: { enum: taskPlanWaitingKindSchema.options, description: "For waiting: user confirmation/input, an already-started background task, or a prerequisite step." },
                 },
               },
             },
@@ -97,6 +101,9 @@ export function registerCoordinationTools(
             const update = updates.get(node.id!);
             const next = { ...node, ...update };
             if (next.waitingFor === null || (update?.status && update.status !== 'waiting')) delete next.waitingFor;
+            if (next.waitingKind === null || (update?.status && update.status !== 'waiting')) delete next.waitingKind;
+            // A changed reason must not inherit a prior user-action classification accidentally.
+            if (update?.waitingFor !== undefined && update.waitingFor !== node.waitingFor && update.waitingKind === undefined) delete next.waitingKind;
             return next as TaskPlan['nodes'][number];
           }).concat(input.appendNodes ?? []);
         }
@@ -182,10 +189,11 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
     const array = (key: string): unknown[] => { const value = object[key] ?? []; if (!Array.isArray(value) || value.length > 20) throw new Error(`${key} must contain at most 20 entries.`); return value; };
     const updates = array('updates').map(value => {
       const node = plainObject(value, 'updates');
-      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor'].includes(key))) throw new Error('Unknown plan patch field.');
+      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind'].includes(key))) throw new Error('Unknown plan patch field.');
       if (node.status !== undefined && !['pending', 'in_progress', 'waiting', 'completed'].includes(String(node.status))) throw new Error('Invalid node status.');
       return { id: requiredString(node.id, 'id'), ...(node.step !== undefined ? { step: requiredString(node.step, 'step') } : {}),
         ...(node.status !== undefined ? { status: node.status as TaskPlan['nodes'][number]['status'] } : {}),
+        ...(node.waitingKind !== undefined ? { waitingKind: node.waitingKind === null ? null : taskPlanWaitingKindSchema.parse(node.waitingKind) } : {}),
         ...(node.waitingFor !== undefined ? { waitingFor: node.waitingFor === null ? null : requiredString(node.waitingFor, 'waitingFor') } : {}) };
     });
     const appended = array('append_nodes');
@@ -213,6 +221,7 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
         ...(optionalString(node.id) ? { id: optionalString(node.id) } : {}),
         step: requiredString(node.step, `nodes[${index}].step`),
         status: status as TaskPlanToolInput["nodes"][number]["status"],
+        ...(node.waitingKind !== undefined ? { waitingKind: taskPlanWaitingKindSchema.parse(node.waitingKind) } : {}),
         ...(node.waitingFor !== undefined ? { waitingFor: requiredString(node.waitingFor, `nodes[${index}].waitingFor`) } : {}),
       };
     }),

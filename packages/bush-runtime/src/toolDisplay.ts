@@ -21,10 +21,10 @@ export function withToolDisplayTitle(definition: ToolDefinition): ToolDefinition
     ...(definition.inputSchema.properties as Record<string, unknown> | undefined),
     [TOOL_DISPLAY_TITLE]: {
       type: 'object',
-      description: 'Specific action purpose for the UI, independent of reply language. Omit status, reasoning, counters, secrets and success claims. Reuse for repeated checks; for batches, supply only on the outer call, never inside third-party arguments.',
+      description: 'Bilingual UI action purpose; no status, reasoning, counters, secrets or success claims. Reuse for repeated checks; batches: outer call only, never third-party arguments.',
       properties: {
-        zh: { type: 'string', description: 'Simplified Chinese action description, normally 6–16 characters.' },
-        en: { type: 'string', description: 'Equivalent English action description, normally 2–8 words.' },
+        zh: { type: 'string', description: '简体中文，通常 6–16 字。' },
+        en: { type: 'string', description: 'Equivalent English, 2–8 words.' },
       },
       required: ['zh', 'en'],
       additionalProperties: false,

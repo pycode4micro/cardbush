@@ -2,16 +2,18 @@ import { Cloud, Folder, Monitor } from 'lucide-react';
 import { HoverPreview, type useHoverPreview } from '../../components/HoverPreview';
 import { basename } from '../../shared/localPaths';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
-import type { AppLanguage, ConversationSummary } from '../../types';
+import type { AppLanguage, ConversationSummary, SessionAttentionState } from '../../types';
+import { sessionAttentionLabel } from '../sessionAttention';
 import { conversationProjectDir } from '../conversationWorkspace';
 
-export function ConversationHoverPreview({ preview, conversation, projectLabel, hostLabel, remote, language }: {
+export function ConversationHoverPreview({ preview, conversation, projectLabel, hostLabel, remote, language, attention }: {
   preview: ReturnType<typeof useHoverPreview>;
   conversation: ConversationSummary;
   projectLabel?: string;
   hostLabel?: string;
   remote: boolean;
   language: AppLanguage;
+  attention?: SessionAttentionState;
 }) {
   if (!preview.anchor) return null;
   const project = projectLabel || basename(conversationProjectDir(conversation)) || (language === 'zh' ? '独立会话' : 'Standalone chat');
@@ -25,6 +27,9 @@ export function ConversationHoverPreview({ preview, conversation, projectLabel, 
       {age && <time dateTime={conversation.updatedAt}>{age}</time>}
     </div>
     <div className="conversation-hover-preview-project"><Folder size={14} aria-hidden="true" /><span>{project}</span></div>
+    {attention && <p className="conversation-hover-preview-status">{sessionAttentionLabel(attention, language)}
+      {attention.body && <> · {attention.body}</>}
+    </p>}
   </HoverPreview>;
 }
 

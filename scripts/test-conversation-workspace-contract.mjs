@@ -169,4 +169,15 @@ assert.equal(conversationWorkspaceMode(conflictedProjectDetail), 'project');
 assert.equal(conversationProjectDir(conflictedProjectDetail), treelkProjectRoot);
 assert.equal(isOnlyTalkConversation(conflictedProjectDetail), false);
 
+const legacyEditorRoot = 'C:/Users/test/AppData/Roaming/cardbush/task-workspaces/ff2074d0c0227a1eecf7b01e';
+for (const origin of ['creation_workspace', 'team_workspace']) {
+  const legacy = { id: 'old-editor', projectDir: legacyEditorRoot, metadata: { [origin]: true, workspace_mode: 'project', projectDir: legacyEditorRoot, project_dir: legacyEditorRoot, user_project_dir: legacyEditorRoot, workspace_dir: legacyEditorRoot } };
+  assert.equal(conversationProjectDir(legacy), '', 'generated editor directory must not become a project');
+  assert.equal(conversationWorkspaceMode(legacy), 'task');
+  assert.equal(conversationWorkspaceRoot(legacy), legacyEditorRoot, 'existing files remain accessible in the original directory');
+  assert.equal(conversationProjectDir({ ...legacy, metadata: { ...legacy.metadata, user_project_dir: 'D:/writing' } }), 'D:/writing');
+}
+assert.equal(conversationProjectDir({ projectDir: legacyEditorRoot }), legacyEditorRoot, 'unrelated explicit projects are untouched');
+assert.equal(conversationProjectDir({ projectDir: 'D:/task-workspaces/research', metadata: { creation_workspace: true } }), 'D:/task-workspaces/research');
+
 console.log('conversation workspace contract tests passed');

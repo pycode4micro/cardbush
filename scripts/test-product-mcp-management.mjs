@@ -8,6 +8,50 @@ import { ToolRegistry } from '@cardbush/bush-runtime';
 import { McpClientManager } from '@cardbush/bush-mcp-client';
 import { ElectronProductHostController } from '../dist-electron/productHostController.mjs';
 import { startProductMcpManagement, mergeMcpServer } from '../dist-electron/productMcpManagement.mjs';
+import { mcpManagementView } from '../dist-electron/productMcpManagementView.mjs';
+
+test('compact MCP observations retain failures, pending state and unavailable-runtime distinctions', () => {
+  const tools = Array.from({ length: 400 }, (_, i) => ({ remoteName: `tool_${i}`, runtimeName: `mcp__other__tool_${i}` }));
+  const source = { configuration: { revision: 9, servers: [{ id: 'broken', enabled: true }, { id: 'disabled', enabled: false }] },
+    runtime: { protocol: 'bush.mcp_snapshot_result.v1', snapshotId: 'fixture', revision: 12, configurationRevision: 8,
+      applicationState: 'pending', applicationPhase: 'waiting_for_calls', pendingRevision: 13, pendingServerIds: ['broken'],
+      servers: [{ id: 'other', health: 'ready', tools }, { id: 'broken', health: 'unavailable', lastError: 'ENOENT', updateState: 'failed', tools: [],
+        lastFailure: { code: 'ENOENT', message: 'Executable unavailable', occurredAt: '2026-10-14T07:29:00.000Z', details: { diagnostic: 'Full detail' } } }] } };
+  const original = JSON.stringify(source), summary = mcpManagementView(source);
+  assert.ok(JSON.stringify(summary).length < original.length / 10, 'bulk tool names stay out of the default view');
+  assert.equal(summary.runtime.servers[0].toolCount, 400);
+  assert.equal(summary.runtime.servers[1].lastError, 'ENOENT');
+  assert.equal(summary.runtime.servers[1].updateState, 'failed');
+  assert.equal(summary.runtime.servers[1].lastFailure.details, undefined);
+  assert.equal(summary.configuration.revision, 9); assert.equal(summary.runtime.configurationRevision, 8);
+  assert.equal(summary.runtime.applicationPhase, 'waiting_for_calls');
+  assert.deepEqual(summary.runtime.pendingServerIds, ['broken']);
+  const detail = mcpManagementView(source, { serverId: 'broken', detail: true });
+  assert.equal(detail.matched, true); assert.equal(detail.runtime.servers.length, 1);
+  assert.deepEqual(detail.runtime.servers[0], source.runtime.servers[1]);
+  const disabled = mcpManagementView(source, { serverId: 'disabled' });
+  assert.equal(disabled.matched, true); assert.equal(disabled.configuration.servers[0].enabled, false);
+  assert.deepEqual(disabled.runtime.servers, []);
+  const offline = mcpManagementView({ configuration: source.configuration, runtime: null, runtimeError: 'Host unavailable' }, { serverId: 'broken' });
+  assert.equal(offline.matched, true); assert.equal(offline.runtime, null); assert.equal(offline.runtimeError, 'Host unavailable');
+  assert.equal(JSON.stringify(source), original, 'presentation does not alter the host snapshot');
+});
+
+test('plugin observation summaries filter services and keep full editable settings behind detail', () => {
+  const connections = ['a', 'b'].map(componentId => ({ pluginId: 'fixture', componentId, serverId: `plugin_fixture_${componentId}`,
+    name: componentId, pluginEnabled: true, source: 'direct', availableSources: ['direct'],
+    settings: { tools: { run: { approval_mode: 'prompt' } } }, effective: { transport: 'stdio' } }));
+  const source = { configurationRevision: 14, connections,
+    runtime: { revision: 18, applicationState: 'applied', servers: connections.map(c => ({ id: c.serverId, health: 'ready', tools: [] })) } };
+  const options = { serverId: 'plugin_fixture_b' }, summary = mcpManagementView(source, options);
+  assert.equal(summary.configurationRevision, 14); assert.equal(summary.matched, true);
+  assert.deepEqual(summary.connections.map(c => c.componentId), ['b']);
+  assert.deepEqual(summary.runtime.servers.map(s => s.id), ['plugin_fixture_b']);
+  assert.equal(summary.connections[0].settings, undefined);
+  assert.deepEqual(mcpManagementView(source, { ...options, detail: true }).connections, [connections[1]]);
+  const missing = mcpManagementView(source, { serverId: 'missing' });
+  assert.equal(missing.matched, false); assert.deepEqual(missing.connections, []); assert.deepEqual(missing.runtime.servers, []);
+});
 
 test('MCP management uses the Product Host store and real Runtime MCP discovery', { timeout: 30_000 }, async (t) => {
   const parent = resolve('tmp');
@@ -128,6 +172,22 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       firstPid = execution.pid;
       assert.ok(!JSON.stringify(result).includes('fixture-private-value'));
       assert.deepEqual(result.configuration.servers[0].environmentKeys, ['FIXTURE_VALUE', 'API_TOKEN']);
+    });
+    await t.test('observations default to counts and expand one service without changing native snapshots', async () => {
+      const summary = await invoke('list_mcp_servers', { serverId: 'fixture' });
+      assert.equal(summary.view, 'summary'); assert.equal(summary.matched, true);
+      assert.deepEqual(summary.runtime.servers.map(s => s.id), ['fixture']);
+      assert.deepEqual(summary.configuration.servers.map(s => s.id), ['fixture']);
+      assert.equal(summary.runtime.servers[0].toolCount, 1);
+      assert.equal(summary.runtime.servers[0].tools, undefined);
+      assert.equal(summary.runtime.protocol, undefined, 'summary does not claim to be a native protocol snapshot');
+      const detail = await invoke('list_mcp_servers', { serverId: 'fixture', detail: true });
+      assert.equal(detail.view, 'detail');
+      assert.deepEqual(detail.runtime.servers[0].tools.map(t => t.runtimeName), ['mcp__fixture__echo']);
+      assert.ok((await host.listMcpServers()).runtime.servers[0].tools, 'UI and host reads keep full snapshots');
+      const missing = await invoke('list_mcp_servers', { serverId: 'missing' });
+      assert.equal(missing.matched, false); assert.deepEqual(missing.runtime.servers, []);
+      assert.doesNotMatch(JSON.stringify(detail), /fixture-private-value/);
     });
     await t.test('active turn returns pending and preserves the old connection until idle', async () => {
       idle = false;

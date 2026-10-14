@@ -54,8 +54,9 @@ window.renderFailure = language => {
 };
 window.renderPlan = (reason, status = 'completed', theme = 'theme-dark') => {
  failureRoot ??= createRoot(document.getElementById('root'));
- const nodes = [{id:'auth',step:'提交生成',status:'waiting',waitingFor:'用户确认'},
-  {id:'verify',step:'核对成片',status:'pending'}];
+ const nodes = [{id:'auth',step:'提交生成',status:'waiting',waitingKind:'user',waitingFor:'生成设置'},
+  {id:'receive',step:'接收成片',status:'waiting',waitingKind:'background',waitingFor:'生成任务'},
+  {id:'verify',step:'核对成片',status:'waiting',waitingKind:'dependency',waitingFor:'成片文件'}];
  failureRoot.render(<div className={'app ' + theme} data-plan-reason={reason} style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
   <MessageBubble message={{id:'plan',role:'assistant',content:'准备成果已保存。',status,
    taskPlan:{protocol:'bush.task_plan.v1',planId:'plan',sessionId:'session',nodes,active:true,explanation:''},

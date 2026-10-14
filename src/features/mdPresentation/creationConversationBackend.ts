@@ -1,20 +1,43 @@
 import { localConversationBackend, type ConversationBackend } from '../../backend/conversationBackend';
 import { conversationRuntime } from '../../backend/conversationRuntime';
 import { runtimeConversation } from '../../backend/api';
+import type { ConversationSummary } from '../../types';
+
+export type CreationConversationPreparation = {
+  title: string; projectDir?: string; metadata: Record<string, unknown>;
+  onCreated?: (conversation: ConversationSummary) => void;
+};
 
 /** A document conversation must not load unrelated conversations or their journals. */
-export function creationConversationBackend(sessionId: string): ConversationBackend {
+export function creationConversationBackend(sessionId: string, scope = 'creation', preparation?: CreationConversationPreparation): ConversationBackend {
+  let persisted = !preparation;
+  const read = async () => {
+    const runtime = conversationRuntime();
+    try { const snapshot = await runtime.client.getSession(sessionId); return snapshot ? runtimeConversation(snapshot) : undefined; }
+    finally { runtime.dispose(); }
+  };
   return {
     ...localConversationBackend,
-    scope: 'creation',
+    scope,
     keepRunningOnUnmount: true,
+    async createConversation(input) {
+      let conversation: ConversationSummary;
+      try { conversation = await localConversationBackend.createConversation({ ...input, metadata: { ...input?.metadata, ...preparation?.metadata, conversation_started: true } }); }
+      catch (error) {
+        // A response may be lost after creation. Reuse this exact ID on retry.
+        const existing = await read().catch(() => undefined);
+        if (!existing) throw error;
+        conversation = existing;
+      }
+      persisted = true;
+      preparation?.onCreated?.(conversation);
+      return conversation;
+    },
     async fetchConversations() {
-      const runtime = conversationRuntime();
-      try {
-        const snapshot = await runtime.client.getSession(sessionId);
-        if (!snapshot) throw Error('创作会话不存在，请重新创建对话。 / Writing conversation no longer exists.');
-        return [runtimeConversation(snapshot)];
-      } finally { runtime.dispose(); }
+      if (!persisted) return [];
+      const conversation = await read();
+      if (!conversation) throw Error('会话不存在，请重新创建对话。 / Conversation no longer exists.');
+      return [conversation];
     },
   };
 }

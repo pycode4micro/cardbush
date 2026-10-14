@@ -338,10 +338,19 @@ test('temporary documents retain content and AI backing files without exposing g
     const first = pages.createBushItPage('# Unnamed draft'), second = pages.createBushItPage();
     assert.notEqual(pages.getBushItPages().pages.find(item => item.id === first).draftNumber, pages.getBushItPages().pages.find(item => item.id === second).draftNumber);
     assert.ok(pages.getBushItPages().pages.filter(item => [first, second].includes(item.id)).every(item => item.temporary && !item.file));
+    const scope = pages.creationSessionScope('', pages.getBushItPages().pages.find(item => item.id === first));
+    const draftId = pages.prepareCreationSession(scope);
+    assert.equal(pages.prepareCreationSession(scope), draftId, 'opening input twice reserves the same identity');
+    assert.equal(pages.getBushItPages().sessions[''], undefined, 'preparing a draft does not persist a conversation');
     pages.flushBushItPages();
     const restored = module('src/features/mdPresentation/bushItPageStore.ts', deps);
     assert.equal(restored.getBushItPages().pages.find(item => item.id === first).source, '# Unnamed draft');
     assert.equal(restored.getBushItPages().selectedId, second);
+    assert.equal(restored.prepareCreationSession(scope), draftId, 'unsent input remains attached to its draft across restarts');
+    restored.setCreationSession('D:/new-task', draftId);
+    assert.equal(restored.getBushItPages().sessions['D:/new-task'], draftId);
+    assert.equal(restored.getBushItPages().sessionDrafts[scope], undefined);
+    restored.flushBushItPages();
   } finally { pages.flushBushItPages(); globalThis.localStorage = oldStorage; globalThis.window = oldWindow; }
 });
 

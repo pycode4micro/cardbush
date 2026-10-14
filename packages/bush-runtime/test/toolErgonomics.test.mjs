@@ -131,6 +131,27 @@ test('plan patches are atomic, queryable and revision checked; omitted nodes sur
   assert.equal(completed.plan.active, false);
 });
 
+test('plan wait kinds survive replace and append, change with the dependency, and clear on resume', () => {
+  const store = new CoordinationStore(), registry = new ToolRegistry(); registerCoordinationTools(registry, store);
+  const tool = registry.resolve('update_task_plan');
+  const run = input => tool.execute({ sessionId: 's', input: tool.decodeInput(input) });
+  const created = run({ nodes: [{ step: 'render', status: 'waiting', waitingFor: 'Approve render', waitingKind: 'user' }], active: true, explanation: '' });
+  const id = created.plan.nodes[0].id;
+  assert.equal(created.plan.nodes[0].waitingKind, 'user');
+  const background = run({ action: 'patch', expected_revision: 1, updates: [{ id, waitingFor: 'Render job', waitingKind: 'background' }] });
+  assert.equal(background.plan.nodes[0].waitingKind, 'background');
+  const unchanged = run({ action: 'patch', expected_revision: 2, updates: [{ id, waitingFor: 'Render job' }] });
+  assert.equal(unchanged.plan.nodes[0].waitingKind, 'background', 'repeating the same dependency retains its classification');
+  const changed = run({ action: 'patch', expected_revision: 3, updates: [{ id, waitingFor: 'Another dependency' }] });
+  assert.equal(changed.plan.nodes[0].waitingKind, undefined, 'changed reasons must not inherit an old classification');
+  assert.throws(() => run({ action: 'patch', expected_revision: 4, updates: [{ id, waitingKind: 'invalid' }] }));
+  assert.deepEqual(run({ action: 'get' }), changed, 'invalid classifications do not mutate the plan');
+  const appended = run({ action: 'patch', expected_revision: 4, append_nodes: [{ step: 'verify', status: 'waiting', waitingFor: 'Rendered output', waitingKind: 'dependency' }] });
+  assert.equal(appended.plan.nodes[1].waitingKind, 'dependency');
+  const finished = run({ action: 'patch', expected_revision: 5, updates: appended.plan.nodes.map(node => ({ id: node.id, status: 'completed' })), active: false });
+  assert.ok(finished.plan.nodes.every(node => node.waitingFor === undefined && node.waitingKind === undefined));
+});
+
 test('MCP batch loads keep complete schemas, partial errors and current-scope admission', async () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry);
   for (const name of ['one', 'two', 'large', 'large2']) registry.register({ definition: { name: `mcp__test__${name}`, description: name.startsWith('large') ? 'x'.repeat(60000) : name,

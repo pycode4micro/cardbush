@@ -84,7 +84,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
       onError={() => setFailedMedia(mediaKey)}
       onClick={() => openInspector(path, memo.file.name)}
       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}
-      onContextMenu={event => openFileContextMenu(event, path, { image: true, language })} />
+      onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : media && isVideoPath(path) ? <InlineVideo src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : media && isAudioPath(path) ? <InlineAudio src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : <LocalFileReferenceLink path={path} knownFileName={memo.file.name}>{label}</LocalFileReferenceLink>}

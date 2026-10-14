@@ -14,7 +14,15 @@ The registry remains the authoritative capability catalog. Provider definitions 
 | Filter, transform or chain tool results | `run_tools` |
 | Load configuration parameters | `get_tool_schema` |
 
-`subagent` and `team` expose common run/query parameters by default. Load their complete schemas before configuring employees or workflows. Definitions shrink again when the full schema receipt leaves the visible context. The legacy `parallel_tools`, `manage_tool_calls`, `await_subagents` and `solution_selection` interfaces remain callable for compatibility; their replacements are presented by default, and `get_tool_schema` can reveal them explicitly. The authoritative request scope is never broadened by loading a schema.
+`subagent` and `team` expose common run/query parameters by default. Plugin roles (`agent_type`) remain directly usable. When `tasks` is available, Team exposes `list/get/run/resume`; load its full schema for editing definitions or reading selected node outputs with `wait.node_ids`. Definitions shrink again when the full schema receipt leaves the visible context. The legacy `parallel_tools`, `manage_tool_calls`, `manage_plugin_agents`, `await_subagents` and `solution_selection` interfaces remain callable for compatibility; their replacements are presented by default, and `get_tool_schema` can reveal them explicitly. A scoped catalog without the replacement or schema loader retains the legacy interface. The authoritative request scope is never broadened by loading a schema.
+
+The default catalog stays stable rather than guessing a tool subset from each user message. Small low-frequency tools and `update_task_plan` stay available. This adds no built-in tool search. Empty installed Command catalogs hide `list_plugin_commands` and `run_plugin_command` in provider presentation only; Skills remain available. Current installation state is refreshed between model rounds, including after restart. Unknown state does not imply an empty catalog. Native handlers and request scopes remain intact for saved calls, explicit commands and hooks. Child execution policy stays in admission, preserving a fork's shared tool prefix.
+
+## Definition diagnostics
+
+Each `cache_chain_observed` event includes `payload.toolDefinitions` for the actual projected tools sent in that model request. It records counts, serialized JSON character sizes, top-level description and input-schema character sizes, built-in counts/sizes excluding MCP/native extensions, and the five largest definitions by name and size. No descriptions, schemas or user content are copied into diagnostics, and diagnostics are not injected into model messages.
+
+`estimatedTokens` uses `runtime-tool-json-chars-v1` (JSON characters divided by four, rounded up; zero for no tools). This is a local comparison estimate, not provider token usage or billing. Character counts measure Runtime definitions, including UI title fields; provider wire formatting may differ. Use the existing request-usage events for provider-reported totals. Evaluate savings together with extra model requests and task outcomes, not tool count alone.
 
 ## Tasks and questions
 
@@ -25,6 +33,8 @@ Start receipts retain their existing handles. Team and asynchronous tools also p
 Waits default to 1 second, allow snapshots at 0, and cannot exceed 30 seconds. They wake on any/all completion or user guidance. Wait cancellation and timeout leave executors running. `cancel_observation` removes only a completion subscription; terminal status continues to come from the process. `stop` uses the executor's cancellation path, including ordinary terminal-stop permissions. Unsupported controls are explicit, including remote children whose bridge has no stop capability.
 
 Questions use the existing persistent-in-turn UI broker. They return immediately and share task observation and automatic result delivery. Only an actual selected answer resolves a dependency; dismissal or turn cancellation grants no approval. One question may be pending per conversation. Question text allows 500 Unicode characters, suggested answers 120 each.
+
+Plan nodes keep `status=waiting` with a concrete `waitingFor` and a `waitingKind`: `user` for confirmation/input, `background` for an already-started task, or `dependency` for a prerequisite step. The terminal and committed turn retain this classification for streaming, recovery and history. Only user waits trigger attention notifications; passive waits use a neutral status. Older unclassified waits remain readable as generic waiting, without inferring user action from prose. Patches clear wait fields on resume/completion; changing the reason without a category clears the old category. Multiple waits prioritize explicit user input, and a pending interactive question cannot be hidden by a passive plan state. Plan updates still do not force another model response.
 
 ## Scheduling and recovery
 
@@ -38,6 +48,14 @@ Execution records and error projections carry `execution` facts:
 - `recovery`: none, retry, correct input, inspect existing work, or do not retry.
 
 Delegating calls retain nested effect and permission evidence. Uncertain mutations require inspection regardless of an HTTP status. No generic automatic replay is added. Native results and full change evidence remain in the existing archive; failures present recovery information before long output.
+
+Executors can attach verified failure facts with the internal `withToolFailureFacts` helper. The coordinator reads an in-process association, never an error's text or serialized `details.execution`. Recorded changes and nested uncertainty take precedence. A patch rejected during preflight reports `effects=none`, `result=known`, `recovery=correct_input`; attempts that reached a write remain conservative, including after rollback. Cancellation still reports that observation stopped without proving the executor stopped.
+
+## MCP management observations
+
+The app's `list_mcp_servers` and `list_plugin_connections` tools default to a compact `view=summary`: configuration identities/revisions, connection health, errors, pending state and `toolCount`. They omit bulk tool-name arrays and plugin editing settings. `serverId` filters one exact service across configuration, connections and Runtime state; `matched=false` means it was absent from that observation, not that an unavailable Runtime was checked successfully. Disabled saved entries remain visible even without a live service. Runtime errors and `runtime=null` are preserved.
+
+Use `detail=true`, preferably with `serverId` (or `pluginId` for plugin connections), for complete tool names and the existing credential-safe connection settings. Global application progress/revisions remain global; service `updateState` describes the selected service. Summary projections do not claim to be the full native MCP snapshot protocol. UI, host observations, execution permissions and connection lifecycle use their existing full data; only the model-facing read-tool results are projected.
 
 ## Multi-file patch
 
@@ -56,4 +74,4 @@ Scripts start as turn-owned background tasks, so awaiting a tool inside the scri
 
 Budgets: 64,000 code characters, 32 calls, 8 calls in flight, 32 MiB guest memory, 1 second total guest CPU with 250 ms slices, 5 minutes wall time, and 2 MiB final serialized data. Unawaited tool operations are drained before successful completion. Failure or cancellation may leave completed effects; review their existing records before rerunning. Hooks can stop the parent turn even when a nested call completes after the initial script handle was returned.
 
-Regression coverage is in `packages/bush-runtime/test/unifiedToolSystem.test.mjs`, with existing task, journal, permissions, Team, workspace, MCP and model-loop tests retained.
+Regression coverage is in `packages/bush-runtime/test/unifiedToolSystem.test.mjs` and `builtinToolDisclosure.test.mjs`, with existing task, journal, permissions, Team, workspace, MCP and model-loop tests retained.

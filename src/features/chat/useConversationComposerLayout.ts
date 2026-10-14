@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
 import { useComponents } from '../components/componentStore';
-import { welcomeComposerFlow } from '../components/componentModel';
+import { welcomeComposerFlow, welcomeInputStyle } from '../components/componentModel';
 import { composerHorizontalBounds, composerVerticalBounds } from '../components/composerLayoutGeometry';
 import { welcomeHeightScale } from '../components/welcomeViewportGeometry';
 
@@ -22,7 +22,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
   const configKey = JSON.stringify([flow, placement?.y, placement?.width, placement?.composerDock, referenceHeight]);
   const anchors = useRef(conversationAnchors);
   const pending = useRef<{ scope: string; configKey: string; anchor: Anchor } | null>(null), clearance = useRef<Clearance | null>(null);
-  const departure = useRef<{ scope: string; configKey: string; y: number } | null>(null);
+  const departure = useRef<{ scope: string; configKey: string; y: number; docked?: boolean } | null>(null);
   const motion = useRef<Animation | null>(null);
   const pendingBottom = useRef<{ scope: string; count: number } | null>(null);
   const geometry = useRef({ y: 0, height: 0 });
@@ -50,7 +50,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     const scale = bounds.height / body.clientHeight || 1;
     const anchor: Anchor = { y: (rect.top - bounds.top) / scale, viewportHeight: body.clientHeight,
       docked: input.closest<HTMLElement>('.welcome-slot-input')?.dataset.composerDocked === 'true' };
-    if (flow.afterSend === 'bottom') { departure.current = { scope, configKey, y: anchor.y }; return; }
+    if (flow.afterSend === 'bottom') { departure.current = { scope, configKey, y: anchor.y, docked: anchor.docked }; return; }
     pending.current = { scope, configKey, anchor };
     anchors.current.set(scope, { configKey, anchor });
   }, [embedded, flow.afterSend, flow.output, welcome, bodyRef, scrollerRef, scope, configKey]);
@@ -61,7 +61,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     departure.current = null;
     // New conversations can acquire their persisted ID during the send. The
     // one pending departure is consumed by the first mounted conversation dock.
-    if (start.configKey !== configKey || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (start.docked || start.configKey !== configKey || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const input = dock.querySelector<HTMLElement>('.composer-stack');
     if (!input) return;
     const rect = body.getBoundingClientRect(), scale = rect.height / body.clientHeight || 1;
@@ -69,7 +69,9 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     const { minimumTravel } = composerVerticalBounds(body.clientHeight, input.offsetHeight, start.y, 'bottom');
     if (distance < minimumTravel - 1) return;
     motion.current?.cancel();
-    motion.current = dock.animate([{ transform: `translateY(${-distance}px)` }, { transform: 'translateY(0)' }],
+    // The dock's full-width backdrop must stay at its final position. Moving
+    // it across the transcript briefly paints over messages during admission.
+    motion.current = input.animate([{ transform: `translateY(${-distance}px)` }, { transform: 'translateY(0)' }],
       { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' });
   }, [bodyRef, dockRef, configKey]);
 
@@ -220,5 +222,5 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     body.addEventListener('wheel', wheel, { passive: false });
     return () => { observer.disconnect(); scroller.removeEventListener('scroll', position); body.removeEventListener('wheel', wheel); if (frame != null) cancelAnimationFrame(frame); };
   }, [anchored, embedded, welcome, loading, scope, refresh, position, bodyRef, dockRef, scrollerRef, interaction]);
-  return { anchored, flow, capture };
+  return { anchored, flow, capture, inputStyle: welcomeInputStyle(collection), customWelcome: Boolean(collection.welcomeLayout) };
 }

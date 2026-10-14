@@ -17,8 +17,16 @@ type ReflowOptions = {
 function captureReadingAnchor(scroller: HTMLElement): ReadingAnchor | null {
   const viewport = scroller.getBoundingClientRect();
   const y = viewport.top + 20;
-  const item = Array.from(scroller.querySelectorAll<HTMLElement>('.message-list-item'))
-    .find(node => node.getBoundingClientRect().bottom > y);
+  const items = scroller.querySelectorAll<HTMLElement>('.message-list-item');
+  // Transcript rows are in vertical order. Find the first visible row without
+  // forcing a geometry read for every earlier message on each scroll frame.
+  let low = 0, high = items.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (items[middle].getBoundingClientRect().bottom <= y) low = middle + 1;
+    else high = middle;
+  }
+  const item = items[low];
   if (!item) return null;
   const element = Array.from(item.querySelectorAll<HTMLElement>(
     'p, li, h1, h2, h3, h4, h5, h6, pre, table, img, video, .user-bubble, .tool-execution-row, .assistant-completed-summary',

@@ -4,6 +4,9 @@ import { Check, ChevronDown } from 'lucide-react';
 export interface SettingsDropdownOption {
   value: string;
   label: ReactNode;
+  selectedLabel?: ReactNode;
+  description?: ReactNode;
+  group?: string;
   searchText?: string;
   icon?: ReactNode;
   disabled?: boolean;
@@ -29,6 +32,11 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
   const [activeIndex, setActiveIndex] = useState(Math.max(0, selectedIndex));
   const search = useRef({ text: '', time: 0 });
   const enabledIndices = options.flatMap((option, index) => option.disabled ? [] : [index]);
+  const groups: { label?: string; items: { option: SettingsDropdownOption; index: number }[] }[] = [];
+  options.forEach((option, index) => {
+    if (!groups.length || groups.at(-1)!.label !== option.group) groups.push({ label: option.group, items: [] });
+    groups.at(-1)!.items.push({ option, index });
+  });
 
   const close = (restoreFocus = false) => {
     menu.current?.hidePopover();
@@ -120,16 +128,18 @@ export function SettingsDropdown({ id, name, label, describedBy, value, options,
           if (index >= 0) { event.preventDefault(); show(index); }
         }
       }}>
-      {options[selectedIndex]?.icon}<span>{options[selectedIndex]?.label ?? value}</span><ChevronDown size={14} aria-hidden="true" />
+      {options[selectedIndex]?.icon}<span>{options[selectedIndex]?.selectedLabel ?? options[selectedIndex]?.label ?? value}</span><ChevronDown size={14} aria-hidden="true" />
     </button>
     <div ref={menu} id={menuId} popover="auto" className="settings-dropdown-popover" role="listbox" aria-label={label}>
-      {options.map((option, index) => <button key={option.value} value={option.value} id={`${menuId}-${index}`} data-index={index}
+      {groups.map((group, groupIndex) => <div key={groupIndex} role={group.label ? 'group' : 'presentation'} aria-label={group.label}>
+      {group.label && <div className="settings-dropdown-group-label" aria-hidden="true">{group.label}</div>}
+      {group.items.map(({ option, index }) => <button key={option.value} value={option.value} id={`${menuId}-${index}`} data-index={index}
         className={`settings-dropdown-option${index === activeIndex ? ' highlighted' : ''}`} type="button" role="option"
         aria-selected={value === option.value} disabled={option.disabled} tabIndex={-1}
         onPointerMove={() => !option.disabled && setActiveIndex(index)} onPointerDown={event => event.preventDefault()}
         onClick={() => choose(index)}>
-        {option.icon}<span>{option.label}</span>{value === option.value && <Check size={14} aria-hidden="true" />}
-      </button>)}
+        {option.icon}<span>{option.label}{option.description && <small className="settings-dropdown-description">{option.description}</small>}</span>{value === option.value && <Check size={14} aria-hidden="true" />}
+      </button>)}</div>)}
     </div>
   </div>;
 }

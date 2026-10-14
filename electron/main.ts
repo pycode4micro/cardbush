@@ -3332,8 +3332,6 @@ ipcMain.handle('browser:settings-update', async (event, input: { startPage: stri
 ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   guestWebContentsId?: number;
   target?: string;
-  x?: number;
-  y?: number;
   mediaType?: string;
   srcURL?: string;
   linkURL?: string;
@@ -3353,8 +3351,6 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   const selectionText = String(payload?.selectionText ?? '');
   const srcURL = String(payload?.srcURL ?? '').trim();
   const linkURL = String(payload?.linkURL ?? '').trim();
-  const x = Number.isFinite(payload?.x) ? Number(payload.x) : 0;
-  const y = Number.isFinite(payload?.y) ? Number(payload.y) : 0;
   const template: MenuItemConstructorOptions[] = [];
 
   if (selectionText) {
@@ -3366,15 +3362,9 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
       { label: '粘贴', click: () => guest.paste() },
     );
   }
-  if (payload?.mediaType === 'image') {
+  if (payload?.mediaType === 'image' && srcURL) {
     if (template.length > 0) template.push({ type: 'separator' });
-    template.push({
-      label: '复制图片',
-      click: () => guest.copyImageAt(x, y),
-    });
-    if (srcURL) {
-      template.push({ label: '复制图片地址', click: () => clipboard.writeText(srcURL) });
-    }
+    template.push({ label: '复制图片地址', click: () => clipboard.writeText(srcURL) });
   }
   if (linkURL) {
     if (template.length > 0) template.push({ type: 'separator' });
@@ -3527,11 +3517,10 @@ ipcMain.handle('shell:file-context-menu', async (event, targetPath: string, opti
     return 'File menu is only available from the main CardBush window.';
   }
   const normalizedPath = /^cardbush-file:/i.test(targetPath) ? localPathFromProtocolUrl(targetPath) : normalizeShellPath(targetPath);
-  const image = options.image && Number.isFinite(options.image.x) && Number.isFinite(options.image.y) ? options.image : undefined;
-  if ((!normalizedPath && !image) || (normalizedPath && !path.isAbsolute(normalizedPath))) {
+  if (!normalizedPath || !path.isAbsolute(normalizedPath)) {
     return 'Invalid path.';
   }
-  const stats = normalizedPath ? await fs.promises.stat(normalizedPath).catch(() => null) : null;
+  const stats = await fs.promises.stat(normalizedPath).catch(() => null);
   if (sourceWindow.isDestroyed() || event.sender.isDestroyed()) return '';
   const menu = Menu.buildFromTemplate(buildFileContextMenu({ path: normalizedPath, exists: Boolean(stats), isFile: stats?.isFile() === true, language: options.language }, {
     open: () => openUiPreview(normalizedPath),
@@ -3539,7 +3528,6 @@ ipcMain.handle('shell:file-context-menu', async (event, targetPath: string, opti
     reveal: () => shell.showItemInFolder(normalizedPath),
     copyPath: () => clipboard.writeText(normalizedPath),
     copyFile: () => copyLocalFileToClipboard(normalizedPath),
-    ...(image ? { copyImage: () => { if (!event.sender.isDestroyed()) event.sender.copyImageAt(Math.round(image.x), Math.round(image.y)); } } : {}),
     onError: error => { void showWindowError(sourceWindow, options.language === 'en' ? 'File operation failed' : '文件操作失败', error instanceof Error ? error.message : String(error)); },
   }));
   showWindowPopupMenu(sourceWindow, menu);

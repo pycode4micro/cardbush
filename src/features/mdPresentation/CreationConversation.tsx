@@ -2,7 +2,8 @@ import type { UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import * as api from '../../backend/api';
-import { creationConversationBackend } from './creationConversationBackend';
+import { creationConversationBackend, type CreationConversationPreparation } from './creationConversationBackend';
+import { conversationProjectDir, conversationWorkspaceRoot } from '../conversationWorkspace';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
 import type { BrowserPromptReference } from '../../shared/promptReferences';
 import { conversationRuntime } from '../../backend/conversationRuntime';
@@ -23,19 +24,27 @@ export type CreationInspectorContext = {
   refresh: () => Promise<void>; revert: (report: ConversationChangeReport) => Promise<void>; appendDraft: (text: string) => void;
   send: (text: UserPromptInput) => Promise<boolean>;
 };
-export type CreationChatOptions = { theme?: ThemeMode; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onConfigureModels?: () => void; composerPortalTarget?: HTMLElement | null; externalComposerControls?: boolean; onOpenComposer?: () => void; browserTabs?: BrowserPromptReference[]; onOpenChangeReview?: (sessionId: string, path?: string, turnId?: string) => void; onInspectorContext?: (context: CreationInspectorContext | null) => void };
+export type CreationChatOptions = { theme?: ThemeMode; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onConfigureModels?: () => void; composerPortalTarget?: HTMLElement | null; externalComposerControls?: boolean; onOpenComposer?: () => void; browserTabs?: BrowserPromptReference[]; onOpenChangeReview?: (sessionId: string, path?: string, turnId?: string) => void; onInspectorContext?: (context: CreationInspectorContext | null) => void; onConversationChanged?: () => void };
 const none = () => {}, empty = new Set<string>(), emptyStates = new Map<string, boolean>();
 const emptyMessages: ChatMessage[] = [];
 
 /** The normal conversation stack owns models, permissions, tools, recovery and history. */
-export function CreationConversation({ sessionId, root, language, visible, beforeSend, contextLabel,
-  theme = 'dark', disabledSkillNames = empty, onToggleSkill = none, onConfigureModels = none, composerPortalTarget, browserTabs, onOpenChangeReview, onInspectorContext, onOpen }: CreationChatOptions & {
+export function CreationConversation({ sessionId, root, language, visible, beforeSend, contextLabel, preparation, scope = 'creation',
+  theme = 'dark', disabledSkillNames = empty, onToggleSkill = none, onConfigureModels = none, composerPortalTarget, browserTabs, onOpenChangeReview, onInspectorContext, onConversationChanged, onOpen }: CreationChatOptions & {
   sessionId: string; root: string; language: AppLanguage; visible: boolean;
+  scope?: 'creation' | 'team';
+  preparation?: CreationConversationPreparation;
   beforeSend: (text: UserPromptInput) => Promise<UserPromptInput>; contextLabel: string; onOpen?: () => void;
 }) {
   const [configuration, setConfiguration] = useState<{ models: ManagedModelConfig[]; defaultModelId: string }>();
   const [error, setError] = useState(''), [pending, setPending] = useState(false);
-  const backend = useMemo(() => creationConversationBackend(sessionId), [sessionId]);
+  const preparationRef = useRef(preparation); preparationRef.current = preparation;
+  const [initialPreparedConversation] = useState<ConversationSummary | undefined>(() => preparation ? {
+    id: sessionId, title: preparation.title, projectDir: preparation.projectDir, preview: '', updatedAt: new Date().toISOString(), metadata: { ui_draft: true },
+  } : undefined);
+  const backend = useMemo(() => creationConversationBackend(sessionId, scope, preparation ? { ...preparation,
+    onCreated: conversation => preparationRef.current?.onCreated?.(conversation),
+  } : undefined), [sessionId, scope]);
   useEffect(() => {
     let alive = true;
     const load = () => void api.fetchModelConfigs().then(value => { if (alive) setConfiguration(value); }).catch(error => { if (alive) setError(String(error.message)); });
@@ -44,21 +53,22 @@ export function CreationConversation({ sessionId, root, language, visible, befor
   }, []);
   const models = useMemo(() => configuration?.models ?? [], [configuration]);
   const chat = useCardbushChat(models, models, { runtimeReady: true, modelsReady: !!configuration, defaultModelId: configuration?.defaultModelId,
-    activeConversationId: sessionId, viewActive: visible || !!composerPortalTarget, language, disabledSkillNames, interactiveRequestsAvailable: true,
+    activeConversationId: sessionId, initialPreparedConversation, viewActive: visible || !!composerPortalTarget, language, disabledSkillNames, interactiveRequestsAvailable: true,
     reasoningTraceVisible: true, contextWindowUsageAvailable: true, workspaceChangesAvailable: true, onModelReasoningChange: api.saveModelReasoning }, backend);
   const messages = chat.activeMessages.length ? chat.activeMessages : emptyMessages;
-  const [draft, setDraft] = useConversationViewState(conversationViewKey('creation', sessionId, 'draft'), () => '', Boolean);
+  const [draft, setDraft] = useConversationViewState(conversationViewKey(scope, sessionId, 'draft'), () => '', Boolean);
   const submitting = useRef(false);
+  const changedRef = useRef(onConversationChanged); changedRef.current = onConversationChanged;
   const send = async (text: UserPromptInput): Promise<boolean> => {
-    if (submitting.current) return false;
+    if (submitting.current || !(typeof text === 'string' ? text : text.text).trim()) return false;
     submitting.current = true; setPending(true); setError('');
     try {
       const request = await beforeSend(text);
       return await new Promise<boolean>(resolve => {
         let settled = false;
-        const finish = (accepted: boolean) => { if (!settled) { settled = true; resolve(accepted); } };
+        const finish = (accepted: boolean) => { if (!settled) { settled = true; if (accepted) changedRef.current?.(); resolve(accepted); } };
         void chat.sendMessage(request, undefined, undefined, undefined, undefined, undefined, () => finish(true))
-          .then(() => finish(false), error => { setError(String(error.message)); finish(false); });
+          .then(() => { changedRef.current?.(); finish(false); }, error => { changedRef.current?.(); setError(String(error.message)); finish(false); });
       });
     } catch (error) { setError(String((error as Error).message)); return false; }
     finally { submitting.current = false; setPending(false); }
@@ -68,6 +78,7 @@ export function CreationConversation({ sessionId, root, language, visible, befor
   const sendFromInspector = useCallback((text: UserPromptInput) => sendRef.current(text), []);
   const [review, setReview] = useState<{ path: string; turnId?: string }>(), [reverting, setReverting] = useState('');
   const busy = chat.sending || chat.stopping;
+  const workspaceRoot = conversationWorkspaceRoot(chat.activeConversation) || root;
   const refresh = useCallback(async () => { await chat.refreshActiveSession({ silent: true }); }, [chat.refreshActiveSession]);
   const revert = useCallback(async (report: ConversationChangeReport) => {
     if (!report.turnId || busy || reverting) return;
@@ -86,19 +97,19 @@ export function CreationConversation({ sessionId, root, language, visible, befor
   }, [setDraft]);
   useEffect(() => {
     if (!chat.activeConversation) return;
-    onInspectorContext?.({ sessionId, root, conversation: chat.activeConversation, messages, reports,
+    onInspectorContext?.({ sessionId, root: workspaceRoot, conversation: chat.activeConversation, messages, reports,
       busy: busy || !!reverting, error: error || chat.error, selectedModel: chat.selectedModel, activeTurnId: chat.activeTurnId, reasoningLevel: chat.reasoningLevel,
       refresh, revert, appendDraft, send: sendFromInspector });
-  }, [onInspectorContext, sessionId, root, chat.activeConversation, messages, reports, busy, error, chat.error, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft, sendFromInspector]);
+  }, [onInspectorContext, sessionId, workspaceRoot, chat.activeConversation, messages, reports, busy, error, chat.error, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft, sendFromInspector]);
   useEffect(() => () => onInspectorContext?.(null), [onInspectorContext]);
   const model = models.find(item => item.id === chat.selectedModel), zh = language === 'zh';
-  return <ConversationHostContext.Provider value={undefined}><ConversationMessageTargetContext.Provider value={`creation:${sessionId}`}>
+  return <ConversationHostContext.Provider value={undefined}><ConversationMessageTargetContext.Provider value={`${scope}:${sessionId}`}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || !!reverting }}>
     <section className="creation-conversation" hidden aria-label={contextLabel || (zh ? '创作对话' : 'Writing conversation')}>
       <ComposerPortalContext.Provider value={composerPortalTarget ?? null}>
-      <ChatPanel embedded progressive browserTabs={browserTabs} welcomeEnabled={false} workSummaryAvailable={false} language={language} theme={theme} title={zh ? '创作' : 'Create'}
+      <ChatPanel embedded progressive browserTabs={browserTabs} welcomeEnabled={false} workSummaryAvailable={false} language={language} theme={theme} title={scope === 'team' ? (zh ? '协作流程' : 'Workflows') : (zh ? '创作' : 'Create')}
         sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => setReview({ path: '' })}
-        activeConversationId={sessionId} activeProjectDir={root} projectPathAliases={[]} selectedProjectDir={root} availableProjects={[]} onWelcomeProjectChange={async () => {}}
+        activeConversationId={sessionId} activeProjectDir={workspaceRoot || undefined} projectPathAliases={[]} selectedProjectDir={conversationProjectDir(chat.activeConversation)} availableProjects={[]} onWelcomeProjectChange={async () => {}}
         messages={chat.activeMessages} changeReports={reports} activeTurnId={chat.activeTurnId} loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
         turnHistoryAvailable subagentObservabilityAvailable={false} thinkingVisible guidanceDeliveryMode="queue"
         activeGoal={chat.activeGoal} goalAvailable={chat.goalAvailable} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting}

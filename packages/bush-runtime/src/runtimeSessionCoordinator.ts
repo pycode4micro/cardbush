@@ -1,4 +1,5 @@
 import {
+  taskPlanWaitingSchema,
   BUSH_MODEL_REQUEST_PROTOCOL,
   modelRequestSchema,
   runtimeSessionTurnRequestSchema,
@@ -302,6 +303,7 @@ export class RuntimeSessionCoordinator {
           message: item.message,
           ...(item.metadata ? { metadata: item.metadata } : {}),
         }));
+        const planWaiting = taskPlanWaitingSchema.safeParse(payload.details.planWaiting);
         this.#store.commitTurn(request.sessionId, {
           turnId: request.turnId,
           turnSequence: checkpoint.turnSequence,
@@ -309,6 +311,7 @@ export class RuntimeSessionCoordinator {
           completedAt: this.#now(),
           status: payload.status,
           reason: payload.reason,
+          ...(payload.reason === 'task_plan_waiting' && planWaiting.success ? { planWaiting: planWaiting.data } : {}),
           messages: [...inputMessages, ...generated],
           usage,
           cacheChainState,

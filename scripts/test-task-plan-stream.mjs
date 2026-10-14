@@ -34,6 +34,7 @@ const api = await loadChatTranscript({
   source: [
     `export { streamRuntimeTurnEvents } from ${JSON.stringify(path.resolve('src/backend/runtimeChat.ts'))};`,
     `export { applyTaskPlanUpdate } from ${JSON.stringify(path.resolve('src/features/chatMessages/transcript/liveMessageUpdates.ts'))};`,
+    `export { fetchSessionMessages } from ${JSON.stringify(path.resolve('src/backend/api.ts'))};`,
   ].join('\n'),
   globals: { console, AbortController, DOMException, TextEncoder, TextDecoder, structuredClone, setTimeout, clearTimeout,
     process: { env: { NODE_ENV: 'test' } }, window: { setTimeout, clearTimeout, cardbushDesktop: { runtime: bridge } } },
@@ -89,6 +90,32 @@ test('a successful update renders the exact plan in its receipt, even if session
   assert.equal(result.updates.length, 1);
   assert.equal(result.message.taskPlan.nodes.length, 4);
   assert.equal(result.message.taskPlan.explanation, receipt.plan.explanation);
+});
+
+test('all wait categories survive tool receipts and transcript projection', async () => {
+  const receipt = plan(6, 4, true, 'Waiting states');
+  receipt.plan.nodes = ['user', 'background', 'dependency', undefined].map((waitingKind, index) => ({
+    id: `wait-${index}`, step: `step-${index}`, status: 'waiting', waitingFor: `reason-${index}`,
+    ...(waitingKind ? { waitingKind } : {}),
+  }));
+  const result = await replay([{ id: 'waiting', result: receipt }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.message.taskPlan.nodes)), receipt.plan.nodes);
+});
+
+test('cold history and recovery keep the committed wait cause without replaying events', async () => {
+  for (const kind of ['user', 'background', 'dependency']) {
+    const planWaiting = { kind, reason: 'Exact dependency' };
+    const runtime = { dispose() {}, client: {
+      getConversationSession: async () => ({ sessionId, revision: 1, metadata: {}, supersededMessageIds: [], createdAt: now, updatedAt: now,
+        turns: [{ turnId, turnSequence: 1, createdAt: now, completedAt: now, status: 'completed', reason: 'task_plan_waiting', planWaiting,
+          messages: [{ messageId: 'reply', turnId, turnSequence: 1, messageIndex: 0, createdAt: now, message: { role: 'assistant', content: 'Prepared.' } }] }] }),
+      getCapabilities: async () => ({ supportedCommands: [] }),
+      listTurnToolExecutionSummaries: async () => [], listTurnContextCompactions: async () => [],
+    } };
+    const result = await api.fetchSessionMessages(sessionId, {}, runtime);
+    assert.deepEqual(JSON.parse(JSON.stringify(result.latestTurn.stopDetails.planWaiting)), planWaiting);
+    assert.deepEqual(JSON.parse(JSON.stringify(result.messages.at(-1).metadata.stop_details.planWaiting)), planWaiting);
+  }
 });
 
 test('slow older receipts cannot overwrite a newer revision', async () => {

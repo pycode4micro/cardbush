@@ -22,10 +22,19 @@ function normalizedWorkspacePath(value: unknown) {
     .toLowerCase();
 }
 
+function legacyCreationWorkspace(conversation?: ConversationSummary | null) {
+  const metadata = conversation?.metadata;
+  if (metadata?.creation_workspace !== true && metadata?.team_workspace !== true) return '';
+  return [conversation?.projectDir, metadata.projectDir, metadata.project_dir, metadata.workspace_dir]
+    .find((value): value is string => typeof value === 'string' && /(?:^|[\\/])task-workspaces[\\/][a-f0-9]{24}[\\/]*$/i.test(value)) || '';
+}
+
 function taskWorkspaceRoots(conversation?: ConversationSummary | null) {
   if (!conversation) return [];
   const metadata = conversation.metadata ?? {};
+  const legacy = legacyCreationWorkspace(conversation);
   return [
+    legacy,
     conversation.workspaceContext?.taskDir,
     metadata.task_dir,
     metadata.taskDir,
@@ -39,7 +48,7 @@ function taskWorkspaceRoots(conversation?: ConversationSummary | null) {
       const normalized = normalizedWorkspacePath(value);
       if (!normalized) return false;
       return (
-        value === conversation.workspaceContext?.taskDir ||
+        value === legacy || value === conversation.workspaceContext?.taskDir ||
         value === metadata.task_dir ||
         value === metadata.taskDir
       );
@@ -164,6 +173,7 @@ export function conversationWorkspaceRoot(conversation?: ConversationSummary | n
     conversation?.workspaceContext?.executionRoot?.trim() ||
     conversation?.workspaceContext?.taskDir?.trim() ||
     metadataText(conversation, 'task_dir', 'taskDir', 'session_workspace_dir', 'sessionWorkspaceDir') ||
+    legacyCreationWorkspace(conversation) ||
     ''
   );
 }

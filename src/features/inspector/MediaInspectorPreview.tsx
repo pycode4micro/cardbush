@@ -63,7 +63,7 @@ export function MediaInspectorPreview({ kind, source: rawSource, path, name: dis
   const name = displayName || basename(path);
   return (
     <div className="inspector-media-preview" ref={containerRef}
-      onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { image: kind === 'image', language })}>
+      onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { language })}>
       {!source ? <p role="status">{language === 'zh' ? '媒体地址不可用' : 'Media address unavailable'}</p> : kind === 'image' ? (
         <button type="button" className="inspector-image-open" aria-label={language === 'zh' ? `查看 ${name}` : `View ${name}`}
           onClick={event => {

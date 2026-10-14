@@ -350,7 +350,7 @@ export function Composer({
   shadowAgentName,
   onToggleShadow,
   contextWindow,
-  submissionPending = false,
+  submissionPending: externalSubmissionPending = false,
   inputReadOnly = false,
   portalCommands = false,
   retainUntilAccepted = false,
@@ -414,7 +414,8 @@ export function Composer({
   const presentation = useContext(ComposerPresentationContext);
   const components = useComponents();
   const simple = (presentation?.style ?? welcomeInputStyle(components)) === 'simple';
-  const initializePermissions = Boolean(presentation && !presentation.preview && !presentation.preservePermissions);
+  const inputOnly = Boolean(portalTarget) && (presentation?.portalInputOnly ?? true);
+  const initializePermissions = Boolean(presentation?.style && !presentation.preview && !presentation.preservePermissions);
   const simplePermissionInitialized = useRef(false);
   useEffect(() => {
     // Continuing a conversation changes presentation only, preserving its permissions.
@@ -432,6 +433,17 @@ export function Composer({
   const immediatePendingRef = useRef(false);
   const immediateHandlerRef = useRef<(fromQueue?: boolean) => Promise<void>>(async () => {});
   const runtimeReady = runtimeStartup.phase === 'ready';
+  const submissionRef = useRef<{ alreadyRunning: boolean } | null>(null);
+  const [startingSubmission, setStartingSubmission] = useState(false);
+  const submissionPending = externalSubmissionPending || startingSubmission;
+  // onSend may live for the whole turn. Admission ends as soon as the parent
+  // reports it running, so users can continue typing guidance while it works.
+  useLayoutEffect(() => {
+    if (sending && submissionRef.current && !submissionRef.current.alreadyRunning) {
+      submissionRef.current = null;
+      setStartingSubmission(false);
+    }
+  }, [sending]);
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
@@ -516,7 +528,7 @@ export function Composer({
   const goalDraft = composerGoalDraftPresentation(draft);
   const composerInputValue = goalDraft?.content ?? draft;
   const multilineInput = useComposerMultiline(composerSurfaceRef, composerInputValue,
-    voiceComposer.visible ? null : portalTarget ? 'input-only' : simple ? 'simple' : null);
+    voiceComposer.visible ? null : inputOnly ? 'input-only' : simple ? 'simple' : null);
   const hasContent =
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
@@ -532,7 +544,9 @@ export function Composer({
     onDraftChange(prediction.text);
     focusComposer(prediction.text.length);
   }
-  const sendButtonLabel = !runtimeReady
+  const sendButtonLabel = submissionPending
+    ? language === 'zh' ? '正在提交' : 'Submitting'
+    : !runtimeReady
     ? runtimeStartupFailed
       ? language === 'zh' ? 'Runtime 启动失败，点击重试' : 'Runtime failed to start. Click to retry'
       : language === 'zh' ? 'Runtime 正在准备' : 'Runtime is preparing'
@@ -597,7 +611,7 @@ export function Composer({
   ]);
 
   async function submit(immediate = false) {
-    if (submissionPending || currentAttachmentUploads() > 0) return;
+    if (submissionPending || submissionRef.current || inputReadOnly || currentAttachmentUploads() > 0) return;
     const styleCommand = styleAvailable ? detectComposerCommand(draft, draft.length) : null;
     if (styleCommand?.mode === 'style') {
       if (commandState?.mode === 'style' && commandItems.length) applyCommand(commandItems[Math.min(commandIndex, commandItems.length - 1)]);
@@ -628,31 +642,41 @@ export function Composer({
     const prompt = !draftTeam && selectedTeam
       ? withTeamReference(draft, { kind: 'team', id: selectedTeam.id, title: selectedTeam.name }).content : draft;
     const value = [...attachmentPaths, prompt.trimEnd()].filter(Boolean).join('\n');
-    const pastedIds = fileAttachments.flatMap(file => file.pastedText ? [file.pastedText.id] : []);
-    if (pastedIds.length) {
-      setAttachmentUploads(current => current + 1);
-      try {
-        if (!pastedTextApi) throw new Error('Text attachment storage is unavailable.');
-        // Retain before handing off: guidance can be queued and a lost network
-        // acknowledgement must not let cleanup break a successfully sent reference.
-        for (let offset = 0; offset < pastedIds.length; offset += 32) await pastedTextApi.retain(pastedIds.slice(offset, offset + 32));
-      } catch (error) {
-        showUiError(language === 'zh' ? '无法发送文本附件' : 'Unable to send text attachment', String(error));
+    const submission = { alreadyRunning: sending };
+    submissionRef.current = submission;
+    setStartingSubmission(true);
+    try {
+      const pastedIds = fileAttachments.flatMap(file => file.pastedText ? [file.pastedText.id] : []);
+      if (pastedIds.length) {
+        setAttachmentUploads(current => current + 1);
+        try {
+          if (!pastedTextApi) throw new Error('Text attachment storage is unavailable.');
+          // Retain before handing off: guidance can be queued and a lost network
+          // acknowledgement must not let cleanup break a successfully sent reference.
+          for (let offset = 0; offset < pastedIds.length; offset += 32) await pastedTextApi.retain(pastedIds.slice(offset, offset + 32));
+        } catch (error) {
+          showUiError(language === 'zh' ? '无法发送文本附件' : 'Unable to send text attachment', String(error));
+          return;
+        } finally { setAttachmentUploads(current => current - 1); }
+      }
+      const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
+      if (host || retainUntilAccepted) {
+        if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
+        if (currentSubmittedDraft() === draft) onDraftChange('');
+        setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
+        setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
         return;
-      } finally { setAttachmentUploads(current => current - 1); }
-    }
-    const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
-    if (host || retainUntilAccepted) {
-      if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
+      }
       if (currentSubmittedDraft() === draft) onDraftChange('');
       setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
-      return;
+      await onSend(value, immediate ? { immediate: true } : undefined);
+    } finally {
+      if (submissionRef.current === submission) {
+        submissionRef.current = null;
+        setStartingSubmission(false);
+      }
     }
-    if (currentSubmittedDraft() === draft) onDraftChange('');
-    setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
-    setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
-    await onSend(value, immediate ? { immediate: true } : undefined);
   }
 
   // Keyboard submission must never inherit the empty button's stop action.
@@ -1257,7 +1281,7 @@ export function Composer({
 
   const composer = (
     <div
-      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''} ${portalTarget ? 'input-only' : simple ? 'simple' : ''}`}
+      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''} ${inputOnly ? 'input-only' : simple ? 'simple' : ''}`}
       ref={composerStackRef}
       style={
         {
@@ -1495,7 +1519,7 @@ export function Composer({
           }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-            if (prediction && event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            if (prediction && (event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
               event.preventDefault();
               event.stopPropagation();
               if (!event.repeat) acceptPrediction();
@@ -1588,8 +1612,9 @@ export function Composer({
               onClick={(event) => toggleMenu('more', event)}
             />
             {prediction && <button type="button" id={predictionHintId} className="composer-prediction-accept"
+              aria-keyshortcuts="Tab Enter"
               aria-label={language === 'zh' ? '填入下一步预测，可编辑后发送' : 'Insert next-step prediction to edit before sending'}
-              onClick={acceptPrediction}><CornerDownLeft size={13}/>{language === 'zh' ? '回车填入' : 'Enter to insert'}</button>}
+              onClick={acceptPrediction}><CornerDownLeft size={13}/>{language === 'zh' ? 'Tab / 回车填入' : 'Tab / Enter to insert'}</button>}
             {shadowAvailable && onToggleShadow && (
               <ToolChip
                 icon={<ShadowCloneIcon size={15} />}
@@ -1648,8 +1673,8 @@ export function Composer({
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
-            {(hasContent || sending) && !presentation?.preview && <VoiceButton language={language} callOnly className="voice-call-entry" disabled={!runtimeReady || inputReadOnly || submissionPending} />}
-            {!sending && !hasContent && runtimeReady && !presentation?.preview ? <VoiceButton language={language} disabled={inputReadOnly || submissionPending || attachmentUploads > 0} /> : <button
+            {(hasContent || sending || submissionPending) && !presentation?.preview && <VoiceButton language={language} callOnly className="voice-call-entry" disabled={!runtimeReady || inputReadOnly || submissionPending} />}
+            {!sending && !submissionPending && !hasContent && runtimeReady && !presentation?.preview ? <VoiceButton language={language} disabled={inputReadOnly || attachmentUploads > 0} /> : <button
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={submissionPending || attachmentUploads > 0 || (!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
@@ -1658,7 +1683,7 @@ export function Composer({
               aria-keyshortcuts={hasContent ? keyboardShortcuts.aria('sendMessage') : undefined}
               onClick={() => void (runtimeReady && sending && !hasContent ? stopGeneration() : submit())}
             >
-              {!runtimeReady ? (
+              {submissionPending ? <LoaderCircle size={14} className="spin" /> : !runtimeReady ? (
                 runtimeStartupFailed
                   ? <RefreshCw size={14} />
                   : <LoaderCircle size={14} className="spin" />

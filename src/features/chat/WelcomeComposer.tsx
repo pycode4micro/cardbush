@@ -68,6 +68,7 @@ export function WelcomeComposer({
   onCancel,
   workspaceControl,
   submissionPending,
+  composer,
 }: {
   language: AppLanguage;
   fileDropTarget?: RefObject<HTMLElement | null>;
@@ -116,6 +117,7 @@ export function WelcomeComposer({
   onCancel: () => Promise<void>;
   workspaceControl?: ReactNode;
   submissionPending?: boolean;
+  composer?: ReactNode;
 }) {
   const welcomeRef = useRef<HTMLDivElement>(null);
   const collection = useComponents();
@@ -202,7 +204,7 @@ export function WelcomeComposer({
           disabled={sending}
           onSelect={onProjectChange}
         />}</div>
-        {welcomeComposer}
+        {composer === undefined ? welcomeComposer : composer}
       </>,
     }}/>
   );

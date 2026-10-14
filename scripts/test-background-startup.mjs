@@ -16,13 +16,13 @@ const compiled = ts.transpileModule([...helpers, effect.getText(source)].join('\
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const row = (id, title = id) => ({ id, title });
-function fixture(initial = {}) {
+function fixture(initial = {}, prepared = {}) {
   const state = { conversations: [], active: '', messages: {}, skills: [], error: null, loading: true, ...initial };
   const sessions = deferred(), skills = deferred();
   const context = {
     requestContext: { runtimeReady: true }, conversationsRef: { current: state.conversations },
     activeConversationIdRef: { current: state.active }, messagesByConversationRef: { current: state.messages },
-    preparedConversationsRef: { current: {} }, fetchConversations: () => sessions.promise, fetchSkills: () => skills.promise,
+    preparedConversationsRef: { current: prepared }, fetchConversations: () => sessions.promise, fetchSkills: () => skills.promise,
     conversationListRevisionRef: { current: 0 },
     useEffect: fn => { context.cancel = fn(); }, errorMessage: String,
   };
@@ -42,6 +42,12 @@ independent.skills.resolve([{ name: 'late-skill' }]); await flush();
 assert.equal(independent.state.skills[0].name, 'late-skill');
 
 const old = row('old', 'Original'), removed = row('removed');
+const draft = fixture({ active: 'writing', messages: { writing: [] } }, { writing: row('writing') });
+draft.sessions.resolve([]); await flush();
+assert.equal(draft.state.active, 'writing', 'deferred editor remains selected while the persisted list is empty');
+assert.deepEqual(draft.state.messages.writing, [], 'the prepared transcript remains loaded without reading a nonexistent runtime session');
+assert.equal(draft.state.conversations.length, 0, 'a prepared editor never appears in persisted recents');
+
 const concurrent = fixture({ conversations: [old, removed], active: 'old', messages: { old: ['original'] } });
 const updated = row('old', 'Renamed while loading'), created = row('new', 'Created while loading');
 concurrent.state.conversations = [created, updated]; concurrent.state.active = 'new';

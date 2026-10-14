@@ -43,6 +43,8 @@
 .md-node-face strong, .md-node-face small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-node-face strong { font-size: 13px; font-weight: 600; }
 .md-node-face small { font-size: 10px; margin-top: 5px; color: var(--text-mid); }
+.md-node-face .md-node-detail { display: flex; align-items: center; gap: 5px; }
+.md-graph[data-readonly=true] .md-node-face { cursor: pointer; }
 .md-node-icon { display: flex; align-items: center; justify-content: center; width: 33px; height: 33px; border-radius: 10px; flex-shrink: 0; color: var(--md-accent); background: color-mix(in srgb, var(--md-accent) 12%, transparent); }
 .md-graph-node[data-selected="true"] .md-node-face, .md-graph-node[data-linking="true"] .md-node-face { border-color: var(--md-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-accent) 10%, transparent), 0 8px 24px #00000014; }
 .md-presentation .md-node-port { position: absolute; z-index: 1; top: calc(50% - 6px); border: 2px solid var(--md-accent); border-radius: 50%; padding: 0; width: 12px; height: 12px; min-width: 0; opacity: .45; background: var(--surface); }

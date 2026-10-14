@@ -88,6 +88,7 @@ import {
   runtimeTurnIdentitySchema,
   runtimeToolCancellationIdentitySchema,
   setRuntimePlanRequestSchema,
+  summarizeTaskPlanWaiting,
   subagentTaskIdentitySchema,
   subagentTaskListRequestSchema,
   updateRuntimeGoalRequestSchema,
@@ -172,7 +173,8 @@ import { registerPluginCommandTools, parsePluginCommandInvocation } from './plug
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
-import { registerBuiltinToolDisclosure } from './builtinToolDisclosure.js';
+import { registerBuiltinToolDisclosure, taskManagementTool } from './builtinToolDisclosure.js';
+import { toolDefinitionUsage } from './toolDefinitionUsage.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import { omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
 import type { SearchResultLimitProvider } from './searchResultLimit.js';
@@ -523,7 +525,7 @@ export class InMemoryRuntimeHost {
             try { const terminal = await this.#runPluginChild(child, signal); const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId); this.#subagentTasks.finish({ parentSessionId: context.sessionId, taskId, ...result }); }
             catch (error) { this.#subagentTasks.finish({ parentSessionId: context.sessionId, taskId, status: signal.aborted ? 'stopped' : 'failed', finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }); }
           });
-          return `Background task ${taskId} started. No result is available yet. Use manage_plugin_agents to list, wait for or stop it.`;
+          return `Background task ${taskId} started. Continue independent work; use ${taskManagementTool(context.turn.request, 'manage_plugin_agents')} when its result is needed.`;
         }
         const terminal = await this.#runPluginChild(child, context.signal);
         const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId);
@@ -2192,9 +2194,11 @@ export class InMemoryRuntimeHost {
       });
     try {
       await this.#mcpApps.remember(request);
+      delete request.metadata.builtinPluginCommandsAvailable;
       if (this.#loadPluginExtensions && !request.metadata.pluginHookEvaluation) {
         this.#pluginHooks.openSession(request.sessionId);
         pluginExtensions = await this.#loadPluginExtensions();
+        request.metadata.builtinPluginCommandsAvailable = Boolean(pluginExtensions.commands?.length);
         if (input.nextRound === 1) {
           const child = request.metadata.agentRole === 'child';
           const initialHookMessages: string[] = [];
@@ -2247,6 +2251,18 @@ export class InMemoryRuntimeHost {
         }
       }
       while (true) {
+        // Capability changes become visible only between requests. Do not remove
+        // native registrations: hooks, explicit commands and saved calls reuse them.
+        if (this.#loadPluginExtensions && !request.metadata.pluginHookEvaluation && round >= input.nextRound) {
+          try {
+            const current = await this.#loadPluginExtensions();
+            request.metadata.builtinPluginCommandsAvailable = Boolean(current.commands?.length);
+          } catch (error) {
+            input.signal?.throwIfAborted();
+            delete request.metadata.builtinPluginCommandsAvailable;
+            this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error)));
+          }
+        }
         const catalogUpdate = synchronizeMcpCatalog(this.#toolRegistry, request);
         if (catalogUpdate) {
           messages.push(catalogUpdate);
@@ -2558,7 +2574,7 @@ export class InMemoryRuntimeHost {
           const cacheObservation = cacheChain.observe(roundRequest);
           this.#eventLog.append(identity, {
             kind: "cache_chain_observed",
-            payload: cacheObservation,
+            payload: { ...cacheObservation, toolDefinitions: toolDefinitionUsage(this.#toolRegistry, roundRequest.tools) },
           });
           this.#recovery.save({
             request,
@@ -3243,13 +3259,15 @@ export class InMemoryRuntimeHost {
           const activePlan = request.metadata.planEnabled === true
             ? this.#coordination.getPlan(request.sessionId)
             : undefined;
+          const planWaiting = summarizeTaskPlanWaiting(activePlan?.plan);
           return await finalize({
             status: "completed",
-            reason: activePlan?.plan.nodes.some(node => node.status === "waiting") ? "task_plan_waiting" : "model_response_completed",
+            reason: planWaiting ? "task_plan_waiting" : "model_response_completed",
             finalMessageId: completedProjector.finalMessageId,
             details: {
               finishReason: completedRound.finishReason ?? null,
               rounds: round,
+              ...(planWaiting ? { planWaiting } : {}),
             },
           });
         }

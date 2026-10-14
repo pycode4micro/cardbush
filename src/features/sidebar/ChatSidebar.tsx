@@ -13,6 +13,7 @@ import {
   Archive,
   CircleAlert,
   CircleCheck,
+  Clock3,
   ChevronDown,
   ChevronRight,
   Clipboard,
@@ -60,6 +61,7 @@ import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { useHoverPreview } from '../../components/HoverPreview';
 import { ConversationHoverPreview } from './ConversationHoverPreview';
+import { sessionAttentionLabel } from '../sessionAttention';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
   AppLanguage,
@@ -1298,19 +1300,6 @@ function ProjectBlock({
   );
 }
 
-function sessionAttentionLabel(
-  attention: SessionAttentionState,
-  language: AppLanguage,
-) {
-  if (attention.kind === 'waiting') {
-    return language === 'zh' ? '等待你的处理' : 'Waiting for your input';
-  }
-  if (attention.kind === 'error') {
-    return language === 'zh' ? '需要关注' : 'Needs attention';
-  }
-  return language === 'zh' ? '已完成，待查看' : 'Complete, not viewed';
-}
-
 function ConversationRow({
   conversation,
   active,
@@ -1524,13 +1513,15 @@ function ConversationRow({
       )}
       {!editingTitle && !running && attention && (
         <span
-          className={`conversation-attention-indicator ${attention.kind}`}
+          className={`conversation-attention-indicator ${attention.kind}${attention.kind === 'waiting' ? ` waiting-${attention.waitingKind ?? 'unspecified'}` : ''}`}
           role="status"
           aria-label={sessionAttentionLabel(attention, language)}
         >
           {attention.kind === 'completed'
             ? <CircleCheck size={15} />
-            : <CircleAlert size={15} />}
+            : attention.kind === 'waiting' && attention.waitingKind !== 'user'
+              ? <Clock3 size={15} />
+              : <CircleAlert size={15} />}
         </span>
       )}
       {quickActionsAvailable && !editingTitle && <button
@@ -1572,7 +1563,7 @@ function ConversationRow({
         <Archive size={15} />
       </button>}
     </div>
-    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} />
+    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running ? undefined : attention} />
   </>);
 }
 

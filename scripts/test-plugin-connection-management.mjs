@@ -11,6 +11,7 @@ import { startProductMcpManagement } from '../dist-electron/productMcpManagement
 import { loadEnabledProductPluginMcpServers } from '../dist-electron/productPlugins.js';
 import { PluginConnectionManager } from '../dist-electron/pluginConnectionManagement.mjs';
 import { troubleshootingLaunch } from '../dist-electron/pluginTroubleshooting.mjs';
+import { pluginHostEnvironment } from '../dist-electron/pluginEnvironment.js';
 
 test('troubleshooting drafts resolve the CardBush installation and overrides without changing connections', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-plugin-troubleshooting-'));
@@ -41,7 +42,8 @@ test('troubleshooting drafts resolve the CardBush installation and overrides wit
     assert.equal(context.configuredLaunch.command, 'node', 'the saved launch override wins over the package default');
     assert.equal(context.configuredLaunch.cwd, join(root, 'run'));
     assert.equal(context.configuredLaunch.args[0].replaceAll('\\', '/'), root.replaceAll('\\', '/') + '/managed.mjs', 'CODEX_PLUGIN_ROOT is resolved to this CardBush installation');
-    assert.deepEqual(context.configuredLaunch.environmentNames, ['API_TOKEN', 'CACHE_ROOT', 'PLUGIN_ROOT', 'CARDBUSH_PLUGIN_ROOT', 'CODEX_PLUGIN_ROOT', 'CLAUDE_PLUGIN_ROOT', 'PLUGIN_DATA', 'CLAUDE_PLUGIN_DATA']);
+    assert.deepEqual(context.configuredLaunch.environmentNames, ['API_TOKEN', 'CACHE_ROOT',
+      ...Object.keys(pluginHostEnvironment('fixture', root, join(root, 'plugin-data')))]);
     assert.doesNotMatch(JSON.stringify(context), /PRIVATE_ARGUMENT|PRIVATE_POSITIONAL|package-default/);
     assert.equal(mutations, 0, 'building a draft does not refresh, launch, reconnect or enumerate runtime tools');
     apps.revision++;
@@ -103,10 +105,15 @@ test('plugin owner tools configure connections and save private credentials with
   const client = new Client({ name: 'plugin-owner-test', version: '1' });
   const transport = new StreamableHTTPClientTransport(new URL(endpoint.url), { requestInit: { headers: { Authorization: `Bearer ${endpoint.token}` } } });
   const invoke = async (name, args) => { const result = await client.callTool({ name, arguments: args }); assert.notEqual(result.isError, true, JSON.stringify(result)); return JSON.parse(result.content[0].text); };
-  const list = () => invoke('list_plugin_connections', { pluginId: 'fixture' });
+  const list = () => invoke('list_plugin_connections', { pluginId: 'fixture', detail: true });
   const pending = async () => { const until = Date.now() + 2000; while (!desktop.requests().length) { if (Date.now() > until) throw Error('No credential form'); await new Promise(resolve => setTimeout(resolve, 10)); } return desktop.requests()[0]; };
   try {
     await client.connect(transport);
+    const summary = await invoke('list_plugin_connections', { pluginId: 'fixture' });
+    assert.equal(summary.view, 'summary');
+    assert.equal(summary.connections.length, 2);
+    assert.equal(summary.connections[0].settings, undefined);
+    assert.equal(summary.connections[0].effective.oauth, undefined);
     let info = await list();
     assert.equal(info.connections.length, 2);
     assert.equal(info.connections[0].effective.oauth.clientId, '<CLIENT_ID>');
@@ -207,7 +214,7 @@ test('plugin diagnostics expose alternate authentication sources and scope runti
   const endpoint = await startProductMcpManagement(() => host);
   const client = new Client({ name: 'plugin-diagnostics-test', version: '1' });
   const invoke = async (name, args) => { const result = await client.callTool({ name, arguments: args }); assert.notEqual(result.isError, true, JSON.stringify(result)); return JSON.parse(result.content[0].text); };
-  const list = pluginId => invoke('list_plugin_connections', pluginId ? { pluginId } : {});
+  const list = pluginId => invoke('list_plugin_connections', { ...(pluginId ? { pluginId } : {}), detail: true });
   const configure = (info, settings) => invoke('configure_plugin_connection', { pluginId: 'calendar', componentId: 'service', expectedRevision: info.configurationRevision, settings });
   const assertScoped = result => {
     assert.deepEqual(result.runtime, { ...runtime, servers: [runtime.servers[0]] }, 'preserve actual errors, cached tools and pending revisions without unrelated services');

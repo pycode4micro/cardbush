@@ -16,6 +16,7 @@ import { BackgroundToolCalls } from '../dist/backgroundToolCalls.js';
 import { registerBuiltinToolDisclosure, synchronizeBuiltinSchemas } from '../dist/builtinToolDisclosure.js';
 import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 import { SubagentTaskStore } from '../dist/subagentTaskStore.js';
+import { withToolFailureFacts } from '../dist/toolFailureFacts.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', owner: 'runtime', risk: 'low', dispatch_scope: 'session', mutating: false };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -108,12 +109,39 @@ test('completion journal failures settle the task and retain an explicit inspect
   assert.match(receipt.result.note, /could not be saved/);
 });
 
+test('executor failure facts are trusted only in process and cannot erase nested effects', async t => {
+  const f = fixture(t), noEffects = { effects: 'none', result: 'known' };
+  f.add('preflight', () => { throw withToolFailureFacts(new Error('Invalid operation'), noEffects); }, { manifest: { ...manifest, mutating: true } });
+  const known = await f.run('preflight', {});
+  assert.deepEqual(known.execution, { dispatch: 'started', ...noEffects, recovery: 'correct_input' });
+  f.add('untrusted', () => { throw Object.assign(new Error('Remote assertion'), { details: { execution: { ...noEffects, recovery: 'retry' } } }); }, { manifest: { ...manifest, mutating: true } });
+  const unknown = await f.run('untrusted', {});
+  assert.deepEqual(unknown.execution, { dispatch: 'started', effects: 'possible', result: 'unknown', recovery: 'inspect_existing' });
+  assert.deepEqual(unknown.error.details.execution, unknown.execution);
+  f.add('delegate_known_failure', async context => {
+    try { await context.invokeTool('untrusted', {}); }
+    catch (error) { throw withToolFailureFacts(error, noEffects); }
+  }, { delegatesToolExecution: true });
+  const nested = await f.run('delegate_known_failure', {});
+  assert.deepEqual(nested.execution, unknown.execution, 'nested uncertainty wins over parent-local facts');
+  f.add('delegate_recorded_write', async context => {
+    await context.invokeTool('write_file', { path: 'recorded.md', content: 'saved' });
+    throw withToolFailureFacts(new Error('Local validation failed after the child'), noEffects);
+  }, { delegatesToolExecution: true });
+  const written = await f.run('delegate_recorded_write', {});
+  assert.equal(readFileSync(join(f.root, 'recorded.md'), 'utf8'), 'saved');
+  assert.deepEqual(written.execution, { dispatch: 'started', effects: 'recorded', result: 'known', recovery: 'inspect_existing' });
+});
+
 test('patch preflight is all-or-none and a successful add/update/move/delete retains undo evidence', async t => {
   const f = fixture(t);
   writeFileSync(join(f.root, 'a.md'), '中文\r\nold\r\n'); writeFileSync(join(f.root, 'delete.md'), 'gone\n');
   for (const path of ['a.md', 'delete.md']) await f.run('read_file', { path });
   const invalid = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Add File: untouched.md\n+new\n*** Update File: a.md\n@@\n-missing\n+new\n*** End Patch' });
   assert.equal(invalid.kind, 'failed'); assert.equal(existsSync(join(f.root, 'untouched.md')), false); assert.match(readFileSync(join(f.root, 'a.md'), 'utf8'), /old/);
+  assert.deepEqual(invalid.execution, { dispatch: 'started', effects: 'none', result: 'known', recovery: 'correct_input' });
+  assert.deepEqual(invalid.error.details.execution, invalid.execution);
+  assert.deepEqual(f.store.listByTool('s', 'apply_patch')[0].execution, invalid.execution, 'journal preserves the same facts');
   const applied = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Update File: a.md\n*** Move to: nested/moved.md\n@@\n 中文\n-old\n+新\n*** Delete File: delete.md\n*** Add File: add.md\n+added\n*** End Patch' });
   assert.equal(applied.kind, 'returned', JSON.stringify(applied)); assert.equal(applied.workspaceChanges.length, 4);
   assert.equal(readFileSync(join(f.root, 'nested/moved.md'), 'utf8'), '中文\r\n新\r\n');
@@ -129,6 +157,8 @@ test('patch rejects stale revisions, duplicate aliases and ambiguous hunks witho
   assert.equal(duplicate.kind, 'failed'); assert.equal(readFileSync(path, 'utf8'), 'one\none\n');
   writeFileSync(path, 'changed'); const stale = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Delete File: a.md\n*** End Patch' });
   assert.equal(stale.kind, 'failed'); assert.equal(readFileSync(path, 'utf8'), 'changed');
+  for (const result of [ambiguous, duplicate, stale]) assert.deepEqual(result.execution,
+    { dispatch: 'started', effects: 'none', result: 'known', recovery: 'correct_input' });
 });
 
 test('an I/O failure after the first patch write restores prior bytes and retains no phantom changes', async t => {
@@ -143,6 +173,28 @@ test('an I/O failure after the first patch write restores prior bytes and retain
     const result = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Update File: a.md\n@@\n-before\n+after\n*** Add File: b.md\n+new\n*** End Patch' });
     assert.ok(sawFirstWrite); assert.equal(result.kind, 'failed'); assert.match(result.error.message, /rolled back/);
     assert.equal(readFileSync(path, 'utf8'), 'before\n'); assert.equal(existsSync(join(f.root, 'b.md')), false); assert.equal(result.workspaceChanges.length, 0);
+    assert.deepEqual(result.execution, { dispatch: 'started', effects: 'possible', result: 'unknown', recovery: 'inspect_existing' });
+  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test('a patch that cannot restore a write keeps recorded effects and requires inspection', async t => {
+  const f = fixture(t), path = join(f.root, 'a.md'); writeFileSync(path, 'before\n'); await f.run('read_file', { path });
+  const original = fsPromises.writeFile;
+  const mocked = t.mock.method(fsPromises, 'writeFile', async (target, ...args) => {
+    if (String(target).endsWith('b.md')) {
+      writeFileSync(path, 'changed externally\n');
+      throw Object.assign(new Error('Second write failed'), { code: 'EIO' });
+    }
+    return original(target, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const result = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Update File: a.md\n@@\n-before\n+after\n*** Add File: b.md\n+new\n*** End Patch' });
+    assert.equal(result.error.code, 'patch_partial_failure');
+    assert.equal(readFileSync(path, 'utf8'), 'changed externally\n');
+    assert.equal(result.workspaceChanges.length, 1);
+    assert.deepEqual(result.error.details.remaining_paths, [path]);
+    assert.deepEqual(result.execution, { dispatch: 'started', effects: 'recorded', result: 'unknown', recovery: 'inspect_existing' });
   } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
 });
 

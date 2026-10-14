@@ -1,21 +1,20 @@
-import { CheckCircle2, Circle, Clock3, Code2, ListChecks, LoaderCircle, Target } from 'lucide-react';
+import { CheckCircle2, Circle, Clock3, ListChecks, LoaderCircle, Target } from 'lucide-react';
 import type { AppLanguage, TaskPlanSnapshot } from '../../types';
 import type { ExperimentalGoal } from '../../backend/api';
 import type { GoalToolUpdate } from '../../shared/goalState';
-import type { ConversationChangeSummary } from '../tools';
+import { taskPlanWaitingLabel } from '../taskPlanWaiting';
 
 type TurnRuntimeProps = {
   language: AppLanguage; running: boolean; stopping?: boolean;
   taskPlan?: TaskPlanSnapshot; goal?: ExperimentalGoal | null; goalRounds?: GoalToolUpdate[];
   goalCancelling?: boolean; goalWaiting?: boolean; onCancelGoal?: () => Promise<void>;
-  changeSummary?: ConversationChangeSummary | null; onOpenChangeReview: () => void;
 };
 export function TurnRuntimeDetails({ language, running, stopping, taskPlan, goal, goalRounds = [], goalCancelling, goalWaiting,
-  onCancelGoal, changeSummary, onOpenChangeReview,
+  onCancelGoal,
 }: TurnRuntimeProps) {
   const visiblePlan = taskPlan?.nodes.some(node => node.status !== 'completed') ? taskPlan : undefined;
   const completedPlanSteps = visiblePlan?.nodes.filter(node => node.status === 'completed').length ?? 0;
-  if (!goal && !visiblePlan && !changeSummary && !stopping) return null;
+  if (!goal && !visiblePlan && !stopping) return null;
   return <div className="turn-runtime-details" aria-label={language === 'zh' ? '本轮进度' : 'Turn progress'}>
     {stopping && <p role="status">{language === 'zh' ? '正在停止并保存本轮记录…' : 'Stopping and saving this turn…'}</p>}
     {goal && (
@@ -99,17 +98,12 @@ export function TurnRuntimeDetails({ language, running, stopping, taskPlan, goal
               ) : (
                 <Clock3 size={13} />
               )}
-              <span>{node.step}{node.status === 'waiting' && <small> — {language === 'zh' ? '等待：' : 'Waiting: '}{node.waitingFor}</small>}</span>
+              <span>{node.step}{node.status === 'waiting' && <small> — {taskPlanWaitingLabel(node.waitingKind, language)}{language === 'zh' ? '：' : ': '}{node.waitingFor}</small>}</span>
             </li>
           ))}
         </ol>
       </section>
     )}
-
-    {changeSummary && <button className="turn-change-review" type="button" onClick={onOpenChangeReview}>
-      <Code2 size={14} /><span>{language === 'zh' ? `${changeSummary.fileCount} 个文件更改` : `${changeSummary.fileCount} changed files`}</span>
-      <b className="diff-count add">+{changeSummary.additions}</b><b className="diff-count del">-{changeSummary.deletions}</b>
-    </button>}
   </div>;
 }
 function goalTokenLabel(goal: ExperimentalGoal, language: AppLanguage) {

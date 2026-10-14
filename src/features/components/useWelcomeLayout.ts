@@ -1,6 +1,6 @@
 import { useLayoutEffect, type RefObject } from 'react';
 import type { ComposerFlow, ComponentCollection, WelcomeLayout } from './componentModel';
-import { composerHorizontalBounds, composerVerticalBounds } from './composerLayoutGeometry';
+import { composerBottomGap, composerEdge, composerHorizontalBounds, composerVerticalBounds } from './composerLayoutGeometry';
 import { welcomeHeightScale } from './welcomeViewportGeometry';
 import { adoptWelcomeViewport } from './componentStore';
 
@@ -42,8 +42,14 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       slot.style.width = `${horizontal.width}px`;
       const height = input.getBoundingClientRect().height / (canvas.getBoundingClientRect().height / canvas.offsetHeight || 1);
       const vertical = composerVerticalBounds(canvas.clientHeight, height, placement ? placement.y * scale : undefined, flow.afterSend, placement?.composerDock === 'bottom');
-      slot.style.top = `${vertical.top}px`;
-      slot.style.height = `${height}px`;
+      // Let a docked input grow upward in the same layout as native typing or
+      // paste. A measured top/height pair leaves one frame at the old top.
+      // Custom canvases can extend below the visible pane, hence the offset
+      // from their containing block's bottom rather than a fixed bottom gap.
+      const pinnedBottom = vertical.docked && canvas.clientHeight - height - composerBottomGap >= composerEdge;
+      slot.style.top = pinnedBottom ? 'auto' : `${vertical.top}px`;
+      slot.style.bottom = pinnedBottom ? `calc(100% - ${canvas.clientHeight - composerBottomGap}px)` : 'auto';
+      slot.style.height = 'auto';
       slot.dataset.composerDocked = String(vertical.docked);
       canvas.style.setProperty('--welcome-composer-height', `${height}px`);
       if (compactWidgets) {
@@ -63,6 +69,9 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       }
     };
     measure();
+    // Native bottom anchoring handles text growth immediately. Batch the
+    // remaining measurements: changing a custom width inside this callback
+    // can resize the observed input again and start a ResizeObserver loop.
     let frame: number | null = null;
     const observer = new ResizeObserver(() => {
       if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); });

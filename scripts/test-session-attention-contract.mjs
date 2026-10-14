@@ -127,7 +127,7 @@ assert.match(storage, /maxPersistedAttentionAgeMs/);
 assert.match(hook, /attentionByConversation/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'completed'/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'waiting'/);
-assert.match(hook, /setSessionAttentionCount\?\.\(Object\.keys\(attentionByConversation\)\.length\)/);
+assert.match(hook, /setSessionAttentionCount\?\.\(Object\.values\(attentionByConversation\)\.filter\(sessionAttentionNeedsNotification\)\.length\)/);
 assert.match(hook, /clearSessionAttention\(normalized, 'completed'\)/);
 
 assert.match(app, /attentionByConversation=\{chat\.attentionByConversation\}/);
@@ -144,7 +144,7 @@ assert.match(
   'Notification navigation uses the shared conversation opener and waits for a known session',
 );
 assert.match(sidebar, /conversation-attention-indicator/);
-assert.match(sidebar, /已完成，待查看/);
+assert.match(storage, /已完成，待查看/);
 assert.match(css, /\.conversation-attention-indicator\s*\{/);
 
 const transpiledRouting = ts.transpileModule(routing, {

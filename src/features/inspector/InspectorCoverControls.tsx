@@ -8,7 +8,7 @@ export function InspectorCoverControls({ language, inputOpen, inputPending = fal
   inputPending?: boolean;
   inert?: boolean;
   onTargetChange: (target: HTMLDivElement | null) => void;
-  onBack: () => void;
+  onBack?: () => void;
   onToggleInput: () => void;
 }) {
   const floating = useInspectorCoverPosition(inputOpen, inert);
@@ -18,7 +18,7 @@ export function InspectorCoverControls({ language, inputOpen, inputPending = fal
       {inputPending && <p className="quick-input-loading" role="status">{zh ? '正在准备对话…' : 'Preparing conversation…'}</p>}
     </div>}
     <div className="inspector-cover-capsule" ref={floating.capsule}>
-      <button type="button" className="inspector-cover-back" onClick={onBack}><ArrowLeft size={15} />{zh ? '返回' : 'Back'}</button>
+      {onBack && <button type="button" className="inspector-cover-back" onClick={onBack}><ArrowLeft size={15} />{zh ? '返回' : 'Back'}</button>}
       <button type="button" className="inspector-cover-drag" aria-label={zh ? '移动输入框' : 'Move input panel'}
         aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home" {...floating.handlers}>
         <GripVertical size={16} aria-hidden="true" />

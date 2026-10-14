@@ -1,4 +1,5 @@
 import { createDisplayDiff } from './workspaceDiff.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
 import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { TerminalSessionManager, type TerminalShell } from './terminalSessionManager.js';
@@ -274,7 +275,10 @@ export function registerWorkspaceTools(
         }
         // Keep evidence for any partial write or externally changed path; never overwrite it blindly.
         for (const path of remaining) { const change = changes.find(item => item.path === path)!; receipt({ ...change, after: await optionalBytes(path) }); }
-        throw Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}${remaining.length ? ' Some paths could not be rolled back; inspect recorded changes before retrying.' : applied.length ? ' All applied changes were rolled back.' : ' No files were changed.'}`), { code: remaining.length ? 'patch_partial_failure' : 'patch_not_applied', details: { remaining_paths: remaining, rolled_back: applied.length > 0 && !remaining.length } });
+        const failure = Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}${remaining.length ? ' Some paths could not be rolled back; inspect recorded changes before retrying.' : applied.length ? ' All applied changes were rolled back.' : ' No files were changed.'}`), { code: remaining.length ? 'patch_partial_failure' : 'patch_not_applied', details: { remaining_paths: remaining, rolled_back: applied.length > 0 && !remaining.length } });
+        // Only preflight proves no mutation was attempted. A rollback may leave
+        // directories or other effects, so retain conservative facts after writes.
+        throw applied.length ? failure : withToolFailureFacts(failure, { effects: 'none', result: 'known' });
       } finally { releases.reverse().forEach(release => release()); }
     },
   });
@@ -557,9 +561,7 @@ export function registerWorkspaceTools(
     definition: {
       name: "terminal_poll",
       description: [
-        "Read new output or wait up to yield_time_ms for a state change from an existing terminal session. For completion-only waits with completion_notification=true, use manage_tool_calls instead.",
-        "Pass the returned terminalSessionId as session_id. If state=running, do independent work before waiting on the same session; do not restart the command. Empty output does not mean completion.",
-        "Returns only output produced since the preceding terminal result.",
+        "Read only new output from terminalSessionId (pass as session_id); yield_time_ms bounds the wait. Empty output is not completion. Continue independent work while state=running; never restart it. With completion_notification=true, use manage_tool_calls for completion-only waits.",
       ].join(" "),
       inputSchema: objectSchema({
         session_id: { type: "string", minLength: 1 },
@@ -959,14 +961,13 @@ function defaultTerminalShell(): TerminalShell {
 function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
-    "Execute one command in the selected working directory.",
-    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. This bounds the call's wait, not the command's duration. Use a short yield (e.g. 1000 ms) for long tasks so you can continue independent work. If completion_notification=true, continue independent work; use manage_tool_calls action=wait with completion_task_id only when its result blocks progress and no independent work remains. Results arrive automatically without polling. Otherwise use terminal_poll with the returned terminalSessionId when new output is needed. Never restart a running command. Use search_file_content for local content searches instead of recursive shell traversal.`,
+    "Run one command in cwd.",
+    `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Wait via manage_tool_calls with completion_task_id only when blocked on results; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
     process.platform === "win32"
-      ? "To delay before rechecking an external task, use shell=powershell with a sleep command, e.g. Start-Sleep -Seconds 30. Reuse an existing running wait session when available."
-      : "To delay before rechecking an external task, use shell=posix with a sleep command, e.g. sleep 30. Reuse an existing running wait session when available.",
-    "Running sessions persist across Agent turns until terminal_stop, natural exit, or a host resource limit. On Windows the whole task tree shares host memory/CPU budgets; detached descendants end with the session. After a resource-limit failure, reduce the workload instead of bypassing the guard or repeating the same command.",
-    "Do not launch a browser for the user through this terminal (including Start-Process or shell start): a newly created browser can be killed when the command exits. Use open_external_url when available for a webpage the user wants to keep open; use Browser Use for page control. If neither is available, return the link instead of bypassing process cleanup.",
-    `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
-    "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",
+      ? "For external waits use PowerShell Start-Sleep; reuse an existing wait session."
+      : "For external waits use POSIX sleep; reuse an existing wait session.",
+    "Sessions survive turns until terminal_stop, exit or a resource limit. Windows task trees share memory/CPU budgets; detached children end with the session. Reduce workload after resource-limit failures; do not bypass limits or repeat unchanged commands.",
+    "Never launch user browsers through the terminal: process cleanup can close them. Use open_external_url to keep a page open, Browser Use for control, or return a link if unavailable.",
+    `Use ${shells} syntax matching shell (default ${defaultTerminalShell()}); Runtime never rewrites commands.`,
   ].join(" ");
 }

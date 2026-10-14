@@ -96,6 +96,10 @@ app.whenReady().then(async () => {
     await read('window.renderPlan("task_plan_waiting")');
     await until('document.querySelector(".app").dataset.planReason === "task_plan_waiting"');
     assert.equal(await read('document.querySelector(".assistant-plan-notice, .assistant-failure-notice")'), null, 'normal waiting does not add an error or unfinished-plan notice');
+    await read('document.querySelector(".assistant-completed-summary")?.click()');
+    await until('!!document.querySelector(".task-plan-block")');
+    assert.deepEqual(await read('[...document.querySelectorAll(".task-plan-block li.waiting small")].map(el => el.textContent)'),
+      [' — 等待用户确认：生成设置', ' — 等待后台任务：生成任务', ' — 等待前置步骤：成片文件'], 'archived plans preserve each waiting cause');
     console.log('Run status UI passed: stable header and narration across tool states, idle-only MCP verification and cleanup.');
     clearTimeout(deadline); window.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); window.destroy(); app.exit(1); }

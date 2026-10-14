@@ -13,8 +13,9 @@ export async function teamCommand<T = unknown>(kind: typeof AGENT_REGISTRY_COMMA
   try { return await session.client.command({ kind, payload }, value => value as T); }
   finally { session.dispose(); }
 }
-export function refreshTeamWorkspace() {
-  if (pending) return pending;
+export function refreshTeamWorkspace(afterMutation = false): Promise<void> {
+  // A list request started before a save must not hide the saved revision.
+  if (pending) return afterMutation ? pending.then(() => refreshTeamWorkspace()) : pending;
   publish({ loading: true });
   pending = Promise.all([
     teamCommand<DefinitionReceipt<RegisteredAgent>[]>(AGENT_REGISTRY_COMMAND, { action: 'list' }),

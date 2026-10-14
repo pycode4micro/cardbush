@@ -3,10 +3,15 @@ import { startDesktopMcpServer } from './desktopMcpServer.mjs';
 import { mcpServerSnapshotSchema, mcpOAuthFromConfig, pluginProxySchema } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import { configurePluginConnectionSchema, pluginConnectionIdentitySchema, type ConfigurePluginConnectionInput, type PluginConnectionIdentity } from './pluginConnectionManagement.mjs';
+import { mcpManagementView } from './productMcpManagementView.mjs';
 
 export const PRODUCT_MCP_MANAGEMENT_ID = 'cardbush_management';
 const reservedIds = new Set([PRODUCT_MCP_MANAGEMENT_ID, 'cardbush_apps', 'browser_use', 'chrome_devtools']);
 const serverId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+const observationSchema = {
+  serverId: z.string().min(1).max(512).optional().describe('Filter one exact service id from a previous listing, including disabled or unavailable services.'),
+  detail: z.boolean().optional().describe('Default false: compact status and tool counts. Use true, preferably with serverId, for full tool names and connection details.'),
+};
 const stringChanges = z.record(z.string(), z.string().nullable());
 export const mcpServerPatchSchema = z.object({
   id: serverId,
@@ -111,20 +116,20 @@ export function createProductMcpManagementServer(getHost: () => ProductMcpManage
     }
   };
   server.registerTool('list_mcp_servers', {
-    description: 'Read CardBush MCP configuration identities and the actual Runtime connection state and discovered tool names. CardBush has a native MCP client. A missing tool alone does not establish that its server is unconfigured or unsupported. Stored credentials are omitted.',
-    inputSchema: {},
+    description: 'Read configured MCP services and actual connection state, including disabled and unavailable services. Defaults to compact identities, health, errors and tool counts. Filter by serverId; detail=true includes discovered tool names. Missing search results alone do not establish that a service is unconfigured. Configuration and Runtime revisions remain distinct; pending is not ready. Stored credentials are omitted.',
+    inputSchema: observationSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async () => result(() => getHost().listMcpServers()));
+  }, async (input) => result(async () => mcpManagementView(await getHost().listMcpServers(), input)));
   server.registerTool('reconnect_mcp_server', {
     description: 'Reconnect one enabled plugin or user MCP service after an external dependency update or a stale tool catalog, without restarting CardBush or changing saved settings. Use the exact id from list_mcp_servers or list_plugin_connections. Plugin package updates normally refresh automatically during the current conversation. Only already dispatched calls on the affected service delay its local process replacement. Pending is not connected; use the returned phase and later status to verify readiness, without repeated reconnects or rapid polling. Verify service health and discovered tools before use. Built-in CardBush services are excluded.',
     inputSchema: { id: serverId },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async ({ id }, context) => result(() => getHost().reconnectMcpServer(id, context.mcpReq.signal)));
   server.registerTool('list_plugin_connections', {
-    description: 'Read installed plugins’ registered app IDs, selected and available connection sources, OpenAI app authorization URLs, effective endpoint, OAuth options, tool policies, configuration revision and Runtime state for the listed connections. Available sources describe host support, not authorization. OpenAI account sign-in and granting the service provider’s access to OpenAI are separate steps. Credential values are never returned.',
-    inputSchema: { pluginId: z.string().optional() },
+    description: 'Read installed plugin connections with compact identities, selected source, configuration revision, health, errors and tool counts. Filter by pluginId or exact serverId. Use detail=true for connection settings, available sources, authorization URLs and tool names before editing configuration. Available sources indicate host support, not authorization; OpenAI sign-in and service access grants are separate. Credential values are never returned.',
+    inputSchema: { pluginId: z.string().optional(), ...observationSchema },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ pluginId }) => result(() => getHost().listPluginConnections(pluginId)));
+  }, async ({ pluginId, ...input }) => result(async () => mcpManagementView(await getHost().listPluginConnections(pluginId), input)));
   server.registerTool('configure_plugin_connection', {
     description: 'Update one installed plugin MCP connection through its owner, using expectedRevision from list_plugin_connections. Only supplied settings change; OAuth/connection/tool maps merge, and null removes an override. This does not edit the plugin package. OAuth credentials can be entered privately with request_plugin_credentials. Changes hot reload during active conversations; affected in-flight calls finish on their original connection. A saved configuration is not proof of connection or successful authorization. Check the returned phase, service health and discovered tools.',
     inputSchema: configurePluginConnectionSchema,

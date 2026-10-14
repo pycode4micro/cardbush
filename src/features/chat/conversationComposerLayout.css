@@ -49,3 +49,4 @@
 .chat-panel.composer-anchored .message-list-item.first { padding-top: 0; }
 .chat-panel.composer-anchored .scroll-bottom { top: auto; bottom: 20px; left: var(--composer-surface-center-x, 50%); }
 .chat-panel.composer-anchored .quick-context-rail { top: 0; }
+.conversation-composer-mount { width: 100%; min-width: 0; }

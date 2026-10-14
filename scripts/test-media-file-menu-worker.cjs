@@ -29,7 +29,6 @@ app.whenReady().then(async () => {
     shell: { showItemInFolder: value => actions.push(['reveal', value]) }, showWindowError: (_, title, message) => errors.push({ title, message }),
   };
   new Function(...Object.keys(dependencies), source)(...Object.values(dependencies));
-  win.webContents.copyImageAt = (x, y) => actions.push(['image', x, y]);
   ipcMain.handle('test:error', (_, error) => errors.push(error));
   const read = code => win.webContents.executeJavaScript(code), until = async predicate => { const end = Date.now() + 5000; while (!await predicate()) { if (Date.now() > end) throw Error('Media menu condition timed out'); await pause(); } };
   const context = async selector => { const before = menus.length; await read(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});element.scrollIntoView({block:'center'});element.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));})()`); await until(() => menus.length > before); return menus.at(-1); };
@@ -43,12 +42,11 @@ app.whenReady().then(async () => {
     assert.ok(!visible.includes(directory), 'media never adds an absolute path to the visible transcript');
     assert.ok(visible.indexOf('视频说明') < visible.indexOf('海报说明') && visible.indexOf('海报说明') < visible.indexOf('音频说明'), 'surrounding prose retains its order');
     const menu = await context('.message-image-preview');
-    for (const label of ['复制图片', '复制文件', '复制路径', '打开方式...']) assert.ok(menu.items.some(item => item.label === label && item.enabled), label);
+    for (const label of ['复制文件', '复制路径', '打开方式...']) assert.ok(menu.items.some(item => item.label === label && item.enabled), label);
+    assert.equal(menu.items.some(item => item.label === '复制图片'), false);
     await invoke(menu, '复制文件');
     const copied = actions.at(-1); assert.equal(copied[0], 'file'); assert.equal(copied[3], files.image);
     assert.ok(copied[2].includes('-STA')); assert.match(copied[2].at(-1), /SetFileDropList/); assert.ok(!copied[2].at(-1).includes(files.image), 'paths travel as environment data, never shell code');
-    await invoke(menu, '复制图片'); assert.equal(actions.at(-1)[0], 'image');
-    assert.ok(await read(`document.elementFromPoint(${actions.at(-1)[1]},${actions.at(-1)[2]}) instanceof HTMLImageElement`), 'pixel copying targets the displayed image');
     await invoke(menu, '复制路径'); assert.deepEqual(actions.at(-1), ['path', files.image]);
     await invoke(menu, '打开方式...'); assert.deepEqual(actions.at(-1), ['with', files.image]);
     for (const [selector, expected] of [['.message-video-player', files.video], ['.message-audio-player', files.audio], ['.message-file-attachment', files.document]]) {
@@ -58,7 +56,8 @@ app.whenReady().then(async () => {
     await until(() => read('document.querySelector(".image-preview-stage img")?.naturalWidth>0'));
     const previewMenu = await context('.image-preview-stage img');
     await invoke(previewMenu, '复制路径'); assert.deepEqual(actions.at(-1), ['path', files.image]);
-    await invoke(previewMenu, '复制图片'); assert.equal(actions.at(-1)[0], 'image');
+    assert.equal(previewMenu.items.some(item => item.label === '复制图片'), false);
+    await invoke(previewMenu, '复制文件'); assert.equal(actions.at(-1)[3], files.image);
     failCopy = true; const currentUrl = win.webContents.getURL();
     await invoke(previewMenu, '复制文件'); await until(() => errors.length > 0);
     assert.match(errors.at(-1).message, /Copy file exited/); assert.equal(win.webContents.getURL(), currentUrl);
@@ -66,7 +65,10 @@ app.whenReady().then(async () => {
     failCopy = false;
     await read('document.querySelector(".image-preview-close").click();setMode("remote")');
     await until(() => read('document.querySelector(".image-preview-stage img")?.naturalWidth>0'));
-    const remote = await context('.image-preview-stage img'); assert.deepEqual(remote.items.map(item => item.label), ['复制图片']);
+    const beforeRemote = menus.length;
+    await read(`document.querySelector('.image-preview-stage img').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`);
+    await pause();
+    assert.equal(menus.length, beforeRemote, 'images without a local file do not open an empty file menu');
     await read('setMode("inspector")'); await until(() => read('document.querySelector(".inspector-media-preview img")?.naturalWidth>0'));
     await invoke(await context('.inspector-media-preview img'), '复制文件'); assert.equal(actions.at(-1)[3], files.image);
     const beforeMissing = menus.length;
@@ -74,6 +76,6 @@ app.whenReady().then(async () => {
     await until(() => menus.length > beforeMissing);
     assert.equal(menus.at(-1).items.find(item => item.label === '复制文件').enabled, false);
     assert.equal(menus.at(-1).items.find(item => item.label === '复制路径').enabled, true);
-    console.log('Media file menus passed: real chat/preview/inspector right clicks, no path captions, native file-drop routing, image pixels, open-with, remote images, missing files and error dialogs without navigation.');
+    console.log('Media file menus passed: real chat/preview/inspector right clicks, copy-file only, no path captions, native file-drop routing, open-with, remote images, missing files and error dialogs without navigation.');
   } finally { win.destroy(); clearTimeout(deadline); }
 }).then(() => app.exit(0), error => { console.error(error); clearTimeout(deadline); app.exit(1); });

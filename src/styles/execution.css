@@ -165,7 +165,8 @@
   text-align: left;
 }
 
-.app .assistant-completed-summary:active {
+.app .assistant-completed-summary:active,
+.app .assistant-completed-collapse:active {
   transform: none;
 }
 
@@ -194,6 +195,40 @@
   display: grid;
   gap: 7px;
   padding-top: 8px;
+}
+
+.assistant-completed-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.assistant-completed-collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 22px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-soft);
+  background: transparent;
+  font: inherit;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.assistant-completed-collapse:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.assistant-completed-collapse:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .assistant-message-content {
@@ -464,14 +499,52 @@
   min-width: 0;
 }
 
-.turn-change-review {
+.assistant-activity-line {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
-  padding: 8px 0;
+  max-width: 100%;
+}
+
+.assistant-activity-line > .turn-thinking-detail {
+  flex: 1;
+}
+
+.assistant-activity-line.has-accessory > .turn-thinking-detail {
+  flex: 0 1 auto;
+  width: fit-content;
+}
+
+.turn-change-review {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  color: var(--text-soft);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  white-space: nowrap;
   cursor: pointer;
-  text-align: left;
+}
+
+.turn-change-separator {
+  opacity: 0.45;
+}
+
+.turn-change-review:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .turn-thinking-detail > summary small {
@@ -517,13 +590,6 @@
   font-weight: 400;
   color: var(--text-soft);
   overflow-wrap: anywhere;
-}
-
-.turn-change-review {
-  justify-self: start;
-  border: 0;
-  background: transparent;
-  color: var(--text-soft);
 }
 
 .turn-change-review:hover,
@@ -1128,7 +1194,8 @@
 }
 
 .tool-execution-row {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
   min-height: 24px;
   display: flex;

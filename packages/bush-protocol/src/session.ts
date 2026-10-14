@@ -3,6 +3,7 @@ import { z } from "zod";
 import { cacheChainStateSchema, providerInputProjectionSchema } from "./cacheChain.js";
 import { modelMessageSchema, modelRequestSchema } from "./model.js";
 import { workspaceSetupSchema } from "./workspace.js";
+import { taskPlanWaitingSchema } from './turn.js';
 
 export const BUSH_SESSION_EVENT_PROTOCOL = "bush.session_event.v1" as const;
 export const BUSH_SESSION_SNAPSHOT_PROTOCOL = "bush.session_snapshot.v1" as const;
@@ -116,6 +117,7 @@ export const committedTurnSchema = z.object({
   completedAt: z.string().min(1),
   status: sessionTurnStatusSchema,
   reason: z.string().min(1),
+  planWaiting: taskPlanWaitingSchema.optional(),
   messages: z.array(sessionMessageSchema).min(1),
   usage: sessionUsageSchema.default({}),
   cacheChainState: cacheChainStateSchema.optional(),

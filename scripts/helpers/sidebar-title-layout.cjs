@@ -207,6 +207,14 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
       await until(`!!sidebarRow(1).querySelector('.conversation-attention-indicator.${kind}')`, kind + ' status marker');
       assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width - 28, kind + ' keeps status lane');
     }
+    for (const [waitingKind, label] of [['user', '等待用户确认'], ['background', '等待后台任务'], ['dependency', '等待前置步骤'], ['unspecified', '等待中']]) {
+      await run(`showSidebarFixture({ attentionByConversation: { 'sidebar-running': {
+        sessionId: 'sidebar-running', kind: 'waiting', waitingKind: '${waitingKind}', body: '详细等待原因', updatedAt: '2026-09-05T00:00:00Z' } } })`);
+      await until(`sidebarRow(1).querySelector('.conversation-attention-indicator')?.getAttribute('aria-label') === '${label}'`, label);
+      assert.equal(await run("!!sidebarRow(1).querySelector('.conversation-attention-indicator .lucide-circle-alert')"), waitingKind === 'user');
+      assert.equal(await run("!!sidebarRow(1).querySelector('.conversation-attention-indicator .lucide-clock-3')"), waitingKind !== 'user');
+      assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width - 28, 'all waiting states share the same stable lane');
+    }
     await run('showSidebarFixture({ attentionByConversation: {} })');
     await until("!sidebarRow(1).querySelector('.conversation-attention-indicator')", 'attention clears');
     assert.equal((await run('sidebarGeometry(1)')).titleColor, baseline[1].titleColor, 'viewed completion restores background title color');

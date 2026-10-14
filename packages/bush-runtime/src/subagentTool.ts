@@ -165,7 +165,7 @@ export function registerSubagentTool(
             expected_revision: { type: 'integer', minimum: 0, description: 'Required for save/delete. 0 creates a new definition; otherwise use its observed revision.' },
           } : {}),
           prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
-          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Delegate new work to a saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only. It uses its own server workspace, model, tools and instructions; no parent history, credentials or local paths are copied. Results participate in await_subagents. Follow up with task_id.' } } : {}),
+          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
           ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Follow up on a subagent owned by this parent. Running children receive guidance without a new task; finished children retain their history and execution host. Fork children inherit the current parent model; clean children and remote hosts retain their own configuration. Supply task_id and prompt only, with optional run_in_background for continuations; do not override configuration or create a duplicate task.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork is a snapshot of the pre-dispatch conversation and intent; later parent messages are not synchronized. clean uses a registered agent_id, or explicit independent system_prompt/settings. Discover reusable employees with list_subagent_options. Clean tasks have independent conversations and employee-scoped memory.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required for an unregistered clean Agent; omit when using agent_id or fork. Sets the actual system message. Host permissions cannot be overridden.' },
@@ -385,7 +385,8 @@ export function registerSubagentTool(
         taskId,
       });
       const completion = background ? options.runBackground!(context.sessionId, context.turnId, taskId, run) : run();
-      if (background) return { ...submittedResult(tasks.get(context.sessionId, taskId)!), background: true, instructions: 'Background task started. Its result is pending; use manage_plugin_agents when needed.' };
+      if (background) return { ...submittedResult(tasks.get(context.sessionId, taskId)!), background: true,
+        instructions: `Background task started. Continue independent work; use ${context.turn?.request.tools.some(tool => tool.name === 'tasks') ? 'tasks' : 'manage_plugin_agents'} when its result is needed.` };
       if (options.asyncDispatch && !execution.waitForResult) {
         options.onAsyncResult?.({
           parentSessionId: context.sessionId,

@@ -6,7 +6,8 @@ import { TEAM_WORKFLOW_COMMAND, type DefinitionReceipt, type TeamWorkflow } from
 import { useMarkdownFile } from './useMarkdownFile';
 import { parseMarkdownGraph } from './markdownGraph';
 import { takeBushItDocument, watchBushItDocument } from './bushItDocuments';
-import { bushItPageName, createBushItPage, getBushItPages, selectBushItPage, setCreationSession, updateBushItPage, useBushItPages, type BushItPage } from './bushItPageStore';
+import { bushItPageName, createBushItPage, creationSessionScope, getBushItPages, prepareCreationSession, selectBushItPage, setCreationSession, updateBushItPage, useBushItPages, type BushItPage } from './bushItPageStore';
+import { conversationWorkspaceRoot } from '../conversationWorkspace';
 import { acceptCreationFile, creationFileRoot, fileName, linkedMarkdownTarget, markdownFile, refreshCreationFile, sameFile, saveCreationFile } from './creationFiles';
 import type { MarkdownAnchorRequest } from './MdPresentation';
 import type { CreationChatOptions } from './CreationConversation';
@@ -24,7 +25,7 @@ const CreationConversation = lazy(() => import('./CreationConversation').then(mo
 type BushItAppProps = CreationChatOptions & { language: 'zh' | 'en'; onPractice?: (team: TeamWorkflow) => void; inspectorOpen?: boolean; onToggleInspector?: () => void };
 export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggleInspector, composerPortalTarget, externalComposerControls = false, onOpenComposer, ...chatOptions }: BushItAppProps) {
   const state = useBushItPages(), current = useRef(state); current.current = state;
-  const [chatOpen, setChatOpen] = useState(false), [starting, setStarting] = useState(false), [error, setError] = useState('');
+  const [chatOpen, setChatOpen] = useState(false), [error, setError] = useState('');
   const [selection, setSelection] = useState<{ id: string; value: MarkdownSelection }>();
   const [anchorRequest, setAnchorRequest] = useState<MarkdownAnchorRequest & { pageId: string }>();
   const linkSequence = useRef(0);
@@ -33,7 +34,6 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
   const dismissInput = useCallback(() => setChatOpen(false), []);
   const localControls = !externalComposerControls && !composerPortalTarget;
   useQuickInputDismiss(chatOpen && localControls, dismissInput, true);
-  const startLock = useRef(false);
   useEffect(() => {
     const create = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'n') {
@@ -52,29 +52,16 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
   }, []);
   const page = state.pages.find(item => item.id === state.selectedId && !item.archived && (item.projectDir || '') === state.projectDir);
   useEffect(() => setSelection(undefined), [page?.id]);
-  const root = state.projectDir || page?.conversationRoot || (page ? creationFileRoot(page) : ''), sessionId = state.sessions[root];
+  const root = state.projectDir || page?.conversationRoot || (page ? creationFileRoot(page) : '');
+  const scope = creationSessionScope(state.projectDir, page), sessionId = state.sessions[state.projectDir || page?.conversationRoot || ''] || state.sessionDrafts[scope];
   const chatScope = state.projectDir || page?.id;
   useEffect(dismissInput, [chatScope, dismissInput]);
   const t = (cn: string, en: string) => language === 'zh' ? cn : en;
-  const startChat = async () => {
+  const startChat = () => {
     setChatOpen(true);
-    if (startLock.current || sessionId) return;
-    startLock.current = true; setStarting(true); setError('');
-    try {
-      const writingPage = page ?? (!root ? (() => { const id = createBushItPage(); return getBushItPages().pages.find(item => item.id === id); })() : undefined);
-      const id = `local-${crypto.randomUUID()}`, directory = root || await window.cardbushDesktop?.ensureTaskWorkspace(id);
-      if (!directory) throw Error(t('无法创建工作区。', 'Could not create a workspace.'));
-      if (writingPage && !writingPage.file) {
-        const file = await markdownFile({ action: 'create', rootPath: directory, path: `document-${writingPage.id.slice(0, 8)}.md`, text: writingPage.source });
-        if (!file) throw Error(t('无法准备创作文档，请重试。', 'Could not prepare the document. Please try again.'));
-        // This is the Agent's backing file, not an explicit Save As by the user.
-        updateBushItPage(writingPage.id, { file, temporary: true });
-      }
-      const { createConversation } = await import('../../backend/api');
-      await createConversation({ sessionId: id, projectDir: directory, title: `${t('创作', 'Create')} · ${writingPage ? bushItPageName(writingPage, language) : fileName(directory)}`, metadata: { creation_workspace: true } });
-      if (writingPage && !writingPage.projectDir) updateBushItPage(writingPage.id, { conversationRoot: directory });
-      setCreationSession(directory, id);
-    } catch (error) { setError(String((error as Error).message)); dismissInput(); } finally { startLock.current = false; setStarting(false); }
+    if (sessionId) return;
+    const writingPage = page ?? (!state.projectDir ? (() => { const id = createBushItPage(); return getBushItPages().pages.find(item => item.id === id); })() : undefined);
+    prepareCreationSession(creationSessionScope(state.projectDir, writingPage));
   };
   const startChatRef = useRef(startChat); startChatRef.current = startChat;
   useEffect(() => {
@@ -83,6 +70,13 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
   const beforeSend = async (text: UserPromptInput) => {
     const captured = page, selected = selection && selection.id === page?.id ? selection.value : undefined;
     if (captured?.unloaded) await refreshCreationFile(captured.id);
+    if (captured && !captured.file) {
+      const directory = state.projectDir || captured.conversationRoot || await window.cardbushDesktop?.ensureTaskWorkspace(sessionId);
+      if (!directory) throw Error(t('无法准备工作区，请重试。', 'Could not prepare the workspace. Please retry.'));
+      const file = await markdownFile({ action: 'create', rootPath: directory, path: `document-${captured.id.slice(0, 8)}.md`, text: getBushItPages().pages.find(item => item.id === captured.id)?.source || '' });
+      if (!file) throw Error(t('无法准备创作文档，请重试。', 'Could not prepare the document. Please retry.'));
+      updateBushItPage(captured.id, { file, temporary: true, ...(!captured.projectDir ? { conversationRoot: directory } : {}) });
+    }
     if (captured?.file) await saveCreationFile(captured.id);
     const saved = getBushItPages().pages.find(item => item.id === captured?.id);
     return creationRequest(text, saved, selected, language);
@@ -112,11 +106,16 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
       onSourceSelection={value => setSelection(current => current?.id === page.id && current.value.source === value.source && current.value.startLine === value.startLine && current.value.endLine === value.endLine ? current : { id: page.id, value })}/>
       : <div className="creation-empty"><FolderOpen size={28}/><h2>{t('开始创作', 'Start writing')}</h2><p>{t('从左侧选择 Markdown 文件，或新建文档。也可以通过下方输入让 AI 帮你创作。', 'Select or create a Markdown file on the left, or use Input below to write with AI.')}</p></div>}
     </div>
-    {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} inputPending={starting} onTargetChange={setInputTarget}
-      onBack={() => { dismissInput(); editor.current?.focus({ preventScroll: true }); }}
+    {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} onTargetChange={setInputTarget}
       onToggleInput={() => { if (chatOpen) dismissInput(); else void startChat(); }}/>}
     </div>
     {sessionId && <Suspense fallback={null}><CreationConversation key={sessionId} {...chatOptions} sessionId={sessionId} root={root} language={language}
+      preparation={state.sessionDrafts[scope] === sessionId ? { title: `${t('创作', 'Create')} · ${page ? bushItPageName(page, language) : fileName(state.projectDir)}`,
+        projectDir: state.projectDir || undefined, metadata: { creation_workspace: true }, onCreated: conversation => {
+          const directory = conversationWorkspaceRoot(conversation);
+          if (page && !page.projectDir) updateBushItPage(page.id, { conversationRoot: directory });
+          setCreationSession(state.projectDir || directory, conversation.id);
+        } } : undefined}
       visible={chatOpen && localControls} composerPortalTarget={composerPortalTarget ?? (localControls && chatOpen ? inputTarget : null)}
       onOpen={() => { if (externalComposerControls) onOpenComposer?.(); else setChatOpen(true); }} beforeSend={beforeSend}
       contextLabel={page?.file ? `${page.temporary ? bushItPageName(page, language) : fileName(page.file.path)}${selection?.id === page.id && selection.value.source === page.source ? ` · Ln ${selection.value.startLine}–${selection.value.endLine}` : ''}` : ''}/></Suspense>}

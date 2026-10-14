@@ -86,7 +86,7 @@ export function ToolImageArtifactViewer({
               aria-busy={loading || undefined}
               disabled={!pathValue || loading}
               onClick={() => void openImage(artifact)}
-              onContextMenu={event => openFileContextMenu(event, host ? '' : pathValue, { language, image: true })}
+              onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { language })}
             >
               {variant === 'thumbnail' ? <>
                 <ToolImageThumbnail key={pathValue} path={pathValue} name={name} language={language} />

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BUSH_MODEL_EVENT_PROTOCOL, BUSH_SESSION_TURN_REQUEST_PROTOCOL, STOP_RUNTIME_TURN_COMMAND } from '@cardbush/bush-protocol';
+import { BUSH_MODEL_EVENT_PROTOCOL, BUSH_SESSION_TURN_REQUEST_PROTOCOL, STOP_RUNTIME_TURN_COMMAND, summarizeTaskPlanWaiting } from '@cardbush/bush-protocol';
 import { CoordinationStore, InMemoryRuntimeHost, SessionStore, ToolRegistry, registerCoordinationTools } from '../dist/index.js';
 
 const catalog = new ToolRegistry();
@@ -24,6 +24,34 @@ function* answer(r) {
   yield event(r, 0, 'text_delta', { delta: 'All steps are completed.' });
   yield event(r, 1, 'response_completed', { finishReason: 'stop' });
 }
+
+for (const kind of ['user', 'background', 'dependency', undefined]) {
+  test(`a ${kind ?? 'legacy unclassified'} wait carries its cause in the terminal without forcing another call`, async () => {
+    const node = { ...auth, ...(kind ? { waitingKind: kind } : {}) };
+    const coordinationStore = setup([node, verify]);
+    const storedEvents = [];
+    const persistence = { load: () => structuredClone(storedEvents), append: event => storedEvents.push(structuredClone(event)) };
+    const sessionStore = new SessionStore({ persistence });
+    let calls = 0;
+    const host = new InMemoryRuntimeHost({ coordinationStore, sessionStore, provider: { async *stream(r) { calls++; yield* answer(r); } } });
+    const terminal = await host.runSessionTurn(request(`wait-${kind ?? 'legacy'}`));
+    assert.equal(terminal.payload.status, 'completed');
+    assert.equal(terminal.payload.reason, 'task_plan_waiting');
+    assert.deepEqual(terminal.payload.details.planWaiting, { kind: kind ?? 'unspecified', reason: auth.waitingFor });
+    assert.deepEqual(sessionStore.snapshot('session').turns[0].planWaiting, terminal.payload.details.planWaiting);
+    assert.deepEqual(new SessionStore({ persistence }).snapshot('session').turns[0].planWaiting, terminal.payload.details.planWaiting, 'journal replay preserves the wait category');
+    assert.equal(calls, 1);
+  });
+}
+
+test('user input takes precedence over passive waits, and prose never promotes an unclassified wait', () => {
+  const waits = ['dependency', 'background', 'user'].map(waitingKind => ({ ...auth, waitingKind, waitingFor: waitingKind }));
+  assert.deepEqual(summarizeTaskPlanWaiting(plan(waits)), { kind: 'user', reason: 'user' });
+  assert.deepEqual(summarizeTaskPlanWaiting(plan(waits.slice(0, 2))), { kind: 'background', reason: 'background' });
+  assert.deepEqual(summarizeTaskPlanWaiting(plan([auth])), { kind: 'unspecified', reason: auth.waitingFor });
+  assert.equal(summarizeTaskPlanWaiting({ ...plan(waits), active: false }), undefined);
+  assert.equal(summarizeTaskPlanWaiting(plan([verify])), undefined);
+});
 
 for (const nodes of [[auth, verify], [verify], [{ ...verify, status: 'in_progress' }]]) {
   test(`a final completion claim preserves recorded ${nodes.map(n => n.status).join('/')} plan states without another model call`, async () => {

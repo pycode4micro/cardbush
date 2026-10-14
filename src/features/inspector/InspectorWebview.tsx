@@ -389,8 +389,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     const contextMenu = (event: Event) => {
       const params = (event as Event & {
         params?: {
-          x?: number;
-          y?: number;
           mediaType?: string;
           srcURL?: string;
           linkURL?: string;
@@ -411,8 +409,6 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       void window.cardbushDesktop?.showInspectorContextMenu?.({
         guestWebContentsId,
         target,
-        x: Number(params.x) || 0,
-        y: Number(params.y) || 0,
         mediaType: params.mediaType,
         srcURL: params.srcURL,
         linkURL: params.linkURL,

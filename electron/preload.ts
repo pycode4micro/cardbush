@@ -670,8 +670,6 @@ const desktopApi = {
   showInspectorContextMenu: (payload: {
     guestWebContentsId: number;
     target: string;
-    x: number;
-    y: number;
     mediaType?: string;
     srcURL?: string;
     linkURL?: string;

@@ -514,6 +514,7 @@ export function SettingsView({
           </button>
           <McpServersPanel
             initialServerId={pluginMcpTarget.serverId}
+            initialCreate={!pluginMcpTarget.serverId}
             language={language}
             capabilities={backendCapabilities}
             onNotify={notify}
@@ -532,7 +533,7 @@ export function SettingsView({
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
           onOpenMcp={(serverId) => setPluginMcpTarget({ serverId })}
-          renderMcp={serverId => <McpServersPanel initialServerId={serverId} language={language}
+          renderMcp={serverId => <McpServersPanel initialServerId={serverId} initialCreate={!serverId} language={language}
             capabilities={backendCapabilities} onNotify={notify} />}
           onNotify={notify}
         />
@@ -1487,11 +1488,13 @@ const emptyMcpDraft: McpServerDraft = {
 
 export function McpServersPanel({
   initialServerId,
+  initialCreate = false,
   language,
   capabilities,
   onNotify,
 }: {
   initialServerId?: string;
+  initialCreate?: boolean;
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
@@ -1507,6 +1510,14 @@ export function McpServersPanel({
   const [validation, setValidation] = useState<McpServerValidationResult | null>(null);
   const selectedIdRef = useRef(initialServerId ?? '');
   const initialEditorPending = useRef(true);
+  const editorRef = useRef<HTMLElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    if (!editorOpen) return;
+    editorRef.current?.scrollIntoView({ block: 'nearest' });
+    editorRef.current?.querySelector('input')?.focus({ preventScroll: true });
+  }, [editorOpen, selectedId]);
 
   const selectServerId = useCallback((serverId: string) => {
     selectedIdRef.current = serverId;
@@ -1533,14 +1544,14 @@ export function McpServersPanel({
       }
       if (initialEditorPending.current) {
         initialEditorPending.current = false;
-        setEditorOpen(!currentId || Boolean(selected));
+        setEditorOpen(Boolean(selected) || (!currentId && initialCreate));
       }
     } catch (caught) {
       setError(mcpErrorText(caught, language));
     } finally {
       setLoading(false);
     }
-  }, [host, language, selectServerId]);
+  }, [host, language, initialCreate, selectServerId]);
 
   useEffect(() => {
     void loadServers();
@@ -1563,11 +1574,14 @@ export function McpServersPanel({
   }, []);
 
   const startNew = useCallback(() => {
+    // Reopening a new server keeps the draft until the user leaves this page.
+    if (selectedIdRef.current) setDraft(emptyMcpDraft);
     selectServerId('');
-    setDraft(emptyMcpDraft);
     setEditorOpen(true);
     setValidation(null);
     setError('');
+    editorRef.current?.scrollIntoView({ block: 'nearest' });
+    editorRef.current?.querySelector('input')?.focus({ preventScroll: true });
   }, [selectServerId]);
 
   const selectServer = useCallback((server: McpServerConfig) => {
@@ -1664,7 +1678,11 @@ export function McpServersPanel({
       try {
         await host.deleteMcpServerConfig(server.id);
         if (selectedId === server.id) {
-          startNew();
+          selectServerId('');
+          setDraft(emptyMcpDraft);
+          setEditorOpen(false);
+          setValidation(null);
+          addButtonRef.current?.focus({ preventScroll: true });
         }
         await loadServers();
         onNotify(language === 'zh' ? 'MCP 服务已删除' : 'MCP server deleted');
@@ -1674,7 +1692,7 @@ export function McpServersPanel({
         setBusyKey('');
       }
     },
-    [host, language, loadServers, onNotify, selectedId, startNew],
+    [host, language, loadServers, onNotify, selectedId, selectServerId],
   );
 
   const selectedServer = servers.find((server) => server.id === selectedId);
@@ -1721,11 +1739,161 @@ export function McpServersPanel({
         </p>}
         <div className="mcp-section-title">
           <strong>{language === 'zh' ? '服务器' : 'Servers'}</strong>
-          <button className="mcp-add-button" type="button" onClick={startNew}>
+          <button ref={addButtonRef} className="mcp-add-button" type="button" disabled={loading || Boolean(busyKey)}
+            aria-expanded={editorOpen && !selectedId} aria-controls="mcp-server-editor" onClick={startNew}>
             <Plus size={16} />
             {language === 'zh' ? '添加服务器' : 'Add server'}
           </button>
         </div>
+        {editorOpen && (
+          <section ref={editorRef} id="mcp-server-editor" className="mcp-editor-panel" aria-labelledby="mcp-server-editor-title">
+            <div className="mcp-section-title">
+              <strong id="mcp-server-editor-title">
+                {selectedId
+                  ? language === 'zh'
+                    ? '配置服务器'
+                    : 'Configure server'
+                  : language === 'zh'
+                    ? '添加服务器'
+                    : 'Add server'}
+              </strong>
+              <button
+                className="mcp-icon-button"
+                type="button"
+                aria-label={language === 'zh' ? '收起服务器配置' : 'Collapse server settings'}
+                disabled={Boolean(busyKey)}
+                onClick={() => {
+                  setEditorOpen(false);
+                  setValidation(null);
+                  addButtonRef.current?.focus({ preventScroll: true });
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="mcp-compact-form">
+              <SettingsInput
+                label={language === 'zh' ? '名称' : 'Name'}
+                value={draft.name}
+                placeholder="node_repl"
+                onChange={(value) => updateDraft({ name: value })}
+              />
+              <label className="settings-field">
+                <span>{language === 'zh' ? '连接方式' : 'Connection'}</span>
+                <SettingsDropdown label={language === 'zh' ? '连接方式' : 'Connection'} value={draft.transport}
+                  onChange={transport => updateDraft({ transport: transport as McpTransport })}
+                  options={[{ value: 'stdio', label: 'stdio' }, { value: 'sse', label: 'SSE' }, { value: 'streamable_http', label: 'HTTP stream' }, { value: 'http', label: 'HTTP' }]} />
+              </label>
+              {draft.transport === 'stdio' ? (
+                <SettingsInput
+                  label={language === 'zh' ? '启动命令' : 'Command'}
+                  value={draft.command}
+                  placeholder="npx @modelcontextprotocol/server-filesystem C:\\Users\\fixture\\Desktop"
+                  onChange={(value) => updateDraft({ command: value })}
+                />
+              ) : (
+                <SettingsInput
+                  label="URL"
+                  value={draft.url}
+                  placeholder="http://127.0.0.1:3000/sse"
+                  onChange={(value) => updateDraft({ url: value })}
+                />
+              )}
+            </div>
+            <details key={selectedId || 'new'} className="mcp-advanced">
+              <summary>{language === 'zh' ? '高级设置' : 'Advanced settings'}</summary>
+              <div className="mcp-form-grid">
+                <SettingsInput
+                  label="id"
+                  value={draft.id}
+                  placeholder="filesystem"
+                  onChange={(value) => updateDraft({ id: value })}
+                />
+                <SettingsInput
+                  label={language === 'zh' ? '工作目录' : 'Working directory'}
+                  value={draft.cwd}
+                  placeholder="C:\\Users\\..."
+                  onChange={(value) => updateDraft({ cwd: value })}
+                />
+                <SettingsInput
+                  label={language === 'zh' ? '描述' : 'Description'}
+                  value={draft.description}
+                  placeholder={language === 'zh' ? '这个 MCP 服务提供什么工具' : 'What this MCP server provides'}
+                  onChange={(value) => updateDraft({ description: value })}
+                />
+              </div>
+              <div className="mcp-form-grid">
+                <label className="mcp-editor">
+                  <span>env JSON</span>
+                  <textarea
+                    value={draft.envText}
+                    placeholder="{&#10;  &quot;API_KEY&quot;: &quot;...&quot;&#10;}"
+                    onChange={(event) => updateDraft({ envText: event.currentTarget.value })}
+                  />
+                </label>
+                <label className="mcp-editor">
+                  <span>headers JSON</span>
+                  <textarea
+                    value={draft.headersText}
+                    placeholder="{&#10;  &quot;Authorization&quot;: &quot;Bearer ...&quot;&#10;}"
+                    onChange={(event) => updateDraft({ headersText: event.currentTarget.value })}
+                  />
+                </label>
+              </div>
+            </details>
+            <div className="settings-actions">
+              <button className="secondary-button" type="button" disabled={Boolean(busyKey)} onClick={() => void validateServer()}>
+                {busyKey === 'validate' ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
+                {language === 'zh' ? '校验' : 'Validate'}
+              </button>
+              <button className="primary-button" type="button" disabled={Boolean(busyKey)} onClick={() => void saveServer()}>
+                {busyKey === 'save' ? <LoaderCircle size={14} /> : <Upload size={14} />}
+                {language === 'zh' ? '保存' : 'Save'}
+              </button>
+              {selectedServer && (
+                <button
+                  className="secondary-button danger"
+                  type="button"
+                  disabled={Boolean(busyKey)}
+                  onClick={() => void removeServer(selectedServer)}
+                >
+                  {busyKey === `delete:${selectedServer.id}` ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+                  {language === 'zh' ? '删除' : 'Delete'}
+                </button>
+              )}
+            </div>
+            {validation && (
+              <div className={`subagent-validation ${validation.ok ? 'ok' : 'invalid'}`}>
+                <strong>
+                  {validation.ok
+                    ? language === 'zh'
+                      ? '校验通过'
+                      : 'Validation passed'
+                    : language === 'zh'
+                      ? '校验未通过'
+                      : 'Validation failed'}
+                  {validation.tools.length ? ` · tools: ${validation.tools.length}` : ''}
+                </strong>
+                {validation.messages.length > 0 ? (
+                  validation.messages.map((message, index) => (
+                    <p key={`${message.severity}-${message.path}-${index}`}>
+                      {message.severity}
+                      {message.path ? ` · ${message.path}` : ''}: {message.message}
+                    </p>
+                  ))
+                ) : (
+                  <p>
+                    {validation.tools.length
+                      ? validation.tools.join(', ')
+                      : language === 'zh'
+                        ? '服务未返回错误详情。'
+                        : 'No error details were returned.'}
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
         <div className="mcp-simple-list">
           {loading ? (
             <div className="mcp-empty-row">
@@ -1759,6 +1927,9 @@ export function McpServersPanel({
                   className="mcp-icon-button"
                   type="button"
                   title={language === 'zh' ? '配置' : 'Configure'}
+                  disabled={Boolean(busyKey)}
+                  aria-expanded={editorOpen && selectedId === server.id}
+                  aria-controls="mcp-server-editor"
                   onClick={() => selectServer(server)}
                 >
                   <Settings size={16} />
@@ -1779,153 +1950,6 @@ export function McpServersPanel({
       </section>
 
       {!host.remote && <CardbushAppsPanel language={language} onNotify={onNotify} />}
-
-      {editorOpen && (
-        <section className="mcp-editor-panel">
-          <div className="mcp-section-title">
-            <strong>
-              {selectedId
-                ? language === 'zh'
-                  ? '配置服务器'
-                  : 'Configure server'
-                : language === 'zh'
-                  ? '添加服务器'
-                  : 'Add server'}
-            </strong>
-            <button
-              className="mcp-icon-button"
-              type="button"
-              onClick={() => {
-                setEditorOpen(false);
-                setValidation(null);
-              }}
-            >
-              ×
-            </button>
-          </div>
-          <div className="mcp-compact-form">
-            <SettingsInput
-              label={language === 'zh' ? '名称' : 'Name'}
-              value={draft.name}
-              placeholder="node_repl"
-              onChange={(value) => updateDraft({ name: value })}
-            />
-            <label className="settings-field">
-              <span>{language === 'zh' ? '连接方式' : 'Connection'}</span>
-              <SettingsDropdown label={language === 'zh' ? '连接方式' : 'Connection'} value={draft.transport}
-                onChange={transport => updateDraft({ transport: transport as McpTransport })}
-                options={[{ value: 'stdio', label: 'stdio' }, { value: 'sse', label: 'SSE' }, { value: 'streamable_http', label: 'HTTP stream' }, { value: 'http', label: 'HTTP' }]} />
-            </label>
-            {draft.transport === 'stdio' ? (
-              <SettingsInput
-                label={language === 'zh' ? '启动命令' : 'Command'}
-                value={draft.command}
-                placeholder="npx @modelcontextprotocol/server-filesystem C:\\Users\\fixture\\Desktop"
-                onChange={(value) => updateDraft({ command: value })}
-              />
-            ) : (
-              <SettingsInput
-                label="URL"
-                value={draft.url}
-                placeholder="http://127.0.0.1:3000/sse"
-                onChange={(value) => updateDraft({ url: value })}
-              />
-            )}
-          </div>
-          <details className="mcp-advanced">
-            <summary>{language === 'zh' ? '高级设置' : 'Advanced settings'}</summary>
-            <div className="mcp-form-grid">
-              <SettingsInput
-                label="id"
-                value={draft.id}
-                placeholder="filesystem"
-                onChange={(value) => updateDraft({ id: value })}
-              />
-              <SettingsInput
-                label={language === 'zh' ? '工作目录' : 'Working directory'}
-                value={draft.cwd}
-                placeholder="C:\\Users\\..."
-                onChange={(value) => updateDraft({ cwd: value })}
-              />
-              <SettingsInput
-                label={language === 'zh' ? '描述' : 'Description'}
-                value={draft.description}
-                placeholder={language === 'zh' ? '这个 MCP 服务提供什么工具' : 'What this MCP server provides'}
-                onChange={(value) => updateDraft({ description: value })}
-              />
-            </div>
-            <div className="mcp-form-grid">
-              <label className="mcp-editor">
-                <span>env JSON</span>
-                <textarea
-                  value={draft.envText}
-                  placeholder="{&#10;  &quot;API_KEY&quot;: &quot;...&quot;&#10;}"
-                  onChange={(event) => updateDraft({ envText: event.currentTarget.value })}
-                />
-              </label>
-              <label className="mcp-editor">
-                <span>headers JSON</span>
-                <textarea
-                  value={draft.headersText}
-                  placeholder="{&#10;  &quot;Authorization&quot;: &quot;Bearer ...&quot;&#10;}"
-                  onChange={(event) => updateDraft({ headersText: event.currentTarget.value })}
-                />
-              </label>
-            </div>
-          </details>
-          <div className="settings-actions">
-            <button className="secondary-button" type="button" disabled={Boolean(busyKey)} onClick={() => void validateServer()}>
-              {busyKey === 'validate' ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
-              {language === 'zh' ? '校验' : 'Validate'}
-            </button>
-            <button className="primary-button" type="button" disabled={Boolean(busyKey)} onClick={() => void saveServer()}>
-              {busyKey === 'save' ? <LoaderCircle size={14} /> : <Upload size={14} />}
-              {language === 'zh' ? '保存' : 'Save'}
-            </button>
-            {selectedServer && (
-              <button
-                className="secondary-button danger"
-                type="button"
-                disabled={Boolean(busyKey)}
-                onClick={() => void removeServer(selectedServer)}
-              >
-                {busyKey === `delete:${selectedServer.id}` ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-                {language === 'zh' ? '删除' : 'Delete'}
-              </button>
-            )}
-          </div>
-          {validation && (
-            <div className={`subagent-validation ${validation.ok ? 'ok' : 'invalid'}`}>
-              <strong>
-                {validation.ok
-                  ? language === 'zh'
-                    ? '校验通过'
-                    : 'Validation passed'
-                  : language === 'zh'
-                    ? '校验未通过'
-                    : 'Validation failed'}
-                {validation.tools.length ? ` · tools: ${validation.tools.length}` : ''}
-              </strong>
-              {validation.messages.length > 0 ? (
-                validation.messages.map((message, index) => (
-                  <p key={`${message.severity}-${message.path}-${index}`}>
-                    {message.severity}
-                    {message.path ? ` · ${message.path}` : ''}: {message.message}
-                  </p>
-                ))
-              ) : (
-                <p>
-                  {validation.tools.length
-                    ? validation.tools.join(', ')
-                    : language === 'zh'
-                      ? '服务未返回错误详情。'
-                      : 'No error details were returned.'}
-                </p>
-              )}
-            </div>
-          )}
-        </section>
-      )}
     </div>
   );
 }

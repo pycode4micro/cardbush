@@ -25,7 +25,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     if (viewportWidth===1920 && style==='simple' && mode==='bottom') fs.writeFileSync(path.join(root,'tmp','composer-maximized-welcome.png'),(await window.webContents.capturePage()).toPNG());
     await run('document.querySelector(".send-button").click()');
     await until('!!document.querySelector(".composer-dock .composer-stack")', 'centered send');
-    await until('document.querySelector(".composer-dock").getAnimations().every(a=>a.playState!=="running")', 'vertical arrival'); await pause();
+    await until('document.querySelector(".composer-dock").getAnimations({subtree:true}).every(a=>a.playState!=="running")', 'vertical arrival'); await pause();
     const after = await run('layoutRect(".composer-dock .composer-stack")');
     const track = await run('layoutRect(".message-row")');
     if (mode==='keep') {

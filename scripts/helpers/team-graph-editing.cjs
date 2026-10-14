@@ -1,0 +1,96 @@
+const assert = require('node:assert/strict');
+const { writeFileSync } = require('node:fs');
+const { resolve } = require('node:path');
+
+module.exports = async ({ read, until, frame, click, action, key, pointerClick, capture, win, chooseView }) => {
+  await until('document.querySelector(".md-graph")?.dataset.readonly==="false"');
+  const saved = await read('structuredClone(records.teams[0].definition)');
+  const revision = () => read('records.teams[0].revision');
+  const waitSave = () => until('!document.querySelector("[aria-label=查看流程或运行]").disabled && !teamState.loading');
+  const movePointer = async (selector, dx, dy) => {
+    const point = await read(`(()=>{const rect=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)}})()`);
+    win.webContents.sendInputEvent({type:'mouseMove',...point});
+    win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
+    win.webContents.sendInputEvent({type:'mouseMove',x:point.x+dx,y:point.y+dy}); await frame();
+    assert.equal(await read('!!document.querySelector(".team-flow-detail")'), false, 'dragging does not select a node and resize its canvas');
+    win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:point.x+dx,y:point.y+dy}); await frame();
+  };
+  const initial = await revision();
+  await read('window.deferSave=true');
+  await movePointer('[data-node-id=stock] .md-node-face', 20, 40);
+  await until('!!window.finishSave');
+  const movedTop = await read('document.querySelector("[data-node-id=stock]").style.top');
+  assert.ok(Number.parseFloat(movedTop)>110, 'the dragged position remains visible while saving');
+  assert.equal(await revision(), initial);
+  await action('刷新'); await frame();
+  assert.equal(await read('document.querySelector("[data-node-id=stock]").style.top'), movedTop, 'background list refreshes do not undo a pending drag');
+  await read('window.deferSave=false;finishSave()'); await waitSave();
+  assert.equal(await revision(), initial+1);
+  assert.equal(await read('records.teams[0].definition.nodes[0].position.y+"px"'), movedTop);
+  assert.deepEqual(await read('records.teams[0].definition.presentation'), saved.presentation);
+  assert.deepEqual(await read('records.runs[0].workflow.nodes.map(node=>node.position)'), [undefined,undefined], 'history never acquires current canvas coordinates');
+  // Zooming and panning are view operations, not persisted edits.
+  const stageBefore = await read('document.querySelector(".md-graph-stage").style.transform');
+  await action('放大图谱');
+  assert.notEqual(await read('document.querySelector(".md-graph-stage").style.transform'), stageBefore);
+  await read('window.cameraBeforeRefresh=document.querySelector(".md-graph-stage").style.transform');
+  await action('刷新'); await until('!teamState.loading');
+  assert.equal(await read('document.querySelector(".md-graph-stage").style.transform'), await read('cameraBeforeRefresh'), 'polling does not reset zoom');
+  await action('适应画布');
+  assert.equal(await revision(), initial+1);
+  await action('自动排列'); await waitSave();
+  assert.equal(await revision(), initial+2);
+  assert.ok(await read('records.teams[0].definition.nodes.every(node=>node.position)'));
+  // Link creation and removal use the same versioned canonical workflow save.
+  await pointerClick('[data-node-id=stock] .md-node-out');
+  await pointerClick('[data-node-id=review] .md-node-in'); await waitSave();
+  assert.deepEqual(await read('records.teams[0].definition.nodes.find(node=>node.id==="review").depends_on'), ['summary','stock']);
+  await pointerClick('[data-node-id=review] .md-node-face');
+  await action('移除依赖 库存核验'); await waitSave();
+  assert.deepEqual(await read('records.teams[0].definition.nodes.find(node=>node.id==="review").depends_on'), ['summary']);
+  await action('关闭步骤详情');
+  const beforeInvalid = await revision();
+  await pointerClick('[data-node-id=review] .md-node-out');
+  await pointerClick('[data-node-id=stock] .md-node-in');
+  await until('document.querySelector(".team-flow-notice[role=alert]")?.textContent.includes("循环依赖")');
+  assert.equal(await revision(), beforeInvalid, 'cycles never reach persistence');
+  await action('关闭提示');
+  await pointerClick('[data-node-id=stock] .md-node-out');
+  await pointerClick('[data-node-id=summary] .md-node-in');
+  assert.equal(await revision(), beforeInvalid, 'adding an existing link does not create a revision');
+  // A competing editor wins; stale local mutations show a readable conflict and reload.
+  await read('records.teams[0].revision++;records.teams[0].definition.nodes[0].prompt="远端最新任务"');
+  await pointerClick('[data-node-id=stock] .md-node-face');
+  await key('ArrowDown', ['alt']); await waitSave();
+  await until('document.querySelector(".team-flow-notice[role=alert]")?.textContent.includes("最新版本")');
+  assert.equal(await read('records.teams[0].definition.nodes[0].prompt'), '远端最新任务');
+  assert.equal(await read('teamState.teams[0].revision'), beforeInvalid+1);
+  assert.equal(await read('document.querySelector(".team-flow-detail")?.textContent.includes("远端最新任务")'), true);
+  await action('关闭提示'); await action('关闭步骤详情');
+  // The shared picker groups complete records and supports keyboard selection.
+  await action('查看流程或运行');
+  assert.deepEqual(await read('[...document.querySelectorAll(".settings-dropdown-popover:popover-open [role=group]")].map(node=>node.getAttribute("aria-label"))'), ['当前流程','历史运行 · 只读']);
+  assert.ok(await read('document.querySelector(".settings-dropdown-popover:popover-open [value=run-one]").textContent.includes("核对本周订单")'));
+  assert.ok(await read('document.querySelector(".settings-dropdown-popover:popover-open time").getAttribute("datetime")==="2026-10-14T01:00:00Z"'));
+  await new Promise(resolve => setTimeout(resolve, 180)); await frame();
+  writeFileSync(resolve('tmp/team-flow-history-picker.png'), (await capture()).toPNG());
+  await read('document.querySelector("[aria-label=查看流程或运行]").focus()');
+  await key('End'); await key('Enter');
+  assert.equal(await read('document.querySelector(".md-graph").dataset.readonly'), 'true');
+  assert.equal(await read('document.querySelectorAll(".md-node-port").length'), 0);
+  assert.equal(await read('!!document.querySelector("[aria-label=自动排列]")'), false);
+  await read('records.runs.push({...structuredClone(records.runs[0]),id:"run-new",createdAt:"2026-10-15T01:00:00Z"})');
+  await action('刷新'); await until('teamState.runs.length===2');
+  assert.equal(await read('document.querySelector("[aria-label=查看流程或运行]").value'), 'run-one', 'an explicit history selection stays stable when new runs arrive');
+  await click('编辑当前流程');
+  assert.equal(await read('document.querySelectorAll(".md-graph-node").length'), 3);
+  assert.equal(await read('document.querySelector(".md-graph").dataset.readonly'), 'false');
+  // A long history remains scrollable; keyboard selection scrolls only the menu.
+  await read('for(let i=0;i<20;i++)records.runs.push({...structuredClone(records.runs[0]),id:"extra-"+i,createdAt:"2026-09-"+String(i+1).padStart(2,"0")+"T01:00:00Z"})');
+  await action('刷新'); await until('teamState.runs.length===22');
+  win.setSize(760,680); await frame(); await action('查看流程或运行');
+  await read('document.querySelector("[aria-label=查看流程或运行]").focus()'); await key('End');
+  assert.ok(await read('(()=>{const list=document.querySelector(".settings-dropdown-popover:popover-open"),rect=list.getBoundingClientRect(),option=list.querySelector(".highlighted").getBoundingClientRect();return list.scrollTop>0&&rect.left>=12&&rect.right<=innerWidth-12&&rect.bottom<=innerHeight-12&&option.top>=rect.top&&option.bottom<=rect.bottom})()'), 'long history scrolls the highlighted entry into a viewport-clamped menu');
+  await key('Escape');
+  win.setSize(1120,1000); await frame();
+};

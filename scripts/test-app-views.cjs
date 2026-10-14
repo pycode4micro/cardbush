@@ -102,7 +102,7 @@ async function buildViews() {
       'src/features/inspector/panelLayout.ts', 'src/features/inspector/BrowserBookmarkButton.tsx',
       'src/features/inspector/useBrowserBookmarks.ts', 'src/features/composer/ComposerPortalContext.ts',
     ] : []),
-    ...(['composer-presentation', 'composer-layout', 'composer-reference-sizing'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
+    ...(['composer-presentation', 'composer-layout', 'composer-reference-sizing', 'first-submission', 'composer-paste-stability'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
       'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
       'src/features/composer/ComposerPortalContext.ts',
       'src/features/components/ComponentsApp.tsx',
@@ -473,7 +473,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-resize', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -681,6 +681,10 @@ app.whenReady().then(async () => {
       await require('./helpers/composer-presentation.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no presentation renderer errors'); assert.deepEqual(errors, []); return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'first-submission') {
+      await require('./helpers/chat-first-submission.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no first-submission renderer errors'); assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing') {
       await require('./helpers/composer-reference-sizing.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no composer reference renderer errors'); assert.deepEqual(errors, []); return;
@@ -829,6 +833,10 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-prediction') {
       await require('./helpers/composer-prediction.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no prediction renderer errors'); assert.deepEqual(errors, []); return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-paste-stability') {
+      await require('./helpers/composer-paste-stability.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no paste renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-input') {
       assert.deepEqual(await run('failures'), [], 'no composer input renderer errors');

@@ -70,10 +70,17 @@ module.exports = async ({ run, until, pause }) => {
           onOpenChangeReview: (...args) => { window.changeTransitionReview = args; } });
       `);
       await until("!!document.querySelector('[data-message-id=change-new-reply] .turn-change-review')", 'actual new edits render');
-      assert.equal(await run("document.querySelector('.turn-change-review').textContent"), '1 changed files+3-1',
+      assert.equal(await run("document.querySelector('.turn-change-review').textContent"), 'file 1|+3-1',
         'live summary counts only this turn');
       await run("document.querySelector('.turn-change-review').click()");
       assert.equal(await run('changeTransitionReview[1]'), 'next-turn', 'review opens the owning turn');
+      assert.equal(await run('changeTransitionReview[0] == null'), true, 'review receives no click event as a file path');
+      await run(`changeTransitionRunning = changeTransitionRunning.map(message => message.role === 'assistant'
+        ? { ...message, content: 'Finishing the result.', metadata: { transcript_kind: 'assistant_final' } } : message);
+        updateChat({messages:[...changeTransitionHistory, ...changeTransitionRunning]});`);
+      await until("!!document.querySelector('.assistant-final-answer')", 'final response starts streaming');
+      assert.equal(await run("document.querySelectorAll('.assistant-activity-line .turn-change-review').length"), 1,
+        'file changes remain beside the live status until the turn finishes');
       await run(`updateChat({ sending: false, activeTurnId: '', messages: [...changeTransitionHistory,
         ...changeTransitionRunning.map(message => ({ ...message, status: 'completed',
           content: message.role === 'assistant' ? 'Next file updated.' : message.content }))] });`);

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { EmployeeIcon } from './employeePresentation';
-import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt, type TeamWorkflow } from '@cardbush/bush-protocol';
+import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorkspaceStore';
 import { TeamGraphWorkspace } from './TeamGraphWorkspace';
-import { useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
+import { requestTeamDocument, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
+import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
 import './team-workspace.css';
 
-export function TeamWorkspace({ language, onPractice }: { language: AppLanguage; onPractice?: (team: TeamWorkflow) => void }) {
+export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { language: AppLanguage; chatOptions?: CreationChatOptions; onOpenConversation?: (id: string) => void }) {
   const state = useTeamWorkspace();
   const zh = language === 'zh', t = (cn: string, en: string) => zh ? cn : en;
   const { tab } = useTeamWorkspaceNavigation();
@@ -63,9 +64,10 @@ export function TeamWorkspace({ language, onPractice }: { language: AppLanguage;
         </div>
       </form>}
     </div></section>}
-    <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language} onPractice={onPractice}/></div>
+    <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language} chatOptions={chatOptions} onOpenConversation={onOpenConversation} visible={tab === 'teams'}/></div>
     {tab === 'runs' && <section className="native-team-management"><h1>{t('运行记录', 'Runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{t('还没有运行记录。', 'No runs yet.')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>
+        <button type="button" onClick={() => requestTeamDocument({ kind: 'select', id: run.teamId, runId: run.id })}>{t('查看流程与结果', 'View workflow and results')}</button>
         {run.nodes.map((node, index) => <details key={node.id}><summary title={node.id}>{t('节点', 'Node')} {index + 1} · {statusLabel(node.status)}</summary><pre>{node.output || node.error}</pre></details>)}
         {run.error && <p role="alert">{run.error}</p>}<small>{run.id}</small>
         {run.status === 'running' && <button type="button" disabled={busy} onClick={() => void perform(() => teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'stop', run_id: run.id }))}>{t('停止团队', 'Stop run')}</button>}

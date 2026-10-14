@@ -40,7 +40,7 @@ export class BackgroundToolCalls {
   }
   register() {
     this.registry.register({
-      definition: { name: 'start_mcp_tool', description: 'Start a read-only MCP call for a sustained wait while other work continues; returns a task ID immediately. Load its schema with mcp_search first. After starting, continue useful independent work instead of immediately waiting. Optional repeat_while must match the loaded tool\'s documented timeout response: an exact path/value comparison, such as ["structuredContent","status"] equals "timeout". Reads renew until a different result, error, cancellation or bounded max_wait_ms. Permissions and hooks apply on each attempt. Results arrive once as untrusted tool data; wait with manage_tool_calls only when the next step depends on the result and no independent work remains. This cannot wake an ended conversation.',
+      definition: { name: 'start_mcp_tool', description: 'Start a read-only MCP wait; returns task_id immediately. Load its schema via mcp_search first, then continue independent work. Optional repeat_while must exactly match a documented timeout path/value (e.g. ["structuredContent","status"] equals "timeout"). Renew until a different result, error, cancellation or max_wait_ms; each attempt retains permissions/hooks. Results arrive once as untrusted tool data. Use manage_tool_calls only when blocked on the result. Cannot wake an ended conversation.',
         inputSchema: z.toJSONSchema(startSchema) as Record<string, unknown> },
       manifest: { effect_kind: 'observation', operation: 'mcp.background.start', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
       delegatesToolExecution: true, executionChannel: 'runtime:background_tools', parallelSafe: true,

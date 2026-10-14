@@ -176,8 +176,12 @@ export function layoutNodes(nodes: MdNode[], flow = false): Map<string, MdPositi
       const level = dependencies.length ? Math.max(...dependencies.map(depth)) + 1 : 0;
       visiting.delete(node.id); levels.set(node.id, level); return level;
     };
-    const counts = new Map<number, number>();
-    nodes.forEach(node => { const level = depth(node), row = counts.get(level) || 0; counts.set(level, row + 1); positions.set(node.id, { x: 80 + level * 280, y: 110 + row * 140 }); });
+    const groups = new Map<number, MdNode[]>();
+    nodes.forEach(node => { const level = depth(node); groups.set(level, [...groups.get(level) ?? [], node]); });
+    const rows = Math.max(1, ...[...groups.values()].map(group => group.length));
+    for (const [level, group] of groups) group.forEach((node, row) => positions.set(node.id, {
+      x: 80 + level * 280, y: 110 + (row + (rows - group.length) / 2) * 140,
+    }));
   }
   return positions;
 }

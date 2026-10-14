@@ -3,8 +3,8 @@ import { parseMarkdownGraph } from './markdownGraph';
 import { pageTitle } from './pageDocument';
 
 export type BushItPage = { id: string; source: string; updatedAt: number; archived?: boolean; projectDir?: string; conversationRoot?: string; temporary?: boolean; draftNumber?: number; unloaded?: boolean; file?: { path: string; revision: string; text: string }; externalFile?: BushItPage['file'] };
-type Pages = { pages: BushItPage[]; selectedId: string; error: string; projectDir: string; projects: string[]; sessions: Record<string, string> };
-const emptyProjects = () => ({ projectDir: '', projects: [] as string[], sessions: {} as Record<string, string> });
+type Pages = { pages: BushItPage[]; selectedId: string; error: string; projectDir: string; projects: string[]; sessions: Record<string, string>; sessionDrafts: Record<string, string> };
+const emptyProjects = () => ({ projectDir: '', projects: [] as string[], sessions: {} as Record<string, string>, sessionDrafts: {} as Record<string, string> });
 const key = 'cardbush.bush-it.pages.v1', listeners = new Set<() => void>();
 const names = new WeakMap<BushItPage, string>();
 let snapshot: Pages | undefined, timer: ReturnType<typeof setTimeout> | undefined;
@@ -16,7 +16,9 @@ function initial(): Pages {
       const pages = saved.pages.map((page: BushItPage) => page.projectDir && isCreationDraftDirectory(page.projectDir)
         ? { ...page, projectDir: '', conversationRoot: page.conversationRoot || page.projectDir, temporary: true } : page);
       const projectDir = typeof saved.projectDir === 'string' && !isCreationDraftDirectory(saved.projectDir) ? saved.projectDir : '';
-      return { ...emptyProjects(), projectDir, projects: Array.isArray(saved.projects) ? saved.projects.filter((item: unknown) => typeof item === 'string' && !isCreationDraftDirectory(item)) : [], sessions: saved.sessions && typeof saved.sessions === 'object' ? saved.sessions : {}, pages, selectedId: pages.find((page: BushItPage) => page.id === saved.selectedId && !page.archived)?.id || pages.find((page: BushItPage) => !page.archived && (page.projectDir || '') === projectDir)?.id || '', error: '' };
+      return { ...emptyProjects(), projectDir, projects: Array.isArray(saved.projects) ? saved.projects.filter((item: unknown) => typeof item === 'string' && !isCreationDraftDirectory(item)) : [], sessions: saved.sessions && typeof saved.sessions === 'object' ? saved.sessions : {},
+        sessionDrafts: saved.sessionDrafts && typeof saved.sessionDrafts === 'object' ? Object.fromEntries(Object.entries(saved.sessionDrafts).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].startsWith('local-'))) : {},
+        pages, selectedId: pages.find((page: BushItPage) => page.id === saved.selectedId && !page.archived)?.id || pages.find((page: BushItPage) => !page.archived && (page.projectDir || '') === projectDir)?.id || '', error: '' };
     }
     const source = localStorage.getItem('cardbush.bush-it.draft') ?? localStorage.getItem('cardbush.md-presentation.draft') ?? '';
     const page = { id: crypto.randomUUID(), source, updatedAt: Date.now() }; return { ...emptyProjects(), pages: [page], selectedId: page.id, error: '' };
@@ -58,7 +60,13 @@ export function selectCreationProject(projectDir: string) {
   const state = read(); publish({ projectDir, projects: projectDir ? [...new Set([...state.projects, projectDir])] : state.projects,
     selectedId: state.pages.find(page => !page.archived && (page.projectDir || '') === projectDir)?.id || '' });
 }
-export function setCreationSession(root: string, sessionId: string) { publish({ sessions: { ...read().sessions, [root]: sessionId } }); }
+export const creationSessionScope = (projectDir: string, page?: BushItPage) => projectDir ? `project:${projectDir}` : page ? `page:${page.id}` : '';
+export function prepareCreationSession(scope: string) {
+  const state = read(), existing = state.sessionDrafts[scope]; if (existing) return existing;
+  const id = `local-${crypto.randomUUID()}`; publish({ sessionDrafts: { ...state.sessionDrafts, [scope]: id } }); return id;
+}
+export function setCreationSession(root: string, sessionId: string) { publish({ sessions: { ...read().sessions, [root]: sessionId },
+  sessionDrafts: Object.fromEntries(Object.entries(read().sessionDrafts).filter(([, id]) => id !== sessionId)) }); }
 export function archiveBushItPage(id: string, archived = true) {
   const state = read(), pages = state.pages.map(page => page.id === id ? { ...page, archived } : page);
   publish({ pages, selectedId: archived && state.selectedId === id ? pages.find(page => !page.archived)?.id || '' : state.selectedId });
@@ -68,7 +76,7 @@ export function useBushItPages() { return useSyncExternalStore(listener => { lis
 export function useCreationSessionId() {
   return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => {
     const state = read(), page = state.pages.find(page => page.id === state.selectedId && !page.archived);
-    const root = state.projectDir || page?.conversationRoot || page?.file?.path.replace(/[\\/][^\\/]+$/, '') || '';
-    return state.sessions[root] || '';
+    const root = state.projectDir || page?.conversationRoot || '';
+    return state.sessions[root] || state.sessionDrafts[creationSessionScope(state.projectDir, page)] || '';
   });
 }

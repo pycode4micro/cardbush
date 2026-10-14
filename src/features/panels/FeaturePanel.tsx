@@ -1,7 +1,6 @@
 import { LoaderCircle } from 'lucide-react';
 import { Suspense } from 'react';
 import { TopBar } from '../../components/TopBar';
-import { useTeamWorkspace } from '../team/teamWorkspaceStore';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { type AppLanguage, type AppSection, type BackendCapabilities, type SkillDetail, type SkillSummary } from '../../types';
 import { sectionLabels } from '../appSections';
@@ -56,8 +55,7 @@ export function FeaturePanel({
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
 }) {
-  const teamWorkspace = useTeamWorkspace(section === 'team');
-  const label = section === 'team' ? teamWorkspace.title || sectionLabels[section][language] : sectionLabels[section][language];
+  const label = sectionLabels[section][language];
   return (
     <div className="feature-panel">
       {section !== 'md-presentation' && <TopBar

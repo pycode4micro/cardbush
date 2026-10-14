@@ -5,6 +5,35 @@ import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
 import { webcrypto } from 'node:crypto';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
+import path from 'node:path';
+
+const attentionStorage = new Map();
+const attentionApi = await loadChatTranscript({ source: [
+  `export * from ${JSON.stringify(path.resolve('src/features/sessionAttention.ts'))};`,
+  `export * from ${JSON.stringify(path.resolve('src/features/taskPlanWaiting.ts'))};`,
+].join('\n'), globals: { window: { localStorage: {
+  getItem: key => attentionStorage.get(key) ?? null,
+  setItem: (key, value) => attentionStorage.set(key, value),
+  removeItem: key => attentionStorage.delete(key),
+} } } });
+
+test('stored wait categories stay distinct and legacy badges cannot invent a user action', () => {
+  const states = Object.fromEntries(['user', 'background', 'dependency', undefined].map((waitingKind, index) => [String(index), {
+    sessionId: String(index), kind: 'waiting', ...(waitingKind ? { waitingKind } : {}),
+    title: 'Task', body: 'Needs your confirmation', turnId: 'turn', updatedAt: new Date().toISOString(),
+  }]));
+  attentionApi.persistSessionAttentionState(states);
+  const restored = attentionApi.readSessionAttentionState();
+  assert.deepEqual(Object.values(restored).map(item => item.waitingKind), ['user', 'background', 'dependency', 'unspecified']);
+  assert.equal(restored['3'].body, '', 'discard the old generic instruction to the user');
+  assert.equal(Object.values(restored).filter(attentionApi.sessionAttentionNeedsNotification).length, 1);
+  assert.deepEqual(Object.values(restored).map(item => attentionApi.sessionAttentionLabel(item, 'zh')),
+    ['等待用户确认', '等待后台任务', '等待前置步骤', '等待中']);
+  attentionApi.persistSessionAttentionState(restored);
+  assert.equal(attentionApi.readSessionAttentionState()['2'].waitingKind, 'dependency');
+  attentionApi.persistSessionAttentionState({});
+});
 
 const source = fs.readFileSync('src/features/notificationSound.ts', 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -128,9 +157,9 @@ test('the actual chat callback includes foreground completion, waiting and error
   const compiled = ts.transpileModule(declaration.getText(hook) + '\nexports.mark = markSessionAttention;',
     { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const sounds = [], toasts = [], exports = {}, attention = { current: {} };
-  const context = { exports, useCallback: fn => fn, notifyAttentionSound: event => sounds.push(event),
+  const context = { ...attentionApi, exports, useCallback: fn => fn, notifyAttentionSound: event => sounds.push(event),
     backend: {}, attentionByConversationRef: attention, viewActiveRef: { current: true }, activeConversationIdRef: { current: 'visible' },
-    isCardbushForeground: () => true, clearSessionAttention() {}, localize: zh => zh,
+    isCardbushForeground: () => true, clearSessionAttention(id, kind) { if (attention.current[id]?.kind === kind) delete attention.current[id]; }, localize: zh => zh,
     conversationsRef: { current: [] }, setAttentionByConversation() {},
     window: { cardbushDesktop: { notifySessionAttention: event => { toasts.push(event); return Promise.resolve(); } } } };
   vm.runInNewContext(compiled, context);
@@ -138,8 +167,27 @@ test('the actual chat callback includes foreground completion, waiting and error
   assert.equal(sounds[0].kind, 'completed'); assert.equal(toasts.length, 0);
   exports.mark('visible', 'waiting', 'approval', 'turn', 'prompt');
   assert.equal(sounds[1].notificationId, 'prompt');
+  exports.mark('visible', 'waiting', 'Task pending', 'turn', undefined, 'background');
+  assert.equal(attention.current.visible.waitingKind, 'user', 'a pending question cannot be overwritten by a passive plan wait');
+  assert.equal(attention.current.visible.interactionId, 'prompt');
   exports.mark('background', 'error', 'failed', 'next');
   assert.equal(sounds[2].kind, 'error');
+  const soundCount = sounds.length, toastCount = toasts.length;
+  for (const kind of ['background', 'dependency', 'unspecified']) {
+    exports.mark('passive', 'waiting', 'Task pending', 'wait-turn', undefined, kind);
+    assert.equal(attention.current.passive.waitingKind, kind, 'the same turn may change wait categories');
+  }
+  assert.equal(sounds.length, soundCount, 'passive waits do not chime');
+  assert.equal(toasts.length, toastCount, 'passive waits do not show desktop notifications');
+  exports.mark('passive', 'waiting', 'Approve next step', 'wait-turn', undefined, 'user');
+  assert.equal(sounds.length, soundCount + 1, 'an explicit user wait promotes the passive state');
+  assert.equal(toasts.length, toastCount + 1);
+  exports.mark('visible', 'completed', 'done', 'turn');
+  assert.equal(attention.current.visible.interactionId, 'prompt', 'a still-open question survives completion');
+  delete attention.current.visible;
+  exports.mark('visible', 'waiting', 'Rendering', 'turn', undefined, 'background');
+  exports.mark('visible', 'completed', 'done', 'turn');
+  assert.equal(attention.current.visible, undefined, 'completion clears a visible passive wait');
 });
 
 // Execute the real send/edit callbacks and recovery against controlled transport
@@ -165,6 +213,7 @@ function turnFixture({ status, transport, latestTurn, goal = null, goalReadFails
   const identity = value => value;
   let messages = {};
   const context = {
+    ...attentionApi,
     exports: {}, crypto: webcrypto, AbortController, console: { warn() {} },
     window: { setTimeout, cardbushDesktop: {} }, backend: {}, requestContext: {},
     activeConversation: candidate, activeConversationId: 'chat', activeConversationIdRef: { current: 'chat' },
@@ -248,8 +297,15 @@ test('non-network history reconciliation uses the matching terminal rather than 
   assert.deepEqual(await turnFixture({ transport: 'other', latestTurn: terminalFact('completed', 'older-turn') }).run('send'), ['error']);
 });
 
-test('a genuine task-plan wait is an input cue rather than a completion cue', async () => {
-  const f = turnFixture();
-  await f.context.markTurnAttention('chat', { ...terminalFact('completed'), stopReason: 'task_plan_waiting' }, 'partial');
-  assert.deepEqual(f.attention.map(args => args[1]), ['waiting']);
+test('task-plan waits carry their explicit category, including during an active goal', async () => {
+  for (const goal of [null, { status: 'active', objective: 'continue' }]) {
+    for (const kind of ['user', 'background', 'dependency', undefined]) {
+      const f = turnFixture({ goal });
+      await f.context.markTurnAttention('chat', { ...terminalFact('completed'), stopReason: 'task_plan_waiting',
+        ...(kind ? { stopDetails: { planWaiting: { kind, reason: 'Exact dependency' } } } : {}) }, 'partial');
+      assert.deepEqual(f.attention.map(args => args[1]), ['waiting']);
+      assert.equal(f.attention[0][5], kind ?? 'unspecified');
+      assert.equal(attentionApi.sessionAttentionNeedsNotification({ kind: 'waiting', waitingKind: f.attention[0][5] }), kind === 'user');
+    }
+  }
 });

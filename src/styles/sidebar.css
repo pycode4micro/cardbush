@@ -752,7 +752,17 @@ body.sidebar-resizing .right-inspector {
 }
 
 .conversation-attention-indicator.waiting {
+  color: var(--text-soft);
+}
+
+.conversation-attention-indicator.waiting-user {
   color: var(--warning);
+}
+
+.conversation-hover-preview-status {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
 }
 
 .conversation-attention-indicator.error {
