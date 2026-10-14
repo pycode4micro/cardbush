@@ -1,8 +1,9 @@
 import type { SessionSnapshot, ConversationExtractSource, ConversationExtractUnit, SessionMessage } from '@cardbush/bush-protocol';
+import { authoredPromptContent } from '@cardbush/bush-protocol';
 const legacyInternalNames = new Set(['runtime_context', 'tool_image_observation', 'task_plan_continuation', 'empty_stop_recovery', 'subagent_result']);
 
 function userText(item: SessionMessage): string {
-  const text = typeof item.metadata?.composerReferenceContent === 'string' ? item.metadata.composerReferenceContent : item.message.content;
+  const text = authoredPromptContent(item.message.content, item.metadata);
   const attachments = Array.isArray(item.metadata?.attachments) ? item.metadata.attachments : [];
   return [text, ...attachments.flatMap(item => item && typeof item === 'object' && typeof item.path === 'string'
     ? [`附件：${item.path}`] : [])].filter(Boolean).join('\n\n');

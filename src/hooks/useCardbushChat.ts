@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
 import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision, streamAttachmentsFromChatAttachments } from '../shared/chatAttachments';
 import { createRealtimeAgentExecutor } from '../backend/realtimeAgent';
 import { journalMessages } from '../backend/conversationJournal';
@@ -166,6 +167,7 @@ export {
 } from '../features/chatMessages/transcript/messageProjection';
 
 export type QueuedChatMessage = {
+  promptContext?: PromptContext[];
   sourceEnabled?: boolean;
   id: string;
   text: string;
@@ -338,7 +340,7 @@ export function useCardbushChat(
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
   const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
   const sendMessageRef = useRef<
-    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => Promise<void>
+    (text: UserPromptInput, conversation?: ConversationSummary, teamId?: string, teamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => Promise<void>
   >(async () => undefined);
   const activeConversationIdForState = activeConversationId.trim();
   const messagesLoading = Boolean(
@@ -347,7 +349,10 @@ export function useCardbushChat(
   );
   const activeQueuedMessages = queuedMessages.filter(
     (item) => queuedMessageConversationId(item) === activeConversationIdForState,
-  );
+  ).map(item => {
+    const prompt = readUserPrompt(item.text, { promptContext: item.promptContext });
+    return prompt.text === item.text ? item : { ...item, text: prompt.text, promptContext: prompt.context };
+  });
   const sending = Boolean(
     activeConversationIdForState &&
       sendingSessionsRef.current.has(activeConversationIdForState),
@@ -612,7 +617,7 @@ export function useCardbushChat(
       const next = nextAutomaticQueuedMessage(sessionId, completedTurnId);
       if (!next) return;
       dispatchingLocalQueues.add(key);
-      void sendMessageRef.current(next.text, next.conversation, next.teamId, next.teamName, next.sourceEnabled, { item: next, automatic: true })
+      void sendMessageRef.current({ text: next.text, context: next.promptContext }, next.conversation, next.teamId, next.teamName, next.sourceEnabled, { item: next, automatic: true })
         .catch(caught => {
           setQueuedMessages(current => current.some(item => item.id === next.id) ? current : [next, ...current]);
           setError(errorMessage(caught));
@@ -2314,18 +2319,19 @@ export function useCardbushChat(
   }, [reloadConversations, beginHistoryRead, isHistoryReadCurrent, applyHistoryRead]);
 
   const sendMessage = useCallback(
-    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => {
+    async (text: UserPromptInput, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => {
       // Capture the target conversation before attachment preparation can yield.
       const turnModel = resolveConversationModelId(availableModels, queuedConversation?.id ?? activeConversationId, backend.scope, defaultModelId);
       const turnReasoningLevel = resolveModelReasoningEffort(modelConfigFor(managedModelConfigs, turnModel) ?? {}) ?? 'default';
       const sourceEnabled = sourceSnapshot ?? resolveConversationSource(queuedConversation?.id ?? activeConversation?.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
-      const trimmed = text.trim();
+      const prompt = readUserPrompt(text);
+      const trimmed = prompt.text.trim();
       if (!trimmed) {
         return;
       }
       const targetSessionId = queuedConversation?.id ?? activeConversationId;
       if (targetSessionId && turnModel) selectConversationModel(turnModel, targetSessionId, backend.scope);
-      const outbound = splitStreamAttachmentMentions(trimmed);
+      const outbound = { ...splitStreamAttachmentMentions(trimmed), promptContext: prompt.context };
       const optimisticAttachments = await chatAttachmentsFromOutbound(outbound, !backend.scope);
       const attachments = streamAttachmentsForVision(
         outbound,
@@ -2369,7 +2375,7 @@ export function useCardbushChat(
       if (isSessionSending(sessionId)) {
         if (backend.queue) {
           try {
-            await backend.queue.enqueue({ sessionId, userInput: outbound.userInput, model: selectedModelName(managedModelConfigs, turnModel),
+            await backend.queue.enqueue({ sessionId, userInput: outbound.userInput, promptContext: outbound.promptContext, model: selectedModelName(managedModelConfigs, turnModel),
               modelConfig: modelConfigFor(managedModelConfigs, turnModel), uiLanguage: languageRef.current,
               permissionMode, subagentPermissionRouting, reasoningLevel: turnReasoningLevel, referencePlanMode, sourceEnabled,
               files: attachments.files, images: attachments.images, attachments: optimisticAttachments,
@@ -2383,6 +2389,7 @@ export function useCardbushChat(
         enqueueMessage({
           id: `queued-${crypto.randomUUID()}`,
           text: trimmed,
+          promptContext: outbound.promptContext,
           sourceEnabled,
           conversation: candidate,
           createdAt: new Date().toISOString(),
@@ -2395,7 +2402,7 @@ export function useCardbushChat(
       if (queuedDelivery) removeQueuedMessage(queuedDelivery.item.id);
       markSessionRunning(sessionId);
       const teamInstructions = turnTeamId ? teamReferenceInstructions(turnTeamId) : undefined;
-      const retryMessage = backend.isSubmissionRetry?.(sessionId, outbound.userInput)
+      const retryMessage = backend.isSubmissionRetry?.(sessionId, outbound.userInput, outbound.promptContext)
         ? (messagesByConversationRef.current[sessionId] ?? []).filter(message => message.role === 'user' && message.metadata?.message_delivery === 'failed').at(-1)
         : undefined;
       const userMessageId = retryMessage?.id ?? `user-${crypto.randomUUID()}`;
@@ -2411,6 +2418,7 @@ export function useCardbushChat(
           optimisticAttachments.length > 0 ? optimisticAttachments : undefined,
         status: 'pending',
         metadata: {
+          ...promptContextMetadata({ text: outbound.displayInput, context: outbound.promptContext }),
           message_delivery: 'pending',
           sourceEnabled,
           ...(turnTeamId ? { team_id: turnTeamId, team_name: turnTeamName ?? turnTeamId } : {}),
@@ -2470,6 +2478,7 @@ export function useCardbushChat(
         await streamChat({
           sessionId,
           userInput: outbound.userInput,
+          promptContext: outbound.promptContext,
           sourceEnabled,
           submittedAt,
           model: selectedModelName(managedModelConfigs, turnModel),
@@ -2929,7 +2938,7 @@ export function useCardbushChat(
           (candidate) => candidate.id !== message.id,
         ),
       }));
-      await sendMessage(retryText, conversation, undefined, undefined, message.metadata?.sourceEnabled !== false);
+      await sendMessage({ text: retryText, context: readUserPrompt(message.content, message.metadata).context }, conversation, undefined, undefined, message.metadata?.sourceEnabled !== false);
     },
     [
       activeConversation,
@@ -3406,6 +3415,7 @@ export function useCardbushChat(
         id: `user-regenerate-${crypto.randomUUID()}`,
         role: 'user',
         content: sourceUserMessage.content,
+        metadata: promptContextMetadata(readUserPrompt(sourceUserMessage.content, sourceUserMessage.metadata)),
         attachments: sourceUserMessage.attachments,
         conversationId,
         createdAt,
@@ -3692,11 +3702,12 @@ export function useCardbushChat(
   const sendTurnGuidance = useCallback(
     async (
       message: ChatMessage,
-      guidance: string,
+      guidance: UserPromptInput,
       mode: 'append_context' | 'interrupt_and_continue',
     ) => {
       const sourceEnabled = resolveConversationSource(message.conversationId || activeConversationId, backend.keepRunningOnUnmount ? undefined : backend.scope);
-      const text = guidance.trim();
+      const prompt = readUserPrompt(guidance);
+      const text = prompt.text.trim();
       if (!text) {
         return false;
       }
@@ -3706,7 +3717,7 @@ export function useCardbushChat(
       if (!isSessionSending(conversationId)) {
         const conversation =
           conversations.find((item) => item.id === conversationId) ?? activeConversation;
-        return submissionReceipt(accepted => sendMessage(text, conversation, undefined, undefined, undefined, undefined, accepted));
+        return submissionReceipt(accepted => sendMessage({ ...prompt, text }, conversation, undefined, undefined, undefined, undefined, accepted));
       }
       if (!conversationId || !turnId || !active || active !== turnId) {
         setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
@@ -3720,7 +3731,7 @@ export function useCardbushChat(
         content: text,
         mode,
       });
-      optimisticMessage.metadata = { ...optimisticMessage.metadata, sourceEnabled };
+      optimisticMessage.metadata = { ...optimisticMessage.metadata, ...promptContextMetadata({ ...prompt, text }), sourceEnabled };
       setMessagesByConversation((current) => ({
         ...current,
         [conversationId]: [...(current[conversationId] ?? []), optimisticMessage],
@@ -3732,6 +3743,7 @@ export function useCardbushChat(
           sessionId: conversationId,
           turnId,
           guidance: text,
+          promptContext: prompt.context,
           sourceEnabled,
           clientMessageId,
           createdAt: optimisticMessage.createdAt,
@@ -3762,7 +3774,7 @@ export function useCardbushChat(
             conversations.find((item) => item.id === conversationId) ?? activeConversation;
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            return submissionReceipt(accepted => sendMessageRef.current(text, conversation, undefined, undefined, sourceEnabled, undefined, accepted));
+            return submissionReceipt(accepted => sendMessageRef.current({ ...prompt, text }, conversation, undefined, undefined, sourceEnabled, undefined, accepted));
           }
           setError(null);
           return true;
@@ -3814,7 +3826,7 @@ export function useCardbushChat(
       if (conversationId && !isSessionSending(conversationId)) {
         // Admission owns deduplication. Do not disable all queue actions for
         // the entire new turn: further manual guidance must remain available.
-        void sendMessageRef.current(text, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled, { item: queued, automatic: false }).catch(caught => {
+        void sendMessageRef.current({ text, context: queued.promptContext }, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled, { item: queued, automatic: false }).catch(caught => {
           setQueuedMessages(current => current.some(item => item.id === queued.id) ? current : [queued, ...current]);
           setError(errorMessage(caught));
         });
@@ -3832,7 +3844,7 @@ export function useCardbushChat(
         content: text,
         mode,
       });
-      optimisticMessage.metadata = { ...optimisticMessage.metadata, sourceEnabled: queued.sourceEnabled !== false };
+      optimisticMessage.metadata = { ...optimisticMessage.metadata, ...promptContextMetadata({ text, context: queued.promptContext }), sourceEnabled: queued.sourceEnabled !== false };
       setMessagesByConversation((current) => ({
         ...current,
         [conversationId]: [...(current[conversationId] ?? []), optimisticMessage],
@@ -3845,6 +3857,7 @@ export function useCardbushChat(
           sessionId: conversationId,
           turnId: active,
           guidance: text,
+          promptContext: queued.promptContext,
           sourceEnabled: queued.sourceEnabled,
           clientMessageId,
           createdAt: optimisticMessage.createdAt,
@@ -3872,7 +3885,7 @@ export function useCardbushChat(
           );
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            await sendMessageRef.current(text, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled);
+            await sendMessageRef.current({ text, context: queued.promptContext }, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled);
           }
           setError(null);
           return;
@@ -3934,6 +3947,7 @@ export function useCardbushChat(
           sessionId: conversationId,
           turnId,
           guidance: text,
+          promptContext: readUserPrompt(message.content, message.metadata).context,
           sourceEnabled: typeof message.metadata?.sourceEnabled === 'boolean' ? message.metadata.sourceEnabled : undefined,
           clientMessageId,
           createdAt: message.createdAt,
@@ -3966,7 +3980,7 @@ export function useCardbushChat(
             guidanceFallbackIdsRef.current.add(clientMessageId);
             const conversation =
               conversations.find((item) => item.id === conversationId) ?? activeConversation;
-            await sendMessageRef.current(text, conversation, undefined, undefined, message.metadata?.sourceEnabled !== false);
+            await sendMessageRef.current({ text, context: readUserPrompt(message.content, message.metadata).context }, conversation, undefined, undefined, message.metadata?.sourceEnabled !== false);
           }
           setError(null);
           return;

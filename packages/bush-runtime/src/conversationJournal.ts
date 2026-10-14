@@ -42,7 +42,7 @@ export class ConversationJournal {
     const entry = conversationEntrySchema.parse(value), entries = this.read(sessionId);
     const old = entries.find(item => item.id === entry.id);
     if (old) {
-      if (old.content !== entry.content || old.role !== entry.role || old.source !== entry.source || old.visibility !== entry.visibility || JSON.stringify(old.attachments) !== JSON.stringify(entry.attachments)) throw Error('Conversation message ID reused with different content.');
+      if (old.content !== entry.content || old.role !== entry.role || old.source !== entry.source || old.visibility !== entry.visibility || JSON.stringify(old.attachments) !== JSON.stringify(entry.attachments) || JSON.stringify(old.promptContext) !== JSON.stringify(entry.promptContext)) throw Error('Conversation message ID reused with different content.');
       return old;
     }
     mkdirSync(this.root, { recursive: true });

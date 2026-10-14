@@ -284,6 +284,19 @@ test('project links resolve relative Markdown paths including spaces and Chinese
   assert.equal(files.linkedMarkdownPath('D:/writing/one.md', 'https://example.com/doc.md'), undefined);
   assert.equal(files.linkedMarkdownPath('D:/writing/one.md', '#section'), undefined);
   assert.equal(files.linkedMarkdownPath('D:/writing/one.md', 'photo.png'), undefined);
+  assert.deepEqual(files.linkedMarkdownTarget('D:/writing/one.md', 'notes/%E7%AC%AC%E4%BA%8C%E7%AB%A0.md#%E5%BC%95%E7%94%A8'), { path: 'D:/writing/notes/第二章.md', fragment: '#%E5%BC%95%E7%94%A8' });
+  assert.deepEqual(files.linkedMarkdownTarget('D:/writing/one.md', './one.md#'), { path: 'D:/writing/one.md', fragment: '#' });
+  assert.equal(files.linkedMarkdownTarget('D:/writing/one.md', 'bad%00.md'), undefined);
+});
+
+test('Markdown anchors follow heading text, duplicate suffixes, nested/setext headings and Unicode', () => {
+  const { markdownOutline, decodeFragment } = module('src/features/mdPresentation/markdownAnchors.ts');
+  const source = '# FastAPI 完全详解\n\n## 七、中间件、CORS 与异常处理\n\n## **重复** `标题`\n\n## 重复 标题\n\n## 重复 标题-1\n\n## 重复 标题\n\n> ### 深层标题\n\nSetext &amp; ![图片](x.png)\n----\n\n```md\n# 这是代码\n```';
+  const headings = markdownOutline(source, 'test');
+  assert.deepEqual(headings.map(item => item.slug), ['fastapi-完全详解', '七中间件cors-与异常处理', '重复-标题', '重复-标题-1', '重复-标题-1-1', '重复-标题-2', '深层标题', 'setext--图片']);
+  assert.equal(new Set(headings.map(item => item.id)).size, headings.length);
+  assert.equal(decodeFragment('%E4%B8%83%E4%B8%AD%E9%97%B4%E4%BB%B6cors-%E4%B8%8E%E5%BC%82%E5%B8%B8%E5%A4%84%E7%90%86'), '七中间件cors-与异常处理');
+  assert.equal(decodeFragment('%broken'), '%broken');
 });
 
 test('an autosave finishing after Save As cannot switch the document back to its old backing file', async () => {
@@ -347,14 +360,15 @@ test('creation reads only its own session even when another session journal is c
 });
 
 test('source line references handle CRLF, trailing selections and edits without sending the full document', () => {
-  const { markdownSelection } = module('src/features/mdPresentation/MarkdownSourceEditor.tsx');
-  const { creationRequest } = module('src/features/mdPresentation/creationConversationContext.ts');
+  const { markdownSelection } = module('src/features/mdPresentation/MarkdownSourceEditor.tsx', { './AiEditingCursor': {} });
+  const { creationRequest } = module('src/features/mdPresentation/creationConversationContext.ts', { '@cardbush/bush-protocol': protocol });
   const source = '# Title\r\n\r\nParagraph\r\nNext';
   const selection = markdownSelection(source, 11, source.indexOf('Next'));
   assert.equal(selection.startLine, 3); assert.equal(selection.endLine, 3);
   const page = { source, file: { path: 'D:/writing/one.md', text: source, revision: 'r1' } };
   const request = creationRequest('修改这一段', page, selection, 'zh');
-  assert.ok(request.includes('3–3')); assert.ok(request.includes('D:/writing/one.md'));
-  assert.ok(!request.includes('Paragraph')); assert.ok(!request.includes('# Title'));
-  assert.ok(!creationRequest('修改', { ...page, source: '# Changed' }, selection, 'zh').includes('L3–3'));
+  assert.equal(request.text, '修改这一段');
+  assert.ok(request.context[0].content.includes('3–3')); assert.ok(request.context[0].content.includes('D:/writing/one.md'));
+  assert.ok(!JSON.stringify(request).includes('Paragraph')); assert.ok(!JSON.stringify(request).includes('# Title'));
+  assert.ok(!creationRequest('修改', { ...page, source: '# Changed' }, selection, 'zh').context[0].content.includes('L3–3'));
 });

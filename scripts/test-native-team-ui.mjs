@@ -13,13 +13,15 @@ const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { TeamWorkspace } from '${local('src/features/team/TeamWorkspace.tsx')}';
+import { NativeTeamSidebar } from '${local('src/features/team/TeamSidebar.tsx')}';
 import { MdPresentationApp } from '${local('src/features/mdPresentation/MdPresentationApp.tsx')}';
 import { BushItSidebar } from '${local('src/features/mdPresentation/BushItSidebar.tsx')}';
 import * as pages from '${local('src/features/mdPresentation/bushItPageStore.ts')}';
+import { publishFileEditEvent } from '${local('src/backend/fileEditEvents.ts')}';
 import { useTeamWorkspace } from '${local('src/features/team/teamWorkspaceStore.ts')}';
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
-window.pages=pages; window.records = { agents: [], teams: [], runs: [] }; window.calls = [];
+window.pages=pages; window.publishFileEditEvent=publishFileEditEvent; window.records = { agents: [], teams: [], runs: [] }; window.calls = [];
 window.fileResult=null; window.fileCalls=[]; window.cardbushDesktop={markdownFile:async input=>{fileCalls.push(input);if(input.action==='save')return {path:'D:/workflow.md',text:input.text,revision:'file-v1'};return fileResult;}};
 window.command = async ({kind,payload:input}) => {
   window.calls.push({kind, input:structuredClone(input)});
@@ -42,7 +44,7 @@ function Fixture(){ window.teamState=useTeamWorkspace(); window.pageState=pages.
   const [portal,setPortal]=React.useState(null);window.setCreationPortal=setPortal;
   const [inspector,setInspector]=React.useState(null);
   const inspectorContext=React.useCallback(value=>{window.creationInspector=value;setInspector(value);},[]);
-  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}>{mode==='team'?<TeamWorkspace language="zh"/>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice} onToggleInspector={()=>window.inspectorOpened=true} onInspectorContext={inspectorContext} composerPortalTarget={portal}/></>}</div>; }
+  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}>{mode==='team'?<><NativeTeamSidebar language="zh" onBack={()=>setMode('md')}/><TeamWorkspace language="zh"/></>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice} onToggleInspector={()=>window.inspectorOpened=true} onInspectorContext={inspectorContext} composerPortalTarget={portal}/></>}</div>; }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {
@@ -64,7 +66,7 @@ try {
       if (id === '\0creation-api') return 'export async function createConversation(input){ window.creationSessionInput=input; return {id:input.sessionId}; }';
       if (id === '\0creation-chat') return `import React from 'react'; import {CreationConversation as View} from '${local('src/features/mdPresentation/CreationConversation.tsx')}'; export function CreationConversation(props){window.creationChatProps=props;return React.createElement(View,props);}`;
       if (id === '\0creation-chat-api') return `export async function fetchModelConfigs(){return {models:[{id:'test-model',provider:'test',apiKey:'',baseUrl:'https://example.invalid/v1',modelName:'Test model',apiProtocol:'openai-responses',maxContextTokens:400000,maxCompletionTokens:128000}],defaultModelId:'test-model'};}export async function saveModelReasoning(){}`;
-      if (id === '\0creation-chat-hook') return `import {useMemo,useState} from 'react'; const noop=()=>{},asyncNoop=async()=>{};
+      if (id === '\0creation-chat-hook') return `import {useMemo,useState} from 'react'; import {readUserPrompt,promptContextMetadata} from '@cardbush/bush-protocol'; const noop=()=>{},asyncNoop=async()=>{};
         export function useCardbushChat(models,available,options){const [messages,setMessages]=useState([]);const conversation=useMemo(()=>({id:options.activeConversationId,title:'创作',preview:'',updatedAt:''}),[options.activeConversationId]);return {
           activeMessages:messages,activeTurnId:'',loading:false,messagesLoading:false,sending:false,stopping:false,skills:[],activeConversation:conversation,
           selectedModel:'test-model',setSelectedModel:noop,permissionMode:'task_free',subagentPermissionRouting:'inherit',referencePlanMode:'off',reasoningLevel:'default',
@@ -73,7 +75,7 @@ try {
           cancelSending:noop,retryFailedUserMessage:asyncNoop,regenerateAssistantMessage:asyncNoop,editUserMessageAndRegenerate:asyncNoop,
           sendTurnGuidance:asyncNoop,retryTurnGuidance:asyncNoop,sendQueuedMessageAsGuidance:asyncNoop,removeQueuedMessage:noop,reorderQueuedMessage:noop,
           replyToInteraction:asyncNoop,cancelPendingInteraction:noop,cancelActiveGoal:noop,toggleQueueLock:noop,
-          sendMessage:async(text,...args)=>{window.creationSubmitted=text;args[5]?.();setMessages([{id:'writing-user',role:'user',content:text,createdAt:new Date().toISOString(),conversationId:options.activeConversationId},{id:'writing-reply',role:'assistant',content:'已更新文档，可以在左侧继续编辑。',status:'completed',createdAt:new Date().toISOString(),conversationId:options.activeConversationId}]);}
+          sendMessage:async(text,...args)=>{window.creationSubmitted=text;const prompt=readUserPrompt(text);args[5]?.();setMessages([{id:'writing-user',role:'user',content:prompt.text,metadata:promptContextMetadata(prompt),createdAt:new Date().toISOString(),conversationId:options.activeConversationId},{id:'writing-reply',role:'assistant',content:'已更新文档，可以在左侧继续编辑。',status:'completed',createdAt:new Date().toISOString(),conversationId:options.activeConversationId}]);}
         };}`;
     },
   }], build: { outDir: directory, emptyOutDir: true, minify: false, lib: { entry: resolve('__native_team_fixture__.tsx'), formats: ['iife'], name: 'NativeTeamFixture' } } });

@@ -1,3 +1,4 @@
+import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { EmployeeIcon, employeeTaskTitle, isEmployeeTask } from '../team/employeePresentation';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -131,7 +132,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   }, [executionConfig, executionModel, chat.selectedModel, chat.setSelectedModel]);
   const [draft, setDraft] = useConversationViewState(conversationViewKey(host?.environmentId, sessionId, 'subagent-draft'), () => '', Boolean);
   const [submissionPending, setSubmissionPending] = useState(false);
-  const send = (text: string): Promise<boolean> => {
+  const send = (text: UserPromptInput): Promise<boolean> => {
     if (accepted.current) return Promise.resolve(false);
     if (chat.sending) return chat.sendMessage(text).then(() => true);
     setSubmissionPending(true);
@@ -202,7 +203,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         onSend={send} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={chat.cancelSending}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={nothing} onOpenConversation={nothing}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
-        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === text.trim() ? '' : current); return accepted; }}
+        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === readUserPrompt(text).text.trim() ? '' : current); return accepted; }}
         onRetryGuidance={message => chat.retryTurnGuidance(message, () => setDraft(current => current.trim() === message.content.trim() ? '' : current))}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>

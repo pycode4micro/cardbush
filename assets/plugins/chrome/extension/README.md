@@ -14,7 +14,9 @@ Development installation:
 4. To use an existing personal tab, open the extension popup and explicitly
    copy it into the active CardBush group. The original tab remains untouched.
 
-Version 1.2.1 preserves pairings and enabled intent across app/browser restarts and temporary desktop disable. Reload the existing extension after upgrading; do not uninstall it, which deletes its saved state.
+Version 1.2.4 recovers when a saved loopback port is occupied or denied by Windows. The app tries the saved endpoint, then a bounded set of 32 spread-out ports below the default Windows dynamic client range. The extension tries its saved endpoint first, then discovers the same paired broker in that set with up to four concurrent, deadline-limited handshakes. It saves a replacement endpoint only after mutual authentication; existing pairing, session routing and site permissions remain unchanged. Discovery failure uses the existing reconnect backoff, and disabling cancels pending discovery.
+
+Reload the existing extension after upgrading; do not uninstall it, which deletes its saved state. Older extension workers cannot discover a changed endpoint until reloaded. No new extension permission or Native Messaging registration is required.
 `list_browsers` and `select_browser` expose the connected profiles to the agent. The configured default applies only to unbound sessions; existing bindings survive a broker restart. Switching explicitly releases the old session scope first. A failed release or disconnect never falls through to another browser. Browser and profile labels describe the target; the pairing credential and exact Origin authenticate it.
 
 Turn completion suspends the browser debugger and collapses managed groups, but
@@ -58,7 +60,7 @@ the reviewed install page instead of the unpacked-extension directory.
 The connector starts disabled. First pairing enables automatic reconnection,
 including after a browser restart. Five minutes limits accepting a new pairing
 code, not the lifetime of an established pairing. Offline retries back off from
-30 seconds to a maximum interval of two minutes and continue while enabled;
+short retries to a persistent 30-second alarm and continue while enabled;
 opening the popup retries immediately. No browser action is replayed.
 
 Desktop disable stops the listener and active control while retaining pairings

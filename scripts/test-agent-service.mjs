@@ -71,6 +71,25 @@ async function openService(t, name = 'fixture', delay = 80, tool, compatibility 
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
 
+test('prompt context stays out of public job text while queued and executing', async t => {
+  const f = await openService(t, 'prompt-context');
+  try {
+    await f.service.call('sessions.create', { sessionId: 'context' });
+    await f.service.call('chat.queue', { action: 'lock', sessionId: 'context', locked: true });
+    const context = [{ kind: 'preview-selection', requestId: 'selection', content: 'Internal locator: h1 in C:/slides.pptx' }];
+    const job = await f.service.call('chat.send', { ...input('context', 'context-request', '修改选区\n\n' + context[0].content), queueOnly: true,
+      userMessageMetadata: { composerReferenceContent: '修改选区', promptContext: context } });
+    const queued = (await f.service.call('chat.jobs', { sessionId: 'context' })).find(item => item.id === job.id);
+    assert.equal(queued.text, '修改选区'); assert.deepEqual(queued.userMessageMetadata.promptContext, context);
+    await f.service.call('chat.queue', { action: 'guide', id: job.id });
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
+    assert.ok(JSON.stringify(f.model.calls[0]).includes('Internal locator'));
+    const saved = await f.service.call('sessions.get', { sessionId: 'context' });
+    const user = saved.turns[0].messages.find(item => item.message.role === 'user' && !item.message.visibility);
+    assert.equal(user.metadata.composerReferenceContent, '修改选区'); assert.deepEqual(user.metadata.promptContext, context);
+  } finally { await f.service.close(); }
+});
+
 for (const queued of [false, true]) test(`immediate guidance aborts remote inference and continues without releasing the old response (${queued ? 'queue' : 'direct'})`, async t => {
   const release = Promise.withResolvers(); let dispatches = 0;
   const f = await openService(t, 'immediate-guidance', () => ++dispatches === 1 ? release.promise : Promise.resolve());

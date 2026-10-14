@@ -2,9 +2,10 @@ import { ArrowLeft, GripVertical } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { useInspectorCoverPosition } from './useInspectorCoverPosition';
 
-export function InspectorCoverControls({ language, inputOpen, inert = false, onTargetChange, onBack, onToggleInput }: {
+export function InspectorCoverControls({ language, inputOpen, inputPending = false, inert = false, onTargetChange, onBack, onToggleInput }: {
   language: AppLanguage;
   inputOpen: boolean;
+  inputPending?: boolean;
   inert?: boolean;
   onTargetChange: (target: HTMLDivElement | null) => void;
   onBack: () => void;
@@ -13,7 +14,9 @@ export function InspectorCoverControls({ language, inputOpen, inert = false, onT
   const floating = useInspectorCoverPosition(inputOpen, inert);
   const zh = language === 'zh';
   return <div className="inspector-cover-controls" ref={floating.root} inert={inert}>
-    {inputOpen && <div className="inspector-quick-input" ref={onTargetChange} aria-label={zh ? '快速输入' : 'Quick input'} />}
+    {inputOpen && <div className="inspector-quick-input" ref={onTargetChange} aria-label={zh ? '快速输入' : 'Quick input'} aria-busy={inputPending}>
+      {inputPending && <p className="quick-input-loading" role="status">{zh ? '正在准备对话…' : 'Preparing conversation…'}</p>}
+    </div>}
     <div className="inspector-cover-capsule" ref={floating.capsule}>
       <button type="button" className="inspector-cover-back" onClick={onBack}><ArrowLeft size={15} />{zh ? '返回' : 'Back'}</button>
       <button type="button" className="inspector-cover-drag" aria-label={zh ? '移动输入框' : 'Move input panel'}

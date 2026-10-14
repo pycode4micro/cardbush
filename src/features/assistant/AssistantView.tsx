@@ -1,3 +1,4 @@
+import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Monitor, Server, Settings2, X, PhoneOff, Link } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry } from '@cardbush/bush-protocol';
@@ -28,6 +29,8 @@ import './assistant.css';
 import { useLoopSubagentTasks } from '../subagents/useLoopSubagentTasks';
 import { AssistantTaskBubble } from './AssistantTaskBubble';
 import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
+import { usePublishRegionConversation } from '../inspector/RegionConversationContext';
+import { localInspectorWorkspace } from '../inspector/inspectorSessions';
 
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
@@ -121,7 +124,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
     void tick(); const timer = setInterval(() => void tick(), 1000);
     return () => { disposed = true; clearInterval(timer); };
   }, [active, ready, ensure, refresh]);
-  const submit = useCallback(async (text: string, spoken = false) => {
+  const submit = useCallback(async (text: UserPromptInput, spoken = false) => {
     const contextVersion = assistantBackend.contextVersion();
     await ensure();
     const config = await prepareRef.current();
@@ -130,14 +133,15 @@ export function AssistantView({ active, language, connections, prepare, onManage
   }, [ensure, refresh]);
   const agent = useMemo(() => assistantBackend.voice(async () => { await ensure(); return { ...await prepareRef.current(), sessionId }; }), [ensure]);
   // Typed messages and recording transcripts share positioning, acceptance and errors.
-  const send = async (text: string) => {
-    if (!text.trim() || submitting) return false;
+  const send = async (text: UserPromptInput) => {
+    if (!readUserPrompt(text).text.trim() || submitting) return false;
     viewport.prepareSend();
     setSubmitting(true); setError(''); setRuntimeError('');
     try { await submit(text); return true; }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
     finally { setSubmitting(false); }
   };
+  usePublishRegionConversation({ scope: localInspectorWorkspace('personal-assistant'), busy, error: error || runtimeError, messages: pageMessages, send }, active);
   const retryReply = async () => {
     viewport.prepareSend();
     setSubmitting(true); setError(''); setRuntimeError('');

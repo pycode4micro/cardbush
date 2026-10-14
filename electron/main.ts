@@ -3245,6 +3245,14 @@ ipcMain.handle('files:pasted-text', async (event, action: string, input: unknown
   throw new Error('Unknown text attachment action.');
 });
 
+ipcMain.handle('inspector:capture-region', async (event, input: import('./inspectorRegionCapture').InspectorRegionCapture) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner || (owner !== mainWindow && !shadowWindows.has(event.sender.id))) throw Error('Invalid preview capture sender.');
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('Region capture is available only in the application.');
+  const { captureInspectorRegion } = await import('./inspectorRegionCapture.js');
+  return captureInspectorRegion(event.sender, input, id => browserUi.guest(event.sender, id));
+});
+
 ipcMain.handle(
   'image:save-data-url',
   (_, dataUrl: string, name?: string, options?: { copyToClipboard?: boolean }) => {
@@ -3623,6 +3631,12 @@ async function runPackagedApplicationSmoke(): Promise<void> {
       10_000,
       'Packaged Product Host query timed out.',
     );
+    await withPackagedSmokeTimeout(
+      productHostController!.refreshMcp(),
+      15_000,
+      'Packaged plugin catalog refresh timed out.',
+    );
+    report.pluginCatalogReady = true;
     const bundledRipgrep = resolveBundledRipgrepPath();
     const smokeDirectory = path.join(app.getPath('userData'), 'smoke space 中文');
     fs.mkdirSync(smokeDirectory, { recursive: true });

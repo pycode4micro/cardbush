@@ -28,7 +28,7 @@
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-本文介绍源码版本 **1.0.8** 的能力，改动见[版本说明](docs/releases/1.0.8.md)。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。对应的 MSIX 包版本为 **1.0.8.0**。目前不提供 macOS、ARM64 或 32 位安装包。
+本文介绍源码版本 **1.0.10** 的能力，改动见[版本说明](docs/releases/1.0.10.md)。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。对应的 MSIX 包版本为 **1.0.10.0**。目前不提供 macOS、ARM64 或 32 位安装包。
 
 ### 安装与开始使用
 

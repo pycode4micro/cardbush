@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import type { ModelEvent, RuntimeEvent } from "@cardbush/bush-protocol";
+import type { ModelEvent, RuntimeEvent, ToolCall } from "@cardbush/bush-protocol";
+import { FileEditPreviewProjector } from './fileEditPreviewProjector.js';
 
 import type {
   InMemoryRuntimeEventLog,
@@ -30,6 +31,7 @@ export class RuntimeEventProjector {
   readonly #eventLog: InMemoryRuntimeEventLog;
   readonly #identity: RuntimeEventIdentity;
   readonly #messageId: string;
+  readonly #fileEdits: FileEditPreviewProjector;
   readonly #createSegmentId: () => string;
   readonly #deltaFlushIntervalMs: number;
   readonly #deltaFlushChars: number;
@@ -54,6 +56,7 @@ export class RuntimeEventProjector {
     this.#finalResponse = options.finalResponse || undefined;
     this.#identity = identity;
     this.#messageId = (options.createMessageId ?? (() => `msg_${randomUUID()}`))();
+    this.#fileEdits = new FileEditPreviewProjector(eventLog, identity, this.#messageId);
     this.#createSegmentId = options.createSegmentId ?? (() => `seg_${randomUUID()}`);
     this.#deltaFlushIntervalMs = options.deltaFlushIntervalMs ?? 40;
     this.#deltaFlushChars = options.deltaFlushChars ?? 2048;
@@ -87,16 +90,18 @@ export class RuntimeEventProjector {
       case "text_delta":
         return this.#appendDelta("assistant", event.delta);
       case "response_completed":
-      case "response_failed":
         return this.completeOpenSegment();
+      case "response_failed":
+        return [...this.finishFileEdits(), ...this.completeOpenSegment()];
       case "response_started":
       case "usage":
         return this.flush();
       case "tool_call_delta": {
-        if (!this.#finalResponse) return this.flush();
+        const preview = this.#fileEdits.accept(event);
+        if (!this.#finalResponse) return [...preview, ...this.flush()];
         this.#finalResponse = false;
-        if (this.#active?.channel === 'assistant') return this.completeOpenSegment();
-        const events = this.flush();
+        if (this.#active?.channel === 'assistant') return [...preview, ...this.completeOpenSegment()];
+        const events = [...preview, ...this.flush()];
         // A model may continue work despite its final intent. Correct any text
         // already displayed, including a block closed by subsequent reasoning.
         const segment = this.#lastAssistantSegment;
@@ -129,6 +134,8 @@ export class RuntimeEventProjector {
     ];
   }
 
+  finishFileEdits(accepted: readonly ToolCall[] = []): RuntimeEvent[] { return this.#fileEdits.finish(accepted); }
+
   appendAssistantText(content: string): RuntimeEvent[] {
     const events = this.#appendDelta("assistant", content);
     events.push(...this.completeOpenSegment());
@@ -137,9 +144,10 @@ export class RuntimeEventProjector {
 
   /** Seal visible partial output as process text, never as a final answer. */
   interrupt(): RuntimeEvent[] {
+    const discarded = this.finishFileEdits();
     const activeAssistant = this.#active?.channel === 'assistant';
     this.#finalResponse = false;
-    const events = this.completeOpenSegment();
+    const events = [...discarded, ...this.completeOpenSegment()];
     const segment = this.#lastAssistantSegment;
     if (!activeAssistant && segment) events.push(this.#eventLog.append(this.#identity, {
       kind: 'assistant_segment_completed', payload: { messageId: this.#messageId,

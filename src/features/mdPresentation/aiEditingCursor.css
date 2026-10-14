@@ -1,0 +1,7 @@
+.ai-editing-cursor { position:fixed; inset:0; z-index:18; pointer-events:none; user-select:none; }
+.ai-editing-cursor > * { position:fixed; pointer-events:none; }
+.ai-editing-caret { width:2px; border-radius:1px; }
+.ai-editing-cursor[data-state="streaming"] .ai-editing-caret { animation:ai-editing-blink 1s steps(2,end) infinite; }
+.ai-editing-label { color:#fff; font:700 11px/24px "Segoe UI",sans-serif; padding:0 9px; border-radius:11px; box-shadow:0 2px 7px #0003; }
+@keyframes ai-editing-blink { 50% { opacity:.35; } }
+@media (prefers-reduced-motion:reduce) { .ai-editing-cursor[data-state="streaming"] .ai-editing-caret { animation:none; } }

@@ -4,12 +4,14 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { pptxWorkerPlugin } from './scripts/pptx-worker-plugin.mjs';
+import { pdfPreviewAssetsPlugin } from './scripts/pdf-preview-assets-plugin.mjs';
+import { spreadsheetRegionPlugin } from './scripts/spreadsheet-region-plugin.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   base: './',
-  plugins: [react(), pptxWorkerPlugin(rootDir)],
+  plugins: [react(), pptxWorkerPlugin(rootDir), pdfPreviewAssetsPlugin(), spreadsheetRegionPlugin(rootDir)],
   worker: { plugins: () => [pptxWorkerPlugin(rootDir)] },
   build: {
     outDir: 'dist',

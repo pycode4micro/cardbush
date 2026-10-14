@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { ToolExecutionStore } from '../packages/bush-runtime/dist/index.js';
-import { decodeRuntimeEvent, decodeSessionSnapshot } from '../packages/bush-protocol/dist/index.js';
+import { decodeRuntimeEvent, decodeSessionSnapshot, PREVIEW_SELECTION_INSTRUCTIONS, readUserPrompt } from '../packages/bush-protocol/dist/index.js';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 // Exercise the shipped local consumer and remote transport, never a second
@@ -36,6 +36,7 @@ const bridge = {
 };
 const api = await loadChatTranscript({ source: [
   ['src/backend/runtimeChat.ts', 'streamRuntimeTurnEvents'],
+  ['src/backend/api.ts', 'editMessage'],
   ['src/backend/runtimeSessionMessageProjection.ts', 'projectRuntimeTurnMessages'],
   ['src/features/agents/agentConversationBackend.ts', 'createAgentConversationBackend, agentRuntimeClient'],
   ['src/features/chatMessages/transcript/liveMessageUpdates.ts', 'appendAssistantDelta, appendToolExecution, applyTaskPlanUpdate, applyAssistantSegmentBoundary, applyAssistantRevision, applyTurnTerminalSnapshot'],
@@ -232,6 +233,24 @@ const outputLimitSnapshot = () => decodeSessionSnapshot({
       { role: 'assistant', content: '', toolCalls: [] },
     ].map((message, messageIndex) => ({ messageId: ['u1', 'm1', 'd1', 'm2', 'd2', 'm3'][messageIndex],
       turnId, turnSequence: 1, messageIndex, createdAt: now, message })) }],
+});
+
+test('cached legacy selections and edited messages retain context without exposing model data', async () => {
+  const selection = { requestId: '302236ec-7c0e-463e-8952-e6c8ebb700e0', file: 'C:/slides.pptx', locator: 'h1', text: '赛博朋克',
+    selection: 'content', textScope: 'selected block', viewport: { width: 566, height: 633 } };
+  const original = `修改选区\n\n${PREVIEW_SELECTION_INSTRUCTIONS}\n\n<preview-selection>\n${JSON.stringify(selection)}\n</preview-selection>`;
+  const cached = [{ id: 'u1', turnId, role: 'user', content: original, createdAt: now }];
+  const visible = api.normalizeChatMessagesForDisplay(cached);
+  assert.equal(visible[0].content, '修改选区'); assert.equal(cached[0].content, original);
+  assert.equal(visible[0].metadata.promptContext[0].requestId, selection.requestId);
+  fixture = { snapshot: outputLimitSnapshot(), events: [] };
+  fixture.snapshot.turns[0].messages[0].message.content = original;
+  let edited;
+  await api.editMessage({ sessionId, messageId: 'u1', content: '改为蓝色', model: 'fixture' },
+    { client: { getSession: async () => fixture.snapshot }, dispose() {} }, async input => { edited = input; });
+  assert.equal(edited.userInput, '改为蓝色');
+  assert.deepEqual(plain(edited.promptContext), readUserPrompt(original).context);
+  assert.equal(fixture.snapshot.turns[0].messages[0].message.content, original, 'no mutation of model history');
 });
 
 test('local and remote final history sync retain output-limit details, including an empty last response', async () => {

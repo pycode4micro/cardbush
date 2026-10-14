@@ -5,13 +5,18 @@ export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 export const parentDirectory = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 export const sameFile = (a: string, b: string) => /^[a-z]:/i.test(a) ? a.replaceAll('\\', '/').toLowerCase() === b.replaceAll('\\', '/').toLowerCase() : a === b;
 export function linkedMarkdownPath(currentPath: string, href: string) {
+  return linkedMarkdownTarget(currentPath, href)?.path;
+}
+export function linkedMarkdownTarget(currentPath: string, href: string): { path: string; fragment?: string } | undefined {
   if (!href || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return undefined;
   try {
     const base = currentPath.replaceAll('\\', '/');
     const target = new URL(href, `file://${base.startsWith('/') ? '' : '/'}${base.split('/').map(part => encodeURIComponent(part)).join('/')}`);
     const path = decodeURIComponent(target.pathname);
     if (!/\.(md|markdown)$/i.test(path)) return undefined;
-    return /^[a-z]:/i.test(currentPath) ? path.replace(/^\/(?=[a-z]:)/i, '') : path;
+    if (path.includes('\0')) return undefined;
+    return { path: /^[a-z]:/i.test(currentPath) ? path.replace(/^\/(?=[a-z]:)/i, '') : path,
+      ...(target.hash || href.endsWith('#') ? { fragment: target.hash || '#' } : {}) };
   } catch { return undefined; }
 }
 export async function markdownFile(input: MarkdownFileRequest) {

@@ -1,5 +1,5 @@
+import type { UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, X } from 'lucide-react';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import * as api from '../../backend/api';
 import { creationConversationBackend } from './creationConversationBackend';
@@ -19,22 +19,22 @@ import '../inspector/inspectorWorkspace.css';
 
 export type CreationInspectorContext = {
   sessionId: string; root: string; conversation: ConversationSummary; messages: ChatMessage[]; reports: ConversationChangeReport[];
-  busy: boolean; selectedModel: string; activeTurnId: string; reasoningLevel: ReasoningLevel;
+  busy: boolean; error?: string | null; selectedModel: string; activeTurnId: string; reasoningLevel: ReasoningLevel;
   refresh: () => Promise<void>; revert: (report: ConversationChangeReport) => Promise<void>; appendDraft: (text: string) => void;
+  send: (text: UserPromptInput) => Promise<boolean>;
 };
-export type CreationChatOptions = { theme?: ThemeMode; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onConfigureModels?: () => void; composerPortalTarget?: HTMLElement | null; browserTabs?: BrowserPromptReference[]; onOpenChangeReview?: (sessionId: string, path?: string, turnId?: string) => void; onInspectorContext?: (context: CreationInspectorContext | null) => void };
+export type CreationChatOptions = { theme?: ThemeMode; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onConfigureModels?: () => void; composerPortalTarget?: HTMLElement | null; externalComposerControls?: boolean; onOpenComposer?: () => void; browserTabs?: BrowserPromptReference[]; onOpenChangeReview?: (sessionId: string, path?: string, turnId?: string) => void; onInspectorContext?: (context: CreationInspectorContext | null) => void };
 const none = () => {}, empty = new Set<string>(), emptyStates = new Map<string, boolean>();
 const emptyMessages: ChatMessage[] = [];
 
 /** The normal conversation stack owns models, permissions, tools, recovery and history. */
-export function CreationConversation({ sessionId, root, language, visible, onClose, beforeSend, contextLabel,
+export function CreationConversation({ sessionId, root, language, visible, beforeSend, contextLabel,
   theme = 'dark', disabledSkillNames = empty, onToggleSkill = none, onConfigureModels = none, composerPortalTarget, browserTabs, onOpenChangeReview, onInspectorContext, onOpen }: CreationChatOptions & {
-  sessionId: string; root: string; language: AppLanguage; visible: boolean; onClose: () => void;
-  beforeSend: (text: string) => Promise<string>; contextLabel: string; onOpen?: () => void;
+  sessionId: string; root: string; language: AppLanguage; visible: boolean;
+  beforeSend: (text: UserPromptInput) => Promise<UserPromptInput>; contextLabel: string; onOpen?: () => void;
 }) {
   const [configuration, setConfiguration] = useState<{ models: ManagedModelConfig[]; defaultModelId: string }>();
   const [error, setError] = useState(''), [pending, setPending] = useState(false);
-  const [inputTarget, setInputTarget] = useState<HTMLDivElement | null>(null);
   const backend = useMemo(() => creationConversationBackend(sessionId), [sessionId]);
   useEffect(() => {
     let alive = true;
@@ -49,7 +49,7 @@ export function CreationConversation({ sessionId, root, language, visible, onClo
   const messages = chat.activeMessages.length ? chat.activeMessages : emptyMessages;
   const [draft, setDraft] = useConversationViewState(conversationViewKey('creation', sessionId, 'draft'), () => '', Boolean);
   const submitting = useRef(false);
-  const send = async (text: string): Promise<boolean> => {
+  const send = async (text: UserPromptInput): Promise<boolean> => {
     if (submitting.current) return false;
     submitting.current = true; setPending(true); setError('');
     try {
@@ -64,6 +64,8 @@ export function CreationConversation({ sessionId, root, language, visible, onClo
     finally { submitting.current = false; setPending(false); }
   };
   const reports = useMemo(() => changeReportsFromMessages(messages), [messages]);
+  const sendRef = useRef(send); sendRef.current = send;
+  const sendFromInspector = useCallback((text: UserPromptInput) => sendRef.current(text), []);
   const [review, setReview] = useState<{ path: string; turnId?: string }>(), [reverting, setReverting] = useState('');
   const busy = chat.sending || chat.stopping;
   const refresh = useCallback(async () => { await chat.refreshActiveSession({ silent: true }); }, [chat.refreshActiveSession]);
@@ -85,18 +87,15 @@ export function CreationConversation({ sessionId, root, language, visible, onClo
   useEffect(() => {
     if (!chat.activeConversation) return;
     onInspectorContext?.({ sessionId, root, conversation: chat.activeConversation, messages, reports,
-      busy: busy || !!reverting, selectedModel: chat.selectedModel, activeTurnId: chat.activeTurnId, reasoningLevel: chat.reasoningLevel,
-      refresh, revert, appendDraft });
-  }, [onInspectorContext, sessionId, root, chat.activeConversation, messages, reports, busy, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft]);
+      busy: busy || !!reverting, error: error || chat.error, selectedModel: chat.selectedModel, activeTurnId: chat.activeTurnId, reasoningLevel: chat.reasoningLevel,
+      refresh, revert, appendDraft, send: sendFromInspector });
+  }, [onInspectorContext, sessionId, root, chat.activeConversation, messages, reports, busy, error, chat.error, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft, sendFromInspector]);
   useEffect(() => () => onInspectorContext?.(null), [onInspectorContext]);
   const model = models.find(item => item.id === chat.selectedModel), zh = language === 'zh';
   return <ConversationHostContext.Provider value={undefined}><ConversationMessageTargetContext.Provider value={`creation:${sessionId}`}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || !!reverting }}>
-    <section className="creation-conversation" hidden={!visible || !!composerPortalTarget} aria-label={zh ? '创作对话' : 'Writing conversation'}>
-      <header><MessageSquare size={16}/><strong>{zh ? '一起创作' : 'Write together'}</strong><button type="button" onClick={onClose} aria-label={zh ? '收起创作对话' : 'Close writing conversation'}><X size={16}/></button></header>
-      <div className="creation-conversation-context" title={root}>{contextLabel || (zh ? '当前项目 · 可以让 Agent 创建或修改文档' : 'Current project · Ask the Agent to create or edit documents')}</div>
-      <div className="creation-quick-input" ref={setInputTarget}/>
-      <ComposerPortalContext.Provider value={composerPortalTarget ?? inputTarget}>
+    <section className="creation-conversation" hidden aria-label={contextLabel || (zh ? '创作对话' : 'Writing conversation')}>
+      <ComposerPortalContext.Provider value={composerPortalTarget ?? null}>
       <ChatPanel embedded progressive browserTabs={browserTabs} welcomeEnabled={false} workSummaryAvailable={false} language={language} theme={theme} title={zh ? '创作' : 'Create'}
         sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => setReview({ path: '' })}
         activeConversationId={sessionId} activeProjectDir={root} projectPathAliases={[]} selectedProjectDir={root} availableProjects={[]} onWelcomeProjectChange={async () => {}}
@@ -119,10 +118,10 @@ export function CreationConversation({ sessionId, root, language, visible, onClo
         onGuideMessage={chat.sendTurnGuidance} onRetryGuidance={chat.retryTurnGuidance} onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={(path = '', turnId) => onOpenChangeReview ? onOpenChangeReview(sessionId, path, turnId) : setReview({ path, turnId })} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
       </ComposerPortalContext.Provider>
+    </section>
       {review && <ConversationChangeDialog language={language} conversation={chat.activeConversation ?? { id: sessionId, title: '', preview: '', updatedAt: '' }} reports={reports} turns={recentReviewTurns(chat.activeMessages)}
         initialFilePath={review.path} initialTurnId={review.turnId} notice={error} revertingChangeId={reverting} revertedChangeIds={new Set(reports.filter(report => report.reverted).map(report => report.id))} revertAvailable={!busy}
         onClose={() => setReview(undefined)} onRevert={revert}/>}
-    </section>
     </WorkspaceChangeStateContext.Provider>
   </ConversationMessageTargetContext.Provider></ConversationHostContext.Provider>;
 }

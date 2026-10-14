@@ -197,5 +197,5 @@ export function registerBrowserUiIpc(assertSender: (id: number) => void, createS
   handle('history-remove', (_owner, id: string) => get().library.removeVisit(id));
   handle('download-action', (_owner, id: string, action: string) => get().downloadAction(id, action));
   handle('clear-data', (owner, input: BrowserClearData) => get().clear(owner, input));
-  return { attach: (owner: WebContents) => get().attach(owner), track: (owner: WebContents, id: number) => get().track(owner, id) };
+  return { attach: (owner: WebContents) => get().attach(owner), track: (owner: WebContents, id: number) => get().track(owner, id), guest: (owner: WebContents, id: number) => get().guest(owner, id) };
 }

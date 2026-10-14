@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -31,6 +32,11 @@ function fixture() {
   const state = { queued: [item('one'), item('two'), item('other', 'b')], locks: {}, sent: [], error: null, inspecting: null };
   const queuedMessagesRef = { get current() { return state.queued; }, set current(value) { state.queued = value; } };
   const context = {
+    readUserPrompt, promptContextMetadata,
+    selectedTeamReference: () => undefined,
+    defaultModelId: 'fixture', availableModels: [], managedModelConfigs: [],
+    resolveConversationModelId: () => 'fixture', resolveModelReasoningEffort: () => 'default', modelConfigFor: () => ({}),
+    readConversationModel: () => 'fixture', selectConversationModel() {},
     backend: {}, queueScope: 'fixture', continuedLocalQueueTurns: new Set(), dispatchingLocalQueues: new Set(),
     queuedMessagesRef, getQueueLocks: () => state.locks,
     setQueueLocks: update => { state.locks = update(state.locks); },

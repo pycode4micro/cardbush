@@ -1,4 +1,5 @@
-import { Node, type Editor, type JSONContent } from '@tiptap/core';
+import { Node, createDocument, type Editor, type JSONContent } from '@tiptap/core';
+import type { EditorState } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import Image from '@tiptap/extension-image';
@@ -7,6 +8,7 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Placeholder from '@tiptap/extension-placeholder';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { pageLink, preparePageLinkReferences } from './pageLink';
 
 const WikiReference = Node.create<{ navigate: (id: string) => void }>({
   name: 'wikiReference', inline: true, group: 'inline', atom: true,
@@ -41,11 +43,12 @@ const LiteralMarkdown = Node.create({
 
 export function pageMarkdownContent(editor: Editor, source: string): JSONContent {
   const unsupported = (node: { type: string; children?: unknown[] }): boolean =>
-    ['html', 'definition', 'linkReference', 'imageReference'].includes(node.type) || (node.children || []).some(child => unsupported(child as typeof node));
-  const ranges = fromMarkdown(source).children.filter(unsupported).map(node => ({ start: node.position!.start.offset!, end: node.position!.end.offset! }));
+    ['html', 'definition', 'imageReference'].includes(node.type) || (node.children || []).some(child => unsupported(child as typeof node));
+  const tree = fromMarkdown(source), definitions = preparePageLinkReferences(editor, source, tree);
+  const ranges = tree.children.filter(unsupported).map(node => ({ start: node.position!.start.offset!, end: node.position!.end.offset! }));
   if (!ranges.length) return editor.markdown!.parse(source);
   const content: JSONContent[] = []; let cursor = 0;
-  const append = (chunk: string) => { if (chunk.trim()) content.push(...(editor.markdown!.parse(chunk.trim()).content || [])); };
+  const append = (chunk: string) => { if (chunk.trim()) content.push(...(editor.markdown!.parse(chunk.trim() + (definitions ? '\n\n' + definitions : '')).content || [])); };
   for (const range of ranges) {
     if (range.start > cursor) append(source.slice(cursor, range.start));
     content.push({ type: 'literalMarkdown', content: [{ type: 'text', text: source.slice(range.start, range.end) }] }); cursor = range.end;
@@ -54,7 +57,7 @@ export function pageMarkdownContent(editor: Editor, source: string): JSONContent
   return { type: 'doc', content };
 }
 
-export function pageEditorExtensions(navigate: (id: string) => void, language: 'zh' | 'en') {
+export function pageEditorExtensions(navigate: (id: string) => void, language: 'zh' | 'en', beforeEdit?: () => void) {
   const zh = language === 'zh';
   const PageImage = Image.extend({
     addNodeView() { return ({ node, getPos, editor }) => {
@@ -67,7 +70,7 @@ export function pageEditorExtensions(navigate: (id: string) => void, language: '
       url.setAttribute('aria-label', zh ? '图片链接' : 'Image URL');
       const status = document.createElement('small'); status.setAttribute('role', 'status');
       const valid = (value: string) => /^https?:\/\//i.test(value) || /^data:image\/(png|jpeg|webp|gif);base64,/i.test(value);
-      const save = (src: string) => { const position = getPos(); if (typeof position === 'number' && dom.isConnected) editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, src })); };
+      const save = (src: string) => { beforeEdit?.(); const position = getPos(); if (typeof position === 'number' && dom.isConnected) editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, src })); };
       upload.onclick = () => file.click();
       file.onchange = () => {
         const selected = file.files?.[0]; if (!selected) return;
@@ -84,6 +87,14 @@ export function pageEditorExtensions(navigate: (id: string) => void, language: '
         update: next => { if (next.type !== node.type) return false; node = next; render(); return true; } };
     }; },
   }).configure({ allowBase64: true });
-  return [StarterKit.configure({ link: { openOnClick: false }, underline: false }), Markdown, TableKit, TaskList, TaskItem.configure({ nested: true }),
+  const refreshDefinitions = (editor: Editor, source: string, state: EditorState) => {
+    const next = createDocument(pageMarkdownContent(editor, source), editor.schema);
+    const start = state.doc.content.findDiffStart(next.content);
+    if (start === null) return;
+    const end = state.doc.content.findDiffEnd(next.content)!;
+    const overlap = Math.max(0, start - Math.min(end.a, end.b));
+    return state.tr.replace(start, end.a + overlap, next.slice(start, end.b + overlap));
+  };
+  return [StarterKit.configure({ link: false, underline: false }), pageLink(refreshDefinitions), Markdown, TableKit, TaskList, TaskItem.configure({ nested: true }),
     PageImage, LiteralMarkdown, WikiReference.configure({ navigate }), Placeholder.configure({ placeholder: zh ? '输入 / 插入内容，开始写作…' : 'Type / to insert content and start writing…' })];
 }

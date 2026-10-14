@@ -322,9 +322,10 @@ function remoteMarkdownPath(value: string | undefined, workspaceRoot: string) {
 }
 
 const LazyMarkdownContent = recoverableLazy('markdown', async () => {
-  const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }] = await Promise.all([
+  const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }, { scrollMarkdownAnchor }] = await Promise.all([
     import('react-markdown'),
     import('remark-gfm'),
+    import('../mdPresentation/markdownAnchors'),
   ]);
 
   type MarkdownRenderSettings = {
@@ -351,6 +352,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     },
     a: ({ href, children, ...props }) => {
       const host = useContext(ConversationHostContext);
+      const [missingAnchor, setMissingAnchor] = useState(false);
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
       const reference = parseMarkdownReference(href);
@@ -384,11 +386,13 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         >{children}</button>;
       }
       return (
-        <a
+        <><a
           {...props}
           href={href}
           onClick={(event) => {
             if (href.startsWith('#')) {
+              event.preventDefault();
+              setMissingAnchor(!scrollMarkdownAnchor(event.currentTarget.closest<HTMLElement>('.markdown-content'), href));
               return;
             }
             event.preventDefault();
@@ -397,7 +401,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           }}
         >
           {children}
-        </a>
+        </a>{missingAnchor && <small role="status"> · {language === 'zh' ? '未找到对应标题' : 'Heading not found'}</small>}</>
       );
     },
     img: ({ src, alt, node: _node, ...props }) => {

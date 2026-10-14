@@ -1,3 +1,4 @@
+import { readUserPrompt, type PromptContext } from '@cardbush/bush-protocol';
 import { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
 export { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
@@ -142,6 +143,7 @@ export interface ExperimentalGoal {
 }
 
 export interface ChatStreamRequest {
+  promptContext?: PromptContext[];
   uiLanguage?: AppLanguage;
   sessionId: string;
   userInput: string;
@@ -286,6 +288,7 @@ export interface EditMessageRequest extends ControlStreamRequest {
 }
 
 export interface SendGuidanceRequest {
+  promptContext?: PromptContext[];
   sourceEnabled?: boolean;
   createdAt?: string;
   contextWindowTokens?: number;
@@ -2488,6 +2491,7 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
     );
   }
   const replacementTurnId = `turn_${crypto.randomUUID()}`;
+  let promptContext: PromptContext[] | undefined;
   let supersession: RuntimeSessionTurnRequest['supersession'];
   const runtime = conversationRuntime(runtimeOverride);
   try {
@@ -2512,6 +2516,8 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
     if (messages[index].message.role !== 'user' || isInternalRuntimeMessage(messages[index])) {
       throw new Error(localizedClientMessage('只能重跑用户消息', 'Only user messages can be rerun'));
     }
+    // Editing/replaying authored text must retain the original selection, not whichever file is open now.
+    promptContext = readUserPrompt(messages[index].message.content, messages[index].metadata).context;
     if (request.expectedTurnId !== undefined &&
       messages[index].turnId !== request.expectedTurnId.trim()) {
       throw new Error(localizedClientMessage(
@@ -2533,7 +2539,7 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
     runtime.dispose();
   }
   return run(
-    { ...request, userInput: content },
+    { ...request, userInput: content, promptContext },
     { turnId: replacementTurnId, supersession },
   );
 }
@@ -2565,7 +2571,7 @@ export async function sendGuidance(request: SendGuidanceRequest,
     const snapshot = promptReferenceParts(guidance).some(part => part.reference?.kind === 'user-turn')
       ? await runtime.client.getSession(sessionId, request.signal) : undefined;
     const referencedInput = await resolvePromptReferenceContext(guidance, sessionId, snapshot, undefined,
-      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract, runtime.resolveBrowserReferences);
+      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal), request.contextWindowTokens, runtime.resolveExtract, runtime.resolveBrowserReferences, request.promptContext);
     const createdAt = request.createdAt ?? new Date().toISOString();
     const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const receipt = await runtime.client.enqueueGuidance({

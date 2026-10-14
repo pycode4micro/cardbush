@@ -1,3 +1,4 @@
+import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { PERSONAL_ASSISTANT_SESSION as sessionId, type ConversationEntry } from '@cardbush/bush-protocol';
 import { createConversation, type ChatStreamRequest } from '../../backend/api';
 import { conversationJournalCommand, readConversationJournal, journalMessages } from '../../backend/conversationJournal';
@@ -47,21 +48,24 @@ export const assistantBackend = {
       window.dispatchEvent(new Event('cardbush:assistant-reset'));
     })().finally(() => { resetting = undefined; });
   },
-  async send(text: string, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion) {
+  async send(text: UserPromptInput, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion) {
     if (resetting) throw Error('正在重置上下文，请稍后发送。');
     if (expectedVersion !== contextVersion) throw Error('上下文已重置，请重新发送。');
     const { generation } = await assistantBackend.read();
     if (resetting || expectedVersion !== contextVersion) throw Error('上下文已重置，请重新发送。');
     const runtime = createDesktopRuntimeSession();
     try {
-      const outbound = splitStreamAttachmentMentions(text);
+      const prompt = readUserPrompt(text);
+      const outbound = { ...splitStreamAttachmentMentions(prompt.text), promptContext: prompt.context };
       const profile = readAssistantProfile();
       const attachments = await assistantExecutionAttachments(await chatAttachmentsFromOutbound(outbound), profile.targetAgent);
       const input = streamAttachmentsForVision(outbound, config.standardImageInputEnabled === true);
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId, userInput: input.userInput,
+        promptContext: outbound.promptContext,
         files: profile.targetAgent ? attachments.map(file => file.execution!.path) : input.files, images: input.images, attachments }, runtime, { turnId: `assistant_${crypto.randomUUID()}` });
       parent.metadata.assistantOutputMode = spoken ? 'voice' : 'text';
       const entry: ConversationEntry = { id: `input-${crypto.randomUUID()}`, role: 'user', content: outbound.displayInput || input.userInput,
+        ...(outbound.promptContext ? { promptContext: outbound.promptContext } : {}),
         ...(attachments.length ? { attachments } : {}),
         source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation', createdAt: new Date().toISOString() };
       await conversationJournalCommand({ action: 'turn', sessionId, entry, parent, profile, generation });

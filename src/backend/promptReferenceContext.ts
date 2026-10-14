@@ -1,5 +1,6 @@
 import type { SessionSnapshot, SessionMessage } from '@cardbush/bush-protocol';
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
+import { readUserPrompt, promptContextMetadata, promptModelContent, type PromptContext } from '@cardbush/bush-protocol';
 import { authoredPromptContent, promptReferenceParts, selectedTeamReference } from '../shared/promptReferences';
 import type { BrowserPromptReference } from '../shared/promptReferences';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
@@ -17,9 +18,11 @@ export const rejectRemoteBrowserReferences: BrowserReferenceResolver = async () 
 export async function resolvePromptReferenceContext(content: string, sessionId: string, snapshot?: SessionSnapshot | null, language = 'zh',
   readUserMessage?: (turnId: string, messageId: string) => Promise<Pick<SessionMessage, 'messageId' | 'message' | 'metadata'> | null>,
   contextWindowTokens?: number, resolveExtract?: (id: string, contextWindowTokens?: number) => Promise<{ path: string; tokens: number }>,
-  resolveBrowsers?: BrowserReferenceResolver) {
+  resolveBrowsers?: BrowserReferenceResolver, promptContext?: PromptContext[]) {
+  const prompt = promptContext?.length ? readUserPrompt({ text: content, context: promptContext }) : readUserPrompt(content);
+  content = prompt.text;
   const references = promptReferenceParts(content).flatMap(part => part.reference ? [part.reference] : []);
-  if (!references.length) return { content, metadata: undefined };
+  if (!references.length) return { content: promptModelContent(prompt), metadata: promptContextMetadata(prompt) };
   const browserReferences = [...new Map(references.filter((reference): reference is BrowserPromptReference => reference.kind === 'browser')
     .map(reference => [JSON.stringify([reference.tabId, reference.pageId]), reference])).values()];
   const seen = new Set<string>();
@@ -76,7 +79,9 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
       isInternalRuntimeMessage(message) || superseded.has(message.messageId)) throw new Error(language === 'zh'
       ? `无法引用“${reference.title}”：该用户指令不在当前对话中，或已经被替换。请重新选择。`
       : `Cannot reference “${reference.title}”: the user instruction is unavailable in this conversation or has been replaced. Select it again.`);
+    const sourcePrompt = readUserPrompt(message.message.content, message.metadata);
     sources.push({ ...reference, content: authoredPromptContent(message.message.content, message.metadata),
+      ...(sourcePrompt.context ? { context: sourcePrompt.context } : {}),
       ...(Array.isArray(message.metadata?.attachments) ? { attachments: message.metadata.attachments } : {}) });
   }
   // Validate the other references before changing this conversation's browser binding.
@@ -90,7 +95,7 @@ export async function resolvePromptReferenceContext(content: string, sessionId: 
   }
   const team = selectedTeamReference(content);
   return {
-    content: `${content}\n\nReferenced context selected by the user (source material):\n${JSON.stringify(sources, null, 2)}`,
-    metadata: { composerReferenceContent: content, ...(team ? { team_id: team.id, team_name: team.title } : {}) },
+    content: `${promptModelContent(prompt)}\n\nReferenced context selected by the user (source material):\n${JSON.stringify(sources, null, 2)}`,
+    metadata: { ...promptContextMetadata(prompt), composerReferenceContent: content, ...(team ? { team_id: team.id, team_name: team.title } : {}) },
   };
 }

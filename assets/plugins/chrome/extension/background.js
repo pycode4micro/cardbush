@@ -127,7 +127,7 @@ async function connectNative(manual = false) {
       port.disconnect();
       suspendDisconnectedControl();
       scheduleReconnect();
-    }, 8_000);
+    }, 12_000);
     port.onMessage.addListener((message) => {
       if (nativePort !== port) return;
       if (message?.type === 'connector_ready' && message.protocol === CONNECTOR_PROTOCOL) {
@@ -138,6 +138,9 @@ async function connectNative(manual = false) {
         fastReconnectAttempts = 0;
         void chrome.alarms.clear(RECONNECT_ALARM);
         pairingRequired = false;
+        void persistConnectorEndpoint(pairing, port, epoch).catch(() => {
+          if (nativePort === port) lastError = '连接已恢复，但新地址未能保存；下次连接会自动重新查找。';
+        });
         void persistReconnectState();
         void publishStatus();
         return;
@@ -259,6 +262,24 @@ function persistConnectorPreference(enabled, cleanup) {
       await chrome.storage.local.set({ [CONNECTOR_ENABLED_KEY]: enabled });
       await chrome.storage.session.set({ [CONNECTOR_ENABLED_KEY]: enabled });
     } finally { await cleanup?.(); }
+  });
+  connectorPreferenceQueue = operation;
+  return operation;
+}
+
+function persistConnectorEndpoint(pairing, port, epoch) {
+  const endpoint = port.endpointPort;
+  if (!Number.isInteger(endpoint) || endpoint < 1024 || endpoint > 65535 || endpoint === pairing.port) return Promise.resolve();
+  // Serialize with disable/remove. A late recovery must never resurrect a
+  // removed pairing or overwrite the credentials of a newly paired profile.
+  const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
+    const current = () => connectorEnabled && epoch === connectionEpoch && nativePort === port && nativeReady;
+    if (!current()) return;
+    const saved = await chrome.storage.local.get([PAIRING_KEY]);
+    let existing;
+    try { existing = parseConnectorPairing(saved[PAIRING_KEY]); } catch { return; }
+    if (!current() || existing.id !== pairing.id || existing.secret !== pairing.secret) return;
+    await chrome.storage.local.set({ [PAIRING_KEY]: `CB2.${endpoint}.${pairing.id}.${pairing.secret}` });
   });
   connectorPreferenceQueue = operation;
   return operation;

@@ -8,6 +8,8 @@ export const conversationEntrySchema = z.object({
   content: z.string().trim().min(1).max(64000), createdAt: z.string().datetime(),
   source: z.enum(['voice', 'page', 'text', 'task']),
   visibility: z.enum(['conversation', 'internal']).default('conversation'),
+  promptContext: z.array(z.object({ kind: z.enum(['preview-selection', 'editing-location', 'plugin-diagnostics']),
+    content: z.string().max(256000), requestId: z.string().optional() }).strict()).max(16).optional(),
   attachments: z.array(z.object({
     id: z.string(), name: z.string(), path: z.string().optional(), size: z.number().nonnegative().optional(),
     type: z.enum(['image', 'video', 'audio', 'document', 'folder']),

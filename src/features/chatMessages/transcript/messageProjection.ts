@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 // Reconcile snapshots and derive visible transcripts. Runtime history remains authoritative.
 import type {
   ChatMessage,
@@ -549,7 +550,12 @@ export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
   // Older cached UI snapshots may already contain model-only child results.
   // Use the transport name, never XML-looking text a user may have pasted.
   const timedMessages = hydrateAssistantTurnTiming(messages.filter(message =>
-    !(message.role === 'user' && message.metadata?.name === 'subagent_result')));
+    !(message.role === 'user' && message.metadata?.name === 'subagent_result')).map(message => {
+      if (message.role !== 'user') return message;
+      const prompt = readUserPrompt(message.content, message.metadata);
+      return prompt.text === message.content ? message : { ...message, content: prompt.text,
+        metadata: { ...message.metadata, ...promptContextMetadata(prompt) } };
+    }));
   const visibleMessages = timedMessages.filter(
     (message) =>
       !isGoalSelfCheckMessage(message) && !isBackendSupersededMessage(message),

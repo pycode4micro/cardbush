@@ -15,6 +15,7 @@ interface ChromeConnectorStatus {
   connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
   transport: 'loopback_websocket';
+  portRecovery?: { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' };
   cleanupWarning?: string;
   connectorEnabled: boolean;
   lifecycleState: string;
@@ -362,6 +363,7 @@ declare global {
         outputTruncated?: boolean;
       }>;
       pastedTextAttachments: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
+      captureInspectorRegion: (input: import('../../electron/inspectorRegionCapture').InspectorRegionCapture) => Promise<string>;
       saveImageDataUrl: (
         dataUrl: string,
         name?: string,

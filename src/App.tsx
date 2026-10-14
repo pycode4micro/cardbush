@@ -15,6 +15,9 @@ import { withWorkspaceReference } from './shared/promptReferences';
 import { recentReviewTurns } from './features/sidebar/reviewModel';
 import { InspectorTabStrip } from './features/inspector/InspectorTabStrip';
 import { InspectorTabLock } from './features/inspector/InspectorTabLock';
+import type { RegionConversation } from './features/inspector/InspectorRegionSelection';
+import { RegionConversationContext } from './features/inspector/RegionConversationContext';
+import { submissionReceipt } from './shared/submissionReceipt';
 import { BrowserTabAudioButton } from './features/browser/BrowserTabAudioButton';
 import { BrowserSiteIcon } from './features/browser/BrowserSiteIcon';
 import { useBrowserTabReferences } from './features/browser/useBrowserTabReferences';
@@ -47,6 +50,7 @@ import {
   PanelRightClose,
   RefreshCw,
   Save,
+  ScanLine,
   X,
 } from 'lucide-react';
 import {
@@ -671,6 +675,15 @@ function CardbushApp() {
   const inspectorTabContextMenuRef = useRef<HTMLDivElement | null>(null);
   const focusNewBrowserTab = useRef(false);
   const inspectorWebviewRefs = useRef(new Map<string, InspectorWebviewHandle>());
+  const [regionSelectionId, setRegionSelectionId] = useState('');
+  const [hostRegionConversation, setHostRegionConversation] = useState<RegionConversation | null>(null);
+  useEffect(() => { setRegionSelectionId(''); }, [inspectorWorkspaceId]);
+  const regionConversation: RegionConversation | undefined = activeCreationInspector ? {
+    scope: inspectorWorkspaceId, busy: activeCreationInspector.busy, error: activeCreationInspector.error, messages: activeCreationInspector.messages, send: activeCreationInspector.send,
+  } : section === 'agents' || section === 'assistant' || section === 'md-presentation' ? (hostRegionConversation?.scope === inspectorWorkspaceId ? hostRegionConversation : undefined) : {
+    scope: inspectorWorkspaceId, busy: chat.sending, error: chat.error, messages: chat.activeMessages,
+    send: text => submissionReceipt(accepted => chat.sendMessage(text, chat.activeConversation ?? undefined, undefined, undefined, undefined, undefined, accepted)),
+  };
   const [inspectorNavigationByTarget, setInspectorNavigationByTarget] = useState<
     Record<string, InspectorNavigationState>
   >({});
@@ -2205,6 +2218,7 @@ function CardbushApp() {
         </PageNavigationScope.Provider>
       )}
       <PageNavigationScope.Provider value={`main:${section}`}>
+      <RegionConversationContext.Provider value={setHostRegionConversation}>
       <ConversationInspectorContext.Provider value={{ ...conversationInspectorActions, outlets: conversationInspectorOutlets, visible: inspectorOpen, visibleTabIds: visibleInspectorTabIds }}>
       <main
         className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${inspectorCover ? ' inspector-covered' : conversationCovered ? ' inspector-conversation-covered' : ''}`}
@@ -2220,6 +2234,7 @@ function CardbushApp() {
                   onBack={() => setSection('chat')}
                   onOpenSettings={() => openSettings('profile')}
                   softVisible={sidebarPresence.visible}
+                  onSelect={() => { if (compactLayout) collapseSidebar(); }}
                 />
               ) : section === 'md-presentation' ? (
                 <BushItSidebar language={language} onBack={() => setSection('chat')} softVisible={sidebarPresence.visible}
@@ -2418,6 +2433,7 @@ function CardbushApp() {
               <FeaturePanel
                 creationChatOptions={{ theme, disabledSkillNames, onToggleSkill: toggleSkillEnabled, onConfigureModels: () => openSettings('models'), browserTabs: composerBrowserTabs,
                   composerPortalTarget: section === 'md-presentation' && quickInputOpen ? quickInputTarget : null,
+                  externalComposerControls: inspectorControlsVisible, onOpenComposer: () => setQuickInputOpen(true),
                   onOpenChangeReview: (sessionId, path) => openChangeReviewInspector(sessionId, path), onInspectorContext: setCreationInspector }}
                 language={language}
                 backendCapabilities={backendCapabilities}
@@ -2753,6 +2769,8 @@ function CardbushApp() {
                       <span>{activeInspectorAddress}</span>
                     </div>
                   )}
+                  <button type="button" aria-label={language === 'zh' ? '框选区域与 AI 对话' : 'Select a region for AI'} title={language === 'zh' ? '点击内容块或拖动框选区域' : 'Click a block or drag to select a region'} aria-pressed={regionSelectionId === activeInspectorTabIdentity}
+                    onClick={() => setRegionSelectionId(id => id === activeInspectorTabIdentity ? '' : activeInspectorTabIdentity)}><ScanLine size={16}/></button>
                 </div>
               )}
               <div className="right-inspector-body">
@@ -2768,6 +2786,7 @@ function CardbushApp() {
                     onResize={(path, ratio) => setInspectorLayout(tree => tree ? resizePanelSplit(tree, path, ratio) : tree)}
                     renderFrame={tab => <InspectorTileFrame tab={tab} language={language} navigation={inspectorNavigationByTarget[tab.id]}
                       handle={inspectorWebviewRefs.current.get(tab.id)}
+                      regionSelected={regionSelectionId === tab.id} onSelectRegion={() => setRegionSelectionId(id => id === tab.id ? '' : tab.id)}
                       onSwap={(from, x, y) => {
                         const bounds = document.querySelector('.right-inspector-tab-pages')?.getBoundingClientRect();
                         if (!bounds || !inspectorLayout) return;
@@ -2797,6 +2816,10 @@ function CardbushApp() {
                               mediaType={tab.detail.mediaType}
                               title={tab.detail.title}
                               language={language}
+                              active={active && inspectorOpen}
+                              regionEnabled={regionSelectionId === tab.id}
+                              onRegionSelectionClose={() => setRegionSelectionId('')}
+                              regionConversation={regionConversation}
                               startPage={<InspectorActions {...inspectorActionProps}
                                 onOpenBookmark={url => inspectorWebviewRefs.current.get(tab.id)?.navigate(url)}/>}
                               onNavigationStateChange={updateInspectorNavigation}
@@ -2902,6 +2925,7 @@ function CardbushApp() {
       {addPageOpen && <InspectorPageDialog language={language} onClose={() => setAddPageOpen(false)} onOpen={url => openInspectorTarget({ target: url, newTab: true })}/>}
       {savingInspectorLayout && <InspectorLayoutDialog language={language} snapshot={savingInspectorLayout.snapshot} onClose={() => setSavingInspectorLayout(null)}/>}
       </ConversationInspectorContext.Provider>
+      </RegionConversationContext.Provider>
       </PageNavigationScope.Provider>
       {projectRenameTarget && (
         <ProjectRenameDialog

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, GripHorizontal, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, GripHorizontal, RefreshCw, ScanLine } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AppLanguage } from '../../types';
 import type { InspectorNavigationState, InspectorWebviewHandle } from './InspectorWebview';
@@ -8,9 +8,10 @@ import { BrowserBookmarkButton } from './BrowserBookmarkButton';
 import { BrowserInstallButton } from '../browser/BrowserInstallButton';
 import { useInspectorTileDrag } from './useInspectorTileDrag';
 
-export function InspectorTileFrame({ tab, language, navigation, handle, onSwap }: {
+export function InspectorTileFrame({ tab, language, navigation, handle, onSwap, regionSelected, onSelectRegion }: {
   tab: InspectorTab; language: AppLanguage; navigation?: InspectorNavigationState; handle?: InspectorWebviewHandle;
   onSwap: (from: string, x: number, y: number) => void;
+  regionSelected?: boolean; onSelectRegion?: () => void;
 }) {
   const zh = language === 'zh', resource = tab.kind === 'resource' ? tab.detail : null;
   const browser = resource && isInspectorBrowserTarget(resource.target, resource.mediaType);
@@ -33,6 +34,7 @@ export function InspectorTileFrame({ tab, language, navigation, handle, onSwap }
         <BrowserInstallButton language={language} navigation={navigation}/>
         <BrowserBookmarkButton address={address} title={title} language={language}/>
       </form> : <span className="inspector-tile-path" title={address}>{title}</span>}
+      <button type="button" aria-label={zh ? '框选区域与 AI 对话' : 'Select a region for AI'} aria-pressed={!!regionSelected} onClick={onSelectRegion}><ScanLine size={14}/></button>
       </>}
     </div>
   </div>;

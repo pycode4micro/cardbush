@@ -1,3 +1,4 @@
+import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Folder, LoaderCircle, Monitor, Plus, RefreshCw, Server, Settings } from 'lucide-react';
@@ -20,6 +21,8 @@ import { recentReviewTurns } from '../sidebar/reviewModel';
 import { WorkspaceChangeStateContext } from '../tools/WorkspaceChangeStateContext';
 import { ConversationExtractionProvider } from '../chat/ConversationExtraction';
 import { ConversationHostContext } from '../conversationHost';
+import { usePublishRegionConversation } from '../inspector/RegionConversationContext';
+import { agentInspectorWorkspace } from '../inspector/inspectorSessions';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
 import { createAgentConversationBackend } from './agentConversationBackend';
 import { useCardbushChat } from '../../hooks/useCardbushChat';
@@ -252,7 +255,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
     submission?.accept();
     void onChanged().catch(error => submission?.refreshFailed(error));
   };
-  const sendComposerMessage = (text: string): Promise<boolean> => {
+  const sendComposerMessage = (text: UserPromptInput): Promise<boolean> => {
     if (acceptSubmissionRef.current.has(sessionId)) return Promise.resolve(false);
     setSubmissionPending(true);
     return new Promise(resolve => {
@@ -276,6 +279,14 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
   };
   const [reverting, setReverting] = useConversationViewState(viewKey('reverting'), () => '', Boolean);
   const busy = chat.sending || chat.stopping;
+  usePublishRegionConversation({ scope: agentInspectorWorkspace(connectionId, sessionId), busy, error: error || chat.error, messages: chat.activeMessages, send: sendComposerMessage,
+    saveImage: async data => {
+      const blob = await (await fetch(data)).blob();
+      const uploaded = await host.uploadFiles([new File([blob], 'region.png', { type: 'image/png' })]);
+      if (!uploaded[0]?.path) throw Error(zh ? '选区截图上传失败' : 'Region upload failed');
+      return uploaded[0].path;
+    },
+  }, active);
   const revert = async (report: ConversationChangeReport) => {
     if (!report.turnId || busy || reverting) return;
     setReverting(report.id); setError('');
@@ -332,7 +343,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
         onSend={sendComposerMessage} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={onCreate} onOpenConversation={onOpenSession}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
-        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === text.trim() ? '' : current); return accepted; }}
+        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === readUserPrompt(text).text.trim() ? '' : current); return accepted; }}
         onRetryGuidance={message => chat.retryTurnGuidance(message, () => setDraft(current => current.trim() === message.content.trim() ? '' : current))}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 
 // Execute the real shared send callback with a gated session creation. Neither
 // local filesystem latency nor a remote acknowledgement should hold the bubble.
@@ -21,6 +22,8 @@ function fixture(scope) {
   const candidate = { id: 'new', title: 'New', preview: '', updatedAt: '' };
   const state = { messages: {}, error: null, titles: [], scheduled: [] };
   const context = {
+    readUserPrompt, promptContextMetadata,
+    selectedTeamReference: () => undefined, teamReferenceInstructions: () => undefined,
     exports: {}, crypto: webcrypto, AbortController, console: { warn() {} },
     window: { cardbushDesktop: { inspectAttachments: async paths => { inspected.push(paths); return []; } }, setTimeout },
     backend: { scope }, selectedModel: 'fixture', managedModelConfigs: [], requestContext: {},
@@ -49,7 +52,7 @@ function fixture(scope) {
     markSessionAttention() {}, markTurnAttention: async () => {}, reloadConversations: async () => {}, truncateText: text => text,
     isPendingInteractionConflictError: () => false,
     markOptimisticChatRequestFailed: (all, id, userId, assistantId) => ({ ...all, [id]: all[id].filter(message => message.id !== assistantId)
-      .map(message => message.id === userId ? { ...message, metadata: { message_delivery: 'failed' } } : message) }),
+      .map(message => message.id === userId ? { ...message, metadata: { ...message.metadata, message_delivery: 'failed' } } : message) }),
     dequeueMessageForConversation: () => undefined,
     scheduleQueuedMessage: (...args) => state.scheduled.push(args),
   };
@@ -58,6 +61,14 @@ function fixture(scope) {
 }
 
 for (const scope of [undefined, 'remote-agent']) {
+  const selected = fixture(scope), context = [{ kind: 'preview-selection', requestId: 'selected-request', content: 'Internal file, locator, coordinates and selected text.' }];
+  const selectionSend = selected.send({ text: '修改选区', context });
+  await tick();
+  assert.equal(selected.state.messages.new[0].content, '修改选区', 'optimistic bubble never flashes internal data');
+  assert.deepEqual(selected.state.messages.new[0].metadata.promptContext, context);
+  selected.creation.resolve(selected.candidate); await tick();
+  assert.equal(selected.streams[0].userInput, '修改选区'); assert.deepEqual(selected.streams[0].promptContext, context);
+  selected.completion.resolve(); await selectionSend;
   const f = fixture(scope), sending = f.send('第一条消息');
   await tick();
   assert.equal(f.state.messages.new[0].content, '第一条消息');

@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -174,6 +175,8 @@ function turnFixture({ status, transport, latestTurn, goal = null, goalReadFails
     referencePlanMode: 'normal', permissionMode: 'ask', subagentPermissionRouting: 'parent', languageRef: { current: 'zh' },
     resolveConversationModelId: () => 'fixture', resolveModelReasoningEffort: () => 'default', selectConversationModel() {}, readConversationModel: () => 'fixture',
     modelConfigFor: () => ({}), selectedModelName: () => 'fixture', normalizeDisabledToolNames: () => [],
+    readUserPrompt, promptContextMetadata,
+    selectedTeamReference: () => undefined, teamReferenceInstructions: () => undefined,
     splitStreamAttachmentMentions: text => ({ displayInput: text, userInput: text, files: [], images: [] }), streamAttachmentsForVision: identity,
     firstUserTitleSource: (_messages, text) => text, resolveConversationSource: () => true, isSessionSending: () => false,
     persistPreparedConversation: async () => candidate, persistAutoConversationTitle() {},

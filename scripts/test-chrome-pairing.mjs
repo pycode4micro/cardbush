@@ -85,7 +85,7 @@ test('actual extension transport verifies the broker before enabling browser com
   const code = broker.createPairing().code;
   const source = fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8');
   class BrowserSocket extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin: extensionOrigin }); } }
-  const sandbox = vm.createContext({ WebSocket: BrowserSocket, navigator: { userAgent: 'Chrome/153.0.0.0' }, crypto: webcrypto, TextEncoder, Uint8Array, setInterval, clearInterval });
+  const sandbox = vm.createContext({ WebSocket: BrowserSocket, navigator: { userAgent: 'Chrome/153.0.0.0' }, crypto: webcrypto, TextEncoder, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval });
   vm.runInContext(source, sandbox);
   const open = value => vm.runInContext(`createConnectorPort(parseConnectorPairing(${JSON.stringify(value)}))`, sandbox);
   const port = open(code); t.after(() => port.disconnect());
@@ -105,6 +105,9 @@ test('actual extension transport verifies the broker before enabling browser com
     socket.send(JSON.stringify({ type: 'challenge', protocol: 'cardbush.chrome_connector.v1', nonce: '0'.repeat(64), proof: '0'.repeat(64) }));
   });
   const fakePort = open(code.replace(/^CB2\.\d+/, `CB2.${impostor.address().port}`));
-  let disconnected = false; fakePort.onDisconnect.addListener(() => { disconnected = true; });
-  await until(() => disconnected); assert.equal(leaked, false, 'a port hijacker receives neither secret nor browser messages');
+  t.after(() => fakePort.disconnect());
+  let recovered = false; fakePort.onMessage.addListener(message => { if (message.type === 'connector_ready') recovered = true; });
+  await until(() => recovered);
+  assert.equal(fakePort.endpointPort, Number(code.split('.')[1]), 'only the authenticated original broker wins discovery');
+  assert.equal(leaked, false, 'a port hijacker receives neither secret nor browser messages');
 });

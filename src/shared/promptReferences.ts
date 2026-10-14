@@ -117,6 +117,4 @@ export function teamReferenceInstructions(id: string): string {
 }
 
 /** UI projection of authored text; the canonical model message retains the resolved facts. */
-export function authoredPromptContent(content: string, metadata?: Record<string, unknown>): string {
-  return typeof metadata?.composerReferenceContent === 'string' ? metadata.composerReferenceContent : content;
-}
+export { authoredPromptContent } from '@cardbush/bush-protocol';

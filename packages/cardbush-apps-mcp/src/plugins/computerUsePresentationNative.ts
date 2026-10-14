@@ -1,6 +1,7 @@
 // Private Windows presentation worker. This source travels with the plugin's
 // compiled JS, so packaging does not depend on Electron or extra host assets.
 import { controlLayerCapture, controlLayerEnabled, controlLayerMarker } from './computerUseCaptureLayers.js';
+import { computerUseAppearance as appearance } from '@cardbush/bush-protocol';
 
 export const computerUsePresentationNative = String.raw`
 using System;
@@ -299,12 +300,12 @@ public static class CardBushPresentation {
         using(var pen=new Pen(cyan,2)) g.DrawRectangle(pen,1,1,Math.Max(0,Width-3),Math.Max(0,Height-3));
         if(pointer && !paused && pointerX>=0 && pointerY>=0 && pointerX<Width && pointerY<Height) {
           float x=pointerX,y=pointerY;
-          var points=new PointF[]{new PointF(x,y),new PointF(x+5,y+20),new PointF(x+10,y+13),new PointF(x+20,y+9)};
-          using(var fill=new SolidBrush(Color.FromArgb(42,177,179))) g.FillPolygon(fill,points);
-          using(var pen=new Pen(Color.FromArgb(228,255,251),1.4f)) g.DrawPolygon(pen,points);
+          var points=new PointF[]{${appearance.points.map(([dx, dy]) => `new PointF(x+${dx},y+${dy})`).join(',')}};
+          using(var fill=new SolidBrush(Color.FromArgb(${appearance.pointer.join(',')}))) g.FillPolygon(fill,points);
+          using(var pen=new Pen(Color.FromArgb(${appearance.outline.join(',')}),1.4f)) g.DrawPolygon(pen,points);
           float labelX=Math.Max(3,Math.Min(Width-84,x+15)); float labelY=y+22;
           if(labelY+24>Height) labelY=Math.Max(3,y-27);
-          using(var fill=new SolidBrush(Color.FromArgb(29,132,139))) g.FillRoundedRectangle(fill,labelX,labelY,80,24,11);
+          using(var fill=new SolidBrush(Color.FromArgb(${appearance.label.join(',')}))) g.FillRoundedRectangle(fill,labelX,labelY,80,24,11);
           using(var font=new Font("Segoe UI",8,FontStyle.Bold)) g.DrawString("CardBush",font,Brushes.White,labelX+8,labelY+5);
           if(click) { using(var pen=new Pen(Color.FromArgb(47,116,117),1)) g.DrawEllipse(pen,x-6,y-6,12,12); }
         }

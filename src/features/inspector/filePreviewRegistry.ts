@@ -84,7 +84,7 @@ export const filePreviewAdapters: readonly FilePreviewAdapter[] = [
   { id: 'video', extensions: ['.mp4', '.m4v', '.mov', '.ogv', '.webm'], renderer: 'video', source: nativeSource },
   { id: 'audio', extensions: ['.mp3', '.m4a', '.aac', '.wav', '.ogg', '.oga', '.opus', '.flac'], renderer: 'audio', source: nativeSource },
   { id: 'html', extensions: ['.html', '.htm', '.xhtml'], renderer: 'webview', source: nativeSource },
-  { id: 'pdf', extensions: ['.pdf'], renderer: 'webview', source: nativeSource },
+  { id: 'pdf', extensions: ['.pdf'], renderer: 'pdf', source: nativeSource },
   {
     id: 'blender', extensions: ['.blend'], renderer: 'webview',
     source: path => `cardbush-file://model-preview/?path=${encodeURIComponent(path)}`,

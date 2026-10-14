@@ -29,7 +29,7 @@ export function MdSectionEditor({ document, node, update, language, flow, nodeFi
     </>}
     {error && <p role="alert" className="md-error">{error}</p>}
     <div className="md-editor-tabs"><button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}>{t('编辑', 'Edit')}</button><button type="button" aria-pressed={preview} onClick={() => setPreview(true)}>{t('预览', 'Preview')}</button></div>
-    {preview ? <div className="md-node-preview"><MarkdownDocument source={node?.body ?? document.introduction} scope="section-preview" onNavigate={onSelect}/></div>
+    {preview ? <div className="md-node-preview"><MarkdownDocument source={node?.body ?? document.introduction} scope="section-preview" onNavigate={onSelect} language={language}/></div>
       : <label>{t(node ? task ? '任务内容' : '章节正文' : '文档正文', node ? task ? 'Assignment' : 'Section content' : 'Document content')}<textarea rows={10} aria-label={t(node ? task ? '任务内容' : '章节正文' : '文档正文', node ? task ? 'Assignment' : 'Section content' : 'Document content')} value={node?.body ?? document.introduction}
         onChange={event => node ? change({ body: event.target.value }) : update({ ...document, introduction: event.target.value })}/></label>}
     {node && <>

@@ -27,6 +27,25 @@ const parent = (registry, voice = false) => ({ protocol: 'bush.session_turn_requ
   inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Check the files' } }], tools: registry?.definitions() ?? [],
   metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'task_free' });
 
+test('assistant journals keep authored text and selection identity while the model receives the full context', async () => {
+  const directory = temporary(), journal = new ConversationJournal(directory), requests = [];
+  const promptContext = [{ kind: 'preview-selection', requestId: 'selected-request', content: 'Selected file C:/work/slides.pptx, page 3, shape heading.' }];
+  const input = { ...entry('selected', '修改这一处'), promptContext };
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+    delegate: async () => { throw Error('No delegation expected'); }, provider: { async *stream(request) {
+      requests.push(request); yield* response(request, { text: '已了解选区。' });
+    } } });
+  try {
+    assistant.command({ action: 'turn', sessionId: id, entry: input, parent: parent(), profile: assistantProfileSchema.parse({}) });
+    await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+    assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
+    assert.ok(requests[0].messages.some(message => message.role === 'user' && message.content.includes(promptContext[0].content)));
+    const saved = new ConversationJournal(directory).read(id)[0];
+    assert.equal(saved.content, '修改这一处'); assert.deepEqual(saved.promptContext, promptContext);
+    assert.throws(() => journal.append(id, { ...input, promptContext: [{ ...promptContext[0], content: 'different target' }] }), /different content/);
+  } finally { assistant.close(); }
+});
+
 test('assistant accepts provider display metadata on all four tools, including await without task_ids', async () => {
   const journal = new ConversationJournal(temporary()), tasks = [], delegated = [], receipts = [];
   const title = { zh: '核对后台任务', en: 'Check background tasks' };

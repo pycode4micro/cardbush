@@ -544,6 +544,7 @@ const desktopApi = {
       stderr: string;
       outputTruncated?: boolean;
     }>,
+  captureInspectorRegion: (input: import('./inspectorRegionCapture').InspectorRegionCapture) => ipcRenderer.invoke('inspector:capture-region', input),
   saveImageDataUrl: (
     dataUrl: string,
     name?: string,

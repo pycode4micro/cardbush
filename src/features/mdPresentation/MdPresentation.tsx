@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Braces, Check, ChevronDown, FileText, ImagePlus, Network, PanelLeft, Plus, Search, Settings2 } from 'lucide-react';
 import { MdGraphCanvas } from './MdGraphCanvas';
 import { MdGraphOverview } from './MdGraphOverview';
@@ -8,10 +8,15 @@ import { PageEditor, type PageEditorHandle } from './PageEditor';
 import { PageMenu } from './PageMenu';
 import { MarkdownSourceEditor, type MarkdownSelection } from './MarkdownSourceEditor';
 import { changePageBody, changePageTitle, pageTitle } from './pageDocument';
+import { AiEditingCursor, textareaCaretRect } from './AiEditingCursor';
+import { useDocumentEditIntent } from './useDocumentEditIntent';
+import { decodeFragment, scrollMarkdownAnchor } from './markdownAnchors';
+import { openMarkdownExternalLink } from './markdownLinkNavigation';
 import { MAX_MARKDOWN_LENGTH, nodeDependencies, nodeName, parseMarkdownGraph, setNodeDependency, setNodeLink, writeMarkdownGraph, type MdDocument, type MdNode } from './markdownGraph';
 import './md-presentation.css';
 import './bush-page.css';
 
+export type MarkdownAnchorRequest = { id: string; fragment: string };
 export type MdPresentationProps = {
   source: string; onChange: (source: string) => void; language: 'zh' | 'en'; flow?: boolean; readOnly?: boolean;
   icon?: (node: MdNode) => ReactNode; subtitle?: (node: MdNode) => string;
@@ -19,28 +24,63 @@ export type MdPresentationProps = {
   documentFields?: (document: MdDocument, change: (attributes: MdDocument['attributes']) => void) => ReactNode;
   newNodeAttributes?: Record<string, unknown>; toolbar?: ReactNode; headerActions?: ReactNode; maxNodes?: number;
   onSourceSelection?: (selection: MarkdownSelection) => void;
+  liveEdit?: { id: string; base: string; cursor: number; state: 'streaming' | 'ready' };
+  onBeforeEdit?: () => void;
+  onCompositionChange?: (composing: boolean) => void;
+  anchorRequest?: MarkdownAnchorRequest;
 };
 
 /** The editable page is primary. Configuration, source and graphs are secondary views. */
-export function MdPresentation({ source, onChange, language, flow, readOnly, icon, subtitle, nodeFields, documentFields, newNodeAttributes, toolbar, headerActions, onSourceSelection, maxNodes = 128 }: MdPresentationProps) {
+export function MdPresentation({ source, onChange, language, flow, readOnly, icon, subtitle, nodeFields, documentFields, newNodeAttributes, toolbar, headerActions, onSourceSelection, liveEdit, onBeforeEdit, onCompositionChange, anchorRequest, maxNodes = 128 }: MdPresentationProps) {
   const t = (cn: string, en: string) => language === 'zh' ? cn : en;
-  const parsed = useMemo(() => { try { return { document: parseMarkdownGraph(source), error: '' }; }
-    catch (error) { return { document: null, error: String((error as Error).message) }; } }, [source]);
+  const lastParsed = useRef<MdDocument | null>(null);
+  const parsed = useMemo(() => { try { const document = parseMarkdownGraph(source); lastParsed.current = document; return { document, error: '' }; }
+    catch (error) { return { document: liveEdit ? lastParsed.current : null, error: liveEdit ? '' : String((error as Error).message) }; } }, [source, !!liveEdit]);
   const [mode, setMode] = useState<'document' | 'graph' | 'markdown'>('document'), [outlineOpen, setOutlineOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [sourcePreview, setSourcePreview] = useState(true);
+  const [linkNotice, setLinkNotice] = useState('');
+  const handledAnchor = useRef('');
   const [selectedId, setSelectedId] = useState(''), [editingId, setEditingId] = useState<string>(), [query, setQuery] = useState('');
   const editors = useRef(new Map<string, PageEditorHandle>()), activeEditorId = useRef(''), workspace = useRef<HTMLElement>(null), prefix = useId().replaceAll(':', ''), sections = useRef(new Map<string, HTMLElement>());
+  const prepareEdit = useDocumentEditIntent(workspace, !!liveEdit, onBeforeEdit, onCompositionChange);
   const document = parsed.document, activeMode = document ? mode : 'markdown', selected = document?.nodes.find(node => node.id === selectedId);
-  const currentDocument = useRef(document); currentDocument.current = document;
+  // Configuration and graph actions operate on committed content, independently
+  // of the temporary text animation shown in the document/source views.
+  const savedSource = liveEdit?.base ?? source;
+  const savedDocument = useMemo(() => { try { return parseMarkdownGraph(savedSource); } catch { return null; } }, [savedSource]);
+  const currentDocument = useRef(savedDocument); currentDocument.current = savedDocument;
   const activeEditor = () => editors.current.get(activeEditorId.current) ?? editors.current.get('') ?? editors.current.values().next().value;
   const article = document ? pageTitle(document) : { title: '', body: '' }, title = article.title || t('无标题页', 'Untitled page');
+  const titleInput = useRef<HTMLTextAreaElement>(null);
+  const editNode = liveEdit && document ? [...document.nodes].reverse().find(node => {
+    const start = source.indexOf(`## ${node.id}\n`); return start >= 0 && liveEdit.cursor >= start;
+  }) : undefined;
+  const editBody = editNode ? editNode.body : article.body;
+  const editBodyStart = editBody ? source.indexOf(editBody, editNode ? Math.max(0, source.indexOf(`## ${editNode.id}\n`)) : 0) : source.length;
+  const editingTitle = !!liveEdit && !editNode && (liveEdit.cursor < editBodyStart || !!article.title && liveEdit.cursor <= source.indexOf(article.title) + article.title.length);
+  const bodyEdit = (id: string) => liveEdit && !editingTitle && id === (editNode?.id ?? '') && editBodyStart >= 0
+    ? { cursor: Math.max(0, Math.min(editBody.length, liveEdit.cursor - editBodyStart)), state: liveEdit.state } : undefined;
   const update = (value: MdDocument) => { const next = writeMarkdownGraph(value); if (next.length > MAX_MARKDOWN_LENGTH) throw Error(t('文档超过 2 MB，请减少图片或内容。', 'The document exceeds 2 MB. Reduce images or content.')); currentDocument.current = value; onChange(next); };
-  const changeNode = (id: string, patch: Partial<MdNode>) => { const value = currentDocument.current; if (value) update({ ...value, nodes: value.nodes.map(node => node.id === id ? { ...node, ...patch } : node) }); };
+  const changeNode = (id: string, patch: Partial<MdNode>) => { prepareEdit(); const value = currentDocument.current; if (value) update({ ...value, nodes: value.nodes.map(node => node.id === id ? { ...node, ...patch } : node) }); };
   const scroll = (id: string) => requestAnimationFrame(() => sections.current.get(id)?.scrollIntoView({ block: 'start' }));
   const closeCompactOutline = () => { if ((workspace.current?.clientWidth || Infinity) <= 760) setOutlineOpen(false); };
   const navigate = (id: string) => { if (id && !document?.nodes.some(node => node.id === id)) return; activeEditorId.current = id; setSelectedId(id); setEditingId(undefined); setMode('document'); closeCompactOutline(); scroll(id); };
+  const followAnchor = (fragment: string) => {
+    setLinkNotice('');
+    if (fragment.startsWith('#md-node=')) { navigate(decodeFragment(fragment.slice(9))); return; }
+    const root = workspace.current?.querySelector<HTMLElement>(activeMode === 'markdown' ? '.creation-source-preview' : '.bush-page-article');
+    if (!scrollMarkdownAnchor(root, fragment)) setLinkNotice(t('未找到链接对应的标题：', 'Heading not found: ') + decodeFragment(fragment.replace(/^#/, '')));
+  };
+  useEffect(() => {
+    if (!anchorRequest || handledAnchor.current === anchorRequest.id) return;
+    if (activeMode === 'graph') { setMode('document'); return; }
+    if (activeMode === 'markdown' && !sourcePreview) { setSourcePreview(true); return; }
+    const frame = requestAnimationFrame(() => { handledAnchor.current = anchorRequest.id; followAnchor(anchorRequest.fragment); });
+    return () => cancelAnimationFrame(frame);
+  }, [anchorRequest, activeMode, sourcePreview]);
   const add = (task = false) => {
+    prepareEdit();
     const value = currentDocument.current;
     if (!value || value.nodes.length >= maxNodes || task && value.nodes.filter(node => 'agent_id' in node.attributes).length >= 64) return;
     const id = `section-${crypto.randomUUID().slice(0, 6)}`;
@@ -48,17 +88,34 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
     setSelectedId(id); setEditingId(task ? id : undefined); setMode('document'); scroll(id);
     requestAnimationFrame(() => sections.current.get(id)?.querySelector<HTMLInputElement>('.bush-section-title')?.focus());
   };
-  const editor = (node?: MdNode) => document && <MdSectionEditor document={document} node={node} update={update} language={language} flow={flow}
+  const editor = (node?: MdNode) => savedDocument && <MdSectionEditor document={savedDocument} node={node && savedDocument.nodes.find(item => item.id === node.id)} update={update} language={language} flow={flow}
     nodeFields={nodeFields} documentFields={documentFields} onSelect={id => { activeEditorId.current = id; setSelectedId(id); setEditingId(id || undefined); }}/>;
   const outline = markdownOutline(article.body, `${prefix}-intro`);
-  const content = (id: string, body: string) => readOnly ? <div className="md-prose"><MarkdownDocument source={body} scope={`${prefix}-${id || 'intro'}`} onNavigate={navigate}/></div>
+  const content = (id: string, body: string) => readOnly ? <div className="md-prose"><MarkdownDocument source={body} scope={`${prefix}-${id || 'intro'}`} onNavigate={navigate} language={language}/></div>
     : <PageEditor source={body} label={t(id ? '章节正文' : '页面正文', id ? 'Section content' : 'Page content')} language={language} onNavigate={navigate}
+      aiEdit={bodyEdit(id)} previewing={!!liveEdit} onBeforeEdit={prepareEdit}
       onChange={value => { const current = currentDocument.current; if (current) id ? changeNode(id, { body: value }) : update(changePageBody(current, value)); }}
       onReady={handle => { if (handle) editors.current.set(id, handle); else editors.current.delete(id); }}
       onActive={() => { activeEditorId.current = id; }} onSection={() => add()} onTask={flow ? () => add(true) : undefined}/>;
   const configuration = (node?: MdNode) => <div className="bush-page-configuration"><div><strong>{t(node ? '章节配置' : '页面配置', node ? 'Section configuration' : 'Page configuration')}</strong>
     <button type="button" aria-label={t('完成编辑', 'Finish editing')} onClick={() => setEditingId(undefined)}><Check size={14}/>{t('完成', 'Done')}</button></div>{readOnly ? <pre>{JSON.stringify(document?.attributes, null, 2)}</pre> : editor(node)}</div>;
-  return <section ref={workspace} className="md-presentation bush-page" aria-label={t('创作', 'Create')} data-outline={outlineOpen}>
+  return <section ref={workspace} className="md-presentation bush-page" aria-label={t('创作', 'Create')} data-outline={outlineOpen} data-ai-editing={!!liveEdit}
+    onClickCapture={event => {
+      const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[href]');
+      if (!anchor || !workspace.current?.contains(anchor) || event.button !== 0) return;
+      const href = anchor.getAttribute('href') ?? '';
+      event.preventDefault(); event.stopPropagation();
+      if (href.startsWith('#')) { followAnchor(href); return; }
+      setLinkNotice('');
+      void openMarkdownExternalLink(href, anchor.textContent ?? '').then(opened => {
+        if (!opened) setLinkNotice(t('无法打开此链接：', 'Unable to open link: ') + href);
+      }).catch(error => setLinkNotice(String((error as Error).message)));
+    }}
+    onKeyDownCapture={event => {
+      if (event.key === 'Enter' && event.target instanceof HTMLAnchorElement) {
+        event.preventDefault(); event.stopPropagation(); event.target.click();
+      }
+    }}>
     <div className="md-presentation-toolbar bush-page-toolbar">
       <div className="bush-page-tools"><PageMenu label={t('页面菜单', 'Page menu')} trigger={<><FileText size={16}/><span>{title}</span><ChevronDown size={13}/></>}>
         <div className="bush-page-menu-group" aria-label={t('视图', 'Views')}>
@@ -83,12 +140,13 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
       {headerActions && <div className="bush-page-header-actions">{headerActions}</div>}
     </div>
     {parsed.error && <p className="md-error" role="alert">{parsed.error}</p>}
+    {linkNotice && <p className="md-link-notice" role="status">{linkNotice}</p>}
     <div className="md-presentation-body" data-mode={activeMode} data-readonly={readOnly || undefined} onPointerDown={event => { if (!(event.target as Element).closest('.md-node-list')) closeCompactOutline(); }}>
       <aside className="md-node-list" aria-label={t('文档目录', 'Document outline')}>
         <label className="md-node-search"><Search size={14}/><input aria-label={t('查找章节', 'Find sections')} placeholder={t('查找章节…', 'Find sections…')} value={query} onChange={event => setQuery(event.target.value)}/></label>
         <button type="button" className="md-document-item" onClick={() => activeMode === 'graph' ? setSelectedId('') : navigate('')}><FileText size={15}/>{title}</button>
         {outline.filter(item => item.label.toLowerCase().includes(query.toLowerCase())).map(item => <button type="button" className="md-heading-item" key={item.id} onClick={() => { activeEditorId.current = ''; setMode('document'); closeCompactOutline(); requestAnimationFrame(() => {
-          const heading = readOnly ? window.document.getElementById(item.id) : sections.current.get('')?.querySelectorAll('.bush-page-content > h1,.bush-page-content > h2,.bush-page-content > h3,.bush-page-content > h4,.bush-page-content > h5,.bush-page-content > h6')[outline.indexOf(item)];
+          const heading = readOnly ? sections.current.get('')?.querySelector(`[id="${item.id}"]`) : sections.current.get('')?.querySelectorAll('.bush-page-content :is(h1,h2,h3,h4,h5,h6)')[outline.indexOf(item)];
           heading?.scrollIntoView({ block: 'start' });
         }); }}>{item.label}</button>)}
         {document?.nodes.filter(node => `${nodeName(node)} ${node.body}`.toLowerCase().includes(query.toLowerCase())).map(node => <button type="button" key={node.id} data-outline-node={node.id} aria-pressed={selectedId === node.id} onClick={() => { if (activeMode === 'graph') { activeEditorId.current = node.id; setSelectedId(node.id); closeCompactOutline(); } else navigate(node.id); }}>{icon?.(node) ?? <FileText size={14}/>}<span>{nodeName(node)}</span></button>)}
@@ -96,16 +154,18 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
       {activeMode === 'markdown' ? <div className="creation-markdown-panel">
         <div className="creation-preview-toggle"><button type="button" aria-pressed={sourcePreview} onClick={() => setSourcePreview(value => !value)}>{t('实时预览', 'Live preview')}</button></div>
         <div className="creation-markdown-panes" data-preview={sourcePreview}>
-          <MarkdownSourceEditor source={source} onChange={onChange} onSelection={onSourceSelection} readOnly={readOnly} language={language}/>
-          {sourcePreview && <div className="creation-source-preview md-prose" aria-label={t('Markdown 预览', 'Markdown preview')}><MarkdownDocument source={source} scope={`${prefix}-preview`} onNavigate={navigate}/></div>}
+          <MarkdownSourceEditor source={source} onChange={onChange} onSelection={onSourceSelection} readOnly={readOnly} language={language} aiEdit={liveEdit}/>
+          {sourcePreview && <div className="creation-source-preview md-prose" aria-label={t('Markdown 预览', 'Markdown preview')}><MarkdownDocument source={source} scope={`${prefix}-preview`} onNavigate={navigate} language={language}/></div>}
         </div>
       </div>
         : document && activeMode === 'document' ? <div className="md-article-scroll"><article className="md-article bush-page-article">
           <section className="md-article-introduction" ref={element => { if (element) sections.current.set('', element); else sections.current.delete(''); }}>
-            {readOnly ? <h1>{title}</h1> : <textarea className="bush-page-title" rows={1} spellCheck={false} aria-label={t('页面标题', 'Page title')} placeholder={t('无标题页', 'Untitled page')} value={article.title}
+            {readOnly ? <h1>{title}</h1> : <textarea ref={titleInput} className="bush-page-title" rows={1} spellCheck={false} aria-label={t('页面标题', 'Page title')} placeholder={t('无标题页', 'Untitled page')} value={article.title}
               onFocus={() => { activeEditorId.current = ''; }} onChange={event => update(changePageTitle(document, event.target.value.replace(/[\r\n]+/g, ' ')))} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); editors.current.get('')?.focus(); } }}/>}
             {editingId === '' && configuration()}
             {content('', article.body)}
+            {editingTitle && liveEdit && <AiEditingCursor language={language} state={liveEdit.state} revision={source} surface={() => titleInput.current}
+              locate={() => textareaCaretRect(titleInput.current, Math.max(0, liveEdit.cursor - source.indexOf(article.title)))}/>}
           </section>
           {document.nodes.map(node => <section key={node.id} className="md-article-section" data-document-section={node.id} ref={element => { if (element) sections.current.set(node.id, element); else sections.current.delete(node.id); }}>
             <header className="md-section-heading">{readOnly ? <h2>{nodeName(node)}</h2> : <input className="bush-section-title" spellCheck={false} aria-label={t('章节标题', 'Section title')} value={nodeName(node)} onFocus={() => { activeEditorId.current = node.id; }} onChange={event => changeNode(node.id, { attributes: { ...node.attributes, name: event.target.value } })}/>}
@@ -115,11 +175,11 @@ export function MdPresentation({ source, onChange, language, flow, readOnly, ico
             {content(node.id, node.body)}
           </section>)}
           {overviewOpen && <MdGraphOverview document={document} language={language} flow={flow} onOpen={() => setMode('graph')}/>}
-        </article></div> : document && <>
-          <MdGraphCanvas document={document} selectedId={selectedId} onSelect={setSelectedId} language={language} flow={flow} icon={icon} subtitle={subtitle} readOnly={readOnly}
-            onMove={(id, position) => { const node = document.nodes.find(node => node.id === id); if (node) changeNode(id, { attributes: { ...node.attributes, position } }); }}
-            onConnect={(from, to) => { const node = document.nodes.find(node => node.id === to), origin = document.nodes.find(node => node.id === from); if (node && (!flow || ('agent_id' in node.attributes && origin && 'agent_id' in origin.attributes))) changeNode(to, (flow ? setNodeDependency : setNodeLink)(node, from, true)); }}
-            onLayout={positions => update({ ...document, nodes: document.nodes.map(node => ({ ...node, attributes: { ...node.attributes, position: positions.get(node.id) } })) })}/>
+        </article></div> : savedDocument && <>
+          <MdGraphCanvas document={savedDocument} selectedId={selectedId} onSelect={setSelectedId} language={language} flow={flow} icon={icon} subtitle={subtitle} readOnly={readOnly}
+            onMove={(id, position) => { const node = savedDocument.nodes.find(node => node.id === id); if (node) changeNode(id, { attributes: { ...node.attributes, position } }); }}
+            onConnect={(from, to) => { const node = savedDocument.nodes.find(node => node.id === to), origin = savedDocument.nodes.find(node => node.id === from); if (node && (!flow || ('agent_id' in node.attributes && origin && 'agent_id' in origin.attributes))) changeNode(to, (flow ? setNodeDependency : setNodeLink)(node, from, true)); }}
+            onLayout={positions => update({ ...savedDocument, nodes: savedDocument.nodes.map(node => ({ ...node, attributes: { ...node.attributes, position: positions.get(node.id) } })) })}/>
           {!readOnly && editor(selected)}
         </>}
     </div>

@@ -62,7 +62,10 @@ let manager;
 try {
   await broker.start();
   const config = JSON.parse(await readFile(broker.configPath, 'utf8'));
-  extension = await pairedClient(broker.createPairing().code);
+  const pairing = broker.createPairing();
+  const connectionId = pairing.code.split('.')[2];
+  assert.match(connectionId, /^[a-f0-9]{32}$/);
+  extension = await pairedClient(pairing.code);
   extension.setEncoding('utf8');
   const messages = lineMessages(extension);
   extension.write(`${JSON.stringify({
@@ -92,7 +95,7 @@ try {
     result: [{ id: 42, title: 'CardBush test', url: 'https://example.test/', active: true }],
   })}\n`);
   assert.deepEqual(await pending, [
-    { id: 42, title: 'CardBush test', url: 'https://example.test/', active: true },
+    { id: 42, title: 'CardBush test', url: 'https://example.test/', active: true, connectionId, browser: 'chrome' },
   ]);
   assert.equal(timings.stage, 'response_received');
   assert.ok(timings.stages.some(item => item.stage === 'broker_forwarded'));
@@ -142,7 +145,10 @@ try {
       toolPolicies: {},
     }],
   });
-  assert.equal(applied.servers[0].tools.length, 22);
+  assert.equal(applied.servers[0].tools.length, 23);
+  assert.ok(registry.resolve('mcp__browser_use__list_browsers'));
+  assert.ok(registry.resolve('mcp__browser_use__select_browser'));
+  assert.ok(registry.resolve('mcp__browser_use__upload_file'));
   const runtimeToolName = 'mcp__browser_use__list_pages';
   assert.ok(registry.resolve(runtimeToolName));
   const coordinator = new ToolExecutionCoordinator({

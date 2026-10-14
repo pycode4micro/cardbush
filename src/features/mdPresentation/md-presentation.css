@@ -114,7 +114,6 @@
 .md-graph-overview path { fill: none; stroke: var(--md-accent); stroke-width: 3; }.md-graph-overview rect { fill: var(--surface); stroke: var(--md-accent); stroke-width: 2; }.md-graph-overview text { fill: var(--text); font: 16px system-ui, sans-serif; }
 .md-team-save-state { color: var(--text-mid); font-size: 10px; }.md-toolbar-extra { flex-wrap: wrap; }
 .md-presentation .md-node-list > button { justify-content: flex-start; }.md-presentation .md-node-list .md-document-item > svg { margin-left: 0; }
-.team-graph-tab { min-height: 0; }.team-graph-footer > span { flex: 1; }
 @media (max-width: 1000px) { .md-presentation-body[data-mode="document"], .md-presentation-body[data-mode="markdown"], .md-presentation-body[data-mode="graph"][data-readonly] { grid-template-columns: minmax(0, 1fr); }.md-article { padding: 28px 34px 64px; } }
 @media (max-width: 680px) { .md-article { padding: 22px 20px 48px; }.md-article h1 { font-size: 25px; }.md-article h2 { font-size: 19px; }.md-presentation-body[data-mode="document"] { overflow: hidden; }.md-article .md-node-editor { padding: 14px; }.md-toolbar-extra { margin-left: 0; }.md-team-save-state { display: none; } }
 @container bush-it (max-width: 760px) { .md-node-list { display: none; }.md-presentation-body[data-mode="document"], .md-presentation-body[data-mode="markdown"], .md-presentation-body[data-mode="graph"][data-readonly] { grid-template-columns: minmax(0, 1fr); }.md-article { padding: 24px 24px 48px; } }

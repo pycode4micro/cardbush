@@ -4,7 +4,7 @@ import net, { type Socket } from 'node:net';
 import path from 'node:path';
 import { createWebSocketStream, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
-import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser } from './chromeConnectorWebSocket';
+import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery } from './chromeConnectorWebSocket';
 import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
 
 import {
@@ -42,6 +42,7 @@ export interface ChromeConnectorStatus {
   lastError?: string;
   paired: boolean;
   transport: 'loopback_websocket';
+  portRecovery?: ConnectorPortRecovery;
   defaultConnectionId: string;
   connections: Array<BrowserConnection & { connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
 }
@@ -178,6 +179,7 @@ export class ChromeConnectorBroker {
       controlledTabCount: [...this.#extensions.values()].reduce((sum, peer) => sum + (peer.status?.controlledTabCount ?? 0), 0),
       paired: this.#webSocket.paired,
       transport: 'loopback_websocket',
+      ...(this.#webSocket.portRecovery ? { portRecovery: this.#webSocket.portRecovery } : {}),
       defaultConnectionId: this.#webSocket.defaultConnectionId,
       connections: this.#webSocket.connections().map(connection => ({ ...connection,
         connected: this.#extensions.has(connection.id), extensionVersion: this.#extensions.get(connection.id)?.status?.extensionVersion,

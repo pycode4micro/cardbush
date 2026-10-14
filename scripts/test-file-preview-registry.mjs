@@ -40,7 +40,7 @@ test('existing format families and extensionless text names share the registry',
     ['README', 'text'], ['Makefile', 'text'], ['.gitignore', 'text'], ['notes.MARKDOWN', 'markdown'],
     ['main.rs', 'text'], ['data.csv', 'text'], ['model.py', 'text'], ['photo.JPEG', 'image'],
     ['image.avif', 'image'], ['icon.svg', 'image'], ['movie.mov', 'video'], ['sound.flac', 'audio'],
-    ['report.html', 'webview'], ['report.pdf', 'webview'], ['report.docx', 'webview'], ['report.pptx', 'webview'],
+    ['report.html', 'webview'], ['report.pdf', 'pdf'], ['report.docx', 'webview'], ['report.pptx', 'webview'],
   ]) assert.equal(resolveFilePreview(`C:/${name}`)?.renderer, renderer, name);
   assert.equal(resolveFilePreview('C:/picture.png#notes.md')?.renderer, 'markdown');
   assert.equal(resolveFilePreview('C:/notes.md.unknown'), null);

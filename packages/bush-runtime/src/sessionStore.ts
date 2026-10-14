@@ -1,3 +1,4 @@
+import { authoredPromptContent } from '@cardbush/bush-protocol';
 import { randomUUID } from "node:crypto";
 
 import {
@@ -112,8 +113,7 @@ export class SessionStore {
           if (!Number.isFinite(time) || time < since || time > until || superseded.has(item.messageId)) continue;
           if (item.message.role !== 'user' || item.message.visibility === 'internal' ||
             (item.message.name && item.message.name !== 'goal_request')) continue;
-          const content = typeof item.metadata?.composerReferenceContent === 'string'
-            ? item.metadata.composerReferenceContent : item.message.content;
+          const content = authoredPromptContent(item.message.content, item.metadata);
           if (!content.trim()) continue;
           prompts.push({ sessionId, messageId: item.messageId, createdAt: item.createdAt,
             content: content.slice(0, 4000), truncated: content.length > 4000 });

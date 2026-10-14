@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import { lazy, Suspense, type ComponentType } from 'react';
 import { fileUrl } from '../../shared/localPaths';
 import type { AppLanguage } from '../../types';
 import { FilePreviewFallback } from './FilePreviewFallback';
@@ -12,6 +12,11 @@ export type InspectorFilePreviewProps = {
   onLoadingChange: (loading: boolean) => void;
 };
 
+const PdfPreview = lazy(() => import('./PdfInspectorPreview'));
+function pdfRenderer(props: InspectorFilePreviewProps) {
+  return <Suspense fallback={null}><PdfPreview {...props}/></Suspense>;
+}
+
 function mediaRenderer(kind: 'image' | 'video' | 'audio'): ComponentType<InspectorFilePreviewProps> {
   return props => <MediaInspectorPreview {...props} kind={kind} source={props.source.startsWith('blob:') ? props.source : fileUrl(props.path)} />;
 }
@@ -23,6 +28,7 @@ export const inspectorFilePreviewRenderers = {
   image: mediaRenderer('image'),
   video: mediaRenderer('video'),
   audio: mediaRenderer('audio'),
+  pdf: pdfRenderer,
   fallback: FilePreviewFallback,
 } satisfies Record<string, ComponentType<InspectorFilePreviewProps>>;
 

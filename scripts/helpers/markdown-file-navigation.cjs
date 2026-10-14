@@ -25,6 +25,20 @@ module.exports = async ({ run, until, pause, window }) => {
   assert.equal(await run('errorDialogs.at(-1).title'), '无法打开链接');
   assert.equal(await run('openedFiles.length'), 1, 'invalid links never reach file/browser navigation');
   assert.equal(window.webContents.getURL(), pageUrl);
+  const anchors = '[中文目录](#七中间件cors-与异常处理) · [重复目录](#重复-标题-1) · [无效目录](#不存在)\n\n'
+    + '正文。\n\n'.repeat(8) + '## 七、中间件、CORS 与异常处理\n\n' + '正文。\n\n'.repeat(8)
+    + '## 重复 标题\n\n' + '正文。\n\n'.repeat(8) + '## 重复 标题\n\n' + '正文。\n\n'.repeat(8);
+  await run(`renderView(h('div',null,...['first-anchor-document','second-anchor-document'].map(id=>h('div',{id,style:{height:'160px',overflow:'auto'}},h(views.MarkdownContent,{content:${JSON.stringify(anchors)},language:'zh'})))))`);
+  await until("document.querySelectorAll('#second-anchor-document h2').length===3", 'Markdown directory headings');
+  for (const [label, index] of [['中文目录',0],['重复目录',2]]) {
+    await run(`Array.from(document.querySelectorAll('#second-anchor-document a')).find(a=>a.textContent===${JSON.stringify(label)}).click()`);
+    await pause();
+    assert.ok(await run(`(()=>{const root=document.getElementById('second-anchor-document'),target=root.querySelectorAll('h2')[${index}].getBoundingClientRect(),viewport=root.getBoundingClientRect();return root.scrollTop>0 && target.top>=viewport.top-1 && target.bottom<=viewport.bottom})()`),'directory selects the exact heading in its own Markdown document');
+    assert.equal(await run("document.getElementById('first-anchor-document').scrollTop"),0,'duplicate headings in another message stay untouched');
+  }
+  await run("Array.from(document.querySelectorAll('#second-anchor-document a')).find(a=>a.textContent==='无效目录').click()");
+  await until("document.querySelector('#second-anchor-document [role=status]')?.textContent.includes('未找到')", 'missing heading notice');
+  assert.equal(window.webContents.getURL(),pageUrl,'fragment navigation never changes the application route');
   await run("removeEventListener('cardbush:open-inspector', recordFileOpen)");
 
   await run(`preview(${JSON.stringify(filePath)})`);

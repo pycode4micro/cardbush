@@ -108,6 +108,7 @@ body.inspector-cover-dragging :is(webview, iframe) { pointer-events: none !impor
 .quick-input-transcript :is(pre, table) { max-width: 100%; overflow-x: auto; }
 .quick-input-transcript .interaction-card { margin: 8px 0 0; }
 .quick-input-empty, .quick-input-error { margin: 4px 0; color: var(--text-soft); font-size: 12px; }
+.quick-input-loading { margin: 0; padding: 14px; color: var(--text-mid); font-size: 12px; }
 .quick-input-error { color: var(--danger); white-space: pre-wrap; }
 @media (prefers-reduced-motion: reduce) { .quick-input-status[data-state="working"] > svg { animation: none; } }
 .composer-stack.input-only .composer-tools, .composer-stack.input-only .model-select, .composer-stack.input-only .composer-note { display: none; }

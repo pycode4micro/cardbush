@@ -407,6 +407,10 @@ app.whenReady().then(async () => {
       await require('./helpers/agent-file-preview.cjs')({ run, until, pause, window, root });
       assert.deepEqual(errors, []); console.log('Remote Agent previews passed.'); return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'markdown-file-navigation') {
+      await require('./helpers/markdown-file-navigation.cjs')({ run, until, pause, window });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-references') {
       await require('./helpers/html-references.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no HTML reference renderer errors');

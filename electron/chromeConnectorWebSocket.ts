@@ -4,11 +4,12 @@ import http from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import { chromeConnectorExtensionId, chromeConnectorProtocol } from './chromeConnectorConstants';
+import { chromeConnectorDiscoveryPorts, chromeConnectorExtensionId, chromeConnectorProtocol } from './chromeConnectorConstants';
 import { assertConnectorFile, writeConnectorFile } from './chromeConnectorFiles';
 
 export type ConnectorBrowser = 'chrome' | 'edge';
 export type BrowserConnection = { id: string; browser: ConnectorBrowser; label: string };
+export type ConnectorPortRecovery = { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' };
 type Credential = BrowserConnection & { secret: string };
 type Pairing = Credential & { expiresAt: number };
 const hex = (size: number) => randomBytes(size).toString('hex');
@@ -36,6 +37,7 @@ export class ChromeConnectorWebSocket {
   #pending: Pairing | null = null;
   #port = 0;
   #running = false;
+  #portRecovery?: ConnectorPortRecovery;
 
   constructor(directory: string, readonly connected: (socket: WebSocket, connection: BrowserConnection) => void,
     readonly options: { handshakeTimeoutMs?: number; pairingTtlMs?: number } = {}) {
@@ -94,13 +96,39 @@ export class ChromeConnectorWebSocket {
       if (typeof this.#defaultConnectionId !== 'string' || (this.#defaultConnectionId && !this.#credentials.has(this.#defaultConnectionId))) throw invalid();
       this.#port = saved.port;
     }
-    await new Promise<void>((resolve, reject) => {
-      this.#server.once('error', reject);
-      this.#server.listen(this.#port, '127.0.0.1', () => { this.#server.off('error', reject); resolve(); });
-    });
+    const savedPort = this.#port;
+    const candidates = [...new Set([...(savedPort ? [savedPort] : []), ...chromeConnectorDiscoveryPorts])];
+    let savedPortError: ConnectorPortRecovery['reason'] | undefined;
+    let lastError: unknown;
+    for (const port of candidates) {
+      try { await this.#listen(port); lastError = undefined; break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'EADDRINUSE' && code !== 'EACCES') throw error;
+        if (port === savedPort) savedPortError = code;
+        lastError = error;
+      }
+    }
+    if (lastError) throw Object.assign(new Error(
+      'Browser connector could not bind any local connection port. Pairings are preserved; retry when a port is available.',
+      { cause: lastError },
+    ), { code: 'connector_ports_unavailable', attemptedPorts: candidates });
     this.#port = (this.#server.address() as { port: number }).port;
+    if (savedPortError) this.#portRecovery = { previousPort: savedPort, port: this.#port, reason: savedPortError };
     try { this.#save(); this.#running = true; }
     catch (error) { this.stop(); throw error; }
+  }
+
+  #listen(port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { this.#server.off('error', failed); this.#server.off('listening', listening); };
+      const failed = (error: Error) => { cleanup(); reject(error); };
+      const listening = () => { cleanup(); resolve(); };
+      this.#server.once('error', failed);
+      this.#server.once('listening', listening);
+      try { this.#server.listen(port, '127.0.0.1'); }
+      catch (error) { cleanup(); reject(error); }
+    });
   }
 
   createPairing(input: { browser?: ConnectorBrowser; label?: string } = {}): { code: string; expiresAt: string; id: string; browser: ConnectorBrowser } {
@@ -115,6 +143,7 @@ export class ChromeConnectorWebSocket {
       expiresAt: new Date(this.#pending.expiresAt).toISOString(), id: this.#pending.id, browser };
   }
   get port(): number { return this.#port; }
+  get portRecovery(): ConnectorPortRecovery | undefined { return this.#portRecovery; }
   get paired(): boolean { return this.#credentials.size > 0; }
   get defaultConnectionId(): string { return this.#defaultConnectionId; }
   connections(): BrowserConnection[] { return [...this.#credentials.values()].map(({ id, browser, label }) => ({ id, browser, label })); }

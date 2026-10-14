@@ -1,3 +1,4 @@
+import { authoredPromptContent, readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { resolveConversationStyle } from '../settings/conversationStyle';
 import { readIndividuation } from '../settings/individuation';
 import type { RuntimeEvent, SessionSnapshot, ConversationExtractDesktopApi } from '@cardbush/bush-protocol';
@@ -13,7 +14,7 @@ import { createRuntimeInteractions } from '../../runtime-client/RuntimeInteracti
 import type { RuntimeStreamRequest } from '../../runtime-client/RuntimeClient';
 import type { ChatMessage, SkillDetail, SkillSummary } from '../../types';
 
-type Job = Omit<AgentJob, 'input'> & { text: string; modelId: string };
+type Job = Omit<AgentJob, 'input'> & { text: string; modelId: string; userMessageMetadata?: Record<string, unknown> };
 export type AgentCall = <T = unknown>(operation: AgentOperation, input?: Record<string, unknown>) => Promise<T>;
 type Watch = (request: Parameters<AgentDesktopApi['watchEvents']>[1], listener: Parameters<AgentDesktopApi['watchEvents']>[2]) => () => void;
 
@@ -94,7 +95,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     const entry = guidance.get(payload.messageId) ?? { command: input, message: {
       id: payload.messageId, clientMessageId: payload.messageId, messageId: payload.messageId, role: 'user',
       conversationId: payload.sessionId, turnId: payload.turnId, createdAt: payload.createdAt,
-      content: typeof payload.metadata?.composerReferenceContent === 'string' ? payload.metadata.composerReferenceContent : payload.content,
+      content: authoredPromptContent(payload.content, payload.metadata),
       metadata: { ...payload.metadata, turn_guidance: true, guidance_delivery: 'pending', guidance_mode: payload.mode ?? 'append_context' },
     } as ChatMessage };
     guidance.set(payload.messageId, entry); saveGuidance();
@@ -145,12 +146,13 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   });
   const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession']; queueOnly?: boolean }) => {
     const prior = uncertain.get(request.sessionId);
-    if (prior && (prior.userMessageMetadata?.composerReferenceContent ?? prior.text) !== request.userInput) throw new Error('上一条消息尚未确认，请先重试原消息。The previous submission is unconfirmed; retry it first.');
+    if (prior && (authoredPromptContent(prior.text, prior.userMessageMetadata) !== request.userInput ||
+      JSON.stringify(readUserPrompt(prior.text, prior.userMessageMetadata).context ?? []) !== JSON.stringify(request.promptContext ?? []))) throw new Error('上一条消息尚未确认，请先重试原消息。The previous submission is unconfirmed; retry it first.');
     const input = prior ?? toInput(request, options);
     if (!prior && options?.queueOnly) input.queueOnly = true;
     if (!prior) {
       const referenced = await resolvePromptReferenceContext(input.text, request.sessionId, await client.getSession(request.sessionId), request.uiLanguage,
-        (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve, runtime.resolveBrowserReferences);
+        (turnId, messageId) => client.getUserMessage(request.sessionId, turnId, messageId), request.modelConfig?.maxContextTokens, extracts.resolve, runtime.resolveBrowserReferences, request.promptContext);
       input.text = referenced.content; input.userMessageMetadata = { ...referenced.metadata, sourceEnabled: request.sourceEnabled !== false,
         userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(request.attachments?.length ? { attachments: request.attachments } : {}) };
@@ -185,10 +187,11 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     const [result, jobs] = await Promise.all([shared.fetchSessionMessages(sessionId, options, runtime), getJobs(sessionId)]);
     const running = jobs.find(job => job.status === 'running');
     if (running && !running.goalContinuation && !result.messages.some(message => message.turnId === running.turnId)) {
-      const user: ChatMessage = { id: `message-${running.id}`, messageId: `message-${running.id}`, role: 'user', content: running.text,
+      const prompt = readUserPrompt(running.text, running.userMessageMetadata);
+      const user: ChatMessage = { id: `message-${running.id}`, messageId: `message-${running.id}`, role: 'user', content: prompt.text,
         conversationId: sessionId, turnId: running.turnId, createdAt: running.createdAt,
         turnSequence: (result.latestTurn?.turnSequence ?? 0) + 1,
-        ...(running.goalContinuation ? { metadata: { goal_continuation: true } } : {}) };
+        metadata: { ...promptContextMetadata(prompt), ...(running.goalContinuation ? { goal_continuation: true } : {}) } };
       result.messages.push(user);
     }
     for (const [id, entry] of guidance) {
@@ -200,9 +203,10 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   };
   const backend: ConversationBackend = {
     scope: connectionId,
-    isSubmissionRetry: (sessionId, text) => {
+    isSubmissionRetry: (sessionId, text, promptContext) => {
       const prior = uncertain.get(sessionId);
-      return Boolean(prior && (prior.userMessageMetadata?.composerReferenceContent ?? prior.text) === text);
+      return Boolean(prior && authoredPromptContent(prior.text, prior.userMessageMetadata) === text &&
+        JSON.stringify(readUserPrompt(prior.text, prior.userMessageMetadata).context ?? []) === JSON.stringify(promptContext ?? []));
     },
     fetchConversations: () => shared.fetchConversations(runtime),
     fetchSessionMessages: load,
@@ -259,7 +263,8 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
           const { jobs, locked, revision } = await call<{ jobs: Job[]; locked: boolean; revision: number }>('chat.queue', { action: 'get', sessionId }); if (!alive) return;
           const running = jobs.find(job => job.status === 'running');
           listener({ activeTurnId: running?.turnId, queueState: { locked, revision }, revision: `${locked}|${jobs.map(job => `${job.id}:${job.status}`).join('|')}`,
-            queued: jobs.filter(job => job.status === 'queued' && !job.goalContinuation).map(job => ({ id: job.id, text: job.text, createdAt: job.createdAt,
+            queued: jobs.filter(job => job.status === 'queued' && !job.goalContinuation).map(job => ({ id: job.id, text: authoredPromptContent(job.text, job.userMessageMetadata),
+              promptContext: readUserPrompt(job.text, job.userMessageMetadata).context, createdAt: job.createdAt,
               conversation: { id: sessionId, title: '', preview: '', updatedAt: job.createdAt } })) });
         } catch (error) { if (alive) onError(error); }
         finally { if (alive) timer = setTimeout(() => void poll(), 1200); }

@@ -1,3 +1,5 @@
+import { readUserPrompt, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
+import { useConversationViewState, conversationViewKey } from '../../shared/conversationViewState';
 import { Sparkles } from 'lucide-react';
 import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
@@ -309,7 +311,7 @@ export function ChatPanel({
   onOpenConversation: (conversationId: string) => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onRefreshActiveSession: RefreshActiveSession;
-  onSend: (text: string) => Promise<void | boolean>;
+  onSend: (text: UserPromptInput) => Promise<void | boolean>;
   onVoiceSend?: (text: string) => Promise<boolean>;
   voiceAgent?: import('../voice/realtimeAgentBridge').RealtimeAgentExecutor;
   onRetryMessage: (message: ChatMessage) => Promise<void>;
@@ -317,7 +319,7 @@ export function ChatPanel({
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
   onGuideMessage: (
     message: ChatMessage,
-    guidance: string,
+    guidance: UserPromptInput,
     mode: 'append_context' | 'interrupt_and_continue',
   ) => Promise<void | boolean>;
   onRetryGuidance: (message: ChatMessage) => Promise<void>;
@@ -357,6 +359,9 @@ export function ChatPanel({
   const host = useContext(ConversationHostContext);
   const quickInputTarget = useContext(ComposerPortalContext);
   const runtimeSessionId = host?.sessionId ?? activeConversationId;
+  const [draftContext, setDraftContext] = useConversationViewState<PromptContext[]>(
+    conversationViewKey(host?.id, runtimeSessionId, 'draft-prompt-context'), () => [], value => value.length > 0);
+  useEffect(() => { if (!draft.trim()) setDraftContext(current => current.length ? [] : current); }, [draft, setDraftContext]);
   const pendingInteraction = suppliedPendingInteraction?.sessionId === activeConversationId
     ? suppliedPendingInteraction : null;
   const hasInteraction = Boolean(pendingInteraction || interactionContent);
@@ -2149,12 +2154,14 @@ export function ChatPanel({
   const editQueuedMessage = useCallback(
     (item: QueuedChatMessage) => {
       onRemoveQueuedMessage(item.id);
+      const prompt = readUserPrompt(item.text, { promptContext: item.promptContext });
+      if (prompt.context) setDraftContext(current => [...current, ...prompt.context!]);
       const next = draft.trim()
-        ? `${draft.trimEnd()}\n${item.text.trim()}`
-        : item.text;
+        ? `${draft.trimEnd()}\n${prompt.text.trim()}`
+        : prompt.text;
       onDraftChange(next);
     },
-    [draft, onDraftChange, onRemoveQueuedMessage],
+    [draft, onDraftChange, onRemoveQueuedMessage, setDraftContext],
   );
 
   const jumpToLatestMessage = useCallback(
@@ -2447,6 +2454,7 @@ export function ChatPanel({
 
   const handleComposerSend = useCallback(
     async (text: string, options?: { immediate?: boolean; acknowledge?: boolean }) => {
+      const prompt: UserPromptInput = draftContext.length && !options?.acknowledge ? { text, context: draftContext } : text;
       captureComposerPosition(!sending);
       if (
         guidanceAvailable && sending &&
@@ -2465,7 +2473,7 @@ export function ChatPanel({
         };
         return await onGuideMessage(
           guidanceAnchor,
-          text,
+          prompt,
           'interrupt_and_continue',
         );
       }
@@ -2483,7 +2491,7 @@ export function ChatPanel({
           setScrollBottomVisible(false);
         }
       }
-      return await (options?.acknowledge && onVoiceSend ? onVoiceSend(text) : onSend(text));
+      return await (options?.acknowledge && onVoiceSend ? onVoiceSend(text) : onSend(prompt));
     },
     [
       activeAssistantForRender,
@@ -2497,6 +2505,7 @@ export function ChatPanel({
       onSend,
       onVoiceSend,
       guidanceAvailable,
+      draftContext,
       sending,
       setScrollBottomVisible,
       composerAnchored,
@@ -2623,7 +2632,7 @@ export function ChatPanel({
         send: (text, options) => handleComposerSend(text, { ...options, acknowledge: true }) }}>
     <ComposerReferenceContext.Provider value={{ sessionId: runtimeSessionId, browserTabs, messages, projects: availableProjects, onWorkspaceSelect: sending || Boolean(activeTurnId) || queuedMessageCount > 0 ? undefined : onWelcomeProjectChange }}>
     {(!embedded || progressive) && <QuickInputStatus language={language} messages={renderMessages} sending={sending} stopping={stopping}
-      previewLatest={progressive}
+      expandOnError={progressive}
       submitting={submissionPending} waiting={hasInteraction} error={error || refreshError} recovery={connectionRecovery} queued={queuedMessageCount}
       errorContent={progressive && (error || refreshError) ? <RuntimeStatusBanner language={language} tone="error" message={error || refreshError}
         actionLabel={language === 'zh' ? '重试' : 'Retry'} onAction={async () => { await refreshBackendWithFeedback({ silent: false }); onClearError(); }}

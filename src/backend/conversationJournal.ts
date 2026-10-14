@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { ASSISTANT_CONVERSATION_COMMAND, type ConversationEntry, type NextStepPrediction } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import type { ChatMessage } from '../types';
@@ -17,5 +18,8 @@ export async function appendConversationEntry(sessionId: string, entry: Conversa
 }
 export function journalMessages(entries: ConversationEntry[], sessionId: string): ChatMessage[] {
   return entries.filter(entry => entry.visibility !== 'internal').map(entry => ({ ...entry, conversationId: sessionId,
-    status: 'completed', metadata: { conversation_journal: true, cardbush_terminal_snapshot: entry.role === 'assistant', voice_transcript: entry.source === 'voice' } }));
+    content: entry.role === 'user' ? readUserPrompt(entry.content).text : entry.content,
+    status: 'completed', metadata: { ...(entry.role === 'user' ? promptContextMetadata(entry.promptContext
+      ? { text: entry.content, context: entry.promptContext } : readUserPrompt(entry.content)) : {}),
+      conversation_journal: true, cardbush_terminal_snapshot: entry.role === 'assistant', voice_transcript: entry.source === 'voice' } }));
 }

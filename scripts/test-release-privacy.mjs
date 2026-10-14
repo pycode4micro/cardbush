@@ -67,3 +67,44 @@ test('a valid ASAR without production dependencies cannot pass the packaging gat
   await createPackage(source, archive);
   assert.equal(verifyPackagedDependencies(archive).verified, 1);
 });
+
+test('host runtime imports must be declared and shipped even when development workspaces resolve them', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-package-runtime-imports-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source'), archive = join(root, 'app.asar');
+  await mkdir(join(source, 'dist-electron/hosts'), { recursive: true });
+  await mkdir(join(source, 'node_modules/sharp'), { recursive: true });
+  await writeFile(join(source, 'node_modules/sharp/package.json'), '{"name":"sharp"}');
+  await mkdir(join(source, 'node_modules/quickjs-emscripten'), { recursive: true });
+  await writeFile(join(source, 'node_modules/quickjs-emscripten/package.json'), '{"name":"quickjs-emscripten"}');
+  const wasmDirectory = join(source, 'node_modules/@jitl/quickjs-wasmfile-release-sync/dist');
+  await mkdir(wasmDirectory, { recursive: true });
+  await writeFile(join(wasmDirectory, 'emscripten-module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+  await writeFile(join(source, 'package.json'), '{}');
+  for (const statement of [
+    "import { createServer } from '@cardbush/chrome-mcp';",
+    "export { createServer } from '@cardbush/chrome-mcp';",
+    "const server = require('@cardbush/chrome-mcp');",
+    "const load = () => import('@cardbush/chrome-mcp/server');",
+  ]) {
+    await writeFile(join(source, 'dist-electron/hosts/browserUseHost.mjs'), statement);
+    await createPackage(source, archive);
+    assert.throws(() => verifyPackagedDependencies(archive), /undeclared production dependencies: @cardbush\/chrome-mcp/);
+  }
+  await writeFile(join(source, 'package.json'), JSON.stringify({ dependencies: { '@cardbush/chrome-mcp': '0.1.0' } }));
+  await createPackage(source, archive);
+  assert.throws(() => verifyPackagedDependencies(archive), /missing production dependencies: @cardbush\/chrome-mcp/);
+  await mkdir(join(source, 'node_modules/@cardbush/chrome-mcp'), { recursive: true });
+  await writeFile(join(source, 'node_modules/@cardbush/chrome-mcp/package.json'), '{"name":"@cardbush/chrome-mcp"}');
+  await writeFile(join(source, 'dist-electron/main.cjs'), `
+    const electron = require('electron');
+    const disk = require('original-fs');
+    const fs = require('node:fs');
+    const path = require('path');
+    const local = require('./hosts/browserUseHost.mjs');
+    const example = "import 'not-a-runtime-dependency'";
+    // require('also-not-a-dependency');
+  `);
+  await createPackage(source, archive);
+  assert.equal(verifyPackagedDependencies(archive).verified, 1);
+});

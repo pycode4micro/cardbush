@@ -1,3 +1,4 @@
+import { promptModelContent } from '@cardbush/bush-protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
@@ -166,7 +167,7 @@ export class AssistantConversation {
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).map(item => item.role === 'assistant' ? { role: 'assistant' as const, content: item.content, toolCalls: [] } : {
         role: 'user' as const,
         ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
-        content: item.content + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),
+        content: promptModelContent({ text: item.content, context: item.promptContext }) + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),
         ...(item.attachments?.some(file => file.type === 'image' && file.path && !file.path.startsWith('ssh://'))
           ? { images: item.attachments.filter(file => file.type === 'image' && file.path && !file.path.startsWith('ssh://')).slice(0, 4).map(file => ({ url: file.path! })) } : {}),
       });

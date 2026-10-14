@@ -52,6 +52,7 @@ export const runtimeEventKindSchema = z.enum([
   "assistant_segment_completed",
   "guidance_applied",
   "tool_queued",
+  "file_edit_preview",
   "tool_running",
   "tool_returned",
   "tool_failed",
@@ -250,6 +251,16 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("tool_queued"),
     payload: toolIdentitySchema,
+  }),
+  // Display-only model input. Never evidence that a tool ran or a file was saved.
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal('file_edit_preview'),
+    payload: z.object({
+      previewId: z.string().min(1), toolCallId: z.string().optional(),
+      toolName: z.enum(['write_file', 'edit_file', 'apply_patch']),
+      offset: z.number().int().nonnegative(), delta: z.string(),
+      state: z.enum(['streaming', 'ready', 'discarded']),
+    }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("tool_running"),

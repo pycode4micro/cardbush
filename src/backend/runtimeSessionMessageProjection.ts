@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import type {
   SessionMessage as RuntimeSessionMessage,
   SessionSnapshot as RuntimeSessionSnapshot,
@@ -166,6 +167,8 @@ export function projectRuntimeSessionMessage(
   const role =
     message.message.role === 'developer' ? 'system' : message.message.role;
   const metadata: Record<string, unknown> = {};
+  const prompt = role === 'user' ? readUserPrompt(message.message.content, message.metadata) : undefined;
+  if (prompt) Object.assign(metadata, promptContextMetadata(prompt));
   if (message.message.role === 'assistant') {
     metadata.toolCalls = message.message.toolCalls;
     if (turn) {
@@ -189,8 +192,7 @@ export function projectRuntimeSessionMessage(
     id: message.messageId,
     messageId: message.messageId,
     role,
-    content: role === 'user' && typeof message.metadata?.composerReferenceContent === 'string'
-      ? message.metadata.composerReferenceContent : message.message.content,
+    content: prompt?.text ?? message.message.content,
     conversationId: sessionId,
     turnId: message.turnId,
     createdAt: message.createdAt,

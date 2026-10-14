@@ -25,6 +25,76 @@ const { projectRuntimeSessionMessage } = load('src/backend/runtimeSessionMessage
 const { inspectorBrowserReferences, referenceableUserMessages } = load('src/features/composer/ComposerReferenceContext.ts');
 const { applicationCatalog, applicationReference, defaultAppCenterPreferences } = load('src/features/appCenter/appCenterModel.ts');
 const user = { kind: 'user-turn', sessionId: 'current', turnId: 'turn-1', messageId: 'user-1', title: '中文 [具体] 指令 \\ 路径' };
+test('region selection keeps authored text, screenshots, model context and reply identity separate across history', async () => {
+  const { regionPrompt } = load('src/features/inspector/regionSelection.ts');
+  const { splitStreamAttachmentMentions } = load('src/shared/chatAttachments.ts');
+  const requestId = '302236ec-7c0e-463e-8952-e6c8ebb700e0';
+  const region = { text: '赛博朋克', locator: 'div:nth-child(2) > h1', page: '1', viewport: { width: 566, height: 633 },
+    pageRect: { x: .1, y: .2, width: .6, height: .1 }, documentRect: { x: 40, y: 60, width: 300, height: 50 } };
+  const prompt = regionPrompt('帮我改成演示文档', 'C:/workspace/模板.pptx', region, 'C:/workspace/region.png', requestId);
+  assert.equal(prompt.text, '@C:/workspace/region.png\n帮我改成演示文档');
+  const outbound = splitStreamAttachmentMentions(prompt.text);
+  assert.deepEqual(outbound.images, [{ path: 'C:/workspace/region.png' }]);
+  const resolved = await resolvePromptReferenceContext(outbound.userInput, 'current', null, 'zh', undefined, undefined, undefined, undefined, prompt.context);
+  assert.match(resolved.content, /模板\.pptx/); assert.match(resolved.content, /赛博朋克/); assert.match(resolved.content, /pageRect/);
+  assert.equal(resolved.metadata.composerReferenceContent, '帮我改成演示文档');
+  const saved = JSON.parse(JSON.stringify({ messageId: 'region-user', turnId: 'region-turn', message: { role: 'user', content: resolved.content }, metadata: resolved.metadata }));
+  const projected = projectRuntimeSessionMessage(saved, 'current');
+  assert.equal(projected.content, '帮我改成演示文档');
+  assert.equal(protocol.readUserPrompt(projected.content, projected.metadata).context[0].requestId, requestId);
+  const retry = protocol.readUserPrompt(projected.content, projected.metadata);
+  const again = await resolvePromptReferenceContext(retry.text, 'current', null, 'zh', undefined, undefined, undefined, undefined, retry.context);
+  assert.deepEqual(again, resolved);
+  const chip = refs.promptReferenceMarkdown({ kind: 'user-turn', sessionId: 'current', turnId: 'region-turn', messageId: 'region-user', title: '修改选区' });
+  const quoted = await resolvePromptReferenceContext(`${chip} 按这个要求继续`, 'current',
+    { sessionId: 'current', turns: [{ turnId: 'region-turn', messages: [saved] }] });
+  assert.match(quoted.content, /模板\.pptx/); assert.equal(quoted.metadata.composerReferenceContent, `${chip} 按这个要求继续`);
+
+  const legacy = `${outbound.userInput}\n\n${prompt.context[0].content}`;
+  assert.equal(protocol.authoredPromptContent(legacy), outbound.userInput);
+  assert.equal(protocol.authoredPromptContent(legacy + '\n\n编辑位置: "C:/workspace/file.md" · L3–6'), outbound.userInput);
+  assert.equal(protocol.readUserPrompt(legacy).context[0].requestId, requestId);
+  assert.equal(projectRuntimeSessionMessage({ ...saved, metadata: undefined, message: { role: 'user', content: legacy } }, 'current').content, outbound.userInput);
+  assert.equal(projectRuntimeSessionMessage({ ...saved, message: { role: 'assistant', content: legacy, toolCalls: [] } }, 'current').content, legacy);
+  for (const literal of [JSON.stringify(region), '<preview-selection>example</preview-selection>', '编辑位置: "C:/file.md"',
+    '```md\n' + legacy + '\n```', legacy + '\n请解释这些字段', legacy.replace(requestId, 'not-a-generated-request'), legacy.replace('"viewport"', '"other"')]) {
+    assert.equal(protocol.authoredPromptContent(literal), literal, 'ordinary text, quotes and incomplete envelopes remain intact');
+  }
+});
+
+test('automatic contexts cannot create prompt references and compose with creation locations without leaking', async () => {
+  const { creationRequest } = load('src/features/mdPresentation/creationConversationContext.ts');
+  const reference = refs.promptReferenceMarkdown({ kind: 'team', id: 'review', title: '审核团队' });
+  const prompt = creationRequest({ text: '调整标题', context: [{ kind: 'plugin-diagnostics', content: `Selected text: ${reference}` }] },
+    { source: 'old', file: { path: 'C:/internal/backing.md' } }, { source: 'old', startLine: 2, endLine: 4 }, 'zh');
+  assert.equal(prompt.text, '调整标题'); assert.equal(prompt.context.length, 2);
+  const result = await resolvePromptReferenceContext(prompt.text, 'current', null, 'zh', undefined, undefined, undefined, undefined, prompt.context);
+  assert.equal(result.metadata.composerReferenceContent, '调整标题'); assert.equal(result.metadata.team_id, undefined);
+  assert.match(result.content, /C:\/internal\/backing\.md/); assert.match(result.content, /L2–4/);
+  assert.ok(!result.content.includes('Referenced context selected by the user'));
+  const authoredReference = await resolvePromptReferenceContext(`${reference} ${prompt.text}`, 'current', null, 'zh', undefined, undefined, undefined, undefined, prompt.context);
+  assert.equal(authoredReference.metadata.team_id, 'review');
+  assert.equal(authoredReference.metadata.promptContext.length, 2);
+  assert.equal(protocol.authoredPromptContent(authoredReference.content, authoredReference.metadata), `${reference} 调整标题`);
+  assert.deepEqual(creationRequest(prompt, { file: { path: 'C:/different.md' } }, undefined, 'zh'), prompt, 'editing a queued request retains its original file');
+  const selected = { text: '调整选区', context: [{ kind: 'preview-selection', content: 'Selection in another file', requestId: 'id' }] };
+  assert.deepEqual(creationRequest(selected, { file: { path: 'C:/different.md' } }, undefined, 'zh'), selected);
+});
+
+test('generated plugin diagnostics have a concise display while the complete evidence reaches the model', async () => {
+  const { pluginTroubleshootingPrompt } = load('src/features/plugins/pluginPrompts.ts');
+  for (const language of ['zh', 'en']) {
+    const content = pluginTroubleshootingPrompt({ id: 'example', manifestPath: 'C:/plugins/example/plugin.json', version: '1.0' },
+      { id: 'plugin_example', name: 'Example', state: 'unavailable', error: 'connect timeout' }, language);
+    const result = await resolvePromptReferenceContext(content, 'current');
+    const projected = protocol.authoredPromptContent(result.content, result.metadata);
+    assert.ok(projected.length < 180); assert.ok(!projected.includes('configuredLaunch')); assert.ok(!projected.includes('serviceId'));
+    assert.match(result.content, /configuredLaunch/); assert.match(result.content, /connect timeout/);
+    assert.equal(result.metadata.promptContext[0].kind, 'plugin-diagnostics');
+    assert.equal(protocol.authoredPromptContent(content), projected);
+    assert.equal(protocol.authoredPromptContent('这是日志示例\n' + content), '这是日志示例\n' + content);
+  }
+});
 test('Team selections survive prompt/history projection and resolve only a compact workflow reference', async () => {
   const team = { kind: 'team', id: 'launch', title: '品牌 [宣传] 团队' };
   const chip = refs.promptReferenceMarkdown(team);

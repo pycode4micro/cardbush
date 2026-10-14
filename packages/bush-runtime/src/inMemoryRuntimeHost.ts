@@ -722,6 +722,7 @@ export class InMemoryRuntimeHost {
           "assistant_segment_completed",
           "guidance_applied",
           "tool_queued",
+          "file_edit_preview",
           "tool_running",
           "tool_returned",
           "tool_failed",
@@ -2643,6 +2644,7 @@ export class InMemoryRuntimeHost {
               continueWithGuidance(projector); break;
             }
             archiveMaintenanceResponse();
+            projector.finishFileEdits();
             projector.completeOpenSegment();
             if (input.signal?.aborted) {
               appendInterruptedAssistantMessage(
@@ -2668,6 +2670,7 @@ export class InMemoryRuntimeHost {
             deferredProviderEvents.forEach((event) => projector.accept(event));
           }
           projector.completeOpenSegment();
+          projector.finishFileEdits(result.status === 'completed' ? result.toolCalls : []);
           mergeUsage(usage, result.usage);
           replaceLastRequestUsage(usage, result.usage);
           if (result.usage.inputTokens !== undefined) {

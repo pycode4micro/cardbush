@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
+import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
 import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
@@ -19,6 +20,7 @@ report.scope = chromeOnly ? 'chrome-only' : 'chrome-and-edge';
 const children = [];
 const createBroker = () => new ChromeConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe') });
 let broker = createBroker();
+let portOccupant;
 const pageServer = http.createServer((request, response) => {
   response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   response.end('<!doctype html><title>Browser Use fixture</title><h1>Isolated browser validation</h1><label>Name <input id="name"></label><button onclick="document.querySelector(\'#proof\').textContent=document.querySelector(\'#name\').value">Apply</button><p id="proof">Ready</p>');
@@ -122,6 +124,7 @@ try {
     report.checks.push(`${name}: select, create, accessibility snapshot, fill, click, evaluate, screenshot, isolated page listing`);
   }
   const savedPairingCount = broker.status().connections.length;
+  const savedConnectorPort = JSON.parse(await fs.readFile(path.join(root, 'browser-connector/pairing.json'), 'utf8')).port;
   broker.stop();
   for (const connection of [chrome, edge].filter(Boolean)) {
     await until(async () => !(await connection.evaluate('chrome.runtime.sendMessage({action:"status"})')).nativeConnected, 'offline extension');
@@ -131,15 +134,22 @@ try {
     assert.equal(state.allowAllSites, true);
     await until(() => connection.evaluate('document.querySelector("#connection").textContent.includes("自动重连") && document.querySelector("#site-access").textContent.includes("已保存")'), 'popup reflects offline state and retained consent');
   }
+  portOccupant = net.createServer(socket => socket.destroy());
+  await new Promise((resolve, reject) => { portOccupant.once('error', reject); portOccupant.listen(savedConnectorPort, '127.0.0.1', resolve); });
   broker = createBroker();
   await broker.start();
+  assert.equal(broker.status().portRecovery.previousPort, savedConnectorPort);
   const recoveryStarted = Date.now();
   const recoveredPages = await call('chrome', 'list_pages');
   assert.equal(recoveredPages.structuredContent.pages.length, 1, 'same session pages remain usable after app restart');
   report.checks.push(`app restart: first tool request succeeds without intervention (${Date.now() - recoveryStarted} ms)`);
   await until(() => broker.status().connections.filter(connection => connection.connected).length === savedPairingCount, 'alarm reconnect after app restart without user action', 45000);
   assert.equal(broker.status().connections.length, savedPairingCount);
-  report.checks.push('app restart: automatic reconnection using the same pairings and saved all-site permission');
+  for (const connection of [chrome, edge].filter(Boolean)) {
+    await until(async () => Number((await connection.evaluate('chrome.storage.local.get("cardbushConnectorPairingV2").then(value => value.cardbushConnectorPairingV2.split(".")[1])'))) === broker.status().portRecovery.port, 'extension persists authenticated replacement endpoint');
+  }
+  report.checks.push('occupied port on app restart: automatic endpoint recovery using the same pairings, session routes and saved all-site permission');
+  await new Promise(resolve => portOccupant.close(resolve));
   const chromeId = chrome.id;
   await chrome.item.send('Browser.close');
   await until(() => chrome.item.closed, 'Chrome exit');
@@ -178,7 +188,7 @@ finally {
     await item.send?.('Browser.close').catch(() => {});
     await until(() => item.closed, 'test browser exit', 5000).catch(() => item.child.kill());
   }
-  broker.stop(); pageServer.close();
+  broker.stop(); pageServer.close(); portOccupant?.close();
   await fs.writeFile(path.join(workspaceTmp, 'browser-use-native-result.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   const resolved = path.resolve(root);

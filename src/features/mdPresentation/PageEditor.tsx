@@ -4,17 +4,21 @@ import { Editor } from '@tiptap/core';
 import type { SelectionBookmark } from '@tiptap/pm/state';
 import { Bold, Code, Heading1, Heading2, Heading3, ImagePlus, Italic, Link, List, ListChecks, ListOrdered, Minus, Plus, Quote, Strikethrough, Table2, Type, UsersRound, X } from 'lucide-react';
 import { pageEditorExtensions, pageMarkdownContent } from './pageEditorExtensions';
+import { pageMarkdownSource } from './pageLink';
+import { syncPageEditor, pageEditorCaret } from './pageEditorSync';
+import { AiEditingCursor } from './AiEditingCursor';
 
 export type PageEditorHandle = { focus: () => void; insertMenu: (anchor?: HTMLElement) => void; image: () => void };
 type Menu = { x: number; y: number; from: number; to: number; query: string; slash: boolean; bookmark: SelectionBookmark; anchor?: HTMLElement };
 const popupEvent = 'cardbush-page-editor-popup';
-export function PageEditor({ source, onChange, language, onNavigate, onActive, onReady, onSection, onTask, label }: {
+export function PageEditor({ source, onChange, language, onNavigate, onActive, onReady, onSection, onTask, label, aiEdit, previewing, onBeforeEdit }: {
   source: string; onChange: (source: string) => void; language: 'zh' | 'en'; onNavigate: (id: string) => void;
   onActive: () => void; onReady: (handle: PageEditorHandle | null) => void; onSection: () => void; onTask?: () => void; label: string;
+  aiEdit?: { cursor: number; state: 'streaming' | 'ready' }; previewing?: boolean; onBeforeEdit?: () => boolean;
 }) {
   const t = (cn: string, en: string) => language === 'zh' ? cn : en;
   const host = useRef<HTMLDivElement>(null), instance = useRef<Editor>(null), menuRef = useRef<HTMLDivElement>(null), formatRef = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onChange, onNavigate, onActive, onReady, onSection, onTask }); callbacks.current = { onChange, onNavigate, onActive, onReady, onSection, onTask };
+  const callbacks = useRef({ onChange, onNavigate, onActive, onReady, onSection, onTask, onBeforeEdit, previewing }); callbacks.current = { onChange, onNavigate, onActive, onReady, onSection, onTask, onBeforeEdit, previewing };
   const accepted = useRef(source), lastEmitted = useRef(source), composing = useRef(false);
   const suppressedSlash = useRef('');
   const [menu, setMenu] = useState<Menu>(), [active, setActive] = useState(0), [error, setError] = useState('');
@@ -40,6 +44,7 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
     },
     image: () => {
       if (editor.isDestroyed) return;
+      callbacks.current.onBeforeEdit?.();
       announce(editor); dismiss();
       // Inserting a second image or inserting after selected text must not replace existing content.
       editor.chain().focus().insertContentAt(editor.state.selection.to, { type: 'image', attrs: { src: '', alt: '' } }).run();
@@ -64,16 +69,21 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
     const choice = filtered(editor, current.query)[index]; if (!choice) return;
     suppressedSlash.current = signature(editor); setCurrentMenu(undefined);
     try {
-      if (current.slash) editor.chain().focus().deleteRange({ from: current.from, to: current.to }).run();
-      else editor.view.dispatch(editor.state.tr.setSelection(current.bookmark.resolve(editor.state.doc)));
+      const restored = callbacks.current.onBeforeEdit?.();
+      if (!restored) {
+        if (current.slash) editor.chain().focus().deleteRange({ from: current.from, to: current.to }).run();
+        else editor.view.dispatch(editor.state.tr.setSelection(current.bookmark.resolve(editor.state.doc)));
+      }
       choice.run(); setCurrentMenu(undefined);
     } catch (caught) { setError(String((caught as Error).message)); }
   };
   const emit = (editor: Editor) => {
     if (composing.current || editor.view.composing) return;
-    const value = editor.getMarkdown();
-    try { lastEmitted.current = value; callbacks.current.onChange(value); accepted.current = value; setError(''); }
-    catch (caught) { setError(String((caught as Error).message)); lastEmitted.current = accepted.current; editor.commands.setContent(pageMarkdownContent(editor, accepted.current), { emitUpdate: false }); }
+    const value = pageMarkdownSource(editor);
+    try {
+      lastEmitted.current = value; callbacks.current.onChange(value); accepted.current = value; setError('');
+    }
+    catch (caught) { setError(String((caught as Error).message)); lastEmitted.current = accepted.current; editor.chain().setContent(pageMarkdownContent(editor, accepted.current), { emitUpdate: false }).setMeta('addToHistory', false).run(); }
   };
   useEffect(() => {
     if (!host.current) return;
@@ -89,9 +99,10 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
         const point = editor.view.coordsAtPos(from); setSelection({ x: Math.max(12, Math.min(point.left, window.innerWidth - 270)), y: Math.max(12, point.top - 48) });
       } else { setSelection(undefined); setLink(undefined); }
     };
-    const editor = new Editor({ element: host.current, extensions: pageEditorExtensions(id => callbacks.current.onNavigate(id), language), content: '',
+    const editor = new Editor({ element: host.current, extensions: pageEditorExtensions(id => callbacks.current.onNavigate(id), language, () => callbacks.current.onBeforeEdit?.()), content: '',
       editorProps: { attributes: { class: 'bush-page-content md-prose', role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'false' },
         handleKeyDown: (_view, event) => {
+          if (event.key === 'Tab' && (editor.isActive('table') || editor.isActive('listItem') || editor.isActive('taskItem'))) callbacks.current.onBeforeEdit?.();
           if (event.isComposing || composing.current || editor.view.composing || !state.current.menu) return false;
           const count = filtered(editor, state.current.menu.query).length;
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setActive(index => count ? (index + (event.key === 'ArrowDown' ? 1 : count - 1)) % count : 0); return true; }
@@ -100,10 +111,10 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
         },
       },
       onUpdate: ({ editor: value }) => { emit(value); syncSelection(value); },
-      onSelectionUpdate: ({ editor: value }) => syncSelection(value),
+      onSelectionUpdate: ({ editor: value, transaction }) => { if (!transaction.getMeta('preventUpdate')) syncSelection(value); },
       onFocus: ({ editor: value }) => { announce(value); callbacks.current.onActive(); syncSelection(value); },
     });
-    instance.current = editor; editor.commands.setContent(pageMarkdownContent(editor, source), { emitUpdate: false });
+    instance.current = editor; editor.chain().setContent(pageMarkdownContent(editor, source), { emitUpdate: false }).setMeta('addToHistory', false).run();
     callbacks.current.onReady(handle(editor));
     const start = () => { composing.current = true; setCurrentMenu(undefined); setSelection(undefined); };
     const end = () => { composing.current = false; queueMicrotask(() => { if (!editor.isDestroyed) { emit(editor); syncSelection(editor); } }); };
@@ -120,7 +131,7 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
       if (event.target instanceof globalThis.Node && menuRef.current?.contains(event.target)) return;
       setSelection(undefined);
       // ProseMirror scrolls the caret into view while typing; keep slash commands attached to it.
-      if (state.current.menu?.slash) reposition(); else if (state.current.menu) dismiss();
+      if (state.current.menu?.slash || callbacks.current.previewing) reposition(); else if (state.current.menu) dismiss();
     };
     editor.view.dom.addEventListener('compositionstart', start); editor.view.dom.addEventListener('compositionend', end);
     document.addEventListener('pointerdown', outside); document.addEventListener('scroll', scroll, true);
@@ -130,8 +141,15 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
       callbacks.current.onReady(null); editor.destroy(); instance.current = null;
     };
   }, [language]);
-  useEffect(() => { const editor = instance.current; if (editor && source.trim() !== lastEmitted.current.trim()) {
-    accepted.current = source; lastEmitted.current = source; editor.commands.setContent(pageMarkdownContent(editor, source), { emitUpdate: false }); dismiss();
+  useLayoutEffect(() => { const editor = instance.current; if (editor && source.trim() !== lastEmitted.current.trim()) {
+    if (composing.current || editor.view.composing) return;
+    accepted.current = source; lastEmitted.current = source;
+    const current = state.current.menu, mapping = syncPageEditor(editor, source);
+    if (previewing && current && mapping) {
+      // Browsing/searching the insert menu is independent of streamed text.
+      // Map its insertion point without closing it or resetting its query.
+      setCurrentMenu({ ...current, from: mapping.map(current.from), to: mapping.map(current.to), bookmark: current.bookmark.map(mapping) });
+    } else if (!previewing) dismiss();
   } }, [source]);
   useLayoutEffect(() => {
     const current = state.current.menu, editor = instance.current;
@@ -149,6 +167,8 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
   const palette = { ...Object.fromEntries(['--surface-raised', '--text', '--border', '--accent'].map(name => [name, colors?.getPropertyValue(name)])), colorScheme: colors?.colorScheme } as CSSProperties;
   return <div className="bush-page-editor"><button type="button" className="bush-block-insert" aria-label={t('插入内容块', 'Insert block')} onMouseDown={event => event.preventDefault()} onClick={event => instance.current && handle(instance.current).insertMenu(event.currentTarget)}><Plus size={16}/></button>
     <div ref={host}/>{error && <p className="md-error" role="alert">{error}</p>}
+    {aiEdit && <AiEditingCursor language={language} state={aiEdit.state} revision={source} surface={() => host.current}
+      locate={() => { const editor = instance.current; if (!editor || editor.isDestroyed) return; try { return pageEditorCaret(editor, source, aiEdit.cursor); } catch { return; } }}/>}
     {menu && createPortal(<div ref={menuRef} className="bush-insert-menu" role="dialog" aria-label={t('插入内容', 'Insert content')} style={{ ...palette, left: menu.x, top: menu.y }} onKeyDown={event => {
       if (event.nativeEvent.isComposing) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); editor?.commands.focus(); }
@@ -161,8 +181,8 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
     {selection && editor && createPortal(<div ref={formatRef} className="bush-format-menu" style={{ ...palette, left: selection.x, top: selection.y }} onMouseDown={event => event.preventDefault()}>
       {([{ icon: Bold, title: t('粗体', 'Bold'), run: () => editor.chain().focus().toggleBold().run() }, { icon: Italic, title: t('斜体', 'Italic'), run: () => editor.chain().focus().toggleItalic().run() },
         { icon: Strikethrough, title: t('删除线', 'Strike'), run: () => editor.chain().focus().toggleStrike().run() }, { icon: Code, title: t('行内代码', 'Inline code'), run: () => editor.chain().focus().toggleCode().run() },
-        { icon: Link, title: t('链接', 'Link'), run: () => setLink(String(editor.getAttributes('link').href || '')) }]).map(item => <button type="button" key={item.title} aria-label={item.title} onClick={item.run}><item.icon size={16}/></button>)}
-      {link !== undefined && <form onSubmit={event => { event.preventDefault(); if (!link) editor.chain().focus().unsetLink().run(); else if (/^(https?:\/\/|mailto:|#)/i.test(link)) editor.chain().focus().setLink({ href: link }).run(); setLink(undefined); }}>
+        { icon: Link, title: t('链接', 'Link'), run: () => setLink(String(editor.getAttributes('link').href || '')), inspect: true }]).map(item => <button type="button" key={item.title} aria-label={item.title} onClick={() => { if (!item.inspect) callbacks.current.onBeforeEdit?.(); item.run(); }}><item.icon size={16}/></button>)}
+      {link !== undefined && <form onSubmit={event => { event.preventDefault(); callbacks.current.onBeforeEdit?.(); if (!link) editor.chain().focus().unsetLink().run(); else if (/^(https?:\/\/|mailto:|#)/i.test(link)) editor.chain().focus().setLink({ href: link }).run(); setLink(undefined); }}>
         <input aria-label={t('链接地址', 'Link URL')} value={link} onMouseDown={event => event.stopPropagation()} onChange={event => setLink(event.target.value)} placeholder="https://"/><button type="submit">{t('确定', 'Apply')}</button><button type="button" aria-label={t('关闭', 'Close')} onClick={() => setLink(undefined)}><X size={14}/></button>
       </form>}
     </div>, document.body)}

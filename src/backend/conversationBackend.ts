@@ -21,7 +21,7 @@ export const localConversationBackend = {
 export type ConversationBackend = typeof localConversationBackend & {
   scope?: string;
   keepRunningOnUnmount?: boolean;
-  isSubmissionRetry?: (sessionId: string, userInput: string) => boolean;
+  isSubmissionRetry?: (sessionId: string, userInput: string, promptContext?: import('@cardbush/bush-protocol').PromptContext[]) => boolean;
   queue?: {
     enqueue(request: ChatStreamRequest): Promise<void>;
     remove(id: string): Promise<void>;

@@ -17,6 +17,7 @@ import { MediaInspectorPreview } from './MediaInspectorPreview';
 import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import { DeferredResizePreview } from './DeferredResizePreview';
+import { InspectorRegionSelection, type RegionConversation } from './InspectorRegionSelection';
 import { BrowserPageTools, type BrowserPageToolsHandle } from '../browser/BrowserPageTools';
 import { browserIconUrl } from '../browser/browserSiteIcons';
 import {
@@ -80,6 +81,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onOpenTarget: (detail: InspectorOpenDetail) => void;
   onActivate?: (identity: string) => void;
   startPage?: ReactNode;
+  active?: boolean;
+  regionConversation?: RegionConversation;
+  regionEnabled?: boolean;
+  onRegionSelectionClose?: () => void;
 }>(function InspectorWebview({
   identity,
   target,
@@ -91,8 +96,13 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onOpenTarget,
   onActivate,
   startPage,
+  active = true,
+  regionConversation,
+  regionEnabled = false,
+  onRegionSelectionClose,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const toolsRef = useRef<BrowserPageToolsHandle>(null);
   const activateRef = useRef(onActivate); activateRef.current = onActivate;
   const openTargetRef = useRef(onOpenTarget); openTargetRef.current = onOpenTarget;
@@ -455,6 +465,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   return (
     <DeferredResizePreview className={`right-inspector-preview ${loading ? 'loading' : 'ready'}${showStartPage ? ' showing-start-page' : ''}`}>
       {!rendererPreview && isInspectorBrowserTarget(target, mediaType) && <BrowserPageTools ref={toolsRef} webviewRef={webviewRef} revision={webviewRevision} language={language}/>}
+      <div className="inspector-selectable-surface" ref={surfaceRef} data-region-enabled={regionEnabled || undefined}>
       <InspectorErrorBoundary
         key={`${target}:${filePreviewRevision}:${webviewRevision}`}
         target={target}
@@ -509,6 +520,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           <small>{language === 'zh' ? '正在加载预览' : 'Loading preview'}</small>
         </div>
       )}
+      <InspectorRegionSelection surface={surfaceRef} guest={webviewRef} enabled={regionEnabled && active && !showStartPage && !loading && !previewError} language={language} target={isInspectorBrowserTarget(target, mediaType) ? currentUrl : filePath}
+        revision={`${currentUrl}:${filePreviewRevision}:${webviewRevision}`} conversation={regionConversation} onClose={() => onRegionSelectionClose?.()}
+        onRefresh={() => rendererPreview ? setFilePreviewRevision(value => value + 1) : webviewRef.current?.reload?.()}/>
+      </div>
     </DeferredResizePreview>
   );
 });

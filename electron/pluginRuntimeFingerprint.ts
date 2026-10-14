@@ -24,9 +24,30 @@ type CachedFile = { stamp: string; hash: string };
 const roots = new Map<string, Map<string, CachedFile>>();
 const stamp = (info: Stats) => [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(':');
 
+async function fileIdentity(path: string): Promise<{ stamp: string; physical: boolean }> {
+  if (process.versions.electron) {
+    // Electron invents a new inode for every stat of an ASAR entry. Use the
+    // archive on disk (and the sidecar for unpacked entries) as the cache key.
+    const disk = (require('original-fs') as typeof import('node:fs')).promises;
+    const diskStat = (name: string) => disk.stat(name).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined;
+      throw error;
+    });
+    for (const match of path.matchAll(/\.asar(?=[\\/])/gi)) {
+      const archive = path.slice(0, match.index + 5);
+      const container = await diskStat(archive);
+      if (!container?.isFile()) continue;
+      const unpacked = await diskStat(`${archive}.unpacked${path.slice(archive.length)}`);
+      return { stamp: JSON.stringify([stamp(container), unpacked ? stamp(unpacked) : null]), physical: false };
+    }
+  }
+  return { stamp: stamp(await stat(path)), physical: true };
+}
+
 async function fileHash(path: string, previous: CachedFile | undefined): Promise<CachedFile> {
-  const current = await stat(path);
-  if (previous?.stamp === stamp(current)) return previous;
+  const current = await fileIdentity(path);
+  const pathStamp = current.stamp;
+  if (previous?.stamp === pathStamp) return previous;
   const file = await open(path, 'r');
   try {
     const before = stamp(await file.stat());
@@ -38,10 +59,13 @@ async function fileHash(path: string, previous: CachedFile | undefined): Promise
       if (!bytesRead) break;
       hash.update(buffer.subarray(0, bytesRead));
     }
-    if (before !== stamp(await file.stat()) || before !== stamp(await stat(path))) {
+    // ASAR open() returns a temporary extracted file. Validate that handle and
+    // its container independently; physical paths must also match the handle.
+    if (before !== stamp(await file.stat()) || pathStamp !== (await fileIdentity(path)).stamp ||
+      (current.physical && before !== pathStamp)) {
       throw new Error('Plugin source changed while refreshing. Wait for the package update to finish and refresh again.');
     }
-    return { stamp: before, hash: hash.digest('hex') };
+    return { stamp: pathStamp, hash: hash.digest('hex') };
   } finally { await file.close(); }
 }
 

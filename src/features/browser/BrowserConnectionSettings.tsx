@@ -101,6 +101,8 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                 ? `${status.activeTabTitle || (language === 'zh' ? '当前标签页' : 'Current tab')} · ${status.controlledTabCount} ${language === 'zh' ? '个受控标签页' : 'controlled tabs'}`
                 : status?.lifecycleState === 'needs_repair'
                   ? (language === 'zh' ? '启动失败不表示配对或网站授权已失效。请先重试连接。' : 'A startup failure does not invalidate saved pairing or site permissions. Retry the connection first.')
+                : status?.portRecovery && status?.paired
+                  ? (language === 'zh' ? '连接地址已自动调整，等待扩展重连。如仍未连接，请更新或重新加载 Browser Use 扩展；原配对和网站授权会保留。' : 'The connection address was recovered automatically. Waiting for the extension to reconnect. If needed, update or reload Browser Use; existing pairing and site permissions are preserved.')
                 : status?.paired
                   ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可打开扩展立即重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; open the extension to retry now. No new code or permission is needed.')
                   : (language === 'zh' ? '首次使用时选择浏览器并生成配对码，粘贴到对应浏览器的 Browser Use 扩展中。页面授权单独选择。' : 'For first use, choose a browser and paste its pairing code into the Browser Use extension. Page access is authorized separately.')}</small>

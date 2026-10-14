@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { AiEditingCursor, textareaCaretRect } from './AiEditingCursor';
 
 export type MarkdownSelection = { startLine: number; endLine: number; source: string };
 export function markdownSelection(source: string, start: number, end: number): MarkdownSelection {
@@ -7,8 +8,9 @@ export function markdownSelection(source: string, start: number, end: number): M
   const endLine = source.slice(0, end > start && source[end - 1] === '\n' ? end - 1 : end).split('\n').length;
   return { startLine, endLine, source };
 }
-export function MarkdownSourceEditor({ source, onChange, onSelection, readOnly, language }: {
+export function MarkdownSourceEditor({ source, onChange, onSelection, readOnly, language, aiEdit }: {
   source: string; onChange: (source: string) => void; onSelection?: (selection: MarkdownSelection) => void; readOnly?: boolean; language: 'zh' | 'en';
+  aiEdit?: { cursor: number; state: 'streaming' | 'ready' };
 }) {
   const gutter = useRef<HTMLPreElement>(null), input = useRef<HTMLTextAreaElement>(null), status = useRef<HTMLOutputElement>(null);
   const selectionCallback = useRef(onSelection); selectionCallback.current = onSelection;
@@ -33,6 +35,7 @@ export function MarkdownSourceEditor({ source, onChange, onSelection, readOnly, 
       <textarea ref={input} className="md-source creation-source-input" aria-label={language === 'zh' ? 'Markdown 源码' : 'Markdown source'}
         wrap="off" readOnly={readOnly} spellCheck={false} value={source} onChange={event => { onChange(event.target.value); selected(); }} onSelect={selected} onKeyUp={selected} onMouseUp={selected}
         onScroll={event => { if (gutter.current) gutter.current.scrollTop = event.currentTarget.scrollTop; }}/>
+      {aiEdit && <AiEditingCursor language={language} state={aiEdit.state} revision={source} surface={() => input.current} locate={() => textareaCaretRect(input.current, aiEdit.cursor)}/>}
     </div>
   </div>;
 }

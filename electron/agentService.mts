@@ -1,3 +1,4 @@
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { webToolAllowed } from '@cardbush/bush-runtime/web-policy';
 import { AgentWebPolicy } from './agentWebPolicy.mjs';
 import { AgentWebFiles } from './agentWebFiles.mjs';
@@ -692,5 +693,9 @@ export class AgentService {
     await this.#writes; await this.#releaseLock();
   }
 }
-function publicJob({ input, ...job }: AgentJob) { return { ...job, text: input.text, modelId: input.modelId,
-  ...(Array.isArray(input.userMessageMetadata?.attachments) ? { attachments: input.userMessageMetadata.attachments.slice(0, 8) } : {}) }; }
+function publicJob({ input, ...job }: AgentJob) {
+  const prompt = readUserPrompt(input.text, input.userMessageMetadata);
+  return { ...job, text: prompt.text, modelId: input.modelId,
+    ...(prompt.context ? { userMessageMetadata: promptContextMetadata(prompt) } : {}),
+    ...(Array.isArray(input.userMessageMetadata?.attachments) ? { attachments: input.userMessageMetadata.attachments.slice(0, 8) } : {}) };
+}

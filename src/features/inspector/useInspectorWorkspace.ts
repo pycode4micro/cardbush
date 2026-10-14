@@ -5,9 +5,7 @@ import { useInspectorRecovery } from './useInspectorRecovery';
 import type { InspectorTab, InspectorResourceTab } from './inspectorTabs';
 import { addPanel, panelIds, retainPanels, type PanelLayout } from './panelLayout';
 import { useInspectorSessionRef, useInspectorSessionState } from './useInspectorSessionState';
-
-const hasOpenModal = () => Array.from(document.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"][aria-modal="true"]'))
-  .some(element => element.checkVisibility());
+import { hasOpenModal, useQuickInputDismiss } from './useQuickInputDismiss';
 
 type InspectorWorkspaceOptions = {
   workspaceId?: string;
@@ -204,39 +202,8 @@ export function useInspectorWorkspace({
     return () => window.removeEventListener('keydown', escape);
   }, [inspectorControlsVisible, quickInputOpen, leaveInspectorCover, inspectorCover, sidebarCollapsed, setSidebarCollapsed, setQuickInputOpen]);
 
-  useEffect(() => {
-    if (!inspectorControlsVisible || !quickInputOpen) return;
-    const inside = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest(
-      '.inspector-cover-controls, .composer-popover, .composer-command-portal, .modal-backdrop, dialog[open], [role="dialog"][aria-modal="true"], .voice-dialog, .voice-mini, .voice-floating-composer',
-    ));
-    const outsidePointer = (event: PointerEvent) => {
-      // A portal modal owns its whole interaction, including the backdrop and
-      // close button. Do not dismiss the conversation underneath it.
-      if (!hasOpenModal() && !inside(event.target)) setQuickInputOpen(false);
-    };
-    // Native guest clicks do not bubble into the host document. Observe the
-    // focus transfer without consuming the click or stealing page focus.
-    let focusTimer: ReturnType<typeof setTimeout> | undefined;
-    const guestFocus = () => {
-      clearTimeout(focusTimer);
-      // Check when focus changes as well as when the timer runs: a modal can
-      // unmount and restore focus before the delayed native-guest check.
-      if (hasOpenModal()) return;
-      focusTimer = setTimeout(() => {
-        const target = document.activeElement;
-        if (!hasOpenModal() && target?.matches('webview, iframe') && !inside(target)) setQuickInputOpen(false);
-      }, 0);
-    };
-    document.addEventListener('pointerdown', outsidePointer, true);
-    document.addEventListener('focusin', guestFocus, true);
-    window.addEventListener('blur', guestFocus);
-    return () => {
-      clearTimeout(focusTimer);
-      document.removeEventListener('pointerdown', outsidePointer, true);
-      document.removeEventListener('focusin', guestFocus, true);
-      window.removeEventListener('blur', guestFocus);
-    };
-  }, [inspectorControlsVisible, quickInputOpen, setQuickInputOpen]);
+  const dismissQuickInput = useCallback(() => setQuickInputOpen(false), [setQuickInputOpen]);
+  useQuickInputDismiss(inspectorControlsVisible && quickInputOpen, dismissQuickInput);
 
   useLayoutEffect(() => {
     const shell = mainStageRef.current?.parentElement;

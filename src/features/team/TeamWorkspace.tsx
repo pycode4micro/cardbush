@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Plus, Save, Trash2 } from 'lucide-react';
 import { EmployeeIcon } from './employeePresentation';
 import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt, type TeamWorkflow } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorkspaceStore';
 import { TeamGraphWorkspace } from './TeamGraphWorkspace';
+import { useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
 import './team-workspace.css';
 
 export function TeamWorkspace({ language, onPractice }: { language: AppLanguage; onPractice?: (team: TeamWorkflow) => void }) {
   const state = useTeamWorkspace();
   const zh = language === 'zh', t = (cn: string, en: string) => zh ? cn : en;
-  const [tab, setTab] = useState<'agents' | 'teams' | 'runs'>('teams');
+  const { tab } = useTeamWorkspaceNavigation();
   const [agent, setAgent] = useState<DefinitionReceipt<RegisteredAgent> | null>(null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  useEffect(() => { setError(''); }, [tab]);
   const explainError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('acyclic')) return t('节点依赖存在循环或无效引用，请检查各节点的等待条件。', 'Dependencies form a cycle or reference a missing node. Check each node’s prerequisites.');
@@ -32,12 +34,8 @@ export function TeamWorkspace({ language, onPractice }: { language: AppLanguage;
   const newAgent = () => setAgent({ revision: 0, updatedAt: '', definition: registeredAgentSchema.parse({ id: `agent-${crypto.randomUUID()}`, name: t('新员工', 'New agent'), system_prompt: t('明确岗位职责、原则及交付要求。', 'Define responsibilities, principles and deliverables.') }) });
   const names = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
   return <div className="native-team-workspace">
-    <nav aria-label={t('团队管理', 'Team management')}>
-      {(['agents', 'teams', 'runs'] as const).map(key => <button type="button" key={key} aria-pressed={tab === key} onClick={() => { setError(''); setTab(key); }}>{key === 'agents' ? t('员工', 'Agents') : key === 'teams' ? t('团队文档', 'Team documents') : t('运行记录', 'Runs')}</button>)}
-      <button type="button" aria-label={t('刷新', 'Refresh')} onClick={() => void refreshTeamWorkspace()}><RefreshCw size={16} /></button>
-    </nav>
     {(error || state.error) && <p role="alert">{error || state.error}</p>}
-    {tab === 'agents' && <div className="native-team-columns">
+    {tab === 'agents' && <section className="native-team-management"><h1>{t('员工', 'Agents')}</h1><div className="native-team-columns">
       <div className="native-team-list"><button type="button" onClick={newAgent}><Plus size={16} />{t('注册员工', 'Register agent')}</button>
         {state.agents.map(record => <button type="button" key={record.definition.id} aria-pressed={agent?.definition.id === record.definition.id} onClick={() => setAgent(structuredClone(record))}><strong className="native-team-identity"><EmployeeIcon size={17} />{record.definition.name}</strong><small>{record.definition.description || record.definition.id}</small></button>)}
         {!state.agents.length && <p>{t('可以在对话中让 Agent 注册员工，也可以在这里创建。', 'Ask an agent to register an employee, or create one here.')}</p>}
@@ -64,15 +62,15 @@ export function TeamWorkspace({ language, onPractice }: { language: AppLanguage;
           {agent.revision > 0 && <button type="button" disabled={busy} onClick={() => void perform(async () => { await teamCommand(AGENT_REGISTRY_COMMAND, { action: 'delete', agent_id: agent.definition.id, expected_revision: agent.revision }); setAgent(null); })}><Trash2 size={16} />{t('删除注册', 'Delete definition')}</button>}
         </div>
       </form>}
-    </div>}
+    </div></section>}
     <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language} onPractice={onPractice}/></div>
-    {tab === 'runs' && <div className="native-team-runs">{!state.runs.length && <p>{t('还没有运行记录。', 'No runs yet.')}</p>}
+    {tab === 'runs' && <section className="native-team-management"><h1>{t('运行记录', 'Runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{t('还没有运行记录。', 'No runs yet.')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>
         {run.nodes.map((node, index) => <details key={node.id}><summary title={node.id}>{t('节点', 'Node')} {index + 1} · {statusLabel(node.status)}</summary><pre>{node.output || node.error}</pre></details>)}
         {run.error && <p role="alert">{run.error}</p>}<small>{run.id}</small>
         {run.status === 'running' && <button type="button" disabled={busy} onClick={() => void perform(() => teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'stop', run_id: run.id }))}>{t('停止团队', 'Stop run')}</button>}
         {['failed', 'stopped', 'interrupted'].includes(run.status) && <p>{t('可在原对话中要求继续此运行；已完成节点会保留。', 'Ask to resume this run in its original chat; completed nodes are retained.')}</p>}
       </article>)}
-    </div>}
+    </div></section>}
   </div>;
 }
