@@ -29,6 +29,10 @@
     "./workspace-diff": {
       "types": "./dist/workspaceDiff.d.ts",
       "import": "./dist/workspaceDiff.js"
+    },
+    "./realtime-conversation": {
+      "types": "./dist/realtimeConversationBridge.d.ts",
+      "import": "./dist/realtimeConversationBridge.js"
     }
   },
   "scripts": {

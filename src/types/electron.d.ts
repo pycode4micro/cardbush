@@ -47,6 +47,7 @@ declare global {
     __cardbushUiPerformance?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
       voice?: import('../../electron/voiceTypes').VoiceDesktopApi;
+      embodied?: { command(input: { action: string; input?: unknown }): Promise<unknown> };
       agents?: import('../../electron/agentTypes').AgentDesktopApi;
       conversationExtracts?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
       platform: string;

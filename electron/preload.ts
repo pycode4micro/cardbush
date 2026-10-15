@@ -103,6 +103,7 @@ ipcRenderer.on('cardling:state', (_event, payload: CardlingDesktopState) => {
 });
 
 const desktopApi = {
+  embodied: { command: (input: { action: string; input?: unknown }): Promise<unknown> => ipcRenderer.invoke('embodied:command', input) },
   voice: {
     setCallActive: (active: boolean) => ipcRenderer.invoke('voice:call-active', active),
     realtime: {

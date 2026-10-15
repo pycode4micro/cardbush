@@ -1994,7 +1994,7 @@ function showMainWindow() {
   mainWindow.moveTop();
 }
 
-registerVoiceIpc(() => mainWindow, {
+const desktopVoiceHost = registerVoiceIpc(() => mainWindow, {
   packaged: cardbushRuntimeIsPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath,
 }, {
   // Use the shared download route: native net.fetch rejects manual redirects,
@@ -2567,6 +2567,30 @@ ipcMain.handle('files:read-workspace-directory', async (event, input: Parameters
 });
 
 let sshConnectionsPromise: Promise<import('./sshConnections.mjs', { with: { 'resolution-mode': 'import' } }).SshConnectionManager> | undefined;
+let embodiedHostPromise: Promise<import('./embodiedHost.mjs', { with: { 'resolution-mode': 'import' } }).EmbodiedHost> | undefined;
+function embodiedHost() {
+  return embodiedHostPromise ??= (async () => {
+    await ensureRuntimeServicesReady();
+    const { EmbodiedHost } = await import('./embodiedHost.mjs');
+    const host = new EmbodiedHost(app.getPath('userData'), desktopVoiceHost.realtime, {
+      async command(kind, payload) {
+        const controller = await ensureRuntimeHostReady();
+        const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind, payload } }) as any;
+        if (!response.ok) throw Object.assign(new Error(response.error?.message || 'Runtime command failed.'), { code: response.error?.code });
+        return response.result;
+      },
+      product: ensureRuntimeServicesReady,
+      instructions: () => readAgentInstructionDocuments(getGlobalInstructionsStore()),
+      environment: 'This assistant is attached to the user’s CardBush desktop. Execute tasks through the configured subagent host and existing permissions. Device speech does not grant additional permissions.',
+    }, { voicePreference: () => desktopVoiceHost.settings().voice });
+    try { await host.start(true); return host; }
+    catch (error) { await host.close(); throw error; }
+  })().catch(error => { embodiedHostPromise = undefined; throw error; });
+}
+ipcMain.handle('embodied:command', async (event, input) => { assertMainWindowSender(event.sender.id); return (await embodiedHost()).command(input); });
+void app.whenReady().then(() => embodiedHost()).catch(error => console.warn('[embodied] startup:', String(error)));
+app.on('before-quit', () => { void embodiedHostPromise?.then(host => host.close()).catch(() => {}); });
+
 let agentConnectionsPromise: Promise<import('./agentConnections.mjs', { with: { 'resolution-mode': 'import' } }).AgentConnectionManager> | undefined;
 let agentFilePreviewsPromise: Promise<import('./agentFilePreview.mjs', { with: { 'resolution-mode': 'import' } }).AgentFilePreviews> | undefined;
 function agentFilePreviews() {

@@ -10,10 +10,11 @@ import { volcengineRealtimeVoice as provider } from '../dist-electron/volcengine
 import { realtimeVoiceNotification } from '../dist-electron/realtimeVoiceNotification.js';
 import { CARDBUSH_REALTIME_PROTOCOL } from '../dist-electron/cardbushRealtimeVoice.js';
 import * as protocol from '@cardbush/bush-protocol';
+import * as conversation from '@cardbush/bush-runtime/realtime-conversation';
 
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 const compile=file=>{const exports={};const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  new Function('exports','require',source)(exports,spec=>spec==='@cardbush/bush-protocol'?protocol:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
+  new Function('exports','require',source)(exports,spec=>spec==='@cardbush/bush-protocol'?protocol:spec==='@cardbush/bush-runtime/realtime-conversation'?conversation:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
 const { RealtimeAgentBridge, realtimeConversationContext }=compile('src/features/voice/realtimeAgentBridge.ts');
 const { RealtimeVoiceCall }=compile('src/features/voice/realtimeVoiceCall.ts');
 const { RealtimeVoiceAudio }=compile('src/features/voice/realtimeVoiceAudio.ts');
@@ -27,6 +28,7 @@ class Socket {
   event(event){this.fire('message',{data:JSON.stringify(event)});}
 }
 function fixture(connect){
+  fs.mkdirSync(path.resolve('tmp'), { recursive: true });
   const file=path.join(fs.mkdtempSync(path.resolve('tmp/realtime-voice-test-')),'settings.json'),socket=new Socket(),events=[];
   let disposed=0,headers;
   const service=new RealtimeVoiceService(file,{encrypt:key=>'encrypted:'+Buffer.from(key).toString('base64'),decrypt:key=>Buffer.from(key.slice(10),'base64').toString(),

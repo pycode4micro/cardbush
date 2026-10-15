@@ -1,0 +1,45 @@
+{
+  "board": "atoms3r-ai-chatbot",
+  "upstream": "https://github.com/78/xiaozhi-esp32.git",
+  "commit": "d7a1c05308fb6e116ffb44b9e2c6e67b3366302a",
+  "idf_image": "espressif/idf@sha256:8ac794c57fd4cac246cb8d2ada4002fa26337ac7df683047b5b83743dbedb6b7",
+  "upstream_board": "m5stack/atoms3r-echo-base",
+  "chip": "esp32s3",
+  "flash_bytes": 8388608,
+  "nvs_offset": 36864,
+  "nvs_bytes": 16384,
+  "protocol": "cardbush.embodied.v1",
+  "images": [
+    {
+      "offset": 0,
+      "file": "000000-bootloader.bin",
+      "size": 16544,
+      "sha256": "979c84ef3deccc176f4fa2389ed069e4c3af0514eea6298af435f4e2bdc714d0"
+    },
+    {
+      "offset": 32768,
+      "file": "008000-partition-table.bin",
+      "size": 3072,
+      "sha256": "3c58cd9a65ffd0586a5f06800fbccc8b0d34697c055a7d6dcf1fb4d47253c472"
+    },
+    {
+      "offset": 53248,
+      "file": "00d000-ota_data_initial.bin",
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "offset": 6291456,
+      "file": "600000-generated_assets.bin",
+      "size": 1262657,
+      "sha256": "bbb4b1d84fdfc6e483bd3d61b4dd76fdacec3ddcf393e6cca0f8e0a8385265ff"
+    },
+    {
+      "offset": 131072,
+      "file": "020000-xiaozhi.bin",
+      "size": 2728448,
+      "sha256": "10572b8c6b0c63882cda462cbcbf8c53aead985af88ce028f978ec913e6063aa"
+    }
+  ],
+  "device_aec": true
+}

@@ -1,0 +1,11 @@
+{
+  "board": "atoms3r-ai-chatbot",
+  "upstream": "https://github.com/78/xiaozhi-esp32.git",
+  "commit": "d7a1c05308fb6e116ffb44b9e2c6e67b3366302a",
+  "idf_image": "espressif/idf@sha256:8ac794c57fd4cac246cb8d2ada4002fa26337ac7df683047b5b83743dbedb6b7",
+  "upstream_board": "m5stack/atoms3r-echo-base",
+  "chip": "esp32s3",
+  "flash_bytes": 8388608,
+  "nvs_offset": 36864,
+  "nvs_bytes": 16384
+}

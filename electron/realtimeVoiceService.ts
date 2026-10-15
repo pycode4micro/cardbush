@@ -24,7 +24,7 @@ interface Dependencies {
 }
 interface LiveCall {
   assistant?: { name: string; persona: string };
-  id: string; owner: number; provider: RealtimeVoiceProvider;
+  id: string; owner: number | string; provider: RealtimeVoiceProvider;
   settings: RealtimeVoiceSettings; secret: string;
   emit(event: RealtimeVoiceEvent): void;
   connection?: RealtimeConnection; ready: boolean; closing: boolean;
@@ -52,14 +52,17 @@ export async function connectRealtimeVoice(proxy: string, url: string, headers: 
 }
 /** One owner-bound call. No credentials, vendor event objects or arbitrary tools cross IPC. */
 export class RealtimeVoiceService {
-  private calls = new Map<number, LiveCall>();
+  private calls = new Map<number | string, LiveCall>();
   private configuration: RealtimeVoiceConfiguration;
   constructor(private file: string, private deps: Dependencies) { this.configuration = new RealtimeVoiceConfiguration(file, value => deps.encrypt(value)); }
   private read() { return this.configuration.current(); }
   settings() { return this.read().settings; }
   save(input: RealtimeVoiceSettingsInput) { return this.configuration.save(input); }
-  async start(owner: number, input: { id: string; sessionId?: string; assistant?: { name: string; persona: string }; voice: 'female' | 'male'; context: {role:'user'|'assistant';text:string}[] }, emit: LiveCall['emit']) {
+  async start(owner: number | string, input: { id: string; sessionId?: string; assistant?: { name: string; persona: string }; voice: 'female' | 'male'; context: {role:'user'|'assistant';text:string}[] }, emit: LiveCall['emit']) {
     if (!input || !/^[a-zA-Z0-9-]{1,100}$/.test(input.id) || !['male','female'].includes(input.voice)) throw Error('Invalid realtime call.');
+    // A closing call may still append its last history pair. Do not open a
+    // second writer for personal-assistant until finish() releases ownership.
+    if (input.assistant && [...this.calls.values()].some(call => call.assistant)) throw Error('assistant 已有语音通话，请挂断另一端并等待连接关闭。');
     if (this.calls.has(owner)) throw Error('语音通话正在关闭，请稍后重试。');
     const saved = this.read();
     if (!saved.secret && realtimeVoiceCatalog[saved.settings.provider].apiKeyRequired) throw Error('请在语音设置中配置实时语音 API Key。');
@@ -192,7 +195,7 @@ export class RealtimeVoiceService {
     if(context.length){call.restoring={eventId:this.send(call,call.provider.context(context)),context};return;}
     this.ready(call);
   }
-  private owned(owner: number,id: string,preparing=false) { const call=this.calls.get(owner); if (!call || call.id!==id || call.closing || !preparing && !call.ready && !call.transitioning) throw Error('语音通话已结束。'); return call; }
+  private owned(owner: number | string,id: string,preparing=false) { const call=this.calls.get(owner); if (!call || call.id!==id || call.closing || !preparing && !call.ready && !call.transitioning) throw Error('语音通话已结束。'); return call; }
   private ready(call:LiveCall) {
     call.ready=true;call.everReady=true;clearTimeout(call.timeout);clearTimeout(call.retryTimer);call.resolve();call.recovery=undefined;call.retryCount=0;call.recoveryDeadline=undefined;
     call.transitioning=false;
@@ -225,7 +228,7 @@ export class RealtimeVoiceService {
     socket.send(JSON.stringify(call.provider.encode?.(message) ?? message));
     return eventId;
   }
-  audio(owner:number,id:string,pcm:ArrayBuffer) {
+  audio(owner:number | string,id:string,pcm:ArrayBuffer) {
     const call=this.owned(owner,id);
     if (!(pcm instanceof ArrayBuffer) || pcm.byteLength!==640) throw Error('Invalid PCM frame.');
     if (call.muted) return;
@@ -241,7 +244,7 @@ export class RealtimeVoiceService {
     try { this.send(call,call.provider.audio(Buffer.from(pcm).toString('base64'))); }
     catch { this.connectionLost(call,'实时语音网络发送暂时拥堵。'); }
   }
-  control(owner:number,id:string,action:'mute'|'unmute'|'interrupt'|'commit') {
+  control(owner:number | string,id:string,action:'mute'|'unmute'|'interrupt'|'commit') {
     if (!['mute','unmute','interrupt','commit'].includes(action)) throw Error('Invalid voice control.');
     const call=this.owned(owner,id);
     if (action === 'mute') call.muted = true;
@@ -249,7 +252,7 @@ export class RealtimeVoiceService {
     if (call.transitioning) { if (action==='mute') call.bufferedFrames=[]; return; }
     try{this.send(call,call.provider.control(action));}catch{this.connectionLost(call,'实时语音控制消息暂时无法送达。');}
   }
-  results(owner:number,id:string,results:RealtimeToolResult[]) {
+  results(owner:number | string,id:string,results:RealtimeToolResult[]) {
     const call=this.owned(owner,id);
     if (!Array.isArray(results) || !results.length || results.length>8 || results.some(r=>!r || typeof r.id!=='string' || typeof r.output!=='string' || r.output.length>64000)) throw Error('Invalid tool results.');
     const batch=[...call.batches].find(([,ids])=>ids.size===results.length && new Set(results.map(r=>r.id)).size===ids.size && results.every(r=>ids.has(r.id)));
@@ -269,14 +272,14 @@ export class RealtimeVoiceService {
     call.memory?.account(JSON.stringify(results).slice(12000));
     this.scheduleNotification(call);
   }
-  setVoice(owner:number,id:string,voice:'female'|'male') {
+  setVoice(owner:number | string,id:string,voice:'female'|'male') {
     if (!['female','male'].includes(voice)) throw Error('Invalid voice.');
     const call=this.owned(owner,id);
     call.voice=voice;
     if (call.transitioning) return;
     this.send(call,{...call.provider.start(call.settings,voice,call.assistant),type:'session.update'});
   }
-  notify(owner:number,id:string,result:string) {
+  notify(owner:number | string,id:string,result:string) {
     const call=this.owned(owner,id);
     if (typeof result!=='string' || result.length>10000) throw Error('Invalid background result.');
     const notification = realtimeVoiceNotification(result);
@@ -284,14 +287,14 @@ export class RealtimeVoiceService {
     call.notified.add(notification.taskId); call.notifications.push(notification);
     this.scheduleNotification(call);
   }
-  compacted(owner:number,id:string,jobId:string,result?:RealtimeContextResult) {
+  compacted(owner:number | string,id:string,jobId:string,result?:RealtimeContextResult) {
     const call=this.owned(owner,id,true);
     if (typeof jobId!=='string' || jobId.length>100) throw Error('Invalid voice checkpoint.');
     if (result!==undefined && (!result || typeof result.jobId!=='string' || !Number.isInteger(result.revision) || !Number.isInteger(result.through) || typeof result.summary!=='string' || result.summary.length>6000)) throw Error('Invalid voice checkpoint result.');
     call.memory?.complete(jobId,result);
     this.scheduleNotification(call);
   }
-  playback(owner:number,id:string,speaking:boolean) {
+  playback(owner:number | string,id:string,speaking:boolean) {
     if (typeof speaking!=='boolean') throw Error('Invalid playback state.');
     const call=this.owned(owner,id); call.playback=speaking;
     call.memory?.tick(); this.scheduleNotification(call);
@@ -348,7 +351,7 @@ export class RealtimeVoiceService {
       } catch { this.connectionLost(call,'后台任务结果等待语音连接恢复。'); }
     },750);
   }
-  close(owner:number,id?:string) {
+  close(owner:number | string,id?:string) {
     const call=this.calls.get(owner); if (!call || id && call.id!==id || call.closing) return;
     call.closing=true; clearTimeout(call.timeout); clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); call.reject(Error('语音通话已取消。'));
     call.memory?.close();

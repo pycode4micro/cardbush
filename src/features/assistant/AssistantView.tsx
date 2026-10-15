@@ -65,6 +65,18 @@ export function AssistantView({ active, language, connections, prepare, onManage
   const [settings, setSettings] = useState(false), [desktop, setDesktop] = useState(false);
   useEffect(() => { if (!active) setSettings(false); }, [active]);
   const prepareRef = useRef(prepare); prepareRef.current = prepare;
+  useEffect(() => {
+    let cancelled = false;
+    void prepareRef.current().then(config => {
+      if (!cancelled) return window.cardbushDesktop?.embodied?.command({ action: 'assistant.save', input: {
+        profile, language, modelId: config.modelConfig?.id || config.model,
+        permissionMode: config.permissionMode || 'task_free',
+        subagentPermissionRouting: config.subagentPermissionRouting, planEnabled: config.referencePlanMode !== 'off',
+        disabledTools: config.disabledTools || [], disabledSkills: config.disabledSkills || [],
+      } });
+    }).catch(() => { /* Model/configuration startup can complete after this render. */ });
+    return () => { cancelled = true; };
+  }, [profile, language, composerControls.selectedModel, composerControls.availableModels, composerControls.permissionMode, composerControls.subagentPermissionRouting, composerControls.referencePlanMode, composerControls.disabledSkillNames]);
   const entriesRef = useRef(entries); entriesRef.current = entries;
   const busyRef = useRef(busy); busyRef.current = busy;
   const cursor = useRef(0);

@@ -1,3 +1,4 @@
+import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
 import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { webToolAllowed } from '@cardbush/bush-runtime/web-policy';
 import { AgentWebPolicy } from './agentWebPolicy.mjs';
@@ -47,6 +48,7 @@ type AgentState = { version: 1; id: string; name: string; revision: number; proj
 
 /** Owns all business state. Transport sessions and UI lifetimes never own a turn. */
 export class AgentService {
+  #embodied?: EmbodiedHost;
   readonly #toolsEnabled: boolean;
   readonly #webRestricted: boolean;
   readonly #webPolicy?: AgentWebPolicy;
@@ -176,9 +178,23 @@ export class AgentService {
         await service.product.refreshMcp();
         if (!service.#webRestricted) await service.runtime.transport.sendCommand({ kind: 'runtime.automation_start', payload: {} });
       }
+      if (service.#toolsEnabled && !service.#webRestricted) {
+        const owner = service;
+        const voice = await createHeadlessRealtimeVoice(root, async () => {
+          const model = networkProxySchema.parse(await readFile(join(root, 'config', 'network.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
+          owner.#network.setModel(model);
+          return owner.#network.endpoint(model);
+        });
+        service.#embodied = new EmbodiedHost(root, voice, {
+          command: (kind, payload) => owner.#command(kind, payload), product: async () => owner.product,
+          instructions: () => readAgentInstructionDocuments(owner.instructions),
+          environment: 'This assistant is hosted by an independent CardBush Agent. Paths and tools belong to this server. Never imply access to the connecting user’s computer.',
+        });
+        await service.#embodied.start(true);
+      }
       service.#pump();
       return service;
-    } catch (error) { if (service) { await service.product.stopMaintenance(); await service.runtime.close(); await service.#network.close(); } await desktop?.close(); await release(); throw error; }
+    } catch (error) { if (service) { await service.#embodied?.close(); service.#embodied?.voice.closeAll(); await service.product.stopMaintenance(); await service.runtime.close(); await service.#network.close(); } await desktop?.close(); await release(); throw error; }
   }
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
@@ -218,7 +234,7 @@ export class AgentService {
   #idle(sessionId?: string) { if (sessionId ? this.#active(sessionId) : this.#state.jobs.some(job => ['queued', 'running'].includes(job.status))) throw new Error('Wait for this Agent’s tasks to finish or stop them first.'); }
 
   call(operation: AgentOperation, input: unknown = {}, readSignal?: AbortSignal): Promise<unknown> {
-    const serialized = ['web.configure', 'configuration.sync', 'product.command', 'conversation.catalog', 'instructions.get', 'instructions.save', 'plugins.install', 'plugins.uninstall', 'plugins.connections.save', 'plugins.configure', 'mcp.configure', 'mcp.remove', 'mcp.reconnect', 'files.upload', 'files.pasted-text', 'delegation.submit', 'chat.send', 'chat.queue', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
+    const serialized = ['devices.command', 'web.configure', 'configuration.sync', 'product.command', 'conversation.catalog', 'instructions.get', 'instructions.save', 'plugins.install', 'plugins.uninstall', 'plugins.connections.save', 'plugins.configure', 'mcp.configure', 'mcp.remove', 'mcp.reconnect', 'files.upload', 'files.pasted-text', 'delegation.submit', 'chat.send', 'chat.queue', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
     const workspaceMutation = operation === 'runtime.command' && /(?:revert|restore|update)_workspace|delete_session|clear_sessions|switch_workspace/.test(String((input as { kind?: string })?.kind));
     if (!serialized.includes(operation) && !workspaceMutation) return this.#call(operation, input, readSignal);
     const result = this.#mutations.then(() => this.#call(operation, input));
@@ -257,6 +273,7 @@ export class AgentService {
       case 'web.files': if (!this.#webFiles) throw new Error('Unavailable'); return this.#webFiles.call(data);
       case 'web.activity': return { active: await this.#webPolicy?.active() ?? false };
 
+      case 'devices.command': { if (!this.#embodied) throw new Error('Device access is unavailable on this service.'); return this.#embodied.command(data); }
       case 'conversation.catalog': {
         const roots = [{ path: join(this.bundledRoot, 'plugins'), source: 'bundled' as const }, { path: join(this.root, 'plugins'), source: 'user' as const }];
         const extensions = await loadEnabledProductPluginExtensions(roots, join(this.root, 'config', 'apps.json'));
@@ -682,6 +699,8 @@ export class AgentService {
   async close() {
     if (this.#closing) return; this.#closing = true;
     await this.#mutations;
+    await this.#embodied?.close();
+    this.#embodied?.voice.closeAll();
     await this.product.stopMaintenance();
     await this.#marketplaces.close();
     for (const abort of this.#busy.values()) abort.abort();

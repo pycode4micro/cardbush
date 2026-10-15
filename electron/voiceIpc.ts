@@ -48,6 +48,13 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
   const callBlockers = new Map<number, number>();
   const releaseCall = (owner: number) => { const blocker = callBlockers.get(owner); if (blocker !== undefined) powerSaveBlocker.stop(blocker); callBlockers.delete(owner); };
   app.once('before-quit', () => { for (const owner of callBlockers.keys()) releaseCall(owner); });
+  const currentService = () => service ??= new VoiceService(path.join(app.getPath('userData'), 'voice-settings.json'), {
+    recognition, speech, speaker, customSpeech,
+    local: new WindowsVoice(runtime.packaged ? path.join(runtime.resourcesPath, 'voice', 'CardBushVoiceHost.exe')
+      : path.join(runtime.appPath, 'dist-native', 'voice', 'CardBushVoiceHost.exe')),
+    fetch: network.speech,
+    ...crypto,
+  });
   const authorized = (event: IpcMainInvokeEvent) => {
     const window = mainWindow();
     if (!window || window.isDestroyed() || window.webContents !== event.sender || event.senderFrame !== event.sender.mainFrame) throw Error('Voice is only available in the main application.');
@@ -56,13 +63,7 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
       event.sender.once('destroyed', () => { service?.cancelOwner(owner); realtime.close(owner); releaseCall(owner); watched.delete(owner); });
       event.sender.on('render-process-gone', () => { service?.cancelOwner(owner); realtime.close(owner); releaseCall(owner); });
     }
-    return service ??= new VoiceService(path.join(app.getPath('userData'), 'voice-settings.json'), {
-      recognition, speech, speaker, customSpeech,
-      local: new WindowsVoice(runtime.packaged ? path.join(runtime.resourcesPath, 'voice', 'CardBushVoiceHost.exe')
-        : path.join(runtime.appPath, 'dist-native', 'voice', 'CardBushVoiceHost.exe')),
-      fetch: network.speech,
-      ...crypto,
-    });
+    return currentService();
   };
   ipcMain.handle('voice:settings', event => authorized(event).settings());
   ipcMain.handle('voice:call-active', (event, active) => {
@@ -129,4 +130,5 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
     if (!event.sender.isDestroyed()) event.sender.send('voice:audio', chunk);
   }), undefined));
   ipcMain.handle('voice:cancel', (event, id) => authorized(event).cancel(event.sender.id, id));
+  return { realtime, settings: () => currentService().settings() };
 }
