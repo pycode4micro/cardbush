@@ -2497,6 +2497,22 @@ ipcMain.handle('dialog:pick-attachments', async () => {
   return result.canceled ? [] : result.filePaths;
 });
 
+let canvasFiles: import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CreationCanvasFiles | undefined;
+ipcMain.handle('creation:canvas', async (event, input: import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CanvasFileRequest) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('Canvas files are only available to the application renderer.');
+  if (!canvasFiles) {
+    const { CreationCanvasFiles } = await import('./creationCanvasFiles.mjs');
+    canvasFiles = new CreationCanvasFiles(async action => {
+      const options: OpenDialogOptions = action === 'open'
+        ? { title: '打开画板', properties: ['openFile'], filters: [{ name: 'Canvas', extensions: ['canvas.json'] }] }
+        : { title: '将创作空间保存到文件夹', properties: ['openDirectory', 'createDirectory'] };
+      const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+      return result.canceled ? undefined : result.filePaths[0];
+    });
+  }
+  return canvasFiles.command(input);
+});
 let markdownFiles: import('./mdPresentationFiles').MarkdownFiles | undefined;
 ipcMain.handle('markdown:file', async (event, input: import('./mdPresentationFiles').MarkdownFileRequest) => {
   assertMainWindowSender(event.sender.id);

@@ -48,3 +48,4 @@ export * from './toolResult.js';
 export * from './filePatch.js';
 export * from './computerUseAppearance.js';
 export * from './userPrompt.js';
+export * from './creationCanvas.js';

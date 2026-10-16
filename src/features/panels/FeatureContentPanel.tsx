@@ -29,7 +29,7 @@ import { ComponentsApp } from '../components/ComponentsApp';
 
 import { TeamWorkspace } from '../team/TeamWorkspace';
 import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
-const MdPresentationApp = lazy(() => import('../mdPresentation/MdPresentationApp').then(module => ({ default: module.MdPresentationApp })));
+const CreationCanvasApp = lazy(() => import('../creationCanvas/CreationCanvasApp').then(module => ({ default: module.CreationCanvasApp })));
 
 export function FeatureContentPanel({
   language,
@@ -65,10 +65,7 @@ export function FeatureContentPanel({
   creationChatOptions?: CreationChatOptions;
 }) {
   if (section === 'components') return <ComponentsApp language={language}/>;
-  const practiceTeam = (team: { id: string; name: string }) => onOpenPluginPrompt(language === 'zh'
-    ? `请使用已保存的 Team「${team.name}」（ID: ${team.id}）实践文档中的任务。先确认本次目标和必要输入，再调用 team 运行，并根据最终结果整理结论。`
-    : `Use the saved Team "${team.name}" (ID: ${team.id}) to practice the tasks in the document. Confirm this run's goal and required input, then run team and summarize the final results.`);
-  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><MdPresentationApp {...creationChatOptions} language={language} onPractice={practiceTeam} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}/></Suspense>;
+  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><CreationCanvasApp {...creationChatOptions} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}/></Suspense>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
     onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;

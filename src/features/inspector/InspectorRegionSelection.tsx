@@ -10,9 +10,10 @@ import './regionSelection.css';
 export type RegionGuest = HTMLElement & { executeJavaScript?: (script: string) => Promise<unknown>; getWebContentsId?: () => number };
 export type RegionConversation = { scope: string; busy: boolean; error?: string | null; messages: ChatMessage[]; send: (text: UserPromptInput) => Promise<boolean>; saveImage?: (data: string) => Promise<string> };
 
-export function InspectorRegionSelection({ surface, guest, enabled, language, target, revision, conversation, onClose, onRefresh }: {
+export function InspectorRegionSelection({ surface, guest, enabled, language, target, revision, conversation, onClose, onRefresh, onReference }: {
   surface: RefObject<HTMLDivElement | null>; guest: RefObject<RegionGuest | null>; enabled: boolean; language: AppLanguage;
   target: string; revision: string; conversation?: RegionConversation; onClose: () => void; onRefresh?: () => void;
+  onReference?: (region: PreviewRegion, image: string) => Promise<void>;
 }) {
   const zh = language === 'zh', layer = useRef<HTMLDivElement>(null), form = useRef<HTMLFormElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const hitArea = useRef<HTMLDivElement>(null), wheel = useRef<(event: WheelEvent) => void>(() => {});
@@ -160,7 +161,10 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
       {sent && !reply && <p className="inspector-region-status"><Check size={13}/>{zh ? '已发送到当前会话' : 'Sent to the current conversation'}</p>}
       {error && <p role="alert">{error}</p>}
       {sent && conversation?.error && <p role="alert">{conversation.error}</p>}
-      {!conversation && <p role="status">{zh ? '请先打开一个可对话的会话，再发送选区要求。' : 'Open a conversation before sending region instructions.'}</p>}
+      {onReference && <button type="button" disabled={!image || preparing || sending} onClick={() => {
+        setSending(true); setError(''); void onReference(selection, image).then(reset, cause => setError(String((cause as Error).message))).finally(() => setSending(false));
+      }}>{zh ? '引用到画板' : 'Reference on canvas'}</button>}
+      {!conversation && !onReference && <p role="status">{zh ? '请先打开一个可对话的会话，再发送选区要求。' : 'Open a conversation before sending region instructions.'}</p>}
       <textarea ref={input} value={draft} rows={2} aria-label={zh ? '选区修改要求' : 'Region instructions'} placeholder={zh ? '想怎么修改这里？' : 'How should this region change?'} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
       <footer><span>{preparing ? (zh ? '正在准备选区…' : 'Preparing region…') : conversation?.busy ? (zh ? '处理中' : 'Working') : (zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for newline')}</span><button type="submit" disabled={!draft.trim() || !image || preparing || sending || !conversation} aria-label={zh ? '发送选区要求' : 'Send region instructions'}>{preparing || sending ? <LoaderCircle className="spinning" size={17}/> : <ArrowUp size={17}/>}</button></footer>
     </form>}

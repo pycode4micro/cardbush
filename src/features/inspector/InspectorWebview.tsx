@@ -18,6 +18,7 @@ import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import { DeferredResizePreview } from './DeferredResizePreview';
 import { InspectorRegionSelection, type RegionConversation } from './InspectorRegionSelection';
+import type { PreviewRegion } from './regionSelection';
 import { BrowserPageTools, type BrowserPageToolsHandle } from '../browser/BrowserPageTools';
 import { browserIconUrl } from '../browser/browserSiteIcons';
 import {
@@ -85,6 +86,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   regionConversation?: RegionConversation;
   regionEnabled?: boolean;
   onRegionSelectionClose?: () => void;
+  onRegionReference?: (region: PreviewRegion, image: string) => Promise<void>;
+  resourceRevision?: string;
 }>(function InspectorWebview({
   identity,
   target,
@@ -100,6 +103,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   regionConversation,
   regionEnabled = false,
   onRegionSelectionClose,
+  onRegionReference,
+  resourceRevision,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -126,6 +131,13 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const [loading, setLoading] = useState(true);
   const [hasDocument, setHasDocument] = useState(false);
   const [webviewRevision, setWebviewRevision] = useState(0);
+  const resourceVersion = useRef({ target, revision: resourceRevision });
+  useEffect(() => {
+    const previous = resourceVersion.current; resourceVersion.current = { target, revision: resourceRevision };
+    if (previous.target !== target || previous.revision === resourceRevision || previous.revision === undefined) return;
+    if (rendererPreview) setFilePreviewRevision(value => value + 1);
+    else setWebviewRevision(value => value + 1);
+  }, [target, resourceRevision, rendererPreview]);
   const [previewError, setPreviewError] = useState<'timeout' | 'load' | 'crash' | null>(null);
 
   useEffect(() => {
@@ -517,7 +529,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         </div>
       )}
       <InspectorRegionSelection surface={surfaceRef} guest={webviewRef} enabled={regionEnabled && active && !showStartPage && !loading && !previewError} language={language} target={isInspectorBrowserTarget(target, mediaType) ? currentUrl : filePath}
-        revision={`${currentUrl}:${filePreviewRevision}:${webviewRevision}`} conversation={regionConversation} onClose={() => onRegionSelectionClose?.()}
+        revision={`${currentUrl}:${filePreviewRevision}:${webviewRevision}`} conversation={regionConversation} onClose={() => onRegionSelectionClose?.()} onReference={onRegionReference}
         onRefresh={() => rendererPreview ? setFilePreviewRevision(value => value + 1) : webviewRef.current?.reload?.()}/>
       </div>
     </DeferredResizePreview>

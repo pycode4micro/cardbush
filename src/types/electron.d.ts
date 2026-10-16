@@ -218,6 +218,7 @@ declare global {
         rawCount: number;
       }>;
       pickAttachments: () => Promise<string[]>;
+      creationCanvas: (input: import('../../electron/creationCanvasFiles.mjs').CanvasFileRequest) => Promise<import('../../electron/creationCanvasFiles.mjs').CanvasFileResponse>;
       markdownFile: (input: import('../../electron/mdPresentationFiles').MarkdownFileRequest) => Promise<import('../../electron/mdPresentationFiles').MarkdownFile | null>;
       getPathForFile: (file: File) => string;
       inspectAttachments: (paths: string[]) => Promise<Array<{

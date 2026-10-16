@@ -369,6 +369,7 @@ const desktopApi = {
       rawCount: number;
     }>,
   pickAttachments: () => ipcRenderer.invoke('dialog:pick-attachments') as Promise<string[]>,
+  creationCanvas: (input: import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CanvasFileRequest) => ipcRenderer.invoke('creation:canvas', input) as Promise<import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CanvasFileResponse>,
   markdownFile: (input: import('./mdPresentationFiles').MarkdownFileRequest) => ipcRenderer.invoke('markdown:file', input) as Promise<import('./mdPresentationFiles').MarkdownFile | null>,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   inspectAttachments: (paths: string[]) =>

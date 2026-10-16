@@ -25,6 +25,7 @@ export function saveComponents(value: ComponentCollection, expectedRevision: num
   read(); window.dispatchEvent(new Event(eventName));
 }
 export function useComponents() { return useSyncExternalStore(subscribe, read, () => defaultComponents); }
+export const getComponents = read;
 
 // Old layouts did not record their viewport. Adopt the first visible size once,
 // without moving anything, so reopening/maximizing no longer establishes a new

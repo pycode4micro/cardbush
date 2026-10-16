@@ -86,7 +86,7 @@ import { useCompactSidebar } from './hooks/useCompactSidebar';
 import { CompactSidebarBackdrop } from './components/CompactSidebarBackdrop';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { ConversationInspectorContext, ConversationInspectorOutlet, useConversationInspectorActions, useConversationInspectorOutlets } from './features/inspector/ConversationInspector';
-import { useCreationSessionId } from './features/mdPresentation/bushItPageStore';
+import { useCanvasSessionId as useCreationSessionId } from './features/creationCanvas/canvasStore';
 import type { CreationInspectorContext } from './features/mdPresentation/CreationConversation';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { agentInspectorWorkspace, localInspectorWorkspace } from './features/inspector/inspectorSessions';
@@ -140,7 +140,7 @@ import {
 } from './features/sidebar';
 import { refreshTeamWorkspace, useTeamWorkspace } from './features/team/teamWorkspaceStore';
 import { NativeTeamSidebar } from './features/team/TeamSidebar';
-import { BushItSidebar } from './features/mdPresentation/BushItSidebar';
+import { CanvasSidebar as BushItSidebar } from './features/creationCanvas/CanvasSidebar';
 import { basename, fileUrl, samePath, stripWrappingQuotes } from './shared/localPaths';
 import {
   themeAccentColor,

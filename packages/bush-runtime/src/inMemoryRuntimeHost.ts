@@ -26,6 +26,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
 import { extractSessionSource } from './sessionExtraction.js';
+import { registerDesignTool } from './designTool.js';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND,
@@ -574,6 +575,7 @@ export class InMemoryRuntimeHost {
     this.#terminalNotifications = new TerminalCompletionNotifications(this.#workspaceTerminals, this.#toolExecutions, options.remoteWorkspace,
       (session, turn, id, result) => this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
     if (options.registerDefaultWorkspaceTools !== false) {
+      registerDesignTool(this.#toolRegistry);
       registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace, commandSandbox: options.commandSandbox, loadCommandSandbox: options.loadCommandSandbox,
         onTerminalStarted: (context, result) => this.#terminalNotifications.watch(context, result),
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
