@@ -3305,7 +3305,12 @@ ipcMain.handle('image:read-data-url', async (event, targetPath: string) => {
   if (!sourceWindow || (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id))) {
     return '';
   }
-  return readLocalImageDataUrl(targetPath);
+  try { return await readLocalImageDataUrl(targetPath); }
+  catch (error) {
+    // Missing historical attachments are an expected absence, not an IPC crash.
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return '';
+    throw error;
+  }
 });
 
 const imageGalleryScanner = new ImageGalleryScanner();
@@ -3331,7 +3336,7 @@ ipcMain.handle('image:gallery-start', (event, root: string, recursive: boolean) 
 ipcMain.handle('image:gallery-next', (event, id: string) => imageGalleryScanner.next(imageGalleryOwner(event), id));
 ipcMain.handle('image:gallery-close', (event, id: string) => imageGalleryScanner.close(imageGalleryOwner(event), id));
 
-const browserUi = registerBrowserUiIpc(assertMainWindowSender);
+const browserUi = registerBrowserUiIpc(assertMainWindowSender, undefined, pluginFetch);
 ipcMain.handle('browser:settings-read', async event => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).read();
@@ -4760,6 +4765,9 @@ function registerLocalFileProtocol() {
       response.headers.set('cache-control', 'public, max-age=31536000, immutable');
       return response;
     } catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return new Response('File is no longer available at its original path.', { status: 404, headers: { 'cache-control': 'no-store' } });
+      }
       console.error(`[${localFileProtocol}] failed to load ${request.url}`, error);
       return new Response('Not found', { status: 404 });
     }

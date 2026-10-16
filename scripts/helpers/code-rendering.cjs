@@ -11,16 +11,19 @@ module.exports = async ({ run, until, window, root }) => {
   ].join('\n');
   await run(`
     window.codeFixtureContent = ${JSON.stringify(content)};
-    window.renderCodeFixture = (language = 'zh') => renderView(
+    window.renderCodeFixture = (language = 'zh', role = 'assistant') => renderView(
       h(views.MessageFileReferenceScope, { workspaceRoot: 'C:/fixture' },
         h(views.MessageBubble, { language, sending: false, activeTurnId: '', activeAssistantMessageId: '', message: {
-          id: 'code-fixture', role: 'assistant', status: 'completed', content: codeFixtureContent,
+          id: role + '-code-fixture', role, status: 'completed', content: codeFixtureContent,
           metadata: { transcript_kind: 'assistant_final' } } })));
     window.copiedCode = '';
+    window.codeCopyFeedback = 0;
+    window.onCodeCopyFeedback = () => { codeCopyFeedback++; };
+    addEventListener('cardbush-copy-feedback', onCodeCopyFeedback);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copiedCode = text; } } });
     renderCodeFixture();
   `);
-  for (const [theme, language] of [['theme-dark', 'zh'], ['theme-light', 'en']]) {
+  for (const [theme, language] of [['theme-dark', 'zh'], ['theme-bright', 'en']]) {
     await run(`viewTheme = ${JSON.stringify(theme)}; renderCodeFixture(${JSON.stringify(language)})`);
     await until("document.querySelector('code.language-csharp .token.keyword')?.textContent === 'for'", 'C# syntax tokens render');
     await until("document.querySelector('.local-file-type-icon.csharp')?.textContent === 'C#'", 'C# file badge renders');
@@ -32,8 +35,13 @@ module.exports = async ({ run, until, window, root }) => {
     assert.equal(await run("Array.from(document.querySelectorAll('.markdown-content p')).some(node => node.textContent === '修法是把两层循环并成按像素的一层：')"), true);
     assert.equal(await run("document.querySelectorAll('.local-file-type-icon.fsharp, .local-file-type-icon.cpp, .local-file-type-icon.config').length"), 3);
     const copyTitle = language === 'zh' ? '复制' : 'Copy';
+    const feedbackBefore = await run('codeCopyFeedback');
     await run(`document.querySelectorAll('.markdown-code-block')[1].querySelector('button[title="${copyTitle}"]').click()`);
     await until(`copiedCode === ${JSON.stringify(code)}`, 'copy contains exact source without labels');
+    await until(`codeCopyFeedback === ${feedbackBefore + 1}`, 'code copy signals success');
+    await run(`document.querySelector('.message-actions button[title="${copyTitle}"]').click()`);
+    await until('copiedCode === codeFixtureContent', 'assistant copy preserves complete Markdown, not rendered labels');
+    await until(`codeCopyFeedback === ${feedbackBefore + 2}`, 'message copy signals success');
     await run("document.querySelectorAll('.markdown-code-block')[1].querySelector('button[aria-pressed]').click()");
     assert.equal(await run("document.querySelectorAll('.markdown-code-block')[1].querySelector('button[aria-pressed]').getAttribute('aria-pressed')"), theme === 'theme-dark' ? 'true' : 'false');
     assert.notEqual(await run("getComputedStyle(document.querySelector('code.language-csharp .token.keyword')).color"),
@@ -43,6 +51,16 @@ module.exports = async ({ run, until, window, root }) => {
       fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
       fs.writeFileSync(screenshotPath, (await window.capturePage()).toPNG());
     }
+  }
+  for (const [theme, language] of [['theme-dark', 'zh'], ['theme-bright', 'en']]) {
+    const copyTitle = language === 'zh' ? '复制' : 'Copy';
+    const feedbackBefore = await run('codeCopyFeedback');
+    await run(`copiedCode = ''; viewTheme = ${JSON.stringify(theme)}; renderCodeFixture(${JSON.stringify(language)}, 'user')`);
+    await until("!!document.querySelector('.message-row.user .message-actions')", 'user message actions render');
+    await until(`!!document.querySelector('.message-row.user .message-actions button[title="${copyTitle}"]')`, 'localized copy action');
+    await run(`document.querySelector('.message-row.user .message-actions button[title="${copyTitle}"]').click()`);
+    await until('copiedCode === codeFixtureContent', 'user copy preserves the complete input');
+    await until(`codeCopyFeedback === ${feedbackBefore + 1}`, 'user copy signals success');
   }
 
   for (const alias of ['c#', 'cs', 'CSharp', 'c++', 'pwsh', 'jsonc']) {
@@ -64,5 +82,6 @@ module.exports = async ({ run, until, window, root }) => {
   await until("document.querySelector('.source-code-lines .token.keyword')?.textContent === 'for'", 'file preview uses the same C# grammar');
   assert.equal(await run("document.querySelectorAll('.source-code-line').length"), code.split('\n').length);
   await run('renderView(null)');
-  console.log('Code rendering passed: actual media/code boundary, C# aliases and badges, both themes/languages, exact copy, blank lines, wrap, large/unknown fallback and file preview.');
+  await run("removeEventListener('cardbush-copy-feedback', onCodeCopyFeedback)");
+  console.log('Code rendering passed: actual media/code boundary, C# aliases and badges, both themes/languages, exact code/user/assistant copy and feedback, blank lines, wrap, large/unknown fallback and file preview.');
 };

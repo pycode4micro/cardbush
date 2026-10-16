@@ -1,4 +1,4 @@
-import { Expand, GripVertical, Hand, Maximize2, Plus, Scan, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Expand, FilePenLine, GripVertical, Hand, Maximize2, Plus, Scan, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import type { CanvasItem, CanvasSnapshot, CreationCanvas } from '@cardbush/bush-protocol';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
@@ -6,7 +6,7 @@ import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
 import { InspectorWebview } from '../inspector/InspectorWebview';
 import { inspectorSource } from '../inspector/inspectorTargets';
 import { openInspector } from '../inspector/inspectorEvents';
-import { canvasFileTarget } from './canvasModel';
+import { canvasFileTarget, editableCanvasMarkdown } from './canvasModel';
 import { adjustCanvasFrame, equalCanvasFrames, zoomCanvasPan, type AlignmentGuide, type ResizeHandle } from './canvasGeometry';
 import '../components/components.css';
 
@@ -24,9 +24,10 @@ type Gesture = { pointer: number; x: number; y: number } & (
 );
 const resizeCursor = (handle?: ResizeHandle) => !handle ? 'grabbing' : ({ nw: 'nwse', se: 'nwse', ne: 'nesw', sw: 'nesw', n: 'ns', s: 'ns', e: 'ew', w: 'ew' }[handle] + '-resize');
 
-export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange, onOpenFile, onAdd, onChat, onViewport, onError }: {
+export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange, onOpenFile, onEditMarkdown, onAdd, onChat, onViewport, onError }: {
   snapshot: CanvasSnapshot; language: 'zh' | 'en'; selectedId?: string; onSelect: (id?: string) => void;
   onChange: (document: CreationCanvas, revision: string) => Promise<void>; onOpenFile: (item: CanvasItem, region: boolean) => void;
+  onEditMarkdown?: (item: CanvasItem) => void;
   onAdd: () => void; onChat: () => void; onViewport: (value: { width: number; height: number; zoom: number }) => void; onError: (message: string) => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null), [size, setSize] = useState({ width: 1000, height: 700 });
@@ -148,8 +149,11 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
       .catch(() => {}).finally(() => { saving.current = false; });
   };
   const activeHandle = gesture.current?.kind === 'item' ? gesture.current.handle : undefined;
+  const origin = { x: (size.width - document.width * zoom) / 2 + pan.x, y: (size.height - 56 - document.height * zoom) / 2 + pan.y };
   return <div className="canvas-stage-shell">
     <div className={'canvas-stage' + (panReady ? ' pan-ready' : '')} ref={viewport} tabIndex={0}
+      style={{ backgroundColor: document.background, color: light ? '#252525' : '#e5e5e5', backgroundPosition: `${origin.x}px ${origin.y}px`,
+        '--canvas-paper': document.background, '--canvas-dot': light ? '#0000001a' : '#ffffff18' } as CSSProperties}
       aria-label={t('画板，拖动空白处平移', 'Canvas, drag empty space to pan')}
       onPointerMove={move} onPointerUp={finish} onPointerCancel={cancel}
       onLostPointerCapture={() => { if (gesture.current) cancel(); }}
@@ -163,12 +167,10 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
       {dragging && <div className="canvas-drag-shield" style={{ cursor: resizeCursor(activeHandle) }}/>}
       {panReady && <div className="canvas-pan-catcher"/>}
       <div className="canvas-size" style={{ width: document.width * zoom, height: document.height * zoom,
-        left: (size.width - document.width * zoom) / 2 + pan.x, top: (size.height - 56 - document.height * zoom) / 2 + pan.y }}>
-        <div className="canvas-board-label" aria-hidden="true">{t('画板', 'Canvas')}<span>{document.width} × {document.height}</span></div>
+        left: origin.x, top: origin.y }}>
         <div className="canvas-plane" data-canvas-width={document.width} data-canvas-height={document.height}
-          style={{ width: document.width, height: document.height, backgroundColor: document.background, color: light ? '#252525' : '#e5e5e5',
-            transform: `scale(${zoom})`, '--canvas-inverse-zoom': 1 / zoom, '--canvas-line': `${1 / zoom}px`,
-            '--canvas-paper': document.background, '--canvas-dot': light ? '#0000001a' : '#ffffff18', '--canvas-grid-size': `${24 / zoom}px` } as CSSProperties}>
+          style={{ width: document.width, height: document.height,
+            transform: `scale(${zoom})`, '--canvas-inverse-zoom': 1 / zoom, '--canvas-line': `${1 / zoom}px` } as CSSProperties}>
           {document.items.map(item => {
             const frame = draft?.id === item.id ? draft.frame : item.frame, active = selectedId === item.id;
             return <article key={item.id} data-canvas-item={item.id} data-canvas-source={item.kind === 'file' ? item.source : undefined}
@@ -182,6 +184,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
                   <GripVertical size={14}/><span>{item.title || item.kind}{item.reference?.mode === 'snapshot' ? t(' · 选区快照', ' · Excerpt snapshot') : ''}</span>
                 </button>
                 <div className="canvas-item-actions">
+                  {onEditMarkdown && editableCanvasMarkdown(item) && <button aria-label={t('编辑 Markdown', 'Edit Markdown')} title={t('编辑 Markdown', 'Edit Markdown')} onClick={() => onEditMarkdown(item)}><FilePenLine size={14}/></button>}
                   {item.kind === 'file' && <><button aria-label={t('引用局部', 'Reference a region')} onClick={() => onOpenFile(item, true)}><Scan size={14}/></button><button aria-label={t('展开文件', 'Expand file')} onClick={() => onOpenFile(item, false)}><Expand size={14}/></button></>}
                   <button aria-label={t('移出画板', 'Remove from canvas')} onClick={() => void onChange({ ...document, items: document.items.filter(value => value.id !== item.id) }, snapshot.revision).catch(() => {})}><Trash2 size={14}/></button>
                 </div>

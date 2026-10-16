@@ -1,5 +1,7 @@
 import { authoredPromptContent } from '@cardbush/bush-protocol';
 import { randomUUID } from "node:crypto";
+import { summarizeSession, type SessionSummary, type SessionHistoryRequest } from '@cardbush/bush-protocol';
+import type { StoredHistoryPage } from './sessionReadIndex.js';
 
 import {
   BUSH_SESSION_EVENT_PROTOCOL,
@@ -7,6 +9,8 @@ import {
   committedTurnSchema,
   sessionEventSchema,
   sessionSnapshotSchema,
+  sessionModelContractSchema,
+  type SessionModelContract,
   type CommittedTurn,
   type SessionEvent,
   type SessionSnapshot,
@@ -21,14 +25,22 @@ export interface SessionEventPersistence {
   listSessionIds?(): string[];
   remove?(sessionId: string): boolean;
   listMetadata?(skip: Set<string>, signal?: AbortSignal): Promise<SessionMetadataEntry[]>;
+  listSummaries?(signal?: AbortSignal): Promise<SessionSummary[]>;
+  historyPage?(input: SessionHistoryRequest, signal?: AbortSignal): Promise<StoredHistoryPage | undefined>;
 }
 
 export interface SessionMetadataEntry { sessionId: string; metadata: Record<string, unknown> }
+
+export function historyCursorError() {
+  return Object.assign(new Error('Session history changed. Refresh the conversation before loading earlier turns.'), { code: 'session_history_changed' });
+}
 
 export interface SessionStoreOptions {
   persistence?: SessionEventPersistence;
   createEventId?: () => string;
   now?: () => string;
+  idleCacheLimit?: number;
+  idleCacheBytes?: number;
 }
 
 export class SessionStore {
@@ -36,16 +48,61 @@ export class SessionStore {
   readonly #createEventId: () => string;
   readonly #now: () => string;
   readonly #events = new Map<string, SessionEvent[]>();
+  readonly #bytes = new Map<string, number>();
+  readonly #protected = new Set<string>();
+  readonly #idleCacheLimit: number;
+  readonly #idleCacheBytes: number;
 
   constructor(options: SessionStoreOptions = {}) {
     this.#persistence = options.persistence;
     this.#createEventId = options.createEventId ?? (() => `session_event_${randomUUID()}`);
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#idleCacheLimit = options.idleCacheLimit ?? 24;
+    this.#idleCacheBytes = options.idleCacheBytes ?? 64 * 1024 * 1024;
+  }
+
+  protect(sessionId: string, value: boolean) {
+    if (value) this.#protected.add(sessionId); else { this.#protected.delete(sessionId); this.#trimCache(); }
+  }
+
+  async listSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
+    signal?.throwIfAborted();
+    const summaries = this.#persistence?.listSummaries ? await this.#persistence.listSummaries(signal) : this.list().map(summarizeSession);
+    return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.sessionId.localeCompare(right.sessionId));
+  }
+
+  async historyPage(input: SessionHistoryRequest, signal?: AbortSignal): Promise<StoredHistoryPage | undefined> {
+    signal?.throwIfAborted();
+    if (this.#persistence?.historyPage) return this.#persistence.historyPage(input, signal);
+    const snapshot = this.snapshot(input.sessionId);
+    if (!snapshot) return undefined;
+    const historyRevision = this.#load(input.sessionId).filter(event => event.kind === 'messages_superseded' ||
+      (event.kind === 'turn_committed' && event.payload.supersession)).at(-1)?.sequence ?? 0;
+    if (input.cursor && input.cursor.historyRevision !== historyRevision) throw historyCursorError();
+    const end = input.cursor ? snapshot.turns.findIndex(turn => turn.turnSequence >= input.cursor!.beforeTurnSequence) : snapshot.turns.length;
+    if (end < 0) throw historyCursorError();
+    const start = Math.max(0, end - input.limit), turns = snapshot.turns.slice(start, end);
+    return { summary: summarizeSession(snapshot), snapshot: { ...snapshot, turns }, historyRevision, beforeCreatedAt: snapshot.turns[end]?.createdAt,
+      nextCursor: start > 0 ? { beforeTurnSequence: turns[0]!.turnSequence, historyRevision } : null };
   }
 
   snapshot(sessionId: string): SessionSnapshot | undefined {
     const events = this.#load(sessionId);
     return events.length === 0 ? undefined : projectSession(sessionId, events);
+  }
+
+  modelContract(sessionId: string): SessionModelContract | undefined {
+    const event = this.#load(sessionId).find(event => event.kind === 'model_contract_bound');
+    return event?.kind === 'model_contract_bound' ? structuredClone(event.payload) : undefined;
+  }
+
+  bindModelContract(sessionId: string, contract: SessionModelContract): SessionModelContract {
+    const existing = this.modelContract(sessionId);
+    if (existing) return existing;
+    if (!this.hasSession(sessionId)) throw new Error('Cannot bind an unknown session.');
+    const payload = sessionModelContractSchema.parse(contract);
+    this.#append(sessionId, { kind: 'model_contract_bound', payload });
+    return structuredClone(payload);
   }
 
   hasSession(sessionId: string): boolean {
@@ -143,6 +200,7 @@ export class SessionStore {
     const exists = this.snapshot(normalized) !== undefined;
     if (!exists) return false;
     this.#events.delete(normalized);
+    this.#bytes.delete(normalized);
     this.#persistence?.remove?.(normalized);
     return true;
   }
@@ -152,10 +210,12 @@ export class SessionStore {
     if (sourceSessionId === sessionId) throw new Error('Fork requires a different session.');
     const source = this.snapshot(sourceSessionId), target = this.snapshot(sessionId);
     if (!source || !target) throw new Error('Fork source or destination does not exist.');
-    if (target.turns.length || target.metadata?.forkSourceSessionId) throw new Error('Fork destination must be empty.');
+    if (target.turns.length || target.metadata?.forkSourceSessionId || this.modelContract(sessionId)) throw new Error('Fork destination must be empty.');
     const rebase = (text: string) => text.replaceAll(`tool-result://${encodeURIComponent(sourceSessionId)}/`, `tool-result://${encodeURIComponent(sessionId)}/`);
     const standaloneSuperseded = new Set(source.supersededMessageIds);
     try {
+      const contract = this.modelContract(sourceSessionId);
+      if (contract) this.bindModelContract(sessionId, contract);
       for (const sourceTurn of source.turns) {
         const turn = structuredClone(sourceTurn);
         // Turn-level supersessions are replayed with the committed Turn itself.
@@ -183,6 +243,7 @@ export class SessionStore {
       // A failed projection must not prevent removing the partially copied fork.
       this.#persistence?.remove?.(sessionId);
       this.#events.delete(sessionId);
+      this.#bytes.delete(sessionId);
       throw error;
     }
   }
@@ -321,12 +382,14 @@ export class SessionStore {
 
   #load(sessionId: string): SessionEvent[] {
     const cached = this.#events.get(sessionId);
-    if (cached) return cached;
+    if (cached) { this.#events.delete(sessionId); this.#events.set(sessionId, cached); return cached; }
     const loaded = (this.#persistence?.load(sessionId) ?? []).map((event) =>
       sessionEventSchema.parse(event),
     );
     if (loaded.length > 0) projectSession(sessionId, loaded);
     this.#events.set(sessionId, loaded);
+    if (this.#persistence) this.#bytes.set(sessionId, Buffer.byteLength(JSON.stringify(loaded)));
+    this.#trimCache();
     return loaded;
   }
 
@@ -345,7 +408,23 @@ export class SessionStore {
     });
     this.#persistence?.append(event);
     events.push(event);
+    if (this.#persistence && this.#events.has(sessionId)) {
+      this.#bytes.set(sessionId, (this.#bytes.get(sessionId) ?? 0) + Buffer.byteLength(JSON.stringify(event)));
+      this.#trimCache();
+    }
     return event;
+  }
+
+  #trimCache() {
+    // In-memory stores own the source itself, so only durable facts may be evicted.
+    if (!this.#persistence) return;
+    const idle = [...this.#events.keys()].filter(id => !this.#protected.has(id));
+    let bytes = idle.reduce((sum, id) => sum + (this.#bytes.get(id) ?? 0), 0), count = idle.length;
+    for (const id of idle) {
+      if (count <= this.#idleCacheLimit && bytes <= this.#idleCacheBytes) break;
+      bytes -= this.#bytes.get(id) ?? 0; count--;
+      this.#events.delete(id); this.#bytes.delete(id);
+    }
   }
 }
 
@@ -361,6 +440,7 @@ export function projectSession(
   const messageIds = new Set<string>();
   const superseded = new Set<string>();
   let metadata: Record<string, unknown> | undefined;
+  let modelContractBound = false;
   for (const [index, event] of events.entries()) {
     if (event.sessionId !== sessionId) throw new Error("Session event identity mismatch.");
     if (event.sequence !== index + 1) throw new Error("Session event sequence is not contiguous.");
@@ -376,6 +456,10 @@ export function projectSession(
     }
     if (index > 0 && event.kind === "session_created") {
       throw new Error("Session may only be created once.");
+    }
+    if (event.kind === 'model_contract_bound') {
+      if (modelContractBound) throw new Error('Session model contract may only be bound once.');
+      modelContractBound = true;
     }
     if (event.kind === "turn_committed") {
       const turn = event.payload;
@@ -450,7 +534,7 @@ export function projectSessionSupersession(
   return { ...session, supersededMessageIds: [...superseded] };
 }
 
-function addSupersededMessages(known: Set<string>, superseded: Set<string>, ids: string[]): void {
+export function addSupersededMessages(known: Set<string>, superseded: Set<string>, ids: string[]): void {
   for (const id of ids) {
     if (!known.has(id)) throw new Error(`Cannot supersede unknown message ${id}.`);
     if (superseded.has(id)) throw new Error(`Message ${id} was superseded more than once.`);
@@ -498,7 +582,7 @@ export function validateCommittedTurn(turn: CommittedTurn): void {
   validateConversation(turn.messages.map((message) => message.message));
 }
 
-function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Set<string>): void {
+export function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Set<string>): void {
   if (turn.contextCheckpoint?.projectionVersion !== "exchange_v1") return;
   const ids = turn.contextCheckpoint.coveredTurnIds;
   if (new Set(ids).size !== ids.length || ids.some(id => !priorTurnIds.has(id))) {

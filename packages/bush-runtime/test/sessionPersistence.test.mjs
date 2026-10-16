@@ -194,6 +194,32 @@ test("enumerates durable Sessions and preserves their explicit metadata", () => 
   });
 });
 
+test('a model contract survives disk restart without entering paginated history or session summaries', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'cardbush-model-contract-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let persistence = new FileSessionEventPersistence({ root });
+  let store = new SessionStore({ persistence });
+  store.ensureSession('contract');
+  const contract = store.bindModelContract('contract', { policyId: 'fixture', version: '1',
+    system: { role: 'system', content: 'Immutable policy text.' },
+    tools: [{ name: 'read_fixture', description: 'Immutable tool description.', inputSchema: { type: 'object' } }],
+  });
+  store.commitTurn('contract', turn('first', 1, 'hello'));
+  persistence.close();
+  persistence = new FileSessionEventPersistence({ root });
+  t.after(() => persistence.close());
+  store = new SessionStore({ persistence });
+  assert.deepEqual(store.modelContract('contract'), contract);
+  assert.deepEqual(store.bindModelContract('contract', { ...contract, version: '2' }), contract, 'a later bind cannot overwrite the contract');
+  const summaries = await store.listSummaries();
+  const page = await store.historyPage({ sessionId: 'contract', limit: 10 });
+  assert.equal(summaries[0].revision, 3);
+  assert.equal(page.snapshot.turns[0].messages[0].message.content, 'hello');
+  for (const payload of [summaries, page, store.snapshot('contract')]) {
+    assert.doesNotMatch(JSON.stringify(payload), /Immutable policy text|Immutable tool description/);
+  }
+});
+
 function deterministicStore(persistence) {
   let id = 0;
   return new SessionStore({

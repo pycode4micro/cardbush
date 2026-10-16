@@ -7,7 +7,7 @@ import type { SubagentDispatcher, SubagentInput } from './subagentTool.js';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { assertParentAgent } from './childAgentPolicy.js';
 import { settleAtAbort } from './abortSettlement.js';
-import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, type CatalogQuery } from './catalogPage.js';
+import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage, type CatalogQuery } from './catalogPage.js';
 import { teamResultNodeIds, teamRunResult } from './teamResults.js';
 import type { RuntimeTaskHandle } from './taskTools.js';
 
@@ -58,6 +58,7 @@ export class TeamWorkflowManager {
         } } },
       manifest: { effect_kind: 'delegation', operation: 'agent.team', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
       visibleToChild: false, parallelSafe: false, decodeInput: decodeTeamInput,
+      projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['teams', 'runs']),
       execute: context => this.execute(context),
     });
   }

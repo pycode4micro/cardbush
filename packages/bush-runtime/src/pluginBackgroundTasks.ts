@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { SubagentTaskStore } from './subagentTaskStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
 import { settleAtAbort } from './abortSettlement.js';
-import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, type CatalogQuery } from './catalogPage.js';
+import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage, type CatalogQuery } from './catalogPage.js';
 
 export class PluginBackgroundTasks {
   get busy() { return this.active.size > 0; }
@@ -19,6 +19,7 @@ export class PluginBackgroundTasks {
     registry.register<CatalogQuery & { action: string; ids: string[]; yieldTimeMs: number }>({
       definition: { name: 'manage_plugin_agents', description: 'Manage background Agent tasks in this conversation. list returns paginated status summaries only; query filters task identity or status. read requires task_ids and returns their saved results. wait returns results after completion; stop cancels selected work and returns status. Background work may outlive the parent turn.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'read', 'wait', 'stop'] }, task_ids: { type: 'array', maxItems: 32, items: { type: 'string', minLength: 1 } }, ...catalogPageProperties }, required: ['action'], additionalProperties: false } },
       manifest: { effect_kind: 'delegation', operation: 'agent.background.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
+      projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks']),
       decodeInput: input => {
         const value = input as Record<string, unknown>;
         if (!value || Array.isArray(value) || Object.keys(value).some(key => !['action', 'task_ids', 'query', 'offset', 'limit'].includes(key)) || !['list', 'read', 'wait', 'stop'].includes(String(value.action)) || (value.task_ids !== undefined && (!Array.isArray(value.task_ids) || value.task_ids.length > 32 || value.task_ids.some(id => typeof id !== 'string' || !id.trim())))) throw new Error('Invalid background Agent action.');
@@ -41,6 +42,7 @@ export class PluginBackgroundTasks {
         const selected = this.tasks.list(context.sessionId).filter(task => task.background && ids.includes(task.taskId));
         if (context.input.action === 'list' || context.input.action === 'stop') {
           const summaries = selected.map(({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }) => ({ taskId, childSessionId, childTurnId, status, has_result: Boolean(finalResponse), error: briefText(errorMessage ?? '') }));
+          if (context.input.action === 'stop') return { tasks: summaries, total: summaries.length };
           const { items, ...page } = catalogPage(summaries, context.input);
           return { tasks: items, ...page };
         }

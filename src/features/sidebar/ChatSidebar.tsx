@@ -16,7 +16,7 @@ import {
   Clock3,
   ChevronDown,
   ChevronRight,
-  Clipboard,
+  Copy,
   Code2,
   Edit3,
   Eye,
@@ -710,7 +710,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       },
       {
         key: 'copy-id',
-        icon: <Clipboard size={15} />,
+        icon: <Copy size={15} />,
         label: language === 'zh' ? '复制会话 ID' : 'Copy session ID',
         onClick: () => void copyText(conversation.id),
       },
@@ -932,8 +932,8 @@ export const ChatSidebar = memo(function ChatSidebar({
                             { key: 'fork', icon: <ExtractionMenuIcon fork/>, label: language === 'zh' ? 'Fork 会话' : 'Fork conversation', onClick: () => void agentSessions?.forkSession(agent.id, session.sessionId) },
                           ] : []),
                           { key: 'rename', icon: <Edit3 size={15}/>, label: language === 'zh' ? '重命名对话' : 'Rename chat', onClick: options.onRename },
-                          { key: 'copy', icon: <Clipboard size={15}/>, label: language === 'zh' ? '复制会话 ID' : 'Copy chat ID', onClick: () => void copyText(session.sessionId) },
-                          { key: 'copy-chat', icon: <Clipboard size={15}/>, label: language === 'zh' ? '复制对话' : 'Copy conversation', onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
+                          { key: 'copy', icon: <Copy size={15}/>, label: language === 'zh' ? '复制会话 ID' : 'Copy chat ID', onClick: () => void copyText(session.sessionId) },
+                          { key: 'copy-chat', icon: <Copy size={15}/>, label: language === 'zh' ? '复制对话' : 'Copy conversation', onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
                           ...(list?.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: language === 'zh' ? '归档对话' : 'Archive chat', separatorBefore: true, onClick: options.onArchive }] : []),
                           { key: 'delete', icon: <Trash2 size={15}/>, label: language === 'zh' ? '删除对话' : 'Delete chat', separatorBefore: true, danger: true, onClick: options.onDelete },
                         ])}
@@ -1353,7 +1353,7 @@ function ConversationRow({
   const [renameDraft, setRenameDraft] = useState(displayTitle);
   const [renamePending, setRenamePending] = useState(false);
   const [renameFailed, setRenameFailed] = useState(false);
-  const hoverPreview = useHoverPreview(editingTitle);
+  const hoverPreview = useHoverPreview(editingTitle, { interactive: true });
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
   const beginRename = useCallback(() => {
     setRenameDraft(displayTitle);
@@ -1367,6 +1367,7 @@ function ConversationRow({
     setEditingTitle(false);
   }, [displayTitle, renamePending]);
   const submitRename = useCallback(async () => {
+    if (renamePending) return;
     const nextTitle = renameDraft.trim();
     if (!nextTitle) {
       setRenameFailed(true);
@@ -1385,7 +1386,7 @@ function ConversationRow({
     setRenameFailed(!saved);
     if (saved) setEditingTitle(false);
     else renameInputRef.current?.focus();
-  }, [displayTitle, onRename, renameDraft]);
+  }, [displayTitle, onRename, renameDraft, renamePending]);
 
   useEffect(() => {
     if (!editingTitle) return;
@@ -1470,7 +1471,7 @@ function ConversationRow({
             ref={renameInputRef}
             value={renameDraft}
             maxLength={160}
-            disabled={renamePending}
+            readOnly={renamePending}
             aria-label={language === 'zh' ? '对话标题' : 'Chat title'}
             aria-invalid={renameFailed}
             title={renameFailed
@@ -1563,7 +1564,7 @@ function ConversationRow({
         <Archive size={15} />
       </button>}
     </div>
-    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running ? undefined : attention} />
+    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running ? undefined : attention} onRename={beginRename} />
   </>);
 }
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { normalizeIndividuation } from '@cardbush/bush-protocol';
 import { IndividuationStore } from '../dist/individuationStore.js';
-import { IndividuationMemory } from '../dist/individuationMemory.js';
+import { runtimeMemory } from './helpers/runtimeMemory.mjs';
 import { memoryTokens } from '../dist/individuationText.js';
 
 const settings=normalizeIndividuation({habits:true,predictions:true,eventTokenThreshold:1000,habitTokenThreshold:1000});
@@ -20,40 +20,46 @@ const write=(store,kind,text,turn)=>store.summarize({[kind]:{text}},settings,{..
 const review=(prediction,evidence,outcome='hit')=>({prediction,evidence,outcome,reason:'Explicit subsequent user request'});
 const result=(habits=[],predictions=[],reviews=[])=>({habits,predictions,reviews});
 const provider=fn=>({async *stream(request){
-  const data=await fn(request,JSON.parse(request.messages.at(-1).content));
+  const rows=JSON.parse(request.messages.at(-1).content),data=await fn(request,rows);
+  for(const review of data.reviews)review.quote=rows.find(row=>row.id===review.evidence)?.text.slice(0,120);
   yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:0,kind:'text_delta',delta:JSON.stringify(data)};
   yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:1,kind:'response_completed',finishReason:'stop'};
 }});
 
-test('promotion crossing the habit threshold immediately runs one full habit pass',async t=>{
+test('forecast compaction that promotes habits still compacts an overflowing habit category',async t=>{
   const f=await fixture(t),stages=[];
   await write(f.store,'habit','既有习惯：用简短中文解释结果。','existing');
   for(let i=0;i<5;i++){
     const tag=`Market${i}`;
-    await write(f.store,'prediction',`${tag}: May need a dated XLSX market report.`,'p'+i);
+    await write(f.store,'prediction',`${tag}: `+'May need a dated XLSX market report with prices and sources. '.repeat(14),'p'+i);
     for(let j=0;j<2;j++)await f.store.observe(`${tag}: Please provide the XLSX report. `+'Include the date, sources and price history. '.repeat(20),settings,{...owner,turnId:`e${i}-${j}`});
   }
   const initial=await f.store.status(settings);assert.ok(initial.eventTokens>=1000&&initial.habitTokens<1000);
-  const memory=new IndividuationMemory(f.path,provider(async(request,rows)=>{
+  const memory=runtimeMemory(f.path,provider(async(request,rows)=>{
     stages.push(request.metadata.memoryStage);assert.equal(request.maxOutputTokens,128000);assert.equal(request.reasoningEffort,'max');
-    if(stages.length===1){
-      assert.equal(rows.length,15);assert.ok(rows.every(row=>row.kind!=='habit'));
+    if(request.metadata.memoryPhase==='review'){
+      assert.ok(rows.every(row=>row.kind!=='habit'));
       const forecasts=rows.filter(row=>row.kind==='prediction'),reviews=[];
-      const habits=forecasts.map((forecast,i)=>{
-        const evidence=rows.filter(row=>row.kind==='evidence'&&row.text.startsWith(`Market${i}:`));assert.equal(evidence.length,2);
+      for(const forecast of forecasts){
+        const tag=forecast.text.split(':')[0];
+        const evidence=rows.filter(row=>row.kind==='evidence'&&row.text.startsWith(tag+':')&&row.reviewable_predictions.includes(forecast.id));
         for(const row of evidence)reviews.push(review(forecast.id,row.id));
-        return {text:`Market${i}: `+'For financial analysis provide an XLSX report with dated prices and sources. '.repeat(12),sources:[forecast.id,...evidence.map(row=>row.id)]};
-      });
-      return result(habits,[],reviews);
+      }
+      return result([],[],reviews);
+    }
+    if(request.metadata.memoryPhase==='consolidate'&&request.metadata.memoryStage==='events'){
+      assert.equal(rows.length,5);assert.ok(rows.every(row=>row.kind==='prediction'&&row.hits===2));
+      return result(rows.map((row,i)=>({text:`Market${i}: `+'For financial analysis provide an XLSX report with dated prices and sources. '.repeat(12),sources:[row.id]})));
     }
     assert.ok(rows.every(row=>row.kind==='habit'));assert.equal(rows.length,6,'existing and newly promoted habits are compacted together');
     assert.ok((await f.store.status(settings)).habitTokens>=1000);
     return result([{text:'用简短中文说明；市场分析附带日期、价格和来源的 XLSX 报告。',sources:rows.map(row=>row.id)}]);
   }));t.after(()=>memory.close());
   const status=await memory.compact(settings,model,false);
-  assert.deepEqual(stages,['events','habits']);assert.equal(status.records,1);assert.equal(status.hits,10);assert.equal(status.eventTokens,0);
+  assert.equal(stages.at(-1),'habits');assert.equal(stages.filter(stage=>stage==='habits').length,1);
+  assert.equal(status.records,1);assert.equal(status.hits,10);assert.equal(status.eventTokens,0);
   assert.ok(status.habitTokens<1000&&status.estimatedTokens<initial.estimatedTokens);
-  await memory.compact(settings,model,false);assert.equal(stages.length,2);
+  const calls=stages.length;await memory.compact(settings,model,false);assert.equal(stages.length,calls);
 });
 
 test('one hit remains a forecast and a later independent hit completes the promotion cycle',async t=>{

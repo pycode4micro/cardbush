@@ -1,4 +1,4 @@
-import { Clipboard, PanelRightOpen } from 'lucide-react';
+import { NotebookText, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
 import type { ReactNode } from 'react';
 import { conversationDisplayTitle } from '../shared/conversationTitle';
@@ -39,7 +39,7 @@ export function TopBar({
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
           aria-label={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
         >
-          <Clipboard size={15} />
+          <NotebookText size={15} />
         </button>
       )}
       {!inspectorOpen && onToggleInspector && <button

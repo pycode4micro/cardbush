@@ -26,6 +26,7 @@ export function agentRuntimeClient(call: AgentCall, watch?: Watch) {
       const payload = command.payload as Record<string, unknown>;
       const result = command.kind === 'runtime.get_session' ? await call('sessions.get', payload)
         : command.kind === 'runtime.list_sessions' ? await call('sessions.list')
+        : command.kind === 'runtime.list_session_summaries' ? await call('sessions.list', { projection: 'summary' })
         : await call('runtime.command', { ...command });
       signal?.throwIfAborted();
       return result;
@@ -184,6 +185,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     });
   };
   const load: typeof shared.fetchSessionMessages = async (sessionId, options) => {
+    if (options?.page?.cursor) return shared.fetchSessionMessages(sessionId, options, runtime);
     const [result, jobs] = await Promise.all([shared.fetchSessionMessages(sessionId, options, runtime), getJobs(sessionId)]);
     const running = jobs.find(job => job.status === 'running');
     if (running && !running.goalContinuation && !result.messages.some(message => message.turnId === running.turnId)) {

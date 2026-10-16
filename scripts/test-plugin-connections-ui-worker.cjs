@@ -25,6 +25,7 @@ app.whenReady().then(async()=>{
   await win.loadFile(join(directory,'index.html'));
   await until('document.body.innerText.includes("已连接 · 26 个工具")');
   await until('!document.querySelector(".plugin-add-button").disabled');
+  if (process.env.CARDBUSH_PLUGIN_MARKETPLACE_ONLY !== '1') {
   await read('Array.from(document.querySelectorAll(".plugin-added-card")).find(button=>button.textContent.includes("Personal Tools")).click()');
   await until('!!document.querySelector(".plugin-detail-hero .plugin-uninstall-button")');
   win.setSize(460,900);await capture('plugin-uninstall-detail.png');
@@ -427,7 +428,7 @@ app.whenReady().then(async()=>{
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationState:"pending",servers:fixtureOverview.snapshot.servers.map(server=>server.id==="plugin_personal_tools_echo"?{...server,health:"ready",lastError:undefined,tools:[{remoteName:"read",runtimeName:"mcp__plugin_personal_tools_echo__read"}]}:server)}}');
   const beforeFocus=await read('authCalls.length');
   await read('window.dispatchEvent(new Event("focus"));window.dispatchEvent(new Event("focus"))');
-  await until('document.querySelector(".plugin-mcp-service header span").textContent.includes("等待任务结束")&&!document.querySelector(".plugin-mcp-heading button").disabled');
+  await until('document.querySelector(".plugin-mcp-service header span").textContent==="正在同步工具目录"&&!document.querySelector(".plugin-mcp-heading button").disabled');
   assert.equal(await read('authCalls.length'),beforeFocus+1,'duplicate focus events share the in-flight connection check');
   assert.ok(await read('document.querySelector(".plugin-mcp-service [role=status]")?.textContent.includes("浏览器完成授权")'),'a deferred runtime snapshot cannot complete the authorization step using old ready state');
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationPhase:"connecting"}}');
@@ -444,7 +445,7 @@ app.whenReady().then(async()=>{
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,servers:fixtureOverview.snapshot.servers.map(server=>({...server,updateState:undefined}))}}');
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationState:"applied",applicationPhase:undefined}}');
   await until('document.querySelector(".plugin-mcp-service header span").textContent==="已连接"');
-  assert.equal(await read('authCalls.length'),beforeFocus+1,'finishing active work updates pending status through snapshot reads, without reconnecting');
+  assert.equal(await read('authCalls.length'),beforeFocus+1,'finishing catalog synchronization updates pending status through snapshot reads, without reconnecting');
   assert.equal(await read('!!document.querySelector(".plugin-mcp-service [role=status]")'),false,'the authorization step disappears only after actual discovery succeeds');
   await read('window.dispatchEvent(new Event("focus"))');
   assert.equal(await read('authCalls.length'),beforeFocus+1,'ordinary focus never reconnects a completed authorization');
@@ -456,7 +457,7 @@ app.whenReady().then(async()=>{
   // Reproduce the reported screen: every connection is pending and the shared
   // account is not available. Cancellation must still be visible per service.
   await read('publishAccount("signed_out");fixtureApps=structuredClone(fixtureApps);fixtureApps.plugins[2].components[0].name="Slack";fixtureApps.plugins[2].components[0].mcp.required=true;fixtureApps.plugins[2].components.push({id:"teams",kind:"app",name:"Teams",description:"",mcp:{registeredAppId:"asdk_app_teams"}});fixtureApps.plugins[2].config.mcp_servers.teams={provider:"openai",enabled:true,enabled_tools:["read"]};fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationState:"pending"}};refreshFixture()');
-  await until('document.querySelectorAll(".plugin-mcp-service").length===2&&document.querySelector(".plugin-mcp-service header span").textContent.includes("等待任务结束")');
+  await until('document.querySelectorAll(".plugin-mcp-service").length===2&&document.querySelector(".plugin-mcp-service header span").textContent==="正在同步工具目录"');
   assert.equal(await read('Array.from(document.querySelectorAll(".plugin-mcp-primary-actions button")).filter(b=>b.textContent==="取消连接"&&!b.disabled).length'),2,'pending connections can be cancelled without an OpenAI sign-in');
   await capture('plugin-connection-cancel-pending.png');
   await click('取消连接');
@@ -464,7 +465,7 @@ app.whenReady().then(async()=>{
   assert.equal(await read('fixtureApps.plugins[2].config.mcp_servers.echo.required'),false,'cancelling a required connection releases its requirement so other services can still apply');
   assert.deepEqual(await read('fixtureApps.plugins[2].config.mcp_servers.teams'),{provider:'openai',enabled:true,enabled_tools:['read']});
   assert.match(await read('document.querySelector(".plugin-mcp-service").textContent'),/已停用/);
-  assert.match(await read('document.querySelector(".plugin-mcp-service").textContent'),/正在运行的任务仍可能使用旧连接/,'queued removal remains distinct from completed runtime removal');
+  assert.match(await read('document.querySelector(".plugin-mcp-service").textContent'),/停用设置已保存，正在完成此连接中已发出的调用/,'queued removal remains distinct from completed runtime removal');
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'));
   await capture('plugin-connection-cancelled-narrow.png');
   await read('fixtureApps=structuredClone(fixtureApps);fixtureApps.plugins[2].components=fixtureApps.plugins[2].components.filter(item=>item.id!=="teams");fixtureApps.plugins[2].components[0].name="Personal Tools";delete fixtureApps.plugins[2].components[0].mcp.required;delete fixtureApps.plugins[2].config.mcp_servers.echo.required;delete fixtureApps.plugins[2].config.mcp_servers.teams;fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationState:"applied",servers:fixtureOverview.snapshot.servers.filter(server=>server.id!=="plugin_personal_tools_echo")}};publishAccount("signed_in");refreshFixture()');
@@ -590,6 +591,9 @@ app.whenReady().then(async()=>{
   await until('document.querySelectorAll(".plugin-manage-list article").length===5');
   await click('插件');
   win.setSize(430,820);
+  }
+  await read('window.marketAddedBefore=document.querySelectorAll(".plugin-added-card").length');
+  win.setSize(430,820);
   await until('window.innerWidth<450');
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'catalog fits narrow windows');
   await new Promise(r=>setTimeout(r,150));
@@ -600,21 +604,46 @@ app.whenReady().then(async()=>{
   await until('document.querySelector(".plugin-detail-hero h2")?.textContent==="Chrome"');
   await click('返回市场');
   await until('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="添加来源").disabled');
+  await read('window.marketGridTop=document.querySelector(".plugin-market-grid").getBoundingClientRect().top;Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="添加来源").focus()');
   await click('添加来源');
-  await until('!document.querySelector(".plugin-market-add input").disabled');
-  await read('(()=>{const input=document.querySelector(".plugin-market-add input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(input,"fixture/plugins");input.dispatchEvent(new Event("input",{bubbles:true}));})()');
+  await until('!document.querySelector(".plugin-market-source-dialog input").disabled');
+  assert.equal(await read('document.querySelector(".plugin-market-source-dialog").matches(":modal")'),true,'market sources use a modal');
+  assert.equal(await read('document.querySelector(".plugin-market-grid").getBoundingClientRect().top'),await read('marketGridTop'),'opening a source leaves the list in place');
+  assert.equal(await read('document.querySelector(".plugin-market-source-help").open'),false,'address help starts collapsed');
+  await read('document.querySelector("dialog [aria-label=来源类型]").click()');
+  await until('!!document.querySelector(".settings-dropdown-popover:popover-open")');
+  await read('document.querySelector(".settings-dropdown-popover:popover-open [value=local]").click()');
+  await click('选择文件夹并添加');
+  await until('marketLocalCalls===1 && document.querySelector("dialog").getAttribute("aria-busy")==="false"');
+  assert.equal(await read('document.querySelector(".plugin-market-source-dialog").matches(":modal")'),true,'cancelling folder picker keeps the source dialog');
+  await read('document.querySelector("dialog [aria-label=来源类型]").click()');
+  await until('!!document.querySelector(".settings-dropdown-popover:popover-open")');
+  await read('document.querySelector(".settings-dropdown-popover:popover-open [value=git]").click()');
+  await read('(()=>{const input=document.querySelector(".plugin-market-source-dialog input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(input,"fixture/plugins");input.dispatchEvent(new Event("input",{bubbles:true}));})()');
   await until('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="添加市场").disabled');
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  await until('!document.querySelector(".plugin-market-source-dialog")');
+  assert.equal(await read('document.activeElement.textContent.trim()'),'添加来源','closing returns focus to source opener');
+  await click('添加来源');await until('document.querySelector(".plugin-market-source-dialog")?.open');
+  assert.equal(await read('document.querySelector("dialog input").value'),'fixture/plugins','closing and reopening preserves the source draft');
   await read('marketAddFails=true');await click('添加市场');
   await until('document.querySelector(".plugin-market-error p")?.textContent.includes("暂时无法连接市场")');
-  assert.equal(await read('document.querySelector(".plugin-market-add input").value'),'fixture/plugins','retry preserves source input');
+  assert.equal(await read('document.querySelector(".plugin-market-source-dialog input").value'),'fixture/plugins','retry preserves source input');
   assert.equal(await read('document.querySelector(".plugin-market-error details").open'),false,'technical errors are collapsed');
   await click('代理设置');await until('document.querySelector(".plugin-proxy-dialog")?.open');
   assert.equal(await read('document.querySelector(".plugin-proxy-dialog .settings-dropdown-trigger").value'),'model');
   await click('关闭代理设置');await until('!document.querySelector(".plugin-proxy-dialog")');
-  assert.equal(await read('document.querySelector(".plugin-market-add input").value'),'fixture/plugins','proxy settings preserve the pending marketplace source');
+  assert.equal(await read('document.querySelector(".plugin-market-source-dialog input").value'),'fixture/plugins','proxy settings preserve the pending marketplace source');
   await new Promise(r=>setTimeout(r,150));
   writeFileSync(resolve('tmp/plugin-marketplace-error.png'),(await win.webContents.capturePage()).toPNG());
-  await read('marketAddFails=false');await click('添加市场');await until('document.body.innerText.includes("claude-example")');
+  await read('marketAddFails=false;marketSourceSlow=true;document.querySelector(".plugin-market-source-dialog form").requestSubmit();document.querySelector(".plugin-market-source-dialog form").requestSubmit()');
+  await until('marketSourceCalls===2 && typeof finishMarketSource==="function"');
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  await new Promise(resolve=>setTimeout(resolve,50));
+  assert.equal(await read('document.querySelector(".plugin-market-source-dialog").matches(":modal")'),true,'adding source cannot be dismissed');
+  await read('finishMarketSource()');await until('document.body.innerText.includes("claude-example")');
+  assert.equal(await read('marketSourceCalls'),2,'source submission is not duplicated');
+  assert.equal(await read('!!document.querySelector(".plugin-market-source-dialog")'),false,'success closes the source dialog');
   assert.ok(await read('Array.from(document.querySelectorAll("article button")).find(b=>b.textContent.includes("unavailable")).disabled'));
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'marketplace fits narrow windows');
   await new Promise(r=>setTimeout(r,500));
@@ -686,10 +715,10 @@ app.whenReady().then(async()=>{
   await read('marketSlow=true');await open('claude-example');
   await until('typeof finishMarketPreview==="function"');await click('返回市场');await click('返回插件');
   await read('finishMarketPreview()');
-  await until('document.querySelectorAll(".plugin-added-card").length===6');
+  await until('document.querySelectorAll(".plugin-added-card").length===marketAddedBefore+1');
   assert.equal(await read('!!document.querySelector(".plugin-market-detail")'),false,'late preview does not reopen marketplace after navigating away');
-  if (process.env.CARDBUSH_PLUGIN_NETWORK_ONLY === '1') {
-    console.log('Marketplace network UI passed: server deadlines, manual retry after route changes, proxy access, retained input and narrow layout.');
+  if (process.env.CARDBUSH_PLUGIN_NETWORK_ONLY === '1' || process.env.CARDBUSH_PLUGIN_MARKETPLACE_ONLY === '1') {
+    console.log('Marketplace UI passed: modal layout, local picker cancellation, retained drafts, busy/duplicate guards, nested proxy settings, source retry and installation.');
     clearTimeout(deadline); win.destroy(); app.exit(0); return;
   }
   await read('showComposer()');await until('!!document.querySelector("textarea")');
@@ -813,7 +842,7 @@ app.whenReady().then(async()=>{
   win.setContentSize(1000,820);await until('Math.abs(window.innerWidth-1000)<=2');
   await draft('/Chrome');await until('document.querySelectorAll(".composer-command-category").length===3');
   await draft('@');await until('document.body.innerText.includes("当前对话 · 用户指令")');
-  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row"),item=>item.dataset.commandId)'),['application:builtin:plugins','application:builtin:automations','application:builtin:settings','application:builtin:components','ssh:manage','reference:files','browser:cardbush-tab','turn:source-user']);
+  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row"),item=>item.dataset.commandId)'),['application:builtin:plugins','application:builtin:automations','application:builtin:settings','application:builtin:components','application:builtin:team','application:builtin:md-presentation','ssh:manage','reference:files','browser:cardbush-tab','turn:source-user']);
   assert.equal(await read('document.querySelector(\'[data-command-id="ssh:manage"]\').disabled'),true,'SSH cannot switch workspaces without a workspace handler');
   assert.doesNotMatch(await read('document.querySelector(".composer-command-list").textContent'),/助手消息不应列出|其他对话不应列出/);
   await capture('composer-mention-menu.png');
@@ -845,13 +874,13 @@ app.whenReady().then(async()=>{
   await until('attachmentPickerCalls===1');
   assert.equal(await read('fixtureDraft'),'','cancelled native picker leaves no @file placeholder');
   await draft('@');await read('setFixtureSources({sessionId:"empty-current",browserTabs:[],messages:[]})');
-  await until('document.querySelectorAll(".composer-command-row").length===6');
-  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row"),item=>item.dataset.commandId)'),['application:builtin:plugins','application:builtin:automations','application:builtin:settings','application:builtin:components','ssh:manage','reference:files'],'empty or changed sessions keep apps/environment/file actions without prior turn suggestions');
+  await until('document.querySelectorAll(".composer-command-row").length===8');
+  assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-row"),item=>item.dataset.commandId)'),['application:builtin:plugins','application:builtin:automations','application:builtin:settings','application:builtin:components','application:builtin:team','application:builtin:md-presentation','ssh:manage','reference:files'],'empty or changed sessions keep apps/environment/file actions without prior turn suggestions');
   await draft('user@example.test');assert.equal(await read('!!document.querySelector(".composer-command-palette")'),false);
-  await read('window.persistedContextPrompt=savedTurnReference+"\\n"+savedBrowserReference;window.referenceOpens=[];window.addEventListener("cardbush:open-inspector",event=>referenceOpens.push(event.detail));window.addEventListener("cardbush:open-work-summary-inspector",event=>referenceOpens.push(event.detail));showTranscript([persistedContextPrompt])');
+  await read('window.persistedContextPrompt=savedTurnReference+"\\n"+savedBrowserReference;window.referenceOpens=[];window.addEventListener("cardbush:open-inspector",event=>referenceOpens.push(event.detail));window.addEventListener("cardbush:open-work-summary-inspector",event=>referenceOpens.push(event.detail));window.addEventListener("cardbush:reveal-browser-tab",event=>{event.preventDefault();referenceOpens.push({kind:"browser-tab",tabId:event.detail.tabId});event.detail.complete({status:"opened"});});showTranscript([persistedContextPrompt])');
   await until('document.querySelectorAll(".context-reference-token").length===2');
   await read('document.querySelectorAll(".context-reference-token")[0].click();document.querySelectorAll(".context-reference-token")[1].click()');
-  assert.deepEqual(await read('referenceOpens'),[{kind:'turn-history',sessionId:'current',turnId:'source-turn'},{target:'https://example.test/current?page=2',title:'CardBush 当前网页',sourceTabId:'cardbush-tab'}]);
+  assert.deepEqual(await read('referenceOpens'),[{kind:'turn-history',sessionId:'current',turnId:'source-turn'},{kind:'browser-tab',tabId:'cardbush-tab'}],'browser references reveal the existing tab without navigating an inspector to a copied URL');
   await capture('composer-reference-transcript.png');
   console.log('Composer references passed: categorized logos, native attachment picker, current-session user facts, browser snapshots, mixed token editing, exact submission and transcript navigation.');
   await read('window.persistedPluginPrompt=referenceText+" 请检查这个插件。\\n\\n[普通 JSON](<C:/Fixture/config.json>)\\n\\n`"+referenceText+"`";showTranscript([persistedPluginPrompt,referenceText+" 再次引用",persistedContextPrompt])');

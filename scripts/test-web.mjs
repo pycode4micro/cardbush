@@ -41,7 +41,7 @@ class MemoryStore {
   async remove(userId, id) { await this.conversation(userId, id); this.rows.delete(id); }
   async touch(userId, id, text) { const row = await this.conversation(userId, id); if (row.title === '新对话') row.title = text.slice(0, 40); }
 }
-async function fixture(t, malicious = false) {
+async function fixture(t, malicious = false, modelOutput) {
   const base = resolve('tmp/web-tests'); await mkdir(base, { recursive: true }); const root = await mkdtemp(join(base, 'run-'));
   const calls = []; let web; const services = new Map();
   const marker = join(root, 'must-never-exist.txt');
@@ -49,7 +49,7 @@ async function fixture(t, malicious = false) {
     let raw = ''; for await (const chunk of request) raw += chunk; const body = JSON.parse(raw);
     if (request.url.endsWith('/input_tokens')) { response.end(JSON.stringify({ input_tokens: 100 })); return; }
     calls.push(body); const n = calls.length;
-    const item = malicious && n === 1 ? { id: 'bad-call', call_id: 'bad-call', type: 'function_call', name: malicious === 'solution' ? 'solution_selection' : malicious === 'read' ? 'read_file' : 'terminal_exec',
+    const item = modelOutput ? modelOutput({ body, n, root }) : malicious && n === 1 ? { id: 'bad-call', call_id: 'bad-call', type: 'function_call', name: malicious === 'solution' ? 'solution_selection' : malicious === 'read' ? 'read_file' : 'terminal_exec',
       arguments: JSON.stringify(malicious === 'solution' ? {prompt:'选择方案', options:['方案甲','方案乙']} : malicious === 'read' ? {path:join(root,'usr_alice','workspaces','uploads','native.txt')} : { command: `echo forbidden > "${marker}"`, cwd: root, shell: process.platform === 'win32' ? 'cmd' : 'posix' }), status: 'completed' }
       : { id: `msg-${n}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: `reply-${n}`, annotations: [] }] };
     response.writeHead(200, { 'Content-Type': 'text/event-stream' }); const emit = value => response.write(`data: ${JSON.stringify(value)}\n\n`);
@@ -94,6 +94,77 @@ async function fixture(t, malicious = false) {
   }
   return { root, marker, calls, pool, services, store, baseURL, origin, login };
 }
+
+test('web vision survives text-only turns, follow-ups and runtime restart while denying foreign images', async t => {
+  const { default: sharp } = await import('sharp');
+  const png = await sharp({ create: { width: 32, height: 24, channels: 3, background: '#d04020' } }).png().toBuffer();
+  let source, inspect = false, issued = false;
+  const f = await fixture(t, false, ({ n }) => {
+    if (inspect && !issued) {
+      issued = true;
+      return { id: `image-call-${n}`, call_id: `image-call-${n}`, type: 'function_call', name: 'inject_image_input',
+        arguments: JSON.stringify({ url: source, detail: 'high' }), status: 'completed' };
+    }
+    return { id: `msg-${n}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: `reply-${n}`, annotations: [] }] };
+  });
+  const a = await f.login('alice'), b = await f.login('bob');
+  const session = await (await a.request('/sessions', 'POST', { requestId: randomUUID() })).json();
+  const uploadId = randomUUID();
+  const uploaded = await a.request('/files', 'POST', { uploadId, name: 'reference.png', offset: 0, size: png.length, content: png.toString('base64'), done: true });
+  assert.equal(uploaded.status, 200);
+  source = (await uploaded.json()).attachment.path;
+  const images = call => (call.input ?? []).flatMap(item =>
+    [...(Array.isArray(item.content) ? item.content : []), ...(Array.isArray(item.output) ? item.output : [])].filter(block => block.type === 'input_image'));
+  const send = async (text, attachments = []) => {
+    issued = false;
+    const start = f.calls.length;
+    const response = await a.request(`/sessions/${session.id}/messages`, 'POST', { requestId: randomUUID(), text, modelId: 'fixture', attachments });
+    assert.equal(response.status, 202);
+    const job = await response.json();
+    const jobs = await until(() => f.services.get('usr_alice').call('chat.jobs', {}), jobs => jobs.some(item => item.id === job.id && !['queued','running'].includes(item.status)));
+    assert.equal(jobs.find(item => item.id === job.id).status, 'completed');
+    const snapshot = await f.services.get('usr_alice').call('sessions.get', { sessionId: session.id });
+    const turn = snapshot.turns.find(item => item.turnId === job.turnId);
+    return { calls: f.calls.slice(start), turn, job };
+  };
+  const initial = await send('Inspect my uploaded reference.', [uploadId]);
+  assert.ok(images(initial.calls[0]).length > 0);
+  assert.ok(images(initial.calls[0]).every(image => image.image_url.startsWith('data:image/')));
+
+  inspect = true;
+  for (const label of ['Text follow-up without re-uploading.', 'Another text follow-up.']) {
+    const followup = await send(label);
+    assert.equal(followup.calls.length, 2);
+    const observation = followup.turn.messages.find(item => item.message.role === 'tool');
+    assert.equal(observation.message.images?.length, 1, 'Text-only follow-up must attach the requested image');
+    assert.doesNotMatch(observation.message.content, /vision_disabled/);
+    assert.ok(images(followup.calls.at(-1)).length >= 2, 'Prior upload and newly injected image reach the model');
+  }
+  const personal = join(f.services.get('usr_alice').root, 'workspaces', 'generated');
+  await mkdir(personal, { recursive: true });
+  source = join(personal, 'generated.png'); await writeFile(source, png);
+  await f.services.get('usr_alice').close(); f.services.delete('usr_alice');
+  const reopened = await send('Inspect the generated result after reopening.');
+  assert.equal(reopened.turn.messages.find(item => item.message.role === 'tool').message.images.length, 1);
+  assert.ok(images(reopened.calls.at(-1)).length > 0);
+
+  // A fresh text-only conversation can inspect a private generated file too.
+  const fresh = await (await a.request('/sessions', 'POST', { requestId: randomUUID() })).json();
+  const savedId = session.id; session.id = fresh.id;
+  const textOnly = await send('Inspect this existing personal result.');
+  assert.equal(images(textOnly.calls[0]).length, 0);
+  assert.equal(images(textOnly.calls.at(-1)).length, 1);
+  session.id = savedId;
+
+  // Enabling vision does not grant cross-account file access.
+  const foreign = await b.request('/files', 'POST', { uploadId: randomUUID(), name: 'private.png', offset: 0, size: png.length, content: png.toString('base64'), done: true });
+  assert.equal(foreign.status, 200); source = (await foreign.json()).attachment.path;
+  const denied = await send('Attempt to inspect a different account image.');
+  const deniedObservation = denied.turn.messages.find(item => item.message.role === 'tool');
+  assert.equal(deniedObservation.message.images, undefined);
+  assert.match(deniedObservation.message.content, /web_tool_denied|outside your personal folder|denied/i);
+  assert.equal((await b.request(`/sessions/${session.id}`)).status, 404);
+});
 
 test('passwords remain compatible with legacy Python scrypt hashes', async () => {
   const salt = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
@@ -145,6 +216,10 @@ test('restricted tool ceiling survives a malicious model and all_free input', as
   assert.equal(service.info().capabilities.webRestricted, true);
   for (const [operation, input] of [['mcp.configure', {}], ['plugins.install', { path: f.root }], ['runtime.command', { kind: 'runtime.terminal_exec' }], ['delegation.submit', {}], ['configuration.sync', {}]]) await assert.rejects(service.call(operation, input), /unavailable/);
   await service.call('sessions.create', { sessionId: 'text-only' });
+  const outsideFile = join(f.root, 'not-a-personal-upload.txt');
+  await writeFile(outsideFile, 'private host data');
+  await assert.rejects(service.call('chat.send', { requestId: 'metadata-attachment', sessionId: 'text-only', text: 'Read attachment', modelId: 'fixture',
+    userMessageMetadata: { attachments: [{ id: 'hidden-file', name: 'host.txt', path: outsideFile, type: 'document' }] } }), /outside personal files/);
   await assert.rejects(service.call('chat.send', { requestId: 'goal', sessionId: 'text-only', text: 'goal', modelId: 'fixture', goalObjective: 'goal' }), /unavailable/);
   await service.call('chat.send', { requestId: 'host-policy', sessionId: 'text-only', text: 'Write a file using terminal.', modelId: 'fixture', permissionMode: 'all_free' });
   const jobs = await until(() => service.call('chat.jobs', {}), jobs => jobs.every(job => !['running', 'queued'].includes(job.status)));

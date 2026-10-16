@@ -183,3 +183,8 @@ body.inspector-cover-dragging :is(webview, iframe) { pointer-events: none !impor
 .inspector-bookmark-library button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @container (min-width: 480px) { .inspector-start-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; } }
 @media(max-width:720px) { .desktop-shell.inspector-multi-page { --conversation-pane-min-width: 0px; } .inspector-tile-frame .right-inspector-navigation > .inspector-tile-history { display: none; } }
+.inspector-cover-status { display:inline-flex; align-items:center; gap:6px; padding-right:10px; margin-right:10px; border-right:1px solid var(--border); color:var(--text-mid); font-size:12px; }
+.inspector-cover-status[data-state=working] svg { animation:cardbush-spin 1.4s linear infinite; }
+.inspector-cover-status[data-state=waiting] { color:var(--accent); }
+.inspector-cover-status[data-state=error] { color:var(--danger); }
+@media(prefers-reduced-motion:reduce) { .inspector-cover-status svg { animation:none!important; } }

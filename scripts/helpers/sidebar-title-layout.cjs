@@ -122,7 +122,8 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
   assert.equal(await run('sidebarGeometry(3).animation'), 'none', 'short titles need no marquee');
   const archivePoint = await run("(() => { const r=sidebarRow(3).querySelector('.conversation-archive').getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()");
   window.webContents.sendInputEvent({ type: 'mouseMove', ...archivePoint });
-  await until("!document.querySelector('.conversation-hover-preview')", 'quick actions suppress the metadata card');
+  await pause(160);
+  assert.equal(await run("!!document.querySelector('.conversation-hover-preview:popover-open')"), true, 'an open edit card stays reachable across row actions');
   await moveAway();
   await run("document.querySelector('.app').style.setProperty('--sidebar-width', '256px')");
   await pause(320);

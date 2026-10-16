@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { searchLimitParameter, searchResultLimitSchema } from '@cardbush/bush-protocol';
 import { readPluginSkill, skillPluginIdentity } from './pluginSkills.js';
 import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
+import { catalogPage, catalogPageProperties, discoveryDescription, projectCatalogPage } from './catalogPage.js';
 
 import type { ToolRegistration, ToolRegistry } from "./toolRegistry.js";
 
@@ -32,16 +33,17 @@ export function registerSkillTools(
 function searchRegistration(
   roots: SkillRootProvider,
   loadSearchResultLimit?: SearchResultLimitProvider,
-): ToolRegistration<{ query: string; limit?: number }> {
+): ToolRegistration<{ query: string; limit?: number; offset: number }> {
   return {
     definition: {
       name: "search_skills",
-      description: "Search installed Skills by capability or name. Returns mainResource (SKILL.md), environment=local and an invocation id for plugin Skills. Read the selected file with read_file in that environment, even in an SSH workspace; local means this Runtime host. Inspect its references/ directory when present and read relevant documents even if unlinked, resolving paths relative to the Skill directory. Reuse resources already in context. To invoke a plugin Skill, pass its exact id to run_skill; other Skills are applied by reading their files.",
+      description: "Search installed Skills by capability or name. Returns brief descriptions, total, next_offset, mainResource (SKILL.md), environment=local and an invocation id for plugin Skills. Continue with next_offset as offset and the same query. Read the selected file with read_file in that environment, even in an SSH workspace; local means this Runtime host. Inspect its references/ directory when present and read relevant documents even if unlinked, resolving paths relative to the Skill directory. Reuse resources already in context. To invoke a plugin Skill, pass its exact id to run_skill; other Skills are applied by reading their files.",
       inputSchema: {
         type: "object",
         properties: {
           query: { type: "string", minLength: 1 },
           limit: { ...searchLimitParameter },
+          offset: catalogPageProperties.offset,
         },
         required: ["query"],
         additionalProperties: false,
@@ -50,12 +52,14 @@ function searchRegistration(
     manifest: manifest("skills.search"),
     parallelSafe: true,
     visibleToChild: true,
+    projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['matches']),
     decodeInput: (value) => {
       const input = object(value);
       const query = String(input.query ?? "").trim();
       const limit = searchResultLimitSchema.optional().parse(input.limit);
       if (!query) throw new Error("query is required.");
-      return { query, limit };
+      if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || Number(input.offset) < 0)) throw new Error('offset must be a nonnegative integer.');
+      return { query, limit, offset: Number(input.offset ?? 0) };
     },
     execute: async (context) => {
       const limit = await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
@@ -74,16 +78,16 @@ function searchRegistration(
         .map((skill) => ({ ...skill, score: score(skill, terms) }))
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
-        .slice(0, limit)
         .map(skill => ({
           name: skill.name,
-          description: skill.description.slice(0, 512),
-          ...(skill.description.length > 512 ? { descriptionTruncated: true } : {}),
+          description: discoveryDescription(skill.description),
+          ...(discoveryDescription(skill.description) !== skill.description ? { descriptionTruncated: true } : {}),
           mainResource: skill.mainResource,
           environment: 'local',
           ...(skill.invocation ? { invocation: skill.invocation } : {}),
         }));
-      return { matches };
+      const { items, ...page } = catalogPage(matches, { offset: context.input.offset, limit });
+      return { matches: items, ...page };
     },
   };
 }

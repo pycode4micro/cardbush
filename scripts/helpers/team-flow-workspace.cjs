@@ -5,6 +5,7 @@ const { resolve } = require('node:path');
 module.exports = async ({ read, until, frame, click, action, fill, key, pointerClick, capture, win }) => {
   const chooseView = async value => { await action('查看流程或运行'); await read(`document.querySelector('.settings-dropdown-popover:popover-open [role=option][value="${value}"]').click()`); await frame(); };
   await until('!!document.querySelector(".team-flow-workspace") && !!window.creationInspector && !teamState.loading');
+  await require('./sidebar-app-dock.cjs')({read,frame,win,sidebar:'.native-team-sidebar'});
   assert.equal(await read('document.querySelectorAll(".md-source,.md-node-editor").length'), 0);
   assert.equal(await read('records.teams.length'), 0, 'opening the workspace does not save a dummy team');
   assert.equal(await read('sessionInputs.length'), 0, 'opening a workflow only reserves its draft ID');
@@ -16,7 +17,9 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
   await click('员工管理'); await click('注册员工'); await fill('名称', '库存员'); await fill('ID', 'warehouse');
   await fill('岗位指令', '核对库存记录，返回数量和依据。');
   await click('保存员工'); await until('records.agents.length===1 && teamState.agents.length===1');
-  await click('全部流程'); await until('!!window.creationInspector');
+  await click('全部流程'); await until('!!document.querySelector(".team-library")');
+  assert.ok(await read('document.querySelector(".team-library").textContent.includes("还没有流程")'));
+  await pointerClick('.team-library header button'); await until('!!window.creationInspector && !document.querySelector(".team-graph-tab").hidden');
   await read('creationInspector.send("帮我创建库存与订单核验流程")'); await until('!!window.creationSubmitted');
   assert.equal(await read('creationSessionInput.metadata.team_workspace'), true);
   assert.equal(await read('creationSessionInput.projectDir'), undefined, 'an automatic workspace is not a project');
@@ -31,8 +34,12 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
       nodes:[{id:'stock',name:'库存核验',agent_id:'warehouse',prompt:'核对库存数量',depends_on:[]},{id:'summary',name:'订单汇总',agent_id:'warehouse',prompt:'根据库存结果核对订单',depends_on:['stock']}],
       presentation:{markdown:'# 订单核验\\n\\n保留这段理由'}}}})`);
   await action('刷新'); await until('document.querySelectorAll(".md-graph-node").length===2');
+  await click('全部流程'); await until('document.querySelectorAll(".team-library-list>button").length===1');
+  writeFileSync(resolve('tmp/team-workflow-library.png'), (await capture()).toPNG());
+  await pointerClick('.team-library-list>button'); await until('!document.querySelector(".team-graph-tab").hidden');
   assert.equal(await read('document.querySelectorAll("[data-edge]").length'), 1);
   assert.equal(await read('getComputedStyle(document.querySelector(".md-graph-node")).position'), 'absolute');
+  assert.equal(await read('(()=>{const canvas=document.querySelector(".team-flow-viewport"),body=document.querySelector(".team-flow-body"),style=getComputedStyle(canvas);return style.borderTopWidth==="0px"&&style.borderRadius==="0px"&&canvas.getBoundingClientRect().width===body.getBoundingClientRect().width})()'), true, 'workflow graph fills the workspace without an inset panel');
   assert.ok(await read('(()=>{const a=document.querySelector("[data-node-id=stock]").getBoundingClientRect(),b=document.querySelector("[data-node-id=summary]").getBoundingClientRect();return Math.abs(a.y-b.y)<1&&a.right<b.left})()'), 'sequential steps align with their graph edges');
   assert.equal(await read('teamState.selectedId'), '', 'browsing a workflow does not change the team selected in ordinary chats');
   await pointerClick('[data-node-id="summary"] .md-node-face');
@@ -55,6 +62,12 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
   await chooseView('run-one');
   assert.equal(await read('document.querySelectorAll(".md-graph-node").length'), 2, 'history uses its immutable execution snapshot');
   await click('停止'); await until('records.runs[0].status==="stopped"');
+  assert.ok(await read('document.querySelector(".team-run-results")?.textContent.includes("库存 50 件")'), 'partial results remain visible above the graph');
+  await read('records.runs[0].status="completed";records.runs[0].nodes[1].status="completed";records.runs[0].nodes[1].output="## 核验结论\\n\\n订单与库存一致。\\n\\n[查看交付文件](D:/reports/result.md)"');
+  await action('刷新'); await until('document.querySelector(".team-run-results h2")?.textContent==="核验结论"');
+  assert.equal(await read('document.querySelector(".team-run-results").textContent.includes("库存 50 件")'), false, 'completed result shows terminal deliverables without repeating upstream output');
+  writeFileSync(resolve('tmp/team-workflow-results.png'), (await capture()).toPNG());
+  await read('records.runs[0].status="stopped";records.runs[0].nodes[1].status="stopped";records.runs[0].nodes[1].output=""'); await action('刷新');
   await read('records.runs[0].parentSessionId="original-chat"'); await action('刷新');
   await click('在原会话继续'); assert.equal(await read('openedConversation'), 'original-chat');
   await chooseView('definition');
@@ -96,6 +109,7 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
     writeFileSync(resolve(`tmp/team-flow-${theme}.png`), (await capture()).toPNG());
   }
   win.setSize(760,680); await frame();
+  assert.ok(await read('Number.parseInt(document.querySelector(".md-graph-controls>span").textContent)>=100'), 'automatic layout preserves readable node text in narrow windows');
   assert.equal(await read('document.documentElement.scrollWidth<=innerWidth'), true);
   assert.ok(await read('(()=>{const r=document.querySelector(".team-flow-workspace .inspector-cover-capsule").getBoundingClientRect();return r.height>30&&r.bottom<=innerHeight})()'));
   writeFileSync(resolve('tmp/team-flow-narrow.png'), (await capture()).toPNG());

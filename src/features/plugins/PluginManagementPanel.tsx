@@ -74,7 +74,7 @@ export function PluginManagementPanel({
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onOpenMcp?: (serverId?: string) => void;
-  renderMcp?: (serverId?: string) => ReactNode;
+  renderMcp?: (serverId?: string, dialog?: { dialogOnly: true; onClose: () => void }) => ReactNode;
   onNotify: (message: string) => void;
   onOpenPrompt?: (prompt: string) => void;
   presentation?: 'catalog' | 'network';
@@ -95,7 +95,8 @@ export function PluginManagementPanel({
       ? { kind: 'workspace', pluginId: requestedPlugin.id, extensionId: requestedPlugin.extensionId }
       : { kind: 'plugin', pluginId: requestedPlugin.id });
   }, [requestedPlugin, setPage]);
-  const openMcp = (serverId?: string) => renderMcp ? setPage({ kind: 'mcp', serverId }) : onOpenMcp?.(serverId);
+  const [mcpDialog, setMcpDialog] = useState<{ serverId?: string } | null>(null);
+  const openMcp = (serverId?: string) => renderMcp ? setMcpDialog({ serverId }) : onOpenMcp?.(serverId);
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [localSkills, setLocalSkills] = useState(skills);
   const [skillDetail, setSkillDetail] = useState<SkillDetail | null>(null);
@@ -567,7 +568,7 @@ export function PluginManagementPanel({
                   <FolderOpen size={15} />
                   <span><strong>{language === 'zh' ? '从文件夹安装插件' : 'Install from folder'}</strong><small>{language === 'zh' ? '选择解压后的插件目录' : 'Choose an unpacked plugin'}</small></span>
                 </button>
-                <button type="button" onClick={() => { setAddOpen(false); openMcp(); }}>
+                <button type="button" onClick={() => { addMenuRef.current?.querySelector<HTMLButtonElement>('.plugin-add-button')?.focus(); setAddOpen(false); openMcp(); }}>
                   <Plus size={15} />
                   <span><strong>{language === 'zh' ? '添加 MCP 服务' : 'Add MCP server'}</strong><small>{language === 'zh' ? '连接本地或远程工具服务' : 'Connect a local or remote tool service'}</small></span>
                 </button>
@@ -632,6 +633,7 @@ export function PluginManagementPanel({
         <PageNavigationScope.Provider value={`${navigationScope}:plugin:${entry.id}`}>{renderPage(entry.page, entries[index - 1]?.page)}</PageNavigationScope.Provider>
       </div>;
     })}
+    {mcpDialog && renderMcp?.(mcpDialog.serverId, { dialogOnly: true, onClose: () => { setMcpDialog(null); void loadConnections(); } })}
   </div>;
 }
 

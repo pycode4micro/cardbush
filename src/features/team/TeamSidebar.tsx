@@ -26,7 +26,7 @@ export function NativeTeamSidebar({ language, onBack, onSelect, softVisible = tr
       </header>
       <button type="button" className="team-new-document" disabled={navigation.busy} onClick={() => { setQuery(''); requestTeamDocument({ kind: 'create' }); onSelect?.(); }}><Plus size={16}/>{t('新建流程', 'New workflow')}</button>
       <nav className="team-sidebar-nav" aria-label={t('团队管理', 'Team management')}>
-        {([{ tab: 'teams', icon: Files, label: t('全部流程', 'All workflows') }, { tab: 'runs', icon: History, label: t('运行记录', 'Runs') }] as const).map(({ tab, icon: Icon, label }) =>
+        {([{ tab: 'library', icon: Files, label: t('全部流程', 'All workflows') }, { tab: 'runs', icon: History, label: t('运行记录', 'Runs') }] as const).map(({ tab, icon: Icon, label }) =>
           <button type="button" key={tab} aria-current={navigation.tab === tab ? 'page' : undefined} onClick={() => { showTeamWorkspaceTab(tab); onSelect?.(); }}><Icon size={16}/>{label}</button>)}
       </nav>
       {searchOpen && <label className="team-sidebar-search"><Search size={14}/><input ref={searchRef} aria-label={t('筛选流程', 'Filter workflows')} placeholder={t('搜索流程…', 'Search workflows…')} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setQuery(''); setSearchOpen(false); } }}/></label>}
@@ -43,7 +43,7 @@ export function NativeTeamSidebar({ language, onBack, onSelect, softVisible = tr
         <button type="button" aria-current={navigation.tab === 'agents' ? 'page' : undefined} onClick={() => { showTeamWorkspaceTab('agents'); onSelect?.(); }}><UsersRound size={16}/>{t('员工管理', 'Manage agents')}</button>
         <button type="button" disabled={navigation.busy} onClick={() => { setQuery(''); requestTeamDocument({ kind: 'open' }); onSelect?.(); }}><FolderOpen size={16}/>{t('导入 Markdown', 'Import Markdown')}</button>
       </details>
-      <div className="native-team-app-dock"><AppCenterDock language={language}/></div>
+      <div className="sidebar-footer"><AppCenterDock language={language}/></div>
     </div>
   </aside>;
 }

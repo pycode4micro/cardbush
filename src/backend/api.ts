@@ -1,5 +1,7 @@
 import { readUserPrompt, type PromptContext } from '@cardbush/bush-protocol';
 import { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
+import { GET_RUNTIME_SESSION_HISTORY_COMMAND, SESSION_HISTORY_PAGE_SIZE, summarizeSession,
+  type SessionSummary, type SessionHistoryCursor, type SessionHistoryPage } from '@cardbush/bush-protocol';
 export { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
 import { modelAuthenticationSchema } from '@cardbush/bush-protocol';
@@ -9,7 +11,7 @@ import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
 import { defaultHostTerminalRuntime } from './hostPlatform';
 import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, SWITCH_RUNTIME_WORKSPACE_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
-import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
+import { promptReferenceParts } from '../shared/promptReferences';
 import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
 import type {
@@ -510,6 +512,7 @@ export interface SessionMessagesResult {
   toolExecutions: ChatToolExecution[];
   workspaceContext?: WorkspaceContext;
   latestTurn?: SessionLatestTurn;
+  historyPage?: { nextCursor: SessionHistoryCursor | null; historyRevision: number; firstTurnSequence: number; totalTurns: number };
 }
 
 export interface SessionLatestTurn {
@@ -1209,7 +1212,7 @@ export async function fetchConversations(
 ): Promise<ConversationSummary[]> {
   const runtime = conversationRuntime(runtimeOverride);
   try {
-    const sessions = await runtime.client.listSessions();
+    const sessions = await runtime.client.listSessionSummaries();
     return sessions
       .filter(isVisibleConversationSession)
       .filter(item => item.sessionId !== 'personal-assistant')
@@ -1231,12 +1234,16 @@ export async function fetchMessages(
 
 export async function fetchSessionMessages(
   sessionId: string,
-  options: { includeSuperseded?: boolean } = {},
+  options: { includeSuperseded?: boolean; page?: { cursor?: SessionHistoryCursor; limit?: number }; signal?: AbortSignal } = {},
   runtimeOverride?: ConversationRuntime,
 ): Promise<SessionMessagesResult> {
   const runtime = conversationRuntime(runtimeOverride);
   try {
-    const snapshot = await runtime.client.getConversationSession(sessionId);
+    const capabilities = await runtime.client.getCapabilities(options.signal);
+    const paged = !!options.page && capabilities.supportedCommands.includes(GET_RUNTIME_SESSION_HISTORY_COMMAND);
+    const page: SessionHistoryPage | null = paged ? await runtime.client.getSessionHistory({ sessionId,
+      limit: options.page?.limit ?? SESSION_HISTORY_PAGE_SIZE, cursor: options.page?.cursor }, options.signal) : null;
+    const snapshot = paged ? page?.snapshot : await runtime.client.getConversationSession(sessionId, options.signal);
     if (!snapshot) {
       return {
         conversation: {
@@ -1263,13 +1270,15 @@ export async function fetchSessionMessages(
       }, snapshot.sessionId);
       return markRuntimeSupersededMessages(projected, superseded);
     });
-    const capabilities = await runtime.client.getCapabilities();
     if (capabilities.supportedCommands.includes(ASSISTANT_CONVERSATION_COMMAND)) {
       const journal = await runtime.client.command({ kind: ASSISTANT_CONVERSATION_COMMAND, payload: { action: 'read', sessionId: snapshot.sessionId } }, value => value as ConversationJournalSnapshot);
-      messages.push(...journalMessages(journal.entries, snapshot.sessionId));
+      const oldest = snapshot.turns[0]?.createdAt;
+      const newest = page?.beforeCreatedAt;
+      messages.push(...journalMessages(journal.entries.filter(entry => !page ||
+        ((!page.nextCursor || !oldest || entry.createdAt >= oldest) && (!newest || entry.createdAt < newest))), snapshot.sessionId));
       messages.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
     }
-    const [recordGroups, compactionEventGroups] = await Promise.all([
+    const [recordGroups, compactionEventGroups] = page ? [[page.toolExecutions], [page.contextCompactions as RuntimeContextCompactionEvent[]]] : await Promise.all([
       Promise.all(
         snapshot.turns.map((turn) =>
           runtime.client.listTurnToolExecutionSummaries({
@@ -1297,7 +1306,7 @@ export async function fetchSessionMessages(
       ...workspaceCheckpointExecutions(workspaceReview),
       ...contextCompactionPresentationExecutions(compactionEvents),
     ];
-    const latest = snapshot.turns.at(-1);
+    const latest = page?.summary.latestTurn ?? snapshot.turns.at(-1);
     const projectDir = optionalString(snapshot.metadata?.projectDir);
     const taskDir = projectDir ? '' : taskWorkspaceDirectory(snapshot.metadata);
     const workspaceContext: WorkspaceContext | undefined = projectDir || taskDir
@@ -1311,12 +1320,14 @@ export async function fetchSessionMessages(
       : undefined;
     return {
       conversation: {
-        ...runtimeConversation(snapshot),
+        ...runtimeConversation(page?.summary ?? snapshot),
         workspaceContext,
       },
       messages: attachHistoryToolExecutions(messages, toolExecutions),
       toolExecutions,
       workspaceContext,
+      ...(page ? { historyPage: { nextCursor: page.nextCursor, historyRevision: page.historyRevision,
+        firstTurnSequence: snapshot.turns[0]?.turnSequence ?? 1, totalTurns: page.summary.turnCount } } : {}),
       ...(latest
         ? {
             latestTurn: {
@@ -1341,25 +1352,12 @@ export async function fetchSessionMessages(
 }
 
 export function runtimeConversation(
-  snapshot: RuntimeSessionSnapshot,
+  snapshot: RuntimeSessionSnapshot | SessionSummary,
 ): ConversationSummary {
-  const visibleMessages = snapshot.turns
-    .flatMap((turn) => turn.messages)
-    .filter(
-      (message) => !snapshot.supersededMessageIds.includes(message.messageId),
-    )
-    .filter((message) => !isInternalRuntimeMessage(message));
-  const firstUserMessage = visibleMessages.find(
-    (message) => message.message.role === 'user',
-  );
-  const lastAssistantMessage = [...visibleMessages]
-    .reverse()
-    .find((message) => message.message.role === 'assistant');
+  const summary = 'turnCount' in snapshot ? snapshot : summarizeSession(snapshot);
   const title =
     conversationDisplayTitle(optionalString(snapshot.metadata?.title) ?? '') ||
-    conversationTitleFromUserText(firstUserMessage
-      ? authoredPromptContent(firstUserMessage.message.content, firstUserMessage.metadata)
-      : '') ||
+    conversationTitleFromUserText(summary.firstUserText) ||
     defaultConversationTitle(snapshot.sessionId);
   const projectDir = optionalString(snapshot.metadata?.projectDir);
   const projectId =
@@ -1368,7 +1366,7 @@ export function runtimeConversation(
   return {
     id: snapshot.sessionId,
     title,
-    preview: lastAssistantMessage?.message.content ?? '',
+    preview: summary.preview,
     updatedAt: snapshot.updatedAt,
     ...(projectId ? { projectId } : {}),
     ...(projectDir ? { projectDir } : {}),
@@ -2123,7 +2121,7 @@ export async function sendTeamFlowAction(
 export async function fetchSubagentRuntime(): Promise<SubagentRuntimeResult> {
   const runtime = createDesktopRuntimeSession();
   try {
-    const sessions = await runtime.client.listSessions();
+    const sessions = await runtime.client.listSessionSummaries();
     const tasks = (
       await Promise.all(
         sessions.map((session) =>
@@ -2193,7 +2191,7 @@ export async function fetchSubagentTask(
     // (including large completed Turns) on each active-task poll.
     const sessions = parentSessionId?.trim()
       ? [{ sessionId: parentSessionId.trim() }]
-      : await runtime.client.listSessions(signal);
+      : await runtime.client.listSessionSummaries(signal);
     for (const session of sessions) {
       const task = await runtime.client.getSubagentTask(
         {

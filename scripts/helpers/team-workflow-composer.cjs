@@ -80,6 +80,7 @@ module.exports = async ({ read, until, frame, key, pointerClick, capture, win })
   await until(`document.querySelector('${dock} textarea').value===''`);
   await setStyle('standard');
   await pointerClick('.team-flow-header h1'); await until(`!document.querySelector('${dock}')`);
+  assert.ok(await read('document.querySelector(".inspector-cover-status")?.textContent.includes("已回复")'), 'collapsed shared input retains the conversation state');
   writeFileSync(resolve('tmp/team-input-collapsed.png'), (await capture()).toPNG());
   console.log('Workflow composer passed: shared floating Input, no Back, standard/simple settings, draft retention, controls, permissions, cover round trip and send.');
 };

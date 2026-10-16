@@ -12,6 +12,7 @@ from volcengine_plugins.client import SeedreamClient, capabilities
 from volcengine_plugins.models import ImageRequest, LocalOptions
 from volcengine_plugins.image_jobs import ImageJobs, account_scope
 from volcengine_plugins.generation_wait import GenerationTask, wait_tasks
+from image_conversion import ConversionRequest, StitchRequest, convert_image, stitch_images
 
 ROOT = Path(os.environ['ZHAOCAI_PERSONAL_ROOT']).resolve(strict=True)
 GATEWAY = os.environ['ZHAOCAI_IMAGE_GATEWAY']
@@ -39,7 +40,7 @@ async def lifespan(_):
     finally:
         await jobs.close()
 
-server = FastMCP('Zhaocai Images', lifespan=lifespan, instructions='Only images. Create once, wait for the same task. No paid retries. Display local_path with Markdown images. Account folder only.')
+server = FastMCP('Zhaocai Images', lifespan=lifespan, instructions='Only personal images. Use image_stitch to combine 2..64 existing images into a numbered overview, preserving source order. For comparing many images, stitch an overview and inspect its returned local_path with inject_image_input, then inspect individual originals only for detail. Use image_convert for exact pixel dimensions or PNG/JPG/WebP conversion. Both are local, preserve full images with white-padded contain by default, and never call generation. For new image generation, create once and wait for the same task; no paid retries. Display returned local_path with Markdown images. Account folder only.')
 read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 
 class Request(BaseModel):
@@ -56,7 +57,32 @@ class ImageTask(BaseModel):
 
 @server.tool(annotations=read)
 def seedream_capabilities() -> dict:
-    return {'image_only': True, 'async': True, 'model': capabilities()['profile'], 'sizes': ['1K','2K','WIDTHxHEIGHT'], 'references': 4, 'personal_root': str(ROOT)}
+    return {'image_only': True, 'async': True, 'model': capabilities()['profile'], 'sizes': ['1K','2K','WIDTHxHEIGHT'], 'references': 4, 'personal_root': str(ROOT),
+            'local_conversion': {'tool': 'image_convert', 'formats': ['png','jpg','webp'], 'max_edge': 8192, 'max_pixels': 16_000_000, 'default_fit': 'contain', 'padding': 'white'},
+            'local_stitch': {'tool': 'image_stitch', 'max_images': 64, 'layouts': ['grid','horizontal','vertical'], 'default_cell_pixels': 384, 'numbered': True, 'default_fit': 'contain', 'max_edge': 8192, 'max_pixels': 16_000_000}}
+
+
+async def authorize_local_processing():
+    # Recheck the administrator grant after waiting for the shared worker slot.
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False) as session:
+        response = await session.get(GATEWAY.removesuffix('/images/generations') + '/authorize',
+                                     headers={'Authorization': 'Bearer ' + TOKEN})
+    if response.status_code in {401, 403}:
+        raise ValueError('当前账号的图片插件权限已关闭，请联系管理员。')
+    if response.status_code != 200 or response.json().get('allowed') is not True:
+        raise ValueError('图片工具权限暂时无法验证，请稍后重试。')
+
+
+@server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+async def image_convert(request: ConversionRequest) -> CallToolResult:
+    """Resize an existing personal image to exact width x height pixels and/or convert PNG/JPG/WebP locally. Default contain preserves the whole image with white padding. Crop/stretch only when explicitly requested. Writes a NEW image in this account's generated folder, never overwrites the source, never invokes a generation model. Omit both dimensions for format-only conversion. Returns the completed local_path after asynchronous processing; show it as a Markdown image and download artifact."""
+    return result(await convert_image(ROOT, request, authorize_local_processing))
+
+
+@server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+async def image_stitch(request: StitchRequest) -> CallToolResult:
+    """Combine 2..64 existing personal images into ONE downloadable overview, with no generation/model call. Grid (automatic or explicit columns), horizontal and vertical layouts; source order is left-to-right then top-to-bottom. Default 384px tiles, white padding, whole-image contain, numeric labels, JPG. cell_width/height are per tile, not total size. Writes a new image without changing originals. For reviewing multiple images, inspect the returned local_path with inject_image_input; numbers correspond to result.sources. Split larger sets into groups of at most 64 without silently dropping files. Show the result as a Markdown image and download artifact."""
+    return result(await stitch_images(ROOT, request, authorize_local_processing))
 
 @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
 async def seedream_create_task(request: Request, request_id: str) -> CallToolResult:

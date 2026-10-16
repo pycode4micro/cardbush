@@ -1,4 +1,5 @@
 import { setTimeout as pause } from 'node:timers/promises';
+import { createHash } from 'node:crypto';
 import { AgentHttpClient } from './agentHttpClient.mjs';
 import type { AgentEventFrame, AgentEventRequest, AgentOperation } from './agentTypes.js';
 import { imageToken, modelToken, tenantKey, WebError, type WebModel } from './webCommon.mjs';
@@ -10,7 +11,7 @@ export interface WebAgent {
 export interface WebAgents { get(userId: string): Promise<WebAgent>; close(): void }
 export class BrokerWebAgents implements WebAgents {
   readonly #opening = new Map<string, Promise<WebAgent>>();
-  readonly #clients = new Map<string, { client: AgentHttpClient; containerId: string; configuredAt: number }>();
+  readonly #clients = new Map<string, { client: AgentHttpClient; containerId: string; configuredAt: number; modelFingerprint: string }>();
   constructor(readonly config: { brokerURL: string; brokerSecret: string; modelSecret: string; internalURL: string; models: WebModel[]; defaultModelId: string }, readonly imageAllowed: (userId: string) => Promise<boolean>) {}
   get(userId: string) {
     const pending = this.#opening.get(userId); if (pending) return pending;
@@ -33,13 +34,17 @@ export class BrokerWebAgents implements WebAgents {
     if (!ready) { client.close(); this.#clients.delete(userId); throw new WebError(503, '会话服务启动失败，请稍后重试。'); }
     // Service restarts and administrator configuration changes are reconciled
     // before a user can submit a turn. Vendor credentials stay in the gateway.
-    if (!previous || previous.client !== client || Date.now() - previous.configuredAt > 60_000) {
-      await client.call('product.command', { kind: 'models.update', config: { defaultModelId: this.config.defaultModelId,
-        models: this.config.models.map(model => ({ id: model.id, name: model.name, provider: 'openai', model: model.model,
+    const currentModels = { defaultModelId: this.config.defaultModelId, models: this.config.models };
+    const modelFingerprint = createHash('sha256').update(JSON.stringify(currentModels)).digest('hex');
+    if (!previous || previous.client !== client || previous.modelFingerprint !== modelFingerprint || Date.now() - previous.configuredAt > 60_000) {
+      await client.call('product.command', { kind: 'models.update', config: { defaultModelId: currentModels.defaultModelId,
+        models: currentModels.models.map(model => ({ id: model.id, name: model.name, provider: model.apiProtocol === 'anthropic_messages' ? 'anthropic' : 'openai', model: model.model,
           apiProtocol: model.apiProtocol ?? 'openai_responses', apiKey: modelToken(this.config.modelSecret, userId),
           baseURL: `${this.config.internalURL.replace(/\/$/, '')}/internal/model/${encodeURIComponent(userId)}/${encodeURIComponent(model.id)}`,
-          ...(model.maxContextTokens ? { maxContextTokens: model.maxContextTokens } : {}), ...(model.maxOutputTokens ? { maxOutputTokens: model.maxOutputTokens } : {}) })) } });
-      this.#clients.set(userId, { client, containerId: result.containerId, configuredAt: Date.now() });
+          ...(model.maxContextTokens ? { maxContextTokens: model.maxContextTokens } : {}),
+          maxOutputTokens: model.maxOutputTokens ?? 128_000,
+          reasoningEffort: model.reasoningEffort === undefined ? 'medium' : model.reasoningEffort })) } });
+      this.#clients.set(userId, { client, containerId: result.containerId, configuredAt: Date.now(), modelFingerprint });
     }
     await client.call('web.configure', { imageEnabled: await this.imageAllowed(userId), gateway: `${this.config.internalURL.replace(/\/$/, '')}/internal/image/${encodeURIComponent(userId)}/images/generations`, credential: imageToken(this.config.modelSecret, userId) });
     return client;

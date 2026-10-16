@@ -67,22 +67,25 @@ test('round boundaries reconcile additions, changes and removals with one bounde
   assert.deepEqual(JSON.parse(synchronizeMcpCatalog(registry, resumed).content).removed, ['added', 'edit'], 'checkpoint resumes retain the previous catalog identity');
 });
 
-test('native extension definitions refresh without expanding a child tool scope', () => {
+test('native extension scope refreshes without rewriting provider declarations or expanding a child scope', () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry);
   registry.replaceOwned('extension:fixture', [{ ...tool('native'), mcpHook: undefined }]);
   const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } };
   synchronizeMcpCatalog(registry, request);
-  assert.ok(modelToolDefinitions(registry, request).some(tool => tool.name === 'native'));
+  const frozen = modelToolDefinitions(registry, request);
+  assert.ok(frozen.some(tool => tool.name === 'native'));
   const child = structuredClone(request); child.metadata.agentRole = 'child';
   registry.replaceOwned('extension:fixture', [{ ...tool('native', { definition: { name: 'native', description: 'new version', inputSchema: { type: 'object' } } }), mcpHook: undefined }, { ...tool('replacement'), mcpHook: undefined }]);
   synchronizeMcpCatalog(registry, request); synchronizeMcpCatalog(registry, child);
-  assert.ok(modelToolDefinitions(registry, request).some(tool => tool.name === 'replacement'));
+  assert.ok(request.tools.some(tool => tool.name === 'replacement'));
+  assert.deepEqual(modelToolDefinitions(registry, request), frozen);
   assert.equal(child.tools.find(tool => tool.name === 'native').description, 'new version');
   assert.ok(!child.tools.some(tool => tool.name === 'replacement'));
-  assert.equal(modelToolDefinitions(registry, child).find(tool => tool.name === 'native').description, 'new version');
+  assert.deepEqual(modelToolDefinitions(registry, child), frozen, 'a fork retains the provider prefix');
   registry.replaceOwned('extension:fixture', []);
   synchronizeMcpCatalog(registry, request); synchronizeMcpCatalog(registry, child);
-  assert.ok(!modelToolDefinitions(registry, request).some(tool => tool.name === 'native'));
+  assert.deepEqual(modelToolDefinitions(registry, request), frozen, 'removal changes admission, not the prefix');
+  assert.ok(!request.tools.some(tool => tool.name === 'native'));
   assert.ok(!child.tools.some(tool => tool.name === 'native'));
 });
 

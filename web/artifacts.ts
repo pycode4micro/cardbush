@@ -6,6 +6,8 @@ const imageTools = new Set([
   'mcp__plugin_volcengine_images_images__seedream_create_task',
   'mcp__plugin_volcengine_images_images__seedream_get_task',
   'mcp__plugin_volcengine_images_images__generation_wait_tasks',
+  'mcp__plugin_volcengine_images_images__image_convert',
+  'mcp__plugin_volcengine_images_images__image_stitch',
 ]);
 export function generatedImagePath(source: string): string | null {
   const path = personalFilePath(source);
@@ -22,7 +24,8 @@ export function imageReceiptArtifacts(name: string, value: unknown): ChatToolArt
   const images = new Map<string, ChatToolArtifact>();
   for (const value of receipts) {
     const task = record(value), output = record(task.result);
-    if (task.kind !== 'seedream' || task.status !== 'succeeded' || !Array.isArray(output.data)) continue;
+    const kind = name.endsWith('__image_convert') ? 'image_conversion' : name.endsWith('__image_stitch') ? 'image_stitch' : 'seedream';
+    if (task.kind !== kind || task.status !== 'succeeded' || !Array.isArray(output.data)) continue;
     for (const item of output.data) {
       const source = record(item).local_path;
       const path = typeof source === 'string' ? generatedImagePath(source) : null;

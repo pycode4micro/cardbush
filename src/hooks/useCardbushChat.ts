@@ -144,6 +144,7 @@ import {
   findPersistedEditableUserMessage,
 } from '../features/chatMessages/transcript/messageFacts';
 import { trimConversationCache } from '../shared/conversationCache';
+import { useConversationHistoryPages } from './useConversationHistoryPages';
 
 // Keep existing helper imports working; new consumers should use the transcript modules.
 export {
@@ -211,7 +212,7 @@ export function useCardbushChat(
   } = {},
   backend: ConversationBackend = localConversationBackend,
 ) {
-  const { cancelInteraction, createConversation, deleteConversationApi, editMessage, fetchConversations, fetchGoalRuntimeStatus, fetchExperimentalGoals, fetchMessages, fetchPendingInteraction, fetchSessionContextWindowUsage, fetchSessionWorkspaceChanges, fetchSkillDetail, fetchSkills, fetchSessionMessages, fetchTeamFlow, replyInteraction, sendGuidance, sendTeamFlowAction, stopTurn, streamChat, streamTurnEvents, updateConversation, switchConversationWorkspace, updateExperimentalGoal, onRuntimeInteractionsChanged } = backend;
+  const { cancelInteraction, createConversation, deleteConversationApi, editMessage, fetchConversations, fetchGoalRuntimeStatus, fetchExperimentalGoals, fetchPendingInteraction, fetchSessionContextWindowUsage, fetchSessionWorkspaceChanges, fetchSkillDetail, fetchSkills, fetchTeamFlow, replyInteraction, sendGuidance, sendTeamFlowAction, stopTurn, streamChat, streamTurnEvents, updateConversation, switchConversationWorkspace, updateExperimentalGoal, onRuntimeInteractionsChanged } = backend;
   // A host is fixed for this hook lifetime; changing it remounts the conversation.
   const preferenceStorage = useMemo(() => ({
     getItem: (key: string) => window.localStorage.getItem(backend.scope ? `${backend.scope}:${key}` : key),
@@ -315,6 +316,9 @@ export function useCardbushChat(
   const goalStreamCheckpointsRef = useRef<Record<string, { turnId: string; checkpoint: FrameStreamCheckpoint }>>({});
   const messagesByConversationRef = useRef(messagesByConversation);
   messagesByConversationRef.current = messagesByConversation;
+  const historyPages = useConversationHistoryPages({ read: backend.fetchSessionMessages, activeId: activeConversationId,
+    messages: messagesByConversation, setMessages: setMessagesByConversation, refresh: id => loadSessionHistory(id) });
+  const fetchSessionMessages = historyPages.read, fetchMessages = historyPages.readMessages;
   const liveTranscriptSessionsRef = useRef(new Set<string>());
   const historyLoadingRequestsRef = useRef(new Map<string, Set<symbol>>());
   const activeConversationIdRef = useRef(activeConversationId);
@@ -4330,6 +4334,7 @@ export function useCardbushChat(
     skills,
     loading,
     messagesLoading,
+    historyPages,
     sending,
     stopping,
     activeTurnId,

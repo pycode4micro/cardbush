@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, ChevronUp, LoaderCircle, MessageSquare } from 'lucide-react';
 import type { AppLanguage, ChatMessage, RuntimeConnectionUpdate } from '../../types';
 import { ComposerPortalContext } from './ComposerPortalContext';
+import { quickInputState } from './quickInputState';
 
 /** The quick composer observes the same turn as the full conversation. */
 export function QuickInputStatus({ language, messages, sending, stopping, submitting, waiting, error, recovery, queued = 0,
@@ -36,24 +37,10 @@ export function QuickInputStatus({ language, messages, sending, stopping, submit
   }, [expanded, target, sessionId]);
   if (!target) return null;
   const zh = language === 'zh';
-  const latest = [...messages].reverse().find(message => message.role === 'assistant' || message.role === 'user');
-  const recovering = recovery && ['retrying', 'syncing'].includes(recovery.state);
-  const failed = Boolean(error || recovery?.state === 'failed' || (!sending && latest?.status === 'failed'));
-  const busy = !failed && !waiting && Boolean(sending || submitting || stopping || recovering);
-  const label = failed ? (zh ? '需要处理' : 'Needs attention')
-    : waiting ? (zh ? '等待你的处理' : 'Waiting for you')
-    : recovering ? (zh ? '正在恢复连接' : 'Reconnecting')
-    : stopping ? (zh ? '正在停止' : 'Stopping')
-    : submitting ? (zh ? '正在发送' : 'Sending')
-    : sending ? (zh ? '正在处理' : 'Working')
-    : queued ? (zh ? `已排队 · ${queued} 条` : `Queued · ${queued}`)
-    : latest?.status === 'stopped' ? (zh ? '已停止' : 'Stopped')
-    : latest?.role === 'assistant' ? (zh ? '已回复' : 'Reply ready')
-    : latest?.role === 'user' ? (zh ? '已发送' : 'Sent')
-    : (zh ? '当前会话' : 'Current conversation');
-  const Icon = failed || waiting ? AlertCircle : busy ? LoaderCircle : latest?.role === 'assistant' ? CheckCircle2 : MessageSquare;
+  const { label, state, icon } = quickInputState({ language, messages, sending, stopping, submitting, waiting, error, recovery, queued });
+  const Icon = { alert: AlertCircle, working: LoaderCircle, complete: CheckCircle2, chat: MessageSquare }[icon];
   return createPortal(<section className="quick-input-conversation" data-expanded={expanded}>
-    <button type="button" className="quick-input-status" data-state={failed ? 'error' : waiting ? 'waiting' : busy ? 'working' : 'idle'}
+    <button type="button" className="quick-input-status" data-state={state}
       onClick={() => setExpanded(value => !value)} aria-expanded={expanded} aria-controls={panelId}
       aria-label={`${label} · ${expanded ? (zh ? '收起简要会话' : 'Collapse conversation preview') : (zh ? '展开简要会话，查看执行情况和回复' : 'Expand conversation preview to view progress and replies')}`}>
     <Icon size={16} aria-hidden="true"/><span role="status" aria-live="polite">{label}</span>

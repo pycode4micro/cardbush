@@ -1,5 +1,5 @@
 .bush-it-sidebar .bush-pages-sidebar-content { display:flex; flex-direction:column; padding:14px 10px 10px; gap:5px; font-size:13px; }
-.bush-it-sidebar button { display:flex; align-items:center; gap:9px; color:var(--text); font:inherit; border:0; background:transparent; padding:7px 10px; min-height:32px; border-radius:8px; cursor:pointer; text-align:left; }
+.bush-it-sidebar button:not(.app-center-launcher, .app-center-shortcut) { display:flex; align-items:center; gap:9px; color:var(--text); font:inherit; border:0; background:transparent; padding:7px 10px; min-height:32px; border-radius:8px; cursor:pointer; text-align:left; }
 .bush-it-sidebar button:hover { background:var(--surface-hover); }.bush-it-sidebar button:focus-visible { outline:2px solid var(--accent); }
 .creation-sidebar-heading { display:flex; align-items:center; gap:2px; padding:0 4px 9px; }.creation-sidebar-heading h2 { flex:1; font-size:18px; line-height:28px; margin:0 6px; }
 .bush-it-sidebar .creation-sidebar-heading button { padding:6px; min-height:28px; color:var(--text-mid); }.bush-it-sidebar .bush-new-page { font-weight:500; margin-bottom:5px; }

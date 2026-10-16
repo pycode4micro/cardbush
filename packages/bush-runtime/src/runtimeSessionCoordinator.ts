@@ -15,6 +15,7 @@ import {
   type SessionSupersession,
   type TurnContextCheckpoint,
   type RuntimeUserPromptsRequest,
+  type SessionModelContract,
 } from "@cardbush/bush-protocol";
 import { isDeepStrictEqual } from "node:util";
 
@@ -70,6 +71,9 @@ export class RuntimeSessionCoordinator {
     return this.#store.snapshot(sessionId);
   }
 
+  modelContract(sessionId: string) { return this.#store.modelContract(sessionId); }
+  bindModelContract(sessionId: string, contract: SessionModelContract) { return this.#store.bindModelContract(sessionId, contract); }
+
   hasSession(sessionId: string): boolean {
     return this.#store.hasSession(sessionId);
   }
@@ -79,6 +83,8 @@ export class RuntimeSessionCoordinator {
   }
 
   listMetadata(signal?: AbortSignal) { return this.#store.listMetadata(signal); }
+  listSummaries(signal?: AbortSignal) { return this.#store.listSummaries(signal); }
+  historyPage(input: import('@cardbush/bush-protocol').SessionHistoryRequest, signal?: AbortSignal) { return this.#store.historyPage(input, signal); }
 
   listUserPrompts(input: RuntimeUserPromptsRequest) {
     return this.#store.listUserPrompts(input);
@@ -253,6 +259,7 @@ export class RuntimeSessionCoordinator {
       },
     };
     this.#activeSessions.set(request.sessionId, request.turnId);
+    this.#store.protect(request.sessionId, true);
     if (supersession) this.#activeSupersessions.set(request.sessionId, supersession);
     return prepared;
   }
@@ -261,6 +268,7 @@ export class RuntimeSessionCoordinator {
     if (this.#activeSessions.get(sessionId) === turnId) {
       this.#activeSessions.delete(sessionId);
       this.#activeSupersessions.delete(sessionId);
+      this.#store.protect(sessionId, false);
     }
   }
 
@@ -274,6 +282,7 @@ export class RuntimeSessionCoordinator {
       throw new Error(`Session ${request.sessionId} already has active Turn ${activeTurnId}.`);
     }
     this.#activeSessions.set(request.sessionId, request.turnId);
+    this.#store.protect(request.sessionId, true);
     if (checkpoint.supersession) {
       this.#activeSupersessions.set(request.sessionId, checkpoint.supersession);
     }

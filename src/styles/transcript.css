@@ -12,6 +12,16 @@
   transition: padding-right 180ms cubic-bezier(0.2, 0.72, 0.25, 1);
 }
 
+.conversation-history-paging {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 0 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .message-list-content {
   /* Keep short turns in the reading area after their response space is
      released. Bottom alignment would push the whole conversation down. */

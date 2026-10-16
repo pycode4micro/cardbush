@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 
 import { mcpSchemaRequiredError, mcpToolWasDiscovered } from './mcpToolDiscovery.js';
+import { builtinSchemaRequiredError, nativeToolSchemaIsCurrent } from './builtinToolDisclosure.js';
 import {
   BUSH_ACTION_MANIFEST_PROTOCOL,
   returnedToolError,
@@ -173,6 +174,10 @@ export class ToolExecutionCoordinator {
       const error = mcpSchemaRequiredError(toolCall.name);
       return failedResult(error.code, error.message, undefined, error.details);
     }
+    if (turn && !nativeToolSchemaIsCurrent(this.#registry, turn.request, toolCall.name)) {
+      const error = builtinSchemaRequiredError(toolCall.name);
+      return failedResult(error.code, error.message, undefined, error.details);
+    }
 
     const hooks = registration.delegatesToolExecution ? undefined : this.#hooks;
     let parsedArguments: unknown;
@@ -194,6 +199,15 @@ export class ToolExecutionCoordinator {
     let hookResult: PluginHookResult = { messages: [] };
     try {
       input = registration.decodeInput(parsedArguments);
+      if (registration.forwardToolCall) {
+        if (pluginCommandDeniesTool(turn?.request, toolCall.name)) return failedResult('plugin_command_tool_disallowed', `Tool ${toolCall.name} is disabled by the active plugin Command.`, undefined, {}, 'permission');
+        const target = registration.forwardToolCall({ input, turn, sessionId: identity.sessionId });
+        if (this.#registry.resolve(target.name)?.forwardToolCall) return failedResult('nested_tool_disallowed', 'Invocation envelopes cannot forward to another invocation envelope.');
+        // Preserve the wire call/result pair and permission anchor, but run every
+        // native gate and journal the target with the same call identity.
+        return this.executeAttempt({ ...toolCall, name: target.name, argumentsText: JSON.stringify(target.input) }, identity,
+          signal, turn, parentLifecycle ?? { toolCall, identity }, trace);
+      }
       if (hooks) {
         hookResult = await hooks.before({ toolCall, input: parsedArguments, turn, signal });
         if (hookResult.blocked) return { ...failedResult('plugin_hook_blocked', hookResult.blocked, undefined, {}, 'permission'), hookMessages: hookResult.messages, hookStopTurn: hookResult.stopTurn };

@@ -59,6 +59,8 @@ export interface ToolRegistration<TInput = unknown> {
   sessionScope?: string;
   /** A dispatcher leaves lifecycle Hooks to the selected tool. */
   delegatesToolExecution?: boolean;
+  /** A transparent invocation envelope: admission, hooks and results belong to the target. */
+  forwardToolCall?: (context: Pick<ToolAdmissionContext<TInput>, 'input' | 'turn' | 'sessionId'>) => { name: string; input: unknown };
   /** Explicit MCP connection capability for trusted lifecycle hooks, never inferred from a tool name. */
   mcpHook?: {
     server: string;
@@ -88,6 +90,9 @@ export interface ToolRegistration<TInput = unknown> {
   /** Budget-aware preview of a returned text result. A zero budget returns only
    * essential status (at most 1024 chars); the full render stays in the archive. */
   projectModelResult?: (result: unknown, maxChars: number) => string | undefined;
+  /** Complete list page with continuation, delivered directly instead of an
+   * archive preview. At budget 0 return a minimal page that can make progress. */
+  projectModelPage?: (result: unknown, maxChars: number, call?: ToolCall) => string | undefined;
   parallelSafe?: boolean;
   executionChannel?: string;
   visibleToChild?: boolean;
@@ -194,6 +199,13 @@ export class ToolRegistry {
     } catch { return undefined; }
   }
 
+  projectModelPage(name: string, result: unknown, maxChars: number, call?: ToolCall): string | undefined {
+    try {
+      const text = this.#registrations.get(name)?.projectModelPage?.(structuredClone(result), maxChars, call && structuredClone(call));
+      return typeof text === 'string' ? text : undefined;
+    } catch { return undefined; }
+  }
+
   definitions(): ToolDefinition[] {
     return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration)).map(({ definition }) =>
       structuredClone(definition),
@@ -242,6 +254,7 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     execute: candidate.execute as AnyToolRegistration["execute"],
     renderModelResult: candidate.renderModelResult,
     projectModelResult: candidate.projectModelResult,
+    projectModelPage: candidate.projectModelPage,
     parallelSafe: candidate.parallelSafe ?? false,
     executionChannel: candidate.executionChannel?.trim() || undefined,
     visibleToChild: candidate.visibleToChild ?? true,
@@ -250,6 +263,7 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     mcpApp: candidate.mcpApp,
     sessionScope: candidate.sessionScope,
     delegatesToolExecution: candidate.delegatesToolExecution,
+    forwardToolCall: candidate.forwardToolCall as AnyToolRegistration['forwardToolCall'],
     nestedCallable: candidate.nestedCallable ?? true,
     resources: candidate.resources as AnyToolRegistration['resources'],
   };

@@ -10,5 +10,5 @@
   "modelSecret": "GENERATE_A_DIFFERENT_SECRET_OF_AT_LEAST_48_CHARACTERS",
   "defaultModelId": "default",
   "imageModel": { "model": "doubao-seedream-5-0-flash-260915", "baseURL": "https://ark.cn-beijing.volces.com/api/v3", "apiKey": "IMAGE_PROVIDER_KEY" },
-  "models": [{ "id": "default", "name": "默认模型", "model": "MODEL_ID", "baseURL": "https://provider.example.com/v1", "apiKey": "PROVIDER_KEY", "apiProtocol": "openai_responses" }]
+  "models": [{ "id": "default", "name": "默认模型", "model": "MODEL_ID", "baseURL": "https://provider.example.com/v1", "apiKey": "PROVIDER_KEY", "apiProtocol": "openai_responses", "maxOutputTokens": 128000, "reasoningEffort": "medium" }]
 }

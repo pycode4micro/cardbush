@@ -67,11 +67,13 @@
 .plugin-market-heading > button { grid-column: 2; grid-row: 1; }
 .plugin-market-page .plugin-install-button { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 38px; padding: 0 14px; margin: 0; white-space: nowrap; }
 .plugin-market-page .plugin-back { min-height: 36px; margin: 0; padding: 0 10px; flex-shrink: 0; white-space: nowrap; }
-.plugin-market-source-form { padding: 16px; margin-bottom: 22px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); }
-.plugin-market-source-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; }
-.plugin-market-add, .plugin-market-controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.plugin-market-add { flex-wrap: wrap; margin: 10px 0; }
-.plugin-market-add input, .plugin-market-controls select {
+.plugin-market-source-help { color: var(--text-soft); font-size: 12px; }
+.plugin-market-source-help summary { cursor: pointer; width: fit-content; }
+.plugin-market-source-dialog .plugin-market-hint { margin: 0; }
+.plugin-market-source-help .plugin-market-hint { margin-top: 10px; }
+.plugin-market-source-dialog .plugin-market-error { margin: 0; }
+.plugin-market-controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.plugin-market-controls select {
   min-width: 0; flex: 1 1 200px; height: 40px; padding: 8px 12px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font-size: 13px;
 }
@@ -125,7 +127,6 @@
   .plugin-market-toolbar, .plugin-market-grid { grid-template-columns: minmax(0, 1fr); }
   .plugin-market-heading h2 { font-size: 26px; }
   .plugin-market-heading { gap: 12px; }
-  .plugin-market-add input { flex-basis: 100%; }
 }
 
 .plugin-hub-actions > button {

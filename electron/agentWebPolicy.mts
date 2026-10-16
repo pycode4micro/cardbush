@@ -38,16 +38,19 @@ export class AgentWebPolicy {
   }
   async #apply() {
     this.#desired ??= configuration.parse(JSON.parse(await readFile(join(this.root, 'config', 'web-policy.json'), 'utf8')));
-    const desired = this.#desired, signature = JSON.stringify(desired);
+    const bundle = resolve('deploy/web/plugins/volcengine_images');
+    const bundled = JSON.parse(await readFile(join(bundle, '.codex-plugin', 'plugin.json'), 'utf8')) as { version: string };
+    const desired = this.#desired, signature = JSON.stringify({ ...desired, pluginVersion: bundled.version });
     if (this.#applied === signature) return;
     if (await this.active()) return;
     await mkdir(join(this.root, 'workspaces'), { recursive: true });
     // Only the image-only, reviewed package shipped with this deployment can be installed.
     const target = join(this.root, 'plugins', WEB_PLUGIN_ID);
-    const installed = Boolean(await readFile(join(target, '.codex-plugin', 'plugin.json'), 'utf8').catch(() => ''));
+    const manifest = await readFile(join(target, '.codex-plugin', 'plugin.json'), 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return ''; throw error; });
+    const installed = manifest ? JSON.parse(manifest) as { version?: string } : undefined;
     if (!desired.imageEnabled && installed) await this.product.uninstallPlugin(WEB_PLUGIN_ID);
-    if (desired.imageEnabled && !installed) {
-      await installProductPlugin(resolve('deploy/web/plugins/volcengine_images'), join(this.root, 'plugins'), (id, replace) => this.product.replacePlugin(id, replace));
+    if (desired.imageEnabled && installed?.version !== bundled.version) {
+      await installProductPlugin(bundle, join(this.root, 'plugins'), (id, replace) => this.product.replacePlugin(id, replace));
     }
     const current = await this.product.execute({ protocol: 'cardbush.product_host_ipc.v1', kind: 'apps.get' }) as any;
     if (!current.ok) throw new Error('Plugin configuration unavailable.');

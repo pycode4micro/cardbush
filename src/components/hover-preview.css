@@ -17,6 +17,18 @@
   animation: hover-preview-reveal 120ms ease-out;
 }
 
+/* Bridge only the gap to the trigger, so slow pointer movement can reach actions. */
+.hover-preview[data-interactive="true"] { overflow: visible; }
+.hover-preview[data-interactive="true"]:is([data-side="right"], [data-side="left"])::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--hover-preview-gap, 12px) + 2px);
+}
+.hover-preview[data-interactive="true"][data-side="right"]::before { right: 100%; }
+.hover-preview[data-interactive="true"][data-side="left"]::before { left: 100%; }
+
 .hover-preview-title {
   display: flex;
   align-items: center;
@@ -57,6 +69,34 @@
 }
 
 .conversation-hover-preview .hover-preview-title strong { flex: 0 1 auto; }
+
+.conversation-hover-preview-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-hover-preview-rename > svg { flex: 0 0 auto; color: var(--text-soft); }
+
+.conversation-hover-preview-rename:hover,
+.conversation-hover-preview-rename:focus-visible {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.conversation-hover-preview-rename:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 .conversation-hover-preview-project {
   display: flex;

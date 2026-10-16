@@ -270,6 +270,8 @@ test('conversation presentation survives restart and stays independent of active
     const job = await service.call('chat.send', input('presentation', 'first-title', '帮我检查服务器日志'));
     await until(() => f.model.calls.length, count => count === 1);
     assert.equal((await service.call('sessions.list'))[0].metadata.title, '帮我检查服务器日志');
+    const listed = (await service.call('sessions.list', { projection: 'summary' }))[0];
+    assert.equal(listed.metadata.title, '帮我检查服务器日志'); assert.equal('turns' in listed, false);
     const raw = await service.call('runtime.command', { kind: 'runtime.get_session', payload: { sessionId: 'presentation' } });
     await service.call('sessions.rename', { sessionId: 'presentation', title: '自定义标题' });
     await service.call('sessions.update', { sessionId: 'presentation', pinned: true, archived: true, forcedUnread: true, readAt: '2026-09-01T00:00:00.000Z' });
@@ -283,6 +285,9 @@ test('conversation presentation survives restart and stays independent of active
     await service.close(); service = await AgentService.open({ dataRoot: f.root });
     const restored = await service.call('sessions.get', { sessionId: 'presentation' });
     assert.equal(restored.metadata.title, '自定义标题'); assert.equal(restored.metadata.pinned, true); assert.equal(restored.metadata.archived, true); assert.equal(restored.metadata.forcedUnread, true);
+    const page = await service.call('runtime.command', { kind: 'runtime.get_session_history', payload: { sessionId: 'presentation', limit: 1 } });
+    assert.equal(page.summary.metadata.title, '自定义标题'); assert.equal(page.snapshot.metadata.pinned, true);
+    assert.equal(page.snapshot.turns.length, 1); assert.equal(page.summary.turnCount, 1);
     await service.call('sessions.update', { sessionId: 'presentation', archived: false, forcedUnread: false });
     const fork = await service.call('sessions.fork', { sessionId: 'presentation' });
     assert.equal(fork.turns.length, 1); assert.equal(fork.metadata.forkSourceSessionId, 'presentation');

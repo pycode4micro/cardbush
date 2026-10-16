@@ -43,8 +43,8 @@ test('individuation changes append user context without altering system/tools or
   }
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /Before every final user-facing answer, call summary_for_user/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /When summary_for_user is available and this turn has used other Tools, call it once/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Ordinary conversation without Tool work may reply directly without calling it/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /optional habit field.*optional prediction field/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Ordinary conversation without Tool work may reply directly/);
+  assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /optional habit field.*optional prediction field/, 'the tool contract owns its optional fields');
   const summaryDescription = seen[0].tools.find(tool => tool.name === 'summary_for_user').description;
   assert.match(summaryDescription, /the host neither inserts a call nor requires one to finish/);
   assert.match(summaryDescription, /When this turn has used other tools and the work is complete, call this once before the final reply/);

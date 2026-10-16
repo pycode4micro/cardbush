@@ -15,15 +15,30 @@ export type MemoryRow = { seq: number; id: string; kind: 'habit'|'prediction'|'n
   hits: number; misses: number; metadata: string; state:'active'|'retracted'|'disputed'|'superseded'|'consolidated';
   origin:'agent'|'user'|'summary';applies_when:string;expires:number|null;confirmed:number|null;rejected:number|null;replaced_by:string };
 export type MemoryStage = 'events'|'habits';
-export type MemorySnapshot = { lease: string; stage: MemoryStage; records: MemoryRow[]; tokens: number; fingerprint: string; retryKey: string };
+export type MemorySnapshot = { lease: string; stage: MemoryStage; records: MemoryRow[]; tokens: number; fingerprint: string; retryKey: string;
+  reviewedPairs?: string[]; reviewPairs?: Array<[string, string]> };
+export type MemorySummaryRejection = { kind: 'habit'|'prediction'|'review'; index: number; reason: string; sources: string[] };
 export type MemorySummary = { habits: Array<MemoryNote & { sources: string[] }>; predictions: Array<MemoryNote & { sources: string[] }>;
-  reviews: Array<{ prediction: string; evidence: string; outcome: 'hit'|'miss'; reason: string }> };
+  reviews: Array<{ prediction: string; evidence: string; outcome: 'hit'|'miss'|'unknown'; reason: string; quote?:string }> };
 export class MemorySummaryValidationError extends Error {
-  constructor(readonly reason:'history_full'|'unsupported_sources'|'unsupported_promotion'|'invalid_review'|'insufficient_reduction'|'disabled_category'|'note_too_long'|'condition_lost'|'expired_output'|'retired_source',message:string) { super(message); }
+  constructor(readonly reason:'history_full'|'unsupported_sources'|'unsupported_promotion'|'invalid_review'|'insufficient_reduction'|'disabled_category'|'note_too_long'|'condition_lost'|'expired_output'|'retired_source',message:string,readonly detail?:string) { super(message); }
 }
 const mask = (settings: IndividuationSettings) => (settings.habits ? 1 : 0) | (settings.predictions ? 2 : 0);
 const emptyStatus = (): PersonalizationStatus => ({ estimatedTokens:0,eventTokens:0,habitTokens:0,records:0,habits:0,predictions:0,notes:0,feedback:0,hits:0,misses:0,running:false,lastSummaryAt:null,lastError:null,inactiveRecords:0,historyChanges:0 });
 const isForecast = (row: MemoryRow) => row.kind==='prediction' || row.kind==='note' && (row.scope & 2)!==0;
+function reviewIssue(prediction:MemoryRow|undefined,evidence:MemoryRow|undefined):string|undefined {
+  if(!prediction||!evidence)return 'unknown_record';
+  if(!isForecast(prediction))return 'not_prediction';
+  if(evidence.kind!=='evidence')return 'not_user_evidence';
+  if(evidence.seq<=prediction.seq||evidence.created<prediction.created)return 'evidence_not_subsequent';
+  if(!metadata(evidence).related?.includes(prediction.id))return 'evidence_not_linked';
+}
+/** The model and the persistence validator share the exact same eligibility rule. */
+export function memoryReviewCandidates(records:MemoryRow[]):Map<string,string[]> {
+  const originals=new Map(records.map(row=>[row.id,row]));
+  return new Map(records.filter(row=>row.kind==='evidence').map(evidence=>[evidence.id,
+    [...new Set(metadata(evidence).related??[])].filter(id=>!reviewIssue(originals.get(id),evidence))]));
+}
 const noteId = (kind:string,note:MemoryNote) => `${kind}_${memoryHash(JSON.stringify([note.text,note.applies_when??'',note.expires_at??'']))}`;
 const stageFingerprint = (stage:MemoryStage,retryKey:string,rows:MemoryRow[]) => createHash('sha256').update(JSON.stringify([stage,retryKey,rows.map(row=>[row.id,row.revision])])).digest('hex');
 
@@ -54,6 +69,14 @@ export class IndividuationStore {
         CREATE TABLE IF NOT EXISTS memory_summary_attempts(fingerprint TEXT PRIMARY KEY,code TEXT NOT NULL,retry_after INTEGER,updated INTEGER NOT NULL);
         INSERT OR IGNORE INTO memory_state(id) VALUES(1); BEGIN IMMEDIATE;`);
       initializeMemoryJournal(db);
+      const reviewColumns = new Set(db.prepare('PRAGMA table_info(memory_reviews)').all().map(row => row.name));
+      for (const column of ['prediction','evidence','turn_key']) if (!reviewColumns.has(column)) db.exec(`ALTER TABLE memory_reviews ADD COLUMN ${column} TEXT`);
+      db.exec('CREATE INDEX IF NOT EXISTS memory_review_turn ON memory_reviews(prediction,turn_key,outcome)');
+      if(!reviewColumns.has('turn_key'))for(const evidence of db.prepare("SELECT * FROM memory_records WHERE kind='evidence'").all() as MemoryRow[]){
+        const meta=metadata(evidence),turnKey=meta.session&&meta.turn?memoryHash(`${meta.session}:${meta.turn}`):evidence.id;
+        for(const prediction of meta.related??[])db.prepare('UPDATE memory_reviews SET prediction=?,evidence=?,turn_key=? WHERE id=?')
+          .run(prediction,evidence.id,turnKey,memoryHash(`${prediction}:${evidence.id}`));
+      }
       // Import the old structured records once; predictions remain hypotheses, never queued actions.
       if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='individuation'").get()) {
         const old=db.prepare('SELECT * FROM individuation').all() as Array<Record<string,unknown>>;
@@ -372,6 +395,17 @@ export class IndividuationStore {
     return db.prepare("SELECT * FROM memory_records WHERE state='active' AND origin!='user' AND (expires IS NULL OR expires>?) AND (scope & ?)=scope AND (kind='habit')=? ORDER BY seq")
       .all(now,mask(settings),stage==='habits'?1:0) as MemoryRow[];
   }
+  /** No live forecast can use these observations. Archive, retaining the exact originals and undo. */
+  private archiveReviewedEvidence(db:DatabaseSync,settings:IndividuationSettings,now:number) {
+    const rows=this.stageRows(db,settings,'events',now), candidates=memoryReviewCandidates(rows);
+    const orphaned=rows.filter(row=>row.kind==='evidence'&&(candidates.get(row.id)??[]).every(prediction=>
+      db.prepare('SELECT 1 FROM memory_reviews WHERE id=?').get(memoryHash(`${prediction}:${row.id}`))));
+    if(!orphaned.length)return;
+    if(memoryHistoryFull(db))throw new MemorySummaryValidationError('history_full','Memory history is full; original records were retained.');
+    for(const row of orphaned)db.prepare("UPDATE memory_records SET state='consolidated',updated=?,revision=revision+1 WHERE id=?").run(now,row.id);
+    recordMemoryChange(db,orphaned,orphaned.map(row=>row.id),'summary','Archive evidence with no pending forecast review',now);
+    db.prepare('UPDATE memory_state SET revision=revision+1,last_summary=? WHERE id=1').run(now);
+  }
   async begin(settings:IndividuationSettings,stage:MemoryStage,manual:boolean,signal?:AbortSignal,retryKey=''):Promise<MemorySnapshot|null> {
     if(!mask(settings) || !existsSync(this.path)) return null;
     return this.transaction((db,now)=>{
@@ -381,69 +415,118 @@ export class IndividuationStore {
       const tokens=stage==='events'?status.eventTokens:status.habitTokens;
       const threshold=stage==='events'?settings.eventTokenThreshold:settings.habitTokenThreshold;
       if(!tokens || !manual&&tokens<threshold) return null;
+      if(stage==='events')this.archiveReviewedEvidence(db,settings,now);
       const rows=this.stageRows(db,settings,stage,now);
       if(!rows.length)return null;
-      // Each stage is a complete snapshot. Retrieval pagination never partitions consolidation.
+      // Freeze ownership once. Maintenance partitions this snapshot without holding a SQL transaction.
       const fingerprint=stageFingerprint(stage,retryKey,rows);
       if(!manual) {
         const failed=db.prepare('SELECT retry_after FROM memory_summary_attempts WHERE fingerprint=?').get(fingerprint);
         if(failed&&(failed.retry_after===null||Number(failed.retry_after)>now))return null;
       }
       const lease=randomUUID(); db.prepare('UPDATE memory_state SET lease=?,lease_until=? WHERE id=1').run(lease,now+180_000);
-      return {lease,stage,records:rows,tokens:rows.reduce((n,row)=>n+row.tokens,0),fingerprint,retryKey};
+      return {lease,stage,records:rows,tokens:rows.reduce((n,row)=>n+row.tokens,0),fingerprint,retryKey,
+        reviewedPairs:db.prepare('SELECT id FROM memory_reviews').all().map(row=>String(row.id))};
     },signal);
   }
-  async apply(snapshot:MemorySnapshot,summary:MemorySummary,settings:IndividuationSettings,signal?:AbortSignal) {
+  async apply(snapshot:MemorySnapshot,summary:MemorySummary,settings:IndividuationSettings,signal?:AbortSignal,
+    options:{partial?:boolean;keepLease?:boolean;reductionCredit?:number}={}) {
     return this.transaction((db,now)=>{
       const state=db.prepare('SELECT * FROM memory_state WHERE id=1').get()!;
-      if(state.lease!==snapshot.lease) throw Object.assign(new Error('Memory summary was superseded; original records were retained.'),{code:'memory_snapshot_changed'});
+      if(state.lease!==snapshot.lease||Number(state.lease_until)<=now) throw Object.assign(new Error('Memory summary was superseded or expired; original records were retained.'),{code:'memory_snapshot_changed'});
       if(snapshot.records.some(row=>!activeMemory(row,now)))throw Object.assign(new Error('Memory expired while summarizing; original records were retained.'),{code:'memory_snapshot_changed'});
       const originals=new Map(snapshot.records.map(r=>[r.id,r]));
       const unchangedStage=this.stageRows(db,settings,snapshot.stage,now).every(row=>originals.get(row.id)?.revision===row.revision);
       if(snapshot.stage==='habits'&&(summary.predictions.length||summary.reviews.length))throw new MemorySummaryValidationError('disabled_category','Habit compaction cannot create or review predictions.');
       if(memoryHistoryFull(db))throw new MemorySummaryValidationError('history_full','Memory history is full; original records were retained.');
-      const historyBefore=new Map(originals),affected=new Set(originals.keys());
-      for(const item of [...summary.habits,...summary.predictions]) if(!item.sources.length || new Set(item.sources).size!==item.sources.length || item.sources.some(id=>!originals.has(id))) throw new MemorySummaryValidationError('unsupported_sources','Summary contains unsupported sources.');
+      const historyBefore=new Map<string,MemoryRow>(),affected=new Set<string>();
+      const rejected:MemorySummaryRejection[]=[];
+      const reject=(error:unknown,kind:MemorySummaryRejection['kind'],index:number,sources:string[])=>{
+        if(!options.partial||!(error instanceof MemorySummaryValidationError))throw error;
+        rejected.push({kind,index,reason:error.reason+(error.detail?`/${error.detail}`:''),sources});
+      };
+      const remember=(row:MemoryRow)=>{if(!historyBefore.has(row.id))historyBefore.set(row.id,row);affected.add(row.id);};
       const reviewPairs=new Set<string>();
-      const validReviews=summary.reviews.filter(review=>{
+      const seenPairs=new Set<string>(),duplicatePairs=new Set<string>();
+      for(const review of summary.reviews){const pair=`${review.prediction}:${review.evidence}`;if(seenPairs.has(pair))duplicatePairs.add(pair);seenPairs.add(pair);}
+      const allowedPairs=new Set(snapshot.reviewPairs?.map(([prediction,evidence])=>`${prediction}:${evidence}`));
+      const validReviews=summary.reviews.filter((review,index)=>{try{
         const pair=`${review.prediction}:${review.evidence}`;
-        if(reviewPairs.has(pair)) throw new MemorySummaryValidationError('invalid_review','Prediction review is duplicated.');
+        // An unknown result asserts nothing. Invalid locators must not create a review
+        // or turn an otherwise valid batch into a retry for a non-assertion.
+        if(options.partial&&review.outcome==='unknown'&&snapshot.reviewPairs&&!allowedPairs.has(pair))return false;
+        if(duplicatePairs.has(pair)||reviewPairs.has(pair)) throw new MemorySummaryValidationError('invalid_review','Prediction review is duplicated.','duplicate_pair');
         reviewPairs.add(pair);
         const prediction=originals.get(review.prediction),evidence=originals.get(review.evidence);
-        if(!prediction || !evidence || !isForecast(prediction) || evidence.kind!=='evidence' || evidence.seq<=prediction.seq || evidence.created<prediction.created || !metadata(evidence).related?.includes(prediction.id)) throw new MemorySummaryValidationError('invalid_review','Prediction review has no subsequent user evidence.');
+        const issue=reviewIssue(prediction,evidence);
+        if(issue) throw new MemorySummaryValidationError('invalid_review','Prediction review has no eligible subsequent user evidence.',issue);
+        if(snapshot.reviewPairs&&!allowedPairs.has(pair))throw new MemorySummaryValidationError('invalid_review','Review is outside this batch.','outside_batch');
+        if(options.partial&&review.outcome!=='unknown'&&(!review.quote?.trim()||!evidence!.text.includes(review.quote.trim())))
+          throw new MemorySummaryValidationError('invalid_review','A scored review needs an exact quote from this user evidence.','missing_quote');
         return true;
+      }catch(error){reject(error,'review',index,[review.prediction,review.evidence]);return false;}
       });
       // A concurrent repeat changes revision. Retry later instead of losing evidence or merging twice.
       if(snapshot.records.some(row=>Number(db.prepare('SELECT revision FROM memory_records WHERE id=?').get(row.id)?.revision)!==row.revision)) throw Object.assign(new Error('Memory changed while summarizing; original records were retained.'),{code:'memory_snapshot_changed'});
       // New dependent evidence requires a fresh complete event snapshot. Unrelated writes
       // may proceed, but must not cause originals and their replacements to coexist.
-      if(snapshot.stage==='events'&&(db.prepare("SELECT * FROM memory_records WHERE kind='evidence' AND state='active' AND (expires IS NULL OR expires>?)").all(now) as MemoryRow[])
+      if(!options.partial&&snapshot.stage==='events'&&(db.prepare("SELECT * FROM memory_records WHERE kind='evidence' AND state='active' AND (expires IS NULL OR expires>?)").all(now) as MemoryRow[])
         .some(row=>!originals.has(row.id)&&(metadata(row).related??[]).some(id=>originals.has(id))))
         throw Object.assign(new Error('New evidence arrived while summarizing; original records were retained.'),{code:'memory_snapshot_changed'});
       const before=this.readStatus(db,settings,now).estimatedTokens;
+      // Savings from this job's review may fund a supported habit in its later
+      // consolidation task. The combined active view still cannot grow.
+      const ceiling=before+Math.max(0,options.reductionCredit??0);
       const hits=new Map<string,number>(),misses=new Map<string,number>(),reviewIds:string[]=[];
       const newReviews:MemorySummary['reviews']=[];
       for(const review of validReviews) {
         const reviewId=memoryHash(`${review.prediction}:${review.evidence}`);
-        const saved=db.prepare('INSERT OR IGNORE INTO memory_reviews VALUES(?,?,?,?)').run(reviewId,review.outcome,review.reason,now);
+        const evidence=originals.get(review.evidence)!,meta=metadata(evidence);
+        const turnKey=meta.session&&meta.turn?memoryHash(`${meta.session}:${meta.turn}`):evidence.id;
+        const counted=db.prepare('SELECT 1 FROM memory_reviews WHERE prediction=? AND turn_key=? AND outcome=?').get(review.prediction,turnKey,review.outcome);
+        const saved=db.prepare('INSERT OR IGNORE INTO memory_reviews(id,outcome,reason,updated,prediction,evidence,turn_key) VALUES(?,?,?,?,?,?,?)')
+          .run(reviewId,review.outcome,review.reason,now,review.prediction,review.evidence,turnKey);
         if(saved.changes) {
           reviewIds.push(reviewId);
+          if(counted||review.outcome==='unknown')continue;
           newReviews.push(review);
           const totals=review.outcome==='hit'?hits:misses;totals.set(review.prediction,(totals.get(review.prediction)??0)+1);
           db.exec(`UPDATE memory_state SET ${review.outcome==='hit'?'hits':'misses'}=${review.outcome==='hit'?'hits':'misses'}+1 WHERE id=1`);
         }
       }
-      const summarizedSources=new Set([...summary.habits,...summary.predictions].flatMap(item=>item.sources));
-      for(const row of snapshot.records) {
-        // A single unexplained rating stays an event; absence from a summary is not a reason to erase it.
-        if(row.kind==='feedback'&&!summarizedSources.has(row.id))continue;
-        db.prepare("UPDATE memory_records SET state='consolidated',hits=hits+?,misses=misses+?,updated=?,revision=revision+1 WHERE id=?")
+      // Omitted eligible outcomes are explicitly unknown, never misses. An invalid review
+      // leaves the remaining pairs pending rather than treating malformed work as completed.
+      const rejectedPairs=new Set(rejected.filter(item=>item.kind==='review').map(item=>item.sources.join(':')));
+      if(snapshot.reviewPairs)for(const [prediction,evidence] of snapshot.reviewPairs){
+        if(rejectedPairs.has(`${prediction}:${evidence}`))continue;
+        const id=memoryHash(`${prediction}:${evidence}`);
+        if(db.prepare('INSERT OR IGNORE INTO memory_reviews(id,outcome,reason,updated,prediction,evidence) VALUES(?,?,?,?,?,?)')
+          .run(id,'unknown','No explicit confirmation or rejection.',now,prediction,evidence).changes)reviewIds.push(id);
+      }
+      for(const row of snapshot.records)if(hits.has(row.id)||misses.has(row.id)){
+        remember(row);
+        db.prepare('UPDATE memory_records SET hits=hits+?,misses=misses+?,updated=?,revision=revision+1 WHERE id=?')
           .run(hits.get(row.id)??0,misses.get(row.id)??0,now,row.id);
       }
-      for(const [kind,items] of [['habit',summary.habits],['prediction',summary.predictions]] as const) for(const item of items) {
+      const activeEvents=this.stageRows(db,settings,'events',now),candidates=memoryReviewCandidates(activeEvents);
+      const pendingPredictions=new Set<string>();
+      for(const [evidence,predictions] of candidates)for(const prediction of predictions)
+        if(!db.prepare('SELECT 1 FROM memory_reviews WHERE id=?').get(memoryHash(`${prediction}:${evidence}`)))pendingPredictions.add(prediction);
+      for(const row of snapshot.records)if(row.kind==='evidence'&&(candidates.get(row.id)??[]).every(prediction=>
+        db.prepare('SELECT 1 FROM memory_reviews WHERE id=?').get(memoryHash(`${prediction}:${row.id}`)))){
+        remember(row);db.prepare("UPDATE memory_records SET state='consolidated',updated=?,revision=revision+1 WHERE id=?").run(now,row.id);
+      }
+      for(const [kind,items] of [['habit',summary.habits],['prediction',summary.predictions]] as const) for(const [index,item] of items.entries()) {
+        const priorHistory=new Map(historyBefore),priorAffected=new Set(affected);
+        db.exec('SAVEPOINT memory_item');
+        try {
+        if(!item.sources.length || new Set(item.sources).size!==item.sources.length || item.sources.some(id=>!originals.has(id)))
+          throw new MemorySummaryValidationError('unsupported_sources','Summary contains unsupported sources.');
         if(kind==='habit'&&!settings.habits || kind==='prediction'&&!settings.predictions) throw new MemorySummaryValidationError('disabled_category','Summary attempted to write a disabled category.');
         const sourceRows=item.sources.map(id=>originals.get(id)!);
-        const newOutcomes=(outcome:'hit'|'miss')=>new Set(newReviews.filter(review=>review.outcome===outcome&&item.sources.includes(review.prediction)).map(review=>review.evidence)).size;
+        const newOutcomes=(outcome:'hit'|'miss')=>new Set(newReviews.filter(review=>review.outcome===outcome&&item.sources.includes(review.prediction)).map(review=>{
+          const meta=metadata(originals.get(review.evidence)!);return meta.session&&meta.turn?`${meta.session}:${meta.turn}`:review.evidence;
+        })).size;
         // Shared sources may have already been merged; do not multiply their old counts.
         const inheritedHits=Math.max(0,...sourceRows.map(row=>row.hits))+newOutcomes('hit');
         const inheritedMisses=Math.max(0,...sourceRows.map(row=>row.misses))+newOutcomes('miss');
@@ -454,9 +537,12 @@ export class IndividuationStore {
           throw new MemorySummaryValidationError('unsupported_promotion','A feedback habit needs distinct rated turns; ratings do not validate forecasts.');
         if(snapshot.stage==='events'&&kind==='habit'&&inheritedHits<2&&!(feedbackOnly&&feedbackTurns.size>=2))
           throw new MemorySummaryValidationError('unsupported_promotion','Promoting a forecast requires repeated verified user evidence.');
+        if(options.partial&&sourceRows.some(row=>isForecast(row)&&pendingPredictions.has(row.id)))
+          throw new MemorySummaryValidationError('unsupported_sources','The forecast has pending evidence; retain it until that evidence is reviewed.','pending_evidence');
+        if(kind==='prediction'&&!sourceRows.some(isForecast))throw new MemorySummaryValidationError('unsupported_sources','A retained forecast needs a forecast source.');
         if(memoryTokens(item.text+' '+(item.applies_when??''))>MAX_MEMORY_NOTE_TOKENS)throw new MemorySummaryValidationError('note_too_long','Consolidated memory is too long.');
         if(sourceRows.some(row=>row.applies_when)&&!item.applies_when)throw new MemorySummaryValidationError('condition_lost','Summary dropped an explicit applicability condition.');
-        const inheritedExpiry=sourceRows.filter(row=>row.kind===kind&&row.expires!==null).map(row=>row.expires!);
+        const inheritedExpiry=sourceRows.filter(row=>row.expires!==null).map(row=>row.expires!);
         const requestedExpiry=item.expires_at?Date.parse(item.expires_at):kind==='prediction'?now+7*86400000:null;
         const expiryLimits=[...inheritedExpiry,...(requestedExpiry===null?[]:[requestedExpiry])];
         const expires=expiryLimits.length?Math.min(...expiryLimits):null;
@@ -467,6 +553,10 @@ export class IndividuationStore {
         const renewedFeedback=Boolean(feedbackOnly&&previous?.origin==='summary'&&
           ['disputed','consolidated'].includes(previous.state)&&metadata(previous).feedbackInvalidated);
         if(previous&&!activeMemory(previous,now)&&!originals.has(id)&&!renewedFeedback)throw new MemorySummaryValidationError('retired_source','Summary attempted to resurrect a retired record.');
+        // Only explicitly replaced sources leave the active view. Omission never erases a preference.
+        for(const source of sourceRows)if(source.kind!=='evidence'&&source.origin!=='user'){
+          remember(source);db.prepare("UPDATE memory_records SET state='consolidated',updated=?,revision=revision+1 WHERE id=?").run(now,source.id);
+        }
         if(renewedFeedback)for(const row of db.prepare("SELECT * FROM memory_records WHERE replaced_by!='[]'").all() as MemoryRow[]) {
           const replacements=JSON.parse(row.replaced_by) as string[];
           if(item.sources.includes(row.id)||!replacements.includes(id))continue;
@@ -479,7 +569,7 @@ export class IndividuationStore {
           const replaced=new Set(JSON.parse(getMemoryRow(db,source.id)!.replaced_by) as string[]);replaced.add(id);
           db.prepare('UPDATE memory_records SET replaced_by=? WHERE id=?').run(JSON.stringify([...replaced]),source.id);
         }
-        if(previous?.origin==='user')continue;
+        if(previous?.origin==='user')throw new MemorySummaryValidationError('unsupported_sources','Pinned memory cannot be replaced.');
         if(previous&&!historyBefore.has(id))historyBefore.set(id,previous);
         const lineage=[...new Set([...item.sources.filter(source=>source!==id),...(previous&&!renewedFeedback?metadata(previous).sources??[]:[])])].slice(0,100);
         const meta={...(previous&&!renewedFeedback?metadata(previous):{}),sources:lineage};
@@ -488,7 +578,7 @@ export class IndividuationStore {
         const firstSeen=Math.min(...sourceRows.map(row=>row.created),previous?.created??now);
         const confirmed=sourceRows.flatMap(row=>row.confirmed===null?[]:[row.confirmed]);
         const rejected=sourceRows.flatMap(row=>row.rejected===null?[]:[row.rejected]);
-        for(const review of validReviews.filter(review=>item.sources.includes(review.prediction))) {
+        for(const review of validReviews.filter(review=>review.outcome!=='unknown'&&item.sources.includes(review.prediction))) {
           const time=originals.get(review.evidence)!.created;
           (review.outcome==='hit'?confirmed:rejected).push(time);
         }
@@ -498,33 +588,89 @@ export class IndividuationStore {
         // The global review ledger is exact; inherited per-record support is conservative.
         db.prepare('UPDATE memory_records SET observations=?,hits=?,misses=? WHERE id=?').run(Math.min(100,Math.max(previous?.observations??0,sourceRows.reduce((n,r)=>n+r.observations,0))),
           Math.max(previous?.hits??0,inheritedHits),Math.max(previous?.misses??0,inheritedMisses),saved.id);
+        if(this.readStatus(db,settings,now).estimatedTokens>ceiling)
+          throw new MemorySummaryValidationError('insufficient_reduction','Summary increased active memory; original records were retained.');
+        db.exec('RELEASE memory_item');
+        }catch(error){
+          db.exec('ROLLBACK TO memory_item; RELEASE memory_item');
+          historyBefore.clear();for(const [id,row] of priorHistory)historyBefore.set(id,row);
+          affected.clear();for(const id of priorAffected)affected.add(id);
+          reject(error,kind,index,item.sources);
+        }
       }
       // Compare the committed active view, including conditions, provenance and promoted
       // habits. Throwing here rolls back notes, review counts and history together.
-      if(this.readStatus(db,settings,now).estimatedTokens>before)
+      if(this.readStatus(db,settings,now).estimatedTokens>ceiling)
         throw new MemorySummaryValidationError('insufficient_reduction','Summary increased active memory; original records were retained.');
-      const changeId=recordMemoryChange(db,[...historyBefore.values()],affected,'summary','Consolidate memory',now,
-        {hits:[...hits.values()].reduce((a,b)=>a+b,0),misses:[...misses.values()].reduce((a,b)=>a+b,0)});
+      const changeId=affected.size||reviewIds.length?recordMemoryChange(db,[...historyBefore.values()],affected,'summary','Consolidate memory',now,
+        {hits:[...hits.values()].reduce((a,b)=>a+b,0),misses:[...misses.values()].reduce((a,b)=>a+b,0)}):null;
       for(const id of reviewIds)db.prepare('INSERT INTO memory_change_reviews VALUES(?,?)').run(changeId,id);
       db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1');
-      db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=0,last_summary=?,last_error=NULL WHERE id=1').run(now);
-      if(unchangedStage) {
+      db.prepare(`UPDATE memory_state SET ${options.keepLease?'':'lease=NULL,lease_until=0,'}retry_after=0,last_summary=?,last_error=NULL WHERE id=1`).run(now);
+      if(unchangedStage&&!options.keepLease) {
         const fingerprint=stageFingerprint(snapshot.stage,snapshot.retryKey,this.stageRows(db,settings,snapshot.stage,now));
         db.prepare('INSERT OR REPLACE INTO memory_summary_attempts VALUES(?,?,NULL,?)').run(fingerprint,'completed',now);
         db.exec('DELETE FROM memory_summary_attempts WHERE fingerprint NOT IN (SELECT fingerprint FROM memory_summary_attempts ORDER BY updated DESC LIMIT 256)');
       }
+      const status=this.readStatus(db,settings,now);
+      return {...status,rejected,reducedTokens:before-status.estimatedTokens,changedRecords:[...affected].map(id=>getMemoryRow(db,id)!),reviewedPairs:reviewIds};
+    },signal);
+  }
+  async finish(snapshot:MemorySnapshot,settings:IndividuationSettings,rejected=0,signal?:AbortSignal) {
+    return this.transaction((db,now)=>{
+      const state=db.prepare('SELECT lease,lease_until FROM memory_state WHERE id=1').get()!;
+      if(state.lease!==snapshot.lease||Number(state.lease_until)<=now)throw Object.assign(new Error('Memory lease expired.'),{code:'memory_snapshot_changed'});
+      const message=rejected?`memory_summary_partial: stage=${snapshot.stage}, rejected=${rejected}. Valid independent results were saved; rejected sources were retained.`:null;
+      db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=0,last_error=? WHERE id=1').run(message);
+      const rows=this.stageRows(db,settings,snapshot.stage,now),known=new Map(snapshot.records.map(row=>[row.id,row.revision]));
+      // New or edited records must remain eligible for the next run.
+      if(rows.every(row=>known.get(row.id)===row.revision)){
+        db.prepare('INSERT OR REPLACE INTO memory_summary_attempts VALUES(?,?,NULL,?)')
+          .run(stageFingerprint(snapshot.stage,snapshot.retryKey,rows),rejected?'partial':'completed',now);
+      }
       return this.readStatus(db,settings,now);
     },signal);
   }
-  async fail(lease:string,message:string,failure?:{fingerprint?:string;code:string;retryable:boolean}) {
+  async renewLease(lease:string,signal?:AbortSignal):Promise<boolean> {
+    return this.transaction((db,now)=>Boolean(db.prepare('UPDATE memory_state SET lease_until=? WHERE id=1 AND lease=? AND lease_until>?')
+      .run(now+180_000,lease,now).changes),signal);
+  }
+  /** Protect a source snapshot across model work and its atomic commit. Model
+   * retries/deadlines belong to Runtime; this lease only fences database writers. */
+  async withSnapshot<T>(snapshot:MemorySnapshot,signal:AbortSignal,work:(signal:AbortSignal)=>Promise<T>):Promise<T> {
+    const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal]);
+    let timer:ReturnType<typeof setTimeout>|undefined,closed=false,leaseError:Error|undefined;
+    const lost=(reason:string)=>{
+      if(closed||combined.aborted)return;
+      leaseError=Object.assign(new Error('Memory source snapshot is no longer owned by this task.'),{code:'memory_snapshot_changed',reason});
+      controller.abort(leaseError);
+    };
+    const renew=()=>{
+      timer=setTimeout(()=>{void this.renewLease(snapshot.lease,combined).then(active=>{
+        if(closed||combined.aborted)return;
+        if(active)renew();else lost('lease_expired');
+      },()=>lost('lease_renewal'));},30_000);
+      timer.unref?.();
+    };
+    renew();
+    try {const value=await work(combined);if(leaseError)throw leaseError;return value;}
+    catch(error){throw signal.aborted?error:leaseError??error;}
+    finally {closed=true;clearTimeout(timer);}
+  }
+  async fail(lease:string,message:string,failure?:{fingerprint?:string;code:string;retryable:boolean;stage?:MemoryStage;settings?:IndividuationSettings;retryKey?:string}) {
     await this.transaction((db,now)=>{
       const updated=db.prepare('UPDATE memory_state SET lease=NULL,lease_until=0,retry_after=?,last_error=? WHERE id=1 AND lease=?')
-        .run(now+300_000,message.slice(0,300),lease);
+        .run(now+300_000,message.slice(0,1000),lease);
       if(updated.changes&&failure?.fingerprint) {
         // A content/configuration fingerprint survives restarts and unrelated
         // writes. Deterministic failures require changed input or a manual retry.
         db.prepare('INSERT OR REPLACE INTO memory_summary_attempts VALUES(?,?,?,?)')
           .run(failure.fingerprint,failure.code,failure.retryable?now+300_000:null,now);
+        if(failure.stage&&failure.settings){
+          const remaining=stageFingerprint(failure.stage,failure.retryKey??'',this.stageRows(db,failure.settings,failure.stage,now));
+          db.prepare('INSERT OR REPLACE INTO memory_summary_attempts VALUES(?,?,?,?)')
+            .run(remaining,failure.code,failure.retryable?now+300_000:null,now);
+        }
         db.exec('DELETE FROM memory_summary_attempts WHERE fingerprint NOT IN (SELECT fingerprint FROM memory_summary_attempts ORDER BY updated DESC LIMIT 256)');
       }
     });

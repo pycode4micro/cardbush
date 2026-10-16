@@ -1,16 +1,29 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ConversationHostContext, type ConversationHost } from '../src/features/conversationHost';
 import { MessageBubble, MessageFileReferenceScope } from '../src/features/chatMessages/MessageBubble';
-import type { ChatMessage } from '../src/types';
+import type { ChatMessage, ChatToolArtifact } from '../src/types';
 import { acquireCachedImage, peekCachedImage, useAccountCache } from './BrowserCacheProvider';
 import { personalFilePath } from './personalFiles';
 import { pendingTranscript, persistedTranscript, webAttachments, webToolExecution, type LiveTranscript } from './transcript';
 import { api, type Job, type State } from './api';
 import type { ToolExecutionRecord } from '@cardbush/bush-protocol';
 import { generatedImagePath, hasDeferredImageArtifacts, webTurnArtifacts } from './artifacts';
+import { downloadArtifactArchive } from './artifactDownload';
 
 const noAction = async () => {};
 const noScene = () => {};
+
+function HistoryMessage({ eager, role, children }: { eager: boolean; role: string; children: ReactNode }) {
+  const element = useRef<HTMLDivElement>(null), [visible, setVisible] = useState(eager);
+  useEffect(() => {
+    if (visible || !element.current) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
+    }, { root: element.current.closest('.transcript'), rootMargin: '600px 0px' });
+    observer.observe(element.current); return () => observer.disconnect();
+  }, [visible]);
+  return <div ref={element} className="history-message" style={visible ? undefined : { minHeight: role === 'user' ? 80 : 180 }}>{visible ? children : null}</div>;
+}
 
 export function NativeTranscript({ state, live, selected, modelName, children, submitting, onError, onRetry }: {
   state: State | null; live: LiveTranscript; selected: string | null; modelName: string; children?: ReactNode;
@@ -75,11 +88,22 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
           try { anchor.click(); } finally { anchor.remove(); }
         } finally { setTimeout(image.dispose, 30_000); }
       },
-      turnArtifacts: message => ({ items: webTurnArtifacts(message),
-        ...(message.turnId && message.conversationId && hasDeferredImageArtifacts(message) ? {
-          load: async () => webTurnArtifacts({ ...message, toolExecutions: await toolDetails(message.conversationId!, message.turnId!) }),
-        } : {}),
-      }),
+      downloadFiles: async (paths, progress) => {
+        if (!selected) throw new Error('请先打开对话。');
+        const controller = new AbortController(), off = cache.onClose(() => controller.abort());
+        try { await downloadArtifactArchive(paths, selected, () => cache.valid(), controller.signal, progress); }
+        finally { off?.(); }
+      },
+      turnArtifacts: message => {
+        const candidates = webTurnArtifacts(message);
+        if (!message.turnId || !message.conversationId || (!candidates.length && !hasDeferredImageArtifacts(message))) return { items: [] };
+        return { items: [], load: async () => {
+          if (message.conversationId !== selected || !cache.valid()) throw new Error('会话已切换。');
+          const items = await api<ChatToolArtifact[]>(`/sessions/${message.conversationId}/artifacts?turnId=${encodeURIComponent(message.turnId!)}`);
+          if (!cache.valid()) throw new Error('账号已切换。');
+          return items;
+        } };
+      },
       openFile: path => { void readFile(path).then(({ name, blob }) => {
         if (!cache.valid()) return;
         const url = URL.createObjectURL(blob), anchor = document.createElement('a');
@@ -98,7 +122,7 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
   </div>;
   return <ConversationHostContext.Provider value={host}><MessageFileReferenceScope workspaceRoot="/data/workspaces">
     <div className="native-transcript">
-      {history.map(message => renderMessage(message))}
+      {history.map((message, index) => <HistoryMessage key={`${selected}:${message.renderKey ?? message.id}`} eager={index >= history.length - 4} role={message.role}>{renderMessage(message)}</HistoryMessage>)}
       {pending.map(job => {
         const messages = pendingTranscript(selected ?? '', job, live[job.turnId]);
         const activeId = job.status === 'running' ? [...messages].reverse().find(message => message.role === 'assistant')?.id ?? '' : '';

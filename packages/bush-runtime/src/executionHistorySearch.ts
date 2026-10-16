@@ -68,7 +68,7 @@ export function searchExecutionSummaries(entries: ExecutionHistoryEntry[], input
  * All other receipts remain available through the same contiguous next_offset. */
 export function executionHistoryResults(matches: ReturnType<typeof searchExecutionSummaries>, offset: number) {
   const page = matches.slice(offset, offset + 5).filter(match => match.tier === matches[offset]?.tier);
-  return { total_matches: matches.length,
+  return { total_matches: matches.length, offset,
     match_type: page.length ? (page[0].tier >= 2 ? 'identifier' : page[0].tier === 1 ? 'keywords' : 'related') : 'none',
     results: page.map(({ entry, matched }) => ({ record_id: entry.id, recorded_at: entry.recordedAt,
       tool: entry.tool, outcome: entry.outcome, summary: entry.summary, matched_keywords: matched,

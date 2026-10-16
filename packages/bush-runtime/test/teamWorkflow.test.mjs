@@ -53,7 +53,7 @@ test('bush-it presentation survives execution-only edits and persistence without
   t.after(() => reopened.close());
   assert.equal((await reopened.configure({ action: 'get', team_id: flow.id })).definition.presentation.markdown, markdown);
   const run = await f.call({ action: 'run', team_id: flow.id, input: 'Check order 42' });
-  const finished = await f.call({ action: 'wait', run_id: run.run_id });
+  const finished = await f.call({ action: 'wait', run_id: run.run_id, yield_time_ms: 10000 });
   assert.equal(finished.status, 'completed');
   assert.equal(requests.length, 3);
   assert.doesNotMatch(JSON.stringify(requests), /PRESENTATION_ONLY_REASON/, 'article prose is not an instruction or inherited context');
@@ -69,6 +69,12 @@ test('Team completion notices deliver final outputs and deduplicate only complet
   const call = { role: 'assistant', content: '', toolCalls: [{ id: 'wait', name: 'team', argumentsText: JSON.stringify({ action: 'wait', run_id: run.id }) }] };
   const receipt = { role: 'tool', toolCallId: 'wait', content: JSON.stringify(teamRunResult(run, ['final'])) };
   assert.equal(teamCompletionAlreadyRead(content, [call, receipt]), true);
+  const forwarded = { ...call, toolCalls: [{ ...call.toolCalls[0], name: 'call_tool',
+    argumentsText: JSON.stringify({ name: 'team', arguments: { action: 'wait', run_id: run.id } }) }] };
+  assert.equal(teamCompletionAlreadyRead(content, [forwarded, receipt]), true, 'recalled calls consume the same native result without duplicate delivery');
+  const unrelated = { ...forwarded, toolCalls: [{ ...forwarded.toolCalls[0],
+    argumentsText: JSON.stringify({ name: 'other_tool', arguments: { action: 'wait', run_id: run.id } }) }] };
+  assert.equal(teamCompletionAlreadyRead(content, [unrelated, receipt]), false);
   const restored = { ...run, nodes: [{ output: run.nodes[0].output, error: '', status: 'completed', id: 'final', taskId: 'attempt-1' }] };
   assert.equal(teamCompletionAlreadyRead(JSON.stringify(teamCompletionNotice(restored)), [call, receipt]), true, 'storage schema property order must not change the result version');
   assert.equal(teamCompletionAlreadyRead(content, [receipt]), false, 'arbitrary tool text does not acknowledge a Team result');

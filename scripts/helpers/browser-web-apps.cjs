@@ -30,6 +30,15 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   await read(`browserFixture.installWebApplication(${JSON.stringify(app)}); void 0`);
   assert.equal((await prefs()).webApps.length, 1, 'repeated installs retain the same app identity');
   await waitFor(`document.querySelector('.app-center-tile[data-application-id^="web:"] img')?.naturalWidth>0`, 'app center uses website icon');
+  await waitFor(`document.querySelector('.app-center-tile[data-application-id^="web:"] img')?.src.startsWith('data:image/png;')`, 'native SVG favicon is rasterized into the shared offline cache');
+  const cachedIcon = await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] img').src`);
+  assert.ok(cachedIcon.length < 32768);
+  assert.equal(await read(`window.cardbushDesktop.browser.readIcon('file:///C:/private.txt')`), '');
+  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭应用中心"]').click(); void 0`);
+  await waitFor(`!document.querySelector('.app-center-drawer')`);
+  await click(window.webContents, '.browser-install-button');
+  await waitFor(`document.querySelector('.app-center-drawer')?.open`);
+  assert.equal(await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] img').src`), cachedIcon, 'opening the center again uses the saved image immediately');
   await click(window.webContents, '.app-center-tile[data-application-id^="web:"] .app-center-tile-open');
   await waitFor(`browserFixture.navigation[browserFixture.activeId]?.url===${JSON.stringify(origin + '/web-app/start')}`); await activeReady();
   const launchedId = await read(`document.querySelector('.right-inspector-tab-page.active webview').getWebContentsId()`), launched = webContents.fromId(launchedId);

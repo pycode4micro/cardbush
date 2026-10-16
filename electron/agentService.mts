@@ -1,5 +1,6 @@
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
-import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
+import { readUserPrompt, promptContextMetadata, collectTurnAttachments } from '@cardbush/bush-protocol';
+import { sessionSummarySchema, sessionHistoryPageSchema } from '@cardbush/bush-protocol';
 import { webToolAllowed } from '@cardbush/bush-runtime/web-policy';
 import { AgentWebPolicy } from './agentWebPolicy.mjs';
 import { AgentWebFiles } from './agentWebFiles.mjs';
@@ -199,11 +200,11 @@ export class AgentService {
 
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
     capabilities: { webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
-  #present<T extends { sessionId: string; metadata?: Record<string, unknown>; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
+  #present<T extends { sessionId: string; metadata?: Record<string, unknown>; firstUserText?: string; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
     const placeholder = !presentation?.title && (!saved || ['新对话', '新会话', 'New conversation', 'New chat', session.sessionId].includes(saved));
-    const first = session.turns?.flatMap(turn => turn.messages).find(item => item.message.role === 'user' && item.message.visibility !== 'internal' && item.message.name !== 'subagent_result')?.message.content
+    const first = (session.firstUserText || session.turns?.flatMap(turn => turn.messages).find(item => item.message.role === 'user' && item.message.visibility !== 'internal' && item.message.name !== 'subagent_result')?.message.content)
       ?? this.#state.jobs.find(job => job.sessionId === session.sessionId)?.input.text;
     // Presentation is independent of the model journal and may change during a turn.
     const title = placeholder && first ? first.replace(/\s+/g, ' ').trim().slice(0, 48) : saved;
@@ -254,7 +255,8 @@ export class AgentService {
     if (!this.#toolsEnabled) {
       const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events'];
       if (!allowed.includes(operation) && !(operation === 'product.command' && ['models.get', 'models.update'].includes(String(data.kind)))) throw new Error('Tools and host commands are disabled on this service.');
-      if (operation === 'chat.send' && (data.goalObjective || data.files || data.images || data.planEnabled || data.supersession)) throw new Error('Only text conversations are enabled on this service.');
+      if (operation === 'chat.send' && (data.goalObjective || data.files || data.images || data.planEnabled || data.supersession ||
+        collectTurnAttachments({ messageId: 'validation', attachments: (data.userMessageMetadata as Record<string, unknown> | undefined)?.attachments }).length)) throw new Error('Only text conversations are enabled on this service.');
       if (operation === 'sessions.create' && data.projectId) throw new Error('Project binding is disabled on this service.');
     }
     if (this.#webRestricted) {
@@ -265,7 +267,9 @@ export class AgentService {
       if (operation === 'sessions.create' && data.projectId) throw new Error('Project binding is unavailable.');
       if (operation === 'chat.send') {
         if (data.goalObjective || data.supersession || data.planEnabled) throw new Error('This capability is unavailable.');
-        for (const path of [...(Array.isArray(data.files) ? data.files : []), ...(Array.isArray(data.images) ? data.images : [])]) await this.#webFiles!.describe(String(path));
+        const metadataPaths = collectTurnAttachments({ messageId: 'validation',
+          attachments: (data.userMessageMetadata as Record<string, unknown> | undefined)?.attachments }).flatMap(item => item.path ? [item.path] : []);
+        for (const path of new Set([...(Array.isArray(data.files) ? data.files : []), ...(Array.isArray(data.images) ? data.images : []), ...metadataPaths])) await this.#webFiles!.describe(String(path));
       }
     }
     switch (operation) {
@@ -334,7 +338,9 @@ export class AgentService {
         await this.#write(state => { if (projectId && !state.projects.some(item => item.id === projectId)) throw new Error('Unknown project.'); state.defaultProjectId = projectId; });
         return { defaultProjectId: projectId };
       }
-      case 'sessions.list': return (await this.#command('runtime.list_sessions') as SessionSnapshot[]).map(session => this.#present(session));
+      case 'sessions.list': return data.projection === 'summary'
+        ? sessionSummarySchema.array().parse(await this.#command('runtime.list_session_summaries')).map(session => this.#present(session))
+        : (await this.#command('runtime.list_sessions') as SessionSnapshot[]).map(session => this.#present(session));
       case 'sessions.get': { const snapshot = await this.#command('runtime.get_session', runtimeSessionReadRequestSchema.parse(data)); return snapshot ? this.#present(decodeSessionSnapshot(snapshot)) : null; }
       case 'sessions.create': {
         const key = data.sessionId ? sessionId() : `session-${randomUUID()}`;
@@ -524,6 +530,12 @@ export class AgentService {
         if (/^runtime\.(run_|resume_|shutdown|upsert_provider|remove_provider|apply_mcp|prepare_plugin)/.test(kind)) throw new Error('Use the Agent service operation for this command.');
         if (kind === 'runtime.delete_session') this.#idle(id.parse((data.payload as Record<string, unknown>)?.sessionId));
         else if (/clear_sessions|switch_workspace|collect_cache|(?:revert|restore|update)_workspace/.test(kind)) this.#idle();
+        if (kind === 'runtime.get_session_history') {
+          const value = await this.#command(kind, data.payload ?? {});
+          if (!value) return null;
+          const page = sessionHistoryPageSchema.parse(value), summary = this.#present(page.summary);
+          return { ...page, summary, snapshot: { ...page.snapshot, metadata: summary.metadata } };
+        }
         return this.#command(kind, data.payload ?? {});
       }
       case 'product.command': if (String(data.kind).startsWith('maintenance.')) this.#idle(); return this.#product(data);

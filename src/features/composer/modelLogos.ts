@@ -6,6 +6,8 @@ import doubaoLogo from '../../assets/model-logos/doubao.svg';
 import geminiLogo from '../../assets/model-logos/gemini.svg';
 import googleLogo from '../../assets/model-logos/google.svg';
 import huggingfaceLogo from '../../assets/model-logos/huggingface.svg';
+import hunyuanLogo from '../../assets/model-logos/hunyuan.svg';
+import longcatLogo from '../../assets/model-logos/longcat.svg';
 import metaLogo from '../../assets/model-logos/meta.svg';
 import minimaxLogo from '../../assets/model-logos/minimax.svg';
 import mistralLogo from '../../assets/model-logos/mistral.svg';
@@ -16,6 +18,7 @@ import openaiLogo from '../../assets/model-logos/openai.svg';
 import openrouterLogo from '../../assets/model-logos/openrouter.svg';
 import perplexityLogo from '../../assets/model-logos/perplexity.svg';
 import qwenLogo from '../../assets/model-logos/qwen.svg';
+import stepfunLogo from '../../assets/model-logos/stepfun.svg';
 import xaiLogo from '../../assets/model-logos/xai.svg';
 import xiaomiLogo from '../../assets/model-logos/xiaomi.svg';
 import zhipuLogo from '../../assets/model-logos/zhipu.svg';
@@ -43,6 +46,24 @@ const modelLogoRules: Array<{
     label: 'Doubao',
     src: doubaoLogo,
     patterns: [/doubao/i, /豆包/],
+  },
+  {
+    id: 'hunyuan',
+    label: 'Hunyuan',
+    src: hunyuanLogo,
+    patterns: [/hunyuan/i, /\bhy(?:\d|\b)/i, /混元/],
+  },
+  {
+    id: 'stepfun',
+    label: 'StepFun',
+    src: stepfunLogo,
+    patterns: [/stepfun/i, /^step$/i, /\bstep[-_.\s]?\d/i, /\bstep(?:audio|video)/i, /阶跃/],
+  },
+  {
+    id: 'longcat',
+    label: 'LongCat',
+    src: longcatLogo,
+    patterns: [/longcat/i, /龙猫/],
   },
   {
     id: 'openai',
@@ -114,7 +135,7 @@ const modelLogoRules: Array<{
     id: 'meta',
     label: 'Meta',
     src: metaLogo,
-    patterns: [/llama/i, /\bmeta\b/i],
+    patterns: [/llama/i, /\bmeta\b/i, /\bmuse\b/i],
   },
   {
     id: 'perplexity',

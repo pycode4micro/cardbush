@@ -7,8 +7,8 @@ import { normalizeIndividuation, summaryForUserInputSchema } from '@cardbush/bus
 import { ToolRegistry, ToolExecutionCoordinator, ToolExecutionStore, InMemoryRuntimeHost,
   InMemoryRuntimeEventLog, RuntimeEventProjector } from '../dist/index.js';
 import { registerIndividuationTools, hasPendingUserSummary, deliveredMemoryIds } from '../dist/individuationTools.js';
-import { IndividuationStore } from '../dist/individuationStore.js';
-import { IndividuationMemory } from '../dist/individuationMemory.js';
+import { IndividuationStore, memoryReviewCandidates } from '../dist/individuationStore.js';
+import { runtimeMemory } from './helpers/runtimeMemory.mjs';
 import { memoryTokens } from '../dist/individuationText.js';
 
 const off=normalizeIndividuation(),on=normalizeIndividuation({habits:true,predictions:true});
@@ -66,6 +66,21 @@ test('deduplication, independent gates, cross-session search and bounded retriev
   const excluded=await f.store.check('A 股 数据表',habits,found.map(r=>r.id));assert.ok(excluded.every(r=>r.id!==found[0].id));
 });
 
+test('narrative predictions stay in memory but are omitted from the composer without blocking the final reply',async t=>{
+  const f=await fixture(t),text='用户可能接下来要求运行这个示例流程，或把其中的节点替换为自己注册的员工。';
+  const saved=result(await f.run('summary_for_user',{habit:'示例流程使用简明的中文步骤名称。',prediction:text},on));
+  assert.equal(saved.status,'ok');assert.equal(saved.final_response,true);
+  assert.ok(saved.writes.every(write=>write.status==='created'));
+  assert.deepEqual(saved.prediction_display,{status:'omitted',reason:'not_user_message'});
+  assert.equal((await f.store.check('',predictions))[0].text,text,'do not silently rewrite stored evidence');
+  const next=result(await f.run('summary_for_user',{prediction:'帮我运行这个示例流程。'},on,{...owner,turnId:'next'}));
+  assert.equal(next.saved,true);assert.equal(next.prediction_display,undefined);
+  const schema=f.registry.definitions().find(tool=>tool.name==='summary_for_user').inputSchema;
+  assert.match(schema.properties.prediction.properties.text.description,/USER could send next/);
+  assert.doesNotMatch(schema.properties.prediction.properties.text.description,/One concise observation/);
+  assert.match(schema.properties.prediction.description,/do not retry solely to fill the composer/);
+});
+
 test('habit and prediction are persisted and retrieved independently before any model summary',async t=>{
   const f=await fixture(t),input={habit:'查看股市走势时默认关注 A 股。',prediction:'查看 A 股后可能需要 XLSX 报表。'};
   const saved=result(await f.run('summary_for_user',input,on));
@@ -116,6 +131,11 @@ test('prediction evidence survives disabling habits and habits cannot be reviewe
   const habit=(await store.check('',habits))[0];
   const all=await store.begin(on,'events',true),forecast=all.records.find(r=>r.kind==='prediction'),evidence=all.records.find(r=>r.kind==='evidence');
   assert.deepEqual(JSON.parse(evidence.metadata).related,[forecast.id]);assert.equal(evidence.scope,2);
+  assert.deepEqual(memoryReviewCandidates(all.records).get(evidence.id),[forecast.id]);
+  assert.deepEqual(memoryReviewCandidates(all.records.map(row=>row.id===evidence.id?{...row,seq:forecast.seq}:row)).get(evidence.id),[]);
+  assert.deepEqual(memoryReviewCandidates(all.records.map(row=>row.id===forecast.id?{...row,kind:'habit'}:row)).get(evidence.id),[]);
+  await assert.rejects(store.apply(all,{habits:[],predictions:[],reviews:[{prediction:forecast.id,evidence:evidence.id,outcome:'hit',reason:'same'},
+    {prediction:forecast.id,evidence:evidence.id,outcome:'hit',reason:'duplicate'}]},on),error=>error.reason==='invalid_review'&&error.detail==='duplicate_pair');
   await assert.rejects(store.apply(all,{habits:[],predictions:[],reviews:[{prediction:habit.id,evidence:evidence.id,outcome:'hit',reason:'invalid category'}]},on),/subsequent user evidence/);
   await store.fail(all.lease,'fixture release');
   const onlyPredictions=await store.begin(predictions,'events',true);
@@ -147,7 +167,7 @@ test('failed and cancelled persistence leave final response available',async t=>
 test('threshold invokes one protocol-independent model summary, replaces records, and coalesces concurrent requests',async t=>{
   const f=await fixture(t),settings={...on,habitTokenThreshold:1000};let calls=0;
   const gate=Promise.withResolvers();
-  const memory=new IndividuationMemory(f.path,summarizeProvider(async(request,rows)=>{
+  const memory=runtimeMemory(f.path,summarizeProvider(async(request,rows)=>{
     calls++;assert.deepEqual(request.tools,[]);assert.equal(request.metadata.runtimeMaintenance,'personalization_summary');await gate.promise;
     return {habits:[{text:'查看 A 股时提供 XLSX 数据表。',sources:rows.filter(r=>r.kind==='habit').map(r=>r.id)}],predictions:[],reviews:[]};
   }));t.after(()=>memory.close());
@@ -170,26 +190,25 @@ async function expireSummaryCooldown(path) {
   finally { db.close(); }
 }
 
-test('maintenance sends the whole category once when it fits and preserves it when context is insufficient',async t=>{
+test('maintenance partitions complete sources to fit even small model contexts',async t=>{
   for(const context of [6000,400000]) {
     const f=await fixture(t),seen=[],settings={...on,habitTokenThreshold:200000};
     await seedSummaryRecords(f.store,settings,40);
-    const memory=new IndividuationMemory(f.path,summarizeProvider((request,rows)=>{
-      seen.push(request);assert.equal(rows.length,40,'no arbitrary record batching');
+    const memory=runtimeMemory(f.path,summarizeProvider((request,rows)=>{
+      seen.push(request);assert.ok(rows.length>0&&rows.length<40,'complete sources are packed within the request budget');
       assert.equal(request.metadata.memoryStage,'habits');
       assert.ok(memoryTokens(JSON.stringify(request.messages))+32+request.maxOutputTokens+512<=context);
       return {habits:[{text:'Market reports include dated XLSX tables and sources.',sources:rows.map(r=>r.id)}],predictions:[],reviews:[]};
     }));t.after(()=>memory.close());
-    const operation=memory.compact(settings,{...model,metadata:{contextWindowTokens:context,maxContextTokens:2048}});
-    if(context===6000){await assert.rejects(operation,/memory_summary_input_limit/);assert.equal(seen.length,0);assert.equal((await f.store.status(settings)).records,40);}
-    else {await operation;assert.equal(seen.length,1);assert.equal((await f.store.status(settings)).records,1);}
+    const operation=memory.compact(settings,{...model,maxOutputTokens:context===6000?2048:model.maxOutputTokens,metadata:{contextWindowTokens:context,maxContextTokens:2048}});
+    await operation;assert.ok(seen.length>1);assert.equal((await f.store.status(settings)).records,1);
   }
 });
 
 test('truncated maintenance preserves the complete snapshot and retries only when explicitly requested',async t=>{
   const f=await fixture(t),settings={...on,habitTokenThreshold:200000},sizes=[];
   await seedSummaryRecords(f.store,settings,12);
-  const memory=new IndividuationMemory(f.path,{async *stream(request) {
+  const memory=runtimeMemory(f.path,{async *stream(request) {
     const rows=JSON.parse(request.messages.at(-1).content);sizes.push(rows.length);
     assert.equal((await f.store.status(settings)).records,12);
     if(sizes.length===1){yield event(request,0,'text_delta',{delta:'{"habits":['});yield event(request,1,'response_completed',{finishReason:'length'});}
@@ -207,7 +226,7 @@ test('event and habit thresholds are independent and can be configured separatel
   const f=await fixture(t),settings={...on,eventTokenThreshold:1000,habitTokenThreshold:1000},stages=[];
   for(let i=0;i<3;i++)await write(f.store,{habit:'Habit '+i+': '+'Use dated XLSX reports. '.repeat(25),prediction:'Forecast '+i+': '+'May request another dated report. '.repeat(15)},settings,{...owner,turnId:String(i)});
   const initial=await f.store.status(settings);assert.ok(initial.estimatedTokens>1000);assert.ok(initial.eventTokens<1000&&initial.habitTokens<1000);
-  const memory=new IndividuationMemory(f.path,summarizeProvider((request,rows)=>{stages.push(request.metadata.memoryStage);return {habits:[],predictions:[{text:'May request dated reports.',sources:rows.map(r=>r.id)}],reviews:[]};}));t.after(()=>memory.close());
+  const memory=runtimeMemory(f.path,summarizeProvider((request,rows)=>{stages.push(request.metadata.memoryStage);return {habits:[],predictions:[{text:'May request dated reports.',sources:rows.map(r=>r.id)}],reviews:[]};}));t.after(()=>memory.close());
   await memory.compact(settings,model,false);assert.deepEqual(stages,[],'combined total does not trigger either stage');
   await write(f.store,{prediction:'Additional request: '+'May request another dated XLSX report. '.repeat(30)},settings,{...owner,turnId:'extra'});
   await write(f.store,{prediction:'Another scenario: '+'May request more charts and tables. '.repeat(30)},settings,{...owner,turnId:'extra-two'});
@@ -219,11 +238,11 @@ test('unchanged failures stay suppressed across restart and writes in the other 
   const f=await fixture(t),settings={...on,habitTokenThreshold:1000},requests=[];
   await seedSummaryRecords(f.store,settings,48);
   const provider={async *stream(request){requests.push(request);yield event(request,0,'response_completed',{finishReason:'length'});}};
-  const memory=new IndividuationMemory(f.path,provider);
+  const memory=runtimeMemory(f.path,provider);
   await assert.rejects(memory.compact(settings,model,false),/memory_summary_output_limit.*finish=length/);assert.equal(requests.length,1);
-  assert.equal(JSON.parse(requests[0].messages.at(-1).content).length,48);
+  assert.ok(JSON.parse(requests[0].messages.at(-1).content).length<48);
   await memory.close();await expireSummaryCooldown(f.path);
-  const restarted=new IndividuationMemory(f.path,provider);t.after(()=>restarted.close());
+  const restarted=runtimeMemory(f.path,provider);t.after(()=>restarted.close());
   await restarted.compact(settings,model,false);assert.equal(requests.length,1);
   await write(f.store,{prediction:'An unrelated forecast.'},settings,{sessionId:'other',turnId:'new'});
   await restarted.compact(settings,model,false);assert.equal(requests.length,1);
@@ -233,7 +252,7 @@ test('unchanged failures stay suppressed across restart and writes in the other 
 test('maintenance diagnostics distinguish invalid JSON and transient provider failure without echoing provider content',async t=>{
   const f=await fixture(t),settings={...on,habitTokenThreshold:1000};let calls=0,mode='network';
   await seedSummaryRecords(f.store,settings,12);
-  const memory=new IndividuationMemory(f.path,{async *stream(request) {
+  const memory=runtimeMemory(f.path,{async *stream(request) {
     calls++;
     if(mode==='network')yield event(request,0,'response_failed',{code:'connection_error',message:'https://private.invalid/?secret=do-not-echo',retryable:true});
     else {
@@ -271,10 +290,10 @@ test('invalid output is retained, while unrelated new memory does not cancel a v
   const snapshot=await f.store.begin(on,'habits',true),source=snapshot.records[0];
   await assert.rejects(f.store.apply(snapshot,{habits:[],predictions:[],reviews:[{prediction:source.id,evidence:source.id,outcome:'hit',reason:'invented'}]},on),/cannot create or review/);
   assert.equal((await f.store.status(on)).records,4);await f.store.fail(snapshot.lease,'invalid evidence');
-  let calls=0;const memory=new IndividuationMemory(f.path,summarizeProvider(()=>{calls++;return 'bad JSON';}));t.after(()=>memory.close());
+  let calls=0;const memory=runtimeMemory(f.path,summarizeProvider(()=>{calls++;return 'bad JSON';}));t.after(()=>memory.close());
   await assert.rejects(memory.compact(on,model,true));assert.equal((await f.store.status(on)).records,4);
   await memory.compact(on,model,false);assert.equal(calls,1);
-  const gate=Promise.withResolvers(),entered=Promise.withResolvers();const concurrent=new IndividuationMemory(f.path,summarizeProvider(async(_,rows)=>{entered.resolve();await gate.promise;return {habits:[{text:'Use dated XLSX market reports.',sources:rows.map(row=>row.id)}],predictions:[],reviews:[]};}));t.after(()=>concurrent.close());
+  const gate=Promise.withResolvers(),entered=Promise.withResolvers();const concurrent=runtimeMemory(f.path,summarizeProvider(async(_,rows)=>{entered.resolve();await gate.promise;return {habits:[{text:'Use dated XLSX market reports.',sources:rows.map(row=>row.id)}],predictions:[],reviews:[]};}));t.after(()=>concurrent.close());
   const running=concurrent.compact(on,model);await entered.promise;
   await write(f.store,{habit:'用户新要求：xlsx 内同时保存来源日期。'},on,{...owner,turnId:'new'});gate.resolve();
   await running;assert.equal((await f.store.status(on)).records,2);
@@ -295,48 +314,150 @@ test('summarizing cannot overwrite a user edit to a selected source',async t=>{
 test('each stage has its own timeout and status stays running between stages',async t=>{
   const f=await fixture(t),settings={...on,eventTokenThreshold:1000,habitTokenThreshold:1000};await seedSummaryRecords(f.store,settings,16);
   await write(f.store,{prediction:'May need XLSX reports.'},settings,{...owner,turnId:'forecast'});
+  await f.store.observe('May need XLSX reports with dates.',settings,{...owner,turnId:'evidence'});
   const first=Promise.withResolvers(),second=Promise.withResolvers(),between=Promise.withResolvers(),proceed=Promise.withResolvers();let calls=0;
-  const memory=new IndividuationMemory(f.path,summarizeProvider(async(request,rows)=>{
-    (++calls===1?first:second).resolve();await new Promise(resolve=>setTimeout(resolve,70000));
+  const memory=runtimeMemory(f.path,summarizeProvider(async(request,rows)=>{
+    (++calls===1?first:second).resolve();await new Promise(resolve=>setTimeout(resolve,40000));
     return {habits:request.metadata.memoryStage==='habits'?[{text:'Market reports use dated XLSX tables.',sources:rows.map(row=>row.id)}]:[],predictions:[],reviews:[]};
   }));t.after(()=>memory.close());
   const begin=memory.store.begin.bind(memory.store);let stages=0;
   memory.store.begin=async(...args)=>{if(++stages===2){between.resolve();await proceed.promise;}return begin(...args);};
   t.mock.timers.enable({apis:['setTimeout']});
-  const operation=memory.compact(settings,model);await first.promise;t.mock.timers.tick(70000);await between.promise;
+  const operation=memory.compact(settings,model);await first.promise;t.mock.timers.tick(40000);await between.promise;
   assert.equal((await memory.store.status(settings)).running,false);assert.equal((await memory.status(settings)).running,true);
-  proceed.resolve();await second.promise;t.mock.timers.tick(70000);const status=await operation;
+  proceed.resolve();await second.promise;t.mock.timers.tick(40000);const status=await operation;
   assert.equal(calls,2);assert.equal(status.running,false);assert.equal(status.lastError,null);assert.ok(status.estimatedTokens<700);
 });
 
 test('a single stalled batch reports timeout and releases its lease without removing memory',async t=>{
   const f=await fixture(t),entered=Promise.withResolvers();await seedSummaryRecords(f.store,on,2);
-  const memory=new IndividuationMemory(f.path,{async *stream(_request,{signal}){
+  const memory=runtimeMemory(f.path,{async *stream(_request,{signal}){
     entered.resolve();await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
   }});t.after(()=>memory.close());
   t.mock.timers.enable({apis:['setTimeout']});
   const operation=memory.compact(on,model),failed=assert.rejects(operation,/memory_summary_timeout:/);
-  await entered.promise;t.mock.timers.tick(120_000);await failed;
+  await entered.promise;t.mock.timers.tick(120_000);assert.equal((await memory.status(on)).running,true,'waiting remains visible until the first-response deadline');
+  t.mock.timers.tick(180_000);await failed;
   const status=await memory.status(on);assert.equal(status.running,false);assert.equal(status.records,2);
-  assert.match(status.lastError,/memory_summary_timeout/);
+  assert.match(status.lastError,/memory_summary_timeout: stage=habits, reason=first_response/);
+  assert.match(status.lastError,/output=unknown\//,'missing usage is not reported as zero output');
+  assert.equal(status.summaryProgress,undefined);
+});
+
+test('active output renews the lease within the bounded maintenance deadline',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,8);
+  const entered=Promise.withResolvers(),gates=Array.from({length:4},()=>Promise.withResolvers()),observed=gates.map(()=>Promise.withResolvers());
+  const memory=runtimeMemory(f.path,{async *stream(request){
+    const rows=JSON.parse(request.messages.at(-1).content);let sequence=0;
+    yield event(request,sequence++,'reasoning_delta',{delta:'private reasoning'});entered.resolve();
+    for(let i=0;i<gates.length;i++){
+      await gates[i].promise;yield event(request,sequence++,'reasoning_delta',{delta:' continuing'});observed[i].resolve();
+    }
+    yield event(request,sequence++,'text_delta',{delta:JSON.stringify({habits:[{text:'Market reports include dated XLSX tables and sources.',sources:rows.map(row=>row.id)}],predictions:[],reviews:[]})});
+    yield event(request,sequence++,'response_completed',{finishReason:'stop'});
+  }});t.after(()=>memory.close());
+  const renew=memory.store.renewLease.bind(memory.store);let renewal;
+  memory.store.renewLease=(...args)=>(renewal=renew(...args));
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.now()});
+  const operation=memory.compact(on,{...model,maxOutputTokens:128000,reasoningEffort:'xhigh'});await entered.promise;
+  let status=await memory.status(on);assert.equal(status.summaryProgress.phase,'reasoning');assert.equal(status.summaryProgress.reasoningChars,17);
+  for(let i=0;i<gates.length;i++){
+    t.mock.timers.tick(35_000);await renewal;
+    assert.equal(await f.store.begin(on,'habits',true),null,'a second process cannot take over the actively renewed summary');
+    gates[i].resolve();await observed[i].promise;
+  }
+  status=await operation;assert.equal(status.records,1);assert.equal(status.running,false);assert.equal(status.lastError,null);
+  assert.equal((await memory.status(on)).summaryProgress,undefined);
+});
+
+test('usage-only heartbeats do not keep a stalled summary alive or expose its reasoning',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,2);
+  const entered=Promise.withResolvers(),heartbeat=Promise.withResolvers(),observed=Promise.withResolvers();
+  const memory=runtimeMemory(f.path,{async *stream(request,{signal}){
+    yield event(request,0,'reasoning_delta',{delta:'private reasoning must not be persisted'});entered.resolve();
+    await heartbeat.promise;yield event(request,1,'usage',{inputTokens:123});observed.resolve();
+    await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+  }});t.after(()=>memory.close());
+  t.mock.timers.enable({apis:['setTimeout']});
+  const operation=memory.compact(on,model),failed=assert.rejects(operation,/memory_summary_timeout: stage=habits, reason=idle/);
+  await entered.promise;t.mock.timers.tick(90_000);heartbeat.resolve();await observed.promise;
+  t.mock.timers.tick(30_000);await failed;
+  const status=await memory.status(on);assert.equal(status.records,2);assert.equal(status.running,false);
+  assert.match(status.lastError,/input=123, output=unknown\//);
+  assert.match(status.lastError,new RegExp(`textChars=0, reasoningChars=${'private reasoning must not be persisted'.length}`));assert.ok(!status.lastError.includes('private reasoning'));
+});
+
+test('an uncooperative provider cannot keep summary busy or save a result after timeout',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,2);
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),finished=Promise.withResolvers();
+  const memory=runtimeMemory(f.path,{async *stream(request){
+    const rows=JSON.parse(request.messages.at(-1).content);entered.resolve();await release.promise;
+    try {
+      yield event(request,0,'text_delta',{delta:JSON.stringify({habits:[{text:'Late summary.',sources:rows.map(row=>row.id)}],predictions:[],reviews:[]})});
+      yield event(request,1,'response_completed',{finishReason:'stop'});
+    } finally {finished.resolve();}
+  }});t.after(()=>memory.close());
+  t.mock.timers.enable({apis:['setTimeout']});
+  const operation=memory.compact(on,model),failed=assert.rejects(operation,/reason=first_response/);
+  await entered.promise;t.mock.timers.tick(300_000);t.mock.timers.tick(250);await failed;
+  let status=await memory.status(on);assert.equal(status.running,false);assert.equal(status.records,2);
+  const error=status.lastError;release.resolve();await finished.promise;
+  status=await memory.status(on);assert.equal(status.records,2);assert.equal(status.lastError,error);assert.equal(status.summaryProgress,undefined);
+});
+
+test('a continuous meaningful stream still has a bounded total stage duration',async t=>{
+  const f=await fixture(t);await seedSummaryRecords(f.store,on,2);
+  const entered=Promise.withResolvers(),gates=Array.from({length:14},()=>Promise.withResolvers()),observed=gates.map(()=>Promise.withResolvers());
+  const memory=runtimeMemory(f.path,{async *stream(request,{signal}){
+    let sequence=0;yield event(request,sequence++,'reasoning_delta',{delta:'working'});entered.resolve();
+    for(let i=0;i<gates.length;i++){
+      await gates[i].promise;yield event(request,sequence++,'reasoning_delta',{delta:' still working'});observed[i].resolve();
+    }
+    await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+  }});t.after(()=>memory.close());
+  const renew=memory.store.renewLease.bind(memory.store);let renewal;
+  memory.store.renewLease=(...args)=>(renewal=renew(...args));
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.now()});
+  const operation=memory.compact(on,model),failed=assert.rejects(operation,/reason=total/);await entered.promise;
+  for(let i=0;i<gates.length;i++){
+    t.mock.timers.tick(60_000);await renewal;gates[i].resolve();await observed[i].promise;
+  }
+  t.mock.timers.tick(60_000);await failed;
+  const status=await memory.status(on);assert.equal(status.records,2);assert.equal(status.running,false);
+  assert.match(status.lastError,/elapsedMs=900000/);
+});
+
+test('expired or replaced leases cannot be renewed, committed or clear a replacement task',async t=>{
+  const f=await fixture(t);let now=Date.now();const store=new IndividuationStore(f.path,()=>now);
+  await seedSummaryRecords(store,on,2);const first=await store.begin(on,'habits',true);
+  now+=179_000;assert.equal(await store.renewLease(first.lease),true);
+  now+=179_000;assert.equal(await store.begin(on,'habits',true),null);
+  now+=1_001;assert.equal(await store.renewLease(first.lease),false);
+  const summary={habits:[{text:'Market reports use dated XLSX tables.',sources:first.records.map(row=>row.id)}],predictions:[],reviews:[]};
+  await assert.rejects(store.apply(first,summary,on),error=>error.code==='memory_snapshot_changed');
+  const replacement=await store.begin(on,'habits',true);assert.notEqual(first.lease,replacement.lease);
+  assert.equal(await store.renewLease(first.lease),false);
+  await store.fail(first.lease,'late failure');assert.equal((await store.status(on)).running,true);
+  await assert.rejects(store.apply(first,summary,on),error=>error.code==='memory_snapshot_changed');
+  const status=await store.apply(replacement,summary,on);assert.equal(status.records,1);assert.equal(status.lastError,null);
 });
 
 test('maintenance respects the selected output ceiling and explains rejected summaries without retaining their text',async t=>{
   const f=await fixture(t);await seedSummaryRecords(f.store,on,3);
-  const memory=new IndividuationMemory(f.path,summarizeProvider(request=>{
+  const memory=runtimeMemory(f.path,summarizeProvider(request=>{
     assert.equal(request.maxOutputTokens,2048);
     return {habits:[{text:'Never log this provider text',sources:['invented-private-id']}],predictions:[],reviews:[]};
   }));t.after(()=>memory.close());
-  await assert.rejects(memory.compact(on,{...model,maxOutputTokens:2048}),/reason=unsupported_sources/);
+  const result=await memory.compact(on,{...model,maxOutputTokens:2048});assert.match(result.lastError,/memory_summary_partial.*rejected=1/);
   const status=await memory.status(on);
   assert.equal(status.records,3);assert.ok(!status.lastError.includes('private')&&!status.lastError.includes('provider text'));
 });
 
-test('maintenance inherits configured output tokens and reasoning unchanged for full-snapshot retries',async t=>{
+test('maintenance preserves the selected reasoning effort and output allowance',async t=>{
   for(const [maxOutputTokens,contextWindowTokens] of [[128000,400000],[8192,16000]]) {
     const f=await fixture(t);await seedSummaryRecords(f.store,on,8);const requests=[];
     const selected={...model,maxOutputTokens,reasoningEffort:'max',metadata:{contextWindowTokens}};
-    const memory=new IndividuationMemory(f.path,{async *stream(request){
+    const memory=runtimeMemory(f.path,{async *stream(request){
       requests.push(request);const rows=JSON.parse(request.messages.at(-1).content);
       assert.equal(request.maxOutputTokens,maxOutputTokens);assert.equal(request.reasoningEffort,'max');assert.equal(rows.length,8);
       if(requests.length===1){yield event(request,0,'usage',{outputTokens:maxOutputTokens});yield event(request,1,'response_completed',{finishReason:'length'});}
@@ -392,7 +513,7 @@ test('manual runtime command works below threshold and a second database owner c
 
 test('cancelling a model summary releases the lease and retains the source',async t=>{
   const f=await fixture(t),entered=Promise.withResolvers();await write(f.store,{habit:'用户偏好简明的 XLSX 数据表。'},on,owner);
-  const memory=new IndividuationMemory(f.path,{async *stream(_request,{signal}){entered.resolve();await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}});
+  const memory=runtimeMemory(f.path,{async *stream(_request,{signal}){entered.resolve();await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}});
   const controller=new AbortController(),running=memory.compact(on,model,true,controller.signal);await entered.promise;controller.abort();
   await assert.rejects(running);const status=await f.store.status(on);assert.equal(status.records,1);assert.equal(status.running,false);assert.ok(status.lastError);
   assert.ok(await f.store.begin(on,'habits',true),'manual retry can acquire immediately');

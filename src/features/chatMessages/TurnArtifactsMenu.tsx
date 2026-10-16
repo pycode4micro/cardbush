@@ -12,7 +12,7 @@ export interface TurnArtifactEntry {
   mediaType?: 'image' | 'video' | 'audio';
 }
 
-export function TurnArtifactsMenu({ items: initialItems, language, reverted, busy, onRevert, onOpen, onContextMenu, loadItems, onDownload }: {
+export function TurnArtifactsMenu({ items: initialItems, language, reverted, busy, onRevert, onOpen, onContextMenu, loadItems, onDownload, onDownloadAll }: {
   items: TurnArtifactEntry[];
   language: AppLanguage;
   reverted: boolean;
@@ -22,6 +22,7 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
   onContextMenu?: (event: MouseEvent<HTMLElement>, item: TurnArtifactEntry) => void;
   loadItems?: () => Promise<TurnArtifactEntry[]>;
   onDownload?: (item: TurnArtifactEntry) => Promise<void>;
+  onDownloadAll?: (items: TurnArtifactEntry[], progress: (completed: number, total: number) => void) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
@@ -31,6 +32,8 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
   const [loadError, setLoadError] = useState('');
   const [retry, setRetry] = useState(0);
   const [downloads, setDownloads] = useState<Set<string>>(() => new Set());
+  const [batch, setBatch] = useState<{ completed: number; total: number } | null>(null);
+  const [placementRevision, setPlacementRevision] = useState(0);
   const items = loadedItems ?? initialItems;
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -63,9 +66,12 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
       width: `${width}px`, maxHeight: `${Math.min(336, Math.max(40, upwards ? above : below))}px`,
       translate: upwards ? '0 -100%' : 'none',
     });
-    menu.current.showPopover();
-    menu.current.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
-  }, [open, items.length]);
+    const opening = !menu.current.matches(':popover-open');
+    if (opening) {
+      menu.current.showPopover();
+      menu.current.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
+    }
+  }, [open, items.length, placementRevision]);
   useEffect(() => {
     const node = menu.current;
     const sync = (event: Event) => { if ((event as ToggleEvent).newState === 'closed') setOpen(false); };
@@ -74,11 +80,15 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
   }, []);
   useEffect(() => {
     if (!open) return;
-    const dismiss = (event: Event) => { if (!menu.current?.contains(event.target as Node)) close(); };
+    const dismiss = (event: Event) => {
+      if (menu.current?.contains(event.target as Node)) return;
+      // Browser image reflow can scroll the transcript while a deferred receipt loads.
+      if (onDownloadAll) setPlacementRevision(value => value + 1); else close();
+    };
     window.addEventListener('resize', dismiss);
     document.addEventListener('scroll', dismiss, true);
     return () => { window.removeEventListener('resize', dismiss); document.removeEventListener('scroll', dismiss, true); };
-  }, [open]);
+  }, [open, onDownloadAll]);
 
   return <div className="turn-artifacts">
     <button ref={trigger} className="turn-artifacts-trigger" type="button" aria-label={`${label} (${items.length})`}
@@ -104,6 +114,17 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
         }
       }}>
       {open && <>
+        {onDownloadAll && <><button className="turn-artifacts-download-all" type="button" role="menuitem"
+          disabled={Boolean(batch) || loading || Boolean(loadError) || Boolean(loadItems && !loadedItems) || !items.length || downloads.size > 0}
+          onClick={async () => {
+            setBatch({ completed: 0, total: items.length }); setError('');
+            try { await onDownloadAll(items, (completed, total) => setBatch({ completed, total })); }
+            catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+            finally { setBatch(null); }
+          }}>
+          {batch ? <LoaderCircle size={15} className="spin"/> : <Download size={15}/>}
+          <span>{batch ? (language === 'zh' ? `正在下载 ${batch.completed}/${batch.total}…` : `Downloading ${batch.completed}/${batch.total}…`) : language === 'zh' ? '下载全部' : 'Download all'}</span>
+        </button><div className="turn-artifacts-divider" role="separator"/></>}
         {loading && <p className="turn-artifacts-notice" role="status">{language === 'zh' ? '正在读取产物…' : 'Loading artifacts…'}</p>}
         {loadError && <div className="turn-artifacts-error" role="alert">{loadError}<button type="button" role="menuitem" onClick={() => setRetry(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
         {!loading && !loadError && items.length === 0 && <p className="turn-artifacts-notice">{language === 'zh' ? '本轮暂无可下载产物' : 'No downloadable artifacts in this turn'}</p>}
@@ -124,7 +145,7 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
         {items.map(item => onDownload ? <div key={item.path} className="turn-artifacts-download-file" title={item.name}>
           <FileTypeIcon path={item.path} fileName={item.name} mediaType={item.mediaType}/><span>{item.name}</span>
           <button type="button" role="menuitem" className="turn-artifacts-download" aria-label={`${language === 'zh' ? '下载' : 'Download'} ${item.name}`}
-            disabled={downloads.has(item.path)} onClick={async () => {
+            disabled={Boolean(batch) || downloads.has(item.path)} onClick={async () => {
               setDownloads(previous => new Set(previous).add(item.path)); setError('');
               try { await onDownload(item); }
               catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }

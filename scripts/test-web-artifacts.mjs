@@ -43,3 +43,29 @@ test('artifact menus keep each conversation and turn scoped, and ordinary chat p
   assert.equal(ui.webTurnArtifacts(message({content:'只有文字的回复'})).length,0);
   assert.equal(ui.hasDeferredImageArtifacts(message()),false);
 });
+
+test('completed conversions appear as downloadable artifacts, including deferred history receipts', () => {
+  const tool='mcp__plugin_volcengine_images_images__image_convert';
+  const value={mcp:{name:tool},result:{structuredContent:{task:task({kind:'image_conversion'})}}};
+  assert.deepEqual(plain(ui.imageReceiptArtifacts(tool,value)).map(item=>item.path),[image]);
+  assert.equal(ui.imageReceiptArtifacts(name,value).length,0);
+  assert.equal(ui.imageReceiptArtifacts(tool,receipt({task:task()})).length,0);
+  const summary={recordedAt:'2026-10-16T00:00:00Z',turnId:'turn-a',ordinal:0,round:1,toolCall:{id:'convert',name:tool},outcome:'returned',resultAvailable:true,workspaceChanges:[]};
+  assert.equal(ui.hasDeferredImageArtifacts(message({toolExecutions:[ui.webToolExecution(summary)]})),true);
+  const full=ui.webToolExecution({...summary,result:value});
+  assert.equal(full.metadata.displayTitle,'转换图片尺寸与格式');
+  assert.deepEqual(plain(ui.webTurnArtifacts(message({toolExecutions:[full]}))).map(item=>item.path),[image]);
+});
+
+test('a stitched overview is one downloadable artifact, with input paths kept out of the output list', () => {
+  const tool='mcp__plugin_volcengine_images_images__image_stitch';
+  const stitched=task({kind:'image_stitch',result:{data:[{local_path:image}],sources:[{index:1,source_path:'/data/workspaces/generated/original.png'}]}});
+  const value={structuredContent:{task:stitched}};
+  const summary={recordedAt:'2026-10-16T00:00:00Z',turnId:'turn-a',ordinal:0,round:1,toolCall:{id:'stitch',name:tool},outcome:'returned',resultAvailable:true,workspaceChanges:[]};
+  assert.equal(ui.hasDeferredImageArtifacts(message({toolExecutions:[ui.webToolExecution(summary)]})),true);
+  const full=ui.webToolExecution({...summary,result:value});
+  assert.equal(full.metadata.displayTitle,'多图组合拼接');
+  assert.deepEqual(plain(ui.webTurnArtifacts(message({toolExecutions:[full]}))).map(item=>item.path),[image]);
+  assert.equal(ui.imageReceiptArtifacts(name,value).length,0);
+  assert.equal(ui.imageReceiptArtifacts(tool,{structuredContent:{task:task()}}).length,0);
+});

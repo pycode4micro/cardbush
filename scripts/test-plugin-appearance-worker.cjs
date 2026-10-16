@@ -105,8 +105,13 @@ app.whenReady().then(async () => {
     assert.equal(await read('active().querySelector(".plugin-search input").value'), 'chrome');
     await input('.plugin-search input', '');
     await read(`active().querySelectorAll('[role=tab]')[2].click()`);
-    await read(`Array.from(active().querySelectorAll('.plugin-featured-main')).find(b=>b.textContent.includes('Blender')).click()`); await page('mcp');
-    await click('返回管理'); await page('manage');
+    await read(`window.manageBefore=active();const button=Array.from(active().querySelectorAll('.plugin-featured-main')).find(b=>b.textContent.includes('Blender'));button.focus();window.mcpOpener=button;button.click()`);
+    await until("document.querySelector('.mcp-server-dialog')?.matches(':modal')");
+    assert.equal(await read('active()===manageBefore'),true,'MCP configuration overlays the original list');
+    await click('关闭配置');
+    await until("!document.querySelector('.mcp-server-dialog')");
+    assert.equal(await read('document.activeElement===mcpOpener'),true,'closing MCP restores list focus');
+    await page('manage');
     assert.equal(await read('active().querySelector("[aria-selected=true]").textContent.includes("MCP")'), true);
     await click('插件'); await page('catalog');
 
@@ -127,8 +132,8 @@ app.whenReady().then(async () => {
     await click('返回插件'); await page('catalog'); await click('市场'); await page('marketplace');
     await until('!active().querySelector(".plugin-install-button").disabled');
     await click('添加来源');
-    await input('.plugin-market-add input', 'https://github.com/fixture/plugins');
-    await read(`active().querySelector('.plugin-market-add').requestSubmit()`);
+    await input('.plugin-market-source-dialog input', 'https://github.com/fixture/plugins');
+    await read(`active().querySelector('.plugin-market-source-dialog form').requestSubmit()`);
     await until('active().innerText.includes("示例市场") && !active().querySelector(".plugin-install-button").disabled');
     await read(`marketSlow=true;active().querySelector('.plugin-featured-main').click()`);
     await until('typeof finishMarketPreview === "function"');

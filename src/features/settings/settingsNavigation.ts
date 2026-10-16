@@ -8,7 +8,7 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
   projects: { zh: '项目', en: 'Projects' },
   ssh: { zh: 'SSH 连接', en: 'SSH connections' },
   profile: { zh: '个性化', en: 'Personalization' },
-  summary_for_user: { zh: 'summary_for_user', en: 'summary_for_user' },
+  summary_for_user: { zh: '记忆与预测', en: 'Memory & predictions' },
   appearance: { zh: '外观与语言', en: 'Appearance & language' },
   shortcuts: { zh: '快捷键', en: 'Keyboard shortcuts' },
   usage: { zh: '使用统计', en: 'Usage' },
@@ -49,7 +49,7 @@ export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: V
 
 const keywords: Record<VisibleSettingsSection, string> = {
   voice: '语音 通话 录音 转写 男声 女声 麦克风 音色 voice audio speech microphone transcription call TTS',
-  summary_for_user: '习惯 记忆 预测 命中 总结 压缩 阈值 Token check_habit memory habit prediction summary threshold consolidation',
+  summary_for_user: '习惯 记忆 预测 命中 总结 压缩 阈值 Token summary_for_user check_habit memory habit prediction summary threshold consolidation',
   projects: '项目 工作区 目录 project workspace directory',
   ssh: 'SSH 远程 连接 主机 服务器 私钥 项目 remote connection server key project',
   profile: '对话 风格 角色 自然 专业 直率 简短 自定义 语气 全局约束 AGENTS.md 提示词 引导 排队 队列 思考 消息 提醒 音效 音量 声音 通知 instructions tone persona style natural professional direct concise guidance queue thinking notification sound volume',

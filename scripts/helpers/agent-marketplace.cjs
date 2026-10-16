@@ -28,7 +28,7 @@ module.exports = async ({ run, until, pause, win, root }) => {
   await click('.plugin-market-heading button', '添加来源');
   assert.equal(await run("!!document.querySelector('[aria-label=\"Agent 主机上的市场目录\"]')"), false);
   await run(`var input=document.querySelector('input[aria-label="市场仓库地址"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'fixture/shared-plugins');input.dispatchEvent(new Event('input',{bubbles:true}));undefined;`);
-  await pause(20);await run("document.querySelector('.plugin-market-add').requestSubmit();undefined;");
+  await pause(20);await run("document.querySelector('.plugin-market-source-dialog form').requestSubmit();undefined;");
   await until("document.querySelector('.plugin-market-card-copy')?.textContent.includes('Shared plugin fixture')", 'shared source loads');
   await run("document.querySelector('.plugin-featured-main').click();undefined;");
   await until("!!document.querySelector('.plugin-market-detail')", 'shared preview');

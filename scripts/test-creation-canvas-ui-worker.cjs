@@ -11,6 +11,20 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: { s
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   const { CreationCanvasFiles, readCanvas } = await import('../dist-electron/creationCanvasFiles.mjs');
+  const { MarkdownFiles } = require('../dist-electron/mdPresentationFiles.js');
+  const markdown = new MarkdownFiles(async () => undefined), teams = [];
+  ipcMain.handle('canvas:markdown', (_, input) => markdown.command(input));
+  ipcMain.handle('canvas:team', (_, { kind, payload }) => {
+    if (payload.action === 'list') return kind === 'runtime.agent_registry' ? [] : { teams, runs: [] };
+    if (payload.action === 'save') {
+      const prior = teams.find(item => item.definition.id === payload.definition.id);
+      if ((prior?.revision ?? 0) !== payload.expected_revision) throw Error('Definition changed. Read its current revision before saving.');
+      const receipt = { revision: payload.expected_revision + 1, updatedAt: new Date().toISOString(), definition: payload.definition };
+      if (prior) teams.splice(teams.indexOf(prior), 1, receipt); else teams.push(receipt);
+      return receipt;
+    }
+    throw Error('Unexpected team command');
+  });
   const { ToolRegistry, ToolExecutionCoordinator, WorkspaceObservationStore, registerWorkspaceTools } = await import('@cardbush/bush-runtime');
   const { registerDesignTool } = await import('../packages/bush-runtime/dist/designTool.js');
   const registry = new ToolRegistry(); registerWorkspaceTools(registry, new WorkspaceObservationStore()); registerDesignTool(registry);
@@ -38,12 +52,19 @@ app.whenReady().then(async () => {
   const until = async (expression, timeout = 20000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { if (await run(expression).catch(() => false)) return; await delay(60); } throw Error(`Timed out: ${expression}; UI: ${(await run('document.body.innerText')).slice(0, 1200)}`); };
   const clickText = text => run(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(text)}).click()`);
   const selected = () => run('canvasStore.getCanvases().canvases.find(c=>c.id===canvasStore.getCanvases().selectedId)');
-  const point = selector => run(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+  const point = async selector => {
+    // A host file read can see the new revision before the save reply reaches React.
+    // Start the next gesture only after that reply and the resulting layout settle.
+    await until('window.canvasPendingWrites===0');
+    await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    return run(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+  };
   const pointer = (type, p, modifiers = []) => win.webContents.sendInputEvent({ type, x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers });
   const design = async input => { const result = await run(`testBridge.design(${JSON.stringify(input)})`); assert.equal(result.kind, 'returned', JSON.stringify(result)); return result.result; };
   try {
     await win.loadFile(join(directory, 'app/index.html')); await until('!!document.querySelector("[data-canvas-item=document]")');
     assert.match(await run('document.querySelector(".canvas-markdown").textContent'), /Preserve my writing/);
+    await require('./helpers/sidebar-app-dock.cjs')({read:run,frame:()=>run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),win,sidebar:'.canvas-sidebar'});
     assert.equal(await run(`canvasFileTarget('图 #1%25.png','C:/root #1/space.canvas.json')`), 'C:/root #1/图 #1%25.png');
     await clickText('新建画板'); await until('!!document.querySelector(".canvas-empty") && !!canvasStore.getCanvases().canvases.find(c=>c.id===canvasStore.getCanvases().selectedId)?.path');
     assert.equal(await run('document.querySelector(".creation-canvas-app").textContent.includes("项目")'), false);
@@ -51,6 +72,8 @@ app.whenReady().then(async () => {
     await writeFile(resolve('tmp/creation-canvas-empty.png'), (await win.webContents.capturePage()).toPNG());
     await clickText('素材'); await until('document.querySelectorAll("[data-canvas-item]").length===2');
     await until('document.querySelector(".canvas-stage").textContent.includes("A real Markdown file")');
+    assert.equal(await run('!!document.querySelector(".canvas-board-label")'), false, 'logical canvas dimensions are not presented as an inner artboard');
+    assert.equal(await run('(()=>{const stage=getComputedStyle(document.querySelector(".canvas-stage")),plane=getComputedStyle(document.querySelector(".canvas-plane"));return stage.backgroundImage.includes("radial-gradient")&&plane.backgroundImage==="none"&&plane.boxShadow==="none"&&plane.backgroundColor==="rgba(0, 0, 0, 0)"})()'), true, 'grid covers the workspace and the coordinate plane is transparent');
     const entry = await selected(), current = await design({ action: 'inspect', path: entry.path });
     const html = { id: 'interactive', title: 'Interactive HTML', kind: 'html', html: '<style>body{margin:20px;background:#252e40;color:#cde}h1{font-size:24px}button{padding:10px}</style><h1>Canvas interaction</h1><button onclick="this.textContent=Number(this.textContent)+1">0</button>', frame: { x: 40, y: 500, width: 550, height: 260 } };
     await design({ action: 'update', path: entry.path, expected_revision: current.revision, upsert: [html] });
@@ -189,6 +212,7 @@ app.whenReady().then(async () => {
     await run('document.querySelector("[aria-label=更多操作]").click()'); await clickText('用作新会话布局'); await until('document.body.textContent.includes("已应用到新会话布局")');
     const layout = await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1")).welcomeLayout');
     assert.ok(layout.items.some(item=>item.componentId==='system-input'&&item.composerDock==='bottom')); assert.equal(layout.items.length,2);
-    console.log('PASS: legacy migration, empty canvas, file import, real design tool updates, state-preserving HTML, drag/snap/Alt/northwest resize at 51%, constant-size handles, keyboard nudging, Escape cancellation, concurrent-update protection, background/iframe panning, document scrolling, hidden Agent context, component extraction, region provenance/snapshot, folder export, local-file refresh, DOCX/PPTX/XLSX/PDF previews, reload persistence, welcome layout');
+    await require('./helpers/canvas-markdown-workspace.cjs')({ run, until, clickText, selected, win, teams, directory });
+    console.log('PASS: canvas previews and geometry; shared Markdown editing, autosave, line context, document switching, conflicts and Team round trip');
   } catch (error) { await writeFile(resolve('tmp/creation-canvas-failure.png'), (await win.webContents.capturePage()).toPNG()); console.error('Pointer diagnostic', await run('window.pointerLog?.slice(-8)')); console.error('Wheel diagnostic', await run('window.canvasWheelLog')); throw error; } finally { win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

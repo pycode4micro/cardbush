@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export type TeamWorkspaceTab = 'teams' | 'agents' | 'runs';
+export type TeamWorkspaceTab = 'teams' | 'library' | 'agents' | 'runs';
 type DocumentRequest = { kind: 'create' } | { kind: 'open' } | { kind: 'select'; id: string; runId?: string };
 type OpenDocument = { id: string; name: string; dirty: boolean };
 type Navigation = { tab: TeamWorkspaceTab; document: OpenDocument | null; request: DocumentRequest | null; busy: boolean };

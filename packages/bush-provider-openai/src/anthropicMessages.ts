@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { createHash } from 'node:crypto';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { ContentBlockParam, MessageCreateParamsStreaming, MessageParam, RawMessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
@@ -13,6 +14,18 @@ import { AnthropicStreamDiagnostics } from './anthropicStreamDiagnostics.js';
 
 const FORMAT = 'anthropic.messages.v1';
 const PROMPT_CACHING_CAPABILITY = 'anthropic_automatic_prompt_caching';
+const isThinking = (block: { type: string }) => block.type === 'thinking' || block.type === 'redacted_thinking';
+function canonical(value: unknown): string {
+  return Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']'
+    : value && typeof value === 'object' ? '{' + Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}' : JSON.stringify(value) ?? 'null';
+}
+const prefixHash = (system: unknown, tools: unknown) => createHash('sha256').update(canonical({ system, tools }));
+function thinkingPrefix(system: unknown, tools: unknown, messages: MessageParam[]): string {
+  const hash = prefixHash(system, tools);
+  for (const message of messages) hash.update('\n').update(canonical(message));
+  return hash.digest('hex');
+}
 function imageBlock(url: string): ContentBlockParam {
   const data = /^data:(image\/(?:jpeg|png|gif|webp));base64,(.+)$/s.exec(url);
   if (data) return { type: 'image', source: { type: 'base64', media_type: data[1] as 'image/png', data: data[2] } };
@@ -48,8 +61,25 @@ function replayContent(message: Extract<ModelMessage, { role: 'assistant' }>, re
   return structuredClone(blocks) as unknown as ContentBlockParam[];
 }
 
-export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: 'adaptive' | 'budget' = 'adaptive', cache = true): MessageCreateParamsStreaming {
+export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: 'adaptive' | 'budget' = 'adaptive', cache = true, discardThinking = false): MessageCreateParamsStreaming {
   const messages: MessageParam[] = [], system: string[] = [];
+  const tools = request.tools.length ? request.tools.map(tool => ({ name: providerToolName(tool.name), description: tool.description,
+    input_schema: { ...withToolDisplayTitle(tool).inputSchema, type: 'object' as const } })) : undefined;
+  // A legacy conversation may have needed one confirmed wire repair. Reproduce
+  // that projection on later requests without editing its durable history.
+  const discardBefore = discardThinking ? request.messages.length : request.messages.reduce((last, message, index) =>
+    message.role === 'assistant' && message.providerReplay?.format === FORMAT && modelReplayMatches(message, request) &&
+      message.providerReplay.data.discardedThinking === true ? index : last, -1);
+  let hashedMessages = 0, replayPrefix: ReturnType<typeof prefixHash> | undefined;
+  const currentPrefix = () => {
+    replayPrefix ??= prefixHash(system.join('\n\n') || undefined, tools);
+    // Only the final message can still be merged by append(). Hash each closed
+    // message once instead of repeatedly hashing the entire growing history.
+    while (hashedMessages < messages.length - 1) replayPrefix.update('\n').update(canonical(messages[hashedMessages++]));
+    const hash = replayPrefix.copy();
+    if (messages.length) hash.update('\n').update(canonical(messages.at(-1)));
+    return hash.digest('hex');
+  };
   const textCallIds = new Set<string>();
   let inPrefix = true;
   const append = (role: 'user' | 'assistant', content: ContentBlockParam[]) => {
@@ -63,7 +93,7 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
     }
     else messages.push({ role, content });
   };
-  for (const message of portableMessages(request)) {
+  for (const [index, message] of portableMessages(request).entries()) {
     if (message.role === 'system' || message.role === 'developer') {
       const content = namedMessageContent(message.name, message.content);
       if (inPrefix) system.push(content);
@@ -77,7 +107,9 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
     if (message.role === 'assistant') {
       const replay = replayContent(message, request);
       if (replay) {
-        append('assistant', replay);
+        const prefix = message.providerReplay!.data.thinkingPrefix;
+        const invalid = index < discardBefore || typeof prefix === 'string' && replay.some(isThinking) && prefix !== currentPrefix();
+        append('assistant', invalid ? replay.filter(block => !isThinking(block)) : replay);
       } else append('assistant', [...textBlocks(message.content), ...message.toolCalls.flatMap(call => {
         const input = objectArguments(call.argumentsText);
         if (input) return [{ type: 'tool_use', id: call.id, name: providerToolName(call.name), input } as ContentBlockParam];
@@ -102,8 +134,7 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
   const budget = thinking && thinkingMode === 'budget' ? Math.min(maxTokens - 1, { low: 1024, medium: 2048, high: 4096, xhigh: 8192, max: 16384 }[effort]) : undefined;
   return { model: request.model, messages, system: system.join('\n\n') || undefined, max_tokens: maxTokens, stream: true,
     ...(cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
-    ...(request.tools.length ? { tools: request.tools.map(tool => ({ name: providerToolName(tool.name), description: tool.description,
-      input_schema: { ...withToolDisplayTitle(tool).inputSchema, type: 'object' as const } })) } : {}),
+    ...(tools ? { tools } : {}),
     ...(thinking ? budget ? { thinking: { type: 'enabled' as const, budget_tokens: budget } }
       : { thinking: { type: 'adaptive' as const }, output_config: { effort } }
       : { ...(effort === 'none' ? { thinking: { type: 'disabled' as const } } : {}),
@@ -147,7 +178,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
     try {
       const resolvedRequest = await resolveLocalImageInputs(request);
       options.signal?.throwIfAborted();
-      const stream = await this.#createStream(resolvedRequest, options, diagnostics);
+      const { stream, prefix, discardedThinking } = await this.#createStream(resolvedRequest, options, diagnostics);
       diagnostics.report('response_headers');
       for await (const event of stream) {
         diagnostics.observe(event);
@@ -225,6 +256,8 @@ export class AnthropicMessagesProvider implements ModelProvider {
             ...(truncated ? { completedToolCallIndices: [] } : {}),
             ...(replayable ? { providerReplay: { format: FORMAT, data: {
               content: [...blocks].sort(([a], [b]) => a - b).map(([, block]) => block.value),
+              thinkingPrefix: prefix,
+              ...(discardedThinking ? { discardedThinking: true } : {}),
             } } } : {}) });
           return;
         }
@@ -244,24 +277,37 @@ export class AnthropicMessagesProvider implements ModelProvider {
     return { scope: this.#capabilityScope, model, capability: PROMPT_CACHING_CAPABILITY };
   }
 
-  #project(request: ModelRequest, disablePromptCache = false): MessageCreateParamsStreaming {
+  #project(request: ModelRequest, disablePromptCache = false, discardThinking = false): MessageCreateParamsStreaming {
     return toAnthropicMessagesParams(request, this.config.anthropicThinkingMode,
-      !disablePromptCache && this.#capabilityStore.read(this.#cacheIdentity(request.model)).status !== 'unsupported');
+      !disablePromptCache && this.#capabilityStore.read(this.#cacheIdentity(request.model)).status !== 'unsupported', discardThinking);
   }
 
   async #createStream(request: ModelRequest, options: ModelStreamOptions, diagnostics: AnthropicStreamDiagnostics) {
     const attempts = options.attempts ?? new ModelRequestAttempts();
     for (;;) {
       options.signal?.throwIfAborted();
-      const params = this.#project(request, attempts.hasRecovery('negotiate_capability'));
+      const discardedThinking = attempts.hasRecovery('discard_incompatible_replay');
+      const params = this.#project(request, attempts.hasRecovery('negotiate_capability'), discardedThinking);
       recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
       diagnostics.dispatch(params);
       try {
         attempts.dispatch();
-        return await this.#client.messages.create(params, { signal: options.signal,
+        const stream = await this.#client.messages.create(params, { signal: options.signal,
           headers: modelRequestHeaders(this.#baseURL, this.config.defaultHeaders, request.sessionId) });
+        return { stream, prefix: thinkingPrefix(params.system, params.tools, params.messages), discardedThinking };
       } catch (error) {
         const message = anthropicValidationMessage(error) ?? '';
+        // Only repair an explicit prefix-binding rejection before any output.
+        // Do not infer it from the diagnostic suffix ("tools/system/... changed"),
+        // a generic 400, malformed signature or transport failure.
+        const bindingRejected = message.includes('Invalid `signature` in `thinking` block') && message.includes('bound to a different conversation');
+        if (bindingRejected && params.messages.some(message => Array.isArray(message.content) && message.content.some(isThinking)) &&
+            attempts.recover('discard_incompatible_replay', { signal: options.signal })) {
+          options.onCompatibilityDiagnostic?.({ model: request.model, source: 'generation', action: 'retry', ...attempts.snapshot(),
+            error: { code: 'anthropic_thinking_prefix_mismatch', status: 400,
+              message: 'The endpoint rejected history-bound thinking; retrying once with its text and tool results preserved.' } });
+          continue;
+        }
         const unsupportedCache = /^(?:["']?cache_control["']?)\s*(?::|is\b)\s*(?:extra inputs are not permitted|not supported|unsupported)\b/i.test(message) ||
           /^(?:unknown|unsupported|unrecognized) (?:field|parameter|request argument(?: supplied)?)\s*:?\s*["']?cache_control\b/i.test(message);
         // This retry only removes a rejected optional field, before any output.

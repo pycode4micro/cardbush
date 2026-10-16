@@ -5,6 +5,9 @@ import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, t
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorkspaceStore';
 import { TeamGraphWorkspace } from './TeamGraphWorkspace';
+import { TeamWorkflowLibrary } from './TeamWorkflowLibrary';
+import { MarkdownContent } from '../chatMessages';
+import { teamNodeTitle } from './teamFlowGraph';
 import { requestTeamDocument, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
 import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
 import './team-workspace.css';
@@ -25,7 +28,7 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
   };
   const statusLabel = (status: string) => ({ pending: t('等待依赖', 'Pending'), running: t('运行中', 'Running'), completed: t('已完成', 'Completed'),
     failed: t('失败', 'Failed'), stopped: t('已停止', 'Stopped'), interrupted: t('运行已中断', 'Interrupted') }[status] ?? status);
-  useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refreshTeamWorkspace(); }, 4000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refreshTeamWorkspace(false, true); }, 4000); return () => window.clearInterval(timer); }, []);
   const perform = async (operation: () => Promise<unknown>) => {
     setError(''); setBusy(true);
     try { await operation(); await refreshTeamWorkspace(); } catch (error) { setError(explainError(error)); }
@@ -36,6 +39,7 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
   const names = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
   return <div className="native-team-workspace">
     {(error || state.error) && <p role="alert">{error || state.error}</p>}
+    {tab === 'library' && <TeamWorkflowLibrary teams={state.teams} runs={state.runs} language={language}/>}
     {tab === 'agents' && <section className="native-team-management"><h1>{t('员工', 'Agents')}</h1><div className="native-team-columns">
       <div className="native-team-list"><button type="button" onClick={newAgent}><Plus size={16} />{t('注册员工', 'Register agent')}</button>
         {state.agents.map(record => <button type="button" key={record.definition.id} aria-pressed={agent?.definition.id === record.definition.id} onClick={() => setAgent(structuredClone(record))}><strong className="native-team-identity"><EmployeeIcon size={17} />{record.definition.name}</strong><small>{record.definition.description || record.definition.id}</small></button>)}
@@ -68,8 +72,8 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
     {tab === 'runs' && <section className="native-team-management"><h1>{t('运行记录', 'Runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{t('还没有运行记录。', 'No runs yet.')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>
         <button type="button" onClick={() => requestTeamDocument({ kind: 'select', id: run.teamId, runId: run.id })}>{t('查看流程与结果', 'View workflow and results')}</button>
-        {run.nodes.map((node, index) => <details key={node.id}><summary title={node.id}>{t('节点', 'Node')} {index + 1} · {statusLabel(node.status)}</summary><pre>{node.output || node.error}</pre></details>)}
-        {run.error && <p role="alert">{run.error}</p>}<small>{run.id}</small>
+        {run.nodes.map(node => <details key={node.id}><summary>{teamNodeTitle(run.workflow.nodes.find(item => item.id === node.id)!, run.agents.map(item => item.definition))} · {statusLabel(node.status)}</summary><MarkdownContent content={node.output || node.error} language={language}/></details>)}
+        {run.error && <p role="alert">{run.error}</p>}<time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}</time>
         {run.status === 'running' && <button type="button" disabled={busy} onClick={() => void perform(() => teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'stop', run_id: run.id }))}>{t('停止团队', 'Stop run')}</button>}
         {['failed', 'stopped', 'interrupted'].includes(run.status) && <p>{t('可在原对话中要求继续此运行；已完成节点会保留。', 'Ask to resume this run in its original chat; completed nodes are retained.')}</p>}
       </article>)}

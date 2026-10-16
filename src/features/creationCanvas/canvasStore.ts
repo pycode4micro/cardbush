@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { emptyCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
 import { bushItPageName, getBushItPages, type BushItPage } from '../mdPresentation/bushItPageStore';
 
-export type CanvasEntry = { id: string; title: string; sessionId: string; sessionCreated?: boolean; root?: string; path?: string; seed?: CreationCanvas; legacyPageId?: string; archived?: boolean; updatedAt: number };
+export type CanvasEntry = { id: string; title: string; sessionId: string; sessionCreated?: boolean; root?: string; path?: string; seed?: CreationCanvas; legacyPageId?: string; archived?: boolean; updatedAt: number; editingId?: string; team?: { id: string; revision: number } };
 type Library = { canvases: CanvasEntry[]; selectedId: string; error: string };
 const key = 'cardbush.creation-canvases.v1', listeners = new Set<() => void>();
 let state: Library | undefined;

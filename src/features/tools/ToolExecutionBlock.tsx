@@ -1,6 +1,6 @@
 import {
   ChevronDown,
-  Clipboard,
+  Copy,
   LoaderCircle,
   Network,
   Play,
@@ -827,7 +827,7 @@ function ToolExecutionDetail({
               aria-label={language === 'zh' ? '复制输出' : 'Copy output'}
               onClick={() => void copyText(output).catch(() => undefined)}
             >
-              <Clipboard size={14} />
+              <Copy size={14} />
             </button>
           </div>}
         </div>
@@ -1174,7 +1174,7 @@ function WorkerDispatchRecommendationCard({
             void copyText(JSON.stringify(dispatch.raw, null, 2)).catch(() => undefined)
           }
         >
-          <Clipboard size={13} />
+          <Copy size={13} />
           <span>{language === 'zh' ? '复制参数' : 'Copy'}</span>
         </button>
       </header>

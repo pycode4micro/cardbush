@@ -122,11 +122,16 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
   </div>;
 }
 
-function BushItDocumentPage({ page, language, onPractice, onSourceSelection, sessionId, root, anchorRequest }: BushItAppProps & { page: BushItPage; onSourceSelection: (selection: MarkdownSelection) => void; sessionId?: string; root: string; anchorRequest?: MarkdownAnchorRequest }) {
+export function BushItDocumentPage({ page, language, onPractice, onSourceSelection, sessionId, root, anchorRequest, embedded = false, initialTeam, onTeamSaved, onNewFile, onKeepDraft, onOpenTeam }: BushItAppProps & {
+  page: BushItPage; onSourceSelection: (selection: MarkdownSelection) => void; sessionId?: string; root: string; anchorRequest?: MarkdownAnchorRequest;
+  embedded?: boolean; initialTeam?: { id: string; revision: number }; onTeamSaved?: (team: { id: string; revision: number }) => void; onNewFile?: (path: string) => void;
+  onKeepDraft?: (source: string) => Promise<void>;
+  onOpenTeam?: (id: string) => void;
+}) {
   const source = page.source, setSource = (value: string) => updateBushItPage(page.id, { source: value });
   const live = useCreationLiveEdit(page, sessionId, root);
   const [teamError, setTeamError] = useState(''), [teamBusy, setTeamBusy] = useState(false);
-  const [registered, setRegistered] = useState<{ id: string; revision: number; source: string }>();
+  const [registered, setRegistered] = useState<{ id: string; revision: number; source: string } | undefined>(() => initialTeam ? { ...initialTeam, source: '' } : undefined);
   const [fileError, setFileError] = useState(''), [readError, setReadError] = useState(''), [saving, setSaving] = useState(false);
   const document = useMemo(() => { try { return parseMarkdownGraph(source); } catch { return undefined; } }, [source]);
   const config = document && documentTeam(document), teamId = String(config?.id || '');
@@ -145,44 +150,48 @@ function BushItDocumentPage({ page, language, onPractice, onSourceSelection, ses
     return () => clearTimeout(timer);
   }, [page.id, page.source, page.file?.revision, page.externalFile]);
   useEffect(() => { const record = state.teams.find(item => item.definition.id === teamId);
-    if (record && registered?.id !== teamId) setRegistered({ id: teamId, revision: record.revision, source: teamToMarkdown(record.definition) });
-  }, [teamId, state.teams, registered?.id]);
+    if (record && (registered?.id !== teamId || !registered.source && registered.revision === record.revision)) setRegistered({ id: teamId, revision: record.revision, source: teamToMarkdown(record.definition) });
+  }, [teamId, state.teams, registered?.id, registered?.revision, registered?.source]);
   const open = async () => { const result = await files.open(); if (result) acceptCreationFile(result); };
   const reload = async () => { try { await refreshCreationFile(page.id); setFileError(''); } catch (error) { setFileError(String((error as Error).message)); } };
   const saveFile = async (asNew = false) => {
     if (live.preview) return;
     if (page.file && !page.temporary && !asNew) { setSaving(true); try { await saveCreationFile(page.id); setFileError(''); } catch (error) { setFileError(String((error as Error).message)); } finally { setSaving(false); } return; }
     const result = await files.save(source, bushItPageName(page, language), true);
-    if (result) { if (asNew) createBushItPage(result.text, result); else updateBushItPage(page.id, { file: result, temporary: false, externalFile: undefined }); }
+    if (result) { if (asNew) { createBushItPage(result.text, result); onNewFile?.(result.path); } else updateBushItPage(page.id, { file: result, temporary: false, externalFile: undefined }); }
   };
   useEffect(() => { const save = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveFile(); } }; window.addEventListener('keydown', save); return () => window.removeEventListener('keydown', save); });
   const saveTeam = async (practice: boolean) => {
     if (teamBusy || state.loading) return; setTeamBusy(true); setTeamError('');
     try {
       const definition = teamFromMarkdown(source);
+      if (page.file) await saveCreationFile(page.id);
       const receipt = await teamCommand<DefinitionReceipt<TeamWorkflow>>(TEAM_WORKFLOW_COMMAND, { action: 'save', definition, expected_revision: registered?.id === definition.id ? registered.revision : 0 });
-      setRegistered({ id: definition.id, revision: receipt.revision, source }); await refreshTeamWorkspace();
+      setRegistered({ id: definition.id, revision: receipt.revision, source }); onTeamSaved?.({ id: definition.id, revision: receipt.revision }); await refreshTeamWorkspace(true);
       if (practice) { selectTeam(definition.id); onPractice?.(definition); }
     } catch (caught) { setTeamError(String((caught as Error).message)); } finally { setTeamBusy(false); }
   };
   if (page.unloaded) return <div className="creation-empty" role="status">{readError || t('正在加载 Markdown…', 'Loading Markdown…')}</div>;
   return <>{(fileError || readError || files.error || teamError) && <p role="alert" className="md-error">{fileError || readError || files.error || teamError}</p>}
     {page.externalFile && <div className="creation-conflict" role="alert"><span>{t('文件已有新版本，当前编辑内容已保留。', 'The file has a new version. Your draft is preserved.')}</span>
-      <button type="button" onClick={() => { createBushItPage(page.source); updateBushItPage(page.id, { source: page.externalFile!.text, file: page.externalFile, externalFile: undefined }); selectBushItPage(page.id); setFileError(''); }}>{t('保留草稿并载入新版本', 'Keep draft and load new version')}</button>
+      <button type="button" disabled={saving} onClick={async () => { setSaving(true); try { if (onKeepDraft) await onKeepDraft(page.source); else createBushItPage(page.source); updateBushItPage(page.id, { source: page.externalFile!.text, file: page.externalFile, externalFile: undefined }); selectBushItPage(page.id); setFileError(''); } catch (error) { setFileError(String((error as Error).message)); } finally { setSaving(false); } }}>{t('保留草稿并载入新版本', 'Keep draft and load new version')}</button>
       <button type="button" onClick={() => void saveFile(true)}>{t('草稿另存为', 'Save draft as')}</button></div>}
     <TeamDocumentEditor source={live.preview?.source ?? source} liveEdit={live.preview} onBeforeEdit={live.beforeEdit} onCompositionChange={live.compositionChange}
       anchorRequest={anchorRequest}
       onChange={value => { live.beforeEdit(); setSource(value); setTeamError(''); }} language={language} teamEnabled={Boolean(config)} agents={state.agents} lockedId={registered?.id === teamId && registered.revision > 0}
       onSourceSelection={onSourceSelection}
-      headerActions={<button type="button" disabled={saving || files.busy || !!live.preview} onClick={() => void saveFile()} aria-label={t('保存 Markdown', 'Save Markdown')} title="Ctrl+S"><Save size={16}/></button>}
+      headerActions={<>{embedded && <span className="canvas-document-save-state" role="status">{page.externalFile ? t('存在版本冲突', 'Version conflict') : saving ? t('正在保存…', 'Saving…') : page.file && page.source !== page.file.text ? t('待保存', 'Unsaved') : t('已保存', 'Saved')}</span>}
+        {onOpenTeam && registered?.id === teamId && <button type="button" disabled={teamBusy} onClick={() => onOpenTeam(teamId)}>{t('查看流程', 'View workflow')}</button>}
+        {embedded && config && <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(false)}><Save size={14}/>{registered?.source === source ? t('已保存到流程', 'Saved to workflow') : t('保存到流程', 'Save to workflow')}</button>}
+        <button type="button" disabled={saving || files.busy || !!live.preview} onClick={() => void saveFile()} aria-label={t('保存 Markdown', 'Save Markdown')} title="Ctrl+S"><Save size={16}/></button></>}
       toolbar={<>
         {config ? <><span className="md-team-save-state">{registered?.source === source ? t('已保存到 Team', 'Saved to Team') : 'Team'}</span>
           <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(false)}><Save size={14}/>{t('保存到 Team', 'Save to Team')}</button>
           {onPractice && <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(true)}><Play size={14}/>{t('实践', 'Practice')}</button>}</>
           : <button type="button" disabled={!document} onClick={() => setSource(enableDocumentTeam(source))}><UsersRound size={15}/>{t('用 Team 实践', 'Practice with Team')}</button>}
         <div className="bush-page-menu-group">
-          <button type="button" onClick={() => createBushItPage()}><FilePlus2 size={15}/>{t('新建页面', 'New page')}</button>
-          <button type="button" disabled={files.busy} onClick={() => void open()}><FolderOpen size={15}/>{t('打开 .md', 'Open .md')}</button>
+          {!embedded && <><button type="button" onClick={() => createBushItPage()}><FilePlus2 size={15}/>{t('新建页面', 'New page')}</button>
+          <button type="button" disabled={files.busy} onClick={() => void open()}><FolderOpen size={15}/>{t('打开 .md', 'Open .md')}</button></>}
           <button type="button" disabled={files.busy || !!live.preview} onClick={() => void saveFile()}><Save size={15}/>{t('保存 .md', 'Save .md')}</button>
           {files.file && <><button type="button" disabled={files.busy || !!live.preview} onClick={() => void saveFile(true)}>{t('另存为', 'Save as')}</button>
             <button type="button" disabled={files.busy} onClick={() => void reload()}><RefreshCw size={15}/>{t('检查文件更新', 'Check file changes')}</button></>}

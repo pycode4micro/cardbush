@@ -4,6 +4,7 @@ import { cacheChainStateSchema, providerInputProjectionSchema } from "./cacheCha
 import { modelMessageSchema, modelRequestSchema } from "./model.js";
 import { workspaceSetupSchema } from "./workspace.js";
 import { taskPlanWaitingSchema } from './turn.js';
+import { toolDefinitionSchema } from './tool.js';
 
 export const BUSH_SESSION_EVENT_PROTOCOL = "bush.session_event.v1" as const;
 export const BUSH_SESSION_SNAPSHOT_PROTOCOL = "bush.session_snapshot.v1" as const;
@@ -129,6 +130,15 @@ export const committedTurnSchema = z.object({
 
 export type CommittedTurn = z.infer<typeof committedTurnSchema>;
 
+// Runtime-owned presentation snapshot. Tool execution still uses the live catalog.
+export const sessionModelContractSchema = z.object({
+  policyId: z.string().min(1),
+  version: z.string().min(1),
+  system: modelMessageSchema.refine(message => message.role === 'system', 'A system message is required.'),
+  tools: z.array(toolDefinitionSchema),
+});
+export type SessionModelContract = z.infer<typeof sessionModelContractSchema>;
+
 const sessionEventEnvelopeSchema = z.object({
   protocol: z.literal(BUSH_SESSION_EVENT_PROTOCOL),
   eventId: z.string().min(1),
@@ -147,6 +157,10 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
   sessionEventEnvelopeSchema.extend({
     kind: z.literal("turn_committed"),
     payload: committedTurnSchema,
+  }),
+  sessionEventEnvelopeSchema.extend({
+    kind: z.literal('model_contract_bound'),
+    payload: sessionModelContractSchema,
   }),
   sessionEventEnvelopeSchema.extend({
     kind: z.literal("messages_superseded"),

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CANVAS_FILE_NAME, CANVAS_MAX_BYTES, creationCanvasSchema, emptyCanvas, serializeCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
 import { withCanvasFileLock } from '@cardbush/bush-runtime';
+import { replaceFileWithRetry } from './atomicJsonFile.mjs';
 
 export type CanvasFileRequest =
   | { action: 'create'; root: string; document?: CreationCanvas }
@@ -51,7 +52,9 @@ export class CreationCanvasFiles {
         const current = await readCanvas(input.path);
         if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 画板已有新修改，请刷新后重试。');
         const temporary = `${input.path}.${randomUUID()}.tmp`;
-        try { await fs.writeFile(temporary, content, { flag: 'wx' }); await fs.rename(temporary, input.path); }
+        try { await fs.writeFile(temporary, content, { flag: 'wx' }); await replaceFileWithRetry(temporary, input.path, async () => {
+          if (digest(await fs.readFile(input.path, 'utf8')) !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 画板已有新修改，请刷新后重试。');
+        }); }
         finally { await fs.unlink(temporary).catch(() => {}); }
         return readCanvas(input.path);
       });

@@ -18,6 +18,7 @@ app.whenReady().then(async () => {
       'src/features/SettingsView.tsx', 'src/features/composer/Composer.tsx', 'src/features/chat/GitBranchMenu.tsx', 'src/features/chat/TaskWorkspaceBar.tsx',
       'src/features/settings/conversationStyle.ts', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
       'src/features/settings/individuation.ts',
+      'src/features/settings/SettingsHostContext.ts',
       'src/features/appearance/appearancePreferences.ts', 'src/features/appearance/useAppearanceRuntime.ts',
       'src/features/notificationSound.ts',
       'src/features/shortcuts/keyboardShortcuts.ts',
@@ -272,6 +273,11 @@ app.whenReady().then(async () => {
       await require('./helpers/settings-agents.cjs')({ run, until, click, choose, edit, window: win, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       win.destroy(); app.exit(0); return;
+    }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'mcp-dialog') {
+      await require('./helpers/settings-mcp-dialog.cjs')({ run, until, click, edit, choose, window: win, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      return;
     }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'models') {
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });

@@ -11,6 +11,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.setContentSize(1456, 760);
   await run(`
     window.summaryOriginal = { props: { ...chatProps }, theme: window.viewTheme };
+    window.summaryReviews = [];
     window.summaryPaneWidth = 1224;
     window.renderSummaryLayout = patch => {
       Object.assign(chatProps, patch);
@@ -21,6 +22,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     renderSummaryLayout({ activeConversationId: 'summary-layout', language: 'zh',
       title: '工作摘要布局', loading: false, historyLoading: false, inspectorOpen: false,
       windowMaximized: false, draft: '保留尚未发送的内容',
+      onOpenChangeReview: path => { summaryReviews.push(path ?? null); },
       messages: [
         { id: 'summary-user', role: 'user', content: '整理项目的输出与执行记录', turnId: 'summary-turn' },
         { id: 'summary-answer', role: 'assistant', turnId: 'summary-turn',
@@ -92,6 +94,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
   try {
     await until("!!document.querySelector('[data-work-summary-toggle]')", 'summary toolbar');
     await open();
+    assert.equal(await run("document.querySelector('.work-summary-header h2').textContent"), '工作摘要');
+    assert.equal(await run("document.querySelector('.work-summary-file-name').textContent"), 'ChatPanel.tsx');
+    assert.deepEqual(await run("[...document.querySelectorAll('.work-summary-file-list small > *')].map(node => node.textContent)"), ['+24', '-3']);
+    await run("document.querySelector('.work-summary-file-list button').click()");
+    await until("summaryReviews[0] === 'src/features/chat/ChatPanel.tsx'", 'summary opens the selected file review');
+    await run("document.querySelector('.work-summary-output-actions button').click()");
+    await until('summaryReviews.length === 2 && summaryReviews[1] === null', 'summary opens all changes');
     await run("window.summaryComposer = document.querySelector('.composer-surface textarea'); window.summaryScroller = document.querySelector('.message-list'); void 0;");
     for (const theme of ['theme-bright', 'theme-dark']) {
       for (const maximized of [false, true]) {
@@ -211,7 +220,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
       window.webContents.debugger.detach();
     }
-    console.log('Work summary: outer native scrollbar wheel/drag, container breakpoint, track alignment, composer preservation, themes, dismissal and motion passed.');
+    console.log('Work summary: output details and review actions, outer native scrollbar wheel/drag, container breakpoint, track alignment, composer preservation, themes, dismissal and motion passed.');
   } finally {
     await run('window.viewTheme = summaryOriginal.theme; Object.assign(chatProps, summaryOriginal.props); updateChat({});');
     window.setContentSize(...originalSize);

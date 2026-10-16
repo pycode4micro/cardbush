@@ -30,7 +30,7 @@ export function useAgentConnections() {
     const load = (async () => {
       try {
         const info = await api().connect(id);
-        const sessions = await api().call(id, 'sessions.list') as AgentSessionItem[];
+        const sessions = await api().call(id, 'sessions.list', { projection: 'summary' }) as AgentSessionItem[];
         const projects = info.capabilities.conversationManagement ? await api().call(id, 'projects.list') as { projects: AgentProject[] } : undefined;
         updateList(id, { sessions: sessions.filter(isVisibleConversationSession), loading: false, management: Boolean(info.capabilities.conversationManagement), projects: projects?.projects });
       } catch (error) { updateList(id, { loading: false, error: message(error) }); throw error; }

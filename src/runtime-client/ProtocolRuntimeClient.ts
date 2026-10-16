@@ -1,3 +1,6 @@
+import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, summarizeSession,
+  sessionSummarySchema, sessionHistoryPageSchema, sessionHistoryRequestSchema,
+  type SessionSummary, type SessionHistoryRequest, type SessionHistoryPage } from '@cardbush/bush-protocol';
 import {
   RUNTIME_TERMINAL_CONTROL_COMMAND, runtimeTerminalControlSchema, runtimeTerminalStatusSchema,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND, LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND,
@@ -220,6 +223,20 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
       (input) => sessionSnapshotSchema.array().parse(input),
       signal,
     );
+  }
+
+  async listSessionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
+    const capabilities = await this.getCapabilities(signal);
+    if (!capabilities.supportedCommands.includes(LIST_RUNTIME_SESSION_SUMMARIES_COMMAND)) {
+      return (await this.listSessions(signal)).map(summarizeSession);
+    }
+    return this.command({ kind: LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, payload: {} },
+      value => sessionSummarySchema.array().parse(value), signal);
+  }
+
+  getSessionHistory(input: SessionHistoryRequest, signal?: AbortSignal): Promise<SessionHistoryPage | null> {
+    return this.command({ kind: GET_RUNTIME_SESSION_HISTORY_COMMAND, payload: sessionHistoryRequestSchema.parse(input) },
+      value => value == null ? null : sessionHistoryPageSchema.parse(value), signal);
   }
 
   updateSessionMetadata(

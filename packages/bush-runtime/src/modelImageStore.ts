@@ -128,7 +128,7 @@ export class ModelImageStore {
   }
 }
 
-async function readDataImage(value: string, maxBytes: number, signal?: AbortSignal): Promise<{ content: Buffer; mime: string }> {
+export async function readDataImage(value: string, maxBytes: number, signal?: AbortSignal): Promise<{ content: Buffer; mime: string }> {
   const header = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(value);
   if (!header) throw new ModelImageInputError("image_input_invalid", "Data image must use base64 encoding.");
   const encoded = value.slice(header[0].length);

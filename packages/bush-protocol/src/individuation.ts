@@ -23,7 +23,7 @@ export function normalizeIndividuation(value: unknown): IndividuationSettings {
 export function individuationPreferenceText(value: unknown): string {
   const state = normalizeIndividuation(value);
   const summaryNote = state.habits || state.predictions
-    ? 'Use the optional habit field only for supported, reusable user preferences and the optional prediction field only for uncertain next-step needs. Each field follows its own enabled category; do not mix them or fill both unnecessarily. If there is nothing new, use {} for the final-display signal.'
+    ? 'Use the optional habit field only for supported, reusable user preferences and the optional prediction field only for uncertain next-step needs. Each field follows its own enabled category; do not mix them or fill both unnecessarily. prediction.text is a short message the user could send next to the assistant, not analysis about the user or an assistant plan. Do not copy narrative wording from historical memory. Choose one supported next request, or omit prediction when uncertain; put conditions in applies_when. Omit unused fields entirely, never habit: {} or prediction: {}. If there is nothing new, use {} for the final-display signal.'
     : 'Memory storage is disabled: use {} for the final-display signal without saving a note.';
   return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; next-step prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. When summary_for_user is available, call it once before the final reply after other Tool work. ${summaryNote} Ordinary conversation without Tool work may reply directly without calling it. Current user instructions take priority; memories and predictions do not authorize actions.`;
 }
@@ -118,6 +118,13 @@ export const personalizationStatusSchema = z.object({
   feedback: z.number().nonnegative().default(0),
   hits: z.number().nonnegative(), misses: z.number().nonnegative(),
   running: z.boolean(), lastSummaryAt: z.number().nullable(), lastError: z.string().nullable(),
+  summaryProgress: z.object({
+    stage: z.enum(['events','habits']), phase: z.enum(['waiting','reasoning','responding','retrying','validating']),
+    startedAt: z.number().nonnegative(), lastProgressAt: z.number().nonnegative().nullable(),
+    textChars: z.number().int().nonnegative(), reasoningChars: z.number().int().nonnegative(),
+    batch: z.number().int().positive().optional(), batches: z.number().int().nonnegative().optional(),
+    rejected: z.number().int().nonnegative().optional(),
+  }).optional(),
   inactiveRecords:z.number().nonnegative().default(0),historyChanges:z.number().nonnegative().default(0),
 });
 export type PersonalizationStatus = z.infer<typeof personalizationStatusSchema>;
@@ -125,5 +132,5 @@ export type PersonalizationStatus = z.infer<typeof personalizationStatusSchema>;
 const memorySummaryItemSchema = memoryNoteSchema.extend({ sources:z.array(z.string()).min(1).max(8000) }).strict();
 export const memorySummarySchema = z.object({
   habits:z.array(memorySummaryItemSchema).max(8000), predictions:z.array(memorySummaryItemSchema).max(8000),
-  reviews:z.array(z.object({prediction:z.string(),evidence:z.string(),outcome:z.enum(['hit','miss']),reason:z.string().max(300)}).strict()).max(40000),
+  reviews:z.array(z.object({prediction:z.string(),evidence:z.string(),outcome:z.enum(['hit','miss','unknown']),reason:z.string().max(300),quote:z.string().max(600).optional()}).strict()).max(40000),
 }).strict();

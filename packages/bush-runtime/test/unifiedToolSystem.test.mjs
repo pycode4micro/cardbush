@@ -227,7 +227,7 @@ test('task waits yield and abort without stopping work; stopping and cancelling 
   await f.run('tasks', { action: 'stop', task_ids: ['manual'] }); assert.equal(stopped, 1);
 });
 
-test('progressive schemas stay compact, expand from a complete receipt, and shrink after compaction', async t => {
+test('progressive schemas stay fixed while complete receipts enable invocation until compaction', async t => {
   const f = fixture(t);
   f.add('subagent', () => ({}));
   // Replace fixture with a realistic large config schema.
@@ -239,9 +239,11 @@ test('progressive schemas stay compact, expand from a complete receipt, and shri
   assert.equal(compact.some(tool => tool.name === 'parallel_tools'), false);
   const receipt = (await f.run('get_tool_schema', { name: 'subagent' })).result;
   synchronizeBuiltinSchemas(f.registry, f.request, [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: '{"name":"subagent"}' }] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(receipt) }]);
-  assert.ok(modelToolDefinitions(f.registry, f.request).find(tool => tool.name === 'subagent').inputSchema.properties.agent);
+  assert.ok(f.request.metadata.builtinToolSchemas.subagent);
+  assert.deepEqual(modelToolDefinitions(f.registry, f.request), compact);
   synchronizeBuiltinSchemas(f.registry, f.request, []);
-  assert.equal(modelToolDefinitions(f.registry, f.request).find(tool => tool.name === 'subagent').inputSchema.properties.agent, undefined);
+  assert.equal(f.request.metadata.builtinToolSchemas.subagent, undefined);
+  assert.deepEqual(modelToolDefinitions(f.registry, f.request), compact);
   const serialized = JSON.stringify(receipt), locator = 'tool-result://s/t/load', middle = Math.floor(serialized.length / 2);
   const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: '{}' }] },
     { role: 'tool', toolCallId: 'load', content: JSON.stringify({ archived: true, locator, originalChars: serialized.length }) }];
@@ -249,7 +251,8 @@ test('progressive schemas stay compact, expand from a complete receipt, and shri
     messages.push({ role: 'assistant', content: '', toolCalls: [{ id: `chunk-${index}`, name: 'read_archived_tool_result', argumentsText: '{}' }] },
       { role: 'tool', toolCallId: `chunk-${index}`, content: JSON.stringify({ locator, offset: start, next_offset: end }) + '\n\n[text]\n' + serialized.slice(start, end) });
     synchronizeBuiltinSchemas(f.registry, f.request, messages);
-    assert.equal(!!modelToolDefinitions(f.registry, f.request).find(tool => tool.name === 'subagent').inputSchema.properties.agent, index === 1, 'only a completely read archive expands its schema');
+    assert.equal(!!f.request.metadata.builtinToolSchemas.subagent, index === 1, 'only a completely read archive enables invocation');
+    assert.deepEqual(modelToolDefinitions(f.registry, f.request), compact);
   }
 });
 

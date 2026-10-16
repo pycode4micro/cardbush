@@ -1,16 +1,22 @@
 import { Globe } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { browserIconUrl, browserSiteIcon, defaultBrowserSiteIcon, rememberBrowserSiteIcon, subscribeBrowserSiteIcons } from './browserSiteIcons';
+import { browserIconUrl, browserSiteIcon, cachedBrowserSiteIcon, defaultBrowserSiteIcon, rememberBrowserSiteIcon, subscribeBrowserSiteIcons } from './browserSiteIcons';
+import { cacheBrowserSiteIcon, isCachedBrowserIcon } from './browserIconCache';
 import './browserSiteIcon.css';
 
-export function BrowserSiteIcon({ url, icon, icons = [], revision = 0, size = 16 }: {
-  url: string; icon?: string; icons?: readonly string[]; revision?: number; size?: number;
+export function BrowserSiteIcon({ url, icon, icons = [], revision = 0, size = 16, persist = false }: {
+  url: string; icon?: string; icons?: readonly string[]; revision?: number; size?: number; persist?: boolean;
 }) {
   const remembered = useSyncExternalStore(subscribeBrowserSiteIcons, () => browserSiteIcon(url), () => '');
-  const candidates = [...new Set([browserIconUrl(icon), ...icons.slice(0, 8).map(browserIconUrl), remembered, defaultBrowserSiteIcon(url)].filter(Boolean))];
+  const cached = useSyncExternalStore(subscribeBrowserSiteIcons, () => persist ? cachedBrowserSiteIcon(url) : '', () => '');
+  const nativeCandidates = [...new Set([browserIconUrl(icon), ...icons.slice(0, 8).map(browserIconUrl), remembered, defaultBrowserSiteIcon(url)].filter(Boolean))];
+  const candidates = [...new Set([cached, ...nativeCandidates].filter(Boolean))];
   // A new document / native favicon notification can recover the same URL that
   // failed earlier (for example while the page's network connection was starting).
   const key = JSON.stringify([url, revision, candidates]);
+  const cacheKey = JSON.stringify([url, revision, nativeCandidates]);
+  // Cache eviction changes display fallback, never starts an automatic refill loop.
+  useEffect(() => { if (persist) void cacheBrowserSiteIcon(url, nativeCandidates); }, [persist, cacheKey]);
   const [failed, setFailed] = useState<{ key: string; urls: string[]; retried: boolean }>({ key: '', urls: [], retried: false });
   const source = candidates.find(value => failed.key !== key || !failed.urls.includes(value));
   const exhausted = !source && candidates.length > 0;
@@ -24,7 +30,9 @@ export function BrowserSiteIcon({ url, icon, icons = [], revision = 0, size = 16
   }, [key, exhausted, retried]);
   return <span className="browser-site-icon" style={{ width: size, height: size }} aria-hidden="true">
     {source ? <img key={source} src={source} alt="" width={size} height={size} draggable={false}
-      decoding="async" loading="lazy" referrerPolicy="no-referrer" onLoad={() => rememberBrowserSiteIcon(url, source)} onError={() => setFailed(current => ({
+      decoding="async" loading="lazy" referrerPolicy="no-referrer" onLoad={() => {
+        if (!persist || !isCachedBrowserIcon(source)) rememberBrowserSiteIcon(url, source);
+      }} onError={() => setFailed(current => ({
         key, urls: [...(current.key === key ? current.urls : []), source],
         retried: current.key === key && current.retried,
       }))}/> : <Globe size={size}/>}

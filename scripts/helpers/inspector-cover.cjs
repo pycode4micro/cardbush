@@ -177,7 +177,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('document.querySelector(".quick-input-status").click()');
   await until('document.querySelector(".quick-input-transcript")?.hidden','preview collapses in place');
   await run('coverUpdate({error:"fixture request failed"})');await until('document.querySelector(".quick-input-status")?.dataset.state==="error"','quick input exposes failures');
-  await run('coverUpdate({error:null,interactionContent:"fixture permission"})');await until('document.querySelector(".quick-input-status")?.textContent.includes("等待你的处理")','permission wait has an expansion entry even without a composer');
+  await run('coverUpdate({error:null,interactionContent:"fixture permission"})');await until('document.querySelector(".quick-input-status")?.textContent.includes("等待你的确认")','permission wait has an expansion entry even without a composer');
   await until('document.querySelector(".quick-input-transcript")?.textContent.includes("fixture permission")','required interactions are reachable in the preview');
   await run('coverUpdate({interactionContent:null})');await until('!!document.querySelector(".inspector-quick-input .send-button svg.lucide-square")','composer returns after pending interaction');
   await run('document.querySelector(".inspector-quick-input .send-button").click()');

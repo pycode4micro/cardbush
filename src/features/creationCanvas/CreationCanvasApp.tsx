@@ -1,9 +1,13 @@
-import { emptyCanvas, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
-import { Copy, FolderDown, LayoutTemplate, MoreHorizontal, Plus, Scan, X } from 'lucide-react';
+import { emptyCanvas, type CanvasItem, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
+import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Plus, Scan, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from '../../components/TopBar';
 import type { CreationChatOptions, CreationInspectorContext } from '../mdPresentation/CreationConversation';
-import { takeBushItDocument, watchBushItDocument } from '../mdPresentation/bushItDocuments';
+import { takeBushItDocumentRequest, watchBushItDocument } from '../mdPresentation/bushItDocuments';
+import { acceptCreationFile, markdownFile, parentDirectory, saveCreationFile } from '../mdPresentation/creationFiles';
+import { getBushItPages } from '../mdPresentation/bushItPageStore';
+import { creationRequest } from '../mdPresentation/creationConversationContext';
+import type { MarkdownSelection } from '../mdPresentation/MarkdownSourceEditor';
 import { InspectorCoverControls } from '../inspector/InspectorCoverControls';
 import { useQuickInputDismiss } from '../inspector/useQuickInputDismiss';
 import { InspectorWebview } from '../inspector/InspectorWebview';
@@ -15,6 +19,7 @@ import { createCanvas, prepareCanvas, updateCanvasEntry, useCanvases } from './c
 import { canvasFileTarget, canvasRequest, placeCanvasItems } from './canvasModel';
 import { extractCanvasComponents } from './canvasComponents';
 import { CanvasStage } from './CanvasStage';
+import { CanvasMarkdownWorkspace } from './CanvasMarkdownWorkspace';
 import '../inspector/inspectorWorkspace.css';
 import './creationCanvas.css';
 
@@ -24,7 +29,7 @@ type Props = CreationChatOptions & { language: 'zh' | 'en'; inspectorOpen?: bool
 export function CreationCanvasApp(props: Props) {
   const library = useCanvases(), entry = library.canvases.find(item => item.id === library.selectedId && !item.archived);
   useEffect(() => {
-    const receive = () => { const source = takeBushItDocument(); if (source === undefined) return; const seed = emptyCanvas(source.match(/^# (.+)$/m)?.[1] || ''); seed.items = [{ id: 'document', title: seed.title, kind: 'markdown', markdown: source, frame: { x: 60, y: 60, width: 1000, height: 800 } }]; createCanvas(seed); };
+    const receive = () => { const request = takeBushItDocumentRequest(); if (!request) return; const { source, team } = request; const seed = emptyCanvas(source.match(/^# (.+)$/m)?.[1] || ''); seed.items = [{ id: 'document', title: seed.title, kind: 'markdown', markdown: source, frame: { x: 60, y: 60, width: 1000, height: 800 } }]; const id = createCanvas(seed); updateCanvasEntry(id, { editingId: 'document', team }); };
     receive(); return watchBushItDocument(receive);
   }, []);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); createCanvas(); } }; window.addEventListener('keydown', listener, true); return () => window.removeEventListener('keydown', listener, true); }, []);
@@ -36,8 +41,11 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   const [error, setError] = useState(''), [readError, setReadError] = useState(''), [notice, setNotice] = useState('');
   const [chatOpen, setChatOpen] = useState(false), [inputTarget, setInputTarget] = useState<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState<string>(), [fileView, setFileView] = useState<{ target: string; title: string; region: boolean }>();
+  const [editor, setEditor] = useState<{ itemId: string; pageId: string }>();
+  const [selection, setSelection] = useState<MarkdownSelection>();
+  const autoOpened = useRef('');
   const [menu, setMenu] = useState(false), [busy, setBusy] = useState(false), [chat, setChat] = useState<CreationInspectorContext | null>(null);
-  const alive = useRef(true), saving = useRef(false), readSequence = useRef(0), viewport = useRef({ width: 0, height: 0, zoom: 1 });
+  const alive = useRef(true), saving = useRef(false), operating = useRef(false), readSequence = useRef(0), viewport = useRef({ width: 0, height: 0, zoom: 1 });
   const inspectorCallback = useRef(onInspectorContext); inspectorCallback.current = onInspectorContext;
   const inspect = useCallback((value: CreationInspectorContext | null) => { setChat(value); inspectorCallback.current?.(value); }, []);
   const setViewport = useCallback((value: typeof viewport.current) => { viewport.current = value; }, []);
@@ -79,18 +87,50 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
     } catch (cause) { if (alive.current) setError(String((cause as Error).message)); throw cause; }
     finally { saving.current = false; }
   };
-  const action = async (run: () => Promise<void>) => { if (busy) return; setBusy(true); setError(''); setNotice(''); setMenu(false); try { await run(); } catch (cause) { if (alive.current) setError(String((cause as Error).message)); } finally { if (alive.current) setBusy(false); } };
+  const action = async (run: () => Promise<void>) => { if (operating.current) return; operating.current = true; setBusy(true); setError(''); setNotice(''); setMenu(false); try { await run(); } catch (cause) { if (alive.current) setError(String((cause as Error).message)); } finally { operating.current = false; if (alive.current) setBusy(false); } };
   const addPaths = (paths: string[]) => action(async () => {
     if (!paths.length) return; const snapshot = current.current; if (!snapshot) throw Error(t('画板尚未准备好。', 'The canvas is not ready.'));
     const items = paths.map(source => ({ id: crypto.randomUUID(), title: source.split(/[\\/]/).pop() || source, kind: 'file' as const, source }));
     await commit(placeCanvasItems(snapshot.document, items), snapshot.revision); if (alive.current) setSelectedId(items[0].id);
   });
   const add = async () => { try { const paths = await window.cardbushDesktop?.pickAttachments(); if (alive.current && paths) await addPaths(paths); } catch (cause) { setError(String((cause as Error).message)); } };
+  const openDocument = async (item: CanvasItem) => {
+    if (editor) await saveCreationFile(editor.pageId);
+    const snapshot = current.current; if (!snapshot) return;
+    let file;
+    if (item.kind === 'markdown') {
+      file = await markdownFile({ action: 'create', rootPath: parentDirectory(snapshot.path), path: `document-${crypto.randomUUID().slice(0, 8)}.md`, text: item.markdown });
+      if (!file || !alive.current) return;
+      const replacement: CanvasItem = { id: item.id, title: item.title || t('未命名文档', 'Untitled document'), frame: item.frame, kind: 'file', source: file.path };
+      await commit({ ...snapshot.document, items: snapshot.document.items.map(value => value.id === item.id ? replacement : value) }, snapshot.revision);
+    } else if (item.kind === 'file') {
+      const path = canvasFileTarget(item.source, snapshot.path);
+      file = await markdownFile({ action: 'open', rootPath: parentDirectory(path), path });
+    }
+    if (!file || !alive.current) return;
+    setEditor({ itemId: item.id, pageId: acceptCreationFile(file) }); setSelectedId(item.id); setSelection(undefined);
+    updateCanvasEntry(entry.id, { editingId: item.id });
+  };
+  const editDocument = (item: CanvasItem) => action(() => openDocument(item));
+  useEffect(() => {
+    if (!snapshot || !entry.editingId || editor || autoOpened.current === entry.editingId) return;
+    const item = snapshot.document.items.find(item => item.id === entry.editingId);
+    autoOpened.current = entry.editingId;
+    if (item) void editDocument(item);
+  }, [snapshot?.path, entry.editingId]);
+  const newDocument = () => action(async () => {
+    const snapshot = current.current; if (!snapshot) return;
+    const item = { id: crypto.randomUUID(), title: t('未命名文档', 'Untitled document'), kind: 'markdown' as const, markdown: '' };
+    const next = placeCanvasItems(snapshot.document, [item]); await commit(next, snapshot.revision);
+    await openDocument(next.items.find(value => value.id === item.id)!);
+  });
   const startChat = () => { if (externalComposerControls) onOpenComposer?.(); else setChatOpen(true); };
   const beforeSend = async (input: UserPromptInput) => {
+    if (editor) await saveCreationFile(editor.pageId);
+    const page = editor ? getBushItPages().pages.find(page => page.id === editor.pageId) : undefined;
     const prepared = await prepareCanvas(entry.id);
     if (!alive.current) throw Error('Canvas changed before sending.');
-    accept(prepared); return canvasRequest(input, prepared, selectedId, viewport.current);
+    accept(prepared); return canvasRequest(creationRequest(input, page, selection, language), prepared, selectedId, viewport.current);
   };
   const reference = async (region: PreviewRegion, image: string) => {
     const snapshot = current.current, source = fileView?.target;
@@ -112,6 +152,7 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   }}>
     <TopBar title={t('创作', 'Create')} language={language} inspectorOpen={!!inspectorOpen} onToggleInspector={onToggleInspector}/>
     <div className="canvas-toolbar"><input aria-label={t('画板名称', 'Canvas name')} key={snapshot?.document.title} defaultValue={snapshot?.document.title || ''} placeholder={t('无标题画板', 'Untitled canvas')} maxLength={200} onBlur={event => { const value = event.target.value.trim(); const snapshot = current.current; if (snapshot && value !== snapshot.document.title) void commit({ ...snapshot.document, title: value }).catch(() => {}); }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}/>
+      <button disabled={busy || !snapshot} onClick={() => void newDocument()}><FilePlus2 size={16}/>{t('新建文档', 'New document')}</button>
       <button disabled={busy || !snapshot} onClick={() => void add()}><Plus size={16}/>{t('素材', 'Add files')}</button>
       <div className="canvas-menu-wrap"><button aria-label={t('更多操作', 'More actions')} aria-expanded={menu} onClick={() => setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu && <><button className="canvas-menu-dismiss" aria-label={t('关闭菜单', 'Close menu')} onClick={() => setMenu(false)}/><div className="canvas-menu" role="menu">
         <button role="menuitem" disabled={busy || !snapshot} onClick={() => void action(async () => { const value = current.current!; const result = await window.cardbushDesktop!.creationCanvas({ action: 'export', path: value.path, expectedRevision: value.revision }); if (result) setNotice(`${t('已保存到', 'Saved to')} ${result.path}`); })}><FolderDown size={16}/>{t('保存到文件夹', 'Save to folder')}</button>
@@ -121,9 +162,18 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
     </div>
     {(error || readError || notice) && <div className={`canvas-notice${error || readError ? ' error' : ''}`} role={error || readError ? 'alert' : 'status'}>{error || readError || notice}<button aria-label={t('关闭提示', 'Dismiss')} onClick={() => { setError(''); setReadError(''); setNotice(''); }}><X size={13}/></button></div>}
     <div className="canvas-workspace">
-      <HtmlComponentContext.Provider value={null}>{snapshot ? <CanvasStage snapshot={snapshot} language={language} selectedId={selectedId} onSelect={setSelectedId} onChange={commit} onAdd={() => void add()} onChat={startChat} onViewport={setViewport} onError={setError} onOpenFile={(item, region) => { if (item.kind === 'file') setFileView({ target: canvasFileTarget(item.reference?.source || item.source, snapshot.path), title: item.title, region }); }}/>
+      <div className="canvas-stage-view" hidden={!!editor}><HtmlComponentContext.Provider value={null}>{snapshot ? <CanvasStage snapshot={snapshot} language={language} selectedId={selectedId} onSelect={setSelectedId} onChange={commit} onAdd={() => void add()} onChat={startChat} onViewport={setViewport} onError={setError} onEditMarkdown={item => void editDocument(item)} onOpenFile={(item, region) => { if (item.kind === 'file') setFileView({ target: canvasFileTarget(item.reference?.source || item.source, snapshot.path), title: item.title, region }); }}/>
         : <div className="canvas-loading" role="status">{t('正在打开画板…', 'Opening canvas…')}</div>}</HtmlComponentContext.Provider>
-      {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} onTargetChange={setInputTarget} onToggleInput={() => setChatOpen(value => !value)}/>}
+      </div>
+      {snapshot && editor && <CanvasMarkdownWorkspace snapshot={snapshot} {...editor} language={language} sessionId={entry.sessionId} root={entry.root || ''}
+        team={editor.itemId === 'document' ? entry.team : undefined} onTeamSaved={team => updateCanvasEntry(entry.id, { team })} onSelection={setSelection}
+        onSelect={id => { const item = current.current?.document.items.find(item => item.id === id); if (item) void editDocument(item); }}
+        onBack={() => void action(async () => { await saveCreationFile(editor.pageId); setEditor(undefined); setSelection(undefined); updateCanvasEntry(entry.id, { editingId: undefined }); })}
+        onNewFile={path => void addPaths([path])} onKeepDraft={async source => {
+          const value = current.current; if (!value) throw Error('Canvas is unavailable.');
+          await commit(placeCanvasItems(value.document, [{ id: crypto.randomUUID(), kind: 'markdown', title: t('保留的草稿', 'Retained draft'), markdown: source }]), value.revision);
+        }}/>}
+      {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} status={chat?.inputStatus} onTargetChange={setInputTarget} onToggleInput={() => setChatOpen(value => !value)}/>}
     </div>
     {snapshot && <Suspense fallback={null}><CreationConversation key={entry.sessionId} {...chatOptions} sessionId={entry.sessionId} root={entry.root || ''} language={language}
       preparation={!entry.sessionCreated ? { title: `${t('创作', 'Create')} · ${entry.title || t('无标题画板', 'Untitled canvas')}`, metadata: { creation_workspace: true, creation_canvas: snapshot.path }, onCreated: () => updateCanvasEntry(entry.id, { sessionCreated: true }) } : undefined}

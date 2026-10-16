@@ -6,7 +6,7 @@ import type { RegisteredAgentStore } from './registeredAgents.js';
 import type { PluginAgent, PluginHook } from './pluginExtensions.js';
 import type { RemoteSubagentBridge } from './subagentTool.js';
 import type { ToolRegistry } from './toolRegistry.js';
-import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, type CatalogQuery } from './catalogPage.js';
+import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage, type CatalogQuery } from './catalogPage.js';
 
 interface OptionsInput extends CatalogQuery {
   section: 'agents' | 'settings' | 'tools';
@@ -53,6 +53,9 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
     },
     manifest: { effect_kind: 'observation', operation: 'agent.options', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
     parallelSafe: true,
+    // Native pagination sorts these kinds alphabetically, independently of the
+    // object's display order. Preserve that order when shortening the page.
+    projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['agent_roles', 'registered_agents', 'remote_agents', 'tools']),
     decodeInput: decodeOptions,
     execute: async context => {
       if (!context.turn) throw new Error('Subagent options require the current Turn context.');

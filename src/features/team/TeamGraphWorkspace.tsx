@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FilePenLine, GitBranch, MessageSquarePlus, MoreHorizontal, Play, Square, Trash2, Unlink, X } from 'lucide-react';
 import { TEAM_WORKFLOW_COMMAND, teamWorkflowSchema, type DefinitionReceipt, type TeamWorkflow, type UserPromptInput } from '@cardbush/bush-protocol';
 import type { CreationChatOptions, CreationInspectorContext } from '../mdPresentation/CreationConversation';
@@ -8,11 +8,13 @@ import { InspectorCoverControls } from '../inspector/InspectorCoverControls';
 import { useQuickInputDismiss } from '../inspector/useQuickInputDismiss';
 import { openBushItDocument } from '../mdPresentation/bushItDocuments';
 import { useMarkdownFile } from '../mdPresentation/useMarkdownFile';
-import { refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorkspaceStore';
+import { acceptTeamWorkflow, currentTeamWorkflow, refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorkspaceStore';
 import { teamFromMarkdown, teamToMarkdown } from './teamMarkdown';
 import { consumeTeamDocumentRequest, setTeamOpenDocument, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
 import { TeamFlowDiagram } from './TeamFlowDiagram';
 import { TeamViewPicker } from './TeamViewPicker';
+import { TeamRunResults } from './TeamRunResults';
+import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
 import { teamNodeTitle, teamStatusLabel } from './teamFlowGraph';
 import { prepareTeamConversation, persistTeamConversation, resetTeamConversation } from './teamConversationStore';
 import { teamConversationRequest } from './teamConversationContext';
@@ -39,12 +41,15 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
   useQuickInputDismiss(inputOpen && localControls, dismissInput, true);
   useEffect(dismissInput, [teamId, visible, dismissInput]);
   const operationPending = useRef(false);
+  const graphSave = useRef<Promise<void> | undefined>(undefined);
+  const activeTeam = useRef(teamId); activeTeam.current = teamId;
   const record = state.teams.find(item => item.definition.id === teamId);
-  const runs = state.runs.filter(run => run.teamId === teamId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const runs = useMemo(() => state.runs.filter(run => run.teamId === teamId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [state.runs, teamId]);
   const run = !imported && view !== 'definition' ? (view === 'auto' ? runs.find(item => item.status === 'running') || (runs[0]?.teamRevision === record?.revision ? runs[0] : undefined) : runs.find(item => item.id === view)) : undefined;
-  const workflow = imported?.definition ?? run?.workflow ?? pendingGraph ?? record?.definition;
+  const graphSaving = pendingGraph?.id === teamId;
+  const workflow = imported?.definition ?? run?.workflow ?? (graphSaving ? pendingGraph : undefined) ?? record?.definition;
   const node = workflow?.nodes.find(item => item.id === nodeId), nodeState = run?.nodes.find(item => item.id === nodeId);
-  const agents = run?.agents.map(item => item.definition) ?? state.agents.map(item => item.definition);
+  const agents = useMemo(() => (run?.agents ?? state.agents).map(item => item.definition), [run?.agents, state.agents]);
   const graphReadOnly = !!run || !!imported || busy || !record;
   const resumable = run && ['failed', 'stopped', 'interrupted'].includes(run.status);
   const foreignRun = run && run.parentSessionId !== chat?.sessionId;
@@ -84,21 +89,31 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
   }, [navigation.request, busy, files.busy, state.loading]);
   const perform = async (operation: () => Promise<unknown>) => {
     if (operationPending.current) return; operationPending.current = true; setBusy(true); setError('');
-    try { await operation(); }
+    try { await graphSave.current; await operation(); }
     catch (caught) { setError(String((caught as Error).message)); }
     finally { await refreshTeamWorkspace(true); operationPending.current = false; setBusy(false); }
   };
   const saveGraph = async (nodes: TeamWorkflow['nodes']) => {
-    if (graphReadOnly || !record || operationPending.current) return;
+    if (graphReadOnly || !record || operationPending.current || graphSave.current) return;
     const result = teamWorkflowSchema.safeParse({ ...record.definition, nodes });
     if (!result.success) { setError(result.error.issues.some(issue => issue.message.includes('acyclic'))
       ? t('这条连接会形成循环依赖，已取消。', 'This connection would create a dependency cycle and was not saved.') : result.error.issues[0].message); return; }
-    setPendingGraph(result.data);
-    await perform(async () => {
-      try { await teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'save', definition: result.data, expected_revision: record.revision }); }
-      catch (caught) { if (String((caught as Error).message).includes('Definition changed')) throw Error(t('流程已被其他操作更新，正在读取最新版本。请在最新流程上重试。', 'The workflow changed elsewhere. Reloading the latest version; please retry your edit.')); throw caught; }
-    });
-    setPendingGraph(undefined);
+    setPendingGraph(result.data); setError('');
+    // A graph edit updates this definition from its receipt. Do not put the app
+    // shell into a loading state or re-fetch every agent and historical run.
+    const saving = (async () => {
+      try { acceptTeamWorkflow(await teamCommand<DefinitionReceipt<TeamWorkflow>>(TEAM_WORKFLOW_COMMAND,
+        { action: 'save', definition: result.data, expected_revision: record.revision })); }
+      catch (caught) {
+        if (activeTeam.current === record.definition.id) setError(String((caught as Error).message).includes('Definition changed')
+          ? t('流程已被其他操作更新，正在读取最新版本。请在最新流程上重试。', 'The workflow changed elsewhere. Reloading the latest version; please retry your edit.') : String((caught as Error).message));
+        await refreshTeamWorkspace(true, true);
+      }
+    })();
+    graphSave.current = saving;
+    await saving;
+    if (graphSave.current === saving) graphSave.current = undefined;
+    setPendingGraph(value => value === result.data ? undefined : value);
   };
   const moveNodes = async (positions: Map<string, MdPosition>) => {
     if (!record || !record.definition.nodes.some(item => { const next = positions.get(item.id); return next && (next.x !== item.position?.x || next.y !== item.position?.y); })) return;
@@ -109,11 +124,12 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
     void saveGraph(record.definition.nodes.map(item => item.id === target ? { ...item, depends_on: [...item.depends_on, source] } : item));
   };
   const onContext = useCallback((value: CreationInspectorContext | null) => { setChat(value); chatOptions.onInspectorContext?.(value); }, [chatOptions.onInspectorContext]);
-  const beforeSend = async (input: UserPromptInput) => {
+  const beforeSend = useCallback(async (input: UserPromptInput) => {
     if (imported) throw Error(t('请先导入或取消预览，再继续对话。', 'Import or cancel the preview before continuing.'));
-    return teamConversationRequest(input, { teamId, revision: record?.revision ?? 0, ...(node ? { nodeId: node.id } : {}), ...(run ? { runId: run.id } : {}) });
-  };
-  useEffect(() => { if (chat) void refreshTeamWorkspace(); }, [chat?.sessionId, chat?.busy]);
+    await graphSave.current;
+    return teamConversationRequest(input, { teamId, revision: currentTeamWorkflow(teamId)?.revision ?? 0, ...(node ? { nodeId: node.id } : {}), ...(run ? { runId: run.id } : {}) });
+  }, [imported, teamId, node?.id, run?.id, language]);
+  useEffect(() => { if (chat) void refreshTeamWorkspace(false, true); }, [chat?.sessionId, chat?.busy]);
   const ask = (text: string) => { chat?.appendDraft(text); openInput(); inputTarget?.querySelector<HTMLElement>('[contenteditable=true],textarea')?.focus(); };
   return <div className="team-flow-workspace" data-team-id={teamId}>
     <header className="team-flow-header">
@@ -129,7 +145,7 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
           <summary aria-label={t('流程操作', 'Workflow actions')}><MoreHorizontal size={18}/></summary><div>
             <button type="button" disabled={!chat || chat.busy} onClick={() => { setMenu(false); resetTeamConversation(teamId); setConversationVersion(value => value + 1); openInput(); }}><MessageSquarePlus size={14}/>{t('新建对话', 'New conversation')}</button>
             <button type="button" disabled={files.busy} onClick={() => { setMenu(false); void files.save(teamToMarkdown(record.definition), record.definition.name, true); }}><Download size={14}/>{t('导出 Markdown', 'Export Markdown')}</button>
-            <button type="button" onClick={() => { setMenu(false); openBushItDocument(teamToMarkdown(record.definition)); }}><FilePenLine size={14}/>{t('在创作中编辑 Markdown', 'Edit Markdown in Create')}</button>
+            <button type="button" onClick={() => { setMenu(false); openBushItDocument(teamToMarkdown(record.definition), { id: record.definition.id, revision: record.revision }); }}><FilePenLine size={14}/>{t('在创作中编辑 Markdown', 'Edit Markdown in Create')}</button>
             <button type="button" onClick={() => { setMenu(false); setDeleting(true); }}><Trash2 size={14}/>{t('删除流程', 'Delete workflow')}</button>
           </div></details>}
       </div>
@@ -139,21 +155,22 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
       <button type="button" disabled={busy} onClick={() => void perform(async () => { const receipt = await teamCommand<DefinitionReceipt<TeamWorkflow>>(TEAM_WORKFLOW_COMMAND, { action: 'save', definition: imported.definition, expected_revision: imported.revision }); open(receipt.definition.id); })}>{t('导入流程', 'Import workflow')}</button>
       <button type="button" disabled={busy} onClick={() => { setImported(undefined); setNodeId(''); }}>{t('取消', 'Cancel')}</button></div>}
     {deleting && <div className="team-flow-notice" role="alert"><span>{t('删除这个流程？已有运行记录和对话会保留。', 'Delete this workflow? Runs and conversations are retained.')}</span>
-      <button type="button" disabled={busy || chat?.busy} onClick={() => void perform(async () => { await teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'delete', team_id: teamId, expected_revision: record?.revision }); create(); })}>{t('确认删除', 'Delete')}</button>
+      <button type="button" disabled={busy || chat?.busy} onClick={() => void perform(async () => { await teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'delete', team_id: teamId, expected_revision: currentTeamWorkflow(teamId)?.revision }); create(); })}>{t('确认删除', 'Delete')}</button>
       <button type="button" onClick={() => setDeleting(false)}>{t('取消', 'Cancel')}</button></div>}
     <div className="team-flow-body">
       {workflow ? <>
         {run && <div className="team-flow-run-caption"><span data-status={run.status}>{teamStatusLabel(run.status, language)}</span><span>{run.nodes.filter(item => item.status === 'completed').length} / {run.nodes.length} {t('步骤', 'steps')} · v{run.teamRevision}</span><span title={run.input}>{run.input}</span>{record && <button type="button" disabled={busy} onClick={() => { setView('definition'); setNodeId(''); }}>{t('编辑当前流程', 'Edit current workflow')}</button>}</div>}
         {run?.error && <div className="team-flow-notice" role="alert">{run.error}</div>}
+        {run && <TeamRunResults run={run} language={language} workspaceRoot={run.parentSessionId === chat?.sessionId ? chat.root : undefined} onOpenConversation={onOpenConversation}/>}
         <TeamFlowDiagram workflow={workflow} run={run || undefined} agents={agents} selectedId={nodeId} onSelect={id => setNodeId(current => current === id ? '' : id)} language={language}
-          readOnly={graphReadOnly} onPositions={moveNodes} onConnect={connectNodes}/>
+          readOnly={graphReadOnly} saving={graphSaving} onPositions={moveNodes} onConnect={connectNodes}/>
         {node && <section className="team-flow-detail" aria-label={t('步骤详情', 'Step details')}>
           <header><strong>{teamNodeTitle(node, agents)}</strong><span>{teamStatusLabel(nodeState?.status || 'idle', language)}</span><button type="button" aria-label={t('关闭步骤详情', 'Close step details')} onClick={() => setNodeId('')}><X size={15}/></button></header>
           <div className="team-flow-detail-content"><p className="team-flow-agent">{agents.find(item => item.id === node.agent_id)?.name || node.agent_id}</p><p>{node.prompt}</p>
             {!!node.depends_on.length && <details open={!run}><summary>{t('输入与上游结果', 'Inputs and upstream results')}</summary>{node.depends_on.map(id => { const upstream = workflow.nodes.find(item => item.id === id)!; return <div key={id}>
               <div className="team-flow-dependency"><strong>{teamNodeTitle(upstream, agents)}</strong>{!run && !imported && <button type="button" disabled={graphReadOnly} aria-label={t(`移除依赖 ${teamNodeTitle(upstream, agents)}`, `Remove dependency ${teamNodeTitle(upstream, agents)}`)} onClick={() => void saveGraph(record!.definition.nodes.map(item => item.id === node.id ? { ...item, depends_on: item.depends_on.filter(dependency => dependency !== id) } : item))}><Unlink size={13}/>{t('断开', 'Unlink')}</button>}</div>
-              {run && <pre>{run.nodes.find(item => item.id === id)?.output || t('上游步骤完成后提供结果。', 'Available when the upstream step completes.')}</pre>}</div>; })}</details>}
-            {nodeState?.error && <p role="alert">{nodeState.error}</p>}{nodeState?.output && <div className="team-flow-result"><strong>{t('结果', 'Result')}</strong><pre>{nodeState.output}</pre></div>}
+              {run && <MessageFileReferenceScope workspaceRoot={run.parentSessionId === chat?.sessionId ? chat.root : undefined}><MarkdownContent content={run.nodes.find(item => item.id === id)?.output || t('上游步骤完成后提供结果。', 'Available when the upstream step completes.')} language={language}/></MessageFileReferenceScope>}</div>; })}</details>}
+            {nodeState?.error && <p role="alert">{nodeState.error}</p>}{nodeState?.output && <div className="team-flow-result"><strong>{t('结果', 'Result')}</strong><MessageFileReferenceScope workspaceRoot={run?.parentSessionId === chat?.sessionId ? chat?.root : undefined}><MarkdownContent content={nodeState.output} language={language}/></MessageFileReferenceScope></div>}
           </div>{!imported && <button type="button" className="team-flow-edit-step" disabled={!chat} onClick={() => ask(t(`调整“${node.name || node.id}”这一步：`, `Change the "${node.name || node.id}" step: `))}>{t('让 AI 调整这一步', 'Ask AI to change this step')}</button>}
         </section>}
       </> : <div className="team-flow-empty"><GitBranch size={28}/><h2>{t('从一句话开始', 'Start with a goal')}</h2><p>{t('告诉 AI 要完成什么，流程会直接出现在这里。', 'Tell AI what to accomplish. The workflow will appear here.')}</p>
@@ -161,14 +178,14 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
         <small>{t('示例 · 分工、连接和配置由 AI 完成', 'Example · AI sets up roles, connections and configuration')}</small>
       </div>}
     </div>
-    {localControls && <InspectorCoverControls language={language} inputOpen={inputOpen} onTargetChange={setInputTarget}
+    {localControls && <InspectorCoverControls language={language} inputOpen={inputOpen} status={chat?.inputStatus} onTargetChange={setInputTarget}
       onToggleInput={() => setInputOpen(value => !value)}/>}
     {teamId && <TeamConversation key={`${teamId}:${conversationVersion}`} teamId={teamId} title={record?.definition.name || t('新流程', 'New workflow')} language={language} visible={visible && (inputOpen || !!chatOptions.composerPortalTarget)}
       chatOptions={chatOptions} target={localControls && inputOpen ? inputTarget : null} beforeSend={beforeSend} onContext={onContext} onOpen={openInput}/>}
   </div>;
 }
 
-function TeamConversation({ teamId, title, language, visible, chatOptions, target, beforeSend, onContext, onOpen }: {
+const TeamConversation = memo(function TeamConversation({ teamId, title, language, visible, chatOptions, target, beforeSend, onContext, onOpen }: {
   teamId: string; title: string; language: 'zh' | 'en'; visible: boolean; chatOptions: CreationChatOptions; target: HTMLElement | null;
   beforeSend: (input: UserPromptInput) => Promise<UserPromptInput>; onContext: (context: CreationInspectorContext | null) => void; onOpen: () => void;
 }) {
@@ -179,4 +196,4 @@ function TeamConversation({ teamId, title, language, visible, chatOptions, targe
         onCreated: conversation => persistTeamConversation(teamId, conversation) } : undefined}
       contextLabel={title} composerPortalTarget={visible ? chatOptions.composerPortalTarget ?? target : null} onInspectorContext={onContext} onOpen={onOpen}/></Suspense>
   </ComposerPresentationContext.Provider>;
-}
+});

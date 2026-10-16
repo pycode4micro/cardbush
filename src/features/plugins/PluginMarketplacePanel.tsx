@@ -6,6 +6,9 @@ import type { AppLanguage } from '../../types';
 import { marketError, marketRetryAt, marketRateLimited, networkError } from './pluginMarketErrors';
 import { useSettingsHost } from '../settings/SettingsHostContext';
 import { usePageState } from '../navigation/PageNavigation';
+import { SettingsFormDialog } from '../settings/SettingsFormDialog';
+import { SettingsDropdown } from '../settings/SettingsDropdown';
+import { SettingsInput } from '../settings/SettingsControls';
 
 export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onNotify, onOpenNetwork }: {
   language: AppLanguage;
@@ -36,9 +39,12 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const [installProgress, setInstallProgress] = useState<PluginMarketInstallProgress | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [sourceKind, setSourceKind] = useState<'git' | 'local'>('git');
+  const [sourceError, setSourceError] = useState('');
+  const sourcePending = useRef(false);
   const generation = useRef(0);
   const selectedSource = sources.find(source => source.id === sourceId);
-  const retryAt = marketRetryAt(error || catalog?.error || '');
+  const retryAt = marketRetryAt(sourceError || error || catalog?.error || '');
   const now = Math.max(clock, Date.now());
   const needsConfiguration = Boolean(preview?.warnings?.some(warning => warning.code === 'variables'));
 
@@ -87,15 +93,16 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   useEffect(() => { if (!previewTarget) void loadCatalog(); return () => { generation.current++; }; }, [loadCatalog, previewTarget]);
 
   const addSource = async (local = false) => {
-    if (!bridge || busy) return;
-    setBusy('source'); setError(''); setRetryPreview(null);
+    if (!bridge || busy || sourcePending.current) return;
+    sourcePending.current = true;
+    setBusy('source'); setSourceError(''); setError(''); setRetryPreview(null);
     try {
-      const source = local ? await bridge.addLocalPluginMarket(host.remote ? directoryInput.trim() : undefined) : await bridge.addPluginMarket(sourceInput);
+      const source = local ? await bridge.addLocalPluginMarket(host.remote ? directoryInput.trim() : undefined) : await bridge.addPluginMarket(sourceInput.trim());
       if (!source) return;
       setSources(await bridge.pluginMarketSources()); setSourceInput(''); setDirectoryInput(''); setAddOpen(false);
       if (source.id === sourceId) await loadCatalog(true); else setSourceId(source.id);
-    } catch (caught) { setError(message(caught)); }
-    finally { setBusy(value => value === 'source' ? '' : value); }
+    } catch (caught) { setSourceError(message(caught)); }
+    finally { sourcePending.current = false; setBusy(value => value === 'source' ? '' : value); }
   };
   const removeSource = async () => {
     if (!bridge || !selectedSource || selectedSource.builtin || busy) return;
@@ -158,6 +165,12 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     catch (caught) { setCancelling(false); setError(message(caught)); }
   };
   const entries = catalog?.entries.filter(entry => [entry.name, entry.description, entry.category].join(' ').toLowerCase().includes(query.trim().toLowerCase())) ?? [];
+  const closeSource = () => { if (!sourcePending.current) { setAddOpen(false); setSourceError(''); } };
+  const renderError = (failure: string, source = false) => <div className="plugin-market-error" role="alert"><p>{marketError(failure, zh, now)}</p>
+    {!source && retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void openPlugin(retryPreview.name)}>
+      <RefreshCw size={15}/>{zh ? '重试获取插件' : 'Retry download'}</button>}
+    {(networkError(failure) || marketRateLimited(failure)) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15}/>{zh ? '代理设置' : 'Proxy settings'}</button>}
+    <details><summary>{zh ? '错误详情' : 'Error details'}</summary><code>{failure}</code></details></div>;
   return <div className="plugin-market-page plugin-catalog-page">
     <button className="plugin-back" type="button" disabled={busy === 'install'} onClick={() => {
       generation.current++;
@@ -165,14 +178,9 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     }}><ArrowLeft size={17} />{previewTarget ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
       <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>
-      {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen}><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
+      {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => { setSourceError(''); setAddOpen(true); }} aria-haspopup="dialog"><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
     {host.remote && <p className="plugin-market-hint">{zh ? '插件安装到当前 Agent；市场来源、运行依赖和网络设置均使用该 Agent 的环境。' : 'Plugins install on the selected Agent, using its marketplace sources, dependencies and network settings.'}</p>}
-    {error && <div className="plugin-market-error" role="alert"><p>{marketError(error, zh, now)}</p>
-      {retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void openPlugin(retryPreview.name)}>
-        <RefreshCw size={15} />{zh ? '重试获取插件' : 'Retry download'}
-      </button>}
-      {(networkError(error) || marketRateLimited(error)) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15} />{zh ? '代理设置' : 'Proxy settings'}</button>}
-      <details><summary>{zh ? '错误详情' : 'Error details'}</summary><code>{error}</code></details></div>}
+    {error && renderError(error)}
     {preview ? <div className="plugin-market-detail">
       <dl><dt>{zh ? '来源' : 'Source'}</dt><dd>{preview.source}</dd>
         <dt>{zh ? '包格式' : 'Package format'}</dt><dd>{preview.format === 'agent-plugins' ? 'Agent Plugins' : preview.format === 'claude' ? (zh ? 'Claude（兼容模式）' : 'Claude (compatibility mode)') : (zh ? 'Codex 兼容格式' : 'Codex compatibility format')}</dd>
@@ -207,18 +215,33 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
       </div>}
       {activated && <button className="plugin-back" type="button" onClick={() => onOpenBundled(installedId)}>{zh ? '配置连接与权限' : 'Configure connections and approval'}</button>}
     </div> : <>
-      {addOpen && <section className="plugin-market-source-form"><div className="plugin-market-source-title"><strong>{zh ? '添加市场来源' : 'Add a marketplace source'}</strong><button className="plugin-back" type="button" disabled={Boolean(busy)} aria-label={zh ? '关闭添加来源' : 'Close add source'} onClick={() => setAddOpen(false)}><X size={16} /></button></div>
-        <form className="plugin-market-add" onSubmit={event => { event.preventDefault(); void addSource(); }}>
-          <input aria-label={zh ? '市场仓库地址' : 'Marketplace repository'} value={sourceInput} onChange={event => setSourceInput(event.currentTarget.value)} placeholder={zh ? 'Git 仓库地址或 owner/repo' : 'Git repository URL or owner/repo'} disabled={Boolean(busy)} />
-          <button className="plugin-install-button" type="submit" disabled={Boolean(busy) || !sourceInput.trim()}>{busy === 'source' && <LoaderCircle className="spin" size={15} />}{busy === 'source' ? (zh ? '正在添加…' : 'Adding…') : (zh ? '添加市场' : 'Add marketplace')}</button>
-          {!host.remote && <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void addSource(true)}><FolderOpen size={16} />{zh ? '本地市场' : 'Local marketplace'}</button>}
-        </form>
-        {host.remote && <form className="plugin-market-add" onSubmit={event => { event.preventDefault(); void addSource(true); }}>
-          <input aria-label={zh ? 'Agent 主机上的市场目录' : 'Marketplace directory on the Agent host'} value={directoryInput} onChange={event => setDirectoryInput(event.currentTarget.value)} placeholder="/srv/plugins/marketplace" disabled={Boolean(busy)} />
-          <button className="plugin-back" type="submit" disabled={Boolean(busy) || !directoryInput.trim()}><FolderOpen size={16}/>{zh ? '添加主机目录' : 'Add host directory'}</button>
-        </form>}
-        <p className="plugin-market-hint">{host.remote ? (zh ? '支持 HTTP(S)、SSH Git 地址和 Agent 主机目录；Git 认证使用 Agent 主机配置。用 owner/repo@ref 或地址#ref 指定版本。' : 'Supports HTTP(S), SSH Git URLs and directories on the Agent host. Git uses that host’s authentication. Pin a version with owner/repo@ref or URL#ref.') : (zh ? '支持 HTTP(S)、SSH Git 地址和本地目录。用 owner/repo@ref 或地址#ref 指定分支、标签或提交；Git 认证沿用本机配置。' : 'HTTP(S), SSH Git URLs and local directories. Use owner/repo@ref or URL#ref to pin a branch, tag or commit. Git uses your local authentication.')}</p>
-      </section>}
+      {addOpen && <SettingsFormDialog className="plugin-market-source-dialog" language={language} busy={Boolean(busy)}
+        title={zh ? '添加市场来源' : 'Add a marketplace source'}
+        description={zh ? '连接插件市场，浏览和安装其中的插件。' : 'Connect a marketplace to browse and install its plugins.'}
+        onCancel={closeSource} onSubmit={() => addSource(sourceKind === 'local')}
+        footer={<>
+          <button className="secondary-button" type="button" disabled={Boolean(busy)} onClick={closeSource}>{zh ? '取消' : 'Cancel'}</button>
+          <button className="primary-button" type="submit" disabled={Boolean(busy) || (sourceKind === 'git' ? !sourceInput.trim() : host.remote && !directoryInput.trim())}>
+            {busy === 'source' ? <LoaderCircle className="spin" size={15}/> : sourceKind === 'local' && !host.remote ? <FolderOpen size={15}/> : <Plus size={15}/>}
+            {busy === 'source' ? (zh ? '正在添加…' : 'Adding…') : sourceKind === 'local' && !host.remote ? (zh ? '选择文件夹并添加' : 'Choose folder and add') : (zh ? '添加市场' : 'Add marketplace')}
+          </button>
+        </>}>
+        <fieldset className="settings-dialog-fields" disabled={Boolean(busy)}>
+          <label className="settings-field"><span>{zh ? '来源类型' : 'Source type'}</span>
+            <SettingsDropdown label={zh ? '来源类型' : 'Source type'} value={sourceKind} onChange={value => { setSourceKind(value as 'git' | 'local'); setSourceError(''); }}
+              options={[{ value: 'git', label: zh ? 'Git 仓库' : 'Git repository' }, { value: 'local', label: host.remote ? (zh ? 'Agent 主机目录' : 'Agent host directory') : (zh ? '本地文件夹' : 'Local folder') }]}/>
+          </label>
+          {sourceKind === 'git' ? <>
+            <SettingsInput label={zh ? '市场仓库地址' : 'Marketplace repository'} value={sourceInput} onChange={value => { setSourceInput(value); setSourceError(''); }} placeholder="https://github.com/owner/repo"/>
+            <details className="plugin-market-source-help"><summary>{zh ? '地址格式与版本' : 'Address formats and versions'}</summary>
+              <p className="plugin-market-hint">{zh ? '支持 HTTP(S)、SSH Git 地址或 owner/repo。用 owner/repo@ref 或地址#ref 指定分支、标签或提交。' : 'Supports HTTP(S), SSH Git URLs or owner/repo. Pin a branch, tag or commit with owner/repo@ref or URL#ref.'}</p>
+              <p className="plugin-market-hint">{host.remote ? (zh ? 'Git 认证使用 Agent 主机配置。' : 'Git uses authentication configured on the Agent host.') : (zh ? 'Git 认证沿用本机配置。' : 'Git uses your local authentication.')}</p>
+            </details>
+          </> : host.remote ? <SettingsInput label={zh ? 'Agent 主机上的市场目录' : 'Marketplace directory on the Agent host'} value={directoryInput} onChange={value => { setDirectoryInput(value); setSourceError(''); }} placeholder="/srv/plugins/marketplace"/>
+            : <p className="plugin-market-hint">{zh ? '选择包含市场清单的文件夹，将它添加为本地插件市场。' : 'Choose a folder containing a marketplace manifest to add it as a local marketplace.'}</p>}
+          {sourceError && renderError(sourceError, true)}
+        </fieldset>
+      </SettingsFormDialog>}
       <div className="plugin-market-toolbar"><div className="plugin-market-controls">
         <select aria-label={zh ? '选择插件市场' : 'Select marketplace'} value={sourceId} onChange={event => { setSourceId(event.currentTarget.value); setQuery(''); }} disabled={Boolean(busy)}>
           {sources.map(source => <option key={source.id} value={source.id}>{source.builtin ? (zh ? 'CardBush 精选' : 'CardBush featured') : `${source.location}${source.ref && source.ref !== 'HEAD' ? `@${source.ref}` : ''}`}</option>)}

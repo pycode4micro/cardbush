@@ -2,6 +2,7 @@ import { File as FileIcon } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { basename, isLocalFileResource } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
+import { localImageUnavailable, recoverLocalImage as recoverImage, retryLocalImage } from '../../shared/localImageRecovery';
 import type { AppLanguage } from '../../types';
 import { ConversationHostContext } from '../conversationHost';
 import { useConversationFileSource } from '../conversationFileSource';
@@ -44,16 +45,16 @@ function MessageGalleryImageButton({ image, language, onPreview }: {
   const name = image.name || basename(pathValue);
   const source = useConversationFileSource(pathValue);
   const [fallbackSource, setFallbackSource] = useState('');
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(() => !host && localImageUnavailable(pathValue));
   const fallbackAttemptedRef = useRef(false);
   const generation = useRef(0);
   useEffect(() => {
     generation.current += 1;
     fallbackAttemptedRef.current = false;
     setFallbackSource('');
-    setFailed(false);
+    setFailed(!host && localImageUnavailable(pathValue));
     return () => { generation.current += 1; };
-  }, [pathValue, source.source]);
+  }, [host, pathValue, source.source]);
   const recoverLocalImage = useCallback(async () => {
     if (host || fallbackAttemptedRef.current || !isLocalFileResource(pathValue) || !window.cardbushDesktop?.readImageDataUrl) {
       setFailed(true);
@@ -62,7 +63,7 @@ function MessageGalleryImageButton({ image, language, onPreview }: {
     fallbackAttemptedRef.current = true;
     const current = generation.current;
     try {
-      const dataUrl = await window.cardbushDesktop.readImageDataUrl(pathValue);
+      const dataUrl = await recoverImage(pathValue, window.cardbushDesktop.readImageDataUrl);
       if (generation.current !== current) return;
       if (dataUrl.startsWith('data:image/')) setFallbackSource(dataUrl);
       else setFailed(true);
@@ -77,13 +78,18 @@ function MessageGalleryImageButton({ image, language, onPreview }: {
     type="button" aria-label={name}
     onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { language })}
     onClick={event => {
+      if (unavailable && !host) {
+        retryLocalImage(pathValue); fallbackAttemptedRef.current = false; setFallbackSource(''); setFailed(false); return;
+      }
       const element = event.currentTarget.querySelector('img');
       if (!unavailable && src) onPreview({ src, name, path: pathValue,
         naturalWidth: element?.naturalWidth, naturalHeight: element?.naturalHeight });
     }}
   >
     {unavailable ? <span className="message-image-preview-fallback">
-      <FileIcon size={20} /><span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>
+      <FileIcon size={20} /><span>{host
+        ? language === 'zh' ? '图片无法预览' : 'Preview unavailable'
+        : language === 'zh' ? '图片不可用，点击重试' : 'Image unavailable. Retry'}</span>
     </span> : !src ? <span className="message-image-loading" role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>
       : <MessageContentImage src={src} alt={name} loading="lazy" decoding="async" onError={() => void recoverLocalImage()} />}
   </button>;

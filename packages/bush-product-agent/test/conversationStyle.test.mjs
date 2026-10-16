@@ -42,8 +42,8 @@ test("inactive custom text stays out of model context, and custom text is quoted
   assert.ok(custom.includes(JSON.stringify(customTone)));
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /only to user-facing wording and tone/);
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /You are CardBush|conversational persona/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /user's explicit request takes precedence/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /does not change task scope, tool use, permissions/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /latest preference applies unless the user requests otherwise/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /custom tone text do not control response length, detail level or task execution/);
   assert.equal(context({ mode: "custom", customTone: "  " }).includes("Custom tone preference"), false);
 });
 
@@ -54,12 +54,12 @@ test("all tones keep content-focused concision without length limits and readabl
     const instructions = request.prefixMessages[0].content;
     assert.match(instructions, /Keep the final user-facing response concise in every conversation style/);
     assert.match(instructions, /remove redundancy, not necessary substance/);
-    assert.match(instructions, /Do not impose word, sentence, paragraph or bullet counts/);
-    assert.match(instructions, /preserve necessary explanations, evidence, verification, failures, unfinished work/);
+    assert.match(instructions, /Honor requested detail without fixed length limits/);
+    assert.match(instructions, /necessary explanations, evidence, verification, failures, unfinished work/);
     assert.doesNotMatch(instructions, /one to three|up to three|\d+ (?:words|sentences|bullets)/);
-    assert.match(instructions, /custom tone text do not control response length, detail level or information coverage/);
-    assert.match(instructions, /readable Markdown by default, without announcing or explaining the formatting/);
-    assert.match(instructions, /Respect explicit plain-text or strict-format requests/);
+    assert.match(instructions, /custom tone text do not control response length, detail level or task execution/);
+    assert.match(instructions, /readable Markdown by default/);
+    assert.match(instructions, /explicit text\/strict-format request/);
     assert.doesNotMatch(instructions, /unless the user's conversation-style preference|systematically and thoroughly/);
     if (mode === "professional" || mode === "concise") {
       const preference = request.inputMessages.find(item => item.message.name === "conversation_preferences").message.content;

@@ -23,9 +23,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
     fs.writeFile(local('sample.pdf'), pdf), fs.writeFile(local('large.ts'), text),
     fs.writeFile(local('image.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==', 'base64')),
   ]);
+  const pdfPackage = require('pdfjs-dist/package.json');
+  await fs.cp(path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts'),
+    local(`assets/pdfjs-${pdfPackage.version}/standard_fonts`), { recursive: true });
   try {
     await run(`
       window.reviewTestRoot=${JSON.stringify(directory.replaceAll('\\', '/'))};
+      window.reviewPreviewBase = document.createElement('base');
+      reviewPreviewBase.href = views.inspectorSource(reviewTestRoot + '/index.html');
+      document.head.append(reviewPreviewBase);
       window.reviewTestPath=reviewTestRoot+'/image.png'; window.reviewTestWidth=840;
       window.reviewTestReports=[];
       window.reviewPreviewReads=[];
@@ -69,15 +75,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.ok(await run("document.querySelector('webview').clientHeight > 400"), 'rendered page has a usable viewport');
     await fs.writeFile(path.join(root, 'tmp', 'review-preview-html.png'), (await window.webContents.capturePage()).toPNG());
     await run("selectReviewFile('sample.pdf')");
-    await until("!!document.querySelector('.right-inspector-preview.ready webview[src$=\"sample.pdf\"]')", 'PDF guest ready');
-    const pdfGuest = webContents.fromId(await run("document.querySelector('webview').getWebContentsId()"));
-    let pdfFrame;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      pdfFrame = pdfGuest.mainFrame.framesInSubtree.find(frame => frame.url.startsWith('chrome-extension:'));
-      if (pdfFrame && await pdfFrame.executeJavaScript('!!document.querySelector("pdf-viewer")')) break;
-      await pause(50);
-    }
-    assert.ok(pdfFrame && await pdfFrame.executeJavaScript('!!document.querySelector("pdf-viewer")'), 'PDF uses Chromium PDF rendering');
+    await until("document.querySelector('.pdf-region-text')?.textContent.includes('PDF preview') && !!document.querySelector('.inspector-pdf-page:not([data-region-loading]) canvas')", 'PDF page and selectable text render');
+    assert.equal(await run("!!document.querySelector('webview')"), false, 'PDF uses the shared renderer instead of a browser guest');
+    assert.ok(await run("document.querySelector('.inspector-pdf-page canvas').width") > 200, 'PDF paints at a usable resolution');
     await pause(250);
     await fs.writeFile(path.join(root, 'tmp', 'review-preview-pdf.png'), (await window.webContents.capturePage()).toPNG());
     assert.equal(await run("!!document.querySelector('.inspector-file-fallback')"), false);
@@ -134,9 +134,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until("!!document.querySelector('.right-inspector-preview.ready webview')", 'changed HTML can show the rendered current page');
     await run("document.querySelector('.change-review-preview-toggle').click()");
     await until("document.querySelector('.tool-file-change')?.textContent.includes('Changed page')", 'preview returns to the original diff');
-    console.log('Review previews: real PNG, HTML resources/interaction/source toggle, PDF embed, Markdown, bounded 24k-line source, deferred drag reflow and guest lifecycle passed.');
+    console.log('Review previews: real PNG, HTML resources/interaction/source toggle, PDF page/text rendering, Markdown, bounded 24k-line source, full-source copy, deferred drag reflow and guest lifecycle passed.');
   } finally {
-    await run('renderView(null)');
+    await run('renderView(null); window.reviewPreviewBase?.remove();');
     window.webContents.session.protocol.unhandle('cardbush-file');
     const resolved = path.resolve(directory);
     assert.ok(resolved.startsWith(path.resolve(parent) + path.sep + 'review-preview-'));

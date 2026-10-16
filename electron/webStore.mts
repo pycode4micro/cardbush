@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { digest, WebError, type WebConversation, type WebUser } from './webCommon.mjs';
 import { WebOrganizationStore, userColumns, userJoin } from './webOrganization.mjs';
 import { hashWebPassword, verifyWebPassword } from './webPasswords.mjs';
+import { conversationCursor, nextConversationCursor, type ConversationPage, type ConversationPageQuery } from './webSessionReads.mjs';
 export { hashWebPassword, verifyWebPassword } from './webPasswords.mjs';
 
 const registration = z.object({ username: z.string().trim().min(3).max(80).regex(/^[A-Za-z0-9_.-]+$/), display_name: z.string().trim().min(1).max(120), password: z.string().min(8).max(128), department_id: z.string().max(64).nullable().optional() }).strict();
@@ -30,6 +31,7 @@ export interface WebStore {
   users(deleted?: boolean): Promise<WebUser[]>;
   updateUser(actor: WebUser, id: string, input: unknown): Promise<WebUser>;
   list(userId: string): Promise<WebConversation[]>;
+  listPage(userId: string, query: ConversationPageQuery): Promise<ConversationPage>;
   conversation(userId: string, id: string): Promise<WebConversation>;
   create(userId: string, id: string, title: string): Promise<WebConversation>;
   update(userId: string, id: string, input: unknown): Promise<WebConversation>;
@@ -50,6 +52,7 @@ export class PostgresWebStore extends WebOrganizationStore implements WebStore {
       INSERT INTO cardbush_web_plugins(id) VALUES('volcengine_images') ON CONFLICT DO NOTHING;
       CREATE TABLE IF NOT EXISTS cardbush_web_plugin_grants (user_id varchar(64) PRIMARY KEY REFERENCES user_accounts(id) ON DELETE CASCADE, created_at timestamptz NOT NULL DEFAULT now());
       CREATE INDEX IF NOT EXISTS cardbush_web_conversations_owner ON cardbush_web_conversations(user_id,updated_at DESC);`);
+    await this.pool.query('CREATE INDEX IF NOT EXISTS cardbush_web_conversations_page ON cardbush_web_conversations(user_id,archived,pinned DESC,updated_at DESC,id DESC)');
     await this.migrateOrganization();
   }
   async plugin(): Promise<WebPluginState> {
@@ -116,6 +119,18 @@ export class PostgresWebStore extends WebOrganizationStore implements WebStore {
   }
   async logout(token: string) { await this.pool.query('UPDATE auth_sessions SET revoked_at=now() WHERE token_hash=$1', [digest(token)]); }
   async list(userId: string): Promise<WebConversation[]> { return (await this.pool.query('SELECT id,title,pinned,archived,created_at,updated_at FROM cardbush_web_conversations WHERE user_id=$1 ORDER BY pinned DESC,updated_at DESC', [userId])).rows; }
+  async listPage(userId: string, query: ConversationPageQuery): Promise<ConversationPage> {
+    const cursor = conversationCursor(query);
+    const search = query.q.replace(/[\\%_]/g, character => '\\' + character);
+    const rows = (await this.pool.query(`SELECT id,title,pinned,archived,created_at,updated_at,updated_at::text AS exact_timestamp
+      FROM cardbush_web_conversations WHERE user_id=$1 AND archived=$2 AND ($3='' OR title ILIKE '%' || $3 || '%')
+      AND ($4::boolean IS NULL OR (pinned,updated_at,id) < ($4,$5::timestamptz,$6::varchar))
+      ORDER BY pinned DESC,updated_at DESC,id DESC LIMIT $7`,
+      [userId, query.archived, search, cursor?.pinned ?? null, cursor?.updatedAt ?? null, cursor?.id ?? null, query.limit + 1])).rows;
+    const visible = rows.slice(0, query.limit), last = visible.at(-1);
+    return { items: visible.map(({ exact_timestamp: _, ...row }) => row),
+      nextCursor: rows.length > query.limit && last ? nextConversationCursor(last, last.exact_timestamp, query) : null };
+  }
   async conversation(userId: string, id: string): Promise<WebConversation> {
     const row = (await this.pool.query('SELECT id,title,pinned,archived,created_at,updated_at FROM cardbush_web_conversations WHERE id=$1 AND user_id=$2', [id, userId])).rows[0];
     if (!row) throw new WebError(404, '会话不存在。'); return row;

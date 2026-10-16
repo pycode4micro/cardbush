@@ -110,7 +110,7 @@ import { skillReference } from '../skills/skillReferences';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
-import { useTeamWorkspace, selectTeam } from '../team/teamWorkspaceStore';
+import { useTeamChoices, selectTeam } from '../team/teamWorkspaceStore';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 import { useRuntimeStartupStatus } from '../../shared/useRuntimeStartupStatus';
 
@@ -514,7 +514,7 @@ export function Composer({
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
-  const teamWorkspace = useTeamWorkspace(!host && teamAvailable);
+  const teamWorkspace = useTeamChoices(!host && teamAvailable);
   const delegationCommand = teamWorkspace.command ? `/${teamWorkspace.command}` : '';
   const selectedTeam = teamAvailable ? teamWorkspace.choices.find((team) => team.id === teamWorkspace.selectedId) : undefined;
   const draftTeam = selectedTeamReference(draft);
@@ -2277,7 +2277,7 @@ function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLangu
 }
 
 function ComposerTeamPicker({ language, selectedId, onSelect, onClose }: { language: AppLanguage; selectedId: string; onSelect: (reference?: TeamPromptReference) => void; onClose: () => void }) {
-  const workspace = useTeamWorkspace();
+  const workspace = useTeamChoices();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardNavigating, setKeyboardNavigating] = useState(false);

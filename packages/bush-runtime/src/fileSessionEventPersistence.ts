@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { boundedJournalLines } from './boundedJournalLines.js';
 import { cacheFiles } from './cacheMaintenance.js';
+import { SessionReadIndex } from './sessionReadIndex.js';
 import {
   chmodSync,
   closeSync,
@@ -10,13 +11,14 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   truncateSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
-import { sessionEventSchema, type SessionEvent } from "@cardbush/bush-protocol";
+import { sessionEventSchema, type SessionEvent, type SessionHistoryRequest, type SessionSummary } from "@cardbush/bush-protocol";
 
 import type { SessionEventPersistence, SessionMetadataEntry } from "./sessionStore.js";
 
@@ -51,6 +53,8 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
   readonly #onRecoveryIssue?: FileSessionEventPersistenceOptions["onRecoveryIssue"];
   readonly #descriptors = new Map<string, number>();
   readonly #metadata = new Map<string, { size: number; mtimeMs: number; entry: SessionMetadataEntry }>();
+  readonly #readIndex = new SessionReadIndex();
+  readonly #summaries = new Map<string, { size: number; mtimeMs: number; summary: SessionSummary }>();
 
   constructor(options: FileSessionEventPersistenceOptions) {
     const root = String(options.root || "").trim();
@@ -99,6 +103,31 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     writeSync(descriptor, `${record}\n`, undefined, "utf8");
     fsyncSync(descriptor);
     this.#metadata.delete(path);
+    this.#summaries.delete(path);
+  }
+
+  async listSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
+    const summaries: SessionSummary[] = [];
+    const files = await cacheFiles(this.#root, name => /^[a-f0-9]{64}\.jsonl$/.test(name));
+    const present = new Set(files.map(file => file.path));
+    for (const key of this.#summaries.keys()) if (!present.has(key)) this.#summaries.delete(key);
+    for (const file of files) {
+      signal?.throwIfAborted();
+      const cached = this.#summaries.get(file.path);
+      const summary = cached?.size === file.bytes && cached.mtimeMs === file.mtimeMs
+        ? cached.summary : await this.#readIndex.summary(file.path, signal);
+      if (summary) {
+        summaries.push(structuredClone(summary));
+        this.#summaries.delete(file.path);
+        this.#summaries.set(file.path, { size: file.bytes, mtimeMs: file.mtimeMs, summary });
+        while (this.#summaries.size > 1000) this.#summaries.delete(this.#summaries.keys().next().value!);
+      }
+    }
+    return summaries;
+  }
+
+  historyPage(input: SessionHistoryRequest, signal?: AbortSignal) {
+    return this.#readIndex.page(this.#path(input.sessionId), input, signal);
   }
 
   async listMetadata(skip: Set<string>, signal?: AbortSignal): Promise<SessionMetadataEntry[]> {
@@ -140,7 +169,7 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     for (const name of readdirSync(this.#root)) {
       if (!name.endsWith(".jsonl")) continue;
       const path = resolve(this.#root, name);
-      const first = readFileSync(path, "utf8").split("\n").find(Boolean);
+      const first = firstJournalLine(path);
       if (!first) continue;
       try {
         const record = JSON.parse(first) as Record<string, unknown>;
@@ -162,6 +191,8 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
   remove(sessionId: string): boolean {
     const path = this.#path(sessionId);
     this.#metadata.delete(path);
+    this.#readIndex.forget(path);
+    this.#summaries.delete(path);
     const descriptor = this.#descriptors.get(path);
     if (descriptor !== undefined) {
       closeSync(descriptor);
@@ -169,6 +200,7 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     }
     if (!existsSync(path)) return false;
     unlinkSync(path);
+    try { unlinkSync(path + '.session-index'); } catch { /* Derived cache cleanup cannot undo a completed journal removal. */ }
     return true;
   }
 
@@ -176,6 +208,8 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     for (const descriptor of this.#descriptors.values()) closeSync(descriptor);
     this.#descriptors.clear();
     this.#metadata.clear();
+    this.#readIndex.clear();
+    this.#summaries.clear();
   }
 
   #decode(path: string, line: number, value: string, sessionId: string): SessionEvent {
@@ -214,4 +248,17 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
 
 function checksum(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function firstJournalLine(path: string): string {
+  const descriptor = openSync(path, 'r'), parts: Buffer[] = [], buffer = Buffer.alloc(4096);
+  try {
+    let count: number;
+    while ((count = readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
+      const end = buffer.subarray(0, count).indexOf(10);
+      parts.push(Buffer.from(buffer.subarray(0, end < 0 ? count : end)));
+      if (end >= 0) break;
+    }
+    return Buffer.concat(parts).toString('utf8');
+  } finally { closeSync(descriptor); }
 }

@@ -77,7 +77,10 @@ module.exports = async ({ win, read, until }) => {
   await frame();
   assert.equal(await read('remoteReads.length'), 2, 'switching and rerendering do not fetch image bytes again');
   await read('document.querySelector(".message-image-gallery-item:not([hidden]) img").click()');
-  assert.equal(await read('openedRemoteFiles.at(-1)'), '/srv/second.png', 'remote images open through their own host');
+  await until('!!document.querySelector(".image-preview-dialog")');
+  assert.equal(await read('document.querySelector(".image-preview-dialog strong").title'), '/srv/second.png', 'shared viewer retains the selected remote image identity');
+  await until('document.querySelector(".image-preview-stage img")?.naturalWidth>0');
+  await read('document.querySelector(".image-preview-close").click()');
   await read(`fixtureMemoFiles['cardbush-memo:s/t/document']={path:'/srv/report.pdf',name:'report.pdf'};
     remoteContent='![First](cardbush-memo:s/t/first)\\n\\n![Document](cardbush-memo:s/t/document)';renderRemoteFixture(false)`);
   await until('!!document.querySelector(".message-image-gallery.is-ungrouped")');

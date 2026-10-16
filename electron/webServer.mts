@@ -8,6 +8,11 @@ import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { BrokerWebAgents, type WebAgents, type WebAgent } from './webAgentPool.mjs';
 import { PostgresWebStore, type WebStore } from './webStore.mjs';
+import { WebReadCache, conversationPageQuery, historyPage } from './webSessionReads.mjs';
+import { WebArtifactArchives, archiveRequest } from './webArtifactArchives.mjs';
+import { webArtifactManifest } from './webArtifactManifest.mjs';
+import { WebModelSettings, PostgresModelSettingsRepository } from './webModelSettings.mjs';
+import type { SessionSnapshot } from '@cardbush/bush-protocol';
 import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
 
 export type WebServerConfig = { origin: string; port?: number; host?: string; staticRoot: string; modelSecret: string; models: WebModel[]; defaultModelId: string; imageModel?: { model: string; baseURL: string; apiKey: string } };
@@ -19,13 +24,15 @@ const messageSchema = z.object({ requestId: z.string().uuid(), text: z.string().
 /** This is an authenticated web application, not a proxy for the owner API.
  * The authenticated account selects the runtime; every session route also checks
  * its durable ownership record before touching that runtime. */
-export async function serveWeb(config: WebServerConfig, store: WebStore, agents: WebAgents) {
+export async function serveWeb(config: WebServerConfig, store: WebStore, agents: WebAgents, modelSettings?: WebModelSettings) {
   const publicOrigin = new URL(config.origin).origin;
   if (publicOrigin !== config.origin || config.modelSecret.length < 48) throw new Error('Invalid web origin or model secret.');
   if (!config.models.some(model => model.id === config.defaultModelId)) throw new Error('A configured default model is required.');
   const active = new Set<{ token: string; userId: string; abort: AbortController }>();
   const throttles = new Map<string, { count: number; until: number }>();
   const mutations = new Map<string, Promise<unknown>>();
+  const reads = new WebReadCache();
+  const archives = new WebArtifactArchives(agents);
   const serial = async <T,>(key: string, work: () => Promise<T>) => {
     const operation = (mutations.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
     mutations.set(key, operation);
@@ -52,11 +59,12 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
     response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
-    const abort = new AbortController(); response.once('close', () => abort.abort());
+    const abort = new AbortController(); response.once('close', () => { if (!response.writableFinished) abort.abort(); });
     void (async () => {
       const url = new URL(request.url ?? '/', publicOrigin), path = url.pathname;
       const method = request.method ?? 'GET';
       if (path === '/healthz' && method === 'GET') { json(response, 200, { ok: true, service: 'cardbush-web', toolsEnabled: true }); return; }
+      if (path.startsWith('/internal/') || path.startsWith(`${prefix}/`)) await modelSettings?.refresh();
       if (path.startsWith('/internal/image/')) { await proxyImage(request, response, url, config, store, abort.signal); return; }
       if (path.startsWith('/internal/model/')) {
         await proxyModel(request, response, url, config, store, abort.signal); return;
@@ -94,6 +102,15 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       const track = { token: digest(token), userId: user.id, abort }; active.add(track);
       response.once('close', () => active.delete(track));
       if (path === `${prefix}/auth/me` && method === 'GET') { json(response, 200, identity(user, token)); return; }
+      if (path === `${prefix}/models` && method === 'GET') {
+        json(response, 200, { models: config.models.map(({ id, name }) => ({ id, name })), defaultModelId: config.defaultModelId }); return;
+      }
+      if (path === `${prefix}/admin/models` && ['GET', 'POST'].includes(method)) {
+        if (user.role !== 'admin') throw new WebError(403, '需要管理员权限。');
+        if (!modelSettings) throw new WebError(503, '模型配置存储尚未初始化。');
+        await modelSettings.refresh(true);
+        json(response, 200, method === 'GET' ? modelSettings.view() : await modelSettings.update(await readJson(request, 24000))); return;
+      }
       if (path === `${prefix}/auth/logout` && method === 'POST') {
         await store.logout(token); setCookie(response, ''); json(response, 200, { ok: true });
         for (const entry of active) if (entry !== track && entry.token === track.token) entry.abort.abort(); return;
@@ -175,6 +192,20 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         try { json(response, 200, await agent.call('web.files', { action: 'upload', ...input })); }
         catch { throw new WebError(400, '上传未完成或文件不受支持。仅接受静态 PNG/JPG/WebP、UTF-8 文本、PDF 和无视频/宏的 Office 文档，单个文件不超过 16 MB。'); } return;
       }
+      if (path === `${prefix}/files/archives` && method === 'POST') {
+        throttle(`archive:${user.id}`, 120);
+        const input = archiveRequest.parse(await readJson(request));
+        await store.conversation(user.id, input.sessionId);
+        const ticket = await archives.prepare(user.id, track.token, input, abort.signal);
+        json(response, 201, archives.status(ticket)); return;
+      }
+      const archive = path.match(/^\/api\/web\/v1\/files\/archives\/([a-f0-9]{64})(?:\/(status))?$/);
+      if (archive && method === 'GET') {
+        const ticket = archives.get(archive[1], user.id, track.token);
+        if (archive[2]) { json(response, 200, archives.status(ticket)); return; }
+        await store.conversation(user.id, ticket.sessionId);
+        await archives.download(ticket, response, abort.signal, async () => (await store.authenticate(token))?.id === user.id); return;
+      }
       if (path === `${prefix}/files/view` && method === 'GET') {
         const filePath = z.string().min(1).max(1000).parse(url.searchParams.get('path'));
         const agent = await agents.get(user.id);
@@ -191,7 +222,9 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         }
         response.end(); return;
       }
-      if (path === `${prefix}/sessions` && method === 'GET') { json(response, 200, await store.list(user.id)); return; }
+      if (path === `${prefix}/sessions` && method === 'GET') {
+        json(response, 200, url.searchParams.has('limit') ? await store.listPage(user.id, conversationPageQuery.parse(Object.fromEntries(url.searchParams))) : await store.list(user.id)); return;
+      }
       if (path === `${prefix}/sessions` && method === 'POST') {
         const input = z.object({ requestId: z.string().uuid() }).strict().parse(await readJson(request, 1024));
         const id = `web-${digest(`${user.id}:${input.requestId}`).slice(0, 40)}`;
@@ -203,29 +236,57 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         });
         json(response, 201, conversation); return;
       }
-      const match = path.match(/^\/api\/web\/v1\/sessions\/(web-[a-f0-9]{40})(?:\/(messages|events|jobs|solutions|tools)(?:\/([^/]+)\/(stop))?)?$/);
+      const match = path.match(/^\/api\/web\/v1\/sessions\/(web-[a-f0-9]{40})(?:\/(messages|events|jobs|solutions|tools|artifacts|status)(?:\/([^/]+)\/(stop))?)?$/);
       if (!match) throw new WebError(404, '接口不存在。');
       const [, sessionId, action, jobId] = match;
       const conversation = await store.conversation(user.id, sessionId);
+      const readKey = `${user.id}:${sessionId}:`;
+      if (method !== 'GET') reads.invalidate(readKey);
       // Account authorization and ownership are settled before runtime startup.
       const agent = await agents.get(user.id);
+      abort.signal.throwIfAborted();
+      const readSnapshot = () => reads.get(`${readKey}snapshot`, 5_000, () => agent.call('sessions.get', { sessionId, messageProjection: 'conversation' }) as Promise<SessionSnapshot | null>);
+      if (action === 'status' && method === 'GET') {
+        const turnIds = z.array(z.string().min(1).max(160)).max(100).parse(url.searchParams.getAll('turnId'));
+        const taskList = await reads.get(`${readKey}jobs`, 1_000, () => jobs(agent, sessionId));
+        // A head read following completion must see the newly committed turn.
+        if (!taskList.some(job => ['queued', 'running'].includes(job.status))) reads.invalidate(`${readKey}snapshot`);
+        json(response, 200, { jobs: taskList.filter(job => !turnIds.length || turnIds.includes(job.turnId)).map(({ id, turnId, status }) => ({ id, turnId, status })) }); return;
+      }
       if (!action && method === 'GET') {
-        const [snapshot, taskList, solutions] = await Promise.all([agent.call('sessions.get', { sessionId, messageProjection: 'conversation' }), jobs(agent, sessionId), agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } })]);
+        if (url.searchParams.get('fresh') === '1') { reads.invalidate(`${readKey}snapshot`); reads.invalidate(`${readKey}jobs`); }
+        const paged = url.searchParams.has('limit');
+        const limit = z.coerce.number().int().min(1).max(40).parse(url.searchParams.get('limit') ?? 20);
+        const before = z.string().min(1).max(160).nullable().parse(url.searchParams.get('before'));
+        const [fullSnapshot, taskList, solutions] = await Promise.all([readSnapshot(), reads.get(`${readKey}jobs`, 1_000, () => jobs(agent, sessionId)), agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } })]);
+        abort.signal.throwIfAborted();
+        const page = paged ? historyPage(fullSnapshot, limit, before) : { snapshot: fullSnapshot };
+        const snapshot = page.snapshot;
         const turns = (snapshot as { turns?: Array<{ turnId: string; messages: Array<{ message: { toolCalls?: unknown[] } }> }> } | null)?.turns ?? [];
         const toolTurns = turns.filter(turn => turn.messages.some(entry => entry.message.toolCalls?.length));
         const toolExecutions: unknown[] = [];
         // Summaries are small and immutable. Bound concurrent runtime reads on long conversations.
-        for (let start = 0; start < toolTurns.length; start += 8) {
-          const groups = await Promise.all(toolTurns.slice(start, start + 8).map(turn => agent.call('runtime.command', {
+        for (let start = 0; start < toolTurns.length; start += 2) {
+          abort.signal.throwIfAborted();
+          const groups = await Promise.all(toolTurns.slice(start, start + 2).map(turn => reads.get(`${readKey}tools:${turn.turnId}`, 60_000, () => agent.call('runtime.command', {
             kind: 'runtime.list_turn_tool_executions', payload: { sessionId, turnId: turn.turnId, detail: 'summary' },
-          }) as Promise<unknown[]>));
+          }) as Promise<unknown[]>)));
           toolExecutions.push(...groups.flat());
         }
-        json(response, 200, { conversation, snapshot, jobs: taskList, solutions, toolExecutions }); return;
+        const included = new Set(turns.map(turn => turn.turnId));
+        const committed = new Set(fullSnapshot?.turns.map(turn => turn.turnId));
+        const visibleJobs = paged ? taskList.filter(job => included.has(job.turnId) || !before && !committed.has(job.turnId)) : taskList;
+        json(response, 200, { conversation, ...page, jobs: visibleJobs, solutions, toolExecutions }); return;
+      }
+      if (action === 'artifacts' && method === 'GET') {
+        const turnId = z.string().min(1).max(160).parse(url.searchParams.get('turnId'));
+        const snapshot = await readSnapshot();
+        if (!snapshot?.turns?.some(turn => turn.turnId === turnId) && !(await jobs(agent, sessionId)).some(job => job.turnId === turnId)) throw new WebError(404, '执行记录不存在。');
+        json(response, 200, await reads.get(`${readKey}artifacts:${turnId}`, 30_000, () => webArtifactManifest(agent, sessionId, turnId, snapshot))); return;
       }
       if (action === 'tools' && method === 'GET') {
         const turnId = z.string().min(1).max(160).parse(url.searchParams.get('turnId'));
-        const snapshot = await agent.call('sessions.get', { sessionId, messageProjection: 'conversation' }) as { turns?: Array<{ turnId: string }> } | null;
+        const snapshot = await readSnapshot();
         if (!snapshot?.turns?.some(turn => turn.turnId === turnId) && !(await jobs(agent, sessionId)).some(job => job.turnId === turnId)) throw new WebError(404, '执行记录不存在。');
         json(response, 200, await agent.call('runtime.command', { kind: 'runtime.list_turn_tool_executions', payload: { sessionId, turnId } })); return;
       }
@@ -247,8 +308,11 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         const attachments = await Promise.all(input.attachments.map(id => agent.call('web.files', { action: 'describe', id }) as Promise<{ path: string; textPath?: string; mime: string; name: string; size: number }>));
         if (attachments.filter(item => item.mime.startsWith('image/')).length > 4 || attachments.reduce((sum, item) => sum + item.size, 0) > 24*1024*1024) throw new WebError(400, '每条消息最多 4 张图片，附件总计不超过 24 MB。');
         const { attachments: _ids, ...message } = input;
-        const job = await agent.call('chat.send', { ...message, ...(attachments.length ? { files: attachments.filter(item => !item.mime.startsWith('image/')).map(item => item.textPath ?? item.path), images: attachments.filter(item => item.mime.startsWith('image/')).map(item => item.path), visionEnabled: true } : {}), sessionId, language: 'zh', permissionMode: 'task_free', planEnabled: false, sourceEnabled: false,
+        // Vision is a turn capability, independent of this message's attachments:
+        // text follow-ups must still inspect prior uploads and generated images.
+        const job = await agent.call('chat.send', { ...message, ...(attachments.length ? { files: attachments.filter(item => !item.mime.startsWith('image/')).map(item => item.textPath ?? item.path), images: attachments.filter(item => item.mime.startsWith('image/')).map(item => item.path) } : {}), visionEnabled: true, sessionId, language: 'zh', permissionMode: 'task_free', planEnabled: false, sourceEnabled: false,
           userMessageMetadata: { userTimeZone: 'Asia/Shanghai', attachments }  });
+        reads.invalidate(readKey);
         await store.touch(user.id, sessionId, input.text); json(response, 202, job); return;
       }
       if (action === 'jobs' && !jobId && method === 'GET') { json(response, 200, await jobs(agent, sessionId)); return; }
@@ -275,6 +339,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       }
       throw new WebError(405, '请求方式不支持。');
     })().catch(error => {
+      if (response.destroyed || abort.signal.aborted) return;
       if (response.headersSent) { response.destroy(); return; }
       const status = error instanceof WebError ? error.status : error instanceof z.ZodError ? 400 : 503;
       const message = error instanceof WebError ? error.message : error instanceof z.ZodError ? '输入内容不符合要求。' : '会话服务暂不可用，请稍后重试。';
@@ -289,11 +354,12 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
 }
 
 async function proxyImage(request: IncomingMessage, response: ServerResponse, url: URL, config: WebServerConfig, store: WebStore, signal: AbortSignal) {
-  const match = url.pathname.match(/^\/internal\/image\/([^/]+)\/images\/generations$/);
-  if (!match || request.method !== 'POST' || request.headers.origin !== undefined) throw new WebError(404, 'Not found.');
+  const match = url.pathname.match(/^\/internal\/image\/([^/]+)\/(images\/generations|authorize)$/);
+  if (!match || request.method !== (match[2] === 'authorize' ? 'GET' : 'POST') || request.headers.origin !== undefined) throw new WebError(404, 'Not found.');
   const userId = decodeURIComponent(match[1]);
   if (!equalSecret(request.headers.authorization ?? '', `Bearer ${imageToken(config.modelSecret, userId)}`)) throw new WebError(401, 'Unauthorized.');
   if (!await store.imageAllowed(userId)) throw new WebError(403, 'Image plugin access is disabled.');
+  if (match[2] === 'authorize') { json(response, 200, { allowed: true }); return; }
   const model = config.imageModel;
   if (!model) throw new WebError(503, 'Image service is not configured.');
   const destination = new URL(model.baseURL);
@@ -349,8 +415,10 @@ if (process.argv[1]?.endsWith('webServer.mjs')) {
     databaseURL: string; brokerURL: string; brokerSecret: string; internalURL: string;
   };
   const store = new PostgresWebStore(config.databaseURL); await store.migrate();
+  const modelSettings = new WebModelSettings(config, new PostgresModelSettingsRepository(store.pool));
+  await modelSettings.initialize();
   const agents = new BrokerWebAgents(config, userId => store.imageAllowed(userId));
-  const listener = await serveWeb(config, store, agents);
+  const listener = await serveWeb(config, store, agents, modelSettings);
   console.log(`CardBush web listening on ${listener.port}; restricted tools and isolated personal folders.`);
   let closing = false;
   const close = () => { if (closing) return; closing = true; void listener.close().finally(() => store.pool.end()); };

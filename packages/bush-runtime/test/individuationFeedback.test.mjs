@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { normalizeIndividuation, assistantFeedbackInputSchema } from '@cardbush/bush-protocol';
 import { IndividuationStore } from '../dist/individuationStore.js';
-import { IndividuationMemory } from '../dist/individuationMemory.js';
+import { runtimeMemory } from './helpers/runtimeMemory.mjs';
 import { InMemoryRuntimeHost } from '../dist/index.js';
 
 const on=normalizeIndividuation({habits:true,predictions:true});
@@ -150,12 +150,12 @@ test('rating changes follow replacement links even when a large summary truncate
 test('the existing memory summarizer receives positive and negative events and consolidates supported feedback',async t=>{
   const f=await fixture(t),a=await f.vote(input()),b=await f.vote(input('t2')),c=await f.vote(input('t3','down'));
   let calls=0;
-  const memory=new IndividuationMemory(f.path,{async *stream(request){
+  const memory=runtimeMemory(f.path,{async *stream(request){
     calls++;const rows=JSON.parse(request.messages.at(-1).content);
     assert.equal(request.metadata.memoryStage,'events');assert.equal(rows.length,3);
-    assert.ok(rows.every(row=>row.kind==='feedback'));assert.equal(rows.find(row=>row.id===c.id).metadata.feedback.rating,'down');
+    assert.ok(rows.every(row=>row.kind==='feedback'));assert.equal(rows.filter(row=>row.feedback.rating==='down').length,1);
     assert.ok(request.messages[0].content.includes('without a specific reason')||request.messages[0].content.includes('no specific reason'));
-    yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:0,kind:'text_delta',delta:JSON.stringify(summary([habit([a.id,b.id])]))};
+    yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:0,kind:'text_delta',delta:JSON.stringify(summary([habit(rows.filter(row=>row.feedback.rating==='up').map(row=>row.id))]))};
     yield {protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString(),sequence:1,kind:'response_completed',finishReason:'stop'};
   }});t.after(()=>memory.close());
   const status=await memory.compact(on,{model:'fixture',metadata:{contextWindowTokens:400000}},true);

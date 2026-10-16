@@ -1,15 +1,26 @@
-import { Suspense, useEffect, useLayoutEffect, useState, type ComponentProps } from 'react';
-import type { BackendCapabilities } from '../../types';
+import { Suspense, useEffect, useLayoutEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import type { AppLanguage, BackendCapabilities } from '../../types';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { PluginManagementPanel } from './PluginManagementPanel';
 import { subscribePluginDetailsRequest, takePluginDetailsRequest } from './pluginNavigationRequests';
+import { SettingsFormDialog } from '../settings/SettingsFormDialog';
+
+function McpEditorNotice({ language, onClose, children }: { language: AppLanguage; onClose?: () => void; children: ReactNode }) {
+  if (!onClose) return children;
+  return <SettingsFormDialog className="mcp-server-dialog" language={language} title={language === 'zh' ? 'MCP 服务器' : 'MCP servers'}
+    onCancel={onClose} onSubmit={() => {}} footer={<button className="secondary-button" type="button" onClick={onClose}>{language === 'zh' ? '关闭' : 'Close'}</button>}>
+    {children}
+  </SettingsFormDialog>;
+}
 
 // Reuse the existing MCP editor without opening the settings shell. Load it
 // only when a server is selected, keeping the catalog entry lightweight.
 const McpEditor = recoverableLazy('plugin-mcp-editor', async () => {
   const module = await import('../SettingsView');
   return { default: module.McpServersPanel };
-}, (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
+}, (props, retry) => <McpEditorNotice language={props.language} onClose={props.dialogOnly ? props.onClose : undefined}>
+  <DeferredModuleNotice language={props.language} retry={retry} />
+</McpEditorNotice>);
 
 type Props = Pick<ComponentProps<typeof PluginManagementPanel>,
   'language' | 'skills' | 'disabledSkillNames' | 'onToggleSkill' | 'onReloadSkills' | 'onLoadSkillDetail' | 'onOpenPrompt'> & {
@@ -31,8 +42,10 @@ export function PluginWorkspace({ capabilities, ...props }: Props) {
 
   return <div className="feature-content plugin-workspace-scroll" data-plugin-scroll-container>
     <PluginManagementPanel {...props} initialTab="plugins" onNotify={setNotice} requestedPlugin={requestedPlugin}
-      renderMcp={serverId => <Suspense fallback={<p role="status">{props.language === 'zh' ? '正在加载 MCP 设置…' : 'Loading MCP settings…'}</p>}>
-        <McpEditor initialServerId={serverId} initialCreate={!serverId} language={props.language} capabilities={capabilities} onNotify={setNotice} />
+      renderMcp={(serverId, dialog) => <Suspense fallback={<McpEditorNotice language={props.language} onClose={dialog?.onClose}>
+        <p role="status">{props.language === 'zh' ? '正在加载 MCP 设置…' : 'Loading MCP settings…'}</p>
+      </McpEditorNotice>}>
+        <McpEditor initialServerId={serverId} initialCreate={!serverId} {...dialog} language={props.language} capabilities={capabilities} onNotify={setNotice} />
       </Suspense>} />
     {notice && <div className="settings-toast" role="status">{notice}</div>}
   </div>;

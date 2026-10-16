@@ -171,7 +171,7 @@ test("visual inputs carry ordered source facts without injecting data URLs or ch
   const context = request.inputMessages.map(item => item.message.content).join('\n');
   assert.ok(context.includes('1. ' + JSON.stringify(sources[0])));
   assert.ok(context.includes('2. ' + JSON.stringify(sources[1])));
-  assert.match(context, /3\. Inline image; no local file path was supplied/);
+  assert.match(context, /3\. Inline image; awaiting original-file storage/);
   assert.ok(context.includes('4. ' + JSON.stringify(sources[3])));
   assert.doesNotMatch(context, /TEST_BYTES|omitted\.png/);
   assert.deepEqual(request.prefixMessages, create([]).prefixMessages);

@@ -1,10 +1,11 @@
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, Globe, LayoutGrid, Pencil, Pin, Plus, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
+import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Pin, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
 import { BrowserSiteIcon } from '../browser/BrowserSiteIcon';
+import { AppCenterSettingsMenu } from './AppCenterSettingsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { observeExplicitInteraction } from '../../shared/explicitInteraction';
@@ -23,11 +24,11 @@ const allowDrop = (event: DragEvent) => { if (event.dataTransfer.types.includes(
 export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; size?: number }) {
   const [failedIcon, setFailedIcon] = useState('');
   if (app.plugin) return <PluginGlyph plugin={app.plugin} />;
-  if (app.kind === 'web') return <BrowserSiteIcon url={app.target} icon={app.icon} size={size}/>;
+  if (app.kind === 'web' || app.kind === 'external') return <BrowserSiteIcon url={app.target} icon={app.icon} size={size} persist/>;
   if (app.kind === 'local') return app.icon && app.icon !== failedIcon
     ? <img className="composer-plugin-option-logo" src={app.icon} alt="" draggable={false} onError={() => setFailedIcon(app.icon ?? '')}/>
     : <AppWindow size={size} aria-hidden="true"/>;
-  const Icon = app.kind === 'external' ? Globe : app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? FileText : Settings;
+  const Icon = app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? FileText : Settings;
   return <Icon size={size} aria-hidden="true" />;
 }
 
@@ -257,7 +258,11 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
       onCancel={dialogEventHandler(event => { event.preventDefault(); setOpen(false); })} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
       <div className="app-center-content" inert={!open ? true : undefined}>
         <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{zh ? '应用中心' : 'App center'}</h2></div>
-          <button type="button" className="app-center-icon" aria-label={zh ? '关闭应用中心' : 'Close app center'} title={zh ? '关闭 · Esc' : 'Close · Esc'} onClick={() => setOpen(false)}><X size={18}/></button>
+          <div className="app-center-header-actions">
+            <AppCenterSettingsMenu language={language} active={open && !dragging} display={prefs.display} onDisplayChange={display => save({ ...current.current.prefs, display })}
+              selectingLocal={selectingLocal} onAddLocal={() => void addLocal()} onAddLink={() => { setLink({ title: '', url: '' }); setError(''); }}/>
+            <button type="button" className="app-center-icon" aria-label={zh ? '关闭应用中心' : 'Close app center'} title={zh ? '关闭 · Esc' : 'Close · Esc'} onClick={() => setOpen(false)}><X size={18}/></button>
+          </div>
         </header>
         <label className="app-center-search"><Search size={16}/><input placeholder={zh ? '搜索应用' : 'Search apps'} aria-label={zh ? '搜索应用' : 'Search apps'} value={query} onChange={event => setQuery(event.target.value)}/></label>
         <div className="app-center-grid">{filtered.map(app => <article key={app.id} className="app-center-tile" data-application-id={app.id} data-dragging={dragging === app.id}>
@@ -273,21 +278,14 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
           </div>
         </article>)}</div>
         {!filtered.length && <p className="app-center-empty">{zh ? '没有匹配的应用' : 'No matching apps'}</p>}
-        <section className="app-center-dock-settings" aria-label={zh ? '快捷方式显示' : 'Show shortcuts'}>
-          <div className="app-center-display" role="group" aria-label={zh ? '快捷方式显示' : 'Show shortcuts'}>{(['always', 'hover'] as const).map(display =>
-            <button type="button" key={display} aria-pressed={prefs.display === display} onClick={() => save({ ...prefs, display })}>{display === 'always' ? (zh ? '始终显示' : 'Always visible') : (zh ? '悬停展开' : 'Show on hover')}</button>)}</div>
-        </section>
-        {link ? <form className="app-center-link-form" onSubmit={event => { event.preventDefault(); const url = applicationLink(link.url); if (!url || !link.title.trim()) { setError(zh ? '请填写名称和有效的 HTTP / HTTPS 地址。' : 'Enter a name and valid HTTP / HTTPS address.'); return; }
+        {link && <form className="app-center-link-form" onSubmit={event => { event.preventDefault(); const url = applicationLink(link.url); if (!url || !link.title.trim()) { setError(zh ? '请填写名称和有效的 HTTP / HTTPS 地址。' : 'Enter a name and valid HTTP / HTTPS address.'); return; }
           if (!link.id && prefs.links.length >= 100) { setError(zh ? '最多保存 100 个应用链接，请先删除不再使用的链接。' : 'Up to 100 app links can be saved. Remove an unused link first.'); return; }
           const id = link.id ?? `external:${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')}`;
           const value = { id, title: link.title, url }; if (save({ ...prefs, links: [...prefs.links.filter(item => item.id !== value.id), value] })) setLink(null); }}>
-          <input aria-label={zh ? '应用名称' : 'App name'} placeholder={zh ? '应用名称' : 'App name'} maxLength={80} required value={link.title} onChange={event => { const title = event.target.value; setLink(previous => previous && { ...previous, title }); }}/>
+          <input aria-label={zh ? '应用名称' : 'App name'} placeholder={zh ? '应用名称' : 'App name'} maxLength={80} autoFocus required value={link.title} onChange={event => { const title = event.target.value; setLink(previous => previous && { ...previous, title }); }}/>
           <input aria-label={zh ? '应用地址' : 'App address'} placeholder="https:// / http://localhost:…" maxLength={4096} required value={link.url} onChange={event => { const url = event.target.value; setLink(previous => previous && { ...previous, url }); }}/>
           <div><button type="button" onClick={() => setLink(null)}>{zh ? '取消' : 'Cancel'}</button><button type="submit">{zh ? '保存' : 'Save'}</button></div>
-        </form> : <div className="app-center-add-actions">
-          <button type="button" className="app-center-add" title={zh ? '选择桌面快捷方式，自动读取名称和图标' : 'Choose a desktop shortcut and load its name and icon'} disabled={selectingLocal || !window.cardbushDesktop?.localApplications} onClick={() => void addLocal()}><Plus size={16}/>{selectingLocal ? (zh ? '正在选择…' : 'Choosing…') : (zh ? '添加本地应用' : 'Add local app')}</button>
-          <button type="button" className="app-center-add" onClick={() => { setLink({ title: '', url: '' }); setError(''); }}><Plus size={16}/>{zh ? '添加应用链接' : 'Add app link'}</button>
-        </div>}
+        </form>}
         {error && <p className="app-center-error" role="alert">{error}</p>}
       </div>
     </dialog>}

@@ -10,6 +10,7 @@ import { conversationRuntime } from '../../backend/conversationRuntime';
 import { useCardbushChat } from '../../hooks/useCardbushChat';
 import type { AppLanguage, ChatMessage, ConversationSummary, ManagedModelConfig, ReasoningLevel, ThemeMode } from '../../types';
 import { ChatPanel } from '../chat/ChatPanel';
+import { quickInputState, type QuickInputState } from '../composer/quickInputState';
 import { ConversationHostContext, ConversationMessageTargetContext } from '../conversationHost';
 import { ConversationChangeDialog } from '../sidebar/ChatSidebar';
 import { recentReviewTurns } from '../sidebar/reviewModel';
@@ -23,6 +24,7 @@ export type CreationInspectorContext = {
   busy: boolean; error?: string | null; selectedModel: string; activeTurnId: string; reasoningLevel: ReasoningLevel;
   refresh: () => Promise<void>; revert: (report: ConversationChangeReport) => Promise<void>; appendDraft: (text: string) => void;
   send: (text: UserPromptInput) => Promise<boolean>;
+  inputStatus?: QuickInputState;
 };
 export type CreationChatOptions = { theme?: ThemeMode; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onConfigureModels?: () => void; composerPortalTarget?: HTMLElement | null; externalComposerControls?: boolean; onOpenComposer?: () => void; browserTabs?: BrowserPromptReference[]; onOpenChangeReview?: (sessionId: string, path?: string, turnId?: string) => void; onInspectorContext?: (context: CreationInspectorContext | null) => void; onConversationChanged?: () => void };
 const none = () => {}, empty = new Set<string>(), emptyStates = new Map<string, boolean>();
@@ -98,9 +100,11 @@ export function CreationConversation({ sessionId, root, language, visible, befor
   useEffect(() => {
     if (!chat.activeConversation) return;
     onInspectorContext?.({ sessionId, root: workspaceRoot, conversation: chat.activeConversation, messages, reports,
+      inputStatus: quickInputState({ language, messages, sending: chat.sending, stopping: chat.stopping, submitting: pending,
+        waiting: chat.pendingInteraction?.sessionId === sessionId, error: error || chat.error, recovery: chat.activeConnectionRecovery, queued: chat.queuedMessageCount }),
       busy: busy || !!reverting, error: error || chat.error, selectedModel: chat.selectedModel, activeTurnId: chat.activeTurnId, reasoningLevel: chat.reasoningLevel,
       refresh, revert, appendDraft, send: sendFromInspector });
-  }, [onInspectorContext, sessionId, workspaceRoot, chat.activeConversation, messages, reports, busy, error, chat.error, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft, sendFromInspector]);
+  }, [onInspectorContext, sessionId, workspaceRoot, chat.activeConversation, messages, reports, busy, error, chat.error, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft, sendFromInspector, language, chat.sending, chat.stopping, pending, chat.pendingInteraction, chat.activeConnectionRecovery, chat.queuedMessageCount]);
   useEffect(() => () => onInspectorContext?.(null), [onInspectorContext]);
   const model = models.find(item => item.id === chat.selectedModel), zh = language === 'zh';
   return <ConversationHostContext.Provider value={undefined}><ConversationMessageTargetContext.Provider value={`${scope}:${sessionId}`}>
@@ -110,7 +114,7 @@ export function CreationConversation({ sessionId, root, language, visible, befor
       <ChatPanel embedded progressive browserTabs={browserTabs} welcomeEnabled={false} workSummaryAvailable={false} language={language} theme={theme} title={scope === 'team' ? (zh ? '协作流程' : 'Workflows') : (zh ? '创作' : 'Create')}
         sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => setReview({ path: '' })}
         activeConversationId={sessionId} activeProjectDir={workspaceRoot || undefined} projectPathAliases={[]} selectedProjectDir={conversationProjectDir(chat.activeConversation)} availableProjects={[]} onWelcomeProjectChange={async () => {}}
-        messages={chat.activeMessages} changeReports={reports} activeTurnId={chat.activeTurnId} loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
+        messages={chat.activeMessages} changeReports={reports} activeTurnId={chat.activeTurnId} loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} historyPages={chat.historyPages} sending={chat.sending} stopping={chat.stopping}
         turnHistoryAvailable subagentObservabilityAvailable={false} thinkingVisible guidanceDeliveryMode="queue"
         activeGoal={chat.activeGoal} goalAvailable={chat.goalAvailable} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting}
         shadowAvailable={false} shadowAccentColor="" shadowThemeVariables={{}}

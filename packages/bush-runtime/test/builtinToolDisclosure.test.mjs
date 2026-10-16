@@ -17,14 +17,18 @@ function fixture(names) {
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
     tools: registry.definitions(), messages: [], permissionMode: 'all_free', metadata: {} };
   const coordinator = new ToolExecutionCoordinator({ registry }); let ordinal = 0;
+  const messages = [];
   const run = (name, args = {}) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `c${++ordinal}`, name, argumentsText: JSON.stringify(args) },
-    { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal }, undefined, { request, contextMessages: [] });
+    { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal }, undefined, { request, contextMessages: messages });
   const load = async name => {
     const outcome = await run('get_tool_schema', { name }); assert.equal(outcome.kind, 'returned', JSON.stringify(outcome));
-    synchronizeBuiltinSchemas(registry, request, [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: JSON.stringify({ name }) }] },
-      { role: 'tool', toolCallId: 'load', content: JSON.stringify(outcome.result) }]);
+    const id = `load-${ordinal}`;
+    messages.push({ role: 'assistant', content: '', toolCalls: [{ id, name: 'get_tool_schema', argumentsText: JSON.stringify({ name }) }] },
+      { role: 'tool', toolCallId: id, content: JSON.stringify(outcome.result) });
+    synchronizeBuiltinSchemas(registry, request, messages);
+    return outcome.result;
   };
-  return { registry, request, run, load, definitions: () => modelToolDefinitions(registry, request) };
+  return { registry, request, messages, run, load, definitions: () => modelToolDefinitions(registry, request) };
 }
 
 test('default entry points converge without removing native handlers, plans or small low-frequency tools', async () => {
@@ -40,9 +44,14 @@ test('default entry points converge without removing native handlers, plans or s
   f.registry.resolve('manage_plugin_agents').authorize = () => ({ kind: 'deny', code: 'fixture_denied', message: 'Denied' });
   assert.equal((await f.run('manage_plugin_agents')).error.code, 'fixture_denied', 'hiding never skips admission');
   await f.load('manage_plugin_agents');
-  assert.ok(f.definitions().some(tool => tool.name === 'manage_plugin_agents'), 'explicit legacy schema loads still work');
+  assert.deepEqual(f.definitions().map(tool => tool.name), names, 'loading never adds a top-level schema');
+  assert.equal((await f.run('call_tool', { name: 'manage_plugin_agents', arguments: {} })).error.code, 'fixture_denied');
+  delete f.registry.resolve('manage_plugin_agents').authorize;
+  assert.equal((await f.run('call_tool', { name: 'manage_plugin_agents', arguments: {} })).result.inspected, 'manage_plugin_agents');
+  f.messages.length = 0;
   synchronizeBuiltinSchemas(f.registry, f.request, []);
-  assert.ok(!f.definitions().some(tool => tool.name === 'manage_plugin_agents'), 'compaction restores the default presentation');
+  assert.deepEqual(f.definitions().map(tool => tool.name), names, 'compaction does not change declarations');
+  assert.equal((await f.run('call_tool', { name: 'manage_plugin_agents', arguments: {} })).error.code, 'builtin_schema_required');
 });
 
 test('scoped catalogs keep compatibility tools when a replacement or the schema loader is unavailable', async () => {
@@ -71,9 +80,11 @@ test('common Team calls use tasks, selected node outputs stay loadable, and plug
   assert.deepEqual(definitions.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
   assert.ok(!definitions.find(tool => tool.name === 'team').inputSchema.properties.node_ids);
   assert.ok(definitions.find(tool => tool.name === 'subagent').inputSchema.properties.agent_type);
-  await f.load('team');
-  assert.ok(f.definitions().find(tool => tool.name === 'team').inputSchema.properties.node_ids);
-  assert.ok(f.definitions().find(tool => tool.name === 'team').inputSchema.properties.definition);
+  const receipt = await f.load('team');
+  assert.ok(receipt.matches[0].definition.inputSchema.properties.node_ids);
+  assert.ok(receipt.matches[0].definition.inputSchema.properties.definition);
+  assert.equal(receipt.invocation.tool, 'call_tool');
+  assert.deepEqual(f.definitions(), definitions, 'advanced arguments are delivered only in the result');
   f.request = { ...f.request, turnId: 'restricted', metadata: {}, tools: f.request.tools.filter(tool => tool.name !== 'tasks') };
   definitions = modelToolDefinitions(f.registry, f.request);
   assert.ok(definitions.find(tool => tool.name === 'team').inputSchema.properties.action.enum.includes('wait'));
@@ -84,7 +95,7 @@ test('task guidance matches the exposed interface without altering parameter or 
   const f = fixture(['tasks', 'terminal_exec', 'terminal_poll', 'start_mcp_tool']);
   for (const name of ['terminal_exec', 'terminal_poll', 'start_mcp_tool']) f.registry.resolve(name).definition.description = 'Wait with manage_tool_calls.';
   f.request.tools = f.registry.definitions();
-  for (const definition of f.definitions().filter(tool => tool.name !== 'tasks' && tool.name !== 'get_tool_schema')) assert.match(definition.description, /Wait with tasks/);
+  for (const definition of f.definitions().filter(tool => ['terminal_exec', 'terminal_poll', 'start_mcp_tool'].includes(tool.name))) assert.match(definition.description, /Wait with tasks/);
   assert.match(f.registry.resolve('terminal_exec').definition.description, /manage_tool_calls/);
   const scoped = { ...f.request, turnId: 'no-tasks', metadata: {}, tools: f.request.tools.filter(tool => tool.name !== 'tasks') };
   assert.match(modelToolDefinitions(f.registry, scoped).find(tool => tool.name === 'terminal_exec').description, /manage_tool_calls/);
@@ -92,16 +103,18 @@ test('task guidance matches the exposed interface without altering parameter or 
 
 test('only confirmed empty plugin command catalogs hide command tools; Skills and native scope remain intact', async () => {
   const f = fixture(['list_plugin_commands', 'run_plugin_command', 'run_skill']);
-  const visible = f.definitions();
   f.request.metadata.builtinPluginCommandsAvailable = false;
+  const visible = f.definitions();
   assert.ok(!f.definitions().some(tool => tool.name === 'list_plugin_commands' || tool.name === 'run_plugin_command'));
   assert.ok(f.definitions().some(tool => tool.name === 'run_skill'));
   assert.equal((await f.run('get_tool_schema', { name: 'run_plugin_command' })).kind, 'failed');
   assert.equal((await f.run('list_plugin_commands')).kind, 'returned', 'presentation is not an execution permission');
   f.request.metadata.builtinPluginCommandsAvailable = true;
-  assert.deepEqual(f.definitions(), visible, 'hot enable restores the stable names/order/schemas');
+  assert.deepEqual(f.definitions(), visible, 'hot enable keeps the frozen names/order/schemas');
+  await f.load('list_plugin_commands');
+  assert.equal((await f.run('call_tool', { name: 'list_plugin_commands', arguments: {} })).kind, 'returned');
   delete f.request.metadata.builtinPluginCommandsAvailable;
-  assert.deepEqual(f.definitions(), visible, 'unknown state is not treated as no capability');
+  assert.deepEqual(f.definitions(), visible, 'a temporary capability observation does not rewrite the prefix');
 });
 
 test('definition diagnostics measure the sent projection and retain only names and sizes', () => {
@@ -139,14 +152,15 @@ test('real model rounds follow plugin capability changes and persist actual tool
     messages: [{ role: 'user', content: 'private fixture request' }], tools: registry.definitions(), permissionMode: 'all_free', metadata: { workspaceDir: root } });
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
   assert.equal(requests.length, 3);
-  assert.deepEqual(requests.map(request => request.tools.some(tool => tool.name === 'run_plugin_command')), [false, true, false]);
-  assert.deepEqual(requests[0].tools, requests[2].tools, 'unrelated definitions/order remain stable');
+  assert.deepEqual(requests.map(request => request.tools.some(tool => tool.name === 'run_plugin_command')), [false, false, false]);
+  assert.ok(requests.every(request => JSON.stringify(request.tools) === JSON.stringify(requests[0].tools)), 'hot reload does not rewrite the prefix');
   assert.ok(requests.every(request => request.tools.some(tool => tool.name === 'run_skill')));
   assert.ok(requests.every(request => !request.tools.some(tool => tool.name === 'manage_plugin_agents')));
   assert.ok(requests.every(request => request.tools.some(tool => tool.name === 'update_task_plan')));
   assert.ok(registry.resolve('run_plugin_command') && registry.resolve('manage_plugin_agents'));
   const observations = host.events('s', 't').filter(event => event.kind === 'cache_chain_observed');
   assert.equal(observations.length, 3);
+  assert.ok(observations.every(event => !event.payload.frozenPrefixBreak));
   for (let index = 0; index < requests.length; index++) {
     assert.deepEqual(observations[index].payload.toolDefinitions, toolDefinitionUsage(registry, requests[index].tools));
     assert.doesNotMatch(JSON.stringify(observations[index].payload.toolDefinitions), /private fixture request|Advance fixture/);

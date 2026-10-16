@@ -1,0 +1,25 @@
+.settings-form-dialog {
+  width: min(660px, calc(100vw - 40px)); max-width: none; max-height: min(860px, calc(100dvh - 64px));
+  margin: auto; padding: 0; border: 1px solid var(--border); border-radius: 20px;
+  color: var(--text); background: var(--surface); box-shadow: 0 20px 70px #0003; overflow: hidden;
+}
+.settings-form-dialog[open] { display: flex; flex-direction: column; }
+.settings-form-dialog::backdrop { background: #0005; backdrop-filter: blur(5px); }
+.settings-dialog-header { display: flex; flex-shrink: 0; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px 18px; border-bottom: 1px solid var(--border); }
+.settings-dialog-header h2 { margin: 0; font-size: 18px; }
+.settings-dialog-header p { margin: 7px 0 0; color: var(--text-soft); font-size: 12px; line-height: 1.6; }
+.settings-dialog-form { display: flex; flex-direction: column; min-height: 0; gap: 0; }
+.settings-dialog-body { min-height: 0; padding: 22px 26px; overflow-y: auto; overscroll-behavior: contain; }
+.settings-dialog-fields { display: grid; gap: 16px; min-width: 0; padding: 0; margin: 0; border: 0; }
+.settings-form-dialog .settings-field { min-width: 0; display: grid; gap: 7px; }
+.settings-form-dialog :is(input, textarea) { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); font: inherit; font-size: 13px; }
+.settings-form-dialog textarea { resize: vertical; min-height: 94px; font-family: var(--font-mono, monospace); }
+.settings-form-dialog :is(input, textarea):focus { outline: 2px solid color-mix(in srgb, var(--accent, #3b82f6) 60%, transparent); outline-offset: 1px; }
+.settings-dialog-footer { display: flex; flex-shrink: 0; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 16px 26px; border-top: 1px solid var(--border); }
+.settings-dialog-footer button { min-height: 36px; min-width: 80px; }
+.settings-dialog-footer .settings-dialog-secondary-action { margin-right: auto; }
+.settings-form-dialog .settings-inline-error { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .settings-form-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 32px); border-radius: 16px; }
+  .settings-dialog-header, .settings-dialog-body, .settings-dialog-footer { padding: 16px; }
+}

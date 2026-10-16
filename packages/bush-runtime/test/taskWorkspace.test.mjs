@@ -11,6 +11,22 @@ import { CREATE_RUNTIME_SESSION_COMMAND, GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_R
   GET_RUNTIME_TOOL_EXECUTION_COMMAND, REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND, RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND } from '@cardbush/bush-protocol';
 
 function git(root, ...args) { return execFileSync('git', ['-C', root, ...args], { windowsHide: true, encoding: 'utf8' }); }
+test('retained attachment originals stay outside workspace edits and survive undo', async t => {
+  const { root, source, manager } = await fixture(t);
+  await manager.create('attachments', source, 'direct');
+  const original = join(source, '.cardbush-attachments', 'originals', 'id', 'source.txt');
+  await mkdir(join(original, '..'), { recursive: true });
+  await writeFile(original, 'retained original');
+  await manager.beginTurn('attachments', 'edit');
+  await writeFile(join(source, 'file.txt'), 'edited');
+  await manager.finishTurn('attachments', 'edit');
+  const changes = (await manager.review('attachments')).changes;
+  assert.ok(changes.some(change => change.path.endsWith('file.txt')));
+  assert.ok(changes.every(change => !change.path.includes('.cardbush-attachments')));
+  await manager.revert('attachments', ['edit']);
+  assert.equal(await readFile(original, 'utf8'), 'retained original');
+  assert.equal(await readFile(join(source, 'file.txt'), 'utf8'), 'committed\r\n');
+});
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-worktrees-')));
   t.after(async () => {

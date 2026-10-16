@@ -188,5 +188,26 @@ module.exports = async ({ run, until, pause, theme = 'theme-dark' }) => {
   const returnedSubmissionOffset = await run("document.querySelector('[data-message-id=scroll-submitted-user]').getBoundingClientRect().top - scrollList().getBoundingClientRect().top");
   assert.ok(Math.abs(returnedSubmissionOffset - submittedOffset) < 2, 'switching preserves the reserved response stage and reading anchor');
   await run("updateChat({ onSend: previousScrollTestSend }); void 0;");
+  await run(`
+    selectScrollSession('b');
+    updateChat({historyPages:{hasMore:true,loadingOlder:false,historyError:'',loadOlder:async before=>{
+      await new Promise(resolve=>window.releaseOlder=resolve); before();
+      scrollSessions.b.messages=[...Array.from({length:10},(_,i)=>({id:'older-'+i,role:i%2?'assistant':'user',content:('Earlier '+i+'.\\n\\n').repeat(8)})),...scrollSessions.b.messages];
+      updateChat({...scrollSessions.b,historyPages:{hasMore:false,loadingOlder:false,historyError:'',loadOlder:async()=>{}}});
+    }}});
+  `);
+  await until('!!document.querySelector(".conversation-history-paging button")', 'earlier history control');
+  await pause(250);
+  await run('readScrollHistory(0);document.querySelector(".conversation-history-paging button").click()');
+  // Continue reading while the request is in flight. Capture at commit, not click.
+  await run('readScrollHistory(550)'); await pause(100);
+  await run('rememberScrollReading("b");releaseOlder()');
+  await until('!!document.querySelector("[data-message-id=older-0]")', 'older page prepended');
+  await pause(200);
+  const retained = await run(`(() => { const list=scrollList(), reading=scrollReadings.b,
+    item=list.querySelector('[data-message-id="'+reading.id+'"]');
+    return {expected:reading.offset,actual:item.getBoundingClientRect().top-list.getBoundingClientRect().top}; })()`);
+  assert.ok(Math.abs(retained.actual-retained.expected)<2, 'prepending keeps current reading position: '+JSON.stringify(retained));
+  await run('updateChat({historyPages:undefined})');
   console.log('Session scroll passed (' + theme + '): first-frame restore, independent readers, background output/completion, loading/reflow, rapid switches and fresh submission.');
 };

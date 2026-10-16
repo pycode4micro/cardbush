@@ -19,6 +19,7 @@ export interface ConversationHost {
   pastedTextAttachments?: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
   openFile(path: string): void;
   downloadFile?(path: string): Promise<void>;
+  downloadFiles?(paths: string[], progress: (completed: number, total: number) => void): Promise<void>;
   turnArtifacts?(message: ChatMessage): { items: ChatToolArtifact[]; load?: () => Promise<ChatToolArtifact[]> };
   openExtract?(id: string): void;
   readFile?(path: string): Promise<{ name: string; blob: Blob }>;

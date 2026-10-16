@@ -43,7 +43,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const onSettingsChange=updater=>update(current=>{const next=views.normalizeAppSettings(updater(current));views.persistAppSettings(next);return next;});
       window.updateMemorySettings=onSettingsChange;
       return h(views.SettingsSummaryPanel,{language:chatProps.language,settings,onSettingsChange,
-        modelId:'fixture-model',call:memoryCall,memoryApi,connections:[{id:'remote-memory',name:'Test Agent'}]});
+        modelId:'fixture-model',modelLabel:'Fixture model',call:memoryCall,memoryApi,connections:[{id:'remote-memory',name:'Test Agent'}]});
     };
     window.renderMemoryFixture=()=>renderView(h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',height:'100%'}},
       h(views.ChatPanel,chatProps),h('div',{className:'memory-settings',style:{overflow:'auto'}},h(MemoryPreferences))));
@@ -94,6 +94,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.setSize(820,780);await pause();
   await run(`views.saveIndividuation({habits:true,predictions:true});renderView(h('div',{className:'memory-settings',style:{height:'100%',overflow:'auto',padding:24}},h(MemoryPreferences)));void 0;`);
   await until('!!document.querySelector(".summary-memory-status strong")','independent summary settings');
+  assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("Memory & predictions")'),true,'settings use a readable title');
+  assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("selected model: Fixture model")'),true,'the selected model is named');
+  assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("fixture-model")'),false,'internal model IDs stay out of settings text');
   await run('document.querySelector(".summary-threshold input").focus();document.querySelector(".summary-threshold input").select()');
   await window.webContents.insertText('999');await pause();await run('document.querySelector(".summary-threshold input").blur()');
   // Hidden windows do not always emit focusout when HTMLElement.blur() is called.

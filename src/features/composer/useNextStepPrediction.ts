@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { nextStepPredictionSchema, type NextStepPrediction } from '@cardbush/bush-protocol';
+import { usableNextStepPrediction, type NextStepPrediction } from '@cardbush/bush-protocol';
 import type { ChatMessage } from '../../types';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 import { latestNextStepPrediction } from './nextStepPrediction';
 
 export function useNextStepPrediction(messages: ChatMessage[], sessionId: string, hostId: string | undefined, enabled: boolean, supplied?: NextStepPrediction) {
   const [clock, tick] = useState(0);
-  const prediction = useMemo(() => !enabled ? undefined : supplied ? nextStepPredictionSchema.safeParse(supplied).data
+  const prediction = useMemo(() => !enabled ? undefined : supplied ? usableNextStepPrediction(supplied)
     : latestNextStepPrediction(messages, sessionId), [messages, sessionId, supplied, enabled, clock]);
   const [dismissed, dismiss] = useConversationViewState(conversationViewKey(hostId, sessionId, 'accepted-prediction'), () => '');
   useEffect(() => {

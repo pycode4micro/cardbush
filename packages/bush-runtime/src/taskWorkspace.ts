@@ -490,7 +490,9 @@ export class TaskWorkspaceManager {
       const entries = decodeGitPaths(await this.#git(root, ["ls-files", "--stage", "-z"])).split("\0").filter(Boolean);
       if (entries.some(entry => entry.startsWith("160000 "))) throw problem("workspace_submodule_unsupported", "Git workspace versions do not yet support submodules.");
       const tracked = entries.map(entry => entry.slice(entry.indexOf("\t") + 1));
-      const others = decodeGitPaths(await this.#git(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
+      // Imported originals are session inputs, not edits to undo with the workspace.
+      const others = decodeGitPaths(await this.#git(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0")
+        .filter(path => path && !path.startsWith('.cardbush-attachments/originals/'));
       return [...new Set([...tracked, ...others, ...Object.keys(known), ...enrolled])].sort();
     };
     const paths = await list();

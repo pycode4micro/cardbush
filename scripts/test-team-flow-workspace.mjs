@@ -47,3 +47,45 @@ test('queued workflow requests preserve both original user context and the submi
   assert.deepEqual(request.context[0], input.context[0]);
   assert.deepEqual(JSON.parse(request.context[1].content.split('(data): ')[1]), { teamId: 'one', revision: 3, nodeId: 'report', runId: 'run-one' });
 });
+
+test('graph receipts update locally and an older background list cannot roll them back', async () => {
+  const first = { revision: 1, updatedAt: '2026-10-16T01:00:00Z', definition: { id: 'flow', name: 'Workflow', description: '', nodes: [{ id: 'step', position: { x: 10, y: 20 } }] } };
+  let teams = [first], delayed, listCalls = 0;
+  const calls = [], exports = {};
+  const hooks = { useEffect() {}, useSyncExternalStore(subscribe, read) { subscribe(() => calls.push(read())); return read(); } };
+  new Function('exports', 'require', ts.transpileModule(readFileSync('src/features/team/teamWorkspaceStore.ts', 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, id => {
+    if (id === 'react') return hooks;
+    if (id === '@cardbush/bush-protocol') return protocol;
+    if (id.includes('promptReferences')) return { teamReferenceInstructions: id => id };
+    if (id.includes('ElectronRuntimeSession')) return { createDesktopRuntimeSession: () => ({ dispose() {}, client: { command: async ({ kind }) => {
+      if (kind === protocol.AGENT_REGISTRY_COMMAND) return [];
+      listCalls++;
+      const result = structuredClone({ teams, runs: [] }), wait = delayed; delayed = undefined;
+      if (wait) await wait.promise;
+      return result;
+    } } }) };
+    throw Error('Unexpected import ' + id);
+  });
+  await exports.refreshTeamWorkspace();
+  const before = exports.useTeamWorkspace(false), choices = exports.useTeamChoices(false).choices;
+  await exports.refreshTeamWorkspace(false, true);
+  assert.equal(exports.useTeamWorkspace(false).teams, before.teams, 'unchanged definitions retain identity');
+  assert.equal(exports.useTeamWorkspace(false).runs, before.runs, 'unchanged runs retain identity');
+  const gate = Promise.withResolvers(); delayed = gate;
+  const refresh = exports.refreshTeamWorkspace(false, true), reads = listCalls;
+  const second = { ...first, revision: 2, updatedAt: '2026-10-16T01:00:01Z', definition: { ...first.definition, nodes: [{ id: 'step', position: { x: 30, y: 60 } }] } };
+  teams = [second]; calls.length = 0;
+  exports.acceptTeamWorkflow(second);
+  assert.equal(listCalls, reads, 'accepting a save does not re-fetch the library');
+  assert.equal(exports.useTeamChoices(false).choices, choices, 'layout changes do not alter composer choices');
+  assert.equal(exports.currentTeamWorkflow('flow'), second);
+  gate.resolve(); await refresh;
+  assert.ok(calls.filter(state => state.teams).every(state => state.teams[0].revision === 2), 'an in-flight old list never replaces the saved definition');
+  assert.equal(exports.currentTeamWorkflow('flow'), second);
+  exports.acceptTeamWorkflow(first);
+  assert.equal(exports.currentTeamWorkflow('flow'), second, 'late save replies cannot roll back a newer revision');
+  teams = []; await exports.refreshTeamWorkspace(false, true);
+  exports.acceptTeamWorkflow(second);
+  assert.equal(exports.currentTeamWorkflow('flow'), undefined, 'late receipts cannot resurrect deleted workflows');
+});

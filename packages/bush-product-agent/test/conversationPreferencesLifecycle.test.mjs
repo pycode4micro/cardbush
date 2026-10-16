@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CacheChainTracker, InMemoryRuntimeHost, SessionStore } from '@cardbush/bush-runtime';
 import { toResponsesCreateParams } from '@cardbush/bush-provider-openai';
 import { responsesInputFingerprint } from '../../bush-provider-openai/dist/responsesInputFingerprint.js';
@@ -54,6 +57,8 @@ function fixture(t) {
 }
 
 test('only first, changed and restored preferences append; attachments and user requests remain per-turn', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-attachment-preferences-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const { open, observed } = fixture(t);
   let { host, store } = open();
   const modes = ['natural', 'natural', 'concise', 'natural', 'natural'];
@@ -63,7 +68,9 @@ test('only first, changed and restored preferences append; attachments and user 
       ({ host, store } = open());
     }
     const before = structuredClone(store.snapshot('preferences')?.turns ?? []);
-    const candidate = request(`turn_${index}`, { files: [`C:/fixture/file_${index}.txt`],
+    const file = join(root, `file_${index}.txt`);
+    await writeFile(file, `file ${index}`);
+    const candidate = request(`turn_${index}`, { workspaceDir: root, files: [file],
       conversationStyle: { mode, customTone: `Inactive draft ${index}` } });
     assert.equal((await host.runSessionTurn(candidate)).payload.status, 'completed');
     assert.deepEqual(store.snapshot('preferences').turns.slice(0, before.length), before);
@@ -129,7 +136,7 @@ test('resuming across midnight appends a clock snapshot while preserving legacy 
 for (const format of ['ordered', 'incremental']) for (const changed of [false, true]) test(`${format} compaction restores the current preference only when absent (${changed ? 'changed' : 'unchanged'} style), with stable restart replay`, async t => {
   const { open, observed, compact } = fixture(t);
   let { host, store } = open();
-  assert.equal((await host.runSessionTurn(request('first'))).payload.status, 'completed');
+  assert.equal((await host.runSessionTurn(request('first', format === 'incremental' ? { tools: [] } : {}))).payload.status, 'completed');
   const original = structuredClone(store.snapshot('preferences').turns[0]);
   const settings = { conversationStyle: { mode: changed ? 'concise' : 'natural', customTone: '' },
     ...(format === 'incremental' ? { tools: [] } : {}) };

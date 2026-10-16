@@ -72,6 +72,19 @@ try {
     createSessionCommandTransport(),
   );
   assert.equal((await typedSessionClient.getSession('session_typed')).turns.length, 1);
+  for (const supportsSummary of [false, true]) {
+    const commands = [], full = await typedSessionClient.getSession('session_typed');
+    const { summarizeSession } = await import('@cardbush/bush-protocol');
+    const summaryClient = new runtimeClientModule.ProtocolRuntimeClient({ async sendCommand(command) {
+      commands.push(command.kind);
+      if (command.kind === 'runtime.get_capabilities') return { ...capabilities, supportedCommands: supportsSummary ? ['runtime.list_session_summaries'] : [] };
+      if (command.kind === 'runtime.list_session_summaries') return [summarizeSession(full)];
+      if (command.kind === 'runtime.list_sessions') return [full];
+      throw Error(command.kind);
+    }, async *openEventStream() {} });
+    assert.deepEqual(await summaryClient.listSessionSummaries(), [summarizeSession(full)]);
+    assert.equal(commands.includes('runtime.list_sessions'), !supportsSummary, 'older hosts retain the legacy list fallback');
+  }
   assert.deepEqual(
     (await typedSessionClient.assembleSessionContext({
       sessionId: 'session_typed',

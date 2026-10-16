@@ -26,6 +26,8 @@ const webToolTitle = (name: string) => ({
   mcp__plugin_volcengine_images_images__seedream_create_task: '提交图片生成',
   mcp__plugin_volcengine_images_images__seedream_get_task: '查看图片生成进度',
   mcp__plugin_volcengine_images_images__generation_wait_tasks: '等待图片生成',
+  mcp__plugin_volcengine_images_images__image_convert: '转换图片尺寸与格式',
+  mcp__plugin_volcengine_images_images__image_stitch: '多图组合拼接',
 } as Record<string, string>)[name];
 
 export function webAttachments(items: unknown): ChatAttachment[] {

@@ -3,6 +3,7 @@ import { useCallback, useContext, useEffect, useState } from 'react';
 
 import { basename, isLocalFileResource, mediaResourceUrl, resourceTargetKind } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
+import { localImageUnavailable, recoverLocalImage, retryLocalImage } from '../../shared/localImageRecovery';
 import type { AppLanguage, ChatToolArtifact } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
 import { ConversationHostContext } from '../conversationHost';
@@ -48,8 +49,10 @@ export function ToolImageArtifactViewer({
         isLocalFileResource(pathValue) &&
         window.cardbushDesktop?.readImageDataUrl
       ) {
-        const dataUrl = await window.cardbushDesktop.readImageDataUrl(pathValue);
-        if (dataUrl.startsWith('data:image/')) src = dataUrl;
+        retryLocalImage(pathValue);
+        const dataUrl = await recoverLocalImage(pathValue, window.cardbushDesktop.readImageDataUrl);
+        if (!dataUrl) throw new Error('Image is unavailable at its original path.');
+        src = dataUrl;
       }
       setFailedPaths((current) => {
         if (!current.has(pathValue)) return current;
@@ -58,8 +61,7 @@ export function ToolImageArtifactViewer({
         return next;
       });
       setPreview({ name, path: pathValue, src });
-    } catch (error) {
-      console.warn('Unable to open tool image artifact', pathValue, error);
+    } catch {
       setFailedPaths((current) => new Set(current).add(pathValue));
     } finally {
       setLoadingPath('');
@@ -123,22 +125,22 @@ export function ToolImageArtifactViewer({
 function ToolImageThumbnail({ path, name, language }: { path: string; name: string; language: AppLanguage }) {
   const host = useContext(ConversationHostContext);
   const { source, error } = useConversationFileSource(path);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(() => !host && localImageUnavailable(path));
   const [fallback, setFallback] = useState('');
   const [fallbackFailed, setFallbackFailed] = useState(false);
   useEffect(() => {
     const read = window.cardbushDesktop?.readImageDataUrl;
-    if (host || !failed || !isLocalFileResource(path) || !read) return;
+    if (host || !failed || !isLocalFileResource(path) || !read || localImageUnavailable(path)) return;
     let disposed = false;
     // Use the file protocol first; only request a data URL if it cannot load.
-    void read(path).then(source => {
+    void recoverLocalImage(path, read).then(source => {
       if (!disposed && source.startsWith('data:image/')) setFallback(source);
     }).catch(() => {});
     return () => { disposed = true; };
   }, [host, failed, path]);
   if (host && !source && !error) return <span className="tool-image-thumbnail-fallback" aria-hidden="true"><LoaderCircle size={20} className="spin" /></span>;
   if (error || fallbackFailed || (failed && !fallback)) return <span className="tool-image-thumbnail-fallback" aria-hidden="true">
-    <FileImage size={20} /><span>{name}</span><small>{language === 'zh' ? '点击查看' : 'View image'}</small>
+    <FileImage size={20} /><span>{name}</span><small>{language === 'zh' ? '图片不可用，点击重试' : 'Image unavailable. Retry'}</small>
   </span>;
   return <img src={fallback || source} alt="" loading="lazy" decoding="async" draggable={false}
     onError={() => fallback ? setFallbackFailed(true) : setFailed(true)} />;

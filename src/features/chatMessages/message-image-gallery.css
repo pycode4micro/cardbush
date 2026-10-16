@@ -108,3 +108,43 @@
   height: auto;
   margin: 10px 0;
 }
+
+/* Attachments share the bubble's width instead of leaving a second, narrower
+   column inside it. The frame follows available width, not the selected image,
+   so switching between wide and tall images cannot move the message text. */
+.user-bubble:has(> .message-image-strip .message-image-gallery:not(.is-ungrouped)) {
+  width: 100%;
+}
+
+.user-bubble > .message-image-strip .message-image-gallery:not(.is-ungrouped) {
+  grid-template-columns: minmax(0, 1fr) 48px;
+  width: 100%;
+  height: auto;
+  margin: 0;
+}
+
+.user-bubble > .message-image-strip .message-image-gallery:not(.is-ungrouped) .message-image-gallery-stage {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  max-height: min(280px, 40vh);
+  background: transparent;
+}
+
+.user-bubble > .message-image-strip .message-image-gallery:not(.is-ungrouped) .message-image-gallery-stage img {
+  background: transparent;
+}
+
+.user-bubble > .message-image-strip .message-image-gallery-rail {
+  /* A long thumbnail list scrolls inside the frame without making it taller. */
+  contain: size;
+}
+
+.user-bubble > .message-image-strip .message-image-gallery-thumbnail {
+  flex-basis: 48px;
+  min-height: 48px;
+}
+
+.user-bubble > .message-image-strip:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}

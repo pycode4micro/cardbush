@@ -138,7 +138,7 @@ import {
   ConversationChangeDialog,
   type ProjectAction,
 } from './features/sidebar';
-import { refreshTeamWorkspace, useTeamWorkspace } from './features/team/teamWorkspaceStore';
+import { refreshTeamWorkspace, useTeamChoices } from './features/team/teamWorkspaceStore';
 import { NativeTeamSidebar } from './features/team/TeamSidebar';
 import { CanvasSidebar as BushItSidebar } from './features/creationCanvas/CanvasSidebar';
 import { basename, fileUrl, samePath, stripWrappingQuotes } from './shared/localPaths';
@@ -484,7 +484,7 @@ function CardbushApp() {
     backendCapabilities.browserPrivacyMode && appSettings.browser.privacyMode;
   const reasoningTraceVisible =
     backendCapabilities.reasoningStream && appSettings.thinking.visible;
-  const teamWorkspace = useTeamWorkspace(backendCapabilities.teamMode);
+  const teamWorkspace = useTeamChoices(backendCapabilities.teamMode);
   useEffect(() => {
     if (backendCapabilities.teamMode) void refreshTeamWorkspace();
     else if (section === 'team') setSection('chat');
@@ -2375,6 +2375,7 @@ function CardbushApp() {
                 guidanceDeliveryMode={appSettings.guidance.deliveryMode}
                 loading={chat.loading || chat.messagesLoading}
                 historyLoading={chat.messagesLoading}
+                historyPages={chat.historyPages}
                 sending={chat.sending}
                 stopping={chat.stopping}
                 activeTurnId={chat.activeTurnId}
@@ -2922,6 +2923,7 @@ function CardbushApp() {
             </aside>
           ) : null}
           {inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
+            status={activeCreationInspector?.inputStatus}
             inert={(compactLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
             onBack={leaveInspectorCover} onToggleInput={() => {
               if (!quickInputOpen && section !== 'agents' && section !== 'assistant' && section !== 'md-presentation' && section !== 'team') setSection('chat');

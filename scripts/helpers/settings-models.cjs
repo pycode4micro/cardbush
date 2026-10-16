@@ -37,12 +37,12 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
   assert.equal(await run("document.querySelector('dialog [aria-label=接入协议]').textContent"),savedProtocol);
   await chooseProvider(savedProvider);
   const reachHeaders = async () => {
-    await run("document.querySelector('.model-dialog-body').scrollTop = document.querySelector('.model-dialog-body').scrollHeight");
+    await run("document.querySelector('.settings-dialog-body').scrollTop = document.querySelector('.settings-dialog-body').scrollHeight");
     await pause(60);
     const area = await run(`(() => {
       const input = document.querySelector('dialog textarea'), rect = input.getBoundingClientRect();
-      const body = document.querySelector('.model-dialog-body').getBoundingClientRect();
-      const footer = document.querySelector('.model-dialog-footer').getBoundingClientRect();
+      const body = document.querySelector('.settings-dialog-body').getBoundingClientRect();
+      const footer = document.querySelector('.settings-dialog-footer').getBoundingClientRect();
       const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
       return { x, y, top: rect.top, bottom: rect.bottom, bodyTop: body.top, bodyBottom: body.bottom,
         footerTop: footer.top, hit: document.elementFromPoint(x, y) === input };

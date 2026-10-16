@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
+import { briefText, projectCatalogPage } from './catalogPage.js';
 
 export interface RuntimeTaskHandle {
   task_id: string;
@@ -53,6 +54,8 @@ export class RuntimeTaskTools {
       definition: { name: 'tasks', description: 'Manage terminal, subagent, Team, MCP, question and script tasks. list returns handles; inspect reads results. wait wakes on any/all completion, user guidance or yield_time_ms (default 1000; 0=snapshot). Continue independent work first; do not poll or restart pending tasks. Pass after revisions to omit unchanged results. inspect/stop/cancel_observation require task_ids. stop uses the normal executor/permissions; cancel_observation only removes a completion subscription. Wait timeout/cancellation never stops tasks.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
+      projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
+        after: Object.fromEntries((page.tasks as RuntimeTaskHandle[]).map(task => [task.task_id, task.revision])) })),
       decodeInput: value => schema.parse(value), execute: async context => {
         const input = context.input;
         if (['inspect', 'stop', 'cancel_observation'].includes(input.action) && !input.task_ids) throw new Error('Explicit task_ids are required for this action.');
@@ -90,11 +93,11 @@ export class RuntimeTaskTools {
         return { ...(wake ? { wake_reason: wake } : {}), ...(controls.length ? { controls } : {}),
           ...(snapshot.unavailable_sources.length ? { complete: false, unavailable_sources: snapshot.unavailable_sources, note: 'Unavailable sources do not prove tasks ended or never started. Inspect the original handles before retrying.' } : {}),
           ...(input.action === 'wait' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
-          ...(input.action === 'list' && !input.task_ids ? { total: all.length, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
+          ...(input.action === 'list' && !input.task_ids ? { total: all.length, offset: input.offset, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
           tasks: await Promise.all(selected.map(async ({ task_id, kind, status, revision, summary, result, readResult, stop, cancelObservation }) => {
             const unchanged = input.after?.[task_id] === revision;
             const value = !unchanged && input.action !== 'list' ? readResult ? await readResult() : result : undefined;
-            return { task_id, kind, status, revision, ...(summary ? { summary } : {}),
+            return { task_id, kind, status, revision, ...(summary ? { summary: input.action === 'list' ? briefText(summary) : summary } : {}),
               ...(unchanged ? { unchanged: true } : value !== undefined ? { result: value } : {}),
               controls: { stop: !!stop, cancel_observation: !!cancelObservation } };
           })),

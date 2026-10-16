@@ -33,6 +33,7 @@ import {
 import { type ExperimentalGoal } from '../../backend/api';
 import { contextWindowMetrics } from '../../backend/contextWindowUsage';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
+import type { ConversationHistoryControls } from '../../hooks/useConversationHistoryPages';
 import {
   normalizeChatMessagesForDisplay,
   normalizeActiveTurnTranscriptForDisplay,
@@ -174,6 +175,7 @@ export function ChatPanel({
   guidanceDeliveryMode,
   loading: backgroundLoading,
   historyLoading,
+  historyPages,
   sending,
   stopping,
   activeTurnId,
@@ -279,6 +281,7 @@ export function ChatPanel({
   guidanceDeliveryMode: AppSettingsState['guidance']['deliveryMode'];
   loading: boolean;
   historyLoading: boolean;
+  historyPages?: ConversationHistoryControls;
   sending: boolean;
   stopping: boolean;
   activeTurnId: string;
@@ -2287,6 +2290,25 @@ export function ChatPanel({
     };
   }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible, composerAnchored]);
 
+  const prependAnchor = useRef<{ sessionId: string; firstId?: string; position: ReturnType<typeof captureConversationScrollPosition> } | undefined>(undefined);
+  const loadEarlier = () => void historyPages?.loadOlder(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller) return;
+    markUserDetachedFromBottom('load-earlier');
+    cancelScheduledStreamFollow();
+    prependAnchor.current = { sessionId: activeConversationId, firstId: renderMessages[0]?.id,
+      position: captureConversationScrollPosition(scroller, false) };
+  });
+  useLayoutEffect(() => {
+    const anchor = prependAnchor.current, scroller = listScrollerRef.current;
+    if (!anchor || !scroller) return;
+    if (anchor.sessionId !== activeConversationId) { prependAnchor.current = undefined; return; }
+    if (anchor.firstId === renderMessages[0]?.id) return;
+    restoreConversationScrollPosition(scroller, anchor.position, quickContextBottomInset);
+    lastScrollTopRef.current = scroller.scrollTop;
+    prependAnchor.current = undefined;
+  }, [activeConversationId, renderMessages, quickContextBottomInset]);
+
   const diagnosticStateRef = useRef<() => Record<string, unknown>>(() => ({}));
   diagnosticStateRef.current = () => ({
     conversationId: activeConversationId, sending, loading, messageCount: renderMessages.length,
@@ -2873,6 +2895,17 @@ export function ChatPanel({
               pathAliases={projectPathAliases}
             >
               <div className="message-list-content">
+                {historyPages?.hasMore && <div className="conversation-history-paging">
+                  <button type="button" className="secondary-button" disabled={historyPages.loadingOlder} onClick={loadEarlier}>
+                    {historyPages.loadingOlder ? (language === 'zh' ? '正在加载…' : 'Loading…')
+                      : historyPages.needsRefresh ? (language === 'zh' ? '重新加载历史' : 'Refresh history')
+                        : language === 'zh' ? '加载更早消息' : 'Load earlier messages'}
+                  </button>
+                  {historyPages.historyError && <span role="alert" title={historyPages.historyError}>
+                    {historyPages.needsRefresh ? (language === 'zh' ? '历史已更新，请重新加载' : 'History changed. Refresh to continue.')
+                      : language === 'zh' ? '加载失败，请重试' : 'Unable to load. Try again.'}
+                  </span>}
+                </div>}
                 {renderMessages.map((message, index) => renderMessage(message, index))}
                 {connectionRecovery && connectionRecovery.state !== 'recovered' && (
                   <ConversationConnectionNotice

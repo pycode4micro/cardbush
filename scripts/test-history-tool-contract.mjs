@@ -6,6 +6,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import { isInternalSessionMessage } from '@cardbush/bush-protocol';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const modulePath = path.join(
@@ -603,6 +604,7 @@ const visibilityTranspiled = ts.transpileModule(visibilitySource, {
 });
 const visibilityModule = { exports: {} };
 vm.runInNewContext(visibilityTranspiled.outputText, {
+  require: name => { assert.equal(name, '@cardbush/bush-protocol'); return { isInternalSessionMessage }; },
   module: visibilityModule,
   exports: visibilityModule.exports,
   Set,
@@ -736,7 +738,7 @@ assert.equal(legacyCollapsed[0].loopHistory[0].id, 'old-segment',
   'Every non-final assistant message in the same turn must be archived as processed history even without segment metadata');
 assert.match(
   stylesSource,
-  /\.app \.assistant-completed-summary:active\s*\{\s*transform:\s*none;/,
+  /\.app \.assistant-completed-summary:active(?:\s*,[^{}]+)?\s*\{\s*transform:\s*none;/,
   'The full-width processed disclosure must not inherit the global button press scale',
 );
 assert.match(
@@ -1382,7 +1384,7 @@ assert.equal(
 );
 assert.match(
   appSource,
-  /revertAvailable=\{!chat\.processingConversationIds\.has\([\s\S]*?displayedReviewConversation\.id/,
+  /revertAvailable=\{!\(writingReview\?\.busy \?\? chat\.processingConversationIds\.has\(\s*displayedReviewConversation\.id/,
   'The review panel must follow the target conversation lifecycle',
 );
 assert.match(

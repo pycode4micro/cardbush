@@ -1,10 +1,11 @@
-import { ASSISTANT_CONVERSATION_COMMAND } from '@cardbush/bush-protocol';
+import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema } from '@cardbush/bush-protocol';
 import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
 import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks } from './registeredAgents.js';
 import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
 import { ConversationJournal } from './conversationJournal.js';
+import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
 import { REALTIME_AGENT_TOOL_COMMAND, realtimeAgentToolRequestSchema } from '@cardbush/bush-protocol';
 import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextRequestSchema } from '@cardbush/bush-protocol';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
@@ -27,6 +28,7 @@ import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
 import { extractSessionSource } from './sessionExtraction.js';
 import { registerDesignTool } from './designTool.js';
+import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema } from '@cardbush/bush-protocol';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND,
@@ -167,6 +169,7 @@ import { RuntimeSolutionBroker } from './runtimeSolutionBroker.js';
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import type { AutomationScheduler } from './automationScheduler.js';
 import { ModelImageStore } from "./modelImageStore.js";
+import { AttachmentStore } from './attachmentStore.js';
 import { randomUUID } from 'node:crypto';
 import { PluginHookRunner, type PluginHookObservation } from './pluginHookRunner.js';
 import { PluginTerminalHooks } from './pluginToolHooks.js';
@@ -237,6 +240,8 @@ import {
 import { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
 import { ModelRequestAttempts } from './modelRequestAttempts.js';
 import { modelFailureAction } from './modelFailurePolicy.js';
+import { RuntimeTurnExecution, type RuntimeExecutionOptions } from './runtimeTurnExecution.js';
+import type { RuntimeInternalTaskOptions, RuntimeInternalTaskRunner } from './runtimeInternalTask.js';
 export { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
 
 export interface InMemoryRuntimeHostOptions {
@@ -375,6 +380,7 @@ export class InMemoryRuntimeHost {
   readonly #toolLoops = new Set<RuntimeToolLoop>();
   readonly #solutions: RuntimeSolutionBroker;
   readonly #modelImages: ModelImageStore;
+  readonly #attachments: AttachmentStore;
   readonly #captureCacheRoot: string;
   readonly #legacyCaptureCacheRoot?: string;
   readonly #guidanceQueues = new Map<string, Array<{
@@ -425,7 +431,7 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
-    this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.#provider);
+    this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.runInternalTask.bind(this));
     registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
@@ -434,6 +440,7 @@ export class InMemoryRuntimeHost {
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team'].includes(tool.name)),
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
+      snapshotImage: (source, signal) => this.#modelImages.snapshot(source, signal),
     });
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
     this.#legacyCaptureCacheRoot = options.legacyCaptureCacheRoot;
@@ -541,6 +548,7 @@ export class InMemoryRuntimeHost {
     this.#pluginAgentEnvironment = new PluginAgentEnvironment(join(runtimeDataRoot, 'plugin-agent-memory'), this.#toolRegistry, this.#taskWorkspaces, options.openAgentMcpScope,
       sessionId => this.#sessions.snapshot(sessionId) ? this.#sessions.assemble({ sessionId }).messages : []);
     this.#modelImages = new ModelImageStore(runtimeDataRoot);
+    this.#attachments = new AttachmentStore(runtimeDataRoot);
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
       readToolResultText: (locator, signal, sessionId) => this.#readArchivedToolResultText(locator, signal, sessionId),
@@ -769,6 +777,8 @@ export class InMemoryRuntimeHost {
         INSPECT_RUNTIME_RECOVERY_COMMAND,
         RESUME_MODEL_TURN_COMMAND,
         GET_RUNTIME_SESSION_COMMAND,
+        GET_RUNTIME_SESSION_HISTORY_COMMAND,
+        LIST_RUNTIME_SESSION_SUMMARIES_COMMAND,
         GET_RUNTIME_USER_MESSAGE_COMMAND,
         LIST_RUNTIME_USER_PROMPTS_COMMAND,
         CREATE_RUNTIME_SESSION_COMMAND,
@@ -1003,7 +1013,8 @@ export class InMemoryRuntimeHost {
     if (this.#cacheMaintenance) command = structuredClone(command);
     while (this.#cacheMaintenance) {
       if (this.#backgroundCacheController) {
-        if (command.kind === GET_RUNTIME_CAPABILITIES_COMMAND || command.kind === LIST_RUNTIME_SESSIONS_COMMAND || command.kind === GET_RUNTIME_SESSION_COMMAND) break;
+        if (command.kind === GET_RUNTIME_CAPABILITIES_COMMAND || command.kind === LIST_RUNTIME_SESSIONS_COMMAND || command.kind === GET_RUNTIME_SESSION_COMMAND ||
+          command.kind === GET_RUNTIME_SESSION_HISTORY_COMMAND || command.kind === LIST_RUNTIME_SESSION_SUMMARIES_COMMAND) break;
         this.#backgroundCacheController.abort();
       }
       await settleAtAbort(this.#cacheMaintenance, signal, 'Runtime command cancelled while waiting for cache maintenance.');
@@ -1104,24 +1115,29 @@ export class InMemoryRuntimeHost {
       }
       case LIST_RUNTIME_USER_PROMPTS_COMMAND:
         return this.#sessions.listUserPrompts(runtimeUserPromptsRequestSchema.parse(command.payload));
+      case LIST_RUNTIME_SESSION_SUMMARIES_COMMAND:
+        return this.#sessions.listSummaries(signal);
+      case GET_RUNTIME_SESSION_HISTORY_COMMAND: {
+        const input = sessionHistoryRequestSchema.parse(command.payload);
+        const page = await this.#sessions.historyPage(input, signal);
+        if (!page) return null;
+        signal?.throwIfAborted();
+        const ids = new Set(page.snapshot.turns.map(turn => turn.turnId));
+        const tail = page.summary.metadata?.agentRole === 'child' && input.cursor
+          ? await this.#sessions.historyPage({ sessionId: input.sessionId, limit: 1 }, signal) : page;
+        const metadata = await this.#sessionPresentationMetadata(input.sessionId, page.summary.metadata, tail?.snapshot.turns.at(-1));
+        return { ...page, summary: { ...page.summary, metadata }, snapshot: conversationSessionSnapshot({ ...page.snapshot, metadata }),
+          toolExecutions: this.#toolExecutions.listTurnsSummaries(input.sessionId, ids)
+            .filter(record => record.actionManifest?.operation !== 'terminal.completion'),
+          contextCompactions: [...ids].flatMap(turnId => {
+            signal?.throwIfAborted();
+            return effectiveContextCompactionEvents(this.#eventLog.replay(input.sessionId, turnId));
+          }) };
+      }
       case GET_RUNTIME_SESSION_COMMAND: {
         const input = runtimeSessionReadRequestSchema.parse(command.payload);
         const snapshot = this.#sessions.snapshot(input.sessionId);
-        if (snapshot?.metadata?.agentRole === 'child') {
-          // A read-only UI projection; never return the child's private request/binding.
-          const active = this.#recovery.cacheRoots().find(item => item.request.sessionId === input.sessionId &&
-            this.#activeTurns.has(JSON.stringify([input.sessionId, item.request.turnId])))?.request;
-          const latest = snapshot.turns.at(-1);
-          const saved = active || await this.#subagentResume.load(input.sessionId);
-          const model = active?.model || latest?.usage.model || saved?.model;
-          const replay = [...latest?.messages ?? []].reverse().find(entry => entry.message.role === 'assistant' &&
-            entry.message.providerReplay?.model === model)?.message;
-          const modelConfigId = active?.providerBinding?.bindingId ||
-            (replay?.role === 'assistant' ? replay.providerReplay?.providerBinding?.bindingId : undefined) ||
-            (saved?.model === model ? saved?.providerBinding?.bindingId : undefined);
-          if (model) snapshot.metadata.executionModel = { model, modelConfigId,
-            turnId: active?.turnId || latest?.turnId || saved?.turnId };
-        }
+        if (snapshot) snapshot.metadata = await this.#sessionPresentationMetadata(input.sessionId, snapshot.metadata, snapshot.turns.at(-1));
         if (!snapshot || input.messageProjection === "full") return snapshot ?? null;
         return conversationSessionSnapshot(snapshot);
       }
@@ -1190,7 +1206,7 @@ export class InMemoryRuntimeHost {
           const deleted = await this.#deleteSession(identity.sessionId);
           if (deleted) this.#scheduleCacheCleanup();
           return { sessionId: identity.sessionId, deleted };
-        }, this.#sessionDeletionScope(identity.sessionId));
+        }, await this.#sessionDeletionScope(identity.sessionId));
       }
       case COLLECT_RUNTIME_CACHE_COMMAND:
         return this.#withCacheMaintenance(() => this.#collectCaches());
@@ -1335,7 +1351,14 @@ export class InMemoryRuntimeHost {
         return { sessionId: result.sessionId, turnIds: result.turnIds, restoredFiles: result.revertedFiles,
           restoredChangeIds: result.revertedChangeIds, restoredAt: result.revertedAt };
       }
-      case ASSISTANT_CONVERSATION_COMMAND: return this.#assistant.command(command.payload);
+      case ASSISTANT_CONVERSATION_COMMAND: {
+        const input = assistantConversationRequestSchema.parse(command.payload);
+        if (input.action === 'turn' || input.action === 'append') {
+          if (!this.#sessions.hasSession(input.sessionId)) throw new Error('Conversation no longer exists.');
+          input.entry = await this.#attachments.retainConversationEntry(input.sessionId, input.entry);
+        }
+        return this.#assistant.command(input);
+      }
       case REALTIME_AGENT_TOOL_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
@@ -1535,9 +1558,29 @@ export class InMemoryRuntimeHost {
 
   async runModelTurn(
     input: ModelRequest,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; execution?: RuntimeExecutionOptions } = {},
   ): Promise<RuntimeEvent> {
     return this.#withTurnAdmission(input.sessionId, () => this.#runModelTurn(input, options));
+  }
+
+  /** Internal tasks use the normal Turn engine without creating a user Session.
+   * Their domain owner validates/commits the result before completion is emitted. */
+  async runInternalTask(input: ModelRequest, options: RuntimeInternalTaskOptions): ReturnType<RuntimeInternalTaskRunner> {
+    let usage: SessionUsage = {}, rejected = false, rejection: unknown;
+    const request = modelRequestSchema.parse({ ...input, metadata: { ...input.metadata,
+      runtimeTask: 'internal', ...(input.tools.length ? {} : { toolExecutionPolicy: 'none' }),
+    } });
+    const terminal = await this.#withTurnAdmission(request.sessionId, () => this.#runModelTurn(request, {
+      signal: options.signal, execution: options,
+      internalTask: { acceptResult: async (text, signal) => {
+        try { await options.acceptResult(text, signal); }
+        catch (error) { rejected = true; rejection = error; throw error; }
+      } },
+      onFinalized: (_payload, _messages, observedUsage) => { usage = observedUsage; },
+    }));
+    if (rejected) throw rejection;
+    if (terminal.kind !== 'turn_terminal') throw new Error('Internal task did not produce a terminal Runtime event.');
+    return { terminal, usage };
   }
 
   async runSessionTurn(
@@ -1615,6 +1658,7 @@ export class InMemoryRuntimeHost {
     options: { signal?: AbortSignal },
   ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
+    restoreSessionModelPolicy(candidate, this.#sessions.modelContract(candidate.sessionId));
     if (candidate.metadata.agentRole !== 'child') {
       const children = new Map(this.#subagentTasks.list(candidate.sessionId).map(task => [task.childSessionId, task]));
       const updates = [...children.values()].flatMap(task => {
@@ -1626,15 +1670,6 @@ export class InMemoryRuntimeHost {
       if (updates.length) candidate.prefixMessages.push({ role: 'developer', name: 'subagent_conversation_updates',
         content: `These child conversations contain direct user interventions. They remain scoped to their child sessions. Read read_subagent_conversation with task_id and its nextCursor to inspect the ordered parent assignments, user messages and child replies before relying on an earlier result.\n${JSON.stringify(updates)}` });
     }
-    // Pin only newly submitted images. Stored history and forked prefixes keep
-    // their original observations, independent of source-file edits or codecs.
-    for (const entry of candidate.inputMessages) {
-      if (entry.message.role !== "user" || !entry.message.images) continue;
-      entry.message.images = await Promise.all(entry.message.images.map(async image => ({
-        ...image, url: await this.#modelImages.snapshot(image.url, options.signal),
-      })));
-    }
-    const automationContext = this.#automation ? structuredClone(candidate) : undefined;
     // Keep the app's current inbox snapshot separate from the authored input.
     let unreadReminder: Awaited<ReturnType<AutomationScheduler['reminder']>> | undefined;
     const authoredInput = [...candidate.inputMessages].reverse().find(entry => entry.message.role === 'user' && entry.message.visibility !== 'internal' && entry.message.name !== 'goal_continuation');
@@ -1645,7 +1680,7 @@ export class InMemoryRuntimeHost {
       } catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
     }
     const workspace = await this.#taskWorkspaces?.descriptor(candidate.sessionId);
-    const sessionMetadata = this.#sessions.snapshot(candidate.sessionId)?.metadata;
+    const sessionMetadata = this.#sessions.snapshot(candidate.sessionId)?.metadata ?? candidate.sessionMetadata;
     const taskRoot = sessionMetadata?.workspace_mode === 'task' && !sessionMetadata.projectDir && !sessionMetadata.user_project_dir &&
       typeof sessionMetadata.task_dir === 'string' ? sessionMetadata.task_dir : undefined;
     if (!workspace && taskRoot) {
@@ -1668,6 +1703,8 @@ export class InMemoryRuntimeHost {
       if (remote) candidate.prefixMessages.push({ role: 'developer', name: 'ssh_workspace_binding', content:
         `The user selected an SSH workspace as the default environment. Saved connection ID: ${remote.connectionId}. Remote project directory: ${remote.path}. SSH is an additional environment, not a replacement for the local Runtime host. Built-in file and terminal tools default to this remote directory; use environment="local" with absolute local paths for local skills, source files and local commands. To explicitly address another saved SSH environment use environment="ssh://connection-id/absolute/directory". Use POSIX paths and shell="posix" remotely; use the local host's native shell for local commands. Each result identifies its executionEnvironment. Terminal handles stay on the host that created them; omit environment for terminal_poll/write/stop, and terminal_list lists this session's terminals across hosts. Connection failures never fall back to local execution. Remote tools do not provide local checkpoint/revert. Other tools and plugins retain their declared execution environments; do not assume they moved remotely. Read the relevant project's AGENTS.md before editing on either host.` });
     }
+    await this.#attachments.prepare(candidate, this.#modelImages, options.signal);
+    const automationContext = this.#automation ? structuredClone(candidate) : undefined;
     if (!candidate.metadata.pluginHookEvaluation &&
       (!Array.isArray(candidate.metadata.childToolAllowlist) || candidate.metadata.childToolAllowlist.includes(CHECKPOINT_CONTEXT_TOOL)) &&
       !candidate.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)) {
@@ -1739,6 +1776,8 @@ export class InMemoryRuntimeHost {
       sessionCommit?: RuntimeSessionCommitCheckpoint;
       cacheChainState?: CacheChainState;
       finalizeWorkspace?: () => Promise<void>;
+      execution?: RuntimeExecutionOptions;
+      internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
     } = {},
   ): Promise<RuntimeEvent> {
     const request = resolveModelRequestContextLimits(modelRequestSchema.parse(input));
@@ -1760,6 +1799,7 @@ export class InMemoryRuntimeHost {
     }
     const turnController = new AbortController();
     const detachAbort = forwardAbort(options.signal, turnController);
+    const execution = new RuntimeTurnExecution(turnController, options.execution);
     this.#activeTurns.add(turnKey);
     this.#activeTurnControllers.set(turnKey, turnController);
     if (request.metadata.automationRunId) this.#automation?.notify();
@@ -1785,6 +1825,7 @@ export class InMemoryRuntimeHost {
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
       detachAbort();
+      execution.dispose();
       throw error;
     }
     return this.#continueModelTurn({
@@ -1794,6 +1835,8 @@ export class InMemoryRuntimeHost {
       nextRound: 1,
       cacheChainState: initialCacheChainState,
       signal: turnController.signal,
+      execution,
+      internalTask: options.internalTask,
       finalizeWorkspace: options.finalizeWorkspace,
       onSettled: detachAbort,
       sessionCommit: options.sessionCommit,
@@ -1829,6 +1872,9 @@ export class InMemoryRuntimeHost {
     let recovery;
     try {
       recovery = this.#recovery.prepareResume(sessionId, turnId);
+      if (recovery.checkpoint.request.metadata.runtimeTask === 'internal') {
+        throw new Error('Restart internal tasks through their owner to obtain a fresh validated source snapshot.');
+      }
     } catch (error) {
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
@@ -1856,6 +1902,7 @@ export class InMemoryRuntimeHost {
       nextRound: recovery.nextRound,
       cacheChainState: recovery.checkpoint.cacheChainState,
       signal: turnController.signal,
+      execution: new RuntimeTurnExecution(turnController),
       onSettled: detachAbort,
       sessionCommit,
       ...(this.#taskWorkspaces ? { finalizeWorkspace: () => this.#finalizeWorkspace(sessionId, turnId) } : {}),
@@ -1879,6 +1926,8 @@ export class InMemoryRuntimeHost {
     onFinalized?: TurnFinalizedObserver;
     sessionCommit?: RuntimeSessionCommitCheckpoint;
     finalizeWorkspace?: () => Promise<void>;
+    execution: RuntimeTurnExecution;
+    internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
   }): Promise<RuntimeEvent> {
     const { request, identity } = input;
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
@@ -1909,7 +1958,7 @@ export class InMemoryRuntimeHost {
       }
     };
     const runHook = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
-      if (request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
+      if (input.internalTask || request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
       const current = await this.#loadPluginExtensions?.() ?? pluginExtensions;
       return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request), event, { ...context, request }, observeHook);
     };
@@ -1927,7 +1976,7 @@ export class InMemoryRuntimeHost {
         const allowed = await this.#requestBackgroundPermission({ ...permission, sessionId: request.sessionId, turnId: request.turnId }, signal);
         return { protocol: 'bush.runtime_permission_answer.v1' as const, permissionId: randomUUID(), answerId: randomUUID(), decision: allowed ? 'allow_once' as const : 'deny' as const, grantedCapabilityIds: allowed ? permission.capabilityIds : [] };
       } } } : {}),
-      ...(this.#loadPluginExtensions ? { hooks: this.#pluginTerminalHooks.forTurn(request.sessionId, runHook) } : {}),
+      ...(this.#loadPluginExtensions && !input.internalTask ? { hooks: this.#pluginTerminalHooks.forTurn(request.sessionId, runHook) } : {}),
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
@@ -1949,8 +1998,10 @@ export class InMemoryRuntimeHost {
     let contextOverflowRecoveries = priorOverflowRetries.length;
     let forceContextCompaction = (priorOverflowRetries.at(-1)?.sequence ?? -1) >
       ([...this.#eventLog.replay(request.sessionId, request.turnId)].reverse().find(event => event.kind === 'context_compaction_completed')?.sequence ?? -1);
-    // Resumed checkpoints retain their saved tool catalog and cache prefix.
-    const checkpointRequiredFields = request.tools.find((tool) =>
+    // Maintenance must accept the format advertised to this conversation, even
+    // when a newer client supplies a different checkpoint definition.
+    const checkpointTools = input.internalTask ? request.tools : this.#sessions.modelContract(request.sessionId)?.tools ?? request.tools;
+    const checkpointRequiredFields = checkpointTools.find((tool) =>
       tool.name === CHECKPOINT_CONTEXT_TOOL)?.inputSchema.required;
     const checkpointFormat = contextCheckpointFormat(checkpointRequiredFields);
     let providerState: ModelProviderState = freshResponseChain();
@@ -2179,14 +2230,17 @@ export class InMemoryRuntimeHost {
         try { await this.#pluginBackground.acknowledge(request.sessionId, request.metadata.pluginBackgroundDeliveries as string[]); }
         catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
       }
-      if (payload.status === 'completed' && !request.metadata.automationRunId && request.metadata.agentRole !== 'child') {
+      if (!input.internalTask && payload.status === 'completed' && !request.metadata.automationRunId && request.metadata.agentRole !== 'child') {
         try { await this.#automation?.emit({ id: `${request.turnId}:completed`, sessionId: request.sessionId, event: 'Stop' }); }
         catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
       }
       return terminal;
     };
     const stop = (finalMessageId?: string): Promise<RuntimeEvent> =>
-      finalize({
+      finalize(input.execution.timeoutReason ? {
+        status: 'failed', reason: 'model_request_timeout', finalMessageId,
+        details: { timeoutReason: input.execution.timeoutReason, retryable: true },
+      } : {
         status: "stopped",
         // A signal may come from a user, caller budget, or host shutdown.
         // Record cancellation without inventing who requested it.
@@ -2195,9 +2249,9 @@ export class InMemoryRuntimeHost {
         details: {},
       });
     try {
-      await this.#mcpApps.remember(request);
+      if (!input.internalTask) await this.#mcpApps.remember(request);
       delete request.metadata.builtinPluginCommandsAvailable;
-      if (this.#loadPluginExtensions && !request.metadata.pluginHookEvaluation) {
+      if (this.#loadPluginExtensions && !input.internalTask && !request.metadata.pluginHookEvaluation) {
         this.#pluginHooks.openSession(request.sessionId);
         pluginExtensions = await this.#loadPluginExtensions();
         request.metadata.builtinPluginCommandsAvailable = Boolean(pluginExtensions.commands?.length);
@@ -2255,7 +2309,7 @@ export class InMemoryRuntimeHost {
       while (true) {
         // Capability changes become visible only between requests. Do not remove
         // native registrations: hooks, explicit commands and saved calls reuse them.
-        if (this.#loadPluginExtensions && !request.metadata.pluginHookEvaluation && round >= input.nextRound) {
+        if (this.#loadPluginExtensions && !input.internalTask && !request.metadata.pluginHookEvaluation && round >= input.nextRound) {
           try {
             const current = await this.#loadPluginExtensions();
             request.metadata.builtinPluginCommandsAvailable = Boolean(current.commands?.length);
@@ -2265,7 +2319,7 @@ export class InMemoryRuntimeHost {
             this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error)));
           }
         }
-        const catalogUpdate = synchronizeMcpCatalog(this.#toolRegistry, request);
+        const catalogUpdate = input.internalTask ? undefined : synchronizeMcpCatalog(this.#toolRegistry, request);
         if (catalogUpdate) {
           messages.push(catalogUpdate);
           generatedMessages.push({ messageId: `plugin_catalog_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message: catalogUpdate });
@@ -2275,7 +2329,7 @@ export class InMemoryRuntimeHost {
         if (!compactionTransaction && !activeContextCompaction) {
           messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
         }
-        if (!compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
+        if (!input.internalTask && !compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           try {
             const message = await changedIndividuation(this.#memory.store, normalizeIndividuation(request.metadata.individuation), messages, input.signal);
             if(message){
@@ -2286,7 +2340,7 @@ export class InMemoryRuntimeHost {
         round += 1;
         const backgroundStop = this.#backgroundTools.stopReason(request.sessionId, request.turnId) ?? this.#asyncJobs.stopReason(request.sessionId, request.turnId);
         if (backgroundStop) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: backgroundStop } });
-        if (!compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
+        if (!input.internalTask && !compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           const context = await this.#mcpApps.context(request.sessionId);
           const lastContext = [...messages].reverse().find(message => message.role === 'user' && message.name === 'mcp_app_context');
           if (context && context !== lastContext?.content) {
@@ -2302,7 +2356,7 @@ export class InMemoryRuntimeHost {
             messages.push(message); generatedMessages.push({ messageId: `msg_mcp_app_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
           }
         }
-        for (const delivery of compactionTransaction || activeContextCompaction ? [] : this.#pluginHooks.takeMessages(request.sessionId)) {
+        for (const delivery of input.internalTask || compactionTransaction || activeContextCompaction ? [] : this.#pluginHooks.takeMessages(request.sessionId)) {
           for (const [index, content] of delivery.messages.entries()) {
             const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
             messages.push(message); generatedMessages.push({ messageId: `msg_${delivery.id}_${index}`, createdAt: this.#sessionNow(), message });
@@ -2557,7 +2611,7 @@ export class InMemoryRuntimeHost {
           synchronizeMcpDiscovery(this.#toolRegistry, request, dispatchMessages);
           const roundRequest = modelRequestSchema.parse({
             ...request,
-            tools: modelToolDefinitions(this.#toolRegistry, request),
+            tools: this.#modelToolDefinitions(request),
             messages: dispatchMessages,
             maxOutputTokens: dispatchOutputTokens,
             providerState: dispatchProviderState,
@@ -2612,6 +2666,7 @@ export class InMemoryRuntimeHost {
             } });
           };
           try {
+            input.execution.requesting();
             result = await this.#modelRequests.run(turnKey, input.signal, (signal, current) =>
               executeModelRound(
                 this.#provider,
@@ -2637,6 +2692,7 @@ export class InMemoryRuntimeHost {
                   },
                   onEvent: (event) => {
                     if (!current()) throw abortError('Model request is no longer active.');
+                    input.execution.observe(event);
                     if (event.kind === 'usage') observedUsage = { inputTokens: event.inputTokens,
                       outputTokens: event.outputTokens, cachedInputTokens: event.cachedInputTokens };
                     if (deferProviderProjection) deferredProviderEvents.push(event);
@@ -2646,6 +2702,7 @@ export class InMemoryRuntimeHost {
               ),
               !contextCompactionRequired && !activeContextCompaction,
             );
+            input.execution.received(result);
           } catch (error) {
             if (error instanceof ModelRequestInterrupted && !input.signal?.aborted) {
               // Keep only provider-reported usage; cancellation does not imply
@@ -2752,7 +2809,7 @@ export class InMemoryRuntimeHost {
             break;
           }
           const failureAction = modelFailureAction(result.error);
-          if (!compactionTransaction && failureAction === 'repair_tool_call' && toolCallRepairAttempts < 1) {
+          if (!input.internalTask && !compactionTransaction && failureAction === 'repair_tool_call' && toolCallRepairAttempts < 1) {
             toolCallRepairAttempts += 1;
             // Append accepted prose only. A rejected batch has no executions or
             // receipts, and must never become a partial tool exchange in history.
@@ -2813,6 +2870,7 @@ export class InMemoryRuntimeHost {
           // Known context refusals belong exclusively to the bounded recovery
           // path above, even if an adapter marks them as transport-retryable.
           if (modelAttempts.canRetry(result.error, attempt)) {
+            input.execution.phase('retrying');
             const supersededEventIds = this.#eventLog
               .replay(request.sessionId, request.turnId, {
                 afterSequence: attemptStartSequence,
@@ -2885,7 +2943,7 @@ export class InMemoryRuntimeHost {
         if (!completedRound || !completedProjector) {
           throw new Error("Runtime retry loop exited without a model result.");
         }
-        if (completedRound.finishReason === "length") {
+        if (completedRound.finishReason === "length" || completedRound.finishReason === 'max_tokens') {
           if (compactionTransaction) {
             if (retryMaintenance('checkpoint_output_limit',
               'The checkpoint response reached its output limit and was not applied. Generate a complete concise checkpoint from the same indexed sources; do not continue the partial JSON or repeat normal work.', true)) continue;
@@ -2913,6 +2971,20 @@ export class InMemoryRuntimeHost {
                 outputTokens: completedRound.usage.outputTokens,
                 hadHiddenReasoning: Boolean(completedRound.reasoning.trim()) } });
           }
+        }
+        if (request.metadata.toolExecutionPolicy === 'none' && completedRound.toolCalls.length) {
+          return await finalize({ status: 'failed', reason: 'tools_disabled', details: {} });
+        }
+        if (input.internalTask && completedRound.toolCalls.length === 0) {
+          input.execution.phase('validating');
+          try { await input.internalTask.acceptResult(completedRound.text, input.signal!); }
+          catch {
+            if (input.signal?.aborted) return await stop();
+            return await finalize({ status: 'failed', reason: 'task_result_rejected', details: {} });
+          }
+          return await finalize({ status: 'completed', reason: 'model_response_completed',
+            finalMessageId: completedProjector.finalMessageId,
+            details: { finishReason: completedRound.finishReason ?? null, rounds: round } });
         }
         const checkpointCalls = completedRound.toolCalls.filter((call) =>
           call.name === CHECKPOINT_CONTEXT_TOOL &&
@@ -3388,8 +3460,27 @@ export class InMemoryRuntimeHost {
       this.#contextCompactionAuthorizations.delete(turnKey);
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
+      input.execution.dispose();
       input.onSettled?.();
     }
+  }
+
+  #modelToolDefinitions(request: ModelRequest) {
+    const policy = systemPolicyIdentity(request.metadata.systemPolicy);
+    if (!policy || request.metadata.runtimeTask === 'internal' || request.metadata.toolExecutionPolicy === 'none' || !this.#sessions.hasSession(request.sessionId)) {
+      return modelToolDefinitions(this.#toolRegistry, request);
+    }
+    const identity = JSON.stringify([request.sessionId, request.turnId]);
+    const snapshot = request.metadata.mcpModelToolSnapshot as { identity?: string } | undefined;
+    if (snapshot?.identity === identity) return modelToolDefinitions(this.#toolRegistry, request);
+    const saved = this.#sessions.modelContract(request.sessionId) ?? this.#sessions.bindModelContract(request.sessionId, {
+      policyId: policy.id, version: policy.version, system: request.messages[0]!,
+      tools: modelToolDefinitions(this.#toolRegistry, request),
+    });
+    // This is the provider-facing presentation only. Execution still checks the
+    // current request/catalog, permissions and Tool scope in the normal tool loop.
+    request.metadata.mcpModelToolSnapshot = { identity, tools: structuredClone(saved.tools) };
+    return modelToolDefinitions(this.#toolRegistry, request);
   }
 
   async #measureContextPressure(
@@ -3399,7 +3490,7 @@ export class InMemoryRuntimeHost {
     signal?: AbortSignal,
     inputTokenUsage?: InputTokenUsage,
   ) {
-    request = { ...request, tools: modelToolDefinitions(this.#toolRegistry, request), messages, providerState };
+    request = { ...request, tools: this.#modelToolDefinitions(request), messages, providerState };
     const contextWindowTokens = Number(request.metadata.contextWindowTokens);
     if (!Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) {
       return undefined;
@@ -3829,6 +3920,22 @@ export class InMemoryRuntimeHost {
     return text;
   }
 
+  async #sessionPresentationMetadata(sessionId: string, metadata: Record<string, unknown> | undefined,
+    latest: import('@cardbush/bush-protocol').CommittedTurn | undefined) {
+    if (metadata?.agentRole !== 'child') return metadata;
+    // A read-only UI projection; never return the child's private request/binding.
+    const active = this.#recovery.cacheRoots().find(item => item.request.sessionId === sessionId &&
+      this.#activeTurns.has(JSON.stringify([sessionId, item.request.turnId])))?.request;
+    const saved = active || await this.#subagentResume.load(sessionId);
+    const model = active?.model || latest?.usage.model || saved?.model;
+    const replay = [...latest?.messages ?? []].reverse().find(entry => entry.message.role === 'assistant' &&
+      entry.message.providerReplay?.model === model)?.message;
+    const modelConfigId = active?.providerBinding?.bindingId ||
+      (replay?.role === 'assistant' ? replay.providerReplay?.providerBinding?.bindingId : undefined) ||
+      (saved?.model === model ? saved?.providerBinding?.bindingId : undefined);
+    return model ? { ...metadata, executionModel: { model, modelConfigId, turnId: active?.turnId || latest?.turnId || saved?.turnId } } : metadata;
+  }
+
   #workspaceMetadata(metadata: Record<string, unknown>, workspace: WorkspaceDescriptor) {
     return { ...metadata, [RUNTIME_WORKSPACE_METADATA_KEY]: workspace,
       projectDir: workspace.sourceDir, project_dir: workspace.sourceDir,
@@ -3846,10 +3953,12 @@ export class InMemoryRuntimeHost {
     }
     this.#turnAdmissions++;
     this.#sessionAdmissions.set(sessionId, (this.#sessionAdmissions.get(sessionId) ?? 0) + 1);
+    this.#toolExecutions.protect(sessionId, true);
     try { return await operation(); } finally {
       this.#turnAdmissions--;
       const remaining = (this.#sessionAdmissions.get(sessionId) ?? 1) - 1;
-      if (remaining) this.#sessionAdmissions.set(sessionId, remaining); else this.#sessionAdmissions.delete(sessionId);
+      if (remaining) this.#sessionAdmissions.set(sessionId, remaining);
+      else { this.#sessionAdmissions.delete(sessionId); this.#toolExecutions.protect(sessionId, false); }
     }
   }
 
@@ -3857,7 +3966,7 @@ export class InMemoryRuntimeHost {
     const related = new Set([sessionId]);
     // Child tasks may still be writing into their parent's workspace.
     let changed = true;
-    const sessions = this.#sessions.list();
+    const sessions = await this.#sessions.listMetadata();
     while (changed) {
       changed = false;
       for (const session of sessions) if (!related.has(session.sessionId) && related.has(String(session.metadata?.parentSessionId))) {
@@ -3873,12 +3982,12 @@ export class InMemoryRuntimeHost {
     try { return await operation(); } finally { this.#workspaceActions--; this.#switchingWorkspaceSession = undefined; }
   }
 
-  #sessionDeletionScope(sessionId: string): Set<string> {
+  async #sessionDeletionScope(sessionId: string): Promise<Set<string>> {
     const related = new Set([sessionId]);
-    const sessions = this.#sessions.list();
+    const sessions = await this.#sessions.listMetadata();
     // A child can be admitted before it has a persisted session snapshot.
     for (const id of related) {
-      const parent = this.#sessions.snapshot(id)?.metadata?.parentSessionId;
+      const parent = sessions.find(session => session.sessionId === id)?.metadata?.parentSessionId;
       if (typeof parent === 'string') related.add(parent);
       for (const child of sessions) if (child.metadata?.parentSessionId === id) related.add(child.sessionId);
       for (const task of this.#subagentTasks.list(id)) related.add(task.childSessionId);
@@ -4514,13 +4623,14 @@ function freshResponseChain(): ModelProviderState {
 function resolveModelRequestContextLimits(request: ModelRequest): ModelRequest {
   const contextWindowTokens = Number(request.metadata.contextWindowTokens);
   if (!Number.isInteger(contextWindowTokens) || contextWindowTokens <= 0) return request;
-  return modelRequestSchema.parse({
-    ...request,
-    maxOutputTokens: resolveContextOutputTokens(
-      contextWindowTokens,
-      request.maxOutputTokens,
-    ),
-  });
+  try {
+    return modelRequestSchema.parse({
+      ...request,
+      maxOutputTokens: resolveContextOutputTokens(contextWindowTokens, request.maxOutputTokens),
+    });
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: 'model_context_limits_invalid' });
+  }
 }
 
 function continuedResponseChain(

@@ -4,7 +4,7 @@ import { CLAUDE_TOOL_NAMES, type PluginCommand } from './pluginExtensions.js';
 import { bashExecutable, executePluginProcess } from './pluginHookRunner.js';
 import type { ToolRegistry, ToolAdmissionDecision, ToolHandlerContext } from './toolRegistry.js';
 import { childAgentDispatchDenial, childAgentToolDenial } from './childAgentPolicy.js';
-import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery } from './catalogPage.js';
+import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage } from './catalogPage.js';
 
 interface CommandInput { command: string; arguments: string; prepared?: CommandPlan }
 interface CommandPlan { command: PluginCommand; arguments: string; tokens: string[]; cwd: string; pieces: Array<{ text?: string; script?: string; admissionScript?: string }> }
@@ -32,6 +32,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
       if (input.command !== undefined && (typeof input.command !== 'string' || !input.command.trim() || ['query', 'offset', 'limit'].some(key => input[key] !== undefined))) throw new Error('Use command alone to inspect one command.');
       return { ...decodeCatalogQuery(input), command: (input.command as string | undefined)?.trim() };
     }, parallelSafe: true,
+    projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['commands']),
     execute: async context => {
       const commands = (await load()).sort((a, b) => a.id.localeCompare(b.id));
       const describe = (command: PluginCommand) => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, userInvocable: command.userInvocable, modelInvocable: !command.disableModelInvocation });

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import './hover-preview.css';
 
 /** Delayed previews share one interaction policy; they never fetch or steal focus. */
-export function useHoverPreview(disabled = false) {
+export function useHoverPreview(disabled = false, { interactive = false }: { interactive?: boolean } = {}) {
   const id = useId();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const pending = useRef<HTMLElement | null>(null);
@@ -38,9 +38,15 @@ export function useHoverPreview(disabled = false) {
     if (event.pointerType === 'touch' || event.buttons) return;
     const action = event.target instanceof Element
       ? event.target.closest('button, input, textarea, [contenteditable="true"]') : null;
-    if (action && action !== event.currentTarget) { close(); return; }
+    if (action && action !== event.currentTarget) {
+      // An open interactive card must remain reachable across the row's actions.
+      // Hovering an action alone still does not open it; pointerdown dismisses it.
+      if (interactive && anchor === event.currentTarget) keepOpen();
+      else close();
+      return;
+    }
     requestOpen(event.currentTarget);
-  }, [close, requestOpen]);
+  }, [anchor, close, interactive, keepOpen, requestOpen]);
   const focus = useCallback((event: FocusEvent<HTMLElement>) => {
     if (event.target === event.currentTarget && event.currentTarget.matches(':focus-visible')) requestOpen(event.currentTarget);
     else close();
@@ -57,10 +63,11 @@ export function useHoverPreview(disabled = false) {
   } };
 }
 
-export function HoverPreview({ preview, className = '', boundarySelector, children }: {
+export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, children }: {
   preview: ReturnType<typeof useHoverPreview>;
   className?: string;
   boundarySelector?: string;
+  interactiveLabel?: string;
   children: ReactNode;
 }) {
   const node = useRef<HTMLDivElement>(null);
@@ -77,8 +84,13 @@ export function HoverPreview({ preview, className = '', boundarySelector, childr
       element.style.maxWidth = `${Math.max(0, Math.min(innerWidth, area.right) - Math.max(0, area.left) - 24)}px`;
       const bounds = element.getBoundingClientRect(), right = trigger.right + 12;
       const left = right + bounds.width <= area.right - 12 ? right : trigger.left - bounds.width - 12;
-      element.style.left = `${Math.max(area.left + 12, Math.min(area.right - bounds.width - 12, left))}px`;
+      const positionedLeft = Math.max(area.left + 12, Math.min(area.right - bounds.width - 12, left));
+      element.style.left = `${positionedLeft}px`;
       element.style.top = `${Math.max(area.top + 12, Math.min(area.bottom - bounds.height - 12, trigger.top + trigger.height / 2 - bounds.height / 2))}px`;
+      const gap = positionedLeft >= trigger.right ? positionedLeft - trigger.right
+        : trigger.left - (positionedLeft + bounds.width);
+      element.dataset.side = gap < 0 ? 'overlap' : positionedLeft >= trigger.right ? 'right' : 'left';
+      element.style.setProperty('--hover-preview-gap', `${Math.max(0, gap)}px`);
     };
     position();
     const observer = new ResizeObserver(position);
@@ -88,25 +100,40 @@ export function HoverPreview({ preview, className = '', boundarySelector, childr
   }, [anchor, boundarySelector, children, close]);
   useEffect(() => {
     if (!anchor) return;
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
-    document.addEventListener('pointerdown', close, true);
+    const pointerDown = (event: globalThis.PointerEvent) => {
+      if (interactiveLabel && event.target instanceof Node && node.current?.contains(event.target)) return;
+      close();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const restoreFocus = interactiveLabel && node.current?.contains(document.activeElement);
+      close();
+      if (restoreFocus) anchor.focus({ preventScroll: true });
+    };
+    document.addEventListener('pointerdown', pointerDown, true);
     document.addEventListener('keydown', key, true);
     document.addEventListener('visibilitychange', close);
     window.addEventListener('blur', close);
     window.addEventListener('resize', close);
     window.addEventListener('scroll', close, true);
     return () => {
-      document.removeEventListener('pointerdown', close, true);
+      document.removeEventListener('pointerdown', pointerDown, true);
       document.removeEventListener('keydown', key, true);
       document.removeEventListener('visibilitychange', close);
       window.removeEventListener('blur', close);
       window.removeEventListener('resize', close);
       window.removeEventListener('scroll', close, true);
     };
-  }, [anchor, close]);
+  }, [anchor, close, interactiveLabel]);
   if (!anchor) return null;
-  return createPortal(<div ref={node} id={preview.id} popover="manual" role="tooltip"
-    className={`hover-preview ${className}`} onPointerEnter={preview.keepOpen} onPointerLeave={preview.leave}>
+  return createPortal(<div ref={node} id={preview.id} popover="manual" role={interactiveLabel ? 'dialog' : 'tooltip'} aria-label={interactiveLabel}
+    className={`hover-preview ${className}`} data-interactive={!!interactiveLabel} onPointerEnter={preview.keepOpen}
+    onPointerLeave={() => {
+      if (interactiveLabel && node.current?.contains(document.activeElement)) return;
+      preview.leave();
+    }}
+    onFocus={preview.keepOpen}
+    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) preview.leave(); }}>
     {children}
   </div>, anchor.closest('.app, .cardling-desktop') ?? document.body);
 }

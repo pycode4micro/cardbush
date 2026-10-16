@@ -1,6 +1,6 @@
 import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -103,10 +103,15 @@ test("detaching a UI stream keeps its Turn running and resumes from the cursor e
   } finally {releaseModel();oldController.abort();await command;}
 });
 
-test("runs consecutive Session Turns from durable facts without duplicating the prefix", async () => {
+test("runs consecutive Session Turns from durable facts without duplicating the prefix", async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-session-attachments-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const attachmentPath = join(root, 'brief.md');
+  await writeFile(attachmentPath, 'brief');
   const observedRequests = [];
   let response = 0;
   const host = new InMemoryRuntimeHost({
+    dataRoot: join(root, 'runtime'),
     provider: {
       async *stream(request) {
         observedRequests.push(structuredClone(request));
@@ -136,7 +141,7 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
       id: "attachment-1",
       name: "brief.md",
       type: "document",
-      path: "C:\\workspace\\brief.md",
+      path: attachmentPath,
     }],
   };
   await host.sendCommand({
@@ -148,8 +153,10 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
     payload: sessionRequest("request_2", "turn_2", "user_2", "second"),
   });
 
+  const attachmentContext = observedRequests[0].messages.find(message => message.name === 'turn_runtime_context').content;
   assert.deepEqual(observedRequests[0].messages.map((message) => message.content), [
     "fixed-prefix",
+    attachmentContext,
     "first",
   ]);
   assert.deepEqual(
@@ -158,6 +165,7 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   );
   assert.deepEqual(observedRequests[1].messages.map((message) => message.content), [
     "fixed-prefix",
+    attachmentContext,
     "first",
     "answer-1",
     "second",
@@ -173,17 +181,21 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   assert.equal(snapshot.turns[1].usage.lastRequestCachedInputTokens, 10);
   assert.equal(snapshot.turns[0].cacheChainState.requestOrdinal, 1);
   assert.equal(snapshot.turns[1].cacheChainState.requestOrdinal, 2);
-  assert.equal(snapshot.turns.flatMap((turn) => turn.messages).length, 4);
+  assert.equal(snapshot.turns.flatMap((turn) => turn.messages).length, 5);
   assert.equal(
     snapshot.turns[0].messages.find((message) => message.message.role === "assistant")
       .message.reasoningContent,
     "private-1",
   );
-  assert.deepEqual(snapshot.turns[0].messages[0].metadata.attachments, [{
+  const saved = snapshot.turns[0].messages.find(message => message.messageId === 'user_1').metadata.attachments;
+  assert.equal(await readFile(saved[0].path, 'utf8'), 'brief');
+  assert.notEqual(saved[0].path, attachmentPath);
+  assert.deepEqual(saved, [{
     id: "attachment-1",
     name: "brief.md",
     type: "document",
-    path: "C:\\workspace\\brief.md",
+    path: saved[0].path,
+    size: 5,
   }]);
   const conversationSnapshot = await host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,
@@ -211,6 +223,7 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   assert.ok(host.capabilities().features.includes("append_only_session_context"));
   assert.ok(host.capabilities().features.includes("cross_turn_cache_chain"));
   assert.ok(host.capabilities().features.includes("stopped_turn_continuation"));
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
 });
 
 test("stops an uncooperative provider, commits partial facts, and continues the Cache Chain", async () => {

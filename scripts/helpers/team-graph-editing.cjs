@@ -6,7 +6,7 @@ module.exports = async ({ read, until, frame, click, action, key, pointerClick, 
   await until('document.querySelector(".md-graph")?.dataset.readonly==="false"');
   const saved = await read('structuredClone(records.teams[0].definition)');
   const revision = () => read('records.teams[0].revision');
-  const waitSave = () => until('!document.querySelector("[aria-label=查看流程或运行]").disabled && !teamState.loading');
+  const waitSave = () => until('document.querySelector(".md-graph").getAttribute("aria-busy")!=="true" && !teamState.loading');
   const movePointer = async (selector, dx, dy) => {
     const point = await read(`(()=>{const rect=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)}})()`);
     win.webContents.sendInputEvent({type:'mouseMove',...point});
@@ -16,17 +16,33 @@ module.exports = async ({ read, until, frame, click, action, key, pointerClick, 
     win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:point.x+dx,y:point.y+dy}); await frame();
   };
   const initial = await revision();
+  await read(`window.unchangedTeams=teamState.teams;window.unchangedRuns=teamState.runs;window.choicesBefore=teamChoiceRenders;refreshTeamWorkspace(false,true)`); await frame();
+  assert.equal(await read('teamState.teams===unchangedTeams && teamState.runs===unchangedRuns'), true, 'unchanged polling preserves snapshot identities');
+  assert.equal(await read('teamChoiceRenders'), await read('choicesBefore'), 'background polls do not rerender the app/composer choices');
+  await read(`window.dragChromeMutations=[];window.dragChrome=new MutationObserver(changes=>dragChromeMutations.push(...changes.map(change=>change.attributeName||change.type)));for(const node of document.querySelectorAll('.team-sidebar-content,.team-flow-header'))dragChrome.observe(node,{subtree:true,attributes:true,childList:true,characterData:true});window.graphElement=document.querySelector('.md-graph');window.portsBefore=document.querySelectorAll('.md-node-port').length;`);
   await read('window.deferSave=true');
   await movePointer('[data-node-id=stock] .md-node-face', 20, 40);
   await until('!!window.finishSave');
   const movedTop = await read('document.querySelector("[data-node-id=stock]").style.top');
   assert.ok(Number.parseFloat(movedTop)>110, 'the dragged position remains visible while saving');
   assert.equal(await revision(), initial);
+  assert.equal(await read('document.querySelector(".md-graph").dataset.readonly'), 'false', 'saving never switches the graph into preview mode');
+  assert.equal(await read('document.querySelectorAll(".md-node-port").length'), await read('portsBefore'), 'ports stay mounted during save');
+  assert.equal(await read('document.querySelector("[aria-label=新建流程]")?.disabled || document.querySelector(".team-new-document").disabled'), false, 'a graph save does not lock the sidebar');
+  assert.deepEqual(await read('dragChromeMutations'), [], 'dragging and pending save leave the sidebar and header unchanged');
+  await read('dragChrome.disconnect()');
+  await read('window.dragRequestReady=false;window.dragRequest=creationChatProps.beforeSend("运行这个流程。").then(value=>{dragRequestReady=true;return value});void 0');
+  assert.equal(await read('dragRequestReady'), false, 'requests wait for the current graph edit to be saved');
   await action('刷新'); await frame();
   assert.equal(await read('document.querySelector("[data-node-id=stock]").style.top'), movedTop, 'background list refreshes do not undo a pending drag');
+  await read('window.choicesBefore=teamChoiceRenders;window.dragCamera=document.querySelector(".md-graph-stage").style.transform');
   await read('window.deferSave=false;finishSave()'); await waitSave();
   assert.equal(await revision(), initial+1);
   assert.equal(await read('records.teams[0].definition.nodes[0].position.y+"px"'), movedTop);
+  assert.equal(await read('teamChoiceRenders'), await read('choicesBefore'), 'saving coordinates does not update app/composer choices');
+  assert.equal(await read('document.querySelector(".md-graph")===graphElement && document.querySelector(".md-graph-stage").style.transform===dragCamera'), true, 'save keeps the graph mounted at the same camera');
+  const dragRequest = await read('dragRequest');
+  assert.ok(dragRequest.context.some(item => item.content.includes('"revision":' + (initial + 1))), 'the next request uses the revision returned by the save');
   assert.deepEqual(await read('records.teams[0].definition.presentation'), saved.presentation);
   assert.deepEqual(await read('records.runs[0].workflow.nodes.map(node=>node.position)'), [undefined,undefined], 'history never acquires current canvas coordinates');
   // Zooming and panning are view operations, not persisted edits.
@@ -93,4 +109,15 @@ module.exports = async ({ read, until, frame, click, action, key, pointerClick, 
   assert.ok(await read('(()=>{const list=document.querySelector(".settings-dropdown-popover:popover-open"),rect=list.getBoundingClientRect(),option=list.querySelector(".highlighted").getBoundingClientRect();return list.scrollTop>0&&rect.left>=12&&rect.right<=innerWidth-12&&rect.bottom<=innerHeight-12&&option.top>=rect.top&&option.bottom<=rect.bottom})()'), 'long history scrolls the highlighted entry into a viewport-clamped menu');
   await key('Escape');
   win.setSize(1120,1000); await frame();
+  // Navigation remains usable while a layout save is pending; its late receipt
+  // may update the library but must not install the old graph in a new draft.
+  await read('window.deferSave=true;window.finishSave=undefined;window.navigationRevision=records.teams[0].revision');
+  await movePointer('[data-node-id=stock] .md-node-face', 15, 15);
+  await until('!!window.finishSave');
+  await click('新建流程'); await until('document.querySelector(".team-flow-header h1")?.textContent==="新建协作流程"');
+  assert.equal(await read('!!document.querySelector(".md-graph")'), false);
+  await read('window.deferSave=false;finishSave()');
+  await until('teamState.teams[0].revision===navigationRevision+1');
+  assert.equal(await read('!document.querySelector(".md-graph") && document.querySelector(".team-flow-header h1")?.textContent==="新建协作流程"'), true, 'a completed save cannot replace the new draft');
+  await pointerClick(`[data-team-document-id="${saved.id}"]`); await until('!!document.querySelector(".md-graph")'); await waitSave();
 };

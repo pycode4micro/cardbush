@@ -344,7 +344,7 @@ async function resolveShadowState(
 ): Promise<ShadowState | undefined> {
   const cached = conversations.get(conversationId);
   if (cached) return cached;
-  const session = (await client.listSessions()).find((candidate) =>
+  const session = (await client.listSessionSummaries()).find((candidate) =>
     candidate.metadata?.shadowConversationId === conversationId &&
     candidate.metadata?.temporary === true);
   const sourceSessionId = String(session?.metadata?.shadowOfSessionId ?? '').trim();

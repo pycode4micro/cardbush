@@ -7,7 +7,7 @@ import { assistantProfileSchema, normalizeIndividuation, PERSONAL_ASSISTANT_SESS
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { AssistantMemory } from '../dist/assistantMemory.js';
 import { ConversationJournal } from '../dist/conversationJournal.js';
-import { IndividuationMemory } from '../dist/individuationMemory.js';
+import { runtimeMemory } from './helpers/runtimeMemory.mjs';
 import { IndividuationStore } from '../dist/individuationStore.js';
 import { registerIndividuationTools } from '../dist/individuationTools.js';
 import { registerContextCompactionTool } from '../dist/contextCompaction.js';
@@ -45,7 +45,7 @@ function fixture(t, respond = () => ({})) {
       sequence: 0, kind: 'response_failed', code: 'ECONNRESET', message: 'Connection interrupted', retryable: true };
     else yield* response(request, output);
   } };
-  const memory = new IndividuationMemory(join(root, 'personalization.sqlite'), provider);
+  const memory = runtimeMemory(join(root, 'personalization.sqlite'), provider);
   registerIndividuationTools(registry, memory.store.path, memory);
   registerContextCompactionTool(registry, () => assert.fail('only maintenance may checkpoint'));
   const observe = memory.store.observe.bind(memory.store);

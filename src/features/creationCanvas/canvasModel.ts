@@ -10,6 +10,9 @@ export function canvasFileTarget(source: string, manifest: string) {
   return decodeURIComponent(url.pathname).replace(/^\/([a-z]:\/)/i, '$1');
 }
 type WithoutFrame<T> = T extends unknown ? Omit<T, 'frame'> : never;
+export function editableCanvasMarkdown(item: CanvasItem) {
+  return item.kind === 'markdown' || item.kind === 'file' && !item.reference && /\.(md|markdown)$/i.test(item.source) && !/^[a-z][\w+.-]*:\/\//i.test(item.source);
+}
 export function placeCanvasItems(document: CreationCanvas, items: Array<WithoutFrame<CanvasItem>>, size = { width: 640, height: 420 }) {
   const next = structuredClone(document);
   for (const item of items) {

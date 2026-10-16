@@ -8,18 +8,20 @@ export function useAccountCache() {
   if (!cache) throw new Error('An authenticated cache scope is required.');
   return cache;
 }
-type ImageEntry = { src: string; bytes: number; users: number; touched: number };
+type ImageEntry = { src: string; blob: Blob; bytes: number; users: number; touched: number };
 class PersonalImages {
   private urls = new Map<string, ImageEntry>();
   private pending = new Map<string, Promise<ImageEntry>>();
   private abort = new AbortController();
+  private fetching = 0;
+  private waiters: Array<() => void> = [];
   constructor(private cache: AccountCache) {
     cache.onClose(() => { this.abort.abort(); for (const value of this.urls.values()) URL.revokeObjectURL(value.src); this.urls.clear(); this.pending.clear(); });
   }
   peek(path: string) { return this.cache.valid() ? this.urls.get(path)?.src : undefined; }
   private remember(path: string, blob: Blob) {
     const existing = this.urls.get(path); if (existing) return existing;
-    const entry = { src: URL.createObjectURL(blob), bytes: blob.size, users: 0, touched: Date.now() }; this.urls.set(path, entry); return entry;
+    const entry = { src: URL.createObjectURL(blob), blob, bytes: blob.size, users: 0, touched: Date.now() }; this.urls.set(path, entry); return entry;
   }
   seed(path: string, blob: Blob) {
     if (!this.cache.valid() || !personalFilePath(path) || !/^image\/(png|jpeg|webp)$/.test(blob.type) || blob.size > cacheLimits.imageBytes) return;
@@ -28,12 +30,16 @@ class PersonalImages {
   private async load(path: string) {
     let blob = await this.cache.get<Blob>(`image:${path}`);
     if (!blob) {
+      if (this.fetching >= 3) await new Promise<void>(resolve => this.waiters.push(resolve)); else this.fetching++;
+      try {
+      this.abort.signal.throwIfAborted();
       const response = await fetch(`/api/web/v1/files/view?path=${encodeURIComponent(path)}`, { credentials: 'same-origin', cache: 'no-store', signal: this.abort.signal, headers: { 'X-CardBush-User': this.cache.owner } });
       if (response.status === 401 && this.cache.valid()) window.dispatchEvent(new Event('cardbush:logged-out'));
       if (!response.ok || !/^image\/(png|jpeg|webp)$/.test(response.headers.get('Content-Type') ?? '') || Number(response.headers.get('Content-Length')) > cacheLimits.imageBytes) throw new Error('图片暂时无法读取');
       blob = await response.blob();
       if (blob.size > cacheLimits.imageBytes) throw new Error('图片过大');
       this.cache.put(`image:${path}`, blob, 'image');
+      } finally { const next = this.waiters.shift(); if (next) next(); else this.fetching--; }
     }
     if (!this.cache.valid()) throw new Error('Account changed');
     return this.remember(path, blob);
@@ -49,7 +55,7 @@ class PersonalImages {
     if (!this.cache.valid()) throw new Error('Account changed');
     entry.users++; entry.touched = Date.now(); this.trim();
     let released = false;
-    return { src: entry.src, release: () => { if (released) return; released = true; entry!.users--; this.trim(); } };
+    return { src: entry.src, blob: entry.blob, release: () => { if (released) return; released = true; entry!.users--; this.trim(); } };
   }
   private trim() {
     let bytes = [...this.urls.values()].reduce((sum, entry) => sum + entry.bytes, 0);
@@ -68,7 +74,7 @@ export async function acquireCachedImage(cache: AccountCache, source: string) {
   const path = personalFilePath(source);
   if (!path) throw new Error('只能查看当前账号的个人图片。');
   const result = await images(cache).acquire(path);
-  return { source: result.src, dispose: result.release };
+  return { source: result.src, blob: result.blob, dispose: result.release };
 }
 export function useCachedImage(source: string) {
   const cache = useAccountCache(), path = personalFilePath(source), store = images(cache);

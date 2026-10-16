@@ -31,6 +31,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelector("textarea").placeholder'), await run('prediction.text'));
   assert.equal(await run('document.querySelector("textarea").value'), '', 'suggestion is not an authored draft');
   assert.deepEqual(await run('predSends'), []);
+  await run(`window.badPrediction={...prediction,id:'narrative',text:'用户可能接下来要求运行这个示例流程，或把其中的节点替换为自己注册的员工。'};`);
+  for (const style of ['standard','simple']) for (const supplied of [false,true]) {
+    await run(`predStyle='${style}';predContext={sessionId:'predict-session',browserTabs:[],messages:predMessages.map(message=>({...message,toolExecutions:message.toolExecutions?.map(tool=>({...tool,metadata:{nextStepPrediction:badPrediction}}))})),${supplied ? 'nextStepPrediction:badPrediction' : ''}};renderPrediction();`);
+    await until('!document.querySelector(".composer-prediction-accept")','narrative forecasts are hidden in all shared inputs');
+    assert.equal(await run('predKey("Tab")'),false,'rejected prediction leaves normal Tab navigation');
+    await run('predKey()');
+    assert.equal(await run('predProps.draft'),'','empty Enter does not insert a rejected prediction');
+    assert.deepEqual(await run('predSends'),[]);
+  }
+  await run('predStyle="standard";predContext={sessionId:"predict-session",browserTabs:[],messages:predMessages};renderPrediction();');
+  await until('!!document.querySelector(".composer-prediction-accept")','valid suggestion remains usable');
   for (const key of ['Enter', 'Tab']) for (const options of [{isComposing:true}, {keyCode:229}, {shiftKey:true}, {ctrlKey:true}, {metaKey:true}, {altKey:true}, {repeat:true}]) {
     const prevented = await run(`predKey('${key}',${JSON.stringify(options)})`);
     if (key === 'Tab' && !options.repeat) assert.equal(prevented, false, 'IME and modified Tab retain their native behavior');
@@ -137,6 +148,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
 
   await run('predAssistant=true;renderPrediction();');
   await until('!!document.querySelector(".composer-stack.simple .composer-prediction-accept")', 'assistant uses the shared prediction input');
+  await run('window.validPrediction=prediction;prediction=badPrediction;renderPrediction();');
+  await until('!document.querySelector(".composer-prediction-accept")','assistant also filters supplied narrative forecasts');
+  assert.equal(await run('predKey("Tab")'),false);
+  await run('predKey()');
+  assert.equal(await run('predProps.draft'),'');assert.equal(await run('predSends.length'),5);
+  await run('prediction=validPrediction;renderPrediction();');
+  await until('!!document.querySelector(".composer-prediction-accept")','assistant restores a valid forecast');
   assert.notEqual(await run('getComputedStyle(document.querySelector(".composer-prediction-accept")).display'), 'none');
   window.setContentSize(430, 720); await pause(80);
   assert.equal(await run('(()=>{const a=document.querySelector("textarea").getBoundingClientRect(),b=document.querySelector(".composer-actions").getBoundingClientRect();return a.bottom<=b.top+1})()'), true,
@@ -158,6 +176,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('predKey("Tab")'), true);
   await until('predProps.draft===prediction.text', 'assistant Tab also inserts without sending');
   assert.equal(await run('predSends.length'), 5);
+  await run('predType(badPrediction.text);');
+  await pause(30);await run('predKey()');
+  await until('predSends.length===6','prediction checks never block the user\'s own text');
+  assert.equal(await run('predSends[5]'),await run('badPrediction.text'));
   await run('renderView(null);views.saveIndividuation({habits:false,predictions:false})');
   console.log('Prediction composer: Tab/Enter insert without sending, empty loop never cancels, native Tab navigation, IME/modifier/repeat guards, draft/attachment priority, assistant and narrow layout passed.');
 };

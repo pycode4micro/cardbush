@@ -11,9 +11,19 @@ import React from 'react';import{createRoot}from'react-dom/client';
 import{CreationCanvasApp}from'${local('src/features/creationCanvas/CreationCanvasApp.tsx')}';
 import{CanvasSidebar}from'${local('src/features/creationCanvas/CanvasSidebar.tsx')}';
 import*as store from'${local('src/features/creationCanvas/canvasStore.ts')}';
+import*as pages from'${local('src/features/mdPresentation/bushItPageStore.ts')}';
+import{refreshCreationFile}from'${local('src/features/mdPresentation/creationFiles.ts')}';
+import{openBushItDocument}from'${local('src/features/mdPresentation/bushItDocuments.ts')}';
+import{teamToMarkdown}from'${local('src/features/team/teamMarkdown.ts')}';
 import{canvasFileTarget}from'${local('src/features/creationCanvas/canvasModel.ts')}';
 import'${local('src/styles/theme.css')}';import'${local('src/styles/app.css')}';
-window.cardbushDesktop={...window.testBridge,getPathForFile:()=>''};window.canvasStore=store;window.canvasFileTarget=canvasFileTarget;
+window.canvasPendingWrites=0;
+window.cardbushDesktop={...window.testBridge,getPathForFile:()=>'',creationCanvas:async input=>{
+  const writing=input.action==='save';if(writing)window.canvasPendingWrites++;
+  try{return await window.testBridge.creationCanvas(input);}finally{if(writing)window.canvasPendingWrites--;}
+}};window.canvasStore=store;window.canvasFileTarget=canvasFileTarget;
+window.canvasPages=pages;window.refreshCreationFile=refreshCreationFile;window.canvasOpenDocument=openBushItDocument;
+window.canvasTeamMarkdown=teamToMarkdown;
 if(!localStorage.getItem('fixture-seeded')){localStorage.setItem('fixture-seeded','true');localStorage.setItem('cardbush.bush-it.pages.v1',JSON.stringify({pages:[{id:'legacy',source:'# Legacy note\\n\\nPreserve my writing',updatedAt:1}],selectedId:'legacy'}));}
 function Fixture(){return <div className="app theme-dark" style={{height:'100vh',display:'flex'}}><CanvasSidebar language="zh" onBack={()=>{}}/><CreationCanvasApp language="zh"/></div>;}createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
@@ -22,14 +32,17 @@ try {
   await writeFile(join(directory, 'entry.tsx'), fixture);
   await writeFile(join(directory, 'chat.tsx'), chat);
   await writeFile(join(directory, 'index.html'), '<html><head><meta charset="utf-8"></head><body style="margin:0"><div id="root"></div><script type="module" src="./entry.tsx"></script></body></html>');
-  await writeFile(join(directory, 'preload.cjs'), `const{contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('testBridge',{creationCanvas:input=>ipcRenderer.invoke('canvas:command',input),ensureTaskWorkspace:id=>ipcRenderer.invoke('canvas:workspace',id),pickAttachments:()=>ipcRenderer.invoke('canvas:pick'),readTextPreview:path=>ipcRenderer.invoke('canvas:text',path),captureInspectorRegion:input=>ipcRenderer.invoke('canvas:capture',input),design:input=>ipcRenderer.invoke('canvas:design',input)});`);
+  await writeFile(join(directory, 'preload.cjs'), `const{contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('testBridge',{creationCanvas:input=>ipcRenderer.invoke('canvas:command',input),markdownFile:input=>ipcRenderer.invoke('canvas:markdown',input),teamCommand:input=>ipcRenderer.invoke('canvas:team',input),ensureTaskWorkspace:id=>ipcRenderer.invoke('canvas:workspace',id),pickAttachments:()=>ipcRenderer.invoke('canvas:pick'),readTextPreview:path=>ipcRenderer.invoke('canvas:text',path),captureInspectorRegion:input=>ipcRenderer.invoke('canvas:capture',input),design:input=>ipcRenderer.invoke('canvas:design',input)});`);
   await writeFile(join(directory, 'sample.md'), '# A real Markdown file\n\nSelect this paragraph for the canvas.\n\nAnother paragraph to preserve.');
   await writeFile(join(directory, 'sample.html'), '<html><body style="background:#eee;color:#111;padding:30px"><h1>HTML file</h1><p id="region">Select a region from this file.</p></body></html>');
   const docx = require('docx'); await writeFile(join(directory, 'sample.docx'), await docx.Packer.toBuffer(new docx.Document({ sections: [{ children: [new docx.Paragraph('Real Word document')] }] })));
   const xlsx = require('styled-exceljs'), book = xlsx.utils.book_new(); xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([['Name', 'Value'], ['Alpha', 42]]), 'Sheet 1'); xlsx.writeFile(book, join(directory, 'sample.xlsx'));
   const slides = new (require('pptxgenjs'))(); slides.addSlide().addText('Real slides', { x: 1, y: 1, w: 6, h: 1 }); await slides.writeFile({ fileName: join(directory, 'sample.pptx') });
   const { PDFDocument } = require('pdf-lib'), pdf = await PDFDocument.create(); pdf.addPage([400, 300]).drawText('Real PDF'); await writeFile(join(directory, 'sample.pdf'), await pdf.save());
-  await build({ configFile: false, root: directory, base: './', logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'fixture-chat', enforce: 'pre', resolveId(source, importer) { if (importer?.replaceAll('\\','/').endsWith('/creationCanvas/CreationCanvasApp.tsx') && source.endsWith('/CreationConversation')) return join(directory, 'chat.tsx'); } }, pdfPreviewAssetsPlugin()], build: { outDir: join(directory, 'app'), emptyOutDir: true, rolldownOptions: { input: join(directory, 'index.html') } } });
+  await build({ configFile: false, root: directory, base: './', logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'fixture-chat', enforce: 'pre', resolveId(source, importer) {
+    if (importer?.replaceAll('\\','/').endsWith('/creationCanvas/CreationCanvasApp.tsx') && source.endsWith('/CreationConversation')) return join(directory, 'chat.tsx');
+    if (source.includes('ElectronRuntimeSession') && importer?.endsWith('teamWorkspaceStore.ts')) return '\0canvas-team-transport';
+  }, load(id) { if (id === '\0canvas-team-transport') return 'export const createDesktopRuntimeSession=()=>({client:{command:async(input,decode)=>decode(await window.testBridge.teamCommand(input))},dispose(){}});'; } }, pdfPreviewAssetsPlugin()], build: { outDir: join(directory, 'app'), emptyOutDir: true, rolldownOptions: { input: join(directory, 'index.html') } } });
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
   const status = await new Promise((resolveStatus, reject) => { const child = spawn(require('electron'), [resolve('scripts/test-creation-canvas-ui-worker.cjs'), directory], { env, windowsHide: true, stdio: 'inherit' }); child.on('error', reject); child.on('exit', resolveStatus); });
   if (status !== 0) throw Error(`Canvas UI test failed (${status}); fixtures retained at ${directory}`);

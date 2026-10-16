@@ -1,6 +1,6 @@
-import { dialogEventHandler } from '../../shared/dialogEvents';
-import { useId, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, Download, X } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { ChevronDown, Download } from 'lucide-react';
+import { SettingsFormDialog } from './SettingsFormDialog';
 import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, resolveModelReasoningEffort, reasoningEffortsForProtocol, type ModelApiProtocol } from '@cardbush/bush-protocol';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { AppLanguage, ManagedModelConfig, ReasoningLevel } from '../../types';
@@ -19,7 +19,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   onCancel: () => void; onSave: (model: ManagedModelConfig) => Promise<void>; discoverModels?: DiscoverModels;
   allowChatGpt?: boolean;
 }) {
-  const zh = language === 'zh', titleId = useId(), dialog = useRef<HTMLDialogElement>(null);
+  const zh = language === 'zh';
   const [name, setName] = useState(model?.modelName ?? '');
   const [authentication, setAuthentication] = useState<'api_key' | 'chatgpt'>(model?.authentication?.kind ?? 'api_key');
   const [accountId, setAccountId] = useState(model?.authentication?.kind === 'chatgpt' ? model.authentication.accountId : '');
@@ -42,11 +42,8 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   const [discovered, setDiscovered] = useState<string[]>([]), [discovering, setDiscovering] = useState(false);
   const discoveryVersion = useRef(0), mounted = useRef(true);
   useLayoutEffect(() => {
-    const node = dialog.current!, previous = document.activeElement as HTMLElement | null;
-    mounted.current = true; node.showModal();
-    return () => { mounted.current = false; node.close();
-      // The opener may still be disabled while React commits the saved state.
-      queueMicrotask(() => { if (previous?.isConnected) previous.focus({ preventScroll: true }); }); };
+    mounted.current = true;
+    return () => { mounted.current = false; };
   }, []);
   const readHeaders = () => modelHeadersSchema.parse(headers.trim() ? JSON.parse(headers) : {});
   const changedConnection = () => { discoveryVersion.current++; setDiscovered([]); setFormError(''); };
@@ -64,13 +61,11 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
         maxContextTokens: context.trim() ? Number(context) : undefined, maxCompletionTokens: !chatGpt && completion.trim() ? Number(completion) : undefined });
     } catch (failure) { setFormError(agentErrorText(failure)); }
   };
-  return <dialog ref={dialog} className="model-config-dialog" aria-labelledby={titleId}
-    onCancel={dialogEventHandler(event => { event.preventDefault(); if (!busy) onCancel(); })} onKeyDown={event => event.stopPropagation()}>
-    <header className="model-dialog-header"><div><h2 id={titleId}>{model ? zh ? '编辑模型' : 'Edit model' : zh ? '添加模型' : 'Add model'}</h2>
-      <p>{zh ? '选择接入协议，填写服务地址和模型信息。' : 'Choose an API protocol and configure the model connection.'}</p></div>
-      <button type="button" className="icon-button" disabled={busy} aria-label={zh ? '关闭' : 'Close'} onClick={onCancel}><X size={18}/></button></header>
-    <form className="model-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <div className="model-dialog-body">
+  return <SettingsFormDialog className="model-config-dialog" language={language} busy={busy} onCancel={onCancel} onSubmit={submit}
+    title={model ? zh ? '编辑模型' : 'Edit model' : zh ? '添加模型' : 'Add model'}
+    description={zh ? '选择接入协议，填写服务地址和模型信息。' : 'Choose an API protocol and configure the model connection.'}
+    footer={<><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{zh ? '取消' : 'Cancel'}</button>
+      <button type="submit" className="primary-button" disabled={busy || !name.trim() || !provider}>{busy ? zh ? '保存中…' : 'Saving…' : zh ? '保存模型' : 'Save model'}</button></>}>
       <fieldset disabled={busy} className="agent-model-fields">
         {(allowChatGpt && window.cardbushDesktop?.siwcSnapshot || chatGpt) && <label className="settings-field"><span>{zh ? '授权方式' : 'Authentication'}</span>
           <SettingsDropdown label={zh ? '授权方式' : 'Authentication'} value={authentication} options={[{ value: 'api_key', label: 'API Key' }, { value: 'chatgpt', label: 'ChatGPT · SIWC', disabled: !allowChatGpt }]}
@@ -125,9 +120,5 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
         </div>}
         {(formError || error) && <p className="settings-inline-error" role="alert">{formError || error}</p>}
       </fieldset>
-      </div>
-      <footer className="model-dialog-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{zh ? '取消' : 'Cancel'}</button>
-        <button type="submit" className="primary-button" disabled={busy || !name.trim() || !provider}>{busy ? zh ? '保存中…' : 'Saving…' : zh ? '保存模型' : 'Save model'}</button></footer>
-    </form>
-  </dialog>;
+  </SettingsFormDialog>;
 }

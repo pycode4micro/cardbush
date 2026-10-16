@@ -1,5 +1,7 @@
 import { checkHabitInputSchema, normalizeIndividuation, summaryForUserInputSchema, memoryChangeSchema,
-  type ModelMessage, type SummaryForUserInput, type CheckHabitInput, type MemoryChange } from '@cardbush/bush-protocol';
+  NEXT_STEP_PREDICTION_TEXT_DESCRIPTION, nextStepPredictionTextIssue,
+  type ModelMessage, type SummaryForUserInput, type CheckHabitInput, type MemoryChange, type MemoryRead } from '@cardbush/bush-protocol';
+import { fitToolResultPage } from './toolResultBudget.js';
 import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import { IndividuationStore } from './individuationStore.js';
@@ -55,7 +57,8 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
       description: 'Mark the next response as final for display after tool work, and optionally save separate habit and prediction records. When this turn has used other tools and the work is complete, call this once before the final reply, even when there is nothing to save ({}). For ordinary conversation without tool work, the agent may reply directly without invoking this tool. The agent chooses when the work is ready; the host neither inserts a call nor requires one to finish. Put supported, reusable user preferences or corrections in habit; put uncertain next-step needs in prediction. Each is independent, optional, and saved only when its own memory category is enabled. Include the applicable situation in concise natural language; do not mix categories or invent an entry to fill both. Do not recap tool executions, repeat known records, save secrets, or infer sensitive traits. No template or required fields. Disabled memory or nothing new to save does not prevent the final-display signal: use {}. The host deduplicates each category and periodically consolidates records; predictions are hypotheses, not authorization. The memory transaction finishes before the final-display receipt; write failure does not block the reply. Each write reports its ID and created/deduplicated/rejected/skipped status without echoing text. Retrying the same operation replays its receipt; use revise_memory to correct an existing record. Success marks the next response final for display but does not end the loop.',
       inputSchema:{type:'object',additionalProperties:false,properties:{
         habit:{...noteSchema,description:'Supported reusable user preference. Omit when disabled or nothing new is supported.'},
-        prediction:{...noteSchema,description:'Unconfirmed next-step need. Write text as one concise, ready-to-edit request in the user\'s voice and language; it is also offered in the empty composer for the user to insert and edit before sending. Put conditions in applies_when. Do not add explanations, multiple alternatives or uncertain third-person narration. It is not an established habit or permission to act. Omit when disabled or nothing new is useful.'},
+        prediction:{...noteSchema,description:'Optional next user message, offered in the empty composer for the user to insert, edit and send. This is an unconfirmed suggestion, never authorization. Omit when disabled or no single next request is clear. A prediction_display omission does not block the final reply; do not retry solely to fill the composer.',
+          properties:{...noteProperties,text:{...noteProperties.text,description:NEXT_STEP_PREDICTION_TEXT_DESCRIPTION}}},
       }},
     },manifest:{...manifest,effect_kind:'mutation',operation:'memory.record',mutating:true},parallelSafe:true,decodeInput:value=>summaryForUserInputSchema.parse(value),
     execute:async context=>{
@@ -65,7 +68,10 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
       try {
         const recorded=await store.summarize(context.input,settings,{...context,operationId:context.toolCall?.id},user,context.signal);
         if(context.turn) memory?.schedule(settings,context.turn.request);
-        return {status:'ok',final_response:true,...recorded};
+        const displayIssue=context.input.prediction && recorded.writes.some(write=>write.category==='prediction' && ['created','deduplicated'].includes(write.status))
+          ? nextStepPredictionTextIssue(context.input.prediction.text) : undefined;
+        return {status:'ok',final_response:true,...recorded,
+          ...(displayIssue ? {prediction_display:{status:'omitted',reason:displayIssue}} : {})};
       } catch {
         context.signal?.throwIfAborted();
         return {status:'ok',final_response:true,saved:false,storage_status:'unavailable',writes:[]};
@@ -83,6 +89,16 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
         ids:{type:'array',minItems:1,maxItems:3,items:{type:'string',maxLength:120}},count_only:{type:'boolean'},
       }},
     },manifest,parallelSafe:true,decodeInput:value=>checkHabitInputSchema.parse(value),
+    projectModelPage: (value, budget, call) => {
+      // Explicit ID reads retain full records. Lookup pages keep their stable
+      // keyset cursor; any entries omitted at delivery remain addressable by ID.
+      if (!call || JSON.parse(call.argumentsText).ids) return undefined;
+      const result = value as MemoryRead;
+      return fitToolResultPage(result.memories.length, budget, count => JSON.stringify({ ...result,
+        memories: result.memories.slice(0, count),
+        ...(count < result.memories.length ? { omitted: [...(result.omitted ?? []),
+          ...result.memories.slice(count).map(memory => ({ id: memory.id, reason: 'budget_limited' }))] } : {}) }));
+    },
     execute:async context=>{
       const settings=normalizeIndividuation(context.turn?.request.metadata.individuation);
       try{return await store.read(context.input,settings,[],1000,context.signal);}

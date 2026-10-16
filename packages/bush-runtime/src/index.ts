@@ -11,6 +11,8 @@ export * from "./coordinationStore.js";
 export * from "./coordinationTools.js";
 export * from "./fileCoordinationPersistence.js";
 export * from "./inMemoryRuntimeHost.js";
+export type { RuntimeInternalTaskOptions, RuntimeInternalTaskRunner } from './runtimeInternalTask.js';
+export type { RuntimeExecutionOptions, RuntimeExecutionProgress } from './runtimeTurnExecution.js';
 export * from "./interactionTools.js";
 export * from "./fileRuntimeEventPersistence.js";
 export * from "./fileRuntimeCheckpointStore.js";

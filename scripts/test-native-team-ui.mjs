@@ -18,11 +18,13 @@ import { MdPresentationApp } from '${local('src/features/mdPresentation/MdPresen
 import { BushItSidebar } from '${local('src/features/mdPresentation/BushItSidebar.tsx')}';
 import * as pages from '${local('src/features/mdPresentation/bushItPageStore.ts')}';
 import { publishFileEditEvent } from '${local('src/backend/fileEditEvents.ts')}';
-import { useTeamWorkspace } from '${local('src/features/team/teamWorkspaceStore.ts')}';
+import { useTeamWorkspace, useTeamChoices, refreshTeamWorkspace } from '${local('src/features/team/teamWorkspaceStore.ts')}';
 import { saveComponents, useComponents } from '${local('src/features/components/componentStore.ts')}';
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 window.pages=pages; window.saveComponents=saveComponents; window.publishFileEditEvent=publishFileEditEvent; window.records = { agents: [], teams: [], runs: [] }; window.calls = []; window.sessionInputs=[];window.fixtureConversations={};window.workspaceCalls=[];
+window.refreshTeamWorkspace=refreshTeamWorkspace;
+const TeamChoiceProbe=React.memo(function TeamChoiceProbe(){window.teamChoiceState=useTeamChoices();window.teamChoiceRenders=(window.teamChoiceRenders||0)+1;return null;});
 window.fileResult=null; window.fileCalls=[]; window.cardbushDesktop={ensureTaskWorkspace:async id=>{workspaceCalls.push(id);return 'D:/task-workspaces/'+id},markdownFile:async input=>{fileCalls.push(input);if(input.action==='save')return {path:'D:/workflow.md',text:input.text,revision:'file-v1'};return fileResult;}};
 window.command = async ({kind,payload:input}) => {
   window.calls.push({kind, input:structuredClone(input)});
@@ -47,7 +49,7 @@ function Fixture(){ window.teamState=useTeamWorkspace(); window.pageState=pages.
   const [inspector,setInspector]=React.useState(null);
   const inspectorContext=React.useCallback(value=>{window.creationInspector=value;setInspector(value);},[]);
   const changed=React.useCallback(()=>{window.conversationRefreshes=(window.conversationRefreshes||0)+1},[]);
-  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}>{mode==='team'?<><NativeTeamSidebar language="zh" onBack={()=>setMode('md')}/><TeamWorkspace language="zh" chatOptions={{onInspectorContext:inspectorContext,composerPortalTarget:portal,onConversationChanged:changed}} onOpenConversation={id=>window.openedConversation=id}/></>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice} onToggleInspector={()=>window.inspectorOpened=true} onInspectorContext={inspectorContext} onConversationChanged={changed} composerPortalTarget={portal}/></>}</div>; }
+  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}><TeamChoiceProbe/>{mode==='team'?<><NativeTeamSidebar language="zh" onBack={()=>setMode('md')}/><TeamWorkspace language="zh" chatOptions={{onInspectorContext:inspectorContext,composerPortalTarget:portal,onConversationChanged:changed}} onOpenConversation={id=>window.openedConversation=id}/></>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice} onToggleInspector={()=>window.inspectorOpened=true} onInspectorContext={inspectorContext} onConversationChanged={changed} composerPortalTarget={portal}/></>}</div>; }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {

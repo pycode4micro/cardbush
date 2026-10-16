@@ -73,10 +73,10 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   assert.match(tool('edit_file').description, /After a match failure.*read_file.*instead of repeating/);
   assert.match(tool('terminal_exec').description, /completion_notification=true.*manage_tool_calls.*completion_task_id/);
   assert.match(tool('terminal_exec').inputSchema.properties.notify_on_exit.description, /Set false for persistent servers/);
-  assert.match(tool('start_mcp_tool').description, /loaded tool's documented timeout response/);
+  assert.match(tool('start_mcp_tool').description, /documented timeout path\/value/);
   assert.match(tool('manage_tool_calls').description, /stops observing, not the process/);
   const title = tool('terminal_exec').inputSchema.properties._display_title;
-  assert.match(title.description, /independent of reply language/);
-  assert.match(title.description, /outer call, never inside third-party arguments/);
+  assert.match(title.description, /Bilingual UI action purpose/);
+  assert.match(title.description, /outer call only, never third-party arguments/);
   assert.deepEqual(title.required, ['zh', 'en']);
 });

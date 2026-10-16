@@ -11,7 +11,7 @@ export async function normalizeWebImage(bytes: Buffer) {
 }
 
 export const WEB_BASE_TOOLS = ['read_file', 'inject_image_input', 'solution_selection', 'checkpoint_context', 'search_skills', 'run_skill'] as const;
-export const WEB_IMAGE_TOOLS = ['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks'] as const;
+export const WEB_IMAGE_TOOLS = ['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'] as const;
 export const WEB_IMAGE_PREFIX = 'mcp__plugin_volcengine_images_images__';
 export function webToolAllowed(name: string) {
   return (WEB_BASE_TOOLS as readonly string[]).includes(name) || WEB_IMAGE_TOOLS.some(tool => name === WEB_IMAGE_PREFIX + tool);
@@ -25,17 +25,26 @@ export async function webToolDenial(request: ModelRequest | undefined, name: str
   if (!webToolAllowed(name)) return 'This tool is not available in this deployment.';
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   if (input.environment !== undefined && input.environment !== 'local') return 'Only the account-local environment is available.';
-  if (name !== 'read_file' && name !== 'inject_image_input') return;
-  const candidate = input[name === 'read_file' ? 'path' : 'url'];
-  if (typeof candidate !== 'string' || !candidate.trim() || /^(?:[a-z][a-z0-9+.-]*:\/\/|data:|\\\\)/i.test(candidate) || candidate.includes('\0')) return 'Only files in your personal folder are available.';
+  const conversion = name === WEB_IMAGE_PREFIX + 'image_convert';
+  const stitching = name === WEB_IMAGE_PREFIX + 'image_stitch';
+  const imageOperation = conversion || stitching;
+  if (name !== 'read_file' && name !== 'inject_image_input' && !imageOperation) return;
+  const imageRequest = input.request as Record<string, unknown> | undefined;
+  const candidates = stitching ? imageRequest?.source_paths : [conversion ? imageRequest?.source_path : input[name === 'read_file' ? 'path' : 'url']];
+  if (!Array.isArray(candidates) || (stitching && (candidates.length < 2 || candidates.length > 64))) return 'Stitching requires 2 to 64 personal image paths.';
   const roots = request.metadata.webReadRoots;
   if (!Array.isArray(roots) || !roots.length || !roots.every(root => typeof root === 'string' && isAbsolute(root))) return 'The personal file boundary is unavailable.';
   try {
     const workspace = typeof request.metadata.workspaceDir === 'string' ? request.metadata.workspaceDir : '';
-    if (!isAbsolute(candidate) && !workspace) return 'An account-local file path is required.';
-    const path = await realpath(resolve(workspace, candidate));
-    const canonicalRoots = await Promise.all(roots.map(root => realpath(root as string)));
-    if (!canonicalRoots.some(root => inside(root, path))) return 'Access outside your personal folder is denied.';
-    if (!(await stat(path)).isFile()) return 'Only regular personal files can be read.';
+    // AgentService publishes the personal folder first; later roots contain read-only plugin skills.
+    const canonicalRoots = await Promise.all((imageOperation ? roots.slice(0, 1) : roots).map(root => realpath(root as string)));
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string' || !candidate.trim() || /^(?:[a-z][a-z0-9+.-]*:\/\/|data:|\\\\)/i.test(candidate) || candidate.includes('\0')) return 'Only files in your personal folder are available.';
+      if (imageOperation && !isAbsolute(candidate)) return 'An absolute personal image path is required.';
+      if (!isAbsolute(candidate) && !workspace) return 'An account-local file path is required.';
+      const path = await realpath(resolve(workspace, candidate));
+      if (!canonicalRoots.some(root => inside(root, path))) return 'Access outside your personal folder is denied.';
+      if (!(await stat(path)).isFile()) return 'Only regular personal files can be read.';
+    }
   } catch { return 'The requested personal file is unavailable.'; }
 }

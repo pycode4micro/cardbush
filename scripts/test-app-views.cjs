@@ -9,7 +9,7 @@ if (process.env.CARDBUSH_APP_VIEWS_CASE === 'agent-file-preview') {
 }
 if (process.env.CARDBUSH_APP_VIEWS_CASE === 'review-preview') {
   protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: {
-    standard: true, secure: true, supportFetchAPI: true, stream: true,
+    standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true,
   } }]);
 }
 // Xvfb runners have no hardware GPU. Keep offscreen fixtures on software
@@ -120,6 +120,7 @@ async function buildViews() {
       'src/backend/promptReferenceContext.ts', 'src/features/inspector/inspectorTabs.ts',
       'src/hooks/useCardbushChat.ts',
     ] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll' ? ['src/hooks/useConversationHistoryPages.ts'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory' ? [
       'src/features/settings/SettingsSummaryPanel.tsx', 'src/features/settings/useAppSettings.ts',
       'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
@@ -171,6 +172,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus' ? ['src/components/confirmAction.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'app-center' ? [
       'src/features/appCenter/AppCenter.tsx', 'src/features/appCenter/appCenterStore.ts',
+      'src/features/browser/browserSiteIcons.ts',
       'src/components/WindowFrame.tsx',
       'src/features/windowMenu/applicationMenus.ts', 'src/features/conversationHost.ts',
     ] : []),
@@ -212,13 +214,17 @@ async function buildViews() {
       },
     },
   });
-  const chunks = (Array.isArray(result) ? result : [result]).flatMap(result => result.output).filter(chunk => chunk.type === 'chunk');
+  const output = (Array.isArray(result) ? result : [result]).flatMap(result => result.output);
+  const chunks = output.filter(chunk => chunk.type === 'chunk');
   assert.equal(chunks.length, 1, 'test must evaluate all real view dependencies and lazy syntax renderer');
-  return chunks[0].code;
+  // Library builds emit imported component styles separately from the JS.
+  // Dropping them changes layout (and the viewport used by virtual lists).
+  return { code: chunks[0].code, css: output.filter(asset => asset.type === 'asset' && asset.fileName.endsWith('.css'))
+    .map(asset => String(asset.source)).join('\n') };
 }
 
 app.whenReady().then(async () => {
-  const bundle = await buildViews();
+  const { code: bundle, css: viewCss } = await buildViews();
   // Vite builds production feature gates; React itself must remain development
   // here so StrictMode actually replays mounts and effect cleanup.
   process.env.NODE_ENV = 'development';
@@ -279,7 +285,8 @@ app.whenReady().then(async () => {
       + '\n' + readSourceFile(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/chat/conversationComposerLayout.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/settings/summarySettings.css'), 'utf8')
-      + '\n' + readSourceFile(path.join(root, 'src/styles/settings-controls.css'), 'utf8'));
+      + '\n' + readSourceFile(path.join(root, 'src/styles/settings-controls.css'), 'utf8')
+      + '\n' + viewCss);
     await run(`
       window.failures = [];
       addEventListener('error', event => failures.push(event.message));
@@ -292,7 +299,12 @@ app.whenReady().then(async () => {
           removeItem: key => values.delete(key),
         }});
       }
-      window.fetch = () => { throw new Error('Network calls are forbidden in the view test'); };
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, options) => {
+        const url = typeof input === 'string' ? input : input.url ?? String(input);
+        if (${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)} === 'review-preview' && url.startsWith('cardbush-file:')) return nativeFetch(input, options);
+        throw new Error('Network calls are forbidden in the view test');
+      };
       const React = require(${JSON.stringify(require.resolve('react'))});
       const { createRoot } = require(${JSON.stringify(require.resolve('react-dom/client'))});
       const sourceRequire = require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
@@ -326,7 +338,7 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
+      if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation', 'composer-memory'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback') {
       await require('./helpers/assistant-feedback.cjs')({ run, until, pause });
@@ -473,7 +485,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -540,11 +552,23 @@ app.whenReady().then(async () => {
       await until(`reads.some(read => read.path.endsWith('huge.${extension}'))`, 'large text read');
       await run(`window.largePreviewText = '# many lines\\n'.repeat(20000); resolveReads('D:/fixture/huge.${extension}', largePreviewText, true)`);
       await until("!!document.querySelector('[data-render-mode=virtual] .source-code-line')", 'large text renders only nearby blocks');
-      assert.ok(await run("document.querySelectorAll('.source-code-line').length") < 200, 'large text must not allocate one DOM row per line');
+      const largePreviewMetrics = await run(`(() => {
+        const scroller = document.querySelector('.source-inspector-document, .markdown-inspector-document');
+        return { rows: scroller.querySelectorAll('.source-code-line').length,
+          viewport: scroller.clientHeight, scrollHeight: scroller.scrollHeight,
+          parentHeight: scroller.parentElement.clientHeight };
+      })()`);
+      assert.ok(largePreviewMetrics.rows < 200,
+        `large ${extension} must not allocate one DOM row per line: ${JSON.stringify(largePreviewMetrics)}`);
+      assert.ok(largePreviewMetrics.viewport > 200 && largePreviewMetrics.viewport <= await run('innerHeight'),
+        `large ${extension} has a bounded, usable viewport: ${JSON.stringify(largePreviewMetrics)}`);
+      assert.ok(largePreviewMetrics.scrollHeight > largePreviewMetrics.viewport * 10,
+        'virtualization preserves the full document scroll range');
       await run("window.largeScroller = document.querySelector('.source-inspector-document, .markdown-inspector-document'); largeScroller.scrollTop = largeScroller.scrollHeight;");
       await until("!!document.querySelector('[data-source-line=\"20001\"]')", 'all byte-bounded text remains reachable at the tail');
       assert.ok(await run("document.querySelectorAll('.source-code-line').length") < 200);
     }
+    console.log('Large text previews passed: bounded TXT/Markdown viewports, fewer than 200 mounted rows and accessible line 20001.');
     await run("preview('D:/fixture/binary.txt')");
     await until("reads.some(read => read.path.endsWith('binary.txt'))", 'binary file read');
     const binaryDialogsBefore = await run('errorDialogs.length');
@@ -798,6 +822,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll') {
+      await require('./helpers/history-pages.cjs')({ run, until, pause });
       for (const theme of ['theme-dark']) await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme });
       assert.deepEqual(await run('failures'), [], 'no session scroll renderer errors');
       assert.deepEqual(errors, []);

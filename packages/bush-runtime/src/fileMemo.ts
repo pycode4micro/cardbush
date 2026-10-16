@@ -1,4 +1,5 @@
 import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
+import { projectCatalogPage } from './catalogPage.js';
 import { memoMarkdownLinks } from './memoMarkdownLinks.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
 import { FILE_MEMO_PROTOCOL, fileMemoInputSchema, fileMemoMarkdown, fileMemoReference, fileMemoSchema, parseFileMemoReference,
@@ -108,6 +109,7 @@ export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecuti
     },
   });
   registry.register<{ id?: string; offset: number }>({
+    projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['memos']),
     definition: { name: 'read_file_memos', description: 'Read this conversation\'s concise file memos by file ID (file_1, file_2, etc.), or list up to 10 entries per offset page. Returns the latest note and ready-to-use markdown link for each file, not execution history. An individual read checks whether the referenced file is available or changed. Older file IDs are still accepted.',
       inputSchema: { type: 'object', additionalProperties: false, properties: {
         id: { type: 'string', pattern: '^file_(?:[1-9]\\d{0,8}|[a-f0-9]{32})$' }, offset: { type: 'integer', minimum: 0, default: 0 },
@@ -132,7 +134,7 @@ export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecuti
       }
       const memos = [...latest.values()].map(entry => publicMemo(store, entry));
       const end = context.input.offset + 10;
-      return { memos: memos.slice(context.input.offset, end), total: memos.length, ...(end < memos.length ? { next_offset: end } : {}) };
+      return { memos: memos.slice(context.input.offset, end), total: memos.length, offset: context.input.offset, ...(end < memos.length ? { next_offset: end } : {}) };
     },
   });
 }

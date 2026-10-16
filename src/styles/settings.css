@@ -1720,8 +1720,7 @@
   font-weight: 700;
 }
 
-.mcp-simple-list,
-.mcp-editor-panel {
+.mcp-simple-list {
   overflow: hidden;
   background: color-mix(in srgb, var(--text) 5%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
@@ -1815,12 +1814,6 @@
   transform: translateX(16px);
 }
 
-.mcp-editor-panel {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-}
-
 .mcp-compact-form {
   display: grid;
   gap: 12px;
@@ -1850,6 +1843,11 @@
 
 .mcp-advanced[open] summary {
   margin-bottom: 12px;
+}
+
+.mcp-server-dialog .mcp-form-grid + .mcp-form-grid { margin-top: 12px; }
+@media (max-width: 560px) {
+  .mcp-server-dialog .mcp-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .mcp-editor {

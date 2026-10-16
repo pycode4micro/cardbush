@@ -63,6 +63,7 @@ interface ModelToolResult {
   format: "json" | "text" | "mcp_discovery" | "archive_read";
   appReference?: string;
   projectPreview?: (maxChars: number) => string | undefined;
+  projectPage?: (maxChars: number) => string | undefined;
 }
 
 export class RuntimeToolLoop {
@@ -131,12 +132,12 @@ export class RuntimeToolLoop {
           if (this.#eventLog.isTerminal(executionIdentity.sessionId, executionIdentity.turnId)) return;
           const active = this.#activeToolControllers.get(toolCall.id);
           if (executingCall.id === toolCall.id) {
-            if (active) active.executedCall = toolCall;
-            else this.#nestedExecutingCalls.set(toolCall.id, toolCall);
+            if (active) { active.executedCall = executingCall; active.toolName = executingCall.name; }
+            else this.#nestedExecutingCalls.set(toolCall.id, executingCall);
           }
           this.#eventLog.append(this.#identity, {
             kind: "tool_running",
-            payload: toolIdentity(toolCall, executionIdentity),
+            payload: toolIdentity(executingCall.id === toolCall.id ? executingCall : toolCall, executionIdentity),
           });
           if (
             this.#permissions.pendingIds().length > 0 &&
@@ -207,6 +208,7 @@ export class RuntimeToolLoop {
     const imageObservations: ToolImageObservation[][] = [];
     const renderedResults: Array<string | undefined> = [];
     const appReferences: Array<string | undefined> = [];
+    const executedCalls: ToolCall[] = [...toolCalls];
     let hookStopTurn: string | undefined;
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = executionIdentities[ordinal]!;
@@ -219,7 +221,7 @@ export class RuntimeToolLoop {
       }
       this.#activeToolControllers.set(toolCall.id, {
         controller,
-        toolName: toolCall.name,
+        toolName: scheduledToolName(toolCall),
       });
       if (this.#hasConcurrentPermissionAdmission(toolCall, toolCalls)) {
         controller.abort(new DOMException(
@@ -237,19 +239,23 @@ export class RuntimeToolLoop {
             : undefined,
         );
         hookStopTurn ??= outcome.hookStopTurn;
+        // Forwarded calls keep their wire identity; result handling and journals
+        // use the native executor, including Team activity and bounded previews.
+        const executedCall = this.#activeToolControllers.get(toolCall.id)?.executedCall ?? toolCall;
+        executedCalls[ordinal] = executedCall;
         // Snapshot before the next sequential Tool can remove or overwrite the source.
         // Keep the native Tool outcome untouched: image delivery is a separate observation.
         imageObservations[ordinal] = outcome.kind === "returned" && outcome.hookFeedback === undefined
           ? await snapshotToolImages(outcome.result, toolCall.id, this.#modelImages, controller.signal)
           : [];
         renderedResults[ordinal] = outcome.kind === "returned"
-          ? outcome.hookFeedback ?? this.#registry.renderModelResult(toolCall.name, outcome.result) : undefined;
+          ? outcome.hookFeedback ?? this.#registry.renderModelResult(executedCall.name, outcome.result) : undefined;
         if (renderedResults[ordinal] !== undefined) renderedResults[ordinal] = omitToolImageDataFromText(renderedResults[ordinal]!);
         if (outcome.kind === 'returned' && outcome.resultError && outcome.hookFeedback === undefined) {
           // Keep recovery facts at the front of budgeted output; the native
           // response remains unchanged in its execution record.
           renderedResults[ordinal] = recoveryReceipt(outcome) + '\n\n' +
-            (renderedResults[ordinal] ?? serializeNativeToolResult(modelFacingNativeToolResult(outcome.result, toolCall.name)));
+            (renderedResults[ordinal] ?? serializeNativeToolResult(modelFacingNativeToolResult(outcome.result, executedCall.name)));
         }
         const receipts = imageObservations[ordinal]!.flatMap(observation => observation.receipt ? [observation.receipt] : []);
         if (receipts.length && outcome.kind === 'returned') {
@@ -258,14 +264,13 @@ export class RuntimeToolLoop {
         }
         // Assistant messages retain the requested call; execution facts retain the
         // arguments actually admitted and run after trusted PreToolUse rewrites.
-        const executedCall = this.#activeToolControllers.get(toolCall.id)?.executedCall ?? toolCall;
         appReferences[ordinal] = this.#executionStore && outcome.kind === 'returned' && outcome.hookFeedback === undefined
           ? modelMcpAppReference(this.#registry, executedCall.name, outcome.result, { ...this.#identity, toolCallId: executedCall.id }) : undefined;
         const modelText = appReferences[ordinal]
-          ? `${renderedResults[ordinal] ?? serializeNativeToolResult(modelFacingNativeToolResult(outcome.kind === 'returned' ? outcome.result : null, toolCall.name))}\n\n${appReferences[ordinal]}`
+          ? `${renderedResults[ordinal] ?? serializeNativeToolResult(modelFacingNativeToolResult(outcome.kind === 'returned' ? outcome.result : null, executedCall.name))}\n\n${appReferences[ordinal]}`
           : renderedResults[ordinal];
         this.#executionStore?.record(executedCall, executionIdentity, outcome, modelText);
-        this.#appendToolOutcome(toolCall, executionIdentity, outcome);
+        this.#appendToolOutcome(executedCall, executionIdentity, outcome);
         return outcome;
       } finally {
         this.#activeToolControllers.delete(toolCall.id);
@@ -273,19 +278,19 @@ export class RuntimeToolLoop {
       }
     };
     // Commands can activate turn-scoped restrictions across execution channels.
-    const outcomes = toolCalls.some(call => call.name === 'run_plugin_command' || call.name === 'run_skill')
+    const outcomes = toolCalls.some(call => ['run_plugin_command', 'run_skill'].includes(scheduledToolName(call)))
       ? await executeSequentially(toolCalls, executeOne)
       : await executeByChannel(
       toolCalls,
       executeOne,
-      (toolCall) => this.#registry.executionChannel(toolCall.name),
-      (toolCall) => this.#registry.isParallelSafe(toolCall.name),
+      (toolCall) => this.#registry.executionChannel(scheduledToolName(toolCall)),
+      (toolCall) => this.#registry.isParallelSafe(scheduledToolName(toolCall)),
     );
     const nativeResults = outcomes.map((outcome) =>
       outcome.kind === "returned" ? outcome.result : { runtimeError: outcome.error }
     );
     const modelResults = nativeResults.map((result, ordinal): ModelToolResult => {
-      const name = toolCalls[ordinal]!.name;
+      const name = executedCalls[ordinal]!.name;
       const text = renderedResults[ordinal];
       const outcome = outcomes[ordinal];
       if (name === "mcp_search" && outcome?.kind === "returned" && outcome.hookFeedback === undefined) {
@@ -293,6 +298,12 @@ export class RuntimeToolLoop {
       }
       if (name === 'read_archived_tool_result' && outcome?.kind === 'returned' && outcome.hookFeedback === undefined) {
         return { content: serializeNativeToolResult(result), format: 'archive_read' };
+      }
+      if (outcome?.kind === 'returned' && outcome.hookFeedback === undefined && !outcome.resultError &&
+          !imageObservations[ordinal]?.length && this.#registry.resolve(name)?.projectModelPage) {
+        return { content: text ?? serializeNativeToolResult(modelFacingNativeToolResult(result, name)),
+          format: text === undefined ? 'json' : 'text', appReference: appReferences[ordinal],
+          projectPage: maxChars => this.#registry.projectModelPage(name, result, maxChars, executedCalls[ordinal]) };
       }
       return text === undefined
         ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json", appReference: appReferences[ordinal] }
@@ -370,17 +381,17 @@ export class RuntimeToolLoop {
   }
 
   #hasConcurrentPermissionAdmission(toolCall: ToolCall, toolCalls: ToolCall[]): boolean {
-    const registration = this.#registry.resolve(toolCall.name);
+    const registration = this.#registry.resolve(scheduledToolName(toolCall));
     if (registration?.manifest.effect_kind !== "desktop_control") return false;
     return toolCalls.some((candidate) => {
       if (candidate.id === toolCall.id) return false;
-      const candidateRegistration = this.#registry.resolve(candidate.name);
+      const candidateRegistration = this.#registry.resolve(scheduledToolName(candidate));
       if (!candidateRegistration?.authorize) return false;
-      const sameChannel = this.#registry.executionChannel(candidate.name) ===
-        this.#registry.executionChannel(toolCall.name);
+      const sameChannel = this.#registry.executionChannel(scheduledToolName(candidate)) ===
+        this.#registry.executionChannel(scheduledToolName(toolCall));
       return !sameChannel || (
-        this.#registry.isParallelSafe(candidate.name) &&
-        this.#registry.isParallelSafe(toolCall.name)
+        this.#registry.isParallelSafe(scheduledToolName(candidate)) &&
+        this.#registry.isParallelSafe(scheduledToolName(toolCall))
       );
     });
   }
@@ -462,6 +473,17 @@ export class RuntimeToolLoop {
   }
 }
 
+/** Scheduling hint only; the coordinator validates the envelope and target. */
+function scheduledToolName(call: ToolCall): string {
+  if (call.name === 'call_tool') {
+    try {
+      const name = JSON.parse(call.argumentsText).name;
+      if (typeof name === 'string') return name;
+    } catch { /* Malformed arguments are rejected by normal admission. */ }
+  }
+  return call.name;
+}
+
 function projectNativeToolResult(
   result: ModelToolResult,
   sessionId: string,
@@ -490,6 +512,8 @@ function projectNativeToolResultBody(
     if (projected !== undefined) return projected;
   }
   maxChars ??= DEFAULT_TOOL_RESULT_MAX_CHARS;
+  const page = result.projectPage?.(maxChars);
+  if (page !== undefined) return page;
   const serialized = result.content;
   if (serialized.length <= maxChars) return serialized;
   const locator = `tool-result://${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}/${encodeURIComponent(toolCallId)}`;

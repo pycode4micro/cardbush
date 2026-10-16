@@ -45,13 +45,25 @@
 5. `docker compose up -d`。第一次打开某账号的对话时创建容器；最多同时运行 3 个账号，忙碌实例不会被淘汰。空闲 10 分钟后停止，命名卷和会话历史保留。
 6. 用两个测试账号验证注册审批、历史恢复、流式回复、跨账号访问拒绝、上传内容验证、方案选择、插件撤权以及工具边界。
 
-管理员在受保护的 `web.json` 中统一配置对话模型和 `imageModel`，修改后重建 web 容器；用户只有模型选择权，没有供应商密钥或服务设置权限。图片网关仅允许固定 Ark 图片端点，模型不能指定目标网址。浏览器和账号容器均不持有供应商密钥。
+管理员通过“管理中心 → 模型管理”新增、编辑、启停和删除对话模型，设置默认模型、接口协议、模型 ID、服务地址、最大上下文、最大输出和思考强度，也可修改生图模型 ID 和密钥。默认模型必须保持启用，删除或停用前需先选择其他默认模型。对话模型默认最大输出 128000、思考强度中；最大输出必须小于上下文长度。保存后新请求使用新配置，不需要重建容器；普通用户只有模型选择权，没有供应商密钥或服务设置权限。
+
+首次启动从受保护的 `web.json` 导入模型配置，随后以 PostgreSQL 的 `cardbush_web_model_settings` 为准。配置使用 `modelSecret` 派生的 AES-256-GCM 密钥加密保存，管理接口仅返回是否已配置密钥，编辑时留空保留原密钥；更换服务源必须重新填写密钥。并发修改使用版本校验，防止覆盖其他管理员的更改。备份和恢复时必须同时保留数据库与原 `modelSecret`。图片网关仅允许固定 Ark 图片端点，模型不能指定目标网址，账号容器不持有供应商密钥。回归：`node --test scripts/test-web-model-admin.mjs scripts/test-web-model-defaults.mjs`。
 
 队列、停止、SSE 断线重放、上下文压缩和进程资源管理沿用原生 CardBush。前端直接复用 Electron 的 `MessageBubble`、消息投影与分组、执行过程折叠、`ToolExecutionBlock`、Markdown 和图片预览。`web/transcript.ts` 只做传输字段适配，`web/NativeTranscript.tsx` 通过 `ConversationHost` 接入受保护的个人文件和工具记录；网站主题由 `web/nativeTranscript.css` 提供。中间说明和工具执行归入同轮历史，最终答案只展示一次。工具结果先读取原生摘要，展开时按需读取完整记录；两个接口都先校验当前账号的会话归属。图片继续使用按账号隔离的浏览器缓存，切换会话复用图片 Blob，退出账号释放资源。
 
 图片任务复用火山插件 `ImageJobs` 的 SQLite 回执、幂等提交、并发限制及 `generation_wait`，不新建任务引擎，不自动重试已付费或结果未知的请求。broker 同时检查会话任务和图片任务，活动任务不会因空闲回收而被停止。渲染回归：`node --test scripts/test-web-transcript.mjs`；浏览器夹具：`node scripts/fixtures/web-transcript-browser.mjs`（127.0.0.1:5210，合成账号 alice/bob，任意测试密码，控制页 `/__test`，不调用模型）。`node scripts/build-web-release.mjs` 同时记录原生渲染依赖清单，便于审计前端发布，不重建 Agent Runtime。
 
-已完成的生图回复在复制、时间旁显示“产物”，展开后逐张“下载”原图。入口复用 Electron 的 `TurnArtifactsMenu`，网页只提供下载操作。产物来自本轮助手输出及图片插件明确的成功回执，按个人生成文件路径去重；上传的参考图、视频、外部地址和其他账号文件不进入下载列表。历史消息没有正文图片链接时，点击入口按需读取当前会话的工具记录；失败可重试。下载复用账号内的原图 Blob 缓存，不再次调用生图模型。回归：`node --test scripts/test-web-artifacts.mjs scripts/test-web-transcript.mjs scripts/test-web-files-ui.mjs scripts/test-web-cache.mjs`。发布记录见 [NAS-20261011-artifacts.md](NAS-20261011-artifacts.md)。
+已完成的生图回复在复制、时间旁显示“产物”，展开后逐张“下载”原图。入口复用 Electron 的 `TurnArtifactsMenu`，网页只提供下载操作。点击入口时，服务端按需从当前会话的真实图片工具回执生成清单，并校验正文引用的文件；拼图同时携带其源原图，包含前几轮生成并在本轮使用的图片。错误或不存在的正文图片路径不会混入下载清单，网络读取失败则允许重试。清单按个人生成文件路径去重，上传的参考图、视频、外部地址和其他账号文件不进入列表。清单校验只读取元数据，单张下载复用账号内的原图 Blob 缓存，不再次调用生图模型。回归：`node --test scripts/test-web-artifact-manifest.mjs scripts/test-web-artifacts.mjs scripts/test-web-transcript.mjs scripts/test-web-files-ui.mjs scripts/test-web-cache.mjs`。初始发布记录见 [NAS-20261011-artifacts.md](NAS-20261011-artifacts.md)。
+
+“下载全部”通过服务器按 512 KiB 分段读取当前账号的生成图片，流式输出 ZIP64，浏览器下载管理器直接保存，不再受原先浏览器整包 128 MiB 限制。图片使用 STORE 避免重复压缩；慢速接收端施加背压，取消、退出或撤销身份后停止继续读取。元数据准备与传输共用两个全局工作槽，同账号只允许一路，其他请求有界排队。下载票据绑定账号及当前登录，仅保留短期清单和进度，不缓存图片或落地整包；单张下载和预览继续复用账号图片缓存。发布记录见 [NAS-20261016-stream-archive.md](NAS-20261016-stream-archive.md)。
+
+下载回归：`node --test scripts/test-web-archives.mjs`。浏览器先运行 `node scripts/fixtures/web-progressive-browser.mjs dist-web`，再运行 `python scripts/test-web-download-browser.py`（需要 Python Playwright 和 Chrome）。大包验证分别追加 `--large-archive` 和 `--large`。夹具读取生产 CSP，验证同名多图、32 张 / 160 MiB ZIP 内容及 CRC、错误重试、单张和 IndexedDB 缓存、账号切换。
+
+安全策略兼容修复发布记录见 [NAS-20261016-artifact-fetch.md](NAS-20261016-artifact-fetch.md)。
+
+会话输入框上方提供“回到底部”浮动按钮，直接复用 Electron 的 `ScrollBottomButton` 和 `useScrollBottomPresence`。上翻阅读时显示，点击立即跳至最新消息并恢复底部跟随；底部稳定后隐藏。只调整本地滚动，不请求历史或工具详情，兼容窄屏和键盘操作。发布记录见 [NAS-20261016-scroll-bottom.md](NAS-20261016-scroll-bottom.md)。
+
+图片插件还提供本地 `image_convert`：例如“把这张图转成 800 × 800 JPG”，可精确指定像素和 PNG/JPG/WebP 格式。默认等比缩放补白，保留整图与源文件；明确要求时支持居中裁剪和拉伸。转换结果接入相同的产物及下载入口，不调用生图模型。转换按账号串行放入独立受限进程，派发前重新校验插件授权。发布与回退细节见 [NAS-20261016-image-convert.md](NAS-20261016-image-convert.md)。
 
 ## 发布与回退
 
@@ -61,7 +73,7 @@
 
 检查：`npm run test:web`（真实 CardBush Runtime + 两账号 Web ACL）、`npm run build:web:ui`。Linux 镜像内运行 `node --test scripts/test-web-plugin.mjs scripts/test-web.mjs scripts/test-web-files-ui.mjs`，测试目录需挂载可写 tmpfs；它验证原生插件安装、异步图片任务、撤权卸载和个人图片路径适配。部署后还需真实 PostgreSQL / Docker / 浏览器验收。
 
-NAS 基础发布记录见 [NAS-20261009.md](NAS-20261009.md)；图片上传优化见 [NAS-20261010.md](NAS-20261010.md)；原生渲染更新见 [NAS-20261010-rendering.md](NAS-20261010-rendering.md)。
+NAS 基础发布记录见 [NAS-20261009.md](NAS-20261009.md)；图片上传优化见 [NAS-20261010.md](NAS-20261010.md)；原生渲染更新见 [NAS-20261010-rendering.md](NAS-20261010-rendering.md)；全部产物下载与会话按需加载见 [NAS-20261016-progressive.md](NAS-20261016-progressive.md)。
 
 ## 浏览器缓存
 

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectCatalogPage } from './catalogPage.js';
 import { sourceMemoInputSchema, sourceMemoSchema, parseSourceMemoIdentity, parseSourceMemoReference,
   type SourceEvidence, type SourceMemo, type SourceMemoResolution, type SourceReferencesRequest, type SourceReferences } from '@cardbush/bush-protocol';
 import { memoMarkdownLinks } from './memoMarkdownLinks.js';
@@ -173,6 +174,10 @@ export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecu
       const result = value as { memos: SourceMemo[]; total: number; next_offset?: number };
       return JSON.stringify({ ...result, memos: result.memos.map(memo => modelSourceMemo(sourceMemoSchema.parse(memo))) });
     },
+    projectModelPage: (value, budget) => {
+      const result = value as { memos: SourceMemo[] };
+      return projectCatalogPage({ ...result, memos: result.memos.map(memo => modelSourceMemo(sourceMemoSchema.parse(memo))) }, budget, ['memos']);
+    },
     decodeInput: value => {
       const input = value as { offset?: number };
       if (!input || Object.keys(input).some(key => key !== 'offset') || (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0))) throw new Error('Use a nonnegative offset.');
@@ -181,7 +186,7 @@ export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecu
     execute: async context => {
       const memos = store.listByTool(context.sessionId, 'remember_source').filter(record => record.outcome === 'returned')
         .flatMap(record => { const memo = sourceMemoSchema.safeParse(record.result); return memo.success ? [memo.data] : []; });
-      return { memos: memos.slice(context.input.offset, context.input.offset + 10), total: memos.length,
+      return { memos: memos.slice(context.input.offset, context.input.offset + 10), total: memos.length, offset: context.input.offset,
         ...(context.input.offset + 10 < memos.length ? { next_offset: context.input.offset + 10 } : {}) };
     },
   });

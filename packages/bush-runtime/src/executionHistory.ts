@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectCatalogPage } from './catalogPage.js';
 import { resolve, win32 } from 'node:path';
 import { toolExecutionError, type ToolExecutionRecord } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
@@ -183,6 +184,7 @@ export function registerExecutionHistoryTool(registry: ToolRegistry, store: Tool
       } } },
     manifest: { effect_kind: 'observation', operation: 'execution_history.search', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     parallelSafe: true, visibleToChild: true, decodeInput: decodeSearch,
+    projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['results'], 'total_matches'),
     execute: async context => {
       context.signal?.throwIfAborted();
       const scope = executionHistoryScope(await listSessions(context.signal), context.sessionId);

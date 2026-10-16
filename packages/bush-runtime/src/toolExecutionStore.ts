@@ -40,6 +40,8 @@ export class ToolExecutionStore {
   readonly #persistence?: ToolExecutionPersistence;
   readonly #now: () => string;
   readonly #records = new Map<string, ToolExecutionRecord[]>();
+  readonly #bytes = new Map<string, number>();
+  readonly #protected = new Set<string>();
   #fileMemoReferences?: FileMemoLocator[];
 
   constructor(options: {
@@ -52,10 +54,24 @@ export class ToolExecutionStore {
 
   async cacheEntries(): Promise<CacheEntry[]> {
     return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#records].map(([id, rows]) =>
-      memoryCacheEntry('tool_executions', id, this.#persistence?.cacheEntries ? [] : rows, () => this.#records.delete(id)))];
+      memoryCacheEntry('tool_executions', id, this.#persistence?.cacheEntries ? [] : rows, () => { this.#records.delete(id); this.#bytes.delete(id); }))];
   }
 
   fileMemoLocators(): FileMemoLocator[] { return [...this.#loadFileMemoReferences()]; }
+
+  protect(sessionId: string, value: boolean) {
+    if (value) this.#protected.add(sessionId); else { this.#protected.delete(sessionId); this.#trim(); }
+  }
+
+  #trim() {
+    if (!this.#persistence) return;
+    const idle = [...this.#records.keys()].filter(id => !this.#protected.has(id));
+    let count = idle.length, bytes = idle.reduce((total, id) => total + (this.#bytes.get(id) ?? 0), 0);
+    for (const id of idle) {
+      if (count <= 24 && bytes <= 64 * 1024 * 1024) break;
+      count--; bytes -= this.#bytes.get(id) ?? 0; this.#records.delete(id); this.#bytes.delete(id);
+    }
+  }
 
   async historySummaries(sessionId: string, signal?: AbortSignal): Promise<ExecutionHistoryPage> {
     signal?.throwIfAborted();
@@ -108,7 +124,10 @@ export class ToolExecutionStore {
     this.#persistence?.append(structuredClone(candidate));
     const returned = structuredClone(candidate);
     records.push(candidate);
+    if (this.#persistence && this.#records.has(identity.sessionId)) this.#bytes.set(identity.sessionId,
+      (this.#bytes.get(identity.sessionId) ?? 0) + Buffer.byteLength(JSON.stringify(candidate)));
     this.#releaseOldWorkspacePayloads(records);
+    this.#trim();
     return returned;
   }
 
@@ -137,6 +156,8 @@ export class ToolExecutionStore {
       this.#persistence?.append(record); records.push(record);
     }
     this.#releaseOldWorkspacePayloads(records);
+    if (this.#persistence && this.#records.has(sessionId)) this.#bytes.set(sessionId, Buffer.byteLength(JSON.stringify(records)));
+    this.#trim();
   }
 
   /** Filter before cloning: a small tool-owned index must not copy unrelated logs. */
@@ -146,8 +167,12 @@ export class ToolExecutionStore {
   }
 
   listTurnSummaries(sessionId: string, turnId: string): ToolExecutionSummary[] {
+    return this.listTurnsSummaries(sessionId, new Set([turnId]));
+  }
+
+  listTurnsSummaries(sessionId: string, turnIds: ReadonlySet<string>): ToolExecutionSummary[] {
     return this.#load(sessionId)
-      .filter((record) => record.turnId === turnId)
+      .filter((record) => turnIds.has(record.turnId))
       .sort((left, right) => left.round - right.round || left.ordinal - right.ordinal)
       .map((record) => structuredClone(toolExecutionSummary(record, this.#coldWorkspaceChanges)));
   }
@@ -217,7 +242,7 @@ export class ToolExecutionStore {
 
   #load(sessionId: string): ToolExecutionRecord[] {
     const cached = this.#records.get(sessionId);
-    if (cached) return cached;
+    if (cached) { this.#records.delete(sessionId); this.#records.set(sessionId, cached); return cached; }
     const loaded = (this.#persistence?.load(sessionId) ?? []).map((record) => {
       const parsed = toolExecutionRecordSchema.parse(record);
       validateRecord(parsed);
@@ -231,6 +256,8 @@ export class ToolExecutionStore {
     }
     this.#releaseOldWorkspacePayloads(loaded);
     this.#records.set(sessionId, loaded);
+    if (this.#persistence) this.#bytes.set(sessionId, Buffer.byteLength(JSON.stringify(loaded)));
+    this.#trim();
     return loaded;
   }
 

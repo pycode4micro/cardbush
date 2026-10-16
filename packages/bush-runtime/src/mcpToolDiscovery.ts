@@ -5,7 +5,8 @@ import { projectBuiltinDefinitions, synchronizeBuiltinSchemas } from './builtinT
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
-import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
+import { DEFAULT_TOOL_RESULT_MAX_CHARS, fitToolResultPage } from './toolResultBudget.js';
+import { discoveryDescription } from './catalogPage.js';
 import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
 import { MCP_SEARCH_CURSOR_LIMIT, MCP_SEARCH_QUERY_LIMIT, mcpSearchFingerprint, rankMcpTools, readMcpSearchCursor, writeMcpSearchCursor, type McpSearchCursor } from './mcpToolSearch.js';
 
@@ -18,13 +19,34 @@ export function projectMcpDiscoveryResult(text: string, maxChars = DEFAULT_TOOL_
   try { result = JSON.parse(text); } catch { return undefined; }
   if (result?.protocol !== MCP_DISCOVERY_PROTOCOL || !Array.isArray(result.matches)) return undefined;
   // Search receipts stay compact; explicit loads contain complete definitions.
-  // Oversized receipts use the ordinary immutable result archive.
+  // Search pages use their actual delivery budget; explicit oversized schemas
+  // still use the ordinary immutable result archive.
   if (result.action === 'search' || result.action === 'load') {
     const { next_step: _next, ...receipt } = result;
     if (result.action === 'search') {
-      delete receipt.protocol; delete receipt.sessionId;
-      receipt.matches = result.matches.map(({ name, description, descriptionTruncated, loaded }: any) =>
-        ({ name, description, ...(descriptionTruncated ? { descriptionTruncated } : {}), loaded }));
+      if (result.matches.some((match: any) => !match || typeof match.name !== 'string' || typeof match.description !== 'string')) return undefined;
+      delete receipt.protocol; delete receipt.sessionId; delete receipt._searchPage;
+      receipt.matches = result.matches.map(({ name, description, descriptionTruncated, loaded }: any) => {
+        const summary = discoveryDescription(description);
+        return { name, description: summary, ...(descriptionTruncated || summary !== description ? { descriptionTruncated: true } : {}), loaded };
+      });
+      // Keep the native page start even on the last page: delivery can shorten
+      // that page too. A continuation is always based on entries actually seen.
+      let seed: McpSearchCursor | undefined = result._searchPage;
+      if (!seed && typeof result.next_cursor === 'string') {
+        try { const next = readMcpSearchCursor(result.next_cursor); seed = { ...next, offset: next.offset - result.matches.length }; } catch { /* Old/invalid receipts retain archive fallback. */ }
+      }
+      if (seed && Number.isSafeInteger(seed.offset) && seed.offset >= 0 && Number.isSafeInteger(result.total) &&
+          result.total >= seed.offset + result.matches.length && typeof seed.query === 'string' && /^[a-f0-9]{64}$/.test(seed.fingerprint)) {
+        const page = seed;
+        return fitToolResultPage(receipt.matches.length, maxChars, count => {
+          const next = page.offset + count, more = next < result.total;
+          const { next_cursor: _cursor, ...overview } = receipt;
+          return JSON.stringify({ ...overview, ...(page.server ? { server: page.server } : {}),
+            matches: receipt.matches.slice(0, count), more,
+            ...(more ? { next_cursor: writeMcpSearchCursor({ ...page, offset: next }) } : {}) });
+        });
+      }
     }
     const compact = JSON.stringify(receipt);
     if (compact.length <= maxChars) return compact;
@@ -159,16 +181,14 @@ export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequ
   const retained = request.tools.filter(tool => !Object.hasOwn(prior.tools, tool.name) && !currentNames.has(tool.name));
   request.tools = [...retained, ...current];
   request.metadata.mcpLiveCatalogSnapshot = next;
-  // MCP stays behind the stable discovery gateway. Native extension definitions
-  // need their provider projection refreshed when that portion actually changes.
-  const extensionNames = new Set([...prior.extensions, ...next.extensions]);
-  if ([...added, ...updated, ...removed].some(name => extensionNames.has(name))) delete request.metadata.mcpModelToolSnapshot;
+  // Refresh execution scope only. New/revised definitions are delivered by
+  // discovery results; never rewrite a provider prefix already sent this turn.
   if (!added.length && !updated.length && !removed.length) return;
   return { role: 'user', name: 'mcp_catalog_update', visibility: 'internal', content: JSON.stringify({
     protocol: 'bush.plugin_catalog_update.v1',
     added: added.slice(0, 32), updated: updated.slice(0, 32), removed: removed.slice(0, 32),
     counts: { added: added.length, updated: updated.length, removed: removed.length },
-    message: 'Plugin capabilities changed during this conversation. Use the current catalog. For new or changed MCP tools, load their current schemas with mcp_search before calling; unchanged visible schemas remain valid. Removed tools are unavailable. Already dispatched operations are not replayed by this update.',
+    message: 'Plugin capabilities changed during this conversation. For new or changed MCP tools use mcp_search then mcp_call. For native extensions use get_tool_schema then call_tool. Top-level declarations stay unchanged; removed tools are unavailable. Already dispatched operations are not replayed.',
   }) };
 }
 
@@ -178,14 +198,15 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   const saved = request.metadata.mcpModelToolSnapshot as { identity?: string; tools?: unknown[] } | undefined;
   if (saved?.identity === key(request) && Array.isArray(saved.tools)) {
     const parsed = toolDefinitionSchema.array().safeParse(saved.tools);
-    if (parsed.success) return projectBuiltinDefinitions(registry, request, parsed.data);
+    if (parsed.success) return parsed.data;
   }
   const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
     (!tool.name.startsWith('agent_memory_') || request.metadata.pluginAgentMemoryActive === true) &&
     (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.
-  request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(tools) };
-  return projectBuiltinDefinitions(registry, request, tools);
+  const projected = projectBuiltinDefinitions(registry, request, tools);
+  request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(projected) };
+  return projected;
 }
 
 export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider): void {
@@ -256,9 +277,10 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       const page = context.input.action === 'load' ? candidates.slice(0, 1) : candidates.slice(offset, offset + limit);
       const matches = page.map(candidate => {
         const version = revision(registry, candidate.definition);
+        const description = discoveryDescription(candidate.definition.description);
         if (context.input.action !== 'load') return {
-          name: candidate.definition.name, description: candidate.definition.description.slice(0, 512),
-          ...(candidate.definition.description.length > 512 ? { descriptionTruncated: true } : {}),
+          name: candidate.definition.name, description,
+          ...(description !== candidate.definition.description ? { descriptionTruncated: true } : {}),
           server: candidate.server, tool: candidate.tool,
           loaded: loaded.get(candidate.definition.name) === version,
         };
@@ -274,6 +296,7 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
         matches, total: context.input.action === 'load' ? 1 : candidates.length,
         more: context.input.action !== 'load' && candidates.length > next,
         ...(context.input.action !== 'load' ? { query: context.input.query,
+          _searchPage: { query: context.input.query, ...(context.input.server ? { server: context.input.server } : {}), offset, fingerprint },
           ...(candidates.length > next ? { next_cursor: writeMcpSearchCursor({ query: context.input.query, server: context.input.server, offset: next, fingerprint }) } : {}) } : {}) };
     },
   });

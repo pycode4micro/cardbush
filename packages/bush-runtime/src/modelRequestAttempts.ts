@@ -1,6 +1,6 @@
 import { modelFailureAction, type ModelFailureFacts } from './modelFailurePolicy.js';
 
-export type ModelTransportRecovery = 'restart_continuation' | 'negotiate_capability';
+export type ModelTransportRecovery = 'restart_continuation' | 'negotiate_capability' | 'discard_incompatible_replay';
 
 /** One unchanged model round owns transport retries and at most one wire recovery.
  * A recovery stays applied across outer retries; tools never run in this boundary. */

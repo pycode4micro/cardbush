@@ -41,6 +41,7 @@ export class AssistantConversation {
     delegate(input: unknown): Promise<unknown>;
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
+    snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   }) {}
   command(value: unknown) {
@@ -171,6 +172,11 @@ export class AssistantConversation {
         ...(item.attachments?.some(file => file.type === 'image' && file.path && !file.path.startsWith('ssh://'))
           ? { images: item.attachments.filter(file => file.type === 'image' && file.path && !file.path.startsWith('ssh://')).slice(0, 4).map(file => ({ url: file.path! })) } : {}),
       });
+    if (parent.requestCapabilities?.vision && this.deps.snapshotImage) for (const message of incoming) {
+      if (message.role !== 'user' || !message.images?.length) continue;
+      message.images = await Promise.all(message.images.map(async image => ({ ...image,
+        url: await this.deps.snapshotImage!(image.url, signal) })));
+    }
     if (authored && this.deps.memory) {
       const reference = await this.deps.memory.recall(parent, authored.content, [...history.read().messages, ...incoming], signal);
       if (reference) incoming.push(reference);

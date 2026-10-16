@@ -8,7 +8,7 @@ import {
   CircleAlert,
   ChevronDown,
   ChevronUp,
-  Clipboard,
+  Copy,
   Clock3,
   Edit3,
   File as FileIcon,
@@ -650,7 +650,7 @@ function MarkdownCodeBlock({
           title={language === 'zh' ? '复制' : 'Copy'}
           onClick={() => void copyText(text).catch(() => undefined)}
         >
-          <Clipboard size={12} />
+          <Copy size={12} />
           <span>{language === 'zh' ? '复制' : 'Copy'}</span>
         </button>
       </div>
@@ -1068,7 +1068,7 @@ function MessageBubbleView({
             title={language === 'zh' ? '复制' : 'Copy'}
             onClick={() => void copyText(text).catch(() => undefined)}
           >
-            <Clipboard size={14} />
+            <Copy size={14} />
           </button>
           <button
             type="button"
@@ -1388,7 +1388,7 @@ function MessageBubbleView({
               title={language === 'zh' ? '复制' : 'Copy'}
               onClick={() => void copyText(message.content).catch(() => undefined)}
             >
-              <Clipboard size={14} />
+              <Copy size={14} />
             </button>
             <button
               className={`feedback-up ${assistantFeedback === 'up' ? 'active' : ''} ${
@@ -1521,8 +1521,9 @@ function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert
   const entries = collect(artifacts);
   if (!entries.length && !loadArtifacts) return null;
   return <TurnArtifactsMenu items={entries} language={language} reverted={reverted}
-    loadItems={loadArtifacts ? async () => collect([...artifacts, ...await loadArtifacts()]) : undefined}
+    loadItems={loadArtifacts ? async () => collect(await loadArtifacts()) : undefined}
     onDownload={host?.downloadFile ? item => host.downloadFile!(item.path) : undefined}
+    onDownloadAll={host?.downloadFiles ? (items, progress) => host.downloadFiles!(items.map(item => item.path), progress) : undefined}
     busy={changeState.busy} onRevert={onRevert}
     onContextMenu={host ? undefined : (event, item) => openFileContextMenu(event, item.path, { language })}
     onOpen={item => {

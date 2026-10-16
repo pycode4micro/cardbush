@@ -616,6 +616,7 @@ const desktopApi = {
     importBookmarks: (profileId?: string) => ipcRenderer.invoke('browser:bookmarks-import', profileId),
     page: (id: number, command: import('./browserUi').BrowserPageCommand) => ipcRenderer.invoke('browser:page', id, command),
     webApplication: (id: number, expectedUrl: string) => ipcRenderer.invoke('browser:web-application', id, expectedUrl),
+    readIcon: (url: string) => ipcRenderer.invoke('browser:icon', url),
     history: (query = '', offset = 0) => ipcRenderer.invoke('browser:history', query, offset),
     frequentSites: () => ipcRenderer.invoke('browser:frequent-sites'),
     onHistoryChanged: (callback: () => void) => {

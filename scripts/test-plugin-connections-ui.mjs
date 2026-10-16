@@ -16,6 +16,7 @@ let source = `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
+import {SettingsFormDialog} from '${local('src/features/settings/SettingsFormDialog.tsx')}';
 import {BrowserSettingsPanel} from '${local('src/features/browser/BrowserSettingsPanel.tsx')}';
 import {ComputerUseSettingsPanel} from '${local('src/features/computerUse/ComputerUseSettings.tsx')}';
 import {Composer as CoreComposer} from '${local('src/features/composer/Composer.tsx')}';
@@ -77,9 +78,11 @@ window.marketSources=[{id:'builtin',kind:'local',location:'bundled',builtin:true
 window.marketInstalls=0;window.marketSaveFails=false;window.marketSlow=false;window.marketCached=false;window.marketAddFails=false;
 window.marketRateLimitUntil=0;window.marketPreviewReads=0;window.marketMissingVariables=false;
 window.marketInstallSlow=false;window.marketProgress=null;
+window.marketSourceCalls=0;window.marketSourceSlow=false;window.marketLocalCalls=0;
 Object.assign(window.cardbushDesktop,{
  pluginMarketSources:async()=>marketSources,
- addPluginMarket:async value=>{if(marketAddFails)throw Error("Error invoking remote method 'plugins:market-add': Error: net::ERR_CONNECTION_RESET");const source={id:'remote',kind:'github',location:value,ref:'HEAD'};marketSources.push(source);return source},
+ addPluginMarket:async value=>{marketSourceCalls++;if(marketSourceSlow)await new Promise(resolve=>window.finishMarketSource=resolve);if(marketAddFails)throw Error("Error invoking remote method 'plugins:market-add': Error: net::ERR_CONNECTION_RESET");const source={id:'remote',kind:'github',location:value,ref:'HEAD'};marketSources.push(source);return source},
+ addLocalPluginMarket:async()=>{marketLocalCalls++;return null},
  removePluginMarket:async id=>{marketSources=marketSources.filter(source=>source.id!==id)},
  pluginMarketCatalog:async id=>({source:marketSources.find(source=>source.id===id),name:id,displayName:id==='builtin'?'CardBush 精选':'示例市场',fetchedAt:'2026-09-09',cached:marketCached,error:marketCached?'fixture offline':undefined,entries:id==='builtin'?[{name:'chrome',description:'Browser',category:'Tools',available:true}]:[
  {name:'claude-example',description:'Claude Skills 与 MCP',category:'Tools',available:true},
@@ -141,7 +144,7 @@ if (appearanceNavigation) {
     .replace('<main style={{padding:26,width:', '<main className="settings-shell" style={{width:')
     .replace("boxSizing:'border-box'}}>{composer?", "boxSizing:'border-box'}}><section className=\"settings-content\" style={{width:'100%',overflow:'auto'}}>{composer?")
     .replace('</main><McpUserRequests', '</section></main><McpUserRequests')
-    .replace('<PluginFixture {...props} onOpenPrompt=', '<PluginFixture {...props} renderMcp={id=><div data-fixture-mcp={id??\'new\'}>MCP configuration</div>} onOpenPrompt=');
+    .replace('<PluginFixture {...props} onOpenPrompt=', '<PluginFixture {...props} renderMcp={(id,dialog)=><SettingsFormDialog className="mcp-server-dialog" title="配置服务器" language="zh" onCancel={dialog.onClose} onSubmit={()=>{}} footer={<button onClick={dialog.onClose} type="button">关闭配置</button>}><div data-fixture-mcp={id??\'new\'}>MCP configuration</div></SettingsFormDialog>} onOpenPrompt=');
 }
 try {
   const result = await build({configFile:false,logLevel:'silent',define:{'process.env.NODE_ENV':'"production"'},plugins:[{
@@ -172,6 +175,7 @@ try {
   const require=createRequire(import.meta.url),env={...process.env};
   if (process.argv.includes('--settings-only')) env.CARDBUSH_PLUGIN_SETTINGS_ONLY = '1';
   if (process.argv.includes('--network-only')) env.CARDBUSH_PLUGIN_NETWORK_ONLY = '1';
+  if (process.argv.includes('--marketplace-only')) env.CARDBUSH_PLUGIN_MARKETPLACE_ONLY = '1';
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
   const worker = localization ? 'scripts/test-plugin-localization-ui.cjs' : coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
   const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});

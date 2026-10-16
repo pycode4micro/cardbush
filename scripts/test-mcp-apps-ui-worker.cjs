@@ -5,9 +5,13 @@ const { app, BrowserWindow, session } = require('electron');
 const directory = resolve(process.argv[2]); app.disableHardwareAcceleration(); app.setPath('userData', join(directory, 'profile'));
 const deadline = setTimeout(() => { console.error('MCP Apps UI timed out'); app.exit(1); }, 25000);
 app.whenReady().then(async () => {
-  session.defaultSession.protocol.handle('cardbush-file', request => new URL(request.url).pathname.endsWith('.png')
-    ? new Response('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240"><rect width="100%" height="100%" fill="#234d4f"/><circle cx="240" cy="120" r="75" fill="#f2bd77"/></svg>', { headers: { 'content-type': 'image/svg+xml' } })
-    : new Response('', { status: 404 }));
+  let missingLoads = 0;
+  session.defaultSession.protocol.handle('cardbush-file', request => {
+    if (new URL(request.url).pathname.endsWith('missing.jpg')) missingLoads++;
+    return new URL(request.url).pathname.endsWith('.png')
+      ? new Response('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240"><rect width="100%" height="100%" fill="#234d4f"/><circle cx="240" cy="120" r="75" fill="#f2bd77"/></svg>', { headers: { 'content-type': 'image/svg+xml' } })
+      : new Response('', { status: 404, headers: { 'cache-control': 'no-store' } });
+  });
   const win = new BrowserWindow({ show: false, width: 880, height: 720, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false } });
   require('../dist-electron/sandboxFrameGuard.js').installSandboxFrameNavigationGuard(win.webContents);
   const read = async script => { try { return await win.webContents.executeJavaScript(script); } catch (error) { throw new Error(`Fixture script failed: ${script}`, { cause: error }); } };
@@ -22,6 +26,22 @@ app.whenReady().then(async () => {
     await win.loadFile(join(directory, 'index.html'));
     await require('./helpers/mcp-app-references.cjs')({ win, read, until, send, click });
     await require('./helpers/message-image-gallery.cjs')({ win, read, until });
+    await read(`clearFixture();window.originalImageRead=cardbushDesktop.readImageDataUrl;window.missingReads=0;window.imageRestored=false;
+      cardbushDesktop.readImageDataUrl=async path=>{if(path.endsWith('missing.jpg')){missingReads++;return imageRestored?originalImageRead(path):'';}return originalImageRead(path)};
+      fixtureMessageOverrides=undefined;mediaOnly=true;fixtureImage={id:'missing',name:'missing.jpg',path:'C:/fixture/missing.jpg',type:'image',display:'inline'};renderFixture(true)`);
+    await until('missingReads===1&&document.querySelector(".tool-image-thumbnail-fallback")');
+    const missingBefore = missingLoads;
+    await read('clearFixture()'); await until('!document.querySelector(".tool-image-thumbnail")');
+    await read('renderFixture(true)'); await until('!!document.querySelector(".tool-image-thumbnail-fallback")');
+    assert.equal(await read('missingReads'), 1, 'remount does not re-read a missing image');
+    assert.equal(missingLoads, missingBefore, 'remount does not retry the failing file protocol');
+    await read('fixtureContent="C:/fixture/missing.jpg";renderFixture(false)');
+    await until('!!document.querySelector(".message-image-preview.is-failed")');
+    assert.equal(await read('missingReads'), 1, 'final gallery shares the negative result');
+    await read('imageRestored=true;document.querySelector(".message-image-preview.is-failed").click()');
+    await until('document.querySelector(".message-image-preview img")?.naturalWidth>0');
+    assert.equal(await read('missingReads'), 2, 'explicit retry recovers a restored image');
+    await read('clearFixture();cardbushDesktop.readImageDataUrl=originalImageRead;fixtureContent=null');
     for (const [name, width, height, windowWidth] of [['square',2048,2048,880],['wide',2048,768,430],['portrait',768,2048,430]]) {
       await win.setContentSize(windowWidth, 720);
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><linearGradient id="bg"><stop stop-color="#183b45"/><stop offset="1" stop-color="#a5d4bf"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#bg)"/><circle cx="${width*.54}" cy="${height*.43}" r="${Math.min(width,height)*.23}" fill="#f2bd77"/><path d="M0 ${height} L${width*.35} ${height*.48} L${width*.62} ${height*.72} L${width} ${height*.4} V${height}Z" fill="#234d4f"/></svg>`;

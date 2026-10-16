@@ -17,6 +17,16 @@ const { isVisibleConversationSession: visible } = load('src/backend/runtimeSessi
 const hookSource = ts.createSourceFile('hook.ts', readFileSync('src/hooks/useCardbushChat.ts', 'utf8'), ts.ScriptTarget.Latest, true);
 const hook = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useCardbushChat');
 const flush = () => new Promise(resolve => setImmediate(resolve));
+test('shared input status distinguishes user interaction from ongoing work and completed replies', () => {
+  const { quickInputState } = load('src/features/composer/quickInputState.ts');
+  const idle = { language: 'zh', messages: [], sending: false };
+  assert.equal(quickInputState(idle).hasActivity, false);
+  assert.equal(quickInputState({ ...idle, sending: true }).state, 'working');
+  assert.equal(quickInputState({ ...idle, sending: true, waiting: true }).state, 'waiting');
+  assert.equal(quickInputState({ ...idle, error: 'Network failed' }).state, 'error');
+  const finished = quickInputState({ ...idle, messages: [{ role: 'assistant', status: 'completed' }] });
+  assert.equal(finished.icon, 'complete'); assert.equal(finished.hasActivity, true);
+});
 function callback(node, context) {
   const exports = {}, code = ts.transpileModule(`exports.run = ${node.getText(hookSource)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function('exports', ...Object.keys(context), code)(exports, ...Object.values(context));

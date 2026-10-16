@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, mkdir, readdir, rm } from 'node:fs/promises';
+import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { emptyCanvas, serializeCanvas, CANVAS_FILE_NAME } from '@cardbush/bush-protocol';
@@ -15,6 +16,24 @@ test('canvas persists independently of a project and uses revision-checked atomi
   assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
   assert.match(String(results.find(result => result.status === 'rejected').reason), /REVISION_CONFLICT/);
   assert.equal((await readCanvas(f.snapshot.path)).document.title, results.find(result => result.status === 'fulfilled').value.document.title);
+});
+
+test('canvas retries a transient Windows rename without overwriting a concurrent edit', async t => {
+  const f = await fixture(t), original = fs.rename;
+  let attempts = 0, changeWhileLocked = false;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (to === f.snapshot.path && attempts++ === 0) {
+      if (changeWhileLocked) await writeFile(to, serializeCanvas(emptyCanvas('External edit')));
+      throw Object.assign(Error('Windows file lock'), { code: 'EPERM' });
+    }
+    return original(from, to);
+  });
+  const saved = await f.service.command({ action: 'save', path: f.snapshot.path, expectedRevision: f.snapshot.revision, document: emptyCanvas('Saved after retry') });
+  assert.equal(saved.document.title, 'Saved after retry'); assert.equal(attempts, 2);
+  attempts = 0; changeWhileLocked = true;
+  await assert.rejects(f.service.command({ action: 'save', path: saved.path, expectedRevision: saved.revision, document: emptyCanvas('Must not replace') }), /REVISION_CONFLICT/);
+  assert.equal((await readCanvas(saved.path)).document.title, 'External edit');
+  assert.ok((await readdir(f.root)).every(name => !name.endsWith('.tmp') && !name.endsWith('.canvas-lock')));
 });
 test('exports copy referenced assets, resource dependencies and source provenance into a reusable folder', async t => {
   const f = await fixture(t); const sources = join(f.root, 'sources'); await mkdir(sources);
